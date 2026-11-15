@@ -251,10 +251,11 @@ describe("Rerail daemon CLI", () => {
       await writeFile(join(root, "other.pem"), selfSignedCertificate().cert);
       await letOthersRead(keyFile, 0o644);
       const notFound = `ENOENT: no such file or directory, open '${literal(misspelled)}'`;
-      // A misspelled certificate, on loopback and for other machines; the key given as the certificate too; another
-      // key's certificate.
+      // A misspelled certificate, on loopback and for other machines; a folder, named though its read error names no
+      // file; the key given as the certificate too; another key's certificate.
       const starts: [string[], string][] = [
         [["--tls-cert", misspelled], notFound], [["--host", "0.0.0.0", "--allow-remote", "--tls-cert", misspelled], notFound],
+        [["--tls-cert", root], `EISDIR: illegal operation on a directory, read '${literal(root)}'`],
         [["--tls-cert", keyFile], "The TLS certificate is not a PEM X\\.509 certificate: "],
         [["--tls-cert", join(root, "other.pem")], "error:\\w+:x509 certificate routines::key values mismatch"],
       ];

@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -82,9 +82,11 @@ describe("daemon transport arguments", () => {
 describe("TLS daemon", () => {
   let root: string;
   const daemons: RerailDaemon[] = [];
+  const leaseHolders: ChildProcess[] = [];
   const originalRerailHome = process.env.RERAIL_HOME;
 
   afterEach(async () => {
+    for (const holder of leaseHolders.splice(0)) holder.kill();
     await Promise.all(daemons.splice(0).map(daemon => daemon.close()));
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
@@ -108,6 +110,25 @@ describe("TLS daemon", () => {
     const state = await readDaemonState(join(home, DAEMON_STATE_FILE));
     if (state === undefined) throw new Error("the daemon wrote no state file");
     return { home, state };
+  }
+
+  /**
+   * A python3 process holding a write lease on `file`, as Samba's kernel oplocks and an NFS server's delegations hold
+   * one: another process's open of the file waits for the holder to give it up, which this one never does (it ignores
+   * the signal that asks), so the kernel ends the lease only after `/proc/sys/fs/lease-break-time`, 45 s by default.
+   * Resolves with "held", or with why the lease could not be taken.
+   */
+  async function holdLease(file: string): Promise<string> {
+    // 1024 is F_SETLEASE on Linux, which older Pythons do not name.
+    const script = "import fcntl, os, signal, sys, time\nsignal.signal(signal.SIGIO, signal.SIG_IGN)\n"
+      + "fcntl.fcntl(os.open(sys.argv[1], os.O_RDONLY), 1024, fcntl.F_WRLCK)\nprint('held', flush=True)\ntime.sleep(60)\n";
+    const holder = spawn("python3", ["-c", script, file], { stdio: ["ignore", "pipe", "pipe"] });
+    leaseHolders.push(holder);
+    let said = "";
+    holder.stderr.on("data", (chunk: Buffer) => { said += chunk.toString(); });
+    const held = once(holder.stdout, "data").then(([chunk]) => String(chunk).trim());
+    const ended = once(holder, "close").then(() => `python3 ended: ${said.trim()}`, (error: Error) => `python3 did not start: ${error.message}`);
+    return await Promise.race([held, ended]);
   }
 
   it.skipIf(process.platform === "win32")("refuses a private key other users may read, and reads one only its owner can", async () => {
@@ -201,9 +222,54 @@ describe("TLS daemon", () => {
       await expect(refused).rejects.toThrow(error);
       await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
     }
+    // A folder's read error names no file: the start names the folder, which main's message beside a private key leaves out.
+    await expect(loadDaemonTls({ certFile: root, keyFile }, shared)).rejects.toThrow(`${await readError(root)} '${root}'`);
     // The certificate it would serve with once the key is private: meanwhile it serves this computer alone.
     await expect(loadDaemonTls({ certFile: join(root, "cert.pem"), keyFile }, shared)).rejects.toBeInstanceOf(TlsKeyExposedError);
   });
+
+  it.skipIf(process.platform !== "linux")("stops the start at once, as main does, when another program holds a lease on the key others can read or on its certificate", async ({ skip }) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    await chmod(files.keyFile, 0o644);
+    for (const leased of [files.keyFile, files.certFile]) {
+      const lease = await holdLease(leased);
+      if (lease !== "held") skip(`python3 could not hold a lease here: ${lease}`);
+      // An open that waited for the lease would hold the start past `rerail daemon start`'s 15 s wait, and the daemon
+      // would serve this computer after the start reported failure. Main refuses the key without opening either file.
+      const refused = loadDaemonTls(files);
+      await expect(refused).rejects.toThrow(`${files.keyFile} is open to other users (mode 0644)`);
+      await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+      for (const holder of leaseHolders.splice(0)) holder.kill();
+    }
+  }, 5_000);
+
+  it("reads at most a mebibyte of a key others can read and of its certificate, so a huge file gets main's refusal at once", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const keyFile = join(root, "key.pem");
+    const certFile = join(root, "cert.pem");
+    await writeFile(keyFile, key);
+    await writeFile(certFile, cert);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    // A real key, then a real certificate, each followed by a hole to 1 GiB: nothing is written, yet a read of the whole
+    // file takes seconds. Neither is a file a person serves with, and main refuses the key without reading either.
+    for (const [name, pem] of [["key-huge.pem", key], ["cert-huge.pem", cert]] as const) {
+      const huge = join(root, name);
+      await writeFile(huge, pem);
+      await truncate(huge, 1024 ** 3);
+      const files = name === "key-huge.pem" ? { certFile, keyFile: huge } : { certFile: huge, keyFile };
+      const started = performance.now();
+      const refused = loadDaemonTls(files, shared);
+      await expect(refused).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
+      await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+      expect(performance.now() - started).toBeLessThan(1_000);
+      await rm(huge);
+    }
+  }, 30_000);
 
   it.skipIf(process.platform === "win32")("stops the start at once for a FIFO certificate beside a key others can read", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
