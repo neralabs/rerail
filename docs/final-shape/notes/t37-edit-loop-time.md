@@ -148,6 +148,25 @@ In live mode the patch goes in within 0.1–2.5 s. A test that entered the chang
 (`selected=affected`); a non-body edit reruns all the selected tests. A deliberate panic showed in
 the next verdict, 1 s after the save, and undoing it passed 2 s later.
 
+### On another Mac
+
+The same live session, run on the M3 Max (idle, 16 cores) from the farm's live mirror of this
+checkout, with the edit made here and its file pushed through the mirror (`scripts/build/farm`):
+
+| Step | Time |
+|---|---|
+| start to the first verdict, cold (native dependencies, then the JIT) | about 140 s |
+| a body edit in `session.rs`, saved here, to the M3's verdict | **1.7 s and 1.1 s** |
+| a deliberate panic in the same function, to its failed verdict | 0.7 s |
+| undoing it, to the passing verdict | 1.2 s |
+| sending the edited file from here | 0.014 s |
+
+This machine spends nothing but the push: the JIT, the 6–7 GB live process and the 7.2 GB
+`target/relax` store are the M3's. It is also faster than the same session here (2–9 s at a load
+of 60–90), because the M3 is idle. What it needs to be the everyday loop: a watcher here that
+pushes each saved file to the host (the push is the mirror's `put`; this run pushed by hand), and
+`relax test --live` started on the host by a script, with its verdicts read back over ssh.
+
 ### What it costs
 
 - **Memory:** the live test process held 6.2 GB.
