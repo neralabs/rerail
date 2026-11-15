@@ -264,7 +264,12 @@ impl<'a> Bytewise<'a> {
         let d = self.native.output_delays[usize::from(o)];
         let pos = f.ins().iadd_imm(p, i64::from(d));
         let mut memo = HashMap::new();
-        let b = self.scalar(f, at, x, pos, 0, &mut memo, heads);
+        let b = self.scalar(f, at, x, pos, 0, Some(i64::from(d)), &mut memo, heads);
+        // Past the file's end, none: the output already says so where it is false on the zero
+        // byte at `p` (`zero_kills`), the bytes after the file being zeros.
+        if crate::native_cpu_lanes::zero_kills(self.native, x, u32::from(d)) {
+            return b;
+        }
         let inside = f.ins().icmp(IntCC::SignedLessThan, p, at.len);
         let inside = f.ins().uextend(types::I64, inside);
         f.ins().band(b, inside)
@@ -373,7 +378,7 @@ impl<'a> Bytewise<'a> {
         f.append_block_param(join, types::I64);
         let before = f.ins().iadd_imm(pos, -1);
         let mut memo = HashMap::new();
-        let first = self.scalar(f, at, a, before, 0, &mut memo, heads);
+        let first = self.scalar(f, at, a, before, 0, None, &mut memo, heads);
         let zero = f.ins().iconst(types::I64, 0);
         f.ins().brif(first, slow, &[], join, &[zero.into()]);
         f.switch_to_block(slow);
@@ -431,9 +436,14 @@ impl<'a> Bytewise<'a> {
         f.block_params(join)[0]
     }
 
-    /// Instruction `x` at stream position `pos - back`, 0 or 1, by scalar loads.
+    /// Instruction `x` at stream position `pos - back`, 0 or 1, by scalar loads. `anchor`: where
+    /// `pos` is `anchor` bytes past a byte `p` of the file or the byte after it, so the bytes
+    /// near it lie in the batch's layout (`native_cpu_block::Batch`: `FRONT` zeros before the
+    /// file, zeros past its end as far as the program looks ahead). There a test of a position
+    /// leaves out what those zeros already say: a `prev`'s bound where its operand is false on
+    /// a zero byte, a `within` another conjunct is false on (`native_cpu_lanes::unguarded`).
     #[allow(clippy::too_many_arguments)]
-    fn scalar(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, pos: Value, back: i64, memo: &mut HashMap<(usize, i64), Value>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    fn scalar(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, pos: Value, back: i64, anchor: Option<i64>, memo: &mut HashMap<(usize, i64), Value>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         if let Some(&v) = memo.get(&(x, back)) {
             return v;
         }
@@ -503,12 +513,21 @@ impl<'a> Bytewise<'a> {
                 f.ins().uextend(types::I64, both)
             }
             BlockInst::Not(a) => {
-                let a = self.scalar(f, at, usize::from(a), pos, back, memo, heads);
+                let a = self.scalar(f, at, usize::from(a), pos, back, anchor, memo, heads);
                 f.ins().bxor_imm(a, 1)
             }
+            // At or after `p`, the conjuncts but the `within`s the zeros make (`unguarded`).
+            BlockInst::And(..) if let Some(kept) = anchor.filter(|&d| back <= d).and_then(|_| crate::native_cpu_lanes::unguarded(self.native, x)) => {
+                let mut v = f.ins().iconst(types::I64, 1);
+                for y in kept {
+                    let b = self.scalar(f, at, y, pos, back, anchor, memo, heads);
+                    v = f.ins().band(v, b);
+                }
+                v
+            }
             BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => {
-                let p = self.scalar(f, at, usize::from(a), pos, back, memo, heads);
-                let q = self.scalar(f, at, usize::from(b), pos, back, memo, heads);
+                let p = self.scalar(f, at, usize::from(a), pos, back, anchor, memo, heads);
+                let q = self.scalar(f, at, usize::from(b), pos, back, anchor, memo, heads);
                 match self.native.insts[x] {
                     BlockInst::And(..) => f.ins().band(p, q),
                     BlockInst::Or(..) => f.ins().bor(p, q),
@@ -520,7 +539,13 @@ impl<'a> Bytewise<'a> {
                 }
             }
             BlockInst::Prev(a, k) => {
-                let v = self.scalar(f, at, usize::from(a), pos, back + i64::from(k), memo, heads);
+                let v = self.scalar(f, at, usize::from(a), pos, back + i64::from(k), anchor, memo, heads);
+                // Its operand read at most `FRONT` bytes before `p`, false on a zero byte: the
+                // zeros before the file say its bound.
+                if anchor.is_some_and(|d| zeros_bound(self.native, usize::from(a), back + i64::from(k) - d)) {
+                    memo.insert((x, back), v);
+                    return v;
+                }
                 let ok = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, i, i64::from(k));
                 let ok = f.ins().uextend(types::I64, ok);
                 f.ins().band(v, ok)
@@ -533,18 +558,30 @@ impl<'a> Bytewise<'a> {
     }
 }
 
-/// The file's byte at `i`, 0 outside it. `i` is at least `-FRONT`: the load is inside the
-/// zeros before the file (`native_cpu_block::Batch`).
+/// Whether the zeros before a file of the batch say a `prev`'s bound (`scalar`): its operand
+/// `a`, read `reach` bytes before a byte of the file, is false on a zero byte, and `reach` is
+/// at most `native_cpu_block::FRONT`, the zeros there.
+pub fn zeros_bound(native: &crate::block_native::BlockNative, a: usize, reach: i64) -> bool {
+    reach <= crate::native_cpu_block::FRONT as i64 && crate::native_cpu_lanes::zero_kills(native, a, 0)
+}
+
+/// The file's byte at `i`, 0 outside it: a load, as the batch's layout has zeros there
+/// (`native_cpu_block::Batch`: `FRONT` before the file, past its end as far as the program
+/// looks ahead). Further before, a `prev`'s bound says none (`scalar`).
 fn byte_at(f: &mut FunctionBuilder<'_>, at: &File, i: Value) -> Value {
-    let inside = f.ins().icmp(IntCC::UnsignedLessThan, i, at.len);
     let addr = f.ins().iadd(at.bytes, i);
-    let b = f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), addr, 0);
-    let zero = f.ins().iconst(types::I64, 0);
-    f.ins().select(inside, b, zero)
+    f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), addr, 0)
 }
 
 /// Whether byte `b` is in the 256-bit set, 0 or 1.
 fn in_set(f: &mut FunctionBuilder<'_>, b: Value, set: [u64; 4]) -> Value {
+    // One byte: a compare, as a lexer's `b == c`.
+    if set.iter().map(|w| w.count_ones()).sum::<u32>() == 1 {
+        let w = set.iter().position(|&w| w != 0).expect("one bit");
+        let c = 64 * w as i64 + i64::from(set[w].trailing_zeros());
+        let same = f.ins().icmp_imm(IntCC::Equal, b, c);
+        return f.ins().uextend(types::I64, same);
+    }
     let zero = f.ins().iconst(types::I64, 0);
     let used: Vec<usize> = (0..4).filter(|&w| set[w] != 0).collect();
     let word = match used.as_slice() {

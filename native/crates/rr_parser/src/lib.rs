@@ -1543,6 +1543,24 @@ pub mod tests {
         assert_eq!(unguarded(&n, 8), Some(vec![1, 0]));
     }
 
+    /// A `prev`'s bound the CPU's scalar tests leave out (`native_cpu_bytes::zeros_bound`):
+    /// where its operand is false on a zero byte, read within `FRONT` bytes before the file,
+    /// the zeros there. A `.` needs none; a byte not `.`, or one read further back, does.
+    #[test]
+    fn a_prevs_bound_goes_where_the_zeros_say_it() {
+        use rerail_compiler::block_native::BlockInst::{EqByte, Not};
+        use rerail_compiler::native_cpu_bytes::zeros_bound;
+        let c = crate::compiled().expect("compiles");
+        let mut n = c.native.clone();
+        n.insts = vec![EqByte(b'.'), Not(0), EqByte(0)];
+        let front = rerail_compiler::native_cpu_block::FRONT as i64;
+        assert!(zeros_bound(&n, 0, 1));
+        assert!(zeros_bound(&n, 0, front));
+        assert!(!zeros_bound(&n, 0, front + 1));
+        assert!(!zeros_bound(&n, 1, 1));
+        assert!(!zeros_bound(&n, 2, 1));
+    }
+
     /// A comment's JSON mark (`json_bad … after comment when count(line_open | block_open) at
     /// least 1`): every comment the reader reads starts with an opener, so the lowering proves
     /// the count holds (`Lowering::implies`) and makes none (`TokenCheck::always`), as a lexer

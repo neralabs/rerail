@@ -1150,3 +1150,44 @@ the selects too:
 | Strings | 368 | 360 | 241 |
 | Numbers | 233 | 226 | 107 |
 | Comments | 371 | 338 | 193 |
+
+## A byte test is a load and a compare (2026-11-15)
+
+**Intro.** The lean lexer tests a comment's opener as
+`c == b'/' && d == b'*'`. The CPU's scalar tests of a mask at a
+token (`native_cpu_bytes::scalar`) checked each byte's place in the
+file instead, about 38 instructions an opener:
+
+```
+// Before, one byte:
+b = (i < len) ? bytes[i] : 0;            // bounds select
+x = ((b >> 6) == 0 ? SET : 0) >> b & 1;  // 256-bit set
+x &= (i >= 1) & (i < len + 1);           // prev's and within's
+// After:
+x = bytes[i] == '/';
+```
+
+**The change.** The batch's layout (`Batch`) puts `FRONT` (16) zero
+bytes before each file. After its end there are zeros as far as the
+program looks ahead. So near a token:
+
+- A byte off the file reads as zero: no bounds select (`byte_at`).
+- A `prev`'s bound goes where its operand is false on a zero byte,
+  read at most `FRONT` before the token (`zeros_bound`).
+- A `within` goes where another conjunct is false on its zero byte
+  (`unguarded`, at or after the token). So does the bit's bound at
+  the file's end.
+- A one-byte set is one compare.
+
+`a_prevs_bound_goes_where_the_zeros_say_it` checks the bound. rr's
+masks give no case where it must stay, so dropping every bound still
+passes the named tests.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 99.2 | 98.5 | 97.9 |
+| Punctuation | 55.4 | 54.4 | 53.5 |
+| Mixed | 59.9 | 59.0 | 63.1 |
+| Strings | 360 | 344 | 241 |
+| Numbers | 226 | 222 | 107 |
+| Comments | 338 | 312 | 193 |
