@@ -132,7 +132,7 @@ wrapper_shape_argk("argument_list").
 .decl wrapper_shape_tx(f: node, c: node, s: node)
 .decl wrapper_shape_txn(f: node)
 .decl wrapper_shape_unsupported(f: node)
-.input doc, node, field, text, line, syntax_error, node_text, child, op, strprefix, value_type_of
+.input doc, node, field, text, line, syntax_error, child, op, strprefix, value_type_of, node_text
 .output violation
 legacy_variant("legacy_sync", "legacy_async", "_sync", "_async").
 legacy_variant("legacy_async", "legacy_sync", "_async", "").

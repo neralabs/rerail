@@ -381,7 +381,7 @@ pub(super) fn compile_parse(
 
 /// The host a parsed tree's rule reaches: the language and scope its `host` rules compile with,
 /// and the options an item's `resolves` reads.
-pub(super) struct Hosting<'s, 'u> {
+pub struct Hosting<'s, 'u> {
     pub(super) language: GrammarDialect,
     pub(super) utils: &'s UtilScope<'u>,
 }

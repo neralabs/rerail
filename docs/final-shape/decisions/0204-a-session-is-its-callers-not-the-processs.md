@@ -74,7 +74,14 @@ session test hung in it. Now a test's thread makes the template before it takes 
 holding nothing, and the filling thread skips that step. The template is also always made under the default switches,
 never a test's set ones.
 
-That may be the phase 0 race above: a template made inside a test that held `set` was made in that test's mode. The
-corpus and typing group passed in one parallel run after the fix (110 pass, 82 s), but one run does not show a 1-in-3
-failure gone.
+The template was not the phase 0 race above. A template made inside a test that held `set` was made in that test's
+mode, so it was a candidate, and the corpus and typing group passed in one parallel run after the fix (110 pass,
+82 s). But the next concurrent run of the group in one process failed the phase 0 test again, with the template fixed.
+
+**Where the shared state is (2026-11-15).** Under cargo-nextest, which runs each test in a process of its own, the
+phase 0 test passed in both runs of the library's tests on an M3 Max: all 2,639 tests, and the quick tier's 2,594,
+at -j 16 each, beside the same corpus tests running in other processes. So the state the runs share is the process's, not the disk's: the
+default tape cache, the observer's journal, or another static. The shared root on disk is shared across those
+processes too, so it is the least likely candidate. The next step is a run of the group in one process with
+the tape cache keyed per session, and then with the journal off.
 

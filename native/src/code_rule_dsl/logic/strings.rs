@@ -311,15 +311,19 @@ impl Vocabulary {
 /// The text columns of the program's relations: `TEXT_COLUMNS`, and each symbol column every writer of a derived
 /// relation copies from one of them (a fixpoint), so a test on a copy is answered from the vocabulary too.
 fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
-    let mut columns: HashMap<String, HashSet<usize>> = TEXT_COLUMNS.iter()
-        .map(|(name, columns)| ((*name).to_owned(), columns.iter().copied().collect()))
-        .collect();
     // Each relation's rules, found once: scanning every rule for every declaration in every round was quadratic in a
     // combined pack (O111).
     let mut by_head: HashMap<&str, Vec<&super::front::Rule>> = HashMap::new();
     for rule in &prog.rules {
         by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
     }
+    // A text relation the batch gives. One the program derives is a derived relation like any other, below: a node
+    // attribute answered on request (decision 0174: `node_text`'s `@rr_node_text_any`) computes its strings after
+    // the batch's vocabulary is made.
+    let mut columns: HashMap<String, HashSet<usize>> = TEXT_COLUMNS.iter()
+        .filter(|(name, _)| !by_head.contains_key(name))
+        .map(|(name, columns)| ((*name).to_owned(), columns.iter().copied().collect()))
+        .collect();
     let inputs: HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     loop {
         let mut found = Vec::new();

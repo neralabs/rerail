@@ -349,13 +349,40 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     made
 }
 
-/// The batches whose documents' texts `long_node_text` reads, by document key: the latest batch to hold each
-/// document, weakly (a chunk's batch is dropped when its run is done; its entries then read nothing).
-static TEXTS: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, (std::sync::Weak<Batch>, usize)>>> = std::sync::LazyLock::new(Default::default);
+/// The batches whose documents' texts `long_node_text`, `node_text_any` and `node_value_any` read, by document key:
+/// the latest batch to hold each document, weakly (a chunk's batch is dropped when its run is done; its entries then
+/// read nothing).
+pub type Texts = Arc<std::sync::RwLock<HashMap<u32, (std::sync::Weak<Batch>, usize)>>>;
 
-/// Hold `batch`'s documents for `long_node_text`.
+thread_local! {
+    /// The texts of the run under way on this thread (`own_texts`), carried to its jobs (`logic::run_state`). A
+    /// document key is a store's: two runs at once may number theirs alike, so each run holds its own. `None`
+    /// outside a run, where no batch is held.
+    pub static TEXTS: std::cell::RefCell<Option<Texts>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A run's own texts on this thread until dropped, when its caller's come back.
+pub fn own_texts() -> impl Drop {
+    struct Own(Option<Texts>);
+    impl Drop for Own {
+        fn drop(&mut self) {
+            TEXTS.with(|t| t.replace(self.0.take()));
+        }
+    }
+    Own(TEXTS.with(|t| t.replace(Some(Texts::default()))))
+}
+
+/// The batch that holds document `key` in the run's texts, and the document's place in it.
+fn held_text(key: u32) -> Option<(Arc<Batch>, usize)> {
+    let texts = TEXTS.with(|t| t.borrow().clone())?;
+    let (batch, i) = texts.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
+    Some((batch.upgrade()?, i))
+}
+
+/// Hold `batch`'s documents for `long_node_text` and the attributes' answers, in the run's texts.
 fn hold_texts(batch: &Arc<Batch>) {
-    let mut texts = TEXTS.write().unwrap_or_else(|p| p.into_inner());
+    let Some(texts) = TEXTS.with(|t| t.borrow().clone()) else { return };
+    let mut texts = texts.write().unwrap_or_else(|p| p.into_inner());
     // Entries of dropped batches go once they are as many as the live ones.
     if texts.len() > 4096 && texts.len() > 2 * batch.docs.len() {
         texts.retain(|_, (b, _)| b.strong_count() > 0);
@@ -370,8 +397,7 @@ fn hold_texts(batch: &Arc<Batch>) {
 /// Only the nodes a rule binds are read and interned (decision 0108 §1).
 pub(crate) fn long_node_text(n: i64) -> Option<String> {
     let (key, low) = ((n >> 32) as u32, n as u32);
-    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
-    let batch = batch.upgrade()?;
+    let (batch, i) = held_text(key)?;
     let p = &batch.docs[i];
     let local = p.local_of(low)?;
     let core = *p.core.get(local as usize)?;
@@ -384,8 +410,7 @@ pub(crate) fn long_node_text(n: i64) -> Option<String> {
 /// It answers `node_text`'s requests (decision 0174): only the nodes a rule asks for are read and interned.
 pub(crate) fn node_text_any(n: i64) -> Option<String> {
     let (key, low) = ((n >> 32) as u32, n as u32);
-    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
-    let batch = batch.upgrade()?;
+    let (batch, i) = held_text(key)?;
     let p = &batch.docs[i];
     let f = &p.facts;
     if let Some(k) = granules::comment_of(low) {
@@ -427,8 +452,7 @@ pub(crate) struct Valued {
 /// batch holds. It answers `value`'s requests (decision 0174).
 pub(crate) fn node_value_any(n: i64) -> Option<String> {
     let (key, low) = ((n >> 32) as u32, n as u32);
-    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
-    let batch = batch.upgrade()?;
+    let (batch, i) = held_text(key)?;
     let p = &batch.docs[i];
     let valued = batch.valued.get(i)?.as_ref()?;
     let local = p.local_of(low)?;
@@ -2086,7 +2110,7 @@ pub enum View {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Place {
+pub enum Place {
     Line,
     EndLine,
     Col,

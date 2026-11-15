@@ -4045,6 +4045,48 @@ pub fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Pr
     prog.asked_by.extend(wide.asked);
 }
 
+/// `prog` as it was before `sources_on_request`: each attribute it answered on request an input again, without its
+/// requests, answers, eager rows' rule and widened copies. For programs merged into one and lowered once
+/// (`convert::overlay`): the requests are made over the merged program's readers.
+pub fn undo_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
+    for round in ON_REQUEST.iter().rev() {
+        let answered: Vec<&OnRequest> = round.iter().filter(|a| prog.decls.contains_key(a.req)).collect();
+        if answered.is_empty() {
+            continue;
+        }
+        // A round's copies are named after its first attribute present (`Widen::new`): any of the round's.
+        let wide: Vec<String> = round.iter().map(|a| format!("rr_wide_{}_", a.rel)).collect();
+        let copy = |rel: &str| wide.iter().any(|w| rel.starts_with(w.as_str()));
+        let mut gone: BTreeSet<String> = BTreeSet::new();
+        for a in answered {
+            gone.insert(a.rel.to_owned());
+            gone.insert(a.req.to_owned());
+            prog.decls.remove(a.req);
+            let named = match a.answer {
+                Answer::Children { named } => Some(named),
+                Answer::Function(_) => None,
+            };
+            for input in a.eager.into_iter().chain(named) {
+                prog.decls.remove(input);
+                prog.inputs.retain(|i| i != input);
+            }
+            if !prog.inputs.iter().any(|i| i == a.rel) {
+                prog.inputs.push(a.rel.to_owned());
+            }
+        }
+        prog.rules.retain(|r| !gone.contains(r.head.rel.as_str()) && !copy(r.head.rel.as_str()));
+        prog.decls.retain(|k, _| !copy(k.as_str()));
+        prog.asked_by.retain(|k, _| !gone.contains(k) && !copy(k));
+        // A token's answer read `node_text`, declared for it where the program had none: unread now, it goes.
+        if round.iter().any(|a| matches!(a.answer, Answer::Children { .. }) && gone.contains(a.rel))
+            && !prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == "node_text")
+        {
+            prog.inputs.retain(|i| i != "node_text");
+            prog.decls.remove("node_text");
+        }
+    }
+}
+
 /// The widened copies a request reads (`sources_on_request`): for each relation `r` that reads an attribute,
 /// `rr_wide_<r>` on the columns its rules bind without one.
 struct Widen<'a> {

@@ -70,6 +70,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "DOC", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "KEPT", Thread, "dialects by grammar: any thread's gives the same"),
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "LOCATED", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/facts/vtab/syntax.rs", "TEXTS", Carried, ""),
     ("src/code_rule_dsl/import_target/mod.rs", "VIEW", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/logic/derived.rs", "MEMO", Carried, ""),
     ("src/code_rule_dsl/logic/derived.rs", "SESSION_MEMO", Outermost, "a session's derived values between its runs: taken and put back by the outermost run"),
@@ -289,6 +290,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
 fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["STAGE"], &super::profile::STAGE);
+    c.cloned(&["TEXTS"], &crate::code_rule_dsl::facts::vtab::syntax::TEXTS);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }
 

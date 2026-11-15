@@ -224,7 +224,7 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
     env.truncate(kept_binds);
     // The outputs: each distinct running mask, the last one's rows extracted.
     let mut outputs: Vec<u16> = Vec::new();
-    let mut index = |v: u16, outputs: &mut Vec<u16>| outputs.iter().position(|&o| o == v).unwrap_or_else(|| {
+    let index = |v: u16, outputs: &mut Vec<u16>| outputs.iter().position(|&o| o == v).unwrap_or_else(|| {
         outputs.push(v);
         outputs.len() - 1
     });

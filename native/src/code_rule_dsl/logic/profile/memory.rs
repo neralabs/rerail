@@ -187,7 +187,7 @@ pub(super) fn sample() {
                 let (live, resident) = heap();
                 let at = start.elapsed().as_secs_f64();
                 let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-                let mut s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 let keep = s.rows.last().is_none_or(|l| now.abs_diff(l.footprint) >= 8 << 20 || at - l.at >= 0.25);
                 let rose = max.saturating_sub(last_max);
                 let top = now > s.top.footprint;

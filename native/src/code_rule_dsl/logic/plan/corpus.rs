@@ -2242,6 +2242,8 @@ fn run_observed(
     let _stage = crate::code_rule_dsl::logic::profile::run_begins();
     // The run's own kept splits (`file_local::split_memo`), apart from any run it is nested in.
     let _splits = crate::code_rule_dsl::typing::file_local::split_memo::own();
+    // And its own texts (`facts::vtab::syntax::TEXTS`): the batches its node attributes are answered from.
+    let _texts = crate::code_rule_dsl::facts::vtab::syntax::own_texts();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None
     } else if phase0::active() || nested {
@@ -7877,7 +7879,7 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             if patched.is_none() && b.lazy_kept
                 && let Some(h) = &held
             {
-                let maintains = rel.strip_suffix("__old").is_some() && maintains;
+                let maintains = maintains && rel.ends_with("__old");
                 let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
                 let wanted = tested_of(&b.constants, &rel).cloned();
                 let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {

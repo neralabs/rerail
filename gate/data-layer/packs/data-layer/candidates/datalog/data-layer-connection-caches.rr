@@ -26,7 +26,7 @@
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, child, text, line, tape_line, col, node_text, op_at
+.input doc, node, field, child, text, line, tape_line, col, op_at, node_text
 .output violation
 option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).

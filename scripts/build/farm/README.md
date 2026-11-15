@@ -12,12 +12,14 @@ keyed on the checkout's path saw each worktree's crates as different. The farm f
   so a crate's key holds paths relative to its checkout, and `--remap-path-prefix` makes its outputs
   the same in every checkout. A crate compiled in one worktree is a hit in all the others.
   This needs the engine not to write its checkout's path into its build (decision 0224).
-- **Spreading.** On a miss, a library crate compiles on another Mac when one has a free core
+- **Spreading.** On a miss, a dependency's library crate compiles on another Mac when one has a free core
   (the hosts in `~/.config/rerail-farm/hosts.json`, reached by ssh). The sources, the crate's dependencies' `.rmeta` files and
   its `OUT_DIR` are copied to the same absolute paths there, only what changed since the last copy,
   and the outputs are copied back.
-- **Editing.** A workspace crate that missed in the last 2 hours is being edited here. It skips the
-  cache and compiles incrementally on this Mac, as without the farm.
+- **Editing.** A workspace crate that misses is being edited here: it compiles incrementally on
+  this Mac, never on another, so its next edit starts from that state. For the next 2 hours it
+  skips the cache, as without the farm. A crate that was a hit has no incremental state: its first
+  edit compiles it whole.
 
 ```
 cargo ──▶ rustc-wrapper ──┬─ hot crate ───────────────▶ rustc -C incremental (here)

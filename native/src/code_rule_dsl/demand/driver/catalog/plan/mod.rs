@@ -12,8 +12,6 @@ mod utility;
 pub(super) use execution::{ClauseLogicalPlan, exact_scope_groups};
 pub(super) use identity::{UtilityDefinitionId, utility_definition_id};
 pub(super) use physical::{FactFamilyContract, StatementRelations};
-#[cfg(test)]
-pub(super) use render::legacy_test_scan_sql;
 pub(super) use render::{ClauseMergeAst, TypedBoundaryAst, workspace_execution_sql};
 
 #[cfg(test)]

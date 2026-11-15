@@ -40,6 +40,32 @@ Two avoidable costs show up in every test rebuild:
 
 The test binary is 613 MB.
 
+### With the farm (2026-11-15)
+
+The same body edit in `logic` (`session.rs`, `start`), rebuilt with the global sccache every
+worktree uses and with the farm (§4), each on a warm target:
+
+| Rebuild after the edit | default: wall, CPU | farm: wall, CPU |
+|---|---|---|
+| the CLI, load 5–17 | 6.4–7.2 s, 17–18 s | 6.6–6.8 s, 19 s |
+| the library's tests, interleaved, load 65–115 | 18.8, 22.2, 61.7 s; 41–48 s | 23.9, 24.6, 40.2 s; 43–46 s |
+| the CLI, the first edit of a crate that was a cache hit | — | 32.7 s, 78 s |
+
+In steady state the farm costs what the default does: a workspace crate being edited compiles
+here, incrementally, either way. The farm's gain is the first build of a worktree (§4, 28 s from
+a filled cache). Its one cost is the first edit of each crate that came from the cache: no
+incremental state came with it, so that edit compiles the crate and those above it whole, once.
+Before 33033b578 that first edit went to another Mac as a whole compile (20.5 s for `logic`), and
+the next one compiled whole again here.
+
+The farm's keys hold the target directory's path within the checkout: a worktree building into
+`target/` shares with every other one; a `CARGO_TARGET_DIR` elsewhere shares only with the same.
+
+Found on the way: since 197f2de81 (the self dev-dependency's removal), only `--lib` test builds
+compiled. `--lib --tests` and `cargo test --workspace` (CI) also build the plain engine library,
+where feature unification turned the variant `AstMatcher::TestUnknown` on and its match arms off.
+The variant is now always there (e26cc1d5b).
+
 ## 2. The test suite is the slow part
 
 One run of the engine's library tests took 762 s wall and 2,682 s CPU (45 CPU-minutes):
@@ -92,8 +118,73 @@ Failures seen in this worktree:
 
 - the stack overflow above, which is real;
 - `language::adapter::kit::shared_walks_read_the_kinds_they_named` and
-  `slice::tests::the_backends_find_the_same_keys_on_real_files`, not yet classified;
+  `slice::tests::the_backends_find_the_same_keys_on_real_files`, classified below;
 - the rest need the pack test data, which a fresh worktree lacks (`npm run fixtures:pull`).
+
+### Two tiers, and the gate on another Mac (2026-11-15)
+
+cargo-nextest runs each test in a process of its own, and reports each test's time. The stack
+overflow then fails one test, not the run, and a process-wide session no longer queues the
+session tests. `.config/nextest.toml` sets two tiers:
+
+```
+cargo nextest run --lib                   # the quick tier: all but the slow tests
+cargo nextest run --lib --profile gate    # everything (a phase gate)
+```
+
+The slow tier is the tests that took 20 s or more each in a full run: 45 tests, named by family
+in the config. A filter on the command line narrows a tier; `--ignore-default-filter` runs a slow
+test by name.
+
+`scripts/dev/test-remote` sends this checkout to a farm host through the mirror and runs a command
+there (`scripts/dev/test-remote -- cargo nextest run --lib --profile gate`). The host builds in
+its own warm `target/`, so the suite spends the host's CPU, not this machine's. On an M3 Max at
+`-j 16`:
+
+| Run | Tests | Wall |
+|---|---|---|
+| The gate | 2,639 | 234 s |
+| The quick tier | 2,594 | 87 s |
+
+In the gate's run the tests took 3,460 test-seconds in all:
+
+| Per-test time | Tests | Their total time |
+|---|---|---|
+| under 1 s | 2,319 | 252 s |
+| 1–5 s | 216 | 469 s |
+| 5–20 s | 61 | 587 s |
+| 20–60 s | 30 | 960 s |
+| 60 s or more | 13 | 1,191 s |
+
+The longest test, `convert::tests::a_sample_of_the_replay_gives_the_recorded_findings` at 227 s,
+bounds the gate's wall time. The next is `rr::tests::dropping_unreached_clauses_…_script_packs`
+at 136 s.
+
+The gate's 14 failures:
+
+- **11 need the pack test data**, which neither machine has: the ruff, sqlfluff and eslint-plugin-vue
+  locks were rewritten after the data moved to S3 (#177, #191), so git history cannot restore it,
+  and a pull needs S3 access. These are the `python_shortcuts_change_no_pack_result_*` tests,
+  `reproduces_sqlfluff_rf01_and_al05`, `vue::view::tests::corpus`, the three that read
+  `pyflakes/F601.py`, and three more that read the pack's upstream files and found few or none:
+  `the_backends_find_the_same_keys_on_real_files` ("1 files"), `the_gate_catches_a_widened_walk`
+  and `spilled_walks_find_the_cpus_roots`.
+- **1 needed `node`**, which the host's ssh PATH lacked (`sql_sessions_use_shared_explain_profiles…`);
+  `test-remote` now puts Homebrew's bin on it, and the test passes there.
+- **2 were real, and are fixed:**
+  - `executors_are_shared`: the MSL compile thread (`metal/src/runtime.rs`) and the cost model's
+    reader (`logic/costs.rs`) made their threads themselves; both are `exec::service` threads now.
+    The build script's grammar threads (`build_grammars.rs`) are an exception: they run in cargo,
+    not in the engine.
+  - `shared_walks_read_the_kinds_they_named`: the brace-format tree names a kind `attribute` (a
+    field's `.name`), and the format family's scope is refused. The walk kinds are now checked only
+    for families with scopes.
+
+On a host, two more things differ from this checkout. The store's git tests made repositories
+under the host's own git config, and a host that signs its commits failed 10 of them; their git
+now runs without the global and system config. And
+`git_workspace::tests::discovers_current_repository_without_a_git_process` reads this checkout's
+`.git`, which the mirror does not send, so it fails on a host only.
 
 ## 3. Relax
 
@@ -163,9 +254,19 @@ checkout, with the edit made here and its file pushed through the mirror (`scrip
 
 This machine spends nothing but the push: the JIT, the 6–7 GB live process and the 7.2 GB
 `target/relax` store are the M3's. It is also faster than the same session here (2–9 s at a load
-of 60–90), because the M3 is idle. What it needs to be the everyday loop: a watcher here that
-pushes each saved file to the host (the push is the mirror's `put`; this run pushed by hand), and
-`relax test --live` started on the host by a script, with its verdicts read back over ssh.
+of 60–90), because the M3 is idle.
+
+`scripts/dev/live-test-remote` makes it one command:
+
+```
+RELAX=<relax binary> RELAX_STD=<its std> scripts/dev/live-test-remote rerail-engine --lib -- <filter>
+```
+
+It sends the checkout and Relax to the first `"mirror"` host, starts the live session there, and
+watches this checkout (FSEvents), sending each saved file; the host's verdicts print here, each
+with the time since the save. Ctrl-C, a kill or a closed terminal stops the session on the host.
+Measured with it: a restart with the host's store warm, 4–11 s to the first verdict; a panic
+added to `start`, failed 1.6 s after the save; undone, passed 0.9 s after.
 
 ### What it costs
 

@@ -1369,7 +1369,7 @@ impl Atoms {
     }
 
     /// `advance_holding`, under `state`'s lock held.
-    pub(super) fn advance_holding_in(&self, connection: &Connection, state: &mut State, base: usize, end: usize) -> StoreResult<()> {
+    fn advance_holding_in(&self, connection: &Connection, state: &mut State, base: usize, end: usize) -> StoreResult<()> {
         if state.map.is_some() || state.atoms.pending().0 > 0 || state.atoms.base() != base {
             return Ok(());
         }

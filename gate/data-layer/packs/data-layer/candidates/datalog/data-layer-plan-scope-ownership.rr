@@ -78,7 +78,7 @@ workflow_type("type").
 .decl workflow_build(a: node, t: node)
 .decl workflow_callable(t: node, s: symbol)
 .decl workflow_class(a: node, c: symbol)
-.input doc, node, child, field, text, line, syntax_error, node_text, value, value_type_of, source
+.input doc, node, child, field, text, line, syntax_error, value_type_of, source, node_text, value
 .output violation
 callback_container("pattern_list").
 callback_container("tuple_pattern").

@@ -18,7 +18,7 @@ use std::sync::Arc;
 // Keep the cursor at the current CST node. Neither Tree-sitter's Node::parent
 // (which searches down from the root) nor ast-grep's DFS (which eagerly
 // unwinds before yielding) is suitable for a bounded index build.
-pub(in crate::code_rule_dsl) trait AnchorCursor<'tree> {
+pub trait AnchorCursor<'tree> {
     type Node: Copy;
     fn current(&self) -> Self::Node;
     fn first_child(&mut self) -> bool;
@@ -499,7 +499,6 @@ impl AnchorPlan {
             // all (`max` only): both select every root.
             AstMatcher::Compare(_) | AstMatcher::Count(_) => Self::unrestricted(),
             AstMatcher::Semantic(semantic) => semantic::compile_in(semantic, inlining),
-            #[cfg(any(test, feature = "test-hooks"))]
             AstMatcher::TestUnknown(_) => Self::unrestricted(),
             // Constraints only narrow the rule's matches: its plan is a superset, never exact.
             AstMatcher::Constrained(core) => {

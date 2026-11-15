@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Materialization {
+pub enum Materialization {
     Materialized,
     Inline,
 }
@@ -62,7 +62,7 @@ pub(crate) struct Query {
     pub branches: Vec<Select>,
 }
 #[derive(Debug)]
-pub(crate) struct SourceUse {
+pub struct SourceUse {
     /// Syntactic references in the emitted reachable definitions, counted once per definition.
     pub references: usize,
     pub materialization: Materialization,
