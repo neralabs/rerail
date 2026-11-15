@@ -2372,7 +2372,7 @@ Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
 "#);
     let a = complete_rule(&rule("A", "xx xx", "xx"));
     let b = complete_rule(&rule("B", "yy yy", "yy"));
-    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
     assert_eq!(combined.natives.len(), 2);
     for native in combined.natives.values() {
         for input in native.reads() { assert!(combined.decls.contains_key(input), "{input}"); }
@@ -2803,7 +2803,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     assert_eq!(alone, ["Fn:a/x.py"]);
     assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
     // The library's relation is unguarded in both policies (so the simplifier makes it one); B's rule is guarded.
-    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
     let reads_scope = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).any(|r| r.body.iter().filter_map(|l| l.atom()).any(|x| x.rel.contains("rr_scope_")));
     assert!(!reads_scope("p0_def_at") && !reads_scope("p1_def_at"), "the library's rules stay as written");
     assert!(combined.rules.iter().any(|r| r.head.rel.starts_with("p1_") && r.body.iter().filter_map(|l| l.atom()).any(|x| x.neg && x.rel == "p1_rr_scope_not")), "B's reads are guarded");
@@ -2812,8 +2812,8 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     let c = named("c", "a", "named(f) :- kind(f, \"function_definition\").");
     let d = named("d", "b", "named(x) :- kind(x, \"function_definition\").");
     let e = named("e", "b", "named(f) :- kind(f, \"class_definition\").");
-    assert!(crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &d], "").is_ok());
-    let refused = crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &e], "").err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &d]).is_ok());
+    let refused = crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &e]).err().map(|e| e.to_string()).unwrap_or_default();
     assert!(refused.contains(".global named"), "{refused}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2841,7 +2841,7 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     let alone: Vec<String> = [run(&[&a], "out-a"), run(&[&b], "out-b")].concat();
     assert_eq!(alone, ["Fn:a/x.py"]);
     assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
-    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
     let rules_of = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).collect::<Vec<_>>();
     assert!(!rules_of("call_name").is_empty() && rules_of("p0_call_name").is_empty(), "the library is held once, under its own names");
     assert!(rules_of("call_name").iter().all(|r| r.body.iter().filter_map(|l| l.atom()).all(|x| !x.rel.contains("rr_scope_"))), "the library's rules are unguarded");

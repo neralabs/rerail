@@ -164,7 +164,7 @@ fn calls_name() -> String {
 #[test]
 fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
     let text = program("calls");
-    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()], "").unwrap();
+    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
     let same = crate::code_rule_dsl::logic::simplify::identical_classes(&prog);
     assert!(same.is_empty(), "{} classes of relations that are one, e.g. {:?}", same.len(), same.iter().take(4).collect::<Vec<_>>());
     let repeated = crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut prog);

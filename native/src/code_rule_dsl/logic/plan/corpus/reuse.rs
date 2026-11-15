@@ -37,14 +37,15 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
 const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED"];
 
-fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
+fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
-    // v3: a record's consulted list is bytes (`encode_consulted`), not lines.
-    h.update(b"rerail.run-reuse/v3\0");
+    // v4: the run's settings keyed as the rows it adds (decision 0249), the texts as the files'.
+    h.update(b"rerail.run-reuse/v4\0");
     for p in programs {
         h.update((p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
     }
+    added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
     h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
@@ -74,11 +75,11 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The programs with the root's settings (`<root>/rerail.env`, the `env` option), as the run reads them.
-fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) -> Result<Vec<String>> {
+/// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
+fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
-    Ok(programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect())
+    Ok(super::added::Added::of(&settings, options))
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
@@ -195,10 +196,9 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
     let programs = given.programs;
     let checking = super::thread_usage();
-    let texts = with_settings(programs, root, options)?;
-    let key = key(&texts, root, options, modes, typing);
+    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
-        miss(&format!("no record under the run's key {} (programs {})", &key[..12], texts.len()));
+        miss(&format!("no record under the run's key {} (programs {})", &key[..12], programs.len()));
         return Ok(None);
     };
     let Some(consulted) = decode_consulted(&consulted) else {
@@ -272,8 +272,7 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let texts = with_settings(programs, root, options)?;
-    let key = key(&texts, root, options, modes, typing);
+    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
     let mut consulted = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();

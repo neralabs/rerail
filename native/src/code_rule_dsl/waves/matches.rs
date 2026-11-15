@@ -55,6 +55,45 @@ const KEPT: &str = "
 matched(c, d, n) :- kept_match(c, d, n).
 span(d, n, s, e) :- kept_span(d, n, s, e).
 ";
+/// `SOURCE` or `KEPT`, read once for the process: constant texts of the engine's, parsed where they are written.
+fn parsed(text: &'static str) -> &'static crate::code_rule_dsl::logic::front::Program {
+    use std::sync::OnceLock;
+    static SOURCE_PROGRAM: OnceLock<crate::code_rule_dsl::logic::front::Program> = OnceLock::new();
+    static KEPT_PROGRAM: OnceLock<crate::code_rule_dsl::logic::front::Program> = OnceLock::new();
+    let slot = if std::ptr::eq(text, SOURCE) { &SOURCE_PROGRAM } else { &KEPT_PROGRAM };
+    slot.get_or_init(|| crate::code_rule_dsl::logic::rr::parse(text).expect("the wave's own rules parse"))
+}
+
+/// What the wave's plan is a function of in its program: its declarations, inputs, outputs, rules and facts (all a
+/// wave program holds).
+fn digest(prog: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
+    use sha2::Digest as _;
+    let facts: std::collections::BTreeMap<&String, _> = prog.facts.iter().collect();
+    let mut h = sha2::Sha256::new();
+    h.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", prog.decls, prog.inputs, prog.outputs, prog.rules, facts).as_bytes());
+    h.finalize().into()
+}
+
+/// `prog` with `more`'s declarations, inputs, outputs, rules (after its own) and facts: the program the two texts
+/// one after the other read as.
+fn joined(prog: &mut crate::code_rule_dsl::logic::front::Program, more: &crate::code_rule_dsl::logic::front::Program) {
+    prog.decls.extend(more.decls.iter().map(|(k, v)| (k.clone(), v.clone())));
+    for i in &more.inputs {
+        if !prog.inputs.contains(i) {
+            prog.inputs.push(i.clone());
+        }
+    }
+    for o in &more.outputs {
+        if !prog.outputs.contains(o) {
+            prog.outputs.push(o.clone());
+        }
+    }
+    prog.rules.extend(more.rules.iter().cloned());
+    for (rel, rows) in &more.facts {
+        prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
+    }
+}
+
 /// The kept rows a warm run reads, filled by its caller (`slice`).
 pub(in crate::code_rule_dsl) const KEPT_MATCH: &str = "temp.wave_kept_match";
 pub(in crate::code_rule_dsl) const KEPT_SPAN: &str = "temp.wave_kept_span";
@@ -212,7 +251,7 @@ impl Wave {
         let mut identity = crate::code_rule_dsl::stats::identity::CompiledPlanId::builder()
             .text("rerail.wave-program/v1")
             .text(PROGRAM)
-            .text(&source)
+            .bytes(&digest(&source))
             .u64(crate::code_rule_dsl::stats::plans::COMPILER_VERSION as u64);
         let mut inputs = batch.iter().collect::<Vec<_>>();
         inputs.sort_by(|a, b| a.0.cmp(b.0));
@@ -243,7 +282,7 @@ impl Wave {
             atoms.extend(names.iter().map(|name| (*name).to_owned()).zip(found.iter().copied()));
             Ok(found)
         };
-        let mut program = emit::emit_batch(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        let mut program = emit::emit_program(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
         program.file_local = true;
         program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
         let bytes = serde_json::to_vec(&program).map_err(|error| invalid(error.to_string()))?;
@@ -298,8 +337,9 @@ impl Wave {
         }
     }
 
-    /// The planner's source and the batch inputs it reads, each with its source and estimate.
-    fn inputs(&self, kept: bool) -> (String, HashMap<String, (Source, f64)>) {
+    /// The planner's program (`SOURCE`, the policies' rules, and `KEPT` for a warm run, each a program: nothing
+    /// printed, decision 0249) and the batch inputs it reads, each with its source and estimate.
+    fn inputs(&self, kept: bool) -> (crate::code_rule_dsl::logic::front::Program, HashMap<String, (Source, f64)>) {
         let mut batch = HashMap::from([
             (
                 "terminal".to_owned(),
@@ -322,10 +362,10 @@ impl Wave {
             };
             batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), rows));
         }
-        let mut source = SOURCE.to_owned();
-        source.push_str(&self.logic.rules);
+        let mut source = parsed(SOURCE).clone();
+        joined(&mut source, &self.logic.rules);
         if kept {
-            source.push_str(KEPT);
+            joined(&mut source, parsed(KEPT));
             batch.insert("kept_match".to_owned(), (Source::positional(KEPT_MATCH, &["c0", "c1", "c2"]), 1000.0));
             batch.insert("kept_span".to_owned(), (Source::positional(KEPT_SPAN, &["c0", "c1", "c2", "c3"]), 1000.0));
         }

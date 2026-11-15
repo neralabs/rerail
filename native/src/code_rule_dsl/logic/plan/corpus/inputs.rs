@@ -984,7 +984,7 @@ quiet() :- ceiling(_), !over(_).
     fn combined_policies_keep_distinct_named_file_inputs_private() {
         let first = ".decl base_sig(s: symbol)\n.input base_sig(IO=json, filename=\"noqa.json\", path=\"/signature\")\n.decl result(s: symbol)\nresult(s) :- base_sig(s).\n.output result\n";
         let second = first.replace("noqa.json", "budget.json");
-        let mut program = super::super::combine(&[first, &second], "").unwrap();
+        let mut program = super::super::combine(&[first, &second]).unwrap();
         populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base, &mut Vec::new()).unwrap();
         assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![[Value::Str("noqa.json".into())].into()]));
         assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![[Value::Str("budget.json".into())].into()]));

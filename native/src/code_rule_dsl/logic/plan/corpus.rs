@@ -24,6 +24,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::rr::WORLD;
 use crate::code_rule_dsl::typing::cross_rounds;
+pub mod added;
 pub mod guests;
 pub mod hiding;
 pub mod exports;
@@ -295,10 +296,8 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Pat
     }
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
-    let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
-    let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
-    // The settings are `env` facts added to each text: its includes, and so its graph, are the text's own.
-    let (prog, _) = combine_keyed(&programs, graphs, "", None, &front::Lists::default())?;
+    // The settings are `env` rows given to each program that declares `env` (decision 0249).
+    let (prog, _) = combine_keyed(programs, graphs, &added::Added::of(&settings, options), None, &front::Lists::default())?;
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
     if prog.decls.contains_key("declared_ret") {
@@ -493,14 +492,14 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
     run_typed(programs, root, None, out, modes, binding, chunk_nodes, &Typing::default())
 }
 
-/// The programs `programs` (`.rr` text, each with `extra` after it) as one program. One program is parsed as it is.
+/// The programs `programs` (`.rr` text) as one program. One program is parsed as it is.
 /// Of several, each one's own relations (the ones it derives or declares beyond its inputs) take a prefix, `p<i>_`,
 /// so programs that name relations alike (a converter's `m650`, `exists_0`) do not meet. The base inputs and the
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
-pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
+pub fn combine(programs: &[&str]) -> Result<front::Program> {
     let graphs: Vec<Option<[u8; 32]>> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::graph_digest(t).ok().flatten()).collect();
-    combine_keyed(programs, &graphs, extra, None, &front::Lists::default()).map(|(program, _)| program)
+    combine_keyed(programs, &graphs, &added::Added::default(), None, &front::Lists::default()).map(|(program, _)| program)
 }
 
 /// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
@@ -541,10 +540,11 @@ impl<'a> Texts<'a> {
     }
 }
 
-/// `combine`, the texts' include graphs' digests given (`Texts::graphs`), with the digest of its texts
-/// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
-/// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again.
-fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, read: Option<&front::Program>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
+/// `combine`, the texts' include graphs' digests given (`Texts::graphs`), each program given the rows `extra` adds
+/// (`added::Added`), with the digest of its texts and those rows (`texts_digest`) it is kept by: a run keys what it
+/// prepares by the same digest. `read` is the program the one text prints from, already lowered (`Texts::read`): the
+/// program itself, not its text lowered again.
+fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&front::Program>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
@@ -557,7 +557,7 @@ fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, re
         return Ok((program.clone(), key));
     }
     let program = match read {
-        Some(read) if programs.len() == 1 && extra.is_empty() => combine_read(programs, extra, Some(read))?,
+        Some(read) if programs.len() == 1 => combine_read(programs, extra, Some(read))?,
         _ => combine_stored(programs, extra, &key, lists)?,
     };
     let mut kept = cache.lock().expect("the combined programs");
@@ -570,13 +570,13 @@ fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, re
 
 /// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
 /// §6): keyed by the texts and checked against the library files the combine read.
-fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front::Lists) -> Result<front::Program> {
+fn combine_stored(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists) -> Result<front::Program> {
     let store = if cfg!(feature = "tape-cache") && programs.len() > 1 && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
         None
     };
-    let Some(store) = store else { return combine_texts(programs, extra) };
+    let Some(store) = store else { return combine_read(programs, extra, None) };
     // The run's one hold on collection (O108) is taken later; this read and write hold it themselves.
     let _reading = store.hold_collection().map_err(|e| Error::Plan(e.to_string()))?;
     let found = {
@@ -589,7 +589,7 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front:
         crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || "read from the store: the same texts, and every library file they read reads the same".into());
         return Ok(program);
     }
-    let (program, read) = crate::code_rule_dsl::logic::rr::recording(|| combine_texts(programs, extra));
+    let (program, read) = crate::code_rule_dsl::logic::rr::recording(|| combine_read(programs, extra, None));
     let program = program?;
     {
         let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the combined program in the store, queued".into());
@@ -602,9 +602,9 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front:
     Ok(program)
 }
 
-/// The digest of `combine`'s texts: what a combined program is a function of. `graphs`: each text's include graph's
-/// digest (`Texts::graphs`).
-fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str) -> [u8; 32] {
+/// The digest of `combine`'s texts and the rows it adds: what a combined program is a function of. `graphs`: each
+/// text's include graph's digest (`Texts::graphs`).
+fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
     // Without decision 0091's guards (`scoping`, a measurement's switch) the same texts combine to another program.
@@ -612,8 +612,7 @@ fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str) -> 
         hash.update(b"scope guards off");
     }
     debug_assert_eq!(programs.len(), graphs.len(), "a graph digest per program text");
-    let extra_graph = crate::code_rule_dsl::logic::rr::graph_digest(extra).ok().flatten();
-    for (text, graph) in programs.iter().copied().zip(graphs.iter().copied()).chain([(extra, extra_graph)]) {
+    for (text, graph) in programs.iter().copied().zip(graphs.iter().copied()) {
         hash.update((text.len() as u64).to_le_bytes());
         hash.update(text.as_bytes());
         // What the text includes, as phase 0 found it: its modules' paths and digests, and the graph's edges. A text
@@ -621,6 +620,10 @@ fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str) -> 
         if let Some(graph) = graph {
             hash.update(graph);
         }
+    }
+    // The rows the run adds, none for most runs (`added`).
+    if !extra.is_empty() {
+        extra.hash(&mut hash);
     }
     hash.finalize().into()
 }
@@ -853,29 +856,37 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
     });
 }
 
-pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
-    combine_read(programs, extra, None)
+/// `combine` of one program already read (`rr::read_file`): the program itself, as a run holds it, never printed and
+/// read again (decision 0249).
+pub fn combine_read_program(read: &front::Program) -> Result<front::Program> {
+    combine_read(&[""], &added::Added::default(), Some(read))
+}
+
+pub fn combine_texts(programs: &[&str]) -> Result<front::Program> {
+    combine_read(programs, &added::Added::default(), None)
 }
 
 /// `combine_texts`, the one text's program given already lowered (`read`): it is that program, not the text lowered
 /// again.
-fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -> Result<front::Program> {
+fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Program>) -> Result<front::Program> {
     use front::{Literal, Program};
-    // A program reads only relations it declares: an error here, not the planner's panic later (`front::declared`).
-    let parse = |text: &str| -> Result<Program> {
-        let prog = crate::code_rule_dsl::logic::rr::parse(&if extra.is_empty() { text.to_owned() } else { format!("{text}\n{extra}") })?;
+    // Each program is given the rows the run adds once it is read (decision 0249): rows, not text after it.
+    let given = |mut prog: Program| -> Result<Program> {
+        extra.add_to(&mut prog);
+        // A program reads only relations it declares: an error here, not the planner's panic later (`front::declared`).
         front::declared(&prog)?;
         Ok(prog)
     };
+    let parse = |text: &str| -> Result<Program> { given(crate::code_rule_dsl::logic::rr::parse(text)?) };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
-    // Each text read once, for its modules and its program, when the two are of the same text (no `extra`).
+    // Each text read once, for its modules and its program.
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read each text (tape, statements, includes)".to_owned());
     // Each program read and lowered on the pool's threads: what each read from the library is noted here after, in
     // the programs' order (`rr::recording`, decision 0094 §6), and the first program's error in that order is the one
     // returned, as one thread gives them.
     use rayon::prelude::*;
     use crate::code_rule_dsl::logic::rr::{recorded_on_worker, replay};
-    let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
+    let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 {
         let each: Vec<_> = programs.par_iter().map(|text| recorded_on_worker(|| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e)))).collect();
         each.into_iter().map(|(got, read)| {
             replay(read);
@@ -912,21 +923,16 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
         .zip(&own_only)
         .zip(texts.par_iter_mut())
         .map(|((text, &own_only), slot)| recorded_on_worker(|| -> Result<Program> {
-            if let Some(read) = read.filter(|_| programs.len() == 1 && extra.is_empty()) {
-                front::declared(read)?;
-                return Ok(read.clone());
+            if let Some(read) = read.filter(|_| programs.len() == 1) {
+                return given(read.clone());
             }
             if let Some(read) = slot.take() {
-                let prog = read.lower(!own_only)?;
-                front::declared(&prog)?;
-                return Ok(prog);
+                return given(read.lower(!own_only)?);
             }
             if !own_only {
                 return parse(text);
             }
-            let prog = crate::code_rule_dsl::logic::rr::parse_own(&if extra.is_empty() { text.to_string() } else { format!("{text}\n{extra}") })?;
-            front::declared(&prog)?;
-            Ok(prog)
+            given(crate::code_rule_dsl::logic::rr::parse_own(text)?)
         }))
         .collect();
     let mut parsed = each
@@ -2119,21 +2125,21 @@ fn run_observed(
     let setting = crate::code_rule_dsl::logic::profile::span(|| "the run's settings".into());
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
-    let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
-    // The program read is the text's only while the settings add nothing to it: a text they add `env` facts to is
-    // another program, lowered whole. Its graph is the text's own (facts include nothing).
-    let read = given.read.filter(|_| with_settings.iter().zip(programs).all(|(with, text)| with == text));
-    let programs: &[&str] = &with_settings.iter().map(String::as_str).collect::<Vec<_>>();
+    // The settings are `env` rows, given to each program that declares `env` once it is read (decision 0249): the
+    // program read stays the program, and the texts are the files' own.
+    let mut added = added::Added::of(&settings, options);
+    let read = given.read;
     drop(setting);
     // What the run is of, whichever build runs it: its manifest's lane (`record_corpus_run_lane`).
     let lane: [u8; 32] = {
         use sha2::Digest as _;
         let mut h = sha2::Sha256::new();
-        h.update(b"rerail.corpus-lane/v1\0");
+        h.update(b"rerail.corpus-lane/v2\0");
         for p in programs {
             h.update((p.len() as u64).to_le_bytes());
             h.update(p.as_bytes());
         }
+        added.hash(&mut h);
         h.finalize().into()
     };
     // The main thread's own CPU (the chunk builder's jobs' is theirs, below; the jobs the main thread runs for the
@@ -2201,7 +2207,7 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::reset();
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let (mut prog, mut texts) = combine_keyed(programs, &given.graphs, "", read, &lists)?;
+    let (mut prog, mut texts) = combine_keyed(programs, &given.graphs, &added, read, &lists)?;
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     // They run as a job on the pool beside phase 1 (decision 0192): neither reads the other's results, each writes in
@@ -2288,17 +2294,17 @@ fn run_observed(
     let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
     // run, its outputs are those relations.
-    let fold_constants = |prog: &mut front::Program| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
+    let fold_constants = |prog: &mut front::Program, added: &added::Added| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
         match options.get(constants::OWN).and_then(|v| v.as_array()) {
             Some(wanted) => {
                 constants::as_outputs(prog, &wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>());
                 Ok(Default::default())
             }
-            None => constants::fold(prog, programs, root, out, modes, binding, chunk_nodes, typing, options),
+            None => constants::fold(prog, programs, &added, root, out, modes, binding, chunk_nodes, typing, options),
         }
     };
     phase("combine", 0);
-    let (mut folded, mut constants_plans) = fold_constants(&mut prog)?;
+    let (mut folded, mut constants_plans) = fold_constants(&mut prog, &added)?;
     phase("constants", 0);
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     // The program's `.language` (above) picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
@@ -2403,9 +2409,10 @@ fn run_observed(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            (prog, texts) = combine_keyed(programs, &given.graphs, &facts, None, &lists)?;
+            added = added.with("declared_ret", facts.into_iter().map(|(q, t)| vec![front::Value::Str(q.into()), front::Value::Str(t.into())]));
+            (prog, texts) = combine_keyed(programs, &given.graphs, &added, read, &lists)?;
             add_bridged(&mut prog);
-            (folded, constants_plans) = fold_constants(&mut prog)?;
+            (folded, constants_plans) = fold_constants(&mut prog, &added)?;
         }
         declared = d;
     }
@@ -2584,7 +2591,14 @@ fn run_observed(
     // keeps it in memory only.
     // `Some(None)`: kept, under a source the store does not hold yet, which the store's writer stores with the
     // prepared program (decision 0104: a run's own threads only read).
-    let durable_text = (tapes.is_some() && t.is_none() && session.is_none()).then(|| programs.join("\0"));
+    // The texts, and the rows the run added (as their digest: a key, never read as a program).
+    let durable_text = (tapes.is_some() && t.is_none() && session.is_none()).then(|| {
+        let mut text = programs.join("\0");
+        if !added.is_empty() {
+            text.push_str(&format!("\0added {}", crate::content_store::observe::hex(&added.digest())));
+        }
+        text
+    });
     let durable: Option<Option<crate::content_store::SourceId>> = match &durable_text {
         Some(text) => Some(memo::stored_source(store, text).map_err(|e| Error::Plan(e.to_string()))?),
         None => None,

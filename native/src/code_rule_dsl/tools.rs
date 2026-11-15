@@ -3,7 +3,7 @@
 
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
-pub use super::logic::settings::{program_text, program_texts, settings, with_settings};
+pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
@@ -234,9 +234,8 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
         match super::logic::rr::read_file(path) {
             // A program the reader passes still has to type: each variable one domain (a kind, a name, …), as a run
             // checks when it plans (`plan::lower::domains`). A run would stop there, so the check does too.
-            Ok((program, _)) if let Err(error) = super::logic::rr::print(&program)
+            Ok((program, _)) if let Err(error) = super::logic::plan::corpus::combine_read_program(&program)
                 .map_err(|e| e.to_string())
-                .and_then(|text| super::logic::plan::corpus::combine(&[text.as_str()], "").map_err(|e| e.to_string()))
                 // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
                 .and_then(|combined| super::logic::plan::lower::domains(&super::logic::front::prune(combined)).map(|_| ()).map_err(|e| e.to_string())) =>
             {
@@ -285,41 +284,29 @@ pub fn run_program(
         typing::file_local::Binding,
     };
     let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
-    let source = rr::print(&program).map_err(|e| e.to_string())?;
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
-    // of one dialect, or none with files, runs as written.
+    // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
+    // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
     let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
-    let runs: Vec<(String, std::path::PathBuf)> = if dialects.is_empty() {
-        vec![(source.clone(), out.to_path_buf())]
+    let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
+        vec![(None, out.to_path_buf())]
     } else {
-        dialects
-            .iter()
-            .enumerate()
-            .map(|(i, label)| {
-                let mut each = program.clone();
-                for (key, value) in &mut each.settings {
-                    if key == "language" {
-                        *value = (*label).to_owned();
-                    }
-                }
-                let dir = if i == 0 { out.to_path_buf() } else { out.join(label) };
-                rr::print(&each).map(|text| (text, dir)).map_err(|e| e.to_string())
-            })
-            .collect::<Result<_, _>>()?
+        dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { out.to_path_buf() } else { out.join(label) })).collect()
     };
+    // The program's text: what the run is keyed by (its record, the combined program's key; a test's program is its
+    // file's with the test spliced in, so not the file's text). The run holds `program` itself.
+    let source = rr::print(&program).map_err(|e| e.to_string())?;
     let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
     // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
-    for (text, dir) in &runs {
-        // The run of the text read holds the program read. Another dialect's text is lowered for its own grammar.
-        let report = if *text == source {
-            corpus::run_read(text, &program, root, dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options))
-        } else {
-            corpus::run_with_options(&[text.as_str()], root, None, dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options))
+    for (dialect, dir) in &runs {
+        let mut options = with_reuse(options);
+        if let Some(dialect) = dialect {
+            options["dialect"] = serde_json::json!(dialect);
         }
-        .map_err(|e| e.to_string())?;
+        let report = corpus::run_read(&source, &program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
         // Each diagnostic: one JSON text the rules made (`rr::lower::findings`; step 5 makes them columns).
         let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
         for row in outputs.rows("rr_diagnostic") {
@@ -550,7 +537,8 @@ pub fn flatten(path: &std::path::Path) -> Result<String, String> {
 #[allow(clippy::too_many_arguments)]
 /// The runs `logic` makes of `programs`: those whose language has one dialect, or one with files in scope, run as
 /// written (the first run); a program of a language of several dialects with files (`run_dialects`) runs in each,
-/// its `.language` set to the dialect. The corpus is listed once for all of them.
+/// its language set to the dialect by the run (the `dialect` option, `corpus::added`), its text as written. The
+/// corpus is listed once for all of them.
 fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<(Option<&'static str>, Vec<String>)>, String> {
     use super::language::CodeRuleLanguage;
     use super::logic::plan::corpus;
@@ -581,12 +569,7 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
             continue;
         }
         for label in labels {
-            let each = if Some(label) == named.as_deref() {
-                (*text).to_owned()
-            } else {
-                let i = line.expect("a .language line");
-                text.lines().enumerate().map(|(j, l)| if j == i { format!(".language {label}") } else { l.to_owned() }).collect::<Vec<_>>().join("\n") + "\n"
-            };
+            let each = (*text).to_owned();
             if Some(label) == named.as_deref() {
                 base.push(each);
             } else if let Some((_, texts)) = by.iter_mut().find(|(l, _)| *l == label) {
@@ -624,6 +607,10 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     for (i, (label, texts)) in runs.iter().enumerate() {
         let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
         let dir = if i == 0 { out.to_path_buf() } else { out.join(label.unwrap_or("other")) };
+        let mut options = options.clone();
+        if let Some(label) = label {
+            options["dialect"] = serde_json::json!(label);
+        }
         let each = super::logic::plan::corpus::run_with_options(&texts, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
             .map_err(|error| error.to_string())?;
         match &mut report {
@@ -692,18 +679,23 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
 #[cfg(test)]
 mod settings_tests {
     #[test]
-    fn settings_become_env_facts_for_a_program_that_declares_env() {
+    fn settings_become_env_rows_for_a_program_that_declares_env() {
         let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("rerail.env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
         let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);
-        let program = ".decl env(key: symbol, value: symbol)\n";
-        let with = super::with_settings(program, &settings);
-        assert!(with.contains("env(\"quote\", \"a\\\"b\").") && with.contains("env(\"python.version\", \"3.13\")."), "{with}");
-        // A program that does not declare `env` is unchanged.
-        assert_eq!(super::with_settings(".decl envy(x: symbol)\n", &settings), ".decl envy(x: symbol)\n");
+        // Rows given to a program that declares `env`, and to no other (decision 0249).
+        use crate::code_rule_dsl::logic::front::Value;
+        let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
+        let mut declares = crate::code_rule_dsl::logic::rr::parse(".decl env(key: symbol, value: symbol)\n").unwrap();
+        added.add_to(&mut declares);
+        let rows: Vec<Vec<Value>> = declares.facts["env"].iter().map(|r| r.to_vec()).collect();
+        assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
+        let mut not = crate::code_rule_dsl::logic::rr::parse(".decl envy(x: symbol)\n").unwrap();
+        added.add_to(&mut not);
+        assert!(!not.facts.contains_key("env"));
     }
 
     #[test]

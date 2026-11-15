@@ -67,8 +67,9 @@ fn ret_names(terms: &Terms, callable: u32, text: &dyn Fn(u32) -> String) -> Opti
     members.into_iter().map(|m| (terms.get(m).ctor == Ctor::Named).then(|| text(terms.get(m).name))).collect()
 }
 
-/// The declarations, merged (user first, then the demanded summaries), as program facts; and the report so far.
-pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut TypingReport) -> Result<(String, BTreeMap<String, BTreeSet<String>>)> {
+/// The declarations, merged (user first, then the demanded summaries), as `declared_ret(q, t)` rows (decision 0249:
+/// rows the run adds, never text); and the report so far.
+pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut TypingReport) -> Result<(Vec<(String, String)>, BTreeMap<String, BTreeSet<String>>)> {
     let mut names: Vec<String> = Vec::new();
     let mut intern = |s: &str| match names.iter().position(|x| x == s) {
         Some(i) => i as u32,
@@ -106,11 +107,11 @@ pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut
     }
     let text = |s: u32| names[s as usize].clone();
     let mut declared = BTreeMap::new();
-    let mut out = String::new();
+    let mut out = Vec::new();
     for (q, callable) in merged {
         let Some(rets) = ret_names(&terms, callable, &text) else { continue };
         for t in &rets {
-            out.push_str(&format!("declared_ret({}, {}).\n", crate::code_rule_dsl::logic::rr::quote(&q), crate::code_rule_dsl::logic::rr::quote(t)));
+            out.push((q.clone(), t.clone()));
             report.declared += 1;
         }
         declared.insert(q, rets);

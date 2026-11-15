@@ -841,7 +841,7 @@ fn libraries_are_held_once_and_equal_requests_share_one_cone() {
     let quiet = "#include \"python/compare.rr\"\n.decl quiet(a: node)\nquiet(a) :- cmp_same(a, _).\n.output quiet\n".to_owned();
     let texts = [ask("call", "one"), ask("call", "two"), ask("name", "three"), quiet];
     let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let prog = super::combine_texts(&texts, "").unwrap();
+    let prog = super::combine_texts(&texts).unwrap();
     let heads = |rel: &str| prog.rules.iter().filter(|r| r.head.rel == rel).count();
     // The library's rule once, unprefixed, whatever the programs read.
     assert_eq!(heads("cmp_same"), 1);

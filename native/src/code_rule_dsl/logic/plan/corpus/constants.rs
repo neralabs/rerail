@@ -114,6 +114,7 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
 pub(super) fn fold(
     prog: &mut Program,
     programs: &[&str],
+    added: &super::added::Added,
     root: &Path,
     scratch: &Path,
     modes: &str,
@@ -130,7 +131,7 @@ pub(super) fn fold(
         return Ok(Default::default());
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
-    let key = key(programs, root, options, &wanted);
+    let key = key(programs, added, root, options, &wanted);
     let was_kept = kept(&key, root, prog)?;
     let reused = was_kept.is_some();
     // The plans the constants' run used, for the outer run's record (`Report::plans`): none when they were kept.
@@ -201,15 +202,16 @@ fn derive(
 }
 
 /// What the constants are keyed by, beside what their run consulted.
-fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTreeSet<String>) -> String {
+fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, wanted: &BTreeSet<String>) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    // v3: the record's consulted list is bytes (`reuse::encode_consulted`).
-    h.update(b"rerail.constants/v3\0");
+    // v4: the rows the run adds (its settings, decision 0249) are keyed as rows, the texts as the files'.
+    h.update(b"rerail.constants/v4\0");
     for p in programs {
         h.update(p.as_bytes());
         h.update([0]);
     }
+    added.hash(&mut h);
     for w in wanted {
         h.update(w.as_bytes());
         h.update([0]);
