@@ -75,22 +75,30 @@ fn loaded_from(address: usize) -> Option<PathBuf> {
         vmaddr: u64,
         vmsize: u64,
     }
+    // The loader's functions (`<mach-o/dyld.h>`), in libSystem: the `libc` crate's copies are deprecated for
+    // another crate's.
+    unsafe extern "C" {
+        fn _dyld_image_count() -> u32;
+        fn _dyld_get_image_header(index: u32) -> *const Header;
+        fn _dyld_get_image_vmaddr_slide(index: u32) -> isize;
+        fn _dyld_get_image_name(index: u32) -> *const std::ffi::c_char;
+    }
     // SAFETY: the loader's own list: each index below the count names a loaded image, its header mapped, its load
     // commands following the header, each at least as long as the command it begins (`cmdsize`).
     unsafe {
-        for i in 0..libc::_dyld_image_count() {
-            let header = libc::_dyld_get_image_header(i).cast::<Header>();
+        for i in 0.._dyld_image_count() {
+            let header = _dyld_get_image_header(i);
             if header.is_null() || (*header).magic != 0xfeed_facf {
                 continue;
             }
-            let slide = libc::_dyld_get_image_vmaddr_slide(i) as usize;
+            let slide = _dyld_get_image_vmaddr_slide(i) as usize;
             let mut at = header.cast::<u8>().add(std::mem::size_of::<Header>());
             for _ in 0..(*header).ncmds {
                 let segment = at.cast::<Segment>();
                 if (*segment).cmd == LC_SEGMENT_64 {
                     let start = ((*segment).vmaddr as usize).wrapping_add(slide);
                     if (*segment).vmsize > 0 && (start..start + (*segment).vmsize as usize).contains(&address) {
-                        let name = libc::_dyld_get_image_name(i);
+                        let name = _dyld_get_image_name(i);
                         if name.is_null() {
                             return None;
                         }
