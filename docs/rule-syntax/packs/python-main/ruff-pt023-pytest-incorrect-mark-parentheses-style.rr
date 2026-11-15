@@ -1,0 +1,79 @@
+.policy "ruff-pt023-pytest-incorrect-mark-parentheses-style" revision 1
+.guests off
+.description "Write pytest markers that take no arguments without empty parentheses, so every marker decorator follows one consistent style."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/names.rr"
+
+// PT023(n): a finding at node n, from clause `mark-with-empty-parentheses`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT023(at: loc, span: node) "Remove the empty `()` after this `pytest.mark` decorator; a marker without arguments is written bare. Keep any comments that sat inside the parentheses."
+    suppress noqa "PT023"
+PT023(SPAN, n) :- kind(n, "decorator"), child(n, c1, _), pt023_empty_mark_call(c1),
+    match("(?P<SPAN>(?:\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:[ \\t]*#[^\\n]*)?", n).
+
+// mark_ns(n): the JSON util `mark-ns`, used where the JSON says `matches: "mark-ns"`
+.decl pt023_mark_ns(n: node)
+pt023_mark_ns(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "pytest.mark").
+pt023_mark_ns(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt023_mark_ns(c1).
+
+// mark_ref(n): the JSON util `mark-ref`, used where the JSON says `matches: "mark-ref"`
+.decl pt023_mark_ref(n: node)
+pt023_mark_ref(n) :- kind(n, "attribute"), field(n, "object", c1), pt023_mark_ns(c1).
+pt023_mark_ref(n) :- kind(n, "identifier"),
+    sym_of(n, q2), match("(pytest\\.mark)(\\.|$).*", q2), !pt023_alt_1(n).
+pt023_mark_ref(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), pt023_mark_ref(c5).
+
+// empty_mark_call(n): the JSON util `empty-mark-call`, used where the JSON says `matches: "empty-mark-call"`
+.decl pt023_empty_mark_call(n: node)
+pt023_empty_mark_call(n) :- kind(n, "call"), field(n, "function", c1), pt023_mark_ref(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    count : { child(c2, c3, _), !pt023_alt_2(c3) } = 0.
+pt023_empty_mark_call(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    pt023_empty_mark_call(c4).
+
+// deeper_import_site(n): the JSON util `deeper-import-site`, used where the JSON says `matches: "deeper-import-site"`
+.decl pt023_deeper_import_site(n: node)
+pt023_deeper_import_site(n) :- kind(n, "aliased_import"),
+    count : { child(p1, n, _), kind(p1, "import_from_statement") } = 0, pt023_tok_has_1(n).
+pt023_deeper_import_site(n) :- child(p10, n, _), kind(p10, "import_from_statement"),
+    pt023_tok_has_2(p10).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(?:[^.]*\\.){3}": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt023_tok_has_1(n: node)
+.stored pt023_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt023_tok_has_1(n) :- field(n, "name", c2), match("(?:[^.]*\\.){3}.*", c2).
+pt023_tok_has_1(n) :- op(n, t3), match("(?:[^.]*\\.){3}.*", t3).
+pt023_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){3})\\S*.*)$", g4).
+pt023_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){3})\\S*.*)$", g4).
+pt023_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){3})\\S*.*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(?:[^.]*\\.){2}": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt023_tok_has_2(n: node)
+.stored pt023_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt023_tok_has_2(n) :- field(n, "module_name", c11), match("(?:[^.]*\\.){2}.*", c11).
+pt023_tok_has_2(n) :- op(n, t12), match("(?:[^.]*\\.){2}.*", t12).
+pt023_tok_has_2(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){2})\\S*.*)$", g13).
+pt023_tok_has_2(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){2})\\S*.*)$", g13).
+pt023_tok_has_2(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){2})\\S*.*)$", g13).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt023_alt_1(n: node)
+pt023_alt_1(n) :- sym_of(n, "pytest.mark").
+pt023_alt_1(n) :- ref_site(n, b1), main_form(b1, "import"), st2 = b1,
+    pt023_deeper_import_site(st2).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt023_alt_2(n: node)
+pt023_alt_2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt023_alt_2(n) :- node(_, n, _, _, _), glob("[()]", n).

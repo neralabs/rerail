@@ -1,7 +1,7 @@
 # 0200: CSS is read by a lean parser that writes tree-sitter-css's tape, or refuses
 
 Status: built (user, 2026-11-14: "next we need PHP (including Blade), Markdown, HTML and CSS").
-CSS became a product language in 0199 (`languages/css.json`, `lang-css`, tape tag 18), read by
+CSS became a product language in 0199 (`languages/css.json`, `lang-css`, tape tag 21), read by
 tree-sitter-css until now.
 
 ## Intro

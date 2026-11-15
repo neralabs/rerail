@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-react",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Rerail rule pack: eslint-plugin-react and eslint-plugin-react-hooks rules ported to Rerail code rules, and React practice rules of its own.",
   "keywords": [
     "rerail",

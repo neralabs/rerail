@@ -7,7 +7,7 @@ grammar and for Vue).
 
 A Markdown file is two grammars. tree-sitter-md's block grammar reads the file's structure; each
 paragraph's `inline` node (and each table cell) is a guest text that tree-sitter-md-inline reads:
-emphasis, links, images, code spans, HTML tags. The block grammar has had a lean parser since 0205.
+emphasis, links, images, code spans, HTML tags. The block grammar has had a lean parser since 0237.
 Every inline text still went to tree-sitter. In a README, that is most of the file's bytes.
 
 This decision adds the lean parser for the inline grammar (`rerail-markdown-inline-lean`). It is
@@ -31,7 +31,7 @@ tree-sitter keeps the one of the highest *dynamic precedence*: the sum of the gr
 
 ## Prior work consulted
 
-- **0205 (lean Markdown block parser).** **Followed:** its frame: stage 1 masks
+- **0237 (lean Markdown block parser).** **Followed:** its frame: stage 1 masks
   (`block.rs`), the external scanner ported (`scan.rs`), keys by name, mapped to the grammar's ids
   in the engine (`tape::markdown_inline_lean`). Its `inline_texts` test writes the inline texts
   the oracle reads, cut as the engine cuts them (`guests::markdown_inline_text`).

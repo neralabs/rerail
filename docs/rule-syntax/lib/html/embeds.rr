@@ -1,4 +1,4 @@
-// The code an HTML file holds, as guests (decision 0055's `embed`, decision 0208): a `<script>`'s text as
+// The code an HTML file holds, as guests (decision 0055's `embed`, decision 0238): a `<script>`'s text as
 // JavaScript or JSON, by its `type`, and a `<style>`'s text as CSS. Each is a whole program ("program"), at the
 // element's `raw_text`, so its nodes have the file's lines and columns.
 //

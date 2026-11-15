@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-td006-invalid-todo-capitalization",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write the TODO tag in uppercase; lowercase and mixed-case tags are easy to overlook when searching for open work.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "invalid-todo-capitalization",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comment",
+                "regex": "^(?:#[#\\s]*(?:(?:[[\\p{Alphabetic}\\p{N}]--[FHTXfhtx]][\\p{Alphabetic}\\p{N}]*|[tT](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO](?:[[\\p{Alphabetic}\\p{N}]--[dD]][\\p{Alphabetic}\\p{N}]*|[dD](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO][\\p{Alphabetic}\\p{N}]+)?)?)?|[fF](?:[[\\p{Alphabetic}\\p{N}]--[iI]][\\p{Alphabetic}\\p{N}]*|[iI](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[mM]][\\p{Alphabetic}\\p{N}]*|[mM](?:[[\\p{Alphabetic}\\p{N}]--[eE]][\\p{Alphabetic}\\p{N}]*|[eE][\\p{Alphabetic}\\p{N}]+)?)?)?)?|[hH](?:[[\\p{Alphabetic}\\p{N}]--[aA]][\\p{Alphabetic}\\p{N}]*|[aA](?:[[\\p{Alphabetic}\\p{N}]--[cC]][\\p{Alphabetic}\\p{N}]*|[cC](?:[[\\p{Alphabetic}\\p{N}]--[kK]][\\p{Alphabetic}\\p{N}]*|[kK][\\p{Alphabetic}\\p{N}]+)?)?)?|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX][\\p{Alphabetic}\\p{N}]+)?)?)(?:[^\\p{Alphabetic}\\p{N}#][^#]*)?|[^\\p{Alphabetic}\\p{N}#\\s][^#]*))*#[#\\s]*(?<D>(?i:TODO))(?:[^\\p{Alphabetic}\\p{N}]|$)"
+              },
+              {
+                "not": {
+                  "regex": "^(?:#[#\\s]*(?:(?:[[\\p{Alphabetic}\\p{N}]--[FHTXfhtx]][\\p{Alphabetic}\\p{N}]*|[tT](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO](?:[[\\p{Alphabetic}\\p{N}]--[dD]][\\p{Alphabetic}\\p{N}]*|[dD](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO][\\p{Alphabetic}\\p{N}]+)?)?)?|[fF](?:[[\\p{Alphabetic}\\p{N}]--[iI]][\\p{Alphabetic}\\p{N}]*|[iI](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[mM]][\\p{Alphabetic}\\p{N}]*|[mM](?:[[\\p{Alphabetic}\\p{N}]--[eE]][\\p{Alphabetic}\\p{N}]*|[eE][\\p{Alphabetic}\\p{N}]+)?)?)?)?|[hH](?:[[\\p{Alphabetic}\\p{N}]--[aA]][\\p{Alphabetic}\\p{N}]*|[aA](?:[[\\p{Alphabetic}\\p{N}]--[cC]][\\p{Alphabetic}\\p{N}]*|[cC](?:[[\\p{Alphabetic}\\p{N}]--[kK]][\\p{Alphabetic}\\p{N}]*|[kK][\\p{Alphabetic}\\p{N}]+)?)?)?|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX][\\p{Alphabetic}\\p{N}]+)?)?)(?:[^\\p{Alphabetic}\\p{N}#][^#]*)?|[^\\p{Alphabetic}\\p{N}#\\s][^#]*))*#[#\\s]*TODO(?:[^\\p{Alphabetic}\\p{N}]|$)"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "TD006",
+        "message": "Write the `$D` tag in uppercase as `TODO`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TD006"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

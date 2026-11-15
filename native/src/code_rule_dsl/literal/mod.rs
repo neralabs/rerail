@@ -129,7 +129,7 @@ impl Grammar {
     }
 
     /// The grammar a `parse.grammar` name selects.
-    pub(crate) fn named(name: &str) -> Option<Self> {
+    pub fn named(name: &str) -> Option<Self> {
         Self::all().iter().copied().find(|grammar| grammar.name() == name)
     }
 
@@ -143,7 +143,7 @@ impl Grammar {
     }
 
     /// The kinds a tree of this grammar has, in id order from 1.
-    pub(crate) fn kinds(self) -> &'static [&'static str] {
+    pub fn kinds(self) -> &'static [&'static str] {
         self.0.kinds()
     }
 
@@ -239,7 +239,7 @@ impl LiteralGrammar for Chars {
         for (at, c) in text.char_indices() {
             root.children.push(
                 PNode::new(grammar, "char", at, at + c.len_utf8())
-                    .with_value(Value::Str(c.to_string())),
+                    .with_value(Value::Str(c.to_string().into())),
             );
         }
         root

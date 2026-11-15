@@ -78,6 +78,8 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     inputs: HashMap<String, Arc<dyn Source>>,
     pub(in crate::code_rule_dsl) loaded: Rc<RefCell<HashMap<String, Arc<dyn Source>>>>,
     digests: HashMap<String, u64>,
+    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0212).
+    types: HashMap<String, Vec<u8>>,
     puts: Vec<FramePut>,
     values: usize,
     gone: Vec<(FrameRel, i64)>,
@@ -87,7 +89,7 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
 }
 
 impl<'s> Kept<'s> {
-    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], program: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
+    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], program: [u8; 32], inputs: &[(String, Arc<dyn Source>)], types: HashMap<String, Vec<u8>>) -> Self {
         Kept {
             store,
             space,
@@ -98,6 +100,7 @@ impl<'s> Kept<'s> {
             inputs: inputs.iter().map(|(r, s)| (r.clone(), Arc::clone(s))).collect(),
             loaded: Default::default(),
             digests: HashMap::new(),
+            types,
             puts: Vec::new(),
             values: 0,
             gone: Vec::new(),
@@ -109,7 +112,9 @@ impl<'s> Kept<'s> {
     fn flush(&mut self, used: Option<Vec<FrameRel>>) {
         let (puts, gone) = (std::mem::take(&mut self.puts), std::mem::take(&mut self.gone));
         self.values = 0;
-        if !puts.is_empty() || !gone.is_empty() || used.is_some() {
+        // Nothing put or forgotten: nothing written (decision 0227). A program's use of its relations is not marked
+        // a run: collection keeps them while a kept manifest names the program (`collect_unreachable_frames`).
+        if !puts.is_empty() || !gone.is_empty() {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's frames, queued".into());
             self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token(), self.program)));
         }
@@ -156,7 +161,10 @@ impl KeptStrata for Kept<'_> {
             return Some(*d);
         }
         let source = self.inputs.get(rel).cloned().or_else(|| self.loaded.borrow().get(rel).cloned())?;
-        let d = super::retain::digest(source.as_ref());
+        let atoms = self.store.atoms_handle();
+        let width = source.columns().len();
+        let cells = self.types.get(rel).filter(|t| t.len() == width).map_or(crate::code_rule_dsl::logic::plan::Cells::plain(width), |t| crate::code_rule_dsl::logic::plan::Cells::new(&atoms, t));
+        let d = super::retain::digest(source.as_ref(), &cells);
         self.digests.insert(rel.to_owned(), d);
         Some(d)
     }
@@ -224,6 +232,9 @@ pub(in crate::code_rule_dsl) struct Part {
     frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
     /// Each derived relation's inputs (`cone`).
     cones: HashMap<String, std::collections::BTreeSet<String>>,
+    /// Each input's and relation's column types as its frame keeps them, from its declaration: `s` a symbol, which
+    /// the store's writer maps to the store's atoms (decision 0170), else `i`.
+    types: HashMap<String, Vec<u8>>,
 }
 
 /// Whether a new process maintains its cross-file part from the store (`RERAIL_KEPT_PART=off`: the per-stratum
@@ -267,6 +278,7 @@ pub(in crate::code_rule_dsl) fn load(
     root: &Path,
     key: [u8; 32],
     prog: &crate::code_rule_dsl::logic::front::Program,
+    domains: &super::lower::Domains,
     sccs: &[std::collections::BTreeSet<String>],
     inputs: &[(String, Arc<dyn Source>)],
     now: &HashMap<String, u64>,
@@ -298,7 +310,8 @@ pub(in crate::code_rule_dsl) fn load(
             e.1 = Some(s);
         }
     }
-    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones })
+    let types = frames.keys().map(|rel| (rel.clone(), super::retain::types_of(prog, domains, rel))).collect();
+    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones, types })
 }
 
 fn load_from_snapshot(
@@ -329,7 +342,8 @@ fn restore(
         let rows = admitted.get(f)?.rows().ok()?;
         let names = source.columns();
         let w = rows.types.len();
-        if names.len() != w { return None; }
+        // Kept under other column types (untyped, before decision 0170): its symbols may be another numbering's.
+        if names.len() != w || part.types.get(rel).is_none_or(|t| *t != rows.types) { return None; }
         let values = (0..w).map(|c| Some((0..rows.n).map(|i| rows.rows[i * w + c]).collect())).collect();
         kept_inputs.push((rel.clone(), was.digest, crate::code_rule_dsl::logic::native::component::columns_source(names, values)));
     }
@@ -355,7 +369,9 @@ fn restore(
     let mut rels = Vec::new();
     for rel in &asked {
         let rows = admitted.get(rel)?.rows().ok()?;
-        rels.push((rel.name.clone(), rows.types.len(), crate::code_rule_dsl::logic::native::component::InRel::kept(rows.types, rows.rows, rows.n)));
+        // Kept under other column types (untyped, before decision 0170): its symbols may be another numbering's.
+        if part.types.get(&rel.name).is_none_or(|t| *t != rows.types) { return None; }
+        rels.push((rel.name.clone(), rows.types.len(), crate::code_rule_dsl::logic::native::component::InRel::kept(super::retain::engine_types(rows.types), rows.rows, rows.n)));
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || {
         format!("{} relations and {} inputs admitted in batches, {} rows; {stale} kept of other inputs, not read", rels.len(), kept_inputs.len(), rels.iter().map(|(_, _, r)| r.rows()).sum::<usize>())
@@ -377,13 +393,15 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
             continue;
         }
         let w = source.columns().len();
+        // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
+        let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
         let n = source.len();
         let mut rows = Vec::with_capacity(n * w);
         for i in 0..n {
             rows.extend((0..w).map(|c| source.value(i, c)));
         }
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types: vec![0; w], rows, n } });
+        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types, rows, n } });
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };
@@ -391,14 +409,21 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let Some(reads) = part.cones.get(rel).map(|c| c.iter().map(|i| Some((i.clone(), *digests.get(i.as_str())?))).collect::<Option<Vec<(String, u64)>>>()).flatten() else { continue };
         let Some(rows) = held.live_rows() else { continue };
         let n = held.rows();
-        let digest = crate::code_rule_dsl::logic::plan::rows_digest(width, &rows, n);
+        // Its symbols typed as declared (the engine holds them as integers), so the writer maps them; its digest of
+        // its content (decision 0212).
+        let Some(types) = part.types.get(rel).filter(|t| t.len() == width).cloned() else { continue };
+        let digest = crate::code_rule_dsl::logic::plan::rows_digest(&crate::code_rule_dsl::logic::plan::Cells::new(&store.atoms_handle(), &types), &rows, n);
         if was.as_ref().is_some_and(|w| w.digest == digest && w.reads == reads) {
             continue;
         }
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types: held.types().to_vec(), rows, n } });
+        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types, rows, n } });
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
+    // Nothing changed: nothing written (decision 0211).
+    if puts.is_empty() {
+        return;
+    }
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
     store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token(), part.key)));
 }

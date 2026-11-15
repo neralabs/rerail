@@ -1,4 +1,4 @@
-// The inline content of a Markdown file, as guests (decision 0055's `embed`, decision 0208). tree-sitter-md reads a
+// The inline content of a Markdown file, as guests (decision 0055's `embed`, decision 0238). tree-sitter-md reads a
 // Markdown file in two grammars: the block grammar gives the file's tree (headings, lists, paragraphs, code blocks),
 // and each `inline` and `pipe_table_cell` node of it holds text in the inline grammar (`markdown-inline`: emphasis,
 // links, code spans, inline HTML). Each such node is a guest of that grammar, a part of its host ("fragment").

@@ -1301,7 +1301,9 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     // Per group and check, its events with findings to compare that the baseline records exact.
     let mut by_check = BTreeMap::<(&str, &str), Vec<usize>>::new();
     for (k, (event, id)) in events.iter().zip(&ids).enumerate() {
-        if event.want.is_ok() && !baseline.misses.contains_key(id) {
+        // `RERAIL_REPLAY_CHECK`: only the checks whose group or name holds it (one check, to time or profile it).
+        let named = std::env::var("RERAIL_REPLAY_CHECK").map_or(true, |c| event.group.contains(&c) || event.check.contains(&c));
+        if event.want.is_ok() && !baseline.misses.contains_key(id) && named {
             by_check.entry((event.group, &event.check)).or_default().push(k);
         }
     }
@@ -1312,8 +1314,10 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     // Per check: the events run, the failures, the time taken.
     let sampled: Vec<(usize, Vec<String>, std::time::Duration, String)> = std::thread::scope(|s| {
         let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                s.spawn(|| {
+            .map(|k| {
+                // Named as a test's thread is, so each worker runs on a store of its own (`test_store::own`), not on
+                // the process's, which every worker would share.
+                std::thread::Builder::new().name(format!("convert::tests::replay_sample_{k}")).spawn_scoped(s, || {
                     let mut out = Vec::new();
                     while let Some(((group, check), ks)) = next() {
                         let begun = std::time::Instant::now();
@@ -1322,6 +1326,7 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
                     }
                     out
                 })
+                .expect("a sample thread")
             })
             .collect();
         workers.into_iter().flat_map(|w| w.join().expect("a sample thread")).collect()
@@ -1547,7 +1552,7 @@ fn converted_programs_hold_only_what_violation_reaches() {
         for r in &prog.rules {
             assert!(reached.contains(r.head.rel.as_str()), "{id}: {} is not reached", r.head.rel);
         }
-        for rel in prog.decls.keys().chain(&prog.inputs) {
+        for rel in prog.decls.keys().map(|r| r.as_str()).chain(prog.inputs.iter().map(String::as_str)) {
             assert!(reached.contains(rel), "{id}: {rel} is declared and not reached");
         }
         let sets: BTreeSet<String> = reached.iter().filter_map(|r| crate::code_rule_dsl::logic::front::axis(r).map(|(set, _)| set)).map(str::to_owned).chain(prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
@@ -2069,7 +2074,7 @@ fn library_relations_through_an_overlay_report() {
         Err(e) => panic!("the closure does not lower: {e}"),
     };
     let rule = rule_file(TARGET).unwrap();
-    for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !crate::code_rule_dsl::logic::front::is_axis(rel) && !closure.inputs.contains(rel)).enumerate() {
+    for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !crate::code_rule_dsl::logic::front::is_axis(rel) && !closure.inputs.iter().any(|i| i == rel.as_str())).enumerate() {
         let args = vec!["_"; cols.len()].join(", ");
         let authored = format!(
             "{includes}.decl in_scope(d: number)\n\

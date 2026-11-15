@@ -31,6 +31,9 @@ pub struct BlockNative {
     pub groups: Vec<crate::block::Group>,
     /// The token records (`block::BlockProgram::records`): the record pass after the passes.
     pub records: Option<crate::records::Records>,
+    /// The groups that are regions (`block::BlockProgram::walks`): Metal runs their rounds; the
+    /// CPU walks them (`cpu_form`).
+    pub walks: Vec<crate::block::Walk>,
 }
 
 /// An instruction of a block body.
@@ -86,19 +89,25 @@ pub enum BlockInst {
     Cmp { col: u16, op: crate::block::CmpOp, rhs: crate::block::Rhs, width: u8 },
     /// A row program's set test (`block::BlockOp::Bit`): 64 rows' values looked up in a set.
     Bit { set: u16, col: u16 },
+    /// Value `out` of walk `walk` (`block::Walk::made`), on the CPU (`cpu_form`): the walk runs
+    /// once a block, a call, when the first of its values is needed. `args` is its inputs.
+    Walk { walk: u16, out: u8, args: u16 },
+    /// Two of a walk's inputs, or an input and the inputs before it: what `Walk` reads, so that
+    /// every pass orders and keeps them as it does any operand. No word of its own.
+    Args(u16, u16),
 }
 
 impl BlockInst {
     /// Whether the instruction carries across blocks.
     pub fn carried(&self) -> bool {
-        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) | BlockInst::BackFill(..))
+        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) | BlockInst::BackFill(..) | BlockInst::Walk { .. })
     }
 
     /// The values the instruction reads.
     pub fn operands(&self) -> Vec<usize> {
         match *self {
-            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) => vec![usize::from(a)],
-            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) | BlockInst::BackFill(a, b) => {
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) | BlockInst::Walk { args: a, .. } => vec![usize::from(a)],
+            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) | BlockInst::BackFill(a, b) | BlockInst::Args(a, b) => {
                 vec![usize::from(a), usize::from(b)]
             }
             _ => vec![],
@@ -146,7 +155,221 @@ impl BlockNative {
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
             groups: crate::block::groups(&program.ops, &program.rounds).expect("a verified program"),
             records: program.records.clone(),
+            walks: program.walks.clone(),
         }
+    }
+
+    /// Each instruction with its operands renamed by `m`.
+    pub fn renamed(inst: BlockInst, m: impl Fn(u16) -> u16) -> BlockInst {
+        match inst {
+            BlockInst::Not(a) => BlockInst::Not(m(a)),
+            BlockInst::And(a, b) => BlockInst::And(m(a), m(b)),
+            BlockInst::Or(a, b) => BlockInst::Or(m(a), m(b)),
+            BlockInst::Xor(a, b) => BlockInst::Xor(m(a), m(b)),
+            BlockInst::AndNot(a, b) => BlockInst::AndNot(m(a), m(b)),
+            BlockInst::Prev(a, k) => BlockInst::Prev(m(a), k),
+            BlockInst::Toggle(a) => BlockInst::Toggle(m(a)),
+            BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
+            BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),
+            BlockInst::BackFill(a, b) => BlockInst::BackFill(m(a), m(b)),
+            BlockInst::Carry(a) => BlockInst::Carry(m(a)),
+            BlockInst::Walk { walk, out, args } => BlockInst::Walk { walk, out, args: m(args) },
+            BlockInst::Args(a, b) => BlockInst::Args(m(a), m(b)),
+            other => other,
+        }
+    }
+
+    /// A walk with its values renamed by `m`.
+    fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
+        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), ..*k }).collect();
+        crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds }
+    }
+
+    /// The CPU's form (decision 0139): each walk's group made by the walk, not by rounds. The
+    /// values the walk makes become its `Walk`s, reading its inputs through `Args`; the group
+    /// goes, and with it whatever only the rounds read (an `else`'s `back_fill`, and the
+    /// backward pass it took). Metal runs the program as it is.
+    pub fn cpu_form(&self) -> BlockNative {
+        let made = self.records_made();
+        if self.walks.is_empty() && made.is_empty() {
+            return self.clone();
+        }
+        let mut insts = self.insts.clone();
+        // The extracts the record pass makes (decision 0177): the lasts by the end rules, the
+        // starts by the loop. Each reads a zero, and the masks only they read are pruned below.
+        let mut outputs = self.outputs.clone();
+        let zero = made.first().map(|_| {
+            insts.push(BlockInst::Const(0));
+            (insts.len() - 1) as u16
+        });
+        for &k in &made {
+            outputs[k] = zero.expect("a zero");
+        }
+        let mut walked = vec![false; self.groups.len()];
+        for (w, walk) in self.walks.iter().enumerate() {
+            walked[usize::from(walk.group)] = true;
+            // Each `Args` reads the one before it and one input more.
+            let reads = walk.reads();
+            let mut args = reads[0];
+            for &r in &reads[1..] {
+                insts.push(BlockInst::Args(args, r));
+                args = (insts.len() - 1) as u16;
+            }
+            for (out, v) in walk.made().into_iter().enumerate() {
+                insts[usize::from(v)] = BlockInst::Walk { walk: w as u16, out: out as u8, args };
+            }
+        }
+        // A `Walk` now reads a later `Args`: the program is put back in order with the `Args`
+        // where its walk's first value was, then pruned to what the outputs read.
+        let n = self.insts.len();
+        let mut order: Vec<usize> = Vec::with_capacity(insts.len());
+        let mut placed = vec![false; insts.len()];
+        fn place(x: usize, insts: &[BlockInst], placed: &mut [bool], order: &mut Vec<usize>) {
+            if placed[x] {
+                return;
+            }
+            placed[x] = true;
+            for o in insts[x].operands() {
+                place(o, insts, placed, order);
+            }
+            order.push(x);
+        }
+        let mut keep = vec![false; insts.len()];
+        let mut todo: Vec<usize> = outputs.iter().map(|&v| usize::from(v)).collect();
+        for (_, group) in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]) {
+            todo.extend(group.carries.iter().flat_map(|&(c, x)| [c, x]));
+        }
+        // A walk's call makes all its values: one kept keeps the others (the reader-made
+        // tokens leave some of a region's fills unread on the CPU, decision 0177).
+        let mut walk_of: Vec<Option<usize>> = vec![None; insts.len()];
+        for (w, walk) in self.walks.iter().enumerate() {
+            for v in walk.made() {
+                walk_of[usize::from(v)] = Some(w);
+            }
+        }
+        while let Some(x) = todo.pop() {
+            if !std::mem::replace(&mut keep[x], true) {
+                todo.extend(insts[x].operands());
+                if let Some(w) = walk_of[x] {
+                    todo.extend(self.walks[w].made().into_iter().map(usize::from));
+                }
+                // A kept group's carry reads its next, a round later.
+                for group in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]).map(|(_, g)| g) {
+                    if let Some(&(_, next)) = group.carries.iter().find(|p| p.0 == x) {
+                        todo.push(next);
+                    }
+                }
+            }
+        }
+        for x in 0..insts.len() {
+            if keep[x] && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
+                place(x, &insts, &mut placed, &mut order);
+            }
+        }
+        let mut number = vec![u16::MAX; insts.len()];
+        for (k, &x) in order.iter().enumerate() {
+            number[x] = k as u16;
+        }
+        let m = |v: u16| number[usize::from(v)];
+        let place_of = |x: usize| usize::from(number[x]);
+        // The walks whose values are kept (none read: the CPU reads no region, decision 0177),
+        // renumbered.
+        let kept_walks: Vec<usize> = (0..self.walks.len()).filter(|&w| keep[usize::from(self.walks[w].hidden)]).collect();
+        let walk_at = |w: u16| kept_walks.iter().position(|&k| k == usize::from(w)).expect("a kept walk's call") as u16;
+        BlockNative {
+            tables: self.tables.clone(),
+            insts: order
+                .iter()
+                .map(|&x| match Self::renamed(insts[x], m) {
+                    BlockInst::Walk { walk, out, args } => BlockInst::Walk { walk: walk_at(walk), out, args },
+                    i => i,
+                })
+                .collect(),
+            outputs: outputs.iter().map(|&v| m(v)).collect(),
+            extracts: self.extracts.clone(),
+            totals: self.totals.clone(),
+            masks: self.masks.clone(),
+            delay: self.delay,
+            output_delays: self.output_delays.clone(),
+            records: self.records.clone(),
+            groups: self
+                .groups
+                .iter()
+                .enumerate()
+                .filter(|(g, _)| !walked[*g])
+                .map(|(_, g)| {
+                    let mut members: Vec<usize> = g.members.iter().filter(|&&x| keep[x]).map(|&x| place_of(x)).collect();
+                    members.sort_unstable();
+                    crate::block::Group { members, carries: g.carries.iter().map(|&(c, x)| (place_of(c), place_of(x))).collect() }
+                })
+                .collect(),
+            walks: kept_walks.iter().map(|&w| Self::walk_renamed(&self.walks[w], m)).collect(),
+        }
+    }
+
+    /// The output of the records' lasts extract, where their end rules give the lasts instead
+    /// (decision 0177): the CPU makes no last-byte mask for it.
+    pub fn ruled_lasts(&self) -> Option<usize> {
+        let r = self.records.as_ref().filter(|r| !r.rules.is_empty())?;
+        self.extracts.get(usize::from(r.lasts)).copied()
+    }
+
+    /// The output of the records' starts extract, where the loop gives the starts instead
+    /// (decision 0177, stage 2a): the CPU makes no start mask for it.
+    pub fn walked_starts(&self) -> Option<usize> {
+        let r = self.records.as_ref().filter(|r| r.skip.is_some())?;
+        self.extracts.get(usize::from(r.starts)).copied()
+    }
+
+    /// The extracts' outputs the CPU's record pass makes, not a mask (`ruled_lasts`,
+    /// `walked_starts`).
+    pub fn records_made(&self) -> Vec<usize> {
+        self.ruled_lasts().into_iter().chain(self.walked_starts()).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).collect()
+    }
+
+    /// The outputs the CPU's token loop makes from the file's bytes where it reads them
+    /// (`native_cpu_bytes`), and nothing else of the records reads from the rows: the CPU's
+    /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
+    pub fn read_at_tokens(&self) -> Vec<usize> {
+        use crate::records::EndRule;
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+            return Vec::new();
+        };
+        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
+        let mut read: Vec<u16> = Vec::new();
+        read.extend(r.skip);
+        read.extend(r.rules.iter().filter_map(|x| match *x {
+            EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(o),
+            EndRule::Read(_) | EndRule::Next(_) => None,
+        }));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer])));
+        read.extend(r.checks.iter().map(|c| c.o));
+        // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
+        // still reads from its row stays stored.
+        let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
+        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
+        read.extend(lift.iter().chain(&at).map(|&(_, o)| o));
+        let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
+        // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
+        let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
+        read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
+    /// its token loop runs, a reader gives its token's kind and marks, so it makes none of them.
+    pub fn readers_tags(&self) -> Vec<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().map(|t| usize::from(t.o)).collect())
+    }
+
+    /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds
+    /// the starts: the CPU makes none of them.
+    pub fn loops_errors(&self) -> Vec<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.untaken.iter().map(|&o| usize::from(o)).collect())
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes
@@ -201,6 +424,8 @@ impl BlockNative {
                 BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
                 BlockInst::BackFill(a, b) => f.push(BlockInst::BackFill(m(a), m(b))),
                 BlockInst::Carry(a) => f.push(BlockInst::Carry(m(a))),
+                BlockInst::Walk { walk, out, args } => f.push(BlockInst::Walk { walk, out, args: m(args) }),
+                BlockInst::Args(a, b) => f.push(BlockInst::Args(m(a), m(b))),
                 other => f.push(other),
             };
             at.push(index);
@@ -216,6 +441,7 @@ impl BlockNative {
             delay: self.delay,
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
+            walks: self.walks.iter().map(|w| Self::walk_renamed(w, |v| at[usize::from(v)])).collect(),
             groups: self
                 .groups
                 .iter()
@@ -437,6 +663,8 @@ impl BlockNative {
                     BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
                     BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),
                     BlockInst::Carry(a) => BlockInst::Carry(m(a)),
+                    BlockInst::Walk { walk, out, args } => BlockInst::Walk { walk, out, args: m(args) },
+                    BlockInst::Args(a, b) => BlockInst::Args(m(a), m(b)),
                     BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("not in a forward pass"),
                     other => other,
                 });
@@ -452,7 +680,11 @@ impl BlockNative {
                 .filter(|g| g.members.iter().all(|&m| in_pass(m, p)))
                 .map(|g| crate::block::Group { members: g.members.iter().map(|&x| place(x)).collect(), carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() })
                 .collect();
+            // A walk is made in the pass of its values, all in one (its `Walk`s read one `Args`).
+            // In another pass it is a walk of no kinds, of nothing (its `hidden` any value).
+            let walks: Vec<crate::block::Walk> = self.walks.iter().map(|w| if w.made().iter().all(|&v| in_pass(usize::from(v), p)) { Self::walk_renamed(w, |v| place(usize::from(v)) as u16) } else { crate::block::Walk { group: w.group, hidden: 0, kinds: Vec::new() } }).collect();
             let body = |outputs: Vec<u16>, last: bool| BlockNative {
+                walks: walks.clone(),
                 tables: self.tables.clone(),
                 insts: insts.clone(),
                 output_delays: if last { self.output_delays.clone() } else { vec![0; outputs.len()] },

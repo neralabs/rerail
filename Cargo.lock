@@ -3149,6 +3149,7 @@ version = "0.1.0"
 dependencies = [
  "block",
  "cc",
+ "core-foundation-sys",
  "libc",
  "metal",
  "objc",
@@ -3319,7 +3320,6 @@ dependencies = [
  "rerail-css-lean",
  "rerail-device-metal",
  "rerail-ecma-lean",
- "rerail-engine",
  "rerail-facts",
  "rerail-html-lean",
  "rerail-java-lean",
@@ -4456,6 +4456,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "rerail-accel",
+ "rerail-prof",
  "rerail-store",
  "rusqlite",
  "serde",

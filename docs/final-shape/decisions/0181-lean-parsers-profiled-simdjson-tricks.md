@@ -9,7 +9,7 @@ highest number in any worktree (0180).
 
 The three lean parsers each write a tape directly from a file:
 
-- `rerail-ecma-lean` reads JavaScript, TypeScript and TSX (0178);
+- `rerail-ecma-lean` reads JavaScript, TypeScript and TSX (0184);
 - `rerail-python-lean` reads Python (0163, 0169);
 - `rerail-rr-syntax`'s lean parser reads `.rr` rules.
 

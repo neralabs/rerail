@@ -17,7 +17,7 @@
 //!   decoded value, and every node stands at the string. A bytes literal or an f-string gives no guest, as Ruff
 //!   parses neither as a type;
 //! - a Markdown `inline` or `pipe_table_cell` node: its text without its `block_continuation`s, as tree-sitter-md
-//!   gives its inline grammar (decision 0208); each piece is a copied stretch, so its nodes have the file's places;
+//!   gives its inline grammar (decision 0238); each piece is a copied stretch, so its nodes have the file's places;
 //! - any other node: its text, copied;
 //! - `embed_value`'s text, standing at `at`.
 //!
@@ -111,6 +111,13 @@ pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> 
     out
 }
 
+/// The embedding a grammar name names for `host` (decision 0222): one its dialect embeds programs through
+/// (`GrammarDialect::embeds`), by its registry id (`script-block` for a `.vue` file).
+fn embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::language::Via> {
+    let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts))?;
+    dialect.embeds().iter().map(|&(via, _)| via).find(|via| via.id() == name)
+}
+
 /// A grammar name's dialect label, and whether its text is parsed in a wrapper (an expression's `( … )`): a
 /// fragment the registry declares (decision 0082), or a dialect's label.
 fn grammar(name: &str) -> Option<(&'static str, bool)> {
@@ -123,11 +130,16 @@ fn grammar(name: &str) -> Option<(&'static str, bool)> {
 
 /// A document's key past every file's (`memo::doc_keys` gives files keys below `GUEST_KEYS`), with `key << 32`
 /// positive: a function of what it is (a guest's host path, place and grammar), so a memoised row's guest nodes keep
-/// their ids. A guest in the run's language takes `GUEST_KEYS..HIDDEN_KEYS`, which a policy shows; every other
-/// document `HIDDEN_KEYS..2^31` (decision 0058 §1).
-fn key(parts: &[&[u8]], shown: bool, taken: &mut HashSet<u32>) -> u32 {
-    use crate::code_rule_dsl::facts::vtab::syntax::{GUEST_KEYS, HIDDEN_KEYS};
-    let (base, span) = if shown { (GUEST_KEYS, HIDDEN_KEYS - GUEST_KEYS) } else { (HIDDEN_KEYS, (1u32 << 31) - HIDDEN_KEYS) };
+/// their ids. A code guest in the run's language takes `GUEST_KEYS..ANNOTATION_KEYS`, which a policy shows; an
+/// annotation `ANNOTATION_KEYS..HIDDEN_KEYS`; every other document `HIDDEN_KEYS..2^31` (decision 0058 §1).
+fn key(parts: &[&[u8]], range: Range, taken: &mut HashSet<u32>) -> u32 {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, HIDDEN_KEYS};
+    let (base, end) = match range {
+        Range::Code => (GUEST_KEYS, ANNOTATION_KEYS),
+        Range::Annotation => (ANNOTATION_KEYS, HIDDEN_KEYS),
+        Range::Hidden => (HIDDEN_KEYS, 1u32 << 31),
+    };
+    let span = end - base;
     let mut h = Sha256::new();
     for p in parts {
         h.update((p.len() as u64).to_le_bytes());
@@ -139,6 +151,14 @@ fn key(parts: &[&[u8]], shown: bool, taken: &mut HashSet<u32>) -> u32 {
         k = (k + 1) % span;
     }
     base + k
+}
+
+/// Which keys a document takes (`key`).
+#[derive(Clone, Copy)]
+enum Range {
+    Code,
+    Annotation,
+    Hidden,
 }
 
 /// A string's text as a placement: copied when its normalized text is a stretch of the host, mapped when it has
@@ -191,7 +211,7 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
                     pieces.extend(p[..p.len() - 1].iter().map(|p| syntax::normalized::Piece { d: p.d + at, ..*p }));
                     tail = p.last().map_or(tail, |p| p.s);
                 }
-                Placement::At(_) => return None,
+                Placement::At(_) | Placement::Segments(_) => return None,
             }
             value.push_str(&text);
         }
@@ -328,6 +348,9 @@ impl Guests {
     fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, role: &str, text: Option<String>, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
         let host_key = (at >> 32) as u32;
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(None) };
+        if let Some(via) = embedding(host, grammar_name) {
+            return self.program(host, at, via, role, cache);
+        }
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
@@ -343,7 +366,16 @@ impl Guests {
         let Some((text, place)) = placed else { return Ok(None) };
         let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
         let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, cache)? else { return Ok(None) };
-        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], label == self.run, &mut self.taken);
+        // Shown to rules that do not name it: code in the run's language. An annotation (a type expression, Python's
+        // in a Python run) is not code: the rules that read one reach it through `parsed`. Shown, a string the
+        // demand asked for only because its rule's inputs hold it (every string, for `type_ctx`) was code to every
+        // rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
+        let range = match (label == self.run, grammar_name == "annotation") {
+            (true, false) => Range::Code,
+            (true, true) => Range::Annotation,
+            (false, _) => Range::Hidden,
+        };
+        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], range, &mut self.taken);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
         Ok(Some(Document {
@@ -355,6 +387,39 @@ impl Guests {
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
             tape: None,
+        }))
+    }
+
+    /// The program host file `host` embeds through `via` (decision 0222): the embedder main registered for it
+    /// (`embed::Embedder`; a Vue component's view, `vue::view`) writes its text and its segments from the host's
+    /// tape, read in place, and the text is parsed in the dialect the embedder chose (a `<script lang="ts">`'s TypeScript). The
+    /// guest's grammar is that dialect's label, as `guest` names what a document is parsed as; its nodes are placed
+    /// through the segments (`Placement::Segments`). `None` where the host embeds no program (no script, `lang="coffee"`).
+    fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
+        let host_key = (at >> 32) as u32;
+        let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { return Ok(None) };
+        let source = host.facts.source.as_str();
+        // The host's tape, read in place by the embedder (whichever parser wrote it, the same tape).
+        let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Ok(None) };
+        let Some(Ok(image)) = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
+        let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root() else { return Ok(None) };
+        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false) else { return Ok(None) };
+        let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
+        let place = Placement::Segments(Arc::new(program.segments));
+        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, cache)? else { return Ok(None) };
+        let range = if label == self.run { Range::Code } else { Range::Hidden };
+        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &mut self.taken);
+        self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
+        let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
+        Ok(Some(Document {
+            key,
+            path: host.path.clone(),
+            core: format!("{}#guest:{}:{at}", host.core, via.id()),
+            digest,
+            facts,
+            guest: Some(Arc::new(Guest { host: host_key, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            module: host.module.clone(),
+            tape,
         }))
     }
 
@@ -372,7 +437,7 @@ impl Guests {
         let path = path.as_str();
         let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
         let Some((facts, root, digest)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
-        let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], false, &mut self.taken);
+        let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], Range::Hidden, &mut self.taken);
         self.values.insert((known_as, identity), i64::from(key));
         self.files.insert(i64::from(key), files);
         Ok(Some(Document {
@@ -483,6 +548,29 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
     kept.1.insert(key, parsed.clone());
     Ok(parsed)
 }
+
+/// An embedded program's text parsed as `label`, with its tape kept beside the facts (decision 0222): the rules over
+/// a view read W's values (`value`, a key's text) as over a file, and a value is read off the document's tape. Not
+/// memoised: a host embeds one program, and a file's tape is the store's.
+fn taped(path: &str, label: &str, text: String, cache: Option<&ContentStore>) -> Result<Option<(Parsed, Tape)>, String> {
+    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(text) };
+    let built = match cache.map(|cache| core::build_in_wave_with_tape(&file, cache, None, None, None, true)) {
+        Some(Ok(built)) => Ok(built),
+        Some(Err(_)) => {
+            crate::code_rule_dsl::prof::count("guests.cache_failed", 1);
+            core::build_with_tape(&file, true)
+        }
+        None => core::build_with_tape(&file, true),
+    }
+    .map_err(|e| format!("{path}: {e}"))?;
+    let (Built::Facts(facts), tape) = built else { return Ok(None) };
+    let digest = core::digest(&facts);
+    let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
+    Ok(Some(((Arc::new(facts), 0, digest), tape)))
+}
+
+/// A document's tape in its file's context (`Document::tape`).
+type Tape = Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>)>;
 
 /// The root of a wrapped expression `( e )`: `e`, the one named child of the parenthesized expression the module's
 /// one statement is, when the text parses so; else the module's first named child (a partial tree's).

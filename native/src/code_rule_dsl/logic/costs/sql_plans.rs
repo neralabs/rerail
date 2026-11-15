@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
-const VERSION: i64 = 3;
+const VERSION: i64 = 4;
 const PROFILE: &str = if cfg!(debug_assertions) {
     "debug"
 } else {
@@ -207,6 +207,8 @@ fn median<T: Ord + Copy>(values: impl Iterator<Item = T>) -> Option<T> {
 }
 
 pub fn estimate(operation: Operation, inputs: &Inputs, strategy: Strategy) -> Estimate {
+    // The stored observations are read beside the run's start (`costs::start`).
+    super::ready();
     let model = MODEL.read();
     let samples = model
         .0

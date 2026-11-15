@@ -1,0 +1,92 @@
+.policy "ruff-pt003-pytest-extraneous-scope-function" revision 1
+.guests off
+.description "Remove an explicit function scope from a pytest fixture decorator; function scope is already the default."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/names.rr"
+
+// PT003(n): a finding at node n, from clause `extraneous-scope-function`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT003(at: node, f: loc) "Delete this `scope=\"function\"` argument from `{f}(...)`, since function scope is the default; drop the parentheses too if no arguments remain."
+    suppress noqa "PT003"
+PT003(n, F) :- kind(n, "keyword_argument"), pt003_tok_has_1(n), field(n, "value", c9),
+    pt003_str_literal(c9), value(c9, v10), value_type(v10, "str"), v10 = "function",
+    count : { precedes(s11, n), kind(s11, "keyword_argument"), pt003_tok_has_2(s11) } = 0,
+    child(p20, n, _), kind(p20, "argument_list"), child(p21, p20, _),
+    kind(p21, "call"), field(p21, "function", c22), pt003_callee(c22, F), child(p23, p21, _),
+    pt003_deco_parent(p23).
+
+// fixture_name(n): the JSON util `fixture-name`, used where the JSON says `matches: "fixture-name"`
+.decl pt003_fixture_name(n: node)
+pt003_fixture_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt003_fixture_ref(n: node, f: loc)
+pt003_fixture_ref(n, F) :- pt003_fixture_name(n), node(_, n, _, _, _), F = n.
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt003_callee(n: node, f: loc)
+pt003_callee(n, F) :- pt003_fixture_ref(n, F).
+pt003_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt003_callee(c1, F).
+
+// plain_callee(n): the JSON util `plain-callee`, used where the JSON says `matches: "plain-callee"`
+.decl pt003_plain_callee(n: node)
+pt003_plain_callee(n) :- pt003_fixture_name(n).
+pt003_plain_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt003_plain_callee(c1).
+
+// fixture_expr(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt003_fixture_expr(n: node)
+pt003_fixture_expr(n) :- pt003_plain_callee(n).
+pt003_fixture_expr(n) :- kind(n, "call"), field(n, "function", c1), pt003_plain_callee(c1).
+pt003_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt003_fixture_expr(c2).
+
+// deco_parent(n): the JSON util `deco-parent`, used where the JSON says `matches: "deco-parent"`
+.decl pt003_deco_parent(n: node)
+pt003_deco_parent(n) :- kind(n, "decorator"),
+    count : { precedes(s1, n), kind(s1, "decorator"), child(s1, c2, _), pt003_fixture_expr(c2) } = 0,
+    child(p3, n, _), kind(p3, "decorated_definition"), field(p3, "definition", c4),
+    kind(c4, "function_definition").
+pt003_deco_parent(n) :- kind(n, "parenthesized_expression"), child(p5, n, _),
+    pt003_deco_parent(p5).
+
+// str_literal(n): the JSON util `str-literal`, used where the JSON says `matches: "str-literal"`
+.decl pt003_str_literal(n: node)
+pt003_str_literal(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), match("[^'\"]*[bBfFtT].*", c1) } = 0.
+pt003_str_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), child(c2, c3, _), kind(c3, "string_start"), match("[^'\"]*[bBfFtT].*", c3) } = 0.
+pt003_str_literal(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    pt003_str_literal(c4).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^scope$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt003_tok_has_1(n: node)
+.stored pt003_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt003_tok_has_1(n) :- field(n, "name", c1), glob("scope", c1).
+pt003_tok_has_1(n) :- op(n, t2), match("scope", t2).
+pt003_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:scope)(?:\\W.*)?)$", g3).
+pt003_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:scope)(?:\\W.*)?)$", g3).
+pt003_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:scope)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^scope$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt003_tok_has_2(n: node)
+.stored pt003_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt003_tok_has_2(n) :- field(n, "name", c12), glob("scope", c12).
+pt003_tok_has_2(n) :- op(n, t13), match("scope", t13).
+pt003_tok_has_2(n) :- child(n, c19, _), structural_before(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:scope)(?:\\W.*)?)$", g14).
+pt003_tok_has_2(n) :- child(n, c19, _), structural_after(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:scope)(?:\\W.*)?)$", g14).
+pt003_tok_has_2(n) :- node_text(n, g14), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:scope)(?:\\W.*)?)$", g14).

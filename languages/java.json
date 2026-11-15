@@ -12,7 +12,7 @@
       ],
       "parser": "tree-sitter",
       "grammar": "ast-grep:Java",
-      "tapeTag": 15
+      "tapeTag": 18
     }
   ],
   "capabilities": {

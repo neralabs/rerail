@@ -39,10 +39,10 @@
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A program written as facts reads back as the same program, and so does the document of those facts, read off
-    /// its tape (decision 0074). A pack rule, prepared, both of its programs.
+    /// A prepared program reads back from what is kept of it: its two programs from their text, the rest from its
+    /// facts (decision 0155). A pack rule, prepared.
     #[test]
-    fn a_prepared_program_reads_back_from_its_facts_and_its_tape() {
+    fn a_prepared_program_reads_back_from_its_text_and_facts() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-facts");
@@ -52,7 +52,9 @@
         let prepared = super::super::with_prepared(|kept| kept.values().flatten().find(|p| p.prog.rules.iter().any(|r| r.head.rel.contains("violation") || !r.body.is_empty())).cloned()).expect("a prepared program");
         let facts = super::facts_of(&prepared);
         let dialect = prepared.lowered.dialect;
-        let back = super::prepared_of(&facts, dialect).unwrap();
+        let text = crate::code_rule_dsl::logic::program_text::print;
+        let read = |p: &crate::code_rule_dsl::logic::front::Program| crate::code_rule_dsl::logic::program_text::read(&text(p).unwrap()).unwrap();
+        let back = super::prepared_of(&facts, read(&prepared.prog), read(&prepared.lowered.program), dialect).unwrap();
         // Program has no PartialEq: its Debug form is the comparison, field by field.
         assert_eq!(format!("{:?}", back.prog), format!("{:?}", prepared.prog), "the front program");
         assert_eq!(format!("{:?}", back.lowered.program), format!("{:?}", prepared.lowered.program), "the lowered program");
@@ -68,53 +70,19 @@
         // tests that run beside this one.
         let all: Vec<std::sync::Arc<super::Prepared>> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
         for p in &all {
-            let b = super::prepared_of(&super::facts_of(p), p.lowered.dialect).unwrap();
+            let b = super::prepared_of(&super::facts_of(p), read(&p.prog), read(&p.lowered.program), p.lowered.dialect).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));
             assert_eq!(format!("{:?}", b.split.cross), format!("{:?}", p.split.cross));
         }
         // And one stored without its split (an earlier entry's facts) makes it again, the same.
         let mut unsplit = facts.clone();
         unsplit.remove("prepared_split");
-        let again = super::prepared_of(&unsplit, dialect).unwrap();
+        let again = super::prepared_of(&unsplit, read(&prepared.prog), read(&prepared.lowered.program), dialect).unwrap();
         assert_eq!(format!("{:?}", again.split.cross), format!("{:?}", prepared.split.cross), "the split, made again");
-        // The split's two parts are not stored: each is a part of the lowered program's rules, made from it again.
-        let programs: std::collections::BTreeSet<&str> = facts.get("program").into_iter().flatten().filter_map(|r| match &r[0] {
-            crate::code_rule_dsl::logic::front::Value::Str(p) => Some(p.as_str()),
-            crate::code_rule_dsl::logic::front::Value::Int(_) => None,
-        }).collect();
-        assert_eq!(programs, ["front", "lowered"].into_iter().collect(), "the programs stored");
-        // Read in place off the stored bytes (`program_facts::decode_view`), as a lookup reads it, in two parts: the same.
-        let (first, second): (crate::code_rule_dsl::logic::program_facts::Facts, crate::code_rule_dsl::logic::program_facts::Facts) = facts.clone().into_iter().partition(|(rel, _)| rel.as_str() < "m");
-        let bytes = [crate::code_rule_dsl::logic::program_facts::encode(&first), crate::code_rule_dsl::logic::program_facts::encode(&second)];
-        let in_place = super::prepared_of_encoded(&bytes, dialect).unwrap();
-        assert_eq!(format!("{:?}", in_place.prog), format!("{:?}", prepared.prog), "the front program, read in place");
-        assert_eq!(format!("{:?}", in_place.lowered.program), format!("{:?}", prepared.lowered.program), "the lowered program, read in place");
-        assert_eq!(format!("{:?}", in_place.split.local), format!("{:?}", prepared.split.local), "the split's local program, read in place");
-        assert_eq!(format!("{:?}", in_place.split.cross), format!("{:?}", prepared.split.cross), "the split's cross-file program, read in place");
-        let document = crate::code_rule_dsl::logic::program_facts::document(&facts, &super::schema()).unwrap();
-        let read = crate::code_rule_dsl::logic::program_facts::document_facts(&document).unwrap();
-        assert_eq!(read, facts, "the document's tape gives the facts written");
+        // No program is in the facts: no row per node (decision 0155).
+        assert!(["program", "rule", "atom", "term"].iter().all(|r| !facts.contains_key(*r)), "{:?}", facts.keys().collect::<Vec<_>>());
         assert_eq!(crate::code_rule_dsl::logic::program_facts::decode(&crate::code_rule_dsl::logic::program_facts::encode(&facts)).unwrap(), facts);
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A program's facts are stored in parts of at most `PART_ROWS` rows, and the parts joined in order are the facts.
-    #[test]
-    fn a_programs_facts_are_stored_in_bounded_parts_that_join_back() {
-        use crate::code_rule_dsl::logic::{front::Value, program_facts::Facts};
-        let mut facts = Facts::new();
-        facts.insert("a".into(), (0..super::PART_ROWS as i64 + 7).map(|i| vec![Value::Int(i)]).collect());
-        facts.insert("b".into(), (0..super::PART_ROWS as i64 * 2).map(|i| vec![Value::Str(format!("s{i}"))]).collect());
-        let parts: Vec<Facts> = super::parts(facts.clone()).collect();
-        assert_eq!(parts.len(), 4);
-        assert!(parts.iter().all(|p| p.values().map(Vec::len).sum::<usize>() <= super::PART_ROWS));
-        let mut joined = Facts::new();
-        for part in parts {
-            for (rel, rows) in part {
-                joined.entry(rel).or_default().extend(rows);
-            }
-        }
-        assert_eq!(joined, facts);
     }
 
     /// A rule about rules reads a program's facts: a document `#include`d, its atoms asked by relation (decision 0074).

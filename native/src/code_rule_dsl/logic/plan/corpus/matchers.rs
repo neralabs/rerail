@@ -20,7 +20,7 @@ fn relation(k: usize, m: usize) -> String {
 }
 
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false })
 }
 
 /// The tree-shaped parts of a Python program's rules as `ast` atoms (decision 0106 §4): a root `r` with
@@ -50,7 +50,7 @@ pub fn absorb(prog: &mut Program, capture: bool) -> usize {
         // How many literals (and the head) read each variable.
         let mut uses: HashMap<String, usize> = HashMap::new();
         for v in rule.head.args.iter().filter_map(var_of) {
-            *uses.entry(v).or_default() += 1;
+            *uses.entry(v.to_string()).or_default() += 1;
         }
         for l in &rule.body {
             for v in l.vars() {
@@ -74,8 +74,8 @@ pub fn absorb(prog: &mut Program, capture: bool) -> usize {
                     continue;
                 }
                 let (Some(name), Some(x)) = (str_of(&field.args[1]), var_of(&field.args[2])) else { continue };
-                let read_again = uses.get(&x).is_some_and(|&n| n > 2);
-                if uses.get(&x).is_none_or(|&n| n < 2) || (read_again && !capture) || x == r {
+                let read_again = uses.get(x.as_str()).is_some_and(|&n| n > 2);
+                if uses.get(x.as_str()).is_none_or(|&n| n < 2) || (read_again && !capture) || x == r {
                     continue;
                 }
                 let kind = rule.body.iter().enumerate().find_map(|(ki, kl)| {
@@ -89,7 +89,7 @@ pub fn absorb(prog: &mut Program, capture: bool) -> usize {
                 if read_again {
                     let name_of = format!("C{}", captures.len() + 1);
                     parts.push(serde_json::json!({"has": {"field": name, "kind": k2, "pattern": format!("${name_of}"), "stopBy": "neighbor"}}));
-                    captures.push((name_of, x));
+                    captures.push((name_of, x.to_string()));
                 } else {
                     parts.push(serde_json::json!({"has": {"field": name, "kind": k2, "stopBy": "neighbor"}}));
                 }
@@ -101,7 +101,7 @@ pub fn absorb(prog: &mut Program, capture: bool) -> usize {
             drop.extend(taken);
             let matcher = serde_json::json!({"language": "python", "rule": {"all": parts}}).to_string();
             fresh += 1;
-            added.push(Literal::Ast { document: format!("rr_ast_d{fresh}"), node: r, matcher, captures });
+            added.push(Literal::Ast { document: format!("rr_ast_d{fresh}"), node: r.to_string(), matcher, captures });
         }
         if added.is_empty() {
             continue;
@@ -126,10 +126,11 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
         let mut head = BTreeSet::new();
         for t in &rule.head.args {
             if let Term::Var(v) = t {
-                head.insert(v.clone());
+                head.insert(v.to_string());
             }
         }
         let reads: Vec<BTreeSet<String>> = body.iter().map(Literal::vars).collect();
+        let mut made = Vec::with_capacity(body.len() + 1);
         for (i, l) in body.iter().enumerate() {
             match l {
                 Literal::Ast { document, node, matcher, captures } if captures.len() <= MOST_CAPTURES => {
@@ -138,17 +139,18 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
                         texts.push((matcher.clone(), names.clone()));
                         texts.len() - 1
                     });
-                    let mut args = vec![Term::Var(node.clone())];
-                    args.extend(captures.iter().map(|(_, var)| Term::Var(var.clone())));
-                    rule.body.push(atom(&relation(k, names.len()), args));
+                    let mut args = vec![Term::Var(node.clone().into())];
+                    args.extend(captures.iter().map(|(_, var)| Term::Var(var.clone().into())));
+                    made.push(atom(&relation(k, names.len()), args));
                     let elsewhere = head.contains(document) || reads.iter().enumerate().any(|(j, r)| j != i && r.contains(document));
                     if elsewhere {
-                        rule.body.push(atom("docof", vec![Term::Var(node.clone()), Term::Var(document.clone())]));
+                        made.push(atom("docof", vec![Term::Var(node.clone().into()), Term::Var(document.clone().into())]));
                     }
                 }
-                l => rule.body.push(l.clone()),
+                l => made.push(l.clone()),
             }
         }
+        rule.body = made.into();
     }
     let mut out = Vec::new();
     for (k, (text, names)) in texts.into_iter().enumerate() {
@@ -156,7 +158,7 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
         // A name of the rule's `transform` binds text (a symbol); every other name, and the root, a node.
         let made = transformed(&text);
         let types = std::iter::once("node").chain(names.iter().map(|name| if made.contains(name) { "sym" } else { "node" }));
-        prog.decls.insert(rel.clone(), columns(&rel).iter().zip(types).map(|(c, t)| ((*c).to_owned(), t.to_owned())).collect());
+        prog.decls.insert(rel.clone().into(), columns(&rel).iter().zip(types).map(|(c, t)| ((*c).to_owned(), t.to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         if !prog.inputs.contains(&rel) {
             prog.inputs.push(rel.clone());
         }
@@ -166,7 +168,7 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
     // hidden): then the rules read the view, and an input of the same name would have no statistics.
     let derived = prog.rules.iter().any(|r| r.head.rel == "docof");
     if !out.is_empty() && !derived && !prog.inputs.iter().any(|r| r == "docof") && prog.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "docof"))) {
-        prog.decls.entry("docof".to_owned()).or_insert_with(|| vec![("n".to_owned(), "loc".to_owned()), ("d".to_owned(), "number".to_owned())]);
+        prog.decls.entry("docof".to_owned().into()).or_insert_with(|| [("n".into(), "loc".into()), ("d".into(), "number".into())].into());
         prog.inputs.push("docof".to_owned());
     }
     out

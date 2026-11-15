@@ -90,14 +90,17 @@ impl World {
                 if k == "load.budget" {
                     budget = v.parse().unwrap_or(budget);
                 }
-                if let Some(dir) = canonical(&root.join(v)).filter(|p| p.is_dir()) {
+                if let Some(dir) = canonical(&root.join(v.as_str())).filter(|p| p.is_dir()) {
                     roots.push(dir);
                 }
             }
         }
         // What the requests may read is watched (decision 0105): a directory listed or a file read that the
         // journal says is unchanged is not statted.
-        super::observe(|o| o.watch(&roots));
+        // Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is watched as it comes.
+        let placeholder = super::phase0::active().then(|| canonical(root)).flatten();
+        let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
+        super::observe(|o| o.watch(&watched));
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 

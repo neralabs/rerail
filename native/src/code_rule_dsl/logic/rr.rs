@@ -26,7 +26,7 @@ pub mod from_tape;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 /// The text tests `.rr` names, and the engine's test each lowers to (the coverage gate probes each).
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
-pub use rerail_rr::code_rule_dsl::logic::rr::print;
+pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
@@ -50,7 +50,7 @@ pub mod tape_type {
     use crate::code_rule_dsl::logic::front::Error;
 }
 pub mod token_reads;
-pub use rerail_rr::code_rule_dsl::logic::rr::translate;
+pub use rerail_rr::code_rule_dsl::logic::rr::translate::{self};
 
 // cratify: `tape_tests` is rerail-engine's (it mounts it)
 // cratify: `tests` is rerail-engine's (it mounts it)
@@ -73,7 +73,7 @@ pub use translate::translate;
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     CORE.get_or_init(|| {
-        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
+        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().map(String::from).collect()).unwrap_or_default()
     })
 }
 
@@ -82,7 +82,9 @@ pub fn library() -> PathBuf {
     // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
     std::env::var_os("RERAIL_RR_LIB")
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/lib"))
+        // Below the checkout's root, with no `..` in it: a path the engine reads is named one way, so the file observer
+        // keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
+        .unwrap_or_else(|| rerail_store::source_tree::root().map_or_else(|| PathBuf::from("docs/rule-syntax/lib"), |root| root.join("docs/rule-syntax/lib")))
 }
 
 /// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:
@@ -176,6 +178,24 @@ impl Text {
             })
             .collect();
         Some(Modules { files: files.iter().map(|(path, digest, statements)| (path.clone(), *digest, declares(statements))).collect(), heads, declared: declares(own) })
+    }
+
+    /// The text's header: its program without a clause of its own or of its libraries (their declarations, its
+    /// directives, its findings' declarations), for what a batch reads of a policy before its run (decision 0168):
+    /// its settings, `.policy`, `.language` and outputs, as its whole program has them, less `.global library` (which
+    /// `read_file` writes) and the settings a clause makes. Lowering only that is a fraction of lowering its rules.
+    pub fn header(self) -> Result<Program, Error> {
+        let header = |statements: Vec<syntax::Statement>| -> Vec<syntax::Statement> {
+            statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).collect()
+        };
+        match self.0 {
+            Read::Plain(statements) => lower::lower(header(statements)),
+            Read::Modular { files, own } => {
+                let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, s)| s.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).cloned()).collect();
+                statements.extend(header(own));
+                lower::lower(statements)
+            }
+        }
     }
 
     /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
@@ -473,7 +493,7 @@ pub fn syntax_error(src: &str) -> Option<(usize, String)> {
 /// that is no whole string literal.
 pub(in crate::code_rule_dsl) fn string_value(text: &str) -> Option<String> {
     match syntax::tokens(text).ok()?.as_slice() {
-        [(syntax::Tok::Str(value), 0, end)] if *end == text.len() => Some(value.clone()),
+        [(syntax::Tok::Str(value), 0, end)] if *end == text.len() => Some(value.to_string()),
         _ => None,
     }
 }
@@ -495,7 +515,7 @@ pub fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
             return Err(Error::Syntax("policy metadata requires a quoted identifier".to_owned()));
         };
         let revision = tokens.windows(2).find_map(|pair| match (&pair[0].0, &pair[1].0) {
-            (Tok::Id(key), Tok::Num(n)) if key == "revision" => Some(*n),
+            (Tok::Id(key), Tok::Num(n)) if *key == "revision" => Some(*n),
             _ => None,
         });
         policies.push(serde_json::json!({"id": id, "revision": revision}));
@@ -818,6 +838,24 @@ pub(in crate::code_rule_dsl) fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<L
     (out, read.into_iter().filter(|f| seen.insert(f.path.clone())).collect())
 }
 
+/// `f` run on another thread for a caller inside `recording`: its result, and the library files it read, which
+/// `replay` notes on the caller's thread, in the order the caller's own reading would have noted them.
+pub(in crate::code_rule_dsl) fn recorded_on_worker<T>(f: impl FnOnce() -> T) -> (T, Vec<LibraryFile>) {
+    let outer = READS.with(|r| r.borrow_mut().replace(Vec::new()));
+    let out = f();
+    let read = READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), outer)).unwrap_or_default();
+    (out, read)
+}
+
+/// The files a worker read (`recorded_on_worker`), noted on this thread as if it had read them.
+pub(in crate::code_rule_dsl) fn replay(files: Vec<LibraryFile>) {
+    READS.with(|r| {
+        if let Some(read) = r.borrow_mut().as_mut() {
+            read.extend(files);
+        }
+    });
+}
+
 fn noted(file: &LibraryFile) {
     READS.with(|r| {
         if let Some(read) = r.borrow_mut().as_mut() {
@@ -982,11 +1020,39 @@ fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
         let (modules, files) = builtin_program(path)?;
         return Ok((Shared(modules.into_iter().map(|(p, s)| (p, std::sync::Arc::new(s))).collect()), files));
     }
+    if super::json_rules::is_policy_path(path) {
+        return json_program_shared(path);
+    }
     let (order, files) = program_order(path)?;
     // One handle on the tape cache for the files read (`phases::Reading`), not one each.
     let _reading = super::plan::corpus::phases::Reading::enter();
     let modules = order.into_iter().map(|p| Ok((p.clone(), read_shared(&p)?.0))).collect::<Result<Vec<_>, Error>>()?;
     Ok((Shared(modules), files))
+}
+
+/// A JSON policy (`rerail.policy/v1`, decision 0175), read as the `.rr` file it translates to: its text translated
+/// as it is read (`json_rules`), its `#include`s (library files only) resolved as a text's are (`resolve_shared`).
+/// The modules and the files read are in `program_shared`'s order: includes first and the file last; `core.rr`, the
+/// file (its JSON bytes' digest, so an edit reads it again), then the rest.
+fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
+    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let (bytes, digest) = super::plan::corpus::observe(|o| o.read(&path)).ok_or_else(|| Error::Syntax(format!("{}: cannot read the file", path.display())))?;
+    let file = LibraryFile { path: path.clone(), sha256: Some(digest) };
+    noted(&file);
+    let json = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let src = super::json_rules::Translator::new().translate_text(&json, &id).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let _reading = super::plan::corpus::phases::Reading::enter();
+    let statements = stored_statements(&path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let (modules, own) = resolve_shared(statements)?;
+    let core = library().join("core.rr").canonicalize().ok();
+    let (first, rest): (Vec<_>, Vec<_>) = modules.iter().partition(|(p, _, _)| Some(p) == core.as_ref());
+    let mut files: Vec<LibraryFile> = first.iter().map(|(p, d, _)| LibraryFile { path: p.clone(), sha256: Some(*d) }).collect();
+    files.push(file);
+    files.extend(rest.iter().map(|(p, d, _)| LibraryFile { path: p.clone(), sha256: Some(*d) }));
+    let mut shared: Vec<(PathBuf, std::sync::Arc<Vec<syntax::Statement>>)> = modules.into_iter().map(|(p, _, s)| (p, s)).collect();
+    shared.push((path, std::sync::Arc::new(own)));
+    Ok((Shared(shared), files))
 }
 
 /// `path` and what it includes, each once, as phase 0 found them: the reading order of the builtin reader.

@@ -1,0 +1,6 @@
+#!/usr/bin/python3
+"""Build scripts' C and C++ compiler (`CC`; `farm-c++` for `CXX`): clang through the farm's sccache (README.md)."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm
+farm.cc(sys.argv[0], sys.argv[1:])

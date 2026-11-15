@@ -13,7 +13,7 @@
       ],
       "parser": "tree-sitter",
       "grammar": "vendored:markdown",
-      "tapeTag": 19
+      "tapeTag": 22
     },
     {
       "label": "markdown-inline",
@@ -21,7 +21,7 @@
       "suffixes": [],
       "parser": "tree-sitter",
       "grammar": "vendored:markdown-inline",
-      "tapeTag": 20
+      "tapeTag": 23
     }
   ],
   "capabilities": {

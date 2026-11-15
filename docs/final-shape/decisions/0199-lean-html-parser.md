@@ -50,9 +50,12 @@ As fee488066 did for Java and C# (0195):
 
 | language | file | extensions | tape tag | grammar |
 |---|---|---|---:|---|
-| HTML | `languages/html.json` | `.html`, `.htm` | 17 | ast-grep's tree-sitter-html |
-| CSS | `languages/css.json` | `.css` | 18 | ast-grep's tree-sitter-css |
-| Markdown | `languages/markdown.json` | `.md`, `.markdown` | 19 | tree-sitter-md 0.5.4's block grammar, vendored |
+| HTML | `languages/html.json` | `.html`, `.htm` | 20 | ast-grep's tree-sitter-html |
+| CSS | `languages/css.json` | `.css` | 21 | ast-grep's tree-sitter-css |
+| Markdown | `languages/markdown.json` | `.md`, `.markdown` | 22 | tree-sitter-md 0.5.4's block grammar, vendored |
+
+The tags were 17, 18 and 19 when drafted; the hub had given those to ESLint directives, Java and C# (merged
+2026-11-14), so they are 20, 21 and 22 (Markdown's inline grammar 23).
 
 - Each has a feature (`lang-html`, `lang-css`, `lang-markdown`) in every crate, a grammar entry in
   `capabilities.json`, a token grammar for the implied-token tables, and an adapter
@@ -141,8 +144,8 @@ and tape.
 
 ## Open
 
-- **`script` and `style` contents:** closed by 0208, which reads them as JavaScript, JSON and CSS
+- **`script` and `style` contents:** closed by 0238, which reads them as JavaScript, JSON and CSS
   guest documents.
-- **Markdown's inline content:** closed by 0208 (guest documents of tree-sitter-md's inline grammar).
+- **Markdown's inline content:** closed by 0238 (guest documents of tree-sitter-md's inline grammar).
 - **The refusals listed above.** Each is a file tree-sitter reads instead; none is a wrong tape.
 - **CSS and Markdown lean parsers:** 0200 and 0201.

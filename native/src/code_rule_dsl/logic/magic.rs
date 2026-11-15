@@ -14,7 +14,7 @@
 //! - Gated negations (`Options::gate`): a negation that demand puts inside its own component waits for its relation's
 //!   `done_` gate, which the native engine opens once what the relation reads is quiet.
 
-use super::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
+use super::front::{AggOp, Atom, Edges, Error, Literal, Program, Rule, Term, Value, cmp_binds, components_of, join, strata, tarjan};
 use std::collections::{BTreeMap, BTreeSet};
 pub use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 
@@ -56,7 +56,7 @@ fn is_const(t: &Term) -> bool {
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args, neg: false, gated: false }
+    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
 }
 
 fn positive(l: &Literal) -> Option<&Atom> {
@@ -71,8 +71,8 @@ fn magic_true() -> Literal {
 }
 
 fn add_magic_true(prog: &mut Program) {
-    prog.decls.insert("magic_true".to_owned(), vec![("k".to_owned(), "int".to_owned())]);
-    prog.facts.entry("magic_true".to_owned()).or_default().push(vec![Value::Int(0)]);
+    prog.decls.insert("magic_true".to_owned().into(), [("k".into(), "int".into())].into());
+    prog.facts.entry("magic_true".to_owned()).or_default().push([Value::Int(0)].into());
 }
 
 /// The variables `l` binds once it runs, or `None` if it cannot run yet (the planner's `ready`).
@@ -146,7 +146,7 @@ pub fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
         let Some(Term::Var(key)) = rule.head.args.first() else { return false };
         rule.body.iter().any(|l| match l {
             Literal::Nearest { n, .. } => n == key,
-            Literal::Atom(a) => !a.neg && a.rel.starts_with(super::front::AXIS) && a.args.first() == Some(&Term::Var(key.clone())),
+            Literal::Atom(a) => !a.neg && a.rel.starts_with(super::front::AXIS) && a.args.first() == Some(&Term::Var(key.clone().into())),
             _ => false,
         })
     };
@@ -166,7 +166,7 @@ pub fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
                 continue;
             }
             let Some(Term::Var(key)) = a.args.first() else { continue };
-            let only_key = |b: &Atom| !b.neg && prog.inputs.iter().any(|x| x == &b.rel) && b.vars().iter().all(|v| v == key) && b.vars().contains(key);
+            let only_key = |b: &Atom| !b.neg && prog.inputs.iter().any(|x| x == &b.rel) && b.vars().iter().all(|v| v == key) && b.vars().contains(key.as_str());
             let atoms: Vec<Literal> = rule
                 .body
                 .iter()
@@ -189,13 +189,13 @@ pub fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
     let mut prog = prog;
     for rel in &demand {
         let name = format!("demand_{rel}");
-        let ty = prog.decls[rel][0].1.clone();
-        prog.decls.insert(name.clone(), vec![("k".to_owned(), ty)]);
+        let ty = prog.decls[rel.as_str()][0].1.clone();
+        prog.decls.insert(name.clone().into(), [("k".into(), ty)].into());
         let mut bodies = wanted.remove(rel).unwrap_or_default();
         bodies.sort_by_key(|b| format!("{b:?}"));
         bodies.dedup();
         for body in bodies {
-            prog.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".to_owned())]), body });
+            prog.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".into())]), body: body.into() });
         }
         for rule in prog.rules.iter_mut().filter(|r| &r.head.rel == rel) {
             let key = rule.head.args[0].clone();
@@ -207,7 +207,7 @@ pub fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
 
 /// `a` with the variable `from` renamed `to`.
 fn rename_atom(a: &Atom, from: &str, to: &str) -> Atom {
-    let args = a.args.iter().map(|t| if matches!(t, Term::Var(v) if v == from) { Term::Var(to.to_owned()) } else { t.clone() }).collect();
+    let args = a.args.iter().map(|t| if matches!(t, Term::Var(v) if v == from) { Term::Var(to.to_owned().into()) } else { t.clone() }).collect();
     Atom { args, ..a.clone() }
 }
 
@@ -251,7 +251,7 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
     if prog.demand.is_empty() {
         return Ok(prog);
     }
-    let (sccs, _) = strata(&prog)?;
+    let sccs = components_of(&prog)?;
     let comp: BTreeMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
     let demanded = |r: &str| prog.demand.iter().any(|d| d == r);
     let (mut rules, mut magic) = (Vec::new(), Vec::<(Atom, Vec<(Literal, bool)>)>::new());
@@ -297,11 +297,11 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
             body.push(Literal::Atom(atom(format!("magic_{}", h.rel), vec![h.args[0].clone()])));
         }
         body.extend(rule.body.iter().cloned());
-        rules.push(Rule { head: h.clone(), body });
+        rules.push(Rule { head: h.clone(), body: body.into() });
     }
     for r in prog.demand.clone() {
-        let ty = prog.decls[&r][0].1.clone();
-        prog.decls.insert(format!("magic_{r}"), vec![("k".to_owned(), ty)]);
+        let ty = prog.decls[r.as_str()][0].1.clone();
+        prog.decls.insert(format!("magic_{r}").into(), [("k".into(), ty)].into());
     }
     add_magic_true(&mut prog);
     let mut keep: Vec<Vec<bool>> = magic.iter().map(|(_, pre)| pre.iter().map(|(_, extra)| !extra).collect()).collect();
@@ -336,14 +336,14 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
             if body.is_empty() {
                 body.push(magic_true());
             }
-            out.push(Rule { head: mh.clone(), body });
+            out.push(Rule { head: mh.clone(), body: body.into() });
         }
         out.extend(rules.iter().cloned());
         Ok(out)
     };
     // Greedy: start from no extras (always stratifiable) and keep each extra that leaves the program stratifiable.
     prog.rules = build(&keep)?;
-    strata(&prog)?;
+    components_of(&prog)?;
     for i in 0..magic.len() {
         for j in 0..magic[i].1.len() {
             if !magic[i].1[j].1 || options.coarse {
@@ -351,7 +351,7 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
             }
             keep[i][j] = true;
             prog.rules = build(&keep)?;
-            match strata(&prog) {
+            match components_of(&prog) {
                 Ok(_) => {}
                 Err(e) if e.unstratified().is_some() => keep[i][j] = false,
                 Err(e) => return Err(e),
@@ -417,7 +417,7 @@ pub fn magic_adorn(prog: Program, options: &Options) -> Result<Program, Error> {
     let mut full: BTreeSet<String> = options.exclude.iter().cloned().collect();
     // A relation that aggregates is computed in full: guarded, its count would join its demand's recursive component.
     full.extend(prog.rules.iter().filter(|r| r.body.iter().any(|l| matches!(l, Literal::Agg { .. }))).map(|r| r.head.rel.to_string()));
-    let (sccs, _) = strata(&prog)?;
+    let sccs = components_of(&prog)?;
     let level: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
     let mut cyc = Vec::new();
     loop {
@@ -484,7 +484,7 @@ impl Adorn<'_> {
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let b = i < keyed && (is_const(t) || matches!(t, Term::Var(v) if bound.contains(v)));
+                let b = i < keyed && (is_const(t) || matches!(t, Term::Var(v) if bound.contains(v.as_str())));
                 if b { 'b' } else { 'f' }
             })
             .collect()
@@ -525,12 +525,12 @@ impl Adorn<'_> {
                 }
                 let mut t = t.clone();
                 if let Term::Call(..) = t {
-                    let v = Term::Var(format!("_m{}", extra.len()));
+                    let v = Term::Var(format!("_m{}", extra.len()).into());
                     extra.push(Literal::Cmp { l: v.clone(), op: "=", r: t });
                     t = v;
                 }
                 if let Term::Var(v) = t {
-                    bound.insert(v);
+                    bound.insert(v.to_string());
                 }
             }
             let mut body = rule.body.clone();
@@ -580,7 +580,7 @@ impl Adorn<'_> {
                 return None;
             }
             let a = |i: usize| positive(&rest[i]).expect("a positive atom");
-            let first = |i: usize| is_const(&a(i).args[0]) || matches!(&a(i).args[0], Term::Var(v) if bound.contains(v));
+            let first = |i: usize| is_const(&a(i).args[0]) || matches!(&a(i).args[0], Term::Var(v) if bound.contains(v.as_str()));
             let derived = |i: usize| self.idb.contains(a(i).rel.as_str());
             let joined: Vec<usize> = pos.iter().copied().filter(|&i| !a(i).vars().is_disjoint(&bound)).collect();
             let lowest = |ix: &[usize], key: &dyn Fn(usize) -> i64| {
@@ -634,7 +634,7 @@ impl Adorn<'_> {
                         }
                         let mut t = t.clone();
                         if let Term::Call(..) = t {
-                            let v = Term::Var(format!("_m{}", calls.len()));
+                            let v = Term::Var(format!("_m{}", calls.len()).into());
                             calls.push(Literal::Cmp { l: v.clone(), op: "=", r: t });
                             t = v;
                         }
@@ -679,7 +679,7 @@ impl Adorn<'_> {
                 let mut out = Vec::new();
                 out.extend(guard.map(Literal::Atom));
                 out.extend(body);
-                rules.push(Rule { head: rule.head.clone(), body: out });
+                rules.push(Rule { head: rule.head.clone(), body: out.into() });
             }
         }
         Ok((rules, magic, seen))
@@ -714,80 +714,85 @@ impl Adorn<'_> {
         };
         for (rel, ad) in &seen {
             if ad.contains('b') {
-                let cols = self.prog.decls[rel].iter().zip(ad.bytes()).filter(|(_, x)| *x == b'b').map(|(c, _)| c.clone()).collect();
-                self.prog.decls.insert(format!("magic_{rel}_{ad}"), cols);
+                let cols = self.prog.decls[rel.as_str()].iter().zip(ad.bytes()).filter(|(_, x)| *x == b'b').map(|(c, _)| c.clone()).collect();
+                self.prog.decls.insert(format!("magic_{rel}_{ad}").into(), cols);
             }
         }
         add_magic_true(&mut self.prog);
         let mut keep: Vec<Vec<bool>> = magic.iter().map(|(_, pre)| pre.iter().map(|(_, extra)| !extra).collect()).collect();
         let views: Vec<Rule> = self.prog.rules.iter().filter(|r| !self.idb.contains(r.head.rel.as_str())).cloned().collect();
+        // One magic rule's body, as `ks` keeps its literals.
+        let one = |mh: &Atom, pre: &[(Literal, bool)], ks: &[bool]| -> Result<Vec<Literal>, Error> {
+            // A left-out literal that binds a key variable, or what such a literal needs, stays.
+            let key = vars_all(&mh.args);
+            let (mut ks, mut need) = (ks.to_vec(), key.clone());
+            for i in (0..pre.len()).rev() {
+                let l = &pre[i].0;
+                let gives = match l {
+                    Literal::Atom(a) if !a.neg => l.vars(),
+                    Literal::Nearest { .. } => l.vars(),
+                    Literal::Cmp { l: Term::Var(_), op: "=", r } if r.is_cat() => l.vars(),
+                    Literal::Cmp { l: Term::Var(v), op: "=", .. } => BTreeSet::from([v.to_string()]),
+                    _ => BTreeSet::new(),
+                };
+                if gives.is_disjoint(&need) {
+                    continue;
+                }
+                ks[i] = true;
+                // A split gives its parts from the whole, and the whole from its parts.
+                let split = match l {
+                    Literal::Cmp { l: Term::Var(v), r, .. } if r.is_cat() && !vars(r).is_disjoint(&need) => BTreeSet::from([v.to_string()]),
+                    _ => BTreeSet::new(),
+                };
+                let climb = matches!(l, Literal::Nearest { a, .. } if need.contains(a));
+                need.retain(|v| !gives.contains(v));
+                match l {
+                    Literal::Nearest { n, a, .. } => {
+                        need.insert(if climb { n.clone() } else { a.clone() });
+                    }
+                    Literal::Cmp { r, .. } => need.extend(if split.is_empty() { vars(r) } else { split }),
+                    _ => {}
+                }
+            }
+            let (mut bound, mut body) = (BTreeSet::new(), Vec::new());
+            for ((l, _), k) in pre.iter().zip(&ks) {
+                if !k {
+                    continue;
+                }
+                if let Some(a) = positive(l) {
+                    body.push(l.clone());
+                    bound.extend(a.vars());
+                } else if let Some(b) = binds(l, &bound) {
+                    body.push(l.clone());
+                    bound.extend(b);
+                }
+            }
+            if !key.is_subset(&bound) {
+                let pre: Vec<Literal> = pre.iter().map(|p| p.0.clone()).collect();
+                return Err(Error::UnboundDemand {
+                    message: format!("demand for {} is unbound: [{}]", mh.rel, join(&pre)),
+                    relation: mh.rel.to_string(),
+                });
+            }
+            Ok(body)
+        };
         let build = |keep: &[Vec<bool>]| -> Result<Vec<Rule>, Error> {
             // Keyed by T's repr of (head, body): the first of equal magic rules stays.
             let (mut out, mut keys) = (Vec::new(), BTreeSet::new());
             for ((mh, pre), ks) in magic.iter().zip(keep) {
-                // A left-out literal that binds a key variable, or what such a literal needs, stays.
-                let key = vars_all(&mh.args);
-                let (mut ks, mut need) = (ks.clone(), key.clone());
-                for i in (0..pre.len()).rev() {
-                    let l = &pre[i].0;
-                    let gives = match l {
-                        Literal::Atom(a) if !a.neg => l.vars(),
-                        Literal::Nearest { .. } => l.vars(),
-                        Literal::Cmp { l: Term::Var(_), op: "=", r } if r.is_cat() => l.vars(),
-                        Literal::Cmp { l: Term::Var(v), op: "=", .. } => BTreeSet::from([v.clone()]),
-                        _ => BTreeSet::new(),
-                    };
-                    if gives.is_disjoint(&need) {
-                        continue;
-                    }
-                    ks[i] = true;
-                    // A split gives its parts from the whole, and the whole from its parts.
-                    let split = match l {
-                        Literal::Cmp { l: Term::Var(v), r, .. } if r.is_cat() && !vars(r).is_disjoint(&need) => BTreeSet::from([v.clone()]),
-                        _ => BTreeSet::new(),
-                    };
-                    let climb = matches!(l, Literal::Nearest { a, .. } if need.contains(a));
-                    need.retain(|v| !gives.contains(v));
-                    match l {
-                        Literal::Nearest { n, a, .. } => {
-                            need.insert(if climb { n.clone() } else { a.clone() });
-                        }
-                        Literal::Cmp { r, .. } => need.extend(if split.is_empty() { vars(r) } else { split }),
-                        _ => {}
-                    }
-                }
-                let (mut bound, mut body) = (BTreeSet::new(), Vec::new());
-                for ((l, _), k) in pre.iter().zip(&ks) {
-                    if !k {
-                        continue;
-                    }
-                    if let Some(a) = positive(l) {
-                        body.push(l.clone());
-                        bound.extend(a.vars());
-                    } else if let Some(b) = binds(l, &bound) {
-                        body.push(l.clone());
-                        bound.extend(b);
-                    }
-                }
-                if !key.is_subset(&bound) {
-                    let pre: Vec<Literal> = pre.iter().map(|p| p.0.clone()).collect();
-                    return Err(Error::UnboundDemand {
-                        message: format!("demand for {} is unbound: [{}]", mh.rel, join(&pre)),
-                        relation: mh.rel.to_string(),
-                    });
-                }
+                let mut body = one(mh, pre, ks)?;
                 if keys.insert(format!("{mh} {}", join(&body))) {
                     if body.is_empty() {
                         body.push(magic_true());
                     }
-                    out.push(Rule { head: mh.clone(), body });
+                    out.push(Rule { head: mh.clone(), body: body.into() });
                 }
             }
             out.extend(rules.iter().cloned());
             out.extend(views.iter().cloned());
             Ok(out)
         };
-        let settle = |this: &mut Self, keep: &[Vec<bool>]| -> Result<(), Error> {
+        let settle = |this: &mut Self, keep: &[Vec<bool>]| -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
             this.prog.rules = build(keep)?;
             this.prog.gates.clear();
             match strata(&this.prog) {
@@ -796,12 +801,12 @@ impl Adorn<'_> {
                         return Err(e);
                     }
                     this.gate_negations(&full, &coarse)?;
-                    strata(&this.prog).map(drop)
+                    strata(&this.prog)
                 }
-                other => other.map(drop),
+                other => other,
             }
         };
-        if let Err(error) = settle(&mut self, &keep) {
+        let settled = match settle(&mut self, &keep) { Ok(settled) => settled, Err(error) => {
             let Some((scc, _)) = error.unstratified() else { return Err(Attempt::Failed(error)) };
             let negs = self
                 .prog
@@ -815,16 +820,60 @@ impl Adorn<'_> {
                 .map(|a| a.rel.to_string())
                 .collect();
             return Err(Attempt::Cycle { error, negs });
-        }
+        } };
+        // Each trial keeps one more literal of one magic rule, which adds edges from that rule's head. The last whole
+        // check's components, dependencies first, tell which edges leave them as they were: one into an earlier
+        // component (nothing there reaches the head), or a positive one inside a component no negation closes. A
+        // literal whose new edges are all such keeps the program stratified, as that check found it, and is kept
+        // without building and stratifying the program again. Any other literal is checked whole, as before (and every
+        // one is with gates, which a positive edge can unsettle). `RERAIL_MAGIC_CHECK=1` checks every one whole too.
+        let places = |settled: &(Vec<BTreeSet<String>>, Edges)| -> (BTreeMap<String, usize>, BTreeSet<usize>) {
+            let (sccs, edges) = settled;
+            let comp: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
+            let negated = edges
+                .iter()
+                .filter_map(|(v, ws)| comp.get(v).map(|c| (*c, ws)))
+                .filter(|(c, ws)| ws.iter().any(|(w, neg)| *neg && comp.get(w) == Some(c)))
+                .map(|(c, _)| c)
+                .collect();
+            (comp, negated)
+        };
+        let (mut comp, mut negated) = places(&settled);
+        let whole_check = std::env::var_os("RERAIL_MAGIC_CHECK").is_some();
+        let edges_of = |body: &[Literal], comp: &BTreeMap<String, usize>| -> BTreeSet<(String, bool)> {
+            body.iter()
+                .filter_map(|l| l.atom().filter(|a| comp.contains_key(a.rel.as_str())).map(|a| (a.rel.to_string(), a.neg || matches!(l, Literal::Agg { .. }))))
+                .collect()
+        };
         for i in 0..magic.len() {
             for j in 0..magic[i].1.len() {
                 if !magic[i].1[j].1 {
                     continue;
                 }
+                let (mh, pre) = &magic[i];
+                let before = one(mh, pre, &keep[i]);
                 keep[i][j] = true;
+                let after = one(mh, pre, &keep[i]);
+                let unchanged = !self.options.gate
+                    && comp.get(mh.rel.as_str()).is_some_and(|&head| match (&before, &after) {
+                        (Ok(before), Ok(after)) => {
+                            let was = edges_of(before, &comp);
+                            edges_of(after, &comp).difference(&was).all(|(w, neg)| {
+                                let at = comp[w];
+                                at < head || (at == head && !*neg && !negated.contains(&head))
+                            })
+                        }
+                        _ => false,
+                    });
+                if unchanged && !whole_check {
+                    continue;
+                }
                 match settle(&mut self, &keep) {
-                    Ok(()) => {}
-                    Err(e) if e.unstratified().is_some() => keep[i][j] = false,
+                    Ok(settled) => (comp, negated) = places(&settled),
+                    Err(e) if e.unstratified().is_some() => {
+                        assert!(!unchanged, "magic: a literal kept without a whole check unstratifies the program: {e}");
+                        keep[i][j] = false
+                    }
                     Err(e) => return Err(Attempt::Failed(e)),
                 }
             }
@@ -932,20 +981,20 @@ impl Adorn<'_> {
                 nb.push(Literal::Atom(g));
                 nb.push(n);
             }
-            rules.push(Rule { head: r.head, body: nb });
+            rules.push(Rule { head: r.head, body: nb.into() });
         }
         let names: BTreeSet<String> = gates.iter().map(|(n, _)| n.clone()).collect();
         for i in 0..gates.len() {
             let (done, g) = gates[i].clone();
             if let Some(src) = &g.src {
-                let cols = self.prog.decls[src].clone();
-                let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}"))).collect();
-                self.prog.decls.insert(done.clone(), cols);
-                rules.push(Rule { head: atom(done.clone(), vs.clone()), body: vec![Literal::Atom(atom(src.clone(), vs))] });
+                let cols = self.prog.decls[src.as_str()].clone();
+                let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}").into())).collect();
+                self.prog.decls.insert(done.clone().into(), cols);
+                rules.push(Rule { head: atom(done.clone(), vs.clone()), body: [Literal::Atom(atom(src.clone(), vs))].into() });
             } else {
-                self.prog.decls.insert(done.clone(), vec![("k".to_owned(), "int".to_owned())]);
-                let wild = vec![Term::Wild; self.prog.decls[&g.rel].len()];
-                rules.push(Rule { head: atom(done.clone(), vec![Term::Int(0)]), body: vec![Literal::Atom(atom(g.rel.clone(), wild))] });
+                self.prog.decls.insert(done.clone().into(), [("k".into(), "int".into())].into());
+                let wild = vec![Term::Wild; self.prog.decls[g.rel.as_str()].len()];
+                rules.push(Rule { head: atom(done.clone(), vec![Term::Int(0)]), body: [Literal::Atom(atom(g.rel.clone(), wild))].into() });
             }
             let (mut reach, mut todo) = (BTreeSet::new(), vec![g.rel.clone()]);
             while let Some(v) = todo.pop() {

@@ -329,6 +329,70 @@ export const LANGUAGE_REGISTRY = /* registry */ [
   },
   {
     "format": "rerail.language/v1",
+    "id": "python-format",
+    "status": "supported",
+    "family": "format",
+    "dialects": [
+      {
+        "label": "percent-format",
+        "variant": "PercentFormat",
+        "suffixes": [
+          ".percent-format"
+        ],
+        "parser": "literal",
+        "grammar": "native:percent-format",
+        "tapeTag": 15
+      },
+      {
+        "label": "brace-format",
+        "variant": "BraceFormat",
+        "suffixes": [
+          ".brace-format"
+        ],
+        "parser": "literal",
+        "grammar": "native:brace-format",
+        "tapeTag": 16
+      }
+    ],
+    "builtWith": "python",
+    "capabilities": {
+      "scope": "refused",
+      "value": "refused",
+      "arguments": "refused",
+      "calls": "refused",
+      "formatArgs": "refused"
+    },
+    "suppressions": []
+  },
+  {
+    "format": "rerail.language/v1",
+    "id": "eslint-directive",
+    "status": "supported",
+    "family": "format",
+    "dialects": [
+      {
+        "label": "eslint-directive",
+        "variant": "EslintDirective",
+        "suffixes": [
+          ".eslint-directive"
+        ],
+        "parser": "literal",
+        "grammar": "native:eslint-directive",
+        "tapeTag": 17
+      }
+    ],
+    "builtWith": "typescript",
+    "capabilities": {
+      "scope": "refused",
+      "value": "refused",
+      "arguments": "refused",
+      "calls": "refused",
+      "formatArgs": "refused"
+    },
+    "suppressions": []
+  },
+  {
+    "format": "rerail.language/v1",
     "id": "java",
     "status": "supported",
     "family": "java",
@@ -341,7 +405,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         ],
         "parser": "tree-sitter",
         "grammar": "ast-grep:Java",
-        "tapeTag": 15
+        "tapeTag": 18
       }
     ],
     "capabilities": {
@@ -367,7 +431,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         ],
         "parser": "tree-sitter",
         "grammar": "ast-grep:CSharp",
-        "tapeTag": 16
+        "tapeTag": 19
       }
     ],
     "capabilities": {
@@ -394,7 +458,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         ],
         "parser": "tree-sitter",
         "grammar": "ast-grep:Html",
-        "tapeTag": 17
+        "tapeTag": 20
       }
     ],
     "capabilities": {
@@ -420,7 +484,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         ],
         "parser": "tree-sitter",
         "grammar": "ast-grep:Css",
-        "tapeTag": 18
+        "tapeTag": 21
       }
     ],
     "capabilities": {
@@ -447,7 +511,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         ],
         "parser": "tree-sitter",
         "grammar": "vendored:markdown",
-        "tapeTag": 19
+        "tapeTag": 22
       },
       {
         "label": "markdown-inline",
@@ -455,7 +519,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "suffixes": [],
         "parser": "tree-sitter",
         "grammar": "vendored:markdown-inline",
-        "tapeTag": 20
+        "tapeTag": 23
       }
     ],
     "capabilities": {
@@ -470,13 +534,13 @@ export const LANGUAGE_REGISTRY = /* registry */ [
 ] /* end registry */ as const;
 
 /** Every language a rule may name: supported, then planned. */
-export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp", "html", "css", "markdown"] as const;
+export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "python-format", "eslint-directive", "java", "csharp", "html", "css", "markdown"] as const;
 /** The languages the engine reads. */
-export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp", "html", "css", "markdown"] as const;
+export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "python-format", "eslint-directive", "java", "csharp", "html", "css", "markdown"] as const;
 /** The languages a rule may name that the engine does not read yet. */
 export const CODE_RULE_PLANNED_LANGUAGES = [] as const;
 /** The semantic families of the supported languages. */
-export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp", "html", "css", "markdown"] as const;
+export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade", "rust", "sql", "vue", "rr", "json", "format", "java", "csharp", "html", "css", "markdown"] as const;
 /** The capabilities every entry declares support for. */
 export const CODE_RULE_SEMANTIC_CAPABILITIES = ["scope", "value", "arguments", "calls", "formatArgs"] as const;
 /** The suppression comments the supported languages honour. */

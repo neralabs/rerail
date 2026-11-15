@@ -4,8 +4,8 @@
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in tree-sitter-python
 //! (`rerail_python_lean::{KINDS, FIELDS, CLASSES}`); here they are its ids. A file the parser refuses
-//! (any syntax error, which tree-sitter recovers from; a construct it does not read) goes to
-//! tree-sitter-python.
+//! (any syntax error, the text's end included, which tree-sitter recovers from; a construct it does
+//! not read) goes to tree-sitter-python (decision 0163, amended).
 
 use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
 

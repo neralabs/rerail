@@ -1,4 +1,4 @@
-# 0108: The per-file memo is frames
+# 0146: The per-file memo is frames
 
 Status: accepted (2026-11-10). It builds t32 stage 5.1 and 5.2, and 0104's move 3 for the per-file memo, on
 this branch rather than More-ergonomic-rule-syntax, so that the work does not wait.
@@ -65,6 +65,9 @@ the key: ids are the store's own and may be given out again once collected, and 
 The frame's reads hold the digest and the path in full, so a part that collides with another content's is a miss.
 
 ## 4. What collects an entry
+
+Superseded in part by decision 0227: disuse no longer collects an entry; an entry goes once no kept manifest holds
+a source of its content.
 
 - **Its plan's death.** A plan no kept manifest names is dead (0053); collection deletes the plan's space with
   its other rows.

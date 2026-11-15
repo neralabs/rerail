@@ -1,0 +1,83 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up004-useless-object-inheritance",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Omit object from a class's base list; every Python 3 class already inherits from it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "useless-object-inheritance",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "in-bases": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "class_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "name",
+                        "kind": "identifier",
+                        "pattern": "$NAME"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "in-bases"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "global": [
+                "object"
+              ],
+              "import": [
+                "builtins.object"
+              ]
+            },
+            "matches": "in-bases"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP004",
+        "message": "Remove `object` from the bases of `$NAME`; Python 3 classes inherit from it already. Keep it only if the code must still run on Python 2.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP004"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

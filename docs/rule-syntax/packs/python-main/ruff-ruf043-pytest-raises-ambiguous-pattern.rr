@@ -1,0 +1,57 @@
+.policy "ruff-ruf043-pytest-raises-ambiguous-pattern" revision 1
+.guests off
+.description "Use a raw string or re.escape for the match pattern of pytest.raises; a plain string with regex special characters hides whether a regex or literal text was meant."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/names.rr"
+
+// RUF043(n): a finding at node n, from clause `ambiguous-pattern`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF043(at: node) "This `match=` string has regex special characters: make it a raw string (writing doubled backslashes once) if it is a regex, or wrap it in `re.escape(...)` if it is literal text."
+    suppress noqa "RUF043"
+RUF043(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    count : { has(n, c1, "string_start"), glob("**[rRbBfFtT]**", c1) } = 0,
+    value(n, v2), match("(?:[^\\\\.^$*+?{\\[|()]|\\\\[^AbBdDsSwWzZ])*(?:[.^$*+?{\\[|()]|\\\\[AbBdDsSwWzZ]).*", v2),
+    ruf043_match_slot(n).
+
+// raises(n): the JSON util `raises`, used where the JSON says `matches: "raises"`
+.decl ruf043_raises(n: node)
+ruf043_raises(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf043_raises(c1).
+ruf043_raises(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.raises").
+
+// match_slot(n): the JSON util `match-slot`, used where the JSON says `matches: "match-slot"`
+.decl ruf043_match_slot(n: node)
+ruf043_match_slot(n) :- field(p1, "value", n), kind(p1, "keyword_argument"), ruf043_tok_has_1(p1),
+    count : { precedes(s10, p1), kind(s10, "keyword_argument"), ruf043_tok_has_2(s10) } = 0,
+    child(p19, p1, _), kind(p19, "argument_list"), field(p20, "arguments", p19),
+    kind(p20, "call"), field(p20, "function", c21), ruf043_raises(c21).
+ruf043_match_slot(n) :- child(p22, n, _), kind(p22, "parenthesized_expression"),
+    ruf043_match_slot(p22).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^match$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf043_tok_has_1(n: node)
+.stored ruf043_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf043_tok_has_1(n) :- field(n, "name", c2), glob("match", c2).
+ruf043_tok_has_1(n) :- op(n, t3), match("match", t3).
+ruf043_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g4).
+ruf043_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g4).
+ruf043_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^match$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf043_tok_has_2(n: node)
+.stored ruf043_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf043_tok_has_2(n) :- field(n, "name", c11), glob("match", c11).
+ruf043_tok_has_2(n) :- op(n, t12), match("match", t12).
+ruf043_tok_has_2(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g13).
+ruf043_tok_has_2(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g13).
+ruf043_tok_has_2(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g13).

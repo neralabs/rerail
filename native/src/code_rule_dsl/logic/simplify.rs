@@ -41,8 +41,11 @@
 //!   they are the same as another's. Outputs, inputs, lattices, relations with facts and demanded relations are kept
 //!   as they are.
 
-use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use super::front::{AggOp, Atom, Literal, Name, Program, Rule, Term, Value};
+use std::collections::{BTreeMap, BTreeSet};
+// FxHash: these maps are keyed by names and rule shapes in the whole-program passes, where std's SipHash was 5% of
+// a cold batch's main thread. Their order was already random (std's hasher is seeded per process).
+use rustc_hash::FxHashMap as HashMap;
 
 /// What was simplified.
 #[derive(Debug, Default, PartialEq)]
@@ -90,10 +93,9 @@ pub fn simplify(prog: &mut Program) -> Report {
     report.constants += ground_rules(prog);
     report.constants += decided_fact_tests(prog);
     // `RERAIL_EXISTENCE_COUNTS=off`: existence counts stay counts, for comparison.
+    use rayon::prelude::*;
     if std::env::var("RERAIL_EXISTENCE_COUNTS").map_or(true, |v| v != "off") {
-        for rule in &mut prog.rules {
-            report.existence += existence_as_reads(rule);
-        }
+        report.existence += prog.rules.par_iter_mut().map(existence_as_reads).sum::<usize>();
     }
     report.inlined = inline_node_tests(prog);
     // `RERAIL_INLINE_FILTERS=off`: filters are built, for comparison.
@@ -102,20 +104,34 @@ pub fn simplify(prog: &mut Program) -> Report {
     }
     // `RERAIL_JOIN_KEYS=off`: no concatenation runs backwards and no relation is keyed by a function, for comparison.
     let join_keys = std::env::var("RERAIL_JOIN_KEYS").map_or(true, |v| v != "off");
-    for rule in &mut prog.rules {
-        if join_keys {
-            report.inverses += concat_inverses(rule);
-        }
-        cat_variables(rule);
-        report.constants += fold_constants(rule);
-        report.within += span_containment(rule);
-        report.keyed += merge_keyed(rule);
-        report.singletons += wild_singletons(rule);
-        report.kind_tests += drop_kind_tests(rule, &prog.kindsets, &prog.decls);
-        report.implied += drop_implied(rule);
-    }
+    // Each rule rewritten alone, on the pool's threads: each pass reads only its rule (and the kind sets and
+    // declarations, which none changes).
+    let (kindsets, decls) = (&prog.kindsets, &prog.decls);
+    let counts = prog
+        .rules
+        .par_iter_mut()
+        .map(|rule| {
+            let inverses = if join_keys { concat_inverses(rule) } else { 0 };
+            cat_variables(rule);
+            let constants = fold_constants(rule);
+            let within = span_containment(rule);
+            let keyed = merge_keyed(rule);
+            let singletons = wild_singletons(rule);
+            let kind_tests = drop_kind_tests(rule, kindsets, decls);
+            let implied = drop_implied(rule);
+            [inverses, constants, within, keyed, singletons, kind_tests, implied]
+        })
+        .reduce(|| [0; 7], |a, b| std::array::from_fn(|i| a[i] + b[i]));
+    let [inverses, constants, within, keyed, singletons, kind_tests, implied] = counts;
+    report.inverses += inverses;
+    report.constants += constants;
+    report.within += within;
+    report.keyed += keyed;
+    report.singletons += singletons;
+    report.kind_tests += kind_tests;
+    report.implied += implied;
     if report.within > 0 && !prog.decls.contains_key(SPAN_WITHIN) {
-        prog.decls.insert(SPAN_WITHIN.to_owned(), vec![("inner".to_owned(), "node".to_owned()), ("outer".to_owned(), "node".to_owned())]);
+        prog.decls.insert(SPAN_WITHIN.to_owned().into(), [("inner".into(), "node".into()), ("outer".into(), "node".into())].into());
         prog.inputs.push(SPAN_WITHIN.to_owned());
     }
     if join_keys {
@@ -125,8 +141,9 @@ pub fn simplify(prog: &mut Program) -> Report {
     report.climbs = climbs_as_axes(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
-        for rule in &mut prog.rules {
-            report.implied += drop_implied(rule);
+        report.implied += prog.rules.par_iter_mut().map(drop_implied).sum::<usize>();
+        if super::profile::on() {
+            similar_relations(prog, &mut report);
         }
     }
     report.unread = drop_unread(prog);
@@ -182,7 +199,7 @@ const WITHIN: &str = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
 /// more. A join of every pair of a file's nodes becomes a walk of the tree (`syntax::within`). Returns the pairs
 /// replaced.
 fn span_containment(rule: &mut Rule) -> usize {
-    let var = |t: &Term| if let Term::Var(v) = t { Some(v.clone()) } else { None };
+    let var = |t: &Term| if let Term::Var(v) = t { Some(v.to_string()) } else { None };
     // (d, n, start, end) of each positive node atom with variables there.
     let nodes: Vec<(String, String, String, String)> = rule
         .body
@@ -197,8 +214,8 @@ fn span_containment(rule: &mut Rule) -> usize {
     // `x <= y` as written, either way round.
     let le = |l: &Literal| -> Option<(String, String)> {
         match l {
-            Literal::Cmp { l, op: "<=", r } => Some((var(l)?, var(r)?)),
-            Literal::Cmp { l, op: ">=", r } => Some((var(r)?, var(l)?)),
+            Literal::Cmp { l, op: "<=", r } => Some((var(l)?.to_string(), var(r)?.to_string())),
+            Literal::Cmp { l, op: ">=", r } => Some((var(r)?.to_string(), var(l)?.to_string())),
             _ => None,
         }
     };
@@ -211,8 +228,8 @@ fn span_containment(rule: &mut Rule) -> usize {
             let starts = rule.body.iter().position(|l| le(l) == Some((outer.2.clone(), inner.2.clone())));
             let ends = rule.body.iter().position(|l| le(l) == Some((inner.3.clone(), outer.3.clone())));
             let (Some(starts), Some(ends)) = (starts, ends) else { continue };
-            let within = Literal::Atom(Atom { rel: SPAN_WITHIN.to_owned().into(), args: vec![Term::Var(inner.1.clone()), Term::Var(outer.1.clone())], neg: false, gated: false });
-            rule.body[starts.min(ends)] = within;
+            let within = Literal::Atom(Atom { rel: SPAN_WITHIN.to_owned().into(), args: [Term::Var(inner.1.clone().into()), Term::Var(outer.1.clone().into())].into(), neg: false, gated: false });
+            rule.body.make_mut()[starts.min(ends)] = within;
             rule.body.remove(starts.max(ends));
             made += 1;
             // The rule changed: look again for another pair.
@@ -232,7 +249,7 @@ fn project_existentials(prog: &mut Program) -> Vec<String> {
         let mut next = made.len();
         let name = loop {
             let name = format!("exists_{next}");
-            if !prog.decls.contains_key(&name) {
+            if !prog.decls.contains_key(name.as_str()) {
                 break name;
             }
             next += 1;
@@ -240,7 +257,7 @@ fn project_existentials(prog: &mut Program) -> Vec<String> {
         match existential(&mut prog.rules[at], &name, &prog.decls) {
             // The same rule again: it may have another such part.
             Some((rule, columns)) => {
-                prog.decls.insert(name.clone(), columns);
+                prog.decls.insert(name.clone().into(), columns.iter().map(|(c, t)| (c.into(), t.into())).collect());
                 prog.rules.push(rule);
                 made.push(name);
             }
@@ -252,7 +269,7 @@ fn project_existentials(prog: &mut Program) -> Vec<String> {
 
 /// The first part of `rule`'s body that meets the rest and the head only at one document variable, replaced by
 /// `name($d)`: that relation's rule and columns.
-fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String, String)>>) -> Option<(Rule, Vec<(String, String)>)> {
+fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>>) -> Option<(Rule, Vec<(Name, Name)>)> {
     let mut head = BTreeSet::new();
     rule.head.args.iter().for_each(|t| t.vars(&mut head));
     let docs: BTreeSet<String> = rule
@@ -265,7 +282,7 @@ fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String
             },
             _ => None,
         })
-        .collect();
+        .map(String::from).collect();
     let vars: Vec<BTreeSet<String>> = rule.body.iter().map(Literal::vars).collect();
     for d in &docs {
         // Parts: literals joined by a shared variable other than `$d`.
@@ -278,7 +295,7 @@ fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String
             part[i] = r;
             r
         }
-        let mut first: HashMap<&str, usize> = HashMap::new();
+        let mut first: HashMap<&str, usize> = HashMap::default();
         for (i, vs) in vars.iter().enumerate() {
             for v in vs.iter().filter(|v| *v != d) {
                 match first.get(v.as_str()) {
@@ -323,7 +340,7 @@ fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String
                 Literal::Atom(a) if !a.neg => a.args.iter().position(|t| matches!(t, Term::Var(v) if v == d)).and_then(|c| Some(decls.get(a.rel.as_str())?.get(c)?.1.clone())),
                 _ => None,
             })?;
-            let atom = |neg| Atom { rel: name.to_owned().into(), args: vec![Term::Var(d.clone())], neg, gated: false };
+            let atom = |neg| Atom { rel: name.to_owned().into(), args: [Term::Var(d.clone().into())].into(), neg, gated: false };
             let body: Vec<Literal> = lits.into_iter().cloned().collect();
             let at = members[0];
             let mut kept = Vec::with_capacity(rule.body.len() - members.len() + 1);
@@ -335,8 +352,8 @@ fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String
                     kept.push(l);
                 }
             }
-            rule.body = kept;
-            return Some((Rule { head: atom(false), body }, vec![("d".to_owned(), ty)]));
+            rule.body = kept.into();
+            return Some((Rule { head: atom(false), body: body.into() }, vec![("d".into(), ty)]));
         }
     }
     None
@@ -347,14 +364,14 @@ fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String
 /// Gives each derived relation of no columns one integer column (above).
 fn unit_columns(prog: &mut Program) {
     let units: BTreeSet<String> =
-        prog.decls.iter().filter(|(rel, cols)| cols.is_empty() && !prog.inputs.contains(rel)).map(|(rel, _)| rel.clone()).collect();
+        prog.decls.iter().filter(|(rel, cols)| cols.is_empty() && !prog.inputs.iter().any(|i| i == rel.as_str())).map(|(rel, _)| rel.to_string()).collect();
     if units.is_empty() {
         return;
     }
     for rel in &units {
-        prog.decls.insert(rel.clone(), vec![("unit".to_owned(), "int".to_owned())]);
+        prog.decls.insert(rel.clone().into(), [("unit".into(), "int".into())].into());
         if let Some(rows) = prog.facts.get_mut(rel) {
-            rows.iter_mut().for_each(|r| *r = vec![Value::Int(1)]);
+            rows.iter_mut().for_each(|r| *r = [Value::Int(1)].into());
         }
     }
     let read = |a: &mut Atom| {
@@ -382,7 +399,7 @@ fn unit_columns(prog: &mut Program) {
 fn decided_fact_tests(prog: &mut Program) -> usize {
     let constant = |t: &Term| match t {
         Term::Int(i) => Some(Value::Int(*i)),
-        Term::Str(s) => Some(Value::Str(s.clone())),
+        Term::Str(s) => Some(Value::Str(s.clone().into())),
         _ => None,
     };
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
@@ -436,7 +453,7 @@ fn kept_by_engine(prog: &Program, rel: &str) -> bool {
 fn ground_rules(prog: &mut Program) -> usize {
     let constant = |t: &Term| match t {
         Term::Int(i) => Some(Value::Int(*i)),
-        Term::Str(s) => Some(Value::Str(s.clone())),
+        Term::Str(s) => Some(Value::Str(s.clone().into())),
         _ => None,
     };
     let mut replaced = 0;
@@ -447,7 +464,7 @@ fn ground_rules(prog: &mut Program) -> usize {
             continue;
         }
         // The body's bindings, or None when it is not equations of constants alone; Some(None) when two disagree.
-        let mut binds: HashMap<&str, Value> = HashMap::new();
+        let mut binds: HashMap<&str, Value> = HashMap::default();
         let mut consistent = true;
         let all_equations = rule.body.iter().all(|l| {
             let (v, c) = match l {
@@ -479,7 +496,7 @@ fn ground_rules(prog: &mut Program) -> usize {
                     };
                     match (part(&args[0])?, part(&args[1])?) {
                         // `@dot("", y)` is `y` (`core.rr`).
-                        (Value::Str(m), Value::Str(x)) => Some(Value::Str(if m.is_empty() { x } else { format!("{m}.{x}") })),
+                        (Value::Str(m), Value::Str(x)) => Some(Value::Str(if m.is_empty() { x } else { format!("{m}.{x}").into() })),
                         _ => None,
                     }
                 }
@@ -491,8 +508,8 @@ fn ground_rules(prog: &mut Program) -> usize {
             Some(row) => {
                 if consistent {
                     let facts = prog.facts.entry(rule.head.rel.to_string()).or_default();
-                    if !facts.contains(&row) {
-                        facts.push(row);
+                    if !facts.iter().any(|f| *f == row) {
+                        facts.push(row.into());
                     }
                 }
                 replaced += 1;
@@ -521,8 +538,8 @@ fn concat_parts(t: &Term) -> Option<Vec<Term>> {
 fn concat_of(parts: &[Term]) -> Term {
     let mut it = parts.iter().cloned();
     match it.next() {
-        None => Term::Str(String::new()),
-        Some(first) => it.fold(first, |acc, p| Term::Call("concat".to_owned(), vec![acc, p])),
+        None => Term::Str(String::new().into()),
+        Some(first) => it.fold(first, |acc, p| Term::Call("concat".into(), [acc, p].into())),
     }
 }
 
@@ -547,9 +564,9 @@ fn concat_inverses(rule: &mut Rule) -> usize {
                 continue;
             }
             let inverse = Literal::Cmp {
-                l: Term::Var(x.clone()),
+                l: Term::Var(x.clone().into()),
                 op: "=",
-                r: Term::Call("str_between".to_owned(), vec![Term::Var(v.clone()), concat_of(&parts[..i]), concat_of(&parts[i + 1..])]),
+                r: Term::Call("str_between".into(), [Term::Var(v.clone().into()), concat_of(&parts[..i]), concat_of(&parts[i + 1..])].into()),
             };
             if !rule.body.contains(&inverse) && !added.contains(&inverse) {
                 added.push(inverse);
@@ -592,7 +609,7 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
                 }
                 let mut vars = BTreeSet::new();
                 call.vars(&mut vars);
-                if vars.is_empty() || vars.contains(v) {
+                if vars.is_empty() || vars.contains(v.as_str()) {
                     continue;
                 }
                 // `$v` is a key only where another atom joins on it (or a concatenation's inverse gives it from one):
@@ -612,7 +629,7 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
                     // The world's relations and the program's inputs are as large as what was read: not copied.
                     let world = super::rr::WORLD.iter().any(|(r, _)| *r == a.rel) || a.rel == "loaded";
                     // An atom keyed by this variable already (an earlier pass of the loop) is not keyed again.
-                    let keyed = rule.body.iter().any(|o| matches!(o, Literal::Atom(k) if k.rel.starts_with(&format!("{}__key_", a.rel)) && k.args.first() == Some(&Term::Var(v.clone()))));
+                    let keyed = rule.body.iter().any(|o| matches!(o, Literal::Atom(k) if k.rel.starts_with(&format!("{}__key_", a.rel)) && k.args.first() == Some(&Term::Var(v.clone().into()))));
                     if a.neg || a.gated || a.rel.contains("__key_") || world || keyed || prog.inputs.iter().any(|x| x == &a.rel) {
                         continue;
                     }
@@ -624,16 +641,16 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
                     for t in &a.args {
                         t.vars(&mut atom_vars);
                     }
-                    if atom_vars.contains(v) || !vars.is_subset(&atom_vars) {
+                    if atom_vars.contains(v.as_str()) || !vars.is_subset(&atom_vars) {
                         continue;
                     }
                     // The function over R's columns: each variable as the column it is first at.
                     let col = |x: &str| a.args.iter().position(|t| matches!(t, Term::Var(y) if y == x));
                     let shape = Term::Call(
-                        f.clone(),
+                        f.clone().into(),
                         args.iter()
                             .map(|t| match t {
-                                Term::Var(x) => col(x).map_or_else(|| t.clone(), |i| Term::Var(format!("c{i}"))),
+                                Term::Var(x) => col(x).map_or_else(|| t.clone(), |i| Term::Var(format!("c{i}").into())),
                                 _ => t.clone(),
                             })
                             .collect(),
@@ -649,19 +666,19 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
                 None => {
                     let Term::Call(f, _) = &shape else { unreachable!("a call") };
                     let name = format!("{rel}__key_{f}{}", made.iter().filter(|(r, _, _)| *r == rel).count());
-                    let cols = prog.decls[&rel].clone();
-                    let mut decl = vec![("k".to_owned(), ty)];
+                    let cols = prog.decls[rel.as_str()].clone();
+                    let mut decl = vec![("k".into(), ty.into())];
                     decl.extend(cols.iter().cloned());
-                    prog.decls.insert(name.clone(), decl);
-                    let columns: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}"))).collect();
-                    let mut head_args = vec![Term::Var("k".to_owned())];
+                    prog.decls.insert(name.clone().into(), decl.iter().map(|(c, t)| (c.into(), t.into())).collect());
+                    let columns: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}").into())).collect();
+                    let mut head_args = vec![Term::Var("k".into())];
                     head_args.extend(columns.iter().cloned());
                     new_rules.push(Rule {
-                        head: Atom { rel: name.clone().into(), args: head_args, neg: false, gated: false },
+                        head: Atom { rel: name.clone().into(), args: head_args.into(), neg: false, gated: false },
                         body: vec![
-                            Literal::Atom(Atom { rel: rel.clone().into(), args: columns, neg: false, gated: false }),
-                            Literal::Cmp { l: Term::Var("k".to_owned()), op: "=", r: shape.clone() },
-                        ],
+                            Literal::Atom(Atom { rel: rel.clone().into(), args: columns.into(), neg: false, gated: false }),
+                            Literal::Cmp { l: Term::Var("k".into()), op: "=", r: shape.clone() },
+                        ].into(),
                     });
                     made.push((rel, shape, name.clone()));
                     name
@@ -675,7 +692,7 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
             };
             // The comparison stays: a plan that has R's columns first computes `$v` forward from them, and the keyed
             // atom is then a test (as a concatenation and its inverse are).
-            let Literal::Atom(a) = &mut rule.body[ai] else { unreachable!("an atom") };
+            let Literal::Atom(a) = &mut rule.body.make_mut()[ai] else { unreachable!("an atom") };
             a.rel = name.into();
             a.args.insert(0, Term::Var(v));
         }
@@ -698,7 +715,7 @@ fn cat_variables(rule: &mut Rule) {
                 for a in args.iter_mut() {
                     if matches!(a, Term::Int(_) | Term::Str(_)) {
                         let v = format!("cat_k{}", added.len());
-                        added.push(Literal::Cmp { l: Term::Var(v.clone()), op: "=", r: std::mem::replace(a, Term::Var(v)) });
+                        added.push(Literal::Cmp { l: Term::Var(v.clone().into()), op: "=", r: std::mem::replace(a, Term::Var(v.into())) });
                     }
                 }
             }
@@ -744,7 +761,7 @@ fn fold_constants(rule: &mut Rule) -> usize {
     let mut folded = 0;
     loop {
         let found = rule.body.iter().position(|l| match l {
-            Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } => constant(r) && !named.contains(v),
+            Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } => constant(r) && !named.contains(v.as_str()),
             _ => false,
         });
         let Some(at) = found else { return folded };
@@ -819,7 +836,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
         let rel = &rule.head.rel;
         let one_node = match rule.head.args.as_slice() {
             [Term::Var(h)] => {
-                let tests_node = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel == "node" && a.args.get(1) == Some(&Term::Var(h.clone()))));
+                let tests_node = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel == "node" && a.args.get(1) == Some(&Term::Var(h.clone().into()))));
                 // A scope guard's document (`rr_sd0 = @doc($h)`, decision 0091) is a function of the node.
                 let alone = rule.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }) && l.vars().iter().all(|v| v == h || v.starts_with(GUARD_VAR)));
                 let recursive = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == *rel));
@@ -901,7 +918,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
     rules.retain(|r| !bodies.contains_key(r.head.rel.as_str()));
     prog.rules = rules;
     for rel in bodies.keys() {
-        prog.decls.remove(rel);
+        prog.decls.remove(rel.as_str());
     }
     bodies.into_keys().collect()
 }
@@ -956,7 +973,7 @@ const FILTER_RULES: usize = 2;
 fn inline_filters(prog: &mut Program) -> Vec<String> {
     let functional = |a: &Atom, bound: &BTreeSet<String>| -> bool {
         let on = |c: usize| match a.args.get(c) {
-            Some(Term::Var(v)) => bound.contains(v),
+            Some(Term::Var(v)) => bound.contains(v.as_str()),
             Some(Term::Wild) | None => false,
             Some(_) => true,
         };
@@ -975,7 +992,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     // intersection of derived relations (`u19(n) :- m25(n)`) is no bigger than what it reads.
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
     let test = |a: &Atom, bound: &BTreeSet<String>| {
-        derived.contains(a.rel.as_str()) && a.args.iter().all(|t| matches!(t, Term::Wild) || matches!(t, Term::Var(v) if bound.contains(v)) || matches!(t, Term::Int(_) | Term::Str(_)))
+        derived.contains(a.rel.as_str()) && a.args.iter().all(|t| matches!(t, Term::Wild) || matches!(t, Term::Var(v) if bound.contains(v.as_str())) || matches!(t, Term::Int(_) | Term::Str(_)))
     };
     // A rule is a filter when every literal is a functional lookup or a test of what its head (and earlier
     // lookups) bind.
@@ -991,7 +1008,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
                     Literal::Atom(a) if !a.neg => functional(a, &bound),
                     Literal::Atom(a) => base_lookup(&a.rel) && l.vars().is_subset(&bound),
                     // `g = @doc(n)` (decision 0091's scope guards) is a function of a bound node: a lookup.
-                    Literal::Cmp { l: Term::Var(_), op: "=", r: Term::Call(f, xs) } if f == "doc" => xs.iter().all(|x| matches!(x, Term::Var(v) if bound.contains(v))),
+                    Literal::Cmp { l: Term::Var(_), op: "=", r: Term::Call(f, xs) } if f == "doc" => xs.iter().all(|x| matches!(x, Term::Var(v) if bound.contains(v.as_str()))),
                     Literal::Cmp { .. } => l.vars().is_subset(&bound),
                     _ => false,
                 };
@@ -1003,7 +1020,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             if todo.is_empty() {
                 let tests = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel != rule.head.rel && derived.contains(a.rel.as_str())));
                 let looks_up = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && base_lookup(&a.rel)));
-                return (!tests || looks_up).then(|| rule.body.clone());
+                return (!tests || looks_up).then(|| rule.body.to_vec());
             }
             if todo.len() == before {
                 return None;
@@ -1083,10 +1100,10 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             let mut body: Vec<Literal> = Vec::new();
             for (h, r) in def.head.args.iter().zip(&read.args) {
                 match (h, r) {
-                    (Term::Var(v), Term::Var(x)) if to.get(v) == Some(&format!("{v}_f{fresh}")) => {
-                        to.insert(v.clone(), x.clone());
+                    (Term::Var(v), Term::Var(x)) if to.get(v.as_str()) == Some(&format!("{v}_f{fresh}")) => {
+                        to.insert(v.to_string(), x.to_string());
                     }
-                    (Term::Var(v), r) => body.push(Literal::Cmp { l: r.clone(), op: "=", r: Term::Var(to[v].clone()) }),
+                    (Term::Var(v), r) => body.push(Literal::Cmp { l: r.clone(), op: "=", r: Term::Var(to[v.as_str()].clone().into()) }),
                     _ => {}
                 }
             }
@@ -1108,7 +1125,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     }
     prog.rules = out;
     for rel in bodies.keys() {
-        prog.decls.remove(rel);
+        prog.decls.remove(rel.as_str());
     }
     bodies.into_keys().collect()
 }
@@ -1117,8 +1134,8 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
 fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
     fn term(t: &Term, to: &BTreeMap<String, String>) -> Term {
         match t {
-            Term::Var(v) => Term::Var(to.get(v).cloned().unwrap_or_else(|| v.clone())),
-            Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| term(a, to)).collect()),
+            Term::Var(v) => Term::Var(to.get(v.as_str()).cloned().unwrap_or_else(|| v.to_string()).into()),
+            Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| term(a, to)).collect()),
             t => t.clone(),
         }
     }
@@ -1146,11 +1163,11 @@ fn join_complements(prog: &mut Program) {
                 if !node.neg
                     && node.rel == "node"
                     && node.args.len() == 5
-                    && node.args.iter().enumerate().all(|(i, t)| if i == 1 { *t == Term::Var(h.clone()) } else { *t == Term::Wild })
+                    && node.args.iter().enumerate().all(|(i, t)| if i == 1 { *t == Term::Var(h.clone().into()) } else { *t == Term::Wild })
                     && x.neg
                     && !x.gated
                     && x.rel != rule.head.rel
-                    && x.args == [Term::Var(h.clone())] =>
+                    && x.args == [Term::Var(h.clone().into())] =>
             {
                 Some(x.rel.to_string())
             }
@@ -1164,16 +1181,16 @@ fn join_complements(prog: &mut Program) {
         }
         let Some(parts) = parts.into_iter().collect::<Option<Vec<String>>>() else { continue };
         let all = format!("{rel}_all");
-        if prog.decls.contains_key(&all) {
+        if prog.decls.contains_key(all.as_str()) {
             continue;
         }
-        let h = || Term::Var("n".to_owned());
-        let atom = |rel: &str, neg: bool| Atom { rel: rel.to_owned().into(), args: vec![h()], neg, gated: false };
+        let h = || Term::Var("n".into());
+        let atom = |rel: &str, neg: bool| Atom { rel: rel.to_owned().into(), args: [h()].into(), neg, gated: false };
         prog.rules.retain(|r| r.head.rel != rel);
         prog.rules.push(Rule { head: atom(&all, false), body: parts.iter().map(|p| Literal::Atom(atom(p, false))).collect() });
-        let node = Atom { rel: "node".to_owned().into(), args: vec![Term::Wild, h(), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false };
-        prog.rules.push(Rule { head: atom(&rel, false), body: vec![Literal::Atom(node), Literal::Atom(atom(&all, true))] });
-        prog.decls.insert(all, vec![("n".to_owned(), "node".to_owned())]);
+        let node = Atom { rel: "node".into(), args: [Term::Wild, h(), Term::Wild, Term::Wild, Term::Wild].into(), neg: false, gated: false };
+        prog.rules.push(Rule { head: atom(&rel, false), body: [Literal::Atom(node), Literal::Atom(atom(&all, true))].into() });
+        prog.decls.insert(all.into(), [("n".into(), "node".into())].into());
     }
 }
 
@@ -1186,12 +1203,12 @@ const KEYS: &[(&str, usize, usize)] =
 fn occurrences(rule: &Rule) -> HashMap<String, usize> {
     fn term(t: &Term, n: &mut HashMap<String, usize>) {
         match t {
-            Term::Var(v) => *n.entry(v.clone()).or_default() += 1,
+            Term::Var(v) => *n.entry(v.to_string()).or_default() += 1,
             Term::Call(_, args) => args.iter().for_each(|a| term(a, n)),
             _ => {}
         }
     }
-    let mut n = HashMap::new();
+    let mut n = HashMap::default();
     rule.head.args.iter().for_each(|t| term(t, &mut n));
     for l in &rule.body {
         match l {
@@ -1230,7 +1247,7 @@ fn wild_singletons(rule: &mut Rule) -> usize {
             && !a.neg
         {
             for t in &mut a.args {
-                if matches!(t, Term::Var(v) if once.contains(v)) {
+                if matches!(t, Term::Var(v) if once.contains(v.as_str())) {
                     *t = Term::Wild;
                     made += 1;
                 }
@@ -1275,8 +1292,8 @@ fn merge_keyed(rule: &mut Rule) -> usize {
                         _ if x == y => args.push(x.clone()),
                         (Term::Wild, y) => args.push(y.clone()),
                         (x, Term::Wild) => args.push(x.clone()),
-                        (Term::Var(x), Term::Var(y)) if !special.contains(y) => {
-                            args.push(Term::Var(x.clone()));
+                        (Term::Var(x), Term::Var(y)) if !special.contains(y.as_str()) => {
+                            args.push(Term::Var(x.clone().into()));
                             renames.push((y.clone(), x.clone()));
                         }
                         _ => {
@@ -1288,8 +1305,8 @@ fn merge_keyed(rule: &mut Rule) -> usize {
                 if args.is_empty() {
                     continue;
                 }
-                let one = Literal::Atom(Atom { args, ..a.clone() });
-                rule.body[i] = one;
+                let one = Literal::Atom(Atom { args: args.into(), ..a.clone() });
+                rule.body.make_mut()[i] = one;
                 rule.body.remove(j);
                 for (from, to) in renames {
                     rule.body = rule.body.iter().map(|l| rename_var(l, &from, &to)).collect();
@@ -1310,7 +1327,7 @@ fn merge_keyed(rule: &mut Rule) -> usize {
 /// Drops the rules of derived relations that no kept relation (`kept`: outputs, demanded relations, gates, …)
 /// reads, directly or through others; returns those relations.
 fn drop_unread(prog: &mut Program) -> Vec<String> {
-    let mut reads: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    let mut reads: HashMap<&str, BTreeSet<&str>> = HashMap::default();
     for rule in &prog.rules {
         reads.entry(rule.head.rel.as_str()).or_default().extend(rule.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()));
     }
@@ -1366,7 +1383,7 @@ fn project_unread_columns(prog: &mut Program) -> Vec<(String, Vec<usize>)> {
     let mut lost: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     loop {
         // Per relation: the columns a reader reads; `None` once something reads it whole.
-        let mut read: HashMap<String, Option<BTreeSet<usize>>> = HashMap::new();
+        let mut read: HashMap<String, Option<BTreeSet<usize>>> = HashMap::default();
         for rule in &prog.rules {
             let exists = existence_counts(rule);
             for l in &rule.body {
@@ -1397,7 +1414,7 @@ fn project_unread_columns(prog: &mut Program) -> Vec<(String, Vec<usize>)> {
                 continue;
             }
             let Some(Some(cols)) = read.get(&rel) else { continue };
-            let Some(decl) = prog.decls.get(&rel) else { continue };
+            let Some(decl) = prog.decls.get(rel.as_str()) else { continue };
             let n = decl.len();
             let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
             // A location stays though no reader reads it: the split partitions a file-local relation's rows by one,
@@ -1430,7 +1447,7 @@ fn project_unread_columns(prog: &mut Program) -> Vec<(String, Vec<usize>)> {
                     }
                 }
             }
-            let decl = prog.decls.get_mut(&rel).unwrap();
+            let decl = prog.decls.get_mut(rel.as_str()).unwrap();
             *decl = keep.iter().map(|&c| decl[c].clone()).collect();
             // Columns as the relation first had them.
             let orig = lost.entry(rel).or_default();
@@ -1521,8 +1538,8 @@ fn existence_as_reads(rule: &mut Rule) -> usize {
 fn rename_var(l: &Literal, from: &str, to: &str) -> Literal {
     fn term(t: &Term, from: &str, to: &str) -> Term {
         match t {
-            Term::Var(v) if v == from => Term::Var(to.to_owned()),
-            Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| term(a, from, to)).collect()),
+            Term::Var(v) if v == from => Term::Var(to.to_owned().into()),
+            Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| term(a, from, to)).collect()),
             t => t.clone(),
         }
     }
@@ -1560,18 +1577,18 @@ fn drop_implied(rule: &mut Rule) -> usize {
     n
 }
 
-fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, decls: &BTreeMap<String, Vec<(String, String)>>) -> usize {
+fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, decls: &BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>>) -> usize {
     // `node`'s columns as declared: the node and its kind.
     let Some(cols) = decls.get("node") else { return 0 };
     let (Some(n), Some(k)) = (cols.iter().position(|(c, _)| c == "n"), cols.iter().position(|(c, _)| c == "kind")) else { return 0 };
     // The members of a single-kind set, by variable: `nearest`'s and `inside`'s ancestor, `has`'s descendant.
-    let mut member: HashMap<String, &str> = HashMap::new();
+    let mut member: HashMap<String, &str> = HashMap::default();
     for l in &rule.body {
         let (a, set) = match l {
             Literal::Nearest { a, kindset, .. } => (a.clone(), kindset.as_str()),
             Literal::Atom(x) if !x.neg && x.args.len() == 2 => match super::front::axis(&x.rel) {
                 Some((set, has)) => match &x.args[if has { 0 } else { 1 }] {
-                    Term::Var(a) => (a.clone(), set),
+                    Term::Var(a) => (a.to_string(), set),
                     _ => continue,
                 },
                 None => continue,
@@ -1593,7 +1610,7 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
         }
         let only = x.args.iter().enumerate().all(|(c, t)| c == n || c == k || *t == Term::Wild);
         let tested = match (&x.args[n], &x.args[k]) {
-            (Term::Var(a), Term::Str(kind)) => member.get(a) == Some(&kind.as_str()),
+            (Term::Var(a), Term::Str(kind)) => member.get(a.as_str()) == Some(&kind.as_str()),
             _ => false,
         };
         !(only && tested)
@@ -1602,22 +1619,29 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
 }
 
 /// A rule with every relation named by `label` and its variables numbered in order of first appearance.
-fn canonical(rule: &Rule, label: &dyn Fn(&str) -> String) -> String {
-    let mut names: HashMap<String, String> = HashMap::new();
-    let mut name = |v: &str| -> String {
-        let k = names.len();
-        names.entry(v.to_owned()).or_insert_with(|| format!("v{k}")).clone()
+///
+/// Its variables are numbered by a scan of the few names seen so far, each `v<k>` one of `names`, made once for the
+/// caller's rules: a map and a `format!` per variable, and each name interned again (a lock the pool's threads share),
+/// were most of `congruence`'s templates, 9% of a cold batch's main thread.
+fn canonical(rule: &Rule, label: &dyn Fn(&str) -> Name, names_made: &CanonicalNames) -> String {
+    let mut names: Vec<String> = Vec::new();
+    let mut name = |v: &str| -> Name {
+        let k = names.iter().position(|n| n == v).unwrap_or_else(|| {
+            names.push(v.to_owned());
+            names.len() - 1
+        });
+        names_made.var(k)
     };
-    fn term(t: &Term, name: &mut dyn FnMut(&str) -> String) -> Term {
+    fn term(t: &Term, name: &mut dyn FnMut(&str) -> Name) -> Term {
         match t {
             Term::Var(v) => Term::Var(name(v)),
-            Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| term(a, name)).collect()),
+            Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| term(a, name)).collect()),
             t => t.clone(),
         }
     }
-    let atom = |a: &Atom, name: &mut dyn FnMut(&str) -> String| Atom { rel: label(&a.rel).into(), args: a.args.iter().map(|t| term(t, name)).collect(), ..a.clone() };
+    let atom = |a: &Atom, name: &mut dyn FnMut(&str) -> Name| Atom { rel: label(&a.rel), args: a.args.iter().map(|t| term(t, name)).collect(), ..a.clone() };
     // The head is the relation the signature is of: `@`, so two relations' rules compare by their bodies.
-    let head = Atom { rel: "@".into(), ..atom(&rule.head, &mut name) };
+    let head = Atom { rel: names_made.head.clone(), ..atom(&rule.head, &mut name) };
     let body: Vec<Literal> = rule
         .body
         .iter()
@@ -1625,24 +1649,43 @@ fn canonical(rule: &Rule, label: &dyn Fn(&str) -> String) -> String {
             Literal::Atom(a) => Literal::Atom(atom(a, &mut name)),
             Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, &mut name), op, r: term(r, &mut name) },
             Literal::Agg { var, op, over, atom: a } => {
-                let var = name(var);
-                let over = over.as_ref().map(|o| name(o));
+                let var = name(var).as_str().to_owned();
+                let over = over.as_ref().map(|o| name(o).as_str().to_owned());
                 let op = match op {
-                    AggOp::Join { by, sep } => AggOp::Join { by: by.iter().map(|k| name(k)).collect(), sep: sep.clone() },
+                    AggOp::Join { by, sep } => AggOp::Join { by: by.iter().map(|k| name(k).as_str().to_owned()).collect(), sep: sep.clone() },
                     op => op.clone(),
                 };
                 Literal::Agg { var, op, over, atom: atom(a, &mut name) }
             }
-            Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n), a: name(a), kindset: kindset.clone() },
+            Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n).as_str().to_owned(), a: name(a).as_str().to_owned(), kindset: kindset.clone() },
             Literal::Ast { document, node, matcher, captures } => Literal::Ast {
-                document: name(document),
-                node: name(node),
+                document: name(document).as_str().to_owned(),
+                node: name(node).as_str().to_owned(),
                 matcher: matcher.clone(),
-                captures: captures.iter().map(|(c, v)| (c.clone(), name(v))).collect(),
+                captures: captures.iter().map(|(c, v)| (c.clone(), name(v).as_str().to_owned())).collect(),
             },
         })
         .collect();
-    Rule { head, body }.to_string()
+    Rule { head, body: body.into() }.to_string()
+}
+
+/// The names `canonical` writes, made once by its caller: the variables `v0`, `v1`, …, the head's `@`, and the
+/// placeholder of the relations a template reads.
+struct CanonicalNames {
+    vars: Vec<Name>,
+    head: Name,
+    placeholder: Name,
+}
+
+impl CanonicalNames {
+    fn new() -> Self {
+        CanonicalNames { vars: (0..64).map(|k| Name::new(&format!("v{k}"))).collect(), head: Name::new("@"), placeholder: Name::new("\u{1}") }
+    }
+
+    /// The variable name `v<k>`.
+    fn var(&self, k: usize) -> Name {
+        self.vars.get(k).cloned().unwrap_or_else(|| Name::new(&format!("v{k}")))
+    }
 }
 
 /// The coarsest partition of the mergeable relations in which every two of a class have the same column types and
@@ -1652,7 +1695,7 @@ fn canonical(rule: &Rule, label: &dyn Fn(&str) -> String) -> String {
 /// since at each step of the fixpoint every member of a class derives from equal classes by equal rules.
 /// `abstract_constants` names every constant `?` too: the classes are then relations equal up to their constants.
 fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
-    let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+    let mut rules_of: HashMap<&str, Vec<&Rule>> = HashMap::default();
     for r in &prog.rules {
         rules_of.entry(r.head.rel.as_str()).or_default().push(r);
     }
@@ -1662,32 +1705,70 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         f.sort();
         f
     };
+    // What keeps a relation its own (`fixed`), as sets made once.
+    let fixed_set: rustc_hash::FxHashSet<&str> = prog
+        .inputs
+        .iter()
+        .map(String::as_str)
+        .chain(prog.demand.iter().map(String::as_str))
+        .chain(prog.gates.iter().map(|(g, _)| g.as_str()))
+        .collect();
+    let fixed = |r: &str| fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r);
+    debug_assert!(prog.rules.iter().map(|r| r.head.rel.as_str()).all(|r| fixed(r) == self::fixed(prog, r)));
     let cands: Vec<&str> = rules_of
         .keys()
         .copied()
         .chain(prog.facts.iter().filter(|(_, f)| !f.is_empty()).map(|(r, _)| r.as_str()))
         .collect::<BTreeSet<&str>>()
         .into_iter()
-        .filter(|r| !fixed(prog, r))
+        .filter(|r| !fixed(r))
         .collect();
-    let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default() };
-    let mut class: HashMap<&str, usize> = HashMap::new();
+    // The candidates by number, in `cands`' order; every other relation a rule names numbered after them, each a
+    // label of its own in every round.
+    let mut number: HashMap<&str, u32> = cands.iter().enumerate().map(|(i, r)| (*r, i as u32)).collect();
+    for r in &prog.rules {
+        for rel in std::iter::once(r.head.rel.as_str()).chain(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())) {
+            let n = number.len() as u32;
+            number.entry(rel).or_insert(n);
+        }
+    }
+    let types = |rel: &str| -> Vec<Name> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default() };
+    // Each relation's signatures are its own, made on the pool's threads; the numbering that follows them is in
+    // `cands`' order, as one thread gives it, so the classes are the same whatever the threads.
+    use rayon::prelude::*;
+    let mut class: Vec<usize> = Vec::with_capacity(cands.len());
     {
-        let mut ids: HashMap<(Vec<String>, usize, Vec<String>), usize> = HashMap::new();
-        for &r in &cands {
+        // A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
+        // below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
+        // apart from its twin.
+        let firsts: Vec<(Vec<Name>, usize, Vec<String>)> = cands
+            .par_iter()
+            .map(|&r| {
+                let rules = rules_of.get(r).map_or(0, |rs| {
+                    rs.iter()
+                        .map(|x| {
+                            use std::hash::{BuildHasher, Hash, Hasher};
+                            let mut h = foldhash::quality::FixedState::with_seed(0x5eed_c0e6).build_hasher();
+                            x.hash(&mut h);
+                            h.finish()
+                        })
+                        .collect::<rustc_hash::FxHashSet<u64>>()
+                        .len()
+                });
+                (types(r), rules, facts(r))
+            })
+            .collect();
+        let mut ids: HashMap<(Vec<Name>, usize, Vec<String>), usize> = HashMap::default();
+        for first in firsts {
             let n = ids.len();
-            let rules = rules_of.get(r).map_or(0, Vec::len);
-            class.insert(r, *ids.entry((types(r), rules, facts(r))).or_insert(n));
+            class.push(*ids.entry(first).or_insert(n));
         }
     }
     let abstracted = |rule: &Rule| -> Rule {
-        if !abstract_constants {
-            return rule.clone();
-        }
         fn t(x: &Term) -> Term {
             match x {
                 Term::Int(_) | Term::Str(_) => Term::Var("?".into()),
-                Term::Call(f, a) => Term::Call(f.clone(), a.iter().map(t).collect()),
+                Term::Call(f, a) => Term::Call(f.clone().into(), a.iter().map(t).collect()),
                 x => x.clone(),
             }
         }
@@ -1706,51 +1787,80 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                 .collect(),
         }
     };
-    let bodies: BTreeMap<&str, Vec<Rule>> = cands.iter().map(|&r| (r, rules_of.get(r).into_iter().flatten().map(|x| abstracted(x)).collect())).collect();
-    let mut classes = class.values().collect::<BTreeSet<_>>().len();
+    // A candidate's rules as `canonical` reads them: the program's own, or with every constant `?`.
+    let bodies: Vec<Vec<std::borrow::Cow<'_, Rule>>> = cands
+        .par_iter()
+        .map(|&r| rules_of.get(r).into_iter().flatten().map(|x| if abstract_constants { std::borrow::Cow::Owned(abstracted(x)) } else { std::borrow::Cow::Borrowed(*x) }).collect())
+        .collect();
+    let mut classes = class.iter().collect::<BTreeSet<_>>().len();
     // Each rule's canonical text is fixed but for the labels of the relations it reads: it is made once, with every
     // relation a placeholder (its template), and the relations read kept in the order it labels them. A round's
     // signature of a rule is its template and those relations' labels, equal exactly when the texts `canonical`
     // gives under the round's labels are (a relation's name has no character of the text around it).
-    let mut templates: HashMap<String, usize> = HashMap::new();
-    let shapes: BTreeMap<&str, Vec<(usize, Vec<String>)>> = cands
-        .iter()
-        .map(|&r| {
-            let shaped = bodies[r]
+    // The texts made on the pool's threads, numbered in `cands`' order, each relation read kept by its number.
+    let names_made = CanonicalNames::new();
+    let texts: Vec<Vec<(String, Vec<u32>)>> = bodies
+        .par_iter()
+        .map(|rules| {
+            rules
                 .iter()
                 .map(|rule| {
                     let read = std::cell::RefCell::new(Vec::new());
-                    let text = canonical(rule, &|rel: &str| {
-                        read.borrow_mut().push(rel.to_owned());
-                        "\u{1}".to_owned()
-                    });
-                    let n = templates.len();
+                    let text = canonical(
+                        rule,
+                        &|rel: &str| {
+                            read.borrow_mut().push(number[rel]);
+                            names_made.placeholder.clone()
+                        },
+                        &names_made,
+                    );
                     let mut read = read.into_inner();
                     // The head's label is replaced by `@`.
                     read.remove(0);
-                    (*templates.entry(text).or_insert(n), read)
+                    (text, read)
                 })
-                .collect();
-            (r, shaped)
+                .collect()
         })
         .collect();
+    let mut templates: HashMap<String, usize> = HashMap::default();
+    let shapes: Vec<Vec<(usize, Vec<u32>)>> = texts
+        .into_iter()
+        .map(|texts| {
+            texts
+                .into_iter()
+                .map(|(text, read)| {
+                    let n = templates.len();
+                    (*templates.entry(text).or_insert(n), read)
+                })
+                .collect()
+        })
+        .collect();
+    // A round's label of a relation read: its class when a candidate, else its own number (a relation that is not a
+    // candidate is only equal to itself).
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    enum Label<'a> {
+    enum Label {
         Class(usize),
-        Name(&'a str),
+        Own(u32),
     }
+    let n_cands = cands.len() as u32;
     loop {
-        let label = |rel: &'_ str| -> Option<usize> { class.get(rel).copied() };
-        let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::new();
-        let mut next: HashMap<&str, usize> = HashMap::new();
-        for &r in &cands {
-            let mut sig: Vec<(usize, Vec<Label>)> = shapes[r]
-                .iter()
-                .map(|(t, read)| (*t, read.iter().map(|rel| label(rel).map_or(Label::Name(rel.as_str()), Label::Class)).collect()))
-                .collect();
-            sig.sort();
+        let sigs: Vec<Vec<(usize, Vec<Label>)>> = shapes
+            .par_iter()
+            .map(|shaped| {
+                let mut sig: Vec<(usize, Vec<Label>)> = shaped
+                    .iter()
+                    .map(|(t, read)| (*t, read.iter().map(|&r| if r < n_cands { Label::Class(class[r as usize]) } else { Label::Own(r) }).collect()))
+                    .collect();
+                sig.sort();
+                sig.dedup();
+                sig
+            })
+            .collect();
+        let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::default();
+        let mut next: Vec<usize> = Vec::with_capacity(cands.len());
+        for (c, sig) in class.iter().zip(sigs) {
             let n = ids.len();
-            next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
+            next.push(*ids.entry((*c, sig)).or_insert(n));
         }
         let now = ids.len();
         class = next;
@@ -1759,8 +1869,10 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         }
         classes = now;
     }
+    let class: HashMap<&str, usize> = cands.iter().copied().zip(class.iter().copied()).collect();
+    let bodies: BTreeMap<&str, &Vec<std::borrow::Cow<'_, Rule>>> = cands.iter().copied().zip(bodies.iter()).collect();
     if std::env::var_os("RERAIL_MERGE_WHY").is_some() && !abstract_constants {
-        let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
+        let label = |rel: &str| -> Name { Name::new(&class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"))) };
         let mut by_suffix: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for &r in &cands {
             if let Some((_, sfx)) = namespace(r) {
@@ -1771,14 +1883,14 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
             let distinct: BTreeSet<usize> = rs.iter().map(|r| class[r]).collect();
             if rs.len() > 1 && distinct.len() > 1 {
                 let sig = |r: &str| -> Vec<String> {
-                    let mut v: Vec<String> = bodies[r].iter().map(|rule| canonical(rule, &label)).collect();
+                    let mut v: Vec<String> = bodies[r].iter().map(|rule| canonical(rule, &label, &names_made)).collect();
                     v.sort();
                     v
                 };
                 let (a, b) = (sig(rs[0]), sig(rs[1]));
                 let only_a: Vec<&String> = a.iter().filter(|x| !b.contains(x)).collect();
                 let only_b: Vec<&String> = b.iter().filter(|x| !a.contains(x)).collect();
-                let name_of = |l: &str| -> Vec<&str> { cands.iter().copied().filter(|r| label(r) == l).take(3).collect() };
+                let name_of = |l: &str| -> Vec<&str> { cands.iter().copied().filter(|r| label(r).as_str() == l).take(3).collect() };
                 let refs = |x: Option<&&String>| -> Vec<String> {
                     x.map(|x| x.split(|c: char| !(c == '#' || c.is_ascii_digit())).filter(|t| t.starts_with('#')).map(|t| format!("{t}={:?}", name_of(t))).collect()).unwrap_or_default()
                 };
@@ -1804,11 +1916,11 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
 /// 0050: read off the tree per node looked up), with no fixpoint: one wave a level of nesting otherwise.
 /// Rewritten so; the components rewritten, by their members.
 fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
-    let Ok((sccs, _)) = super::front::strata(prog) else { return Vec::new() };
+    let Ok(sccs) = super::front::components_of(prog) else { return Vec::new() };
     let mut done = Vec::new();
     // Each relation's rules, by place: made again only when a component is rewritten.
     let index = |prog: &Program| -> HashMap<String, Vec<usize>> {
-        let mut by: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut by: HashMap<String, Vec<usize>> = HashMap::default();
         for (i, r) in prog.rules.iter().enumerate() {
             by.entry(r.head.rel.to_string()).or_default().push(i);
         }
@@ -1848,7 +1960,7 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
                 break;
             }
             match atoms.as_slice() {
-                [s] if members.contains(s.rel.as_str()) && s.args == [Term::Var(x.clone())] => edges.push((s.rel.to_string(), rule.head.rel.to_string(), false)),
+                [s] if members.contains(s.rel.as_str()) && s.args == [Term::Var(x.clone().into())] => edges.push((s.rel.to_string(), rule.head.rel.to_string(), false)),
                 [a, b] => {
                     let (s, c) = if members.contains(a.rel.as_str()) { (a, b) } else { (b, a) };
                     let (Some(Term::Var(y)), true) = (s.args.first(), members.contains(s.rel.as_str()) && s.args.len() == 1 && c.rel == "child" && c.args.len() == 3) else {
@@ -1925,10 +2037,10 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
                     }
                     if !stepped.is_empty() {
                         let x = format!("{t}_axis");
-                        let (inner, outer) = if up { (Term::Var(t.clone()), Term::Var(x.clone())) } else { (Term::Var(x.clone()), Term::Var(t.clone())) };
+                        let (inner, outer) = if up { (Term::Var(t.clone().into()), Term::Var(x.clone().into())) } else { (Term::Var(x.clone().into()), Term::Var(t.clone().into())) };
                         let mut body = b.body.clone();
-                        body.push(Literal::Atom(Atom { rel: WITHIN.to_owned().into(), args: vec![inner, outer], neg: false, gated: false }));
-                        new_rules.push(Rule { head: Atom { rel: m.clone().into(), args: vec![Term::Var(x)], neg: false, gated: false }, body });
+                        body.push(Literal::Atom(Atom { rel: WITHIN.to_owned().into(), args: [inner, outer].into(), neg: false, gated: false }));
+                        new_rules.push(Rule { head: Atom { rel: m.clone().into(), args: [Term::Var(x.into())].into(), neg: false, gated: false }, body });
                     }
                 }
             }
@@ -1940,7 +2052,7 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
         prog.rules.extend(new_rules);
         by_head = index(prog);
         if !prog.decls.contains_key(WITHIN) {
-            prog.decls.insert(WITHIN.to_owned(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+            prog.decls.insert(WITHIN.to_owned().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
         }
         if !prog.inputs.iter().any(|i| i == WITHIN) {
             prog.inputs.push(WITHIN.to_owned());
@@ -1980,7 +2092,7 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         return false;
     }
     let mut rename: BTreeMap<String, String> = BTreeMap::new();
-    let mut taken: BTreeSet<String> = prog.decls.keys().cloned().collect();
+    let mut taken: BTreeSet<String> = prog.decls.keys().cloned().map(String::from).collect();
     for g in &groups {
         let suffixes: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(_, s)| s)).collect();
         let spaces: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(p, _)| p)).collect();
@@ -2021,9 +2133,9 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     let outputs: Vec<(String, String)> = rename.iter().filter(|(from, _)| prog.outputs.iter().any(|o| o == *from)).map(|(f, t)| (f.clone(), t.clone())).collect();
     let mut copies: Vec<Rule> = Vec::new();
     for (from, to) in &outputs {
-        let width = prog.decls.get(from).map_or(0, Vec::len);
-        let args: Vec<Term> = (0..width).map(|i| Term::Var(format!("c{i}"))).collect();
-        copies.push(Rule { head: Atom { rel: from.clone().into(), args: args.clone(), neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: to.clone().into(), args, neg: false, gated: false })] });
+        let width = prog.decls.get(from.as_str()).map_or(0, |c| c.len());
+        let args: Vec<Term> = (0..width).map(|i| Term::Var(format!("c{i}").into())).collect();
+        copies.push(Rule { head: Atom { rel: from.clone().into(), args: args.clone().into(), neg: false, gated: false }, body: [Literal::Atom(Atom { rel: to.clone().into(), args: args.into(), neg: false, gated: false })].into() });
     }
     prog.rules.retain(|r| !rename.contains_key(r.head.rel.as_str()) || firsts.contains(r.head.rel.as_str()));
     let to = |rel: &mut crate::code_rule_dsl::logic::front::Name| {
@@ -2045,21 +2157,25 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     prog.rules.extend(copies);
     for (from, t) in &rename {
         let output = prog.outputs.iter().any(|o| o == from);
-        let cols = if output { prog.decls.get(from).cloned() } else { prog.decls.remove(from) };
+        let cols = if output { prog.decls.get(from.as_str()).cloned() } else { prog.decls.remove(from.as_str()) };
         if let Some(cols) = cols {
-            prog.decls.entry(t.clone()).or_insert(cols);
+            prog.decls.entry(t.clone().into()).or_insert(cols);
         }
         if let Some(rows) = prog.facts.remove(from) {
             prog.facts.entry(t.clone()).or_insert(rows);
         }
         report.merged.push((t.clone(), from.clone()));
     }
-    // Relations equal up to their constants (not merged: one relation keyed by the constant would serve them).
+    true
+}
+
+/// Relations equal up to their constants (not merged: one relation keyed by the constant would serve them), into
+/// the report a profiled run writes. A congruence of its own over the whole program, so made only when profiled.
+fn similar_relations(prog: &Program, report: &mut Report) {
     let similar = congruence(prog, true);
     report.similar = similar.iter().map(Vec::len).sum();
     report.similar_groups = similar.len();
     report.similar_examples = similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect();
-    true
 }
 
 #[cfg(test)]
@@ -2107,20 +2223,21 @@ pub mod tests {
                 rules_of.entry(r.head.rel.as_str()).or_default().push(r);
             }
             let cands: Vec<&str> = rules_of.keys().copied().filter(|r| !fixed(prog, r)).collect();
-            let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default() };
-            let mut class: HashMap<&str, usize> = HashMap::new();
-            let mut ids: HashMap<(Vec<String>, usize), usize> = HashMap::new();
+            let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).map(String::from).collect()).unwrap_or_default() };
+            let mut class: HashMap<&str, usize> = HashMap::default();
+            let mut ids: HashMap<(Vec<String>, usize), usize> = HashMap::default();
             for &r in &cands {
                 let n = ids.len();
                 class.insert(r, *ids.entry((types(r), rules_of[r].len())).or_insert(n));
             }
             let mut classes = class.values().collect::<BTreeSet<_>>().len();
+            let names_made = CanonicalNames::new();
             loop {
-                let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
-                let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::new();
-                let mut next: HashMap<&str, usize> = HashMap::new();
+                let label = |rel: &str| -> Name { Name::new(&class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"))) };
+                let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::default();
+                let mut next: HashMap<&str, usize> = HashMap::default();
                 for &r in &cands {
-                    let mut sig: Vec<String> = rules_of[r].iter().map(|rule| canonical(rule, &label)).collect();
+                    let mut sig: Vec<String> = rules_of[r].iter().map(|rule| canonical(rule, &label, &names_made)).collect();
                     sig.sort();
                     let n = ids.len();
                     next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
@@ -2195,14 +2312,14 @@ pub mod tests {
     #[test]
     fn a_merged_variable_is_renamed_inside_the_head() {
         let mut rule = Rule {
-            head: Atom { rel: "rn".to_owned().into(), args: vec![Term::Var("n".to_owned()), Term::Call("lower".to_owned(), vec![Term::Var("t".to_owned())])], neg: false, gated: false },
+            head: Atom { rel: "rn".into(), args: [Term::Var("n".into()), Term::Call("lower".into(), [Term::Var("t".into())].into())].into(), neg: false, gated: false },
             body: vec![
-                Literal::Atom(Atom { rel: "text".to_owned().into(), args: vec![Term::Var("n".to_owned()), Term::Var("u".to_owned())], neg: false, gated: false }),
-                Literal::Atom(Atom { rel: "text".to_owned().into(), args: vec![Term::Var("n".to_owned()), Term::Var("t".to_owned())], neg: false, gated: false }),
-            ],
+                Literal::Atom(Atom { rel: "text".into(), args: [Term::Var("n".into()), Term::Var("u".into())].into(), neg: false, gated: false }),
+                Literal::Atom(Atom { rel: "text".into(), args: [Term::Var("n".into()), Term::Var("t".into())].into(), neg: false, gated: false }),
+            ].into(),
         };
         assert_eq!(merge_keyed(&mut rule), 1);
-        assert_eq!(rule.head.args[1], Term::Call("lower".to_owned(), vec![Term::Var("u".to_owned())]));
+        assert_eq!(rule.head.args[1], Term::Call("lower".into(), [Term::Var("u".into())].into()));
     }
 
     /// Two programs' copies of a recursive library relation (each reads its own copy) are one relation in the shared
@@ -2234,7 +2351,11 @@ pub mod tests {
             "#,
         )
         .unwrap();
-        let report = simplify(&mut prog);
+        // Unprofiled: held so no profile test turns the (process-wide) profile on meanwhile.
+        let report = {
+            let _run = super::super::profile::one_run();
+            simplify(&mut prog)
+        };
         let mut merged = report.merged.clone();
         merged.sort();
         assert_eq!(
@@ -2250,8 +2371,38 @@ pub mod tests {
         assert_eq!(prog.rules.iter().filter(|r| r.head.rel == "s_reach").count(), 2);
         assert_eq!(prog.facts["s_seed"].len(), 1);
         assert!(prog.decls.contains_key("p0_mine") && prog.decls.contains_key("p1_mine"));
-        // p0_mine and p1_mine differ only in their constant.
-        assert_eq!((report.similar, report.similar_groups), (2, 1));
+        // p0_mine and p1_mine differ only in their constant: reported in a profiled run only (below).
+        assert_eq!((report.similar, report.similar_groups), (0, 0));
+    }
+
+    /// Relations equal up to their constants are a profile's report (`relations equal up to their constants`), not
+    /// a part of the merge: an unprofiled simplify makes no second congruence for them (it was about half of each
+    /// merge's cost in a pack, decision 0168), and a profiled one reports them as before.
+    #[test]
+    fn relations_alike_but_for_their_constants_are_found_only_when_profiled() {
+        let text = r#"
+            .decl edge(a: number, b: number)
+            .input edge
+            .decl p0_reach(a: number)
+            p0_reach(b) :- edge(1, b).
+            .decl p1_reach(a: number)
+            p1_reach(b) :- edge(1, b).
+            .decl p0_mine(a: number)
+            p0_mine(b) :- edge(2, b), p0_reach(b).
+            .decl p1_mine(a: number)
+            p1_mine(b) :- edge(3, b), p1_reach(b).
+            .output p0_mine, p1_mine
+        "#;
+        // Held from the unprofiled run on: no other profile test turns the (process-wide) profile on meanwhile.
+        let _run = super::super::profile::one_run();
+        let quiet = simplify(&mut super::super::rr::parse(text).unwrap());
+        assert_eq!(quiet.merged.len(), 2, "{:?}", quiet.merged);
+        assert_eq!((quiet.similar, quiet.similar_groups), (0, 0));
+        super::super::profile::set(true);
+        let profiled = simplify(&mut super::super::rr::parse(text).unwrap());
+        super::super::profile::set(false);
+        assert_eq!(profiled.merged, quiet.merged);
+        assert_eq!((profiled.similar, profiled.similar_groups), (2, 1));
     }
 
     /// The converter's `has` with no stop: a node holding a match among its descendants, climbed one `child` edge a
@@ -2649,5 +2800,20 @@ pub mod tests {
         assert!(text.iter().any(|r| r.starts_with("none(") && r.contains("!pair($n") && !r.contains("count")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("some(") && r.contains(", pair($n") && !r.contains("count")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("many(") && r.contains("count")), "{text:?}");
+    }
+
+    /// A relation's rules are a set: `p1` has its rule twice and `p2` once, and they are one class, so one merge
+    /// finds it (a list comparison kept them apart until the repeat was dropped, which took a second merge).
+    #[test]
+    fn a_repeated_rule_does_not_keep_a_relation_from_its_twin() {
+        let mut prog = super::super::rr::parse(
+            ".decl e(a: number, b: number)\n.input e\n.decl p1(a: number, b: number)\n.decl p2(a: number, b: number)\n\
+             .decl out(a: number)\n.output out\np1(a, b) :- e(a, b).\np2(a, b) :- e(a, b).\nout(a) :- p1(a, _), p2(_, a).\n",
+        )
+        .unwrap();
+        let again = prog.rules.iter().find(|r| r.head.rel == "p1").unwrap().clone();
+        prog.rules.push(again);
+        let classes = super::congruence(&prog, false);
+        assert!(classes.iter().any(|c| c.iter().any(|r| r == "p1") && c.iter().any(|r| r == "p2")), "{classes:?}");
     }
 }

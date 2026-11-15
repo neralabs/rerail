@@ -702,6 +702,9 @@ fn level_ways(levels: &[Level], positions: &[(usize, Pos)], level_of_rule: &Hash
                         Wrap::Field(_) if d == 0 => pending = true,
                         Wrap::Relabel { .. } if d > 0 => {}
                         Wrap::Relabel { field, .. } if *field != 0 && c > 0 => owned = true,
+                        // A kind alone (`relabel _ as K`, not `drop`): the node made last stays
+                        // one, its field its own.
+                        Wrap::Relabel { field: 0, moved, inner: 0 } if *moved != 0 && *moved != crate::stream_ir::DEAD && c > 0 => {}
                         Wrap::Reread(_) if d > 0 || (c > 0 && owned) => {}
                         Wrap::Fold(_) if d > 0 => {}
                         Wrap::Field(_) | Wrap::Super(_) | Wrap::Retag(_) | Wrap::Flag { .. } | Wrap::Unless(_) => {}

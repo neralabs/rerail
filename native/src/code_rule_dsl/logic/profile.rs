@@ -27,7 +27,7 @@
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
 //! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -269,6 +269,12 @@ impl Activity {
 /// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
 /// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
 /// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
+/// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
+/// runs and threads read on one axis.
+pub fn timeline_clock() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
+}
+
 pub fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
     if !on() {
         return blocking();
@@ -403,6 +409,8 @@ pub struct Open {
     peak: u64,
     children_alloc: u64,
     children_rise: u64,
+    /// Its id in the heap sampler (`rerail_prof::heap::intern`; 0 off).
+    heap: u32,
 }
 
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
@@ -414,6 +422,178 @@ pub struct Thread {
     opens: Vec<Open>,
     /// The statement SQLite is running for it, and since when (`strict_statement`).
     statement: Option<(String, std::time::Instant)>,
+    /// The CPU its outermost spans took: what of its CPU the spans account for (`threads`).
+    covered: f64,
+    /// The outermost span that closed last, and the thread's CPU then.
+    between: Option<(String, f64)>,
+    /// Its CPU outside every span, by the outermost spans around it: (closed before, opened after) (`gaps`).
+    gaps: HashMap<(String, String), f64>,
+}
+
+/// Where a thread was outside every span before its first span opened, and after its last closed.
+const THREAD_START: &str = "(the thread's start)";
+const THREAD_END: &str = "(the thread's end, or now)";
+
+/// A thread that opened a span leaves its account when it ends (`threads`): its CPU and its spans' then.
+impl Drop for Thread {
+    fn drop(&mut self) {
+        if let Some(cpu) = thread_cpu(self.port) {
+            EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((self.name.clone(), cpu, self.covered));
+            let mut gaps = std::mem::take(&mut self.gaps);
+            if let Some((after, at)) = self.between.take() {
+                *gaps.entry((after, THREAD_END.to_owned())).or_default() += (cpu - at).max(0.0);
+            }
+            let mut ended = EXITED_GAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (k, v) in gaps {
+                *ended.entry(k).or_default() += v;
+            }
+        }
+    }
+}
+
+/// The gaps of threads that have ended (`gaps`).
+static EXITED_GAPS: LazyLock<Mutex<HashMap<(String, String), f64>>> = LazyLock::new(Default::default);
+
+/// CPU a thread took outside every span, between the outermost span that closed before it (`after`) and the one that
+/// opened after it (`before`), summed over the threads.
+#[derive(Clone, Debug)]
+pub struct Gap {
+    pub after: String,
+    pub before: String,
+    pub cpu: f64,
+}
+
+/// Every thread's CPU outside its spans, by the spans around it, largest first: ended threads' and live ones' (their
+/// CPU since their last span closed counted as before their end).
+pub fn gaps() -> Vec<Gap> {
+    let mut all = EXITED_GAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let live: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    for t in live {
+        let t = t.lock();
+        for (k, v) in &t.gaps {
+            *all.entry(k.clone()).or_default() += v;
+        }
+        if t.opens.is_empty()
+            && let (Some((after, at)), Some(now)) = (&t.between, thread_cpu(t.port))
+        {
+            *all.entry((after.clone(), THREAD_END.to_owned())).or_default() += (now - at).max(0.0);
+        }
+    }
+    let mut out: Vec<Gap> = all.into_iter().map(|((after, before), cpu)| Gap { after, before, cpu }).collect();
+    out.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
+    out
+}
+
+/// The accounts of threads that opened spans and have ended: name, CPU, CPU under spans.
+static EXITED: LazyLock<Mutex<Vec<(String, f64, f64)>>> = LazyLock::new(Default::default);
+
+/// One thread's CPU, and what of it its spans took.
+#[derive(Clone, Debug)]
+pub struct ThreadCpu {
+    pub name: String,
+    pub cpu: f64,
+    pub covered: f64,
+}
+
+/// The process's CPU by thread (`threads`): every live thread, the ended ones that opened spans, and a row for the
+/// threads that ended without one (the process's CPU less all the others'), so the rows add up to `process`.
+#[derive(Clone, Debug, Default)]
+pub struct Threads {
+    pub process: f64,
+    pub rows: Vec<ThreadCpu>,
+}
+
+/// The process's CPU (user + system) so far.
+pub fn process_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        // SAFETY: fills a `rusage` for this process.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
+        t(usage.ru_utime) + t(usage.ru_stime)
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
+    }
+}
+
+/// The live threads' Mach ports and names (macOS; none elsewhere).
+fn live_threads() -> Vec<(u32, String)> {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::kern_return_t;
+        }
+        let mut list: libc::thread_act_array_t = std::ptr::null_mut();
+        let mut count: libc::mach_msg_type_number_t = 0;
+        // SAFETY: the task's own threads; the list and each port's right are given back below.
+        let task = unsafe { libc::mach_task_self() };
+        if unsafe { libc::task_threads(task, &mut list, &mut count) } != 0 {
+            return Vec::new();
+        }
+        let ports: Vec<u32> = (0..count as usize).map(|i| unsafe { *list.add(i) }).collect();
+        let named = ports
+            .iter()
+            .map(|&port| {
+                let mut name = [0 as libc::c_char; 64];
+                // SAFETY: a thread of this task; a thread that ended meanwhile gives a null pthread.
+                let thread = unsafe { libc::pthread_from_mach_thread_np(port) };
+                let name = if thread == 0 || unsafe { libc::pthread_getname_np(thread, name.as_mut_ptr(), name.len()) } != 0 {
+                    String::new()
+                } else {
+                    unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned()
+                };
+                (port, if name.is_empty() { "unnamed".to_owned() } else { name })
+            })
+            .collect();
+        for &port in &ports {
+            unsafe { mach_port_deallocate(task, port) };
+        }
+        unsafe { libc::vm_deallocate(task, list as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::thread_act_t>()) as libc::vm_size_t) };
+        named
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
+}
+
+/// The process's CPU now, by thread: each live thread's, with what its outermost spans took, and the ended ones'.
+/// A span's CPU is its own thread's, so work it hands to another thread (rayon's, a helper's) is under no span unless
+/// that thread opens one (`span_at`): this says where such CPU went.
+pub fn threads() -> Threads {
+    let process = process_cpu();
+    let registered: Vec<(u32, f64)> = THREADS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .map(|t| {
+            let t = t.lock();
+            // Spans open now count what they have taken so far.
+            let open = t.opens.first().map_or(0.0, |o| thread_cpu(t.port).map_or(0.0, |now| now - o.start));
+            (t.port, t.covered + open)
+        })
+        .collect();
+    let mut rows: Vec<ThreadCpu> = live_threads()
+        .into_iter()
+        .filter_map(|(port, name)| {
+            let cpu = thread_cpu(port)?;
+            let covered = registered.iter().find(|(p, _)| *p == port).map_or(0.0, |(_, c)| *c);
+            Some(ThreadCpu { name, cpu, covered })
+        })
+        .collect();
+    let live: f64 = rows.iter().map(|t| t.cpu).sum();
+    let ended = EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let named: f64 = ended.iter().map(|(_, cpu, _)| cpu).sum();
+    rows.extend(ended.into_iter().map(|(name, cpu, covered)| ThreadCpu { name: format!("{name} (ended)"), cpu, covered }));
+    let unnamed = process - live - named;
+    if unnamed > 0.005 {
+        rows.push(ThreadCpu { name: "ended threads that opened no span".to_owned(), cpu: unnamed, covered: 0.0 });
+    }
+    Threads { process, rows }
 }
 
 /// Every thread that opened a span, while it lives.
@@ -431,6 +611,9 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
         counters: memory::Counters::mine(),
         opens: Vec::new(),
         statement: None,
+        covered: 0.0,
+        between: None,
+        gaps: HashMap::new(),
     }));
     let mut all = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     all.retain(|t| t.strong_count() > 0);
@@ -461,6 +644,17 @@ pub fn here() -> Option<String> {
     STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
 }
 
+/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
+/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
+/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
+pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
+    let under = here();
+    move |a| {
+        let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
+        f(a)
+    }
+}
+
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
 /// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
 pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
@@ -474,9 +668,13 @@ pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
 pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
+        // `RERAIL_TIMELINE=all`: every thread's, named (a test runs on a thread of its own name).
         static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
-            eprintln!("RERAIL_TIMELINE span {}", name());
+        static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
+        let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
+        if on && (all || std::thread::current().name() == Some("main")) {
+            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}]", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"));
         }
         return Span(false);
     }
@@ -497,7 +695,17 @@ fn open(path: String) -> Span {
     STACK.with(|s| {
         let mut s = s.lock();
         let alloc = s.counters.read();
-        s.opens.push(Open { path, start: cpu(), children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0 });
+        let start = cpu();
+        if s.opens.is_empty() {
+            let (after, at) = s.between.take().unwrap_or_else(|| (THREAD_START.to_owned(), 0.0));
+            if start > at {
+                *s.gaps.entry((after, path.clone())).or_default() += start - at;
+            }
+        }
+        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`).
+        let heap = if rerail_prof::heap::on() { rerail_prof::heap::intern(&path) } else { 0 };
+        rerail_prof::heap::set_span(heap);
+        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap });
     });
     Span(true)
 }
@@ -513,7 +721,12 @@ impl Drop for Span {
             let mut s = s.lock();
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
+            rerail_prof::heap::set_span(s.opens.last().map_or(0, |o| o.heap));
             let total = now - open.start;
+            if s.opens.is_empty() {
+                s.covered += total;
+                s.between = Some((open.path.clone(), now));
+            }
             let alloc = allocated.saturating_sub(open.alloc.0);
             let rise = peak.saturating_sub(open.peak);
             if let Some(parent) = s.opens.last_mut() {
@@ -594,16 +807,54 @@ thread_local! {
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
-pub struct Waves(bool);
+/// With the stage this thread's run was at before (`STAGE`).
+pub struct Waves(bool, u8);
 
 pub fn waves() -> Waves {
     WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves(true)
+    Waves(true, STAGE.with(|s| s.replace(INSIDE)))
+}
+
+/// Where this thread's run is (decision 0192), carried to its jobs (`run_state`): no run (`0`), a run before its
+/// first wave (`BEFORE`), or inside the waves (`INSIDE`). Runs on other threads may be in their waves meanwhile (a
+/// typing run beside phase 1): a run before its own may still read, and a thread of a run in its waves may not.
+/// A thread with no run's context (a parallel loop's item) goes by the process's count (`WAVES`).
+const BEFORE: u8 = 1;
+const INSIDE: u8 = 2;
+thread_local! {
+    /// Public so that the run's context can carry it (`logic::run_state`, a crate above this one).
+    pub static STAGE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
+/// waves, until the guard drops.
+pub fn run_begins() -> impl Drop {
+    struct Begun(u8);
+    impl Drop for Begun {
+        fn drop(&mut self) {
+            STAGE.with(|s| s.set(self.0));
+        }
+    }
+    Begun(STAGE.with(|s| if s.get() == INSIDE { INSIDE } else { s.replace(BEFORE) }))
+}
+
+/// Whether a store may be asked here (decision 0104): not while waves are under way for this thread.
+pub fn may_read_store() -> bool {
+    !waves_here()
+}
+
+/// Whether waves are under way for this thread: its run's, or, with no run's context here, any run's.
+fn waves_here() -> bool {
+    match STAGE.with(std::cell::Cell::get) {
+        BEFORE => false,
+        INSIDE => true,
+        _ => WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0,
+    }
 }
 
 /// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
 pub fn inside_waves() -> bool {
-    WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0
+    waves_here()
 }
 
 
@@ -614,6 +865,134 @@ pub fn inside_waves() -> bool {
 pub fn strict() -> bool {
     static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
+}
+
+/// `RERAIL_WARM`, a development check for a run that is truly warm: one over a store that already holds everything
+/// the run computes, under rules and inputs that have not changed since. Such a run should only read. Each of
+/// these is then a recomputation, and a fault:
+///
+/// - a write to SQLite: any transaction that commits a write, on any connection of the process (the store's, the
+///   run's, an in-memory one), the store writer's included;
+/// - a write queued for the store's writer (`ContentStore::write_back`): what a cache miss computed, kept;
+/// - the whole-run cutoff (`corpus::reuse`) asked for and not applying: a rule file, a document or a read changed,
+///   or no run left a record;
+/// - a maintained run's non-empty delta: an input's or a stratum's rows gone or new (`__minus`, `__plus`), or a
+///   maintained relation's overdeleted or inserted rows (`__del`, `__ins`, `__gone`).
+///
+/// `RERAIL_WARM=1` ends the process at the first fault, with its stack (`warm_fault`). `RERAIL_WARM=list` reports
+/// every fault and goes on, a line each as it happens (the first 60 with their stacks), and ends the process with
+/// status 3 if there was one, after its own exit. A switch of how a run is checked, not of what it outputs: the cutoff's key leaves it
+/// out (`reuse::NOT_OUTPUTS`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Warm {
+    Off,
+    Fail,
+    List,
+}
+
+pub fn warm_mode() -> Warm {
+    // The switch, read once as `strict` reads its own: 0 off, 1 fail, 2 list.
+    static WARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    match *WARM.get_or_init(|| match std::env::var("RERAIL_WARM").as_deref() {
+        Err(_) | Ok("" | "0" | "off") => 0,
+        Ok("list") => 2,
+        Ok(_) => 1,
+    }) {
+        0 => Warm::Off,
+        2 => Warm::List,
+        _ => Warm::Fail,
+    }
+}
+
+/// Whether the warm check is on (`warm_mode`).
+pub fn warm() -> bool {
+    warm_mode() != Warm::Off
+}
+
+/// The writes a warm run may still make, by what the store's writer calls the job (`ContentStore::write_back`'s
+/// `what`), and why each is allowed: locks against another process's collection, and the timestamps by which
+/// collection judges recency. Nothing else is exempt from the warm check.
+///
+/// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
+/// and refuses a commit that changes one without the other.
+pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
+    ("the run's hold on its plans", "a lock: a lease on the run's plans against a collection in another process (decision 0053)"),
+    ("the run's hold released", "a lock: the lease's release"),
+    ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
+    ("the combined program's pins released", "a lock: the release of the combined program's leases"),
+    ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
+    ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
+];
+
+/// Whether the store's writer may run a job called `what` in a warm run (`WARM_WRITES_ALLOWED`).
+pub fn warm_write_allowed(what: &str) -> bool {
+    WARM_WRITES_ALLOWED.iter().any(|(w, _)| *w == what)
+}
+
+thread_local! {
+    /// On the store's writer: whether a transaction is open for listed jobs (`warm_scope`), and whether every job
+    /// it ran so far is listed (`warm_job`).
+    static WARM_SCOPE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// While it lives, the commits on this thread are a listed write's (`WARM_WRITES_ALLOWED`) if every job named to
+/// `warm_job` inside it is listed; they are not a fault then. The store's writer holds one around each transaction.
+pub struct WarmScope(Option<bool>);
+
+pub fn warm_scope() -> WarmScope {
+    WarmScope(WARM_SCOPE.with(|s| s.replace(Some(true))))
+}
+
+impl Drop for WarmScope {
+    fn drop(&mut self) {
+        WARM_SCOPE.with(|s| s.set(self.0));
+    }
+}
+
+/// The store's writer runs the job called `what` in the open `warm_scope`.
+pub fn warm_job(what: &str) {
+    if warm() && !warm_write_allowed(what) {
+        WARM_SCOPE.with(|s| s.set(s.get().map(|_| false)));
+    }
+}
+
+/// How many faults a `RERAIL_WARM=list` run has had so far: its exit status is 3 if any.
+static WARM_FAULTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A recomputation in a warm run (`warm_mode`): `kind` is what happened (a SQLite write, a queued write, ...),
+/// `detail` which one. Nothing without `RERAIL_WARM`. Safe inside SQLite's callbacks: it aborts, never unwinds.
+pub fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
+    let mode = warm_mode();
+    if mode == Warm::Off {
+        return;
+    }
+    let mut detail = detail();
+    if detail.len() > 600 {
+        detail.truncate(detail.floor_char_boundary(600));
+        detail.push('…');
+    }
+    let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+    if mode == Warm::Fail {
+        eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
+        std::process::abort();
+    }
+    // Each fault is a line as it happens (`sort | uniq -c` groups them), the first 60 with their stacks.
+    let n = WARM_FAULTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    #[cfg(not(windows))]
+    if n == 1 {
+        extern "C" fn report() {
+            eprintln!("rerail: RERAIL_WARM: {} recomputations in a warm run", WARM_FAULTS.load(std::sync::atomic::Ordering::Relaxed));
+            // SAFETY: ends the process with the warm check's status, after its other exit handlers ran.
+            unsafe { libc::_exit(3) };
+        }
+        // SAFETY: registers a function without arguments, run once as the process exits.
+        unsafe { libc::atexit(report) };
+    }
+    if n <= 60 {
+        eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
+    } else {
+        eprintln!("rerail: RERAIL_WARM: {kind}: {detail} (thread {thread}, span {})", current());
+    }
 }
 
 /// Whether the store's connections trace their statements: for the profile, or the strict mode.
@@ -639,7 +1018,7 @@ pub fn strict_statement(conn: &'static str, text: &str) {
         return;
     }
     // A run reads before its first wave; a process's runs (phase 0's include graphs, then the run) each do.
-    let inside = WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0;
+    let inside = waves_here();
     if !inside && reads_only(text) {
         return;
     }
@@ -664,8 +1043,45 @@ fn violation(when: &str, what: &str) -> ! {
     std::process::abort();
 }
 
+/// A write transaction committing on connection `db`: a fault of the warm check (`warm_fault`), naming the database
+/// and the statement that commits it. SQLite calls a commit hook for a transaction that wrote (or took the write
+/// lock, `BEGIN IMMEDIATE`), never for a read.
+///
+/// # Safety
+/// `db` is an open connection, and this runs on its thread inside its commit hook.
+pub unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
+    use rusqlite::ffi;
+    if !warm() || WARM_SCOPE.with(|s| s.get() == Some(true)) {
+        return;
+    }
+    // SAFETY: the caller's connection.
+    let file = unsafe {
+        let file = ffi::sqlite3_db_filename(db, c"main".as_ptr());
+        if file.is_null() { String::new() } else { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
+    };
+    let kind = if file.is_empty() { "a SQLite write committed in memory" } else { "a SQLite write committed to a file" };
+    warm_fault(kind, || {
+        // SAFETY: the caller's connection; its statements are listed under its mutex, which the hook holds.
+        unsafe {
+            let mut statement = String::new();
+            let mut s = ffi::sqlite3_next_stmt(db, std::ptr::null_mut());
+            while !s.is_null() {
+                if ffi::sqlite3_stmt_busy(s) != 0 {
+                    let sql = ffi::sqlite3_sql(s);
+                    if !sql.is_null() {
+                        statement = std::ffi::CStr::from_ptr(sql).to_string_lossy().split_whitespace().collect::<Vec<_>>().join(" ");
+                    }
+                }
+                s = ffi::sqlite3_next_stmt(db, s);
+            }
+            format!("{}: {statement}", if file.is_empty() { "(in memory)" } else { file.as_str() })
+        }
+    });
+}
+
 /// In the strict mode, every SQLite connection the process opens checks its statements (`strict_statement`): one that
-/// sets a trace of its own (the store's, the run's) checks them there.
+/// sets a trace of its own (the store's, the run's) checks them there. In the warm mode (`warm`), each checks its
+/// commits (`warm_commit`).
 pub fn strict_on_every_connection() {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
@@ -676,12 +1092,25 @@ pub fn strict_on_every_connection() {
         }
         0
     }
+    unsafe extern "C" fn committed(db: *mut std::ffi::c_void) -> std::ffi::c_int {
+        // SAFETY: the connection SQLite commits on, passed as the hook's argument, on its thread.
+        unsafe { warm_commit(db.cast()) };
+        0
+    }
     unsafe extern "C" fn opened(db: *mut ffi::sqlite3, _: *mut *mut std::ffi::c_char, _: *const ffi::sqlite3_api_routines) -> std::ffi::c_int {
         // SAFETY: SQLite calls this with a connection it has just opened.
-        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe {
+            if strict() {
+                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut());
+            }
+            // A connection that sets a commit hook of its own (the store's, for its atoms) calls `warm_commit` there.
+            if warm() {
+                ffi::sqlite3_commit_hook(db, Some(committed), db.cast());
+            }
+        }
         ffi::SQLITE_OK
     }
-    if strict() {
+    if strict() || warm() {
         // SAFETY: registers a function with the signature SQLite calls; it outlives every connection.
         unsafe { ffi::sqlite3_auto_extension(Some(opened)) };
     }
@@ -691,6 +1120,7 @@ impl Drop for Waves {
     fn drop(&mut self) {
         if self.0 {
             WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            STAGE.with(|s| s.set(self.1));
         }
     }
 }
@@ -715,13 +1145,13 @@ pub fn is_behind() -> bool {
 }
 
 fn in_waves() -> bool {
-    on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+    on() && waves_here() && !BEHIND.with(std::cell::Cell::get)
 }
 
 /// In the strict mode a wave's wait for the writer ends the process, as its SQL would (`strict_statement`); the run's last
 /// wait, for every queued write, is the end of the run.
 fn strict_wait(what: &str) {
-    if strict() && !BEHIND.with(std::cell::Cell::get) && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+    if strict() && !BEHIND.with(std::cell::Cell::get) && waves_here() {
         violation("inside the waves", &format!("a wait for the store's writer: {what}"));
     }
 }

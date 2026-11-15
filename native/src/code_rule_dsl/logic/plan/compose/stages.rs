@@ -31,14 +31,14 @@ fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: 
         let before = (empty.len(),prog.rules.len(),prog.inputs.len());
         prog.rules.retain(|r|!r.body.iter().any(|l|matches!(l,Literal::Atom(a) if !a.neg && empty.contains(a.rel.as_str()))));
         for rel in prog.decls.keys() {
-            if !prog.inputs.contains(rel) && !prog.natives.contains_key(rel)
-                && prog.facts.get(rel).is_none_or(Vec::is_empty) && !prog.rules.iter().any(|r|r.head.rel==*rel) {
-                empty.insert(rel.clone());
+            if !prog.inputs.iter().any(|i| i == rel.as_str()) && !prog.natives.contains_key(rel.as_str())
+                && prog.facts.get(rel.as_str()).is_none_or(Vec::is_empty) && !prog.rules.iter().any(|r|r.head.rel==*rel) {
+                empty.insert(rel.to_string());
             }
         }
         let native: BTreeSet<_> = prog.inputs.iter().cloned().collect();
         let mut quiet = Vec::new();
-        for scc in strata(prog)?.0 {
+        for scc in components_of(prog)? {
             if scc.len()!=1 { continue; }
             let rel=scc.iter().next().unwrap();
             if prog.inputs.contains(rel) || prog.natives.contains_key(rel) || prog.facts.get(rel).is_some_and(|f|!f.is_empty()) { continue; }

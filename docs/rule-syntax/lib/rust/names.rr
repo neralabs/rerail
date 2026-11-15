@@ -1,0 +1,184 @@
+// rust/names: the names a Rust file binds and the scopes that hold them, as rustc's lexical scopes do, after main's
+// scope reader (native scope/rust.rs).
+//
+// What a rule gets from this library (main's binding terms, rerail.policy/v1 `binds`):
+//   binding(s, x, site, f)  scope s binds x at site, of main's form f: "parameter", "assignment" (`let`, `const`),
+//                           "match" (a match arm's or an `if let` / `while let` pattern's name), "for",
+//                           "definition" (fn, struct, enum, union, trait, mod, macro_rules!), "typeAlias", "static",
+//                           "import" (`use`, `extern crate`), "typeParameter"
+//   bind_name(n, site)      n is the identifier that names a binding of site
+//   main_form(site, f)      the form of site's bindings
+//   site_scope(site, k)     the kind of scope that holds site's bindings: "function", "lambda", "block", "module",
+//                           "typeParameters"
+//   binding_value(site, v)  the value of `let x = v` (a plain name only), `const X: T = v`, `static S: T = v`
+//
+// The site is the construct that binds: the parameter, the `let`, the match arm, the `for`, the `let` condition, the
+// item, the `use` declaration. A pattern binds each of its names at the one site.
+//   fn f(a: i32) { let (b, c) = (1, 2); match a { d => {} } }
+//   binding(<f>, "a", <a: i32>, "parameter"); binding(<f>, "b", <let …>, "assignment"), the same for "c";
+//   binding(<d => {}>, "d", <d => {}>, "match")
+//
+// Scopes: a function (its parameters and its body's own statements are one scope, as main reads them), a closure,
+// each other block, an `if` / `while` (its `let` conditions), a `for` (its pattern), a match arm, a module, the file,
+// and an item with generic parameters. Labels, lifetimes, `Self` and `use a::{self}` are not bound here.
+//
+// Builds on core only.
+
+// ---- scopes ---------------------------------------------------------------------------------------------------------
+.decl rs_scope_kind(k: symbol)
+rs_scope_kind("source_file"). rs_scope_kind("mod_item"). rs_scope_kind("function_item").
+rs_scope_kind("function_signature_item"). rs_scope_kind("closure_expression"). rs_scope_kind("block").
+rs_scope_kind("if_expression"). rs_scope_kind("while_expression"). rs_scope_kind("for_expression").
+rs_scope_kind("match_arm"). rs_scope_kind("struct_item"). rs_scope_kind("enum_item"). rs_scope_kind("union_item").
+rs_scope_kind("type_item"). rs_scope_kind("trait_item"). rs_scope_kind("impl_item"). rs_scope_kind("associated_type").
+// rs_fbody(b): b is a function's body, which is no scope of its own (its statements bind in the function's).
+.decl rs_fbody(b: node)
+rs_fbody(b) :- kind(f, "function_item"), field(f, "body", b).
+// rs_scope_of(n, s): s is the scope around n: its nearest scope ancestor, a function's body read as the function.
+.decl rs_scope_of(n: node, s: node)
+rs_scope_of(n, s) :- nearest(n, a, rs_scope_kind), !rs_fbody(a), s = a.
+rs_scope_of(n, f) :- nearest(n, a, rs_scope_kind), rs_fbody(a), field(f, "body", a).
+.decl rs_scope_name(k: symbol, name: symbol)  // a scope node kind, in main's scope kind names
+rs_scope_name("source_file", "module"). rs_scope_name("mod_item", "module").
+rs_scope_name("function_item", "function"). rs_scope_name("function_signature_item", "function").
+rs_scope_name("closure_expression", "lambda"). rs_scope_name("block", "block").
+rs_scope_name("if_expression", "block"). rs_scope_name("while_expression", "block").
+rs_scope_name("for_expression", "block"). rs_scope_name("match_arm", "block").
+rs_scope_name("struct_item", "typeParameters"). rs_scope_name("enum_item", "typeParameters").
+rs_scope_name("union_item", "typeParameters"). rs_scope_name("type_item", "typeParameters").
+rs_scope_name("trait_item", "typeParameters"). rs_scope_name("impl_item", "typeParameters").
+rs_scope_name("associated_type", "typeParameters").
+
+// ---- patterns -------------------------------------------------------------------------------------------------------
+// rs_root(site, s, f, p): pattern p binds its names at site, in scope s, with main's form f.
+.decl rs_root(site: node, s: node, f: symbol, p: node)
+// A function's or closure's typed parameter: `a: i32`, `(p, q): (i32, i32)`, `Point { x, y }: P`.
+rs_root(par, s, "parameter", p) :- kind(par, "parameter"), field(par, "pattern", p), !kind(p, "self"),
+    rs_scope_of(par, s).
+// A closure's untyped parameter is a bare pattern: `|a, (b, c)|`; the pattern is its own site.
+rs_root(p, s, "parameter", p) :- kind(ps, "closure_parameters"), child(ps, p, _), !kind(p, "parameter"),
+    !rs_not_pattern(p), rs_scope_of(p, s).
+// `let PAT = v;` binds in the block (or function) around it.
+rs_root(l, s, "assignment", p) :- kind(l, "let_declaration"), field(l, "pattern", p), rs_scope_of(l, s).
+// `if let PAT = v` and `while let PAT = v` (also in a `let` chain) bind in the `if` or `while`.
+rs_root(c, s, "match", p) :- kind(c, "let_condition"), field(c, "pattern", p), rs_scope_of(c, s).
+// `for PAT in xs` binds in the loop; a match arm's patterns, its guard aside, bind in the arm.
+rs_root(l, l, "for", p) :- kind(l, "for_expression"), field(l, "pattern", p).
+rs_root(a, a, "match", p) :- kind(a, "match_arm"), field(a, "pattern", mp), child(mp, p, _), !field(mp, "condition", p),
+    !rs_not_pattern(p).
+.decl rs_not_pattern(p: node)  // nodes a pattern walk never descends into, nor binds: comments, attributes
+rs_not_pattern(p) :- kind(p, "line_comment") ; kind(p, "block_comment") ; kind(p, "attribute_item").
+// rs_walk(site, p): the pattern walk of site reaches p. It goes into every named child, except: a tuple struct
+// pattern's path (`Some` of `Some(x)`), a struct pattern's path and field names (only `x` and `w` in
+// `Point { x, y: w }`), and paths, literals, ranges, macros and closures, which bind nothing.
+.decl rs_walk(site: node, p: node)
+rs_walk(site, p) :- rs_root(site, _, _, p).
+rs_walk(site, c) :- rs_walk(site, q), rs_descends(q), child(q, c, _), !rs_not_pattern(c), !rs_ctor(q, c).
+.decl rs_ctor(q: node, c: node)  // c is tuple struct pattern q's path
+rs_ctor(q, c) :- kind(q, "tuple_struct_pattern"), field(q, "type", c).
+rs_walk(site, c) :- rs_walk(site, q), kind(q, "struct_pattern"), child(q, fp, _), kind(fp, "field_pattern"),
+    (field(fp, "pattern", c) ; !field(fp, "pattern", _), field(fp, "name", c)).
+.decl rs_descends(q: node)
+rs_descends(q) :- rs_walk(_, q), kind(q, k), !rs_leaf_kind(k).
+.decl rs_leaf_kind(k: symbol)
+rs_leaf_kind("identifier"). rs_leaf_kind("shorthand_field_identifier"). rs_leaf_kind("struct_pattern").
+rs_leaf_kind("scoped_identifier"). rs_leaf_kind("scoped_type_identifier"). rs_leaf_kind("range_pattern").
+rs_leaf_kind("integer_literal"). rs_leaf_kind("float_literal"). rs_leaf_kind("string_literal").
+rs_leaf_kind("raw_string_literal"). rs_leaf_kind("char_literal"). rs_leaf_kind("boolean_literal").
+rs_leaf_kind("negative_literal"). rs_leaf_kind("closure_expression"). rs_leaf_kind("macro_invocation").
+rs_leaf_kind("token_tree"). rs_leaf_kind("self").
+// rs_pat_name(site, n, x): the walk of site binds x at n. An identifier that names a constant, a static, a unit or
+// tuple struct, or an upper-case import, or `None`, is a path rustc reads, not a binding (rs_pat_path). A name an
+// or-pattern repeats (`A(x) | B(x)`) binds once, at its first place.
+.decl rs_pat_name(site: node, n: node, x: symbol)
+rs_pat_name(site, n, x) :- rs_walk(site, n), (kind(n, "identifier") ; kind(n, "shorthand_field_identifier")),
+    text(n, x), !rs_pat_path(n), !rs_pat_repeat(site, n).
+.decl rs_pat_path(n: node)
+rs_pat_path(n) :- rs_walk(_, n), kind(n, "identifier"), text(n, "None").
+// Approximation: the item may be in any scope around the pattern; main also stops at a module boundary and at a
+// binding made later in the scope.
+rs_pat_path(n) :- rs_walk(_, n), kind(n, "identifier"), text(n, x), rs_path_item(s, x), within(n, s).
+.decl rs_path_item(s: node, x: symbol)  // scope s holds an item that an identifier pattern of name x reads
+rs_path_item(s, x) :- rs_item(s, x, _, it, _), (kind(it, "const_item") ; kind(it, "static_item")).
+rs_path_item(s, x) :- rs_item(s, x, _, it, _), kind(it, "struct_item"), !rs_braced(it).
+rs_path_item(s, x) :- rs_use(s, x, n, _), match("\\p{Lu}.*", n).
+.decl rs_braced(it: node)  // a struct with named fields, which is a type only
+rs_braced(it) :- kind(it, "struct_item"), field(it, "body", b), kind(b, "field_declaration_list").
+.decl rs_pat_repeat(site: node, n: node)
+rs_pat_repeat(site, n) :- rs_walk(site, n), kind(n, "identifier"), text(n, x), rs_walk(site, m), m != n,
+    kind(m, "identifier"), text(m, x), node(_, m, _, ms, _), node(_, n, _, ns, _), ms < ns,
+    within(n, o), kind(o, "or_pattern"), within(m, o).
+
+// ---- items ----------------------------------------------------------------------------------------------------------
+// rs_item(s, x, n, it, f): item it, a direct child of the file, a module body or a block (a function body too),
+// binds x at its name n in scope s, visible in the whole scope. The items of an `impl` or `trait` body are no
+// lexical names (they are reached through a path), and those of an `extern { … }` block are its scope's.
+.decl rs_item(s: node, x: symbol, n: node, it: node, f: symbol)
+rs_item(s, x, n, it, f) :- child(p, it, _), rs_item_home(p), kind(it, k), rs_item_form(k, f), field(it, "name", n),
+    text(n, x), rs_scope_of(it, s).
+.decl rs_item_home(p: node)
+rs_item_home(p) :- kind(p, "source_file") ; kind(p, "block").
+rs_item_home(p) :- kind(p, "declaration_list"), child(m, p, _), (kind(m, "mod_item") ; kind(m, "foreign_mod_item")).
+.decl rs_item_form(k: symbol, f: symbol)
+rs_item_form("function_item", "definition"). rs_item_form("function_signature_item", "definition").
+rs_item_form("struct_item", "definition"). rs_item_form("enum_item", "definition").
+rs_item_form("union_item", "definition"). rs_item_form("trait_item", "definition").
+rs_item_form("mod_item", "definition"). rs_item_form("macro_definition", "definition").
+rs_item_form("type_item", "typeAlias"). rs_item_form("const_item", "assignment").
+rs_item_form("static_item", "static").
+// `extern crate a;` binds a, `extern crate a as b;` binds b.
+.decl rs_extern(s: node, x: symbol, n: node, it: node)
+rs_extern(s, x, n, it) :- kind(it, "extern_crate_declaration"), field(it, "alias", n), text(n, x), x != "_",
+    rs_scope_of(it, s).
+rs_extern(s, x, n, it) :- kind(it, "extern_crate_declaration"), !field(it, "alias", _), field(it, "name", n),
+    text(n, x), rs_scope_of(it, s).
+// rs_use(s, x, n, u): `use` declaration u binds x at n, in scope s: the last segment of each path it imports, or
+// its alias. `use a::b;` binds b, `use a::{b, c as d};` binds b and d, `use a::*` binds nothing it can name.
+.decl rs_use(s: node, x: symbol, n: node, u: node)
+.decl rs_use_tree(u: node, t: node)
+rs_use_tree(u, t) :- kind(u, "use_declaration"), field(u, "argument", t).
+rs_use_tree(u, t) :- rs_use_tree(u, l), kind(l, "scoped_use_list"), field(l, "list", t).
+rs_use_tree(u, t) :- rs_use_tree(u, l), kind(l, "use_list"), child(l, t, _).
+rs_use(s, x, t, u) :- rs_use_tree(u, t), kind(t, "identifier"), text(t, x), rs_scope_of(u, s).
+rs_use(s, x, n, u) :- rs_use_tree(u, t), kind(t, "scoped_identifier"), field(t, "name", n), kind(n, "identifier"),
+    text(n, x), rs_scope_of(u, s).
+rs_use(s, x, n, u) :- rs_use_tree(u, t), kind(t, "use_as_clause"), field(t, "alias", n), text(n, x), x != "_",
+    rs_scope_of(u, s).
+// rs_tparam(s, x, n, tp): generic parameter tp (`T`, `const N: usize`, `'a`) binds x at its name n in scope s,
+// the item or function it parameterises.
+.decl rs_tparam(s: node, x: symbol, n: node, tp: node)
+rs_tparam(s, x, n, tp) :- kind(tps, "type_parameters"), child(tps, tp, _),
+    (kind(tp, "type_parameter") ; kind(tp, "const_parameter") ; kind(tp, "lifetime_parameter")),
+    field(tp, "name", n), text(n, x), rs_scope_of(tp, s).
+
+// ---- the bindings ---------------------------------------------------------------------------------------------------
+// rs_bind(s, x, n, site, f): every binding: scope, name, name node, site and main's form.
+.decl rs_bind(s: node, x: symbol, n: node, site: node, f: symbol)
+rs_bind(s, x, n, site, f) :- rs_root(site, s, f, _), rs_pat_name(site, n, x).
+// `self`, `&self`, `mut self: Box<Self>`: the parameter binds the name self.
+rs_bind(s, "self", n, par, "parameter") :- kind(par, "self_parameter"), child(par, n, _), kind(n, "self"),
+    rs_scope_of(par, s).
+rs_bind(s, "self", n, par, "parameter") :- kind(par, "parameter"), field(par, "pattern", n), kind(n, "self"),
+    rs_scope_of(par, s).
+rs_bind(s, x, n, it, f) :- rs_item(s, x, n, it, f).
+rs_bind(s, x, n, it, "import") :- rs_extern(s, x, n, it).
+rs_bind(s, x, n, u, "import") :- rs_use(s, x, n, u).
+rs_bind(s, x, n, tp, "typeParameter") :- rs_tparam(s, x, n, tp).
+
+// ==== interface =====================================================================================================
+// binding(s, x, site, f): scope s binds x at site. Main orders a scope's bindings of a name by where they take
+// effect (an item at its scope's start, a `let` after its statement, a parameter at its function's start); a rule
+// that compares two sites by node order (`redefines`) sees source order, which differs only for an item placed
+// after a `let` of its name.
+.decl binding(s: node, x: symbol, site: node, form: symbol)
+binding(s, x, site, f) :- rs_bind(s, x, _, site, f).
+.decl bind_name(n: node, site: node)
+bind_name(n, site) :- rs_bind(_, _, n, site, _).
+.decl main_form(site: node, form: symbol)
+main_form(site, f) :- rs_bind(_, _, _, site, f).
+.decl site_scope(site: node, k: symbol)
+site_scope(site, k) :- rs_bind(s, _, _, site, _), kind(s, sk), rs_scope_name(sk, k).
+.decl binding_value(site: node, v: node)
+binding_value(l, v) :- kind(l, "let_declaration"), field(l, "pattern", p), kind(p, "identifier"), rs_bind(_, _, p, l, _),
+    field(l, "value", v).
+binding_value(it, v) :- (kind(it, "const_item") ; kind(it, "static_item")), rs_item(_, _, _, it, _), field(it, "value", v).

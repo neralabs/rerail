@@ -1273,6 +1273,177 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
     for (uint i = 0; i < p[1] && i < 8; i++) kv[i] = R[ulong(p[3 + i]) * nr + t];
     out[t] = hash_keys(kv, p[1], p[2]);
 }
+
+// A lattice relation's rounds on the device (decision 0124): a round's rows `U` (a table of `k` slots: the key's
+// `nkeys` columns, then the value) folded by key into the held relation `R` (its `k` columns and a change count,
+// stride `had`). `P` groups `U`'s rows by key (each place the least row of its key), `best` the key's chosen row
+// (min and max select one of their values), `flags` a flat key's conflict. A held key's row is updated in place; a
+// new key's row goes to `N` (as `R`'s columns), found next by `H` (key to `R`'s row, kept from round to round). Each
+// changed key's row (key and value) goes to `D`, the next round's delta: `counters[0]` of them, `counters[1]` new.
+struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint pad; };
+
+static inline uint lat_hash(thread const long* key, uint nk, uint mask) {
+    ulong h = 0x9E3779B97F4A7C15ul;
+    for (uint c = 0; c < nk && c < 8; c++) { h ^= ulong(key[c]); h *= 0xff51afd7ed558ccdul; h ^= h >> 33; }
+    return uint(h) & mask;
+}
+
+static inline bool lat_same(device const long* T, uint stride, uint a, uint b, uint nk) {
+    for (uint c = 0; c < nk && c < 8; c++) if (T[ulong(c) * stride + a] != T[ulong(c) * stride + b]) return false;
+    return true;
+}
+
+kernel void lat_clear(device uint* P [[buffer(0)]], device uint* best [[buffer(1)]], device uint* flags [[buffer(2)]],
+                      constant LatP& p [[buffer(3)]], uint i [[thread_position_in_grid]]) {
+    if (i > p.pmask) return;
+    P[i] = 0xffffffffu;
+    best[i] = 0xffffffffu;
+    flags[i] = 0;
+}
+
+kernel void lat_hclear(device uint* H [[buffer(0)]], constant LatP& p [[buffer(1)]], uint i [[thread_position_in_grid]]) {
+    if (i <= p.hmask) H[i] = 0xffffffffu;
+}
+
+// `R`'s row `t` into `H` (a table grown: every held row placed again).
+kernel void lat_rehash(device const long* R [[buffer(0)]], device atomic_uint* H [[buffer(1)]], constant LatP& p [[buffer(2)]],
+                       uint t [[thread_position_in_grid]]) {
+    if (t >= p.had) return;
+    long key[8];
+    for (uint c = 0; c < p.nkeys && c < 8; c++) key[c] = R[ulong(c) * p.had + t];
+    uint at = lat_hash(key, p.nkeys, p.hmask);
+    // Bounded: a place at a time, and a weak exchange's spurious failure tries the place again.
+    for (uint k = 0; k < 2 * (p.hmask + 1); k++) {
+        uint seen = 0xffffffffu;
+        if (atomic_compare_exchange_weak_explicit(&H[at], &seen, t, memory_order_relaxed, memory_order_relaxed)) return;
+        if (seen == 0xffffffffu) continue;
+        at = (at + 1) & p.hmask;
+    }
+}
+
+kernel void lat_claim(device const long* U [[buffer(0)]], device atomic_uint* P [[buffer(1)]], constant LatP& p [[buffer(2)]],
+                      uint x [[thread_position_in_grid]]) {
+    if (x >= p.n) return;
+    long key[8];
+    for (uint c = 0; c < p.nkeys && c < 8; c++) key[c] = U[ulong(c) * p.n + x];
+    uint at = lat_hash(key, p.nkeys, p.pmask);
+    for (uint k = 0; k < 2 * (p.pmask + 1); k++) {
+        uint seen = 0xffffffffu;
+        if (atomic_compare_exchange_weak_explicit(&P[at], &seen, x, memory_order_relaxed, memory_order_relaxed)) return;
+        if (seen == 0xffffffffu) continue;
+        if (lat_same(U, p.n, seen, x, p.nkeys)) { atomic_fetch_min_explicit(&P[at], x, memory_order_relaxed); return; }
+        at = (at + 1) & p.pmask;
+    }
+}
+
+// The place of row `x`'s key in `P` (claimed: it is there).
+static inline uint lat_place(device const long* U, device const uint* P, constant LatP& p, uint x) {
+    long key[8];
+    for (uint c = 0; c < p.nkeys && c < 8; c++) key[c] = U[ulong(c) * p.n + x];
+    uint at = lat_hash(key, p.nkeys, p.pmask);
+    for (uint k = 0; k <= p.pmask; k++) {
+        uint y = P[at];
+        if (y == 0xffffffffu) return 0xffffffffu;
+        if (lat_same(U, p.n, y, x, p.nkeys)) return at;
+        at = (at + 1) & p.pmask;
+    }
+    return 0xffffffffu;
+}
+
+// Whether value `a` (of row `ra`) is chosen over `b` (of `rb`): the top absorbs; min the least, max the greatest;
+// a tie to the first row.
+static inline bool lat_better(constant LatP& p, long a, uint ra, long b, uint rb) {
+    if (b == p.top) return false;
+    if (a == p.top) return true;
+    if (a == b) return ra < rb;
+    return p.code == 0 ? a < b : a > b;
+}
+
+kernel void lat_best(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device atomic_uint* best [[buffer(2)]],
+                     device atomic_uint* flags [[buffer(3)]], constant LatP& p [[buffer(4)]], uint x [[thread_position_in_grid]]) {
+    if (x >= p.n) return;
+    uint s = lat_place(U, P, p, x);
+    if (s == 0xffffffffu) return;
+    long v = U[ulong(p.nkeys) * p.n + x];
+    if (p.code == 2) {
+        if (v != U[ulong(p.nkeys) * p.n + P[s]]) atomic_fetch_or_explicit(&flags[s], 1u, memory_order_relaxed);
+        return;
+    }
+    uint cur = atomic_load_explicit(&best[s], memory_order_relaxed);
+    for (uint k = 0; k < 4 * p.n + 8; k++) {
+        if (cur != 0xffffffffu && !lat_better(p, v, x, U[ulong(p.nkeys) * p.n + cur], cur)) return;
+        if (atomic_compare_exchange_weak_explicit(&best[s], &cur, x, memory_order_relaxed, memory_order_relaxed)) return;
+    }
+}
+
+// The join of two present values (`code`: 0 min, 1 max, 2 flat), the top absorbing.
+static inline long lat_lub(constant LatP& p, long a, long b) {
+    if (a == p.top || b == p.top) return p.top;
+    if (p.code == 0) return min(a, b);
+    if (p.code == 1) return max(a, b);
+    return a == b ? a : p.top;
+}
+
+// A key changed past `after` times: min's or max's value moving on is its top (a finite chain); flat's is kept.
+static inline long lat_widen(constant LatP& p, long old, long now) {
+    if (p.code == 0 && now < old) return p.top;
+    if (p.code == 1 && now > old) return p.top;
+    return now;
+}
+
+kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device const uint* best [[buffer(2)]],
+                      device const uint* flags [[buffer(3)]], device long* R [[buffer(4)]], device atomic_uint* H [[buffer(5)]],
+                      device long* N [[buffer(6)]], device long* D [[buffer(7)]], device atomic_uint* counters [[buffer(8)]],
+                      constant LatP& p [[buffer(9)]], uint s [[thread_position_in_grid]]) {
+    if (s > p.pmask) return;
+    uint rep = P[s];
+    if (rep == 0xffffffffu) return;
+    uint r = (p.code == 2 || best[s] == 0xffffffffu) ? rep : best[s];
+    long v = U[ulong(p.nkeys) * p.n + r];
+    if (p.code == 2 && flags[s] != 0) v = p.top;
+    long key[8];
+    for (uint c = 0; c < p.nkeys && c < 8; c++) key[c] = U[ulong(c) * p.n + r];
+    uint k = p.nkeys + 1;
+    uint at = lat_hash(key, p.nkeys, p.hmask);
+    uint held = 0xffffffffu;
+    for (uint i = 0; i <= p.hmask; i++) {
+        uint h = atomic_load_explicit(&H[at], memory_order_relaxed);
+        if (h == 0xffffffffu) break;
+        bool same = h < p.had;
+        for (uint c = 0; same && c < p.nkeys && c < 8; c++) same = R[ulong(c) * p.had + h] == key[c];
+        if (same) { held = h; break; }
+        at = (at + 1) & p.hmask;
+    }
+    if (held != 0xffffffffu) {
+        long o = R[ulong(p.nkeys) * p.had + held];
+        long m = lat_lub(p, o, v);
+        if (m == o) return;
+        long changes = R[ulong(k) * p.had + held];
+        if (p.after != 0xffffffffu && changes >= long(p.after)) {
+            m = lat_widen(p, o, m);
+            if (m == o) return;
+        }
+        R[ulong(p.nkeys) * p.had + held] = m;
+        R[ulong(k) * p.had + held] = changes + 1;
+        v = m;
+    } else {
+        uint a = atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
+        for (uint c = 0; c < p.nkeys && c < 8; c++) N[ulong(c) * p.n + a] = key[c];
+        N[ulong(p.nkeys) * p.n + a] = v;
+        N[ulong(k) * p.n + a] = 1;
+        uint id = p.had + a;
+        uint place = lat_hash(key, p.nkeys, p.hmask);
+        for (uint i = 0; i < 2 * (p.hmask + 1); i++) {
+            uint seen = 0xffffffffu;
+            if (atomic_compare_exchange_weak_explicit(&H[place], &seen, id, memory_order_relaxed, memory_order_relaxed)) break;
+            if (seen == 0xffffffffu) continue;
+            place = (place + 1) & p.hmask;
+        }
+    }
+    uint d = atomic_fetch_add_explicit(&counters[0], 1u, memory_order_relaxed);
+    for (uint c = 0; c < p.nkeys && c < 8; c++) D[ulong(c) * p.n + d] = key[c];
+    D[ulong(p.nkeys) * p.n + d] = v;
+}
 "#;
 
 /// Whether this machine has the Metal device the stages run on.
@@ -1459,8 +1630,9 @@ fn hash_bits(rows: usize) -> u32 {
 
 /// A binding table on the device: `slots` columns of `cap` 64-bit values, column-major.
 /// The device buffers' budget left in the process (other lanes hold theirs: the syntax side's tapes most).
+/// What the device joins may still lease of the device's budget: their own leases count (`relational_bytes_left`).
 pub(in crate::code_rule_dsl) fn device_bytes_left() -> usize {
-    super::metal_backend::METAL_BUFFER_LIMIT.saturating_sub(super::metal_backend::reserved())
+    super::metal_backend::relational_bytes_left()
 }
 
 /// Gives this thread's pooled free buffers back to the budget (after a refusal for capacity).
@@ -1970,9 +2142,15 @@ impl Batch {
 }
 
 impl Drop for Batch {
-    /// Work still in flight holds its buffers: wait for it before they return to the pool.
+    /// Work still in flight holds its buffers: wait for it before they return to the pool. Work encoded and never
+    /// committed is dropped uncommitted (nothing reads it, and nothing ran it): committing it here ran the launch
+    /// guard, whose thread-local a batch dropped in a thread's teardown (a wave left open) can no longer read.
     fn drop(&mut self) {
-        let _ = self.finish();
+        drop(self.pass.take());
+        drop(self.open.take());
+        for s in self.committed.drain(..) {
+            s.wait();
+        }
     }
 }
 
@@ -2120,4 +2298,81 @@ pub mod tests {
         assert_eq!(hash_bits(70_000), 32);
         assert_eq!(hash_bits(1000), 24);
     }
+}
+
+/// A lattice relation's key table on the device (`Batch::lattice_fold`): each held key's row, kept from round to
+/// round, grown (every held row placed again) when the rows it may hold pass half its places.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct LatKeys {
+    table: Option<Held>,
+    places: usize,
+}
+
+/// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat; its top; `widen`'s count.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::code_rule_dsl) struct LatCode {
+    pub(in crate::code_rule_dsl) code: u32,
+    pub(in crate::code_rule_dsl) top: i64,
+    pub(in crate::code_rule_dsl) after: Option<u32>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, pad: u32 }
+
+impl Batch {
+    /// A lattice relation's round (decision 0124): the `n` rows of `u` (its key's `nkeys` columns, then the value)
+    /// folded by key into `total` (the relation's `nkeys + 2` columns, its last a key's changes; `had` rows): a held
+    /// key's row updated in place, a new key's row into `new_keys` (as `total`'s columns), each changed key's row (key
+    /// and value) into `delta`. `counters`: `[changed, new]`.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, total: Option<&DevRel>, nkeys: usize, lat: LatCode, keys: &mut LatKeys,
+                                                 counters: &Words, new_keys: &Table, delta: &Table) -> Result<(), Error> {
+        assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && new_keys.cap == n && delta.cap == n);
+        let had = total.map_or(0, |t| t.rows);
+        let pplaces = (2 * n).next_power_of_two().max(16);
+        let want = (2 * (had + n)).next_power_of_two().max(16);
+        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, pad: 0 };
+        let r: metal::Buffer = total.map_or_else(|| self.dummy.buffer.to_owned(), |t| t.buffer.buffer.to_owned());
+        if keys.places < want {
+            // Grown: every held row placed again.
+            let table = Held::new(4 * want)?;
+            p.hmask = (want - 1) as u32;
+            let bytes = lat_bytes(&p);
+            let hclear = pipeline("join", "lat_hclear", || SOURCE.to_owned())?;
+            let rehash = pipeline("join", "lat_rehash", || SOURCE.to_owned())?;
+            let pass = self.pass(2)?;
+            pass.run_bytes(&hclear, &[&table.buffer], bytes, groups(want));
+            if had > 0 {
+                pass.run_bytes(&rehash, &[&r, &table.buffer], bytes, groups(had));
+            }
+            if let Some(old) = keys.table.replace(table) {
+                self.keep.push(old);
+            }
+            keys.places = want;
+        }
+        p.hmask = (keys.places - 1) as u32;
+        let bytes = lat_bytes(&p);
+        let clear = pipeline("join", "lat_clear", || SOURCE.to_owned())?;
+        let claim = pipeline("join", "lat_claim", || SOURCE.to_owned())?;
+        let best = pipeline("join", "lat_best", || SOURCE.to_owned())?;
+        let merge = pipeline("join", "lat_merge", || SOURCE.to_owned())?;
+        let places = Held::new(4 * pplaces)?;
+        let chosen = Held::new(4 * pplaces)?;
+        let flags = Held::new(4 * pplaces)?;
+        let h: metal::Buffer = keys.table.as_ref().expect("a key table").buffer.to_owned();
+        let pass = self.pass(4)?;
+        let ub: &BufferRef = &u.buffer.buffer;
+        pass.run_bytes(&clear, &[&places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(pplaces));
+        pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));
+        pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(n));
+        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r, &h, &new_keys.buffer.buffer, &delta.buffer.buffer, &counters.buffer.buffer], bytes, groups(pplaces));
+        self.keep.extend([places, chosen, flags]);
+        Ok(())
+    }
+}
+
+fn lat_bytes(p: &LatParams) -> &[u8] {
+    // SAFETY: `LatParams` is `repr(C)`: an i64 then eight u32s, no padding.
+    unsafe { std::slice::from_raw_parts((p as *const LatParams).cast::<u8>(), std::mem::size_of::<LatParams>()) }
 }

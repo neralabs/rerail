@@ -13,7 +13,7 @@
       ],
       "parser": "tree-sitter",
       "grammar": "ast-grep:Html",
-      "tapeTag": 17
+      "tapeTag": 20
     }
   ],
   "capabilities": {

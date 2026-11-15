@@ -75,7 +75,9 @@ const POOL_STACK: usize = 16 << 20;
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
 
-/// The bytes of this thread's stack below this frame, where the platform says where the stack is.
+/// The bytes of this thread's stack below this frame, where the platform says where the stack is. Never inlined:
+/// inlined, its local could sit above its caller's locals in one frame, and a big frame went uncounted.
+#[inline(never)]
 fn stack_left() -> Option<usize> {
     thread_local! {
         /// The lowest address of this thread's stack.
@@ -323,14 +325,26 @@ pub fn cores_slowdown() -> f64 {
     v
 }
 
-/// `RERAIL_LANE_PIN=<cpu|sme|gpu|ane>`: a measurement, not a setting. Every launch the named lane can run, and that
-/// its caller did not pin, is placed there, so one run's launches can be measured on each lane in turn.
+/// `RERAIL_LANE_PIN=<cpu|sme|gpu|ane>[:<kernel name>]`: a measurement, not a setting. Every launch the named lane can
+/// run, and that its caller did not pin, is placed there, so one run's launches can be measured on each lane in turn;
+/// with a kernel's name (`Kernel::name`, as the profile shows it), only that kernel's launches.
 pub fn measured_lane() -> Option<Lane> {
-    static PIN: OnceLock<Option<Lane>> = OnceLock::new();
-    *PIN.get_or_init(|| {
+    measured_pin().map(|p| p.0)
+}
+
+fn measured_pin() -> Option<(Lane, Option<String>)> {
+    static PIN: OnceLock<Option<(Lane, Option<String>)>> = OnceLock::new();
+    PIN.get_or_init(|| {
         let v = std::env::var("RERAIL_LANE_PIN").ok()?;
-        Lane::ALL.into_iter().find(|l| l.name() == v.trim())
+        let (lane, name) = v.split_once(':').map_or((v.trim(), None), |(l, n)| (l.trim(), Some(n.trim().to_owned())));
+        Lane::ALL.into_iter().find(|l| l.name() == lane).map(|l| (l, name))
     })
+    .clone()
+}
+
+/// The lane `RERAIL_LANE_PIN` measures `kernel` on, if it names one for it.
+pub fn measured_lane_for(kernel: &Kernel) -> Option<Lane> {
+    measured_pin().filter(|(_, name)| name.as_deref().is_none_or(|n| n == kernel.name())).map(|p| p.0)
 }
 
 /// A submission begun ([`Backend::start`]) and not yet read.
@@ -611,15 +625,15 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
                     let start = Instant::now();
                     let pending = {
                         let ks: Vec<&Kernel> = ids.iter().map(|&i| &claims.kernels[i]).collect();
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(&ks))).unwrap_or_else(|_| Err("its submission panicked".into()))
+                        lane_host(lane, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(&ks))).unwrap_or_else(|_| Err("its submission panicked".into())))
                     };
                     if let Some(f) = flight.replace(Flight { claims, ids, ticket, start, pending }) {
-                        f.end(&board, lane);
+                        lane_host(lane, || f.end(&board, lane));
                     }
                     continue;
                 }
                 if let Some(f) = flight.take() {
-                    f.end(&board, lane);
+                    lane_host(lane, || f.end(&board, lane));
                     continue;
                 }
                 open.retain(|c| c.takeable_in(lane).is_some());
@@ -638,6 +652,34 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
         })
         .expect("a lane's worker thread");
     send
+}
+
+/// Runs a device lane's host work (`f`: its submission, its results read) on the lanes' own pool, where its parallel
+/// loops stay; the cores' lane runs it in place. On the one pool, a device lane's loop shared its threads with jobs
+/// that wait on that lane: a pool thread waiting inside the loop's join took such a job, which blocked on the lane,
+/// which waited on the join below it, and neither moved. The lanes' pool runs no job that waits on a lane.
+fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
+    if lane == Lane::Cpu {
+        return f();
+    }
+    /// What crosses to the pool's thread and back: the lane's thread waits in `install` until it is back, so nothing
+    /// is used on two threads at once (a submission's Metal objects are not `Send`).
+    struct Handed<T>(T);
+    // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
+    unsafe impl<T> Send for Handed<T> {}
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    let pool = POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok());
+    match pool {
+        Some(pool) => {
+            let f = Handed(f);
+            pool.install(move || {
+                let f = f;
+                Handed((f.0)())
+            })
+            .0
+        }
+        None => f(),
+    }
 }
 
 /// A batch's launches, claimed as the lanes reach them (decision 0100 §11).
@@ -1023,7 +1065,7 @@ impl Executor {
         for i in order {
             let l = &batch.0[i];
             // A launch the caller did not pin goes to the measurement's lane when that lane can run it.
-            let pin = l.pin.or_else(|| measured_lane().filter(|&m| self.backends.iter().any(|b| b.lane() == m && b.can(&l.kernel))));
+            let pin = l.pin.or_else(|| measured_lane_for(&l.kernel).filter(|&m| self.backends.iter().any(|b| b.lane() == m && b.can(&l.kernel))));
             let able: Vec<Lane> = self.backends.iter().filter(|b| pin.is_none_or(|p| p == b.lane()) && b.can(&l.kernel)).map(|b| b.lane()).collect();
             let (lane, cost, fastest) = prices.choose_host_predicted(&l.kernel, &able, &load, &predicted[i]).ok_or_else(|| {
                 format!("no lane can run launch {i} ({}, {:.3e} units){}", l.kernel.form().name(), l.kernel.units(), l.pin.map_or(String::new(), |p| format!(" on {}", p.name())))
@@ -1082,7 +1124,7 @@ impl Executor {
         let mut due = vec![0.0; n];
         let mut per_lane = [0usize; Lane::COUNT];
         for (i, l) in batch.0.iter().enumerate() {
-            let measured = measured_lane().filter(|&m| self.backends.iter().any(|b| b.lane() == m && b.can(&l.kernel)));
+            let measured = measured_lane_for(&l.kernel).filter(|&m| self.backends.iter().any(|b| b.lane() == m && b.can(&l.kernel)));
             pinned[i] = l.pin.is_some() || measured.is_some();
             for b in &self.backends {
                 if b.can(&l.kernel) {
@@ -1542,9 +1584,12 @@ mod stack_tests {
         let left = std::thread::Builder::new().stack_size(size).spawn(super::stack_left).unwrap().join().unwrap().expect("measured");
         assert!(left <= size + (64 << 10) && left > size - (256 << 10), "{left} of {size} (the platform counts its guard page)");
         let deeper = std::thread::Builder::new().stack_size(size).spawn(|| {
-            let pad = std::hint::black_box([0u8; 512 << 10]);
+            // Written through a `&mut`, so it is the frame's (optimized, a zero array never written was a constant,
+            // and the frame held none of it).
+            let mut pad = [0u8; 512 << 10];
+            std::hint::black_box(&mut pad);
             let left = super::stack_left().unwrap();
-            std::hint::black_box(&pad);
+            std::hint::black_box(&mut pad);
             left
         }).unwrap().join().unwrap();
         assert!(deeper + (512 << 10) <= left + (64 << 10), "a frame of 512 KiB is counted: {deeper} after {left}");

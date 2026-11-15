@@ -41,7 +41,7 @@ thread_local! {
 thread_local! {
     /// While a phase runs, what it reads from earlier phases: worked out once (`facts`), and taken as it is by the
     /// phase's own run, which would otherwise run those phases again.
-    static HANDED_DOWN: std::cell::RefCell<Vec<(String, Facts)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static HANDED_DOWN: std::cell::RefCell<Vec<(String, std::sync::Arc<Facts>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Phase 1's name (`sources.rr`): run first, once for a run, by the runner (`corpus::run_observed`), not as a phase a
@@ -63,14 +63,22 @@ pub(super) struct PhaseOne {
 }
 
 thread_local! {
-    static PHASE_ONE: std::cell::RefCell<Option<std::rc::Rc<PhaseOne>>> = const { std::cell::RefCell::new(None) };
+    static PHASE_ONE: std::cell::RefCell<Option<std::sync::Arc<PhaseOne>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Carries the phases under way, what they were handed and phase 1's result to a job on another thread
+/// (`run_state`): a run there is inside the same phases, and takes the same documents.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["RUNNING"], &RUNNING);
+    c.cloned(&["HANDED_DOWN"], &HANDED_DOWN);
+    c.cloned(&["PHASE_ONE"], &PHASE_ONE);
 }
 
 /// Holds phase 1's result for the run until dropped.
-pub(super) struct PhaseOneHeld(Option<std::rc::Rc<PhaseOne>>);
+pub(super) struct PhaseOneHeld(Option<std::sync::Arc<PhaseOne>>);
 impl PhaseOneHeld {
     pub(super) fn enter(one: PhaseOne) -> PhaseOneHeld {
-        PhaseOneHeld(PHASE_ONE.with(|p| p.borrow_mut().replace(std::rc::Rc::new(one))))
+        PhaseOneHeld(PHASE_ONE.with(|p| p.borrow_mut().replace(std::sync::Arc::new(one))))
     }
 }
 impl Drop for PhaseOneHeld {
@@ -80,7 +88,7 @@ impl Drop for PhaseOneHeld {
 }
 
 /// Phase 1's result, while a run that ran it is under way on this thread, if it read `root` in `label`.
-pub(super) fn phase_one(root: &Path, label: &str) -> Option<std::rc::Rc<PhaseOne>> {
+pub(super) fn phase_one(root: &Path, label: &str) -> Option<std::sync::Arc<PhaseOne>> {
     PHASE_ONE.with(|p| p.borrow().clone()).filter(|o| o.root == root && o.label == label)
 }
 
@@ -88,7 +96,7 @@ pub(super) fn phase_one(root: &Path, label: &str) -> Option<std::rc::Rc<PhaseOne
 struct HandedDown;
 impl HandedDown {
     fn enter(name: &str, facts: Facts) -> HandedDown {
-        HANDED_DOWN.with(|h| h.borrow_mut().push((name.to_owned(), facts)));
+        HANDED_DOWN.with(|h| h.borrow_mut().push((name.to_owned(), std::sync::Arc::new(facts))));
         HandedDown
     }
 }
@@ -145,7 +153,7 @@ fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
 
 /// The file of phase program `name` (`source`).
 fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
-    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
+    let builtin = rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs");
     dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists())
 }
 
@@ -215,7 +223,7 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 ///
 /// The batch is one run of the frames' spaces too (O-store-single-program): its policies share one run token, as a
 /// run's nested programs do. Each policy counted as its own run of the root's cross-file space, so a policy's kept
-/// inputs, used once a batch, went unused for 43 of the space's runs and were collected (`frames::RUNS`) by another
+/// inputs, used once a batch, went unused for 43 of the space's runs and were collected (by recency, before decision 0227) by another
 /// policy's write: the next batch found its kept inputs and its memo entries gone.
 pub struct Batch(#[allow(dead_code)] super::UnderWay, #[allow(dead_code)] Reading);
 
@@ -336,7 +344,7 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
     // A phase's own run: its upstream facts were worked out by the run that started it.
     if let Some(me) = declared(prog)
-        && let Some(f) = HANDED_DOWN.with(|h| h.borrow().last().filter(|(n, _)| *n == me.name).map(|(_, f)| f.clone()))
+        && let Some(f) = HANDED_DOWN.with(|h| h.borrow().last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
     {
         return Ok((f, Vec::new()));
     }
@@ -371,7 +379,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             return Err(Error::Plan(format!("{name}.rr says `.phase {}`", declared.name)));
         }
         for export in &declared.exports {
-            let cols = program.decls.get(export).ok_or_else(|| Error::Plan(format!("{name}.rr exports {export}, which it does not declare")))?;
+            let cols = program.decls.get(export.as_str()).ok_or_else(|| Error::Plan(format!("{name}.rr exports {export}, which it does not declare")))?;
             if let Some((c, _)) = cols.iter().find(|(_, t)| t == "node") {
                 return Err(Error::Plan(format!("{name}.rr exports {export}, whose column {c} is a node: an export names symbols, which an edit does not renumber")));
             }
@@ -383,7 +391,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             if !declared.exports.contains(export) {
                 return Err(Error::Plan(format!("{rel}: phase {name} does not export {export} (a phase's other relations are its own)")));
             }
-            let (want, have) = (&program.decls[export], &prog.decls[rel]);
+            let (want, have) = (&program.decls[export.as_str()], &prog.decls[rel.as_str()]);
             let ty = |t: &str| if t == "sym" { "symbol".to_owned() } else if t == "int" { "number".to_owned() } else { t.to_owned() };
             if want.len() != have.len() || want.iter().zip(have).any(|((_, a), (_, b))| ty(a) != ty(b)) {
                 return Err(Error::Plan(format!("{rel}: {} columns, where phase {name}'s {export} has {}", have.len(), want.len())));
@@ -431,7 +439,7 @@ pub(super) fn current() -> Option<String> {
 
 /// Phase 1's program, the builtin one.
 pub(super) fn sources_path() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs/sources.rr")
+    rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs/sources.rr")
 }
 
 /// Phase 1, `sources` (decision 0104): the run's source files, each `(path, module, grammar, content digest)`, loaded
@@ -489,7 +497,7 @@ pub(super) fn sources(
         options = serde_json::json!({ "inputFiles": [] });
     }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
-    let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone()), Value::Str(m.clone()), Value::Str(g.clone()), Value::Str(c.clone())]).collect();
+    let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone().into()), Value::Str(m.clone().into()), Value::Str(g.clone().into()), Value::Str(c.clone().into())]).collect();
     let _down = HandedDown::enter(NAME, Facts::from([("observer__source_file".to_owned(), stated)]));
     let out = scratch.join(format!("phase-{NAME}"));
     let report = {
@@ -549,7 +557,7 @@ fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) 
             let held: Vec<String> = std::fs::read_dir(out).map(|d| d.filter_map(|f| f.ok().map(|f| f.file_name().to_string_lossy().into_owned())).collect()).unwrap_or_default();
             Error::Plan(format!("phase {name}: {export}: {e} (in {}, which holds {held:?})", out.display()))
         })?;
-        let width = program.decls[export].len();
+        let width = program.decls[export.as_str()].len();
         let read: Vec<Vec<String>> = text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect();
         // Outputs are lines of tab-separated values, unescaped: a value holding a newline or a tab would come back
         // as other rows, and be handed on as facts no rule made.
@@ -565,13 +573,13 @@ fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) 
 /// The rows of the exports `reads` names, as the reader's relations' values.
 fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTreeMap<String, Vec<Vec<String>>>, facts: &mut Facts) -> Result<()> {
     for (rel, export) in reads {
-        let types: Vec<&str> = program.decls[export].iter().map(|(_, t)| t.as_str()).collect();
+        let types: Vec<&str> = program.decls[export.as_str()].iter().map(|(_, t)| t.as_str()).collect();
         let held = facts.entry(rel.clone()).or_default();
         for r in rows.get(export).into_iter().flatten() {
             let row = r
                 .iter()
                 .zip(&types)
-                .map(|(v, t)| if *t == "symbol" || *t == "sym" { Ok(Value::Str(v.clone())) } else { v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("phase {name}: {export}: not a number: {v}"))) })
+                .map(|(v, t)| if *t == "symbol" || *t == "sym" { Ok(Value::Str(v.clone().into())) } else { v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("phase {name}: {export}: not a number: {v}"))) })
                 .collect::<Result<Vec<_>>>()?;
             held.push(row);
         }

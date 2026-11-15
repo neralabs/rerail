@@ -1551,6 +1551,7 @@ mod literal {
     }
     pub use rerail_lang_python::code_rule_dsl::literal::identifier_words;
     pub use rerail_lang_python::code_rule_dsl::literal::percent;
+    pub use rerail_lang_python::code_rule_dsl::literal::format_tape;
     pub use rerail_lang_php::code_rule_dsl::literal::php_string;
     pub mod phpdoc {
         pub use rerail_lang_php::code_rule_dsl::literal::phpdoc::*;
@@ -1598,12 +1599,37 @@ mod literal {
 pub(crate) mod logic {
     pub use rerail_logic::code_rule_dsl::logic::*;
     // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    pub mod program_image {
+        // Its items, beside its tests here; the engine reads it through `logic`'s own re-export.
+        #[allow(unused_imports)]
+        pub use rerail_logic::code_rule_dsl::logic::program_image::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
+    pub mod program_text {
+        // Its items, beside its tests here; the engine reads it through `logic`'s own re-export.
+        #[allow(unused_imports)]
+        pub use rerail_logic::code_rule_dsl::logic::program_text::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
+    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
     pub mod liveness {
         pub use rerail_logic::code_rule_dsl::logic::liveness::*;
         #[cfg(test)]
         pub mod tests;
     }
+    // The cost statistics' read of each lane and form (3a42aefcf).
+    #[cfg(test)]
+    mod costs_tests;
     pub mod convert;
+    // The JSON translator's tests (decision 0175) run in the engine's test binary.
+    #[path = "json_rules"]
+    pub mod json_rules {
+        pub use rerail_logic::code_rule_dsl::logic::json_rules::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
     #[path = "front"]
     pub mod front {
         pub use rerail_rr::code_rule_dsl::logic::front::*;
@@ -1656,8 +1682,6 @@ pub(crate) mod logic {
         #[path = "setfix"]
         pub mod setfix {
             pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
-            #[cfg(target_os="macos")]
-            pub use rerail_device_metal::code_rule_dsl::logic::native::setfix::device;
             // The lab's tests run strata on the Metal device (the transducer's), which the engine alone sees.
             #[path = "lab"]
             pub mod lab {
@@ -1665,6 +1689,8 @@ pub(crate) mod logic {
                 #[cfg(test)]
                 pub mod tests;
             }
+            #[cfg(target_os="macos")]
+            pub use rerail_device_metal::code_rule_dsl::logic::native::setfix::device;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
             #[allow(unused_imports)]
@@ -1871,6 +1897,9 @@ pub(crate) mod logic {
     #[path = "profile"]
     pub mod profile {
         pub use rerail_prof::code_rule_dsl::logic::profile::*;
+        // The profile's account of every thread's CPU, under its spans and between them (3af4e92a3, 2f9181e59).
+        #[cfg(test)]
+        mod threads_tests;
         // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
         pub mod report {
             pub use rerail_logic::code_rule_dsl::logic::profile::report::*;
@@ -1969,7 +1998,7 @@ pub(crate) mod logic {
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
 /// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
-    pub(crate) use super::logic::profile::{behind_the_run, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
+    pub(crate) use super::logic::profile::{behind_the_run, inside_waves, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
 }
 #[path = "sql_executor"]
 mod sql_executor {
@@ -4734,7 +4763,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, css::Css, csharp::Csharp, ecma::Ecma, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, css::Css, csharp::Csharp, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4753,6 +4782,8 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Rr, &Pack::<Rr>::NEW);
     register(Family::Json, &Pack::<Json>::NEW);
     language::register_base(Family::Json, &Pack::<Json>::NEW);
+    register(Family::Format, &Pack::<Format>::NEW);
+    language::register_base(Family::Format, &Pack::<Format>::NEW);
     register(Family::Java, &Pack::<Java>::NEW);
     language::register_base(Family::Java, &Pack::<Java>::NEW);
     register(Family::Csharp, &Pack::<Csharp>::NEW);
@@ -4813,6 +4844,7 @@ pub(crate) fn install_languages() {
         core_rr::register_dialect_facts(Family::Python, &python_core::PythonFacts);
         core_rr::register_dialect_facts(Family::Ecma, &ecma_core::EcmaFacts);
         core_rr::register_dialect_facts(Family::Rr, &rr_core::RrFacts);
+        core_rr::register_dialect_facts(core_rr::Family::Format, &literal::format_tape::FormatFacts);
     }
     // A workspace's project context of ECMAScript's files (manifests, project configurations, server graphs).
     workspace::ingest::install_project(|| Box::new(workspace::ingest::ecma::EcmaProject::default()));
@@ -4902,7 +4934,16 @@ pub(crate) fn install_languages() {
             // The lean parser (`tape::python_lean`); a file it refuses goes to tree-sitter-python.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Python, name: "lean Python parser", rank: 0, runs: true, parser: &tape::python_lean::Lean });
         }
-        // The lean ECMAScript parser (`tape::ecma_lean`, decision 0178); a file it refuses goes to
+        // Python's format strings (decision 0176): guests only, parsed by Ruff's parsers' ports.
+        if cfg!(feature = "lang-python") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::PercentFormat, name: "percent-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::PercentFormat); &P } });
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::BraceFormat, name: "brace-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::BraceFormat); &P } });
+        }
+        // ESLint's directive comments (decision 0194): guests only, parsed by main's directive parser.
+        if cfg!(feature = "lang-typescript") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::EslintDirective, name: "ESLint directive comments", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::EslintDirective); &P } });
+        }
+        // The lean ECMAScript parser (`tape::ecma_lean`, decision 0184); a file it refuses goes to
         // the dialect's tree-sitter grammar.
         if cfg!(feature = "lang-javascript") {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::JavaScript, name: "lean JavaScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::JAVASCRIPT });
@@ -4942,7 +4983,7 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Css, name: "lean CSS parser", rank: 0, runs: true, parser: &tape::css_lean::Lean });
         }
         if cfg!(feature = "lang-markdown") {
-            // The lean Markdown parser (`tape::markdown_lean`, decision 0205); a file it refuses
+            // The lean Markdown parser (`tape::markdown_lean`, decision 0237); a file it refuses
             // goes to tree-sitter-md.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Markdown, name: "lean Markdown parser", rank: 0, runs: true, parser: &tape::markdown_lean::Lean });
             // The lean parser of Markdown's inline grammar (`tape::markdown_inline_lean`, decision
@@ -4956,7 +4997,7 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Sql, name: "lean SQL parser", rank: 0, runs: true, parser: &tape::sql_lean::Lean });
         }
         if cfg!(feature = "lang-vue") {
-            // The lean Vue parser (`tape::vue_lean`, decision 0239), whose tape the component's
+            // The lean Vue parser (`tape::vue_lean`, decision 0242), whose tape the component's
             // embedded program is built from; a file it refuses goes to tree-sitter-vue.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Vue, name: "lean Vue parser", rank: 0, runs: true, parser: &tape::vue_lean::Lean });
         }

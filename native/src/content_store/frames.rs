@@ -14,33 +14,27 @@
 //! read has that digest still. That is what lets relations of the same identity be one copy for every program that
 //! has them, in any order of runs.
 //!
-//! Frames are written only by the store's writer (decision 0102), behind the run. What a space keeps is the
-//! relations its runs use: a relation is collected by the [`RUNS`]th run of its space in a row that does not use it.
-//! A run is the outermost run (its token): the programs of one run that keep frames in one space (a phase's, P3's
-//! cross part, its loading cone) each mark what they used, and the space counts the run once.
+//! Frames are written only by the store's writer (decision 0102), behind the run. What a space keeps is what the kept
+//! manifests reach (decision 0227, `collect_unreachable_frames`): a memo entry while its plan is live and a kept
+//! manifest names its content, a maintained frame while a live program (a part's key, named by a kept manifest)
+//! derives its relation there. No run marks what it used: a run that changes nothing writes nothing.
 
 use super::{ContentStore, StoreResult};
-use rusqlite::{OptionalExtension as _, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// How many runs of a space in a row may leave a relation unused before it is collected.
-pub const RUNS: i64 = 4;
-
-/// The run each space last counted in this process, by its token: a later program of that run marks what it used and
-/// counts nothing. A new process counts its first run of a space, since its tokens are new.
+/// The run each space last counted in this process, by its token: a later program of that run puts under the same
+/// stamp. A new process counts its first run of a space, since its tokens are new.
 fn counted() -> &'static std::sync::Mutex<HashMap<[u8; 32], u64>> {
     static COUNTED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], u64>>> = std::sync::OnceLock::new();
     COUNTED.get_or_init(Default::default)
 }
 
-/// What a run used of a space: the relations, the run's token (`0`: a run of its own, counted each time), and the
-/// program that used them (its key): a relation is kept while one of its programs' last [`RUNS`] runs used it.
+/// What a program derives in a space, with what it puts there: the relations, the run's token (`0`: a write of its
+/// own, counted each time) and the program (its key). Its relations are kept while the program is live
+/// (`collect_unreachable_frames`).
 pub type Used = (Vec<Rel>, u64, [u8; 32]);
-
-/// How many runs of a space a program's runs count for (`Used`'s program): one not run again in as many runs of its
-/// space (a policy removed, or edited into another key) keeps its relations no longer.
-pub const ABANDON: i64 = 256;
 
 // The frames' tables (`frames`, `frame_part_used`, `frame_spaces`, `frame_confirmed`, `frame_program_used`) are
 // the store's schema (`schema::SCHEMA`): every store has them, so nothing here checks for them or makes them.
@@ -113,7 +107,8 @@ pub struct Put {
 }
 
 /// One admitted fact relation. Durable rows remain encoded until a consumer needs them.
-/// Queued rows share the writer's allocation. This value belongs to the run, not a separate cache.
+/// A queued frame is encoded as it is queued: the snapshot and the writer share it. This value belongs to the run, not a
+/// separate cache.
 pub struct Admitted {
     pub stored: Stored,
     data: Data,
@@ -121,8 +116,9 @@ pub struct Admitted {
 
 #[derive(Clone)]
 enum Data {
-    Encoded { types: Vec<u8>, n: usize, bytes: Arc<Vec<u8>> },
-    Queued(Arc<Put>),
+    /// `store`: the bytes are the store's, read from it, their symbols the store's ids (decision 0170): mapped to this
+    /// process's as they are decoded. `None`: this process's own (encoded as queued, or its snapshot of what it wrote).
+    Encoded { types: Vec<u8>, n: usize, bytes: Arc<Vec<u8>>, store: Option<Arc<super::atoms::Atoms>> },
     Metadata,
     /// A relation's rows as its base frame (part 0) and the deltas written after it, oldest first (decision 0117
     /// step 4): a run that changed a few rows of a large relation writes those, not the relation. `n`: the rows after
@@ -172,14 +168,16 @@ fn apply_deltas(mut rows: Rows, deltas: &[Arc<Admitted>]) -> StoreResult<Rows> {
 
 fn rows_of(data: &Data) -> StoreResult<Rows> {
     match data {
-        Data::Queued(p) => Ok(p.rows.clone()),
-        Data::Encoded { types, n, bytes } => {
+        Data::Encoded { types, n, bytes, store } => {
             let width = types.len();
             let mut cols = vec![Vec::new(); width];
             super::cross_rows::decode(width, *n, bytes, &mut cols)?;
             let mut rows = Vec::with_capacity(width * n);
             for r in 0..if width == 0 { 0 } else { *n } {
                 rows.extend(cols.iter().map(|c| c[r]));
+            }
+            if let Some(atoms) = store {
+                super::atoms::map_columns(types, &mut rows, |v| atoms.to_local(super::StoreIds::as_stored(v)).map(drop))?;
             }
             Ok(Rows { types: types.clone(), rows, n: *n })
         }
@@ -209,27 +207,55 @@ impl Admitted {
 
     pub fn rows(&self) -> StoreResult<Rows> {
         match &self.data {
-            Data::Chain { .. } => rows_of(&self.data),
-            Data::Queued(p) => Ok(p.rows.clone()),
-            Data::Encoded { types, n, bytes } => {
-                let width = types.len();
-                let mut cols = vec![Vec::new(); width];
-                super::cross_rows::decode(width, *n, bytes, &mut cols)?;
-                let mut rows = Vec::with_capacity(width * n);
-                for r in 0..if width == 0 { 0 } else { *n } {
-                    rows.extend(cols.iter().map(|c| c[r]));
-                }
-                Ok(Rows { types: types.clone(), rows, n: *n })
-            }
+            Data::Chain { .. } | Data::Encoded { .. } => rows_of(&self.data),
             Data::Metadata => Err(super::StoreError::Invalid("frame payload was not admitted".into())),
         }
+    }
+
+    /// Appends the store's ids its rows' symbol columns name, for rows read from the store (as the store numbers them).
+    fn stored_symbols(&self, out: &mut Vec<i64>) -> StoreResult<()> {
+        fn of(data: &Data, out: &mut Vec<i64>) -> StoreResult<()> {
+            match data {
+                Data::Encoded { types, n, bytes, store: Some(_) } => {
+                    if !types.contains(&b's') {
+                        return Ok(());
+                    }
+                    let mut cols = vec![Vec::new(); types.len()];
+                    super::cross_rows::decode(types.len(), *n, bytes, &mut cols)?;
+                    for (c, col) in cols.into_iter().enumerate() {
+                        if types[c] == b's' {
+                            out.extend(col);
+                        }
+                    }
+                    Ok(())
+                }
+                Data::Chain { base, deltas, .. } => {
+                    of(base, out)?;
+                    deltas.iter().try_for_each(|d| of(&d.data, out))
+                }
+                Data::Encoded { store: None, .. } | Data::Metadata => Ok(()),
+            }
+        }
+        of(&self.data, out)
+    }
+
+    /// The store whose ids its rows' symbols are (decision 0170): set for rows read from the store, none for this
+    /// process's own. Rows `rows` gives map the typed (`b's'`) columns; a reader of untyped ones maps them itself.
+    pub fn store_atoms(&self) -> Option<Arc<super::atoms::Atoms>> {
+        fn of(data: &Data) -> Option<Arc<super::atoms::Atoms>> {
+            match data {
+                Data::Encoded { store, .. } => store.clone(),
+                Data::Chain { base, deltas, .. } => of(base).or_else(|| deltas.iter().find_map(|d| of(&d.data))),
+                Data::Metadata => None,
+            }
+        }
+        of(&self.data)
     }
 
     /// Its rows' count, where its rows were admitted.
     pub fn len(&self) -> Option<usize> {
         match &self.data {
             Data::Encoded { n, .. } => Some(*n),
-            Data::Queued(p) => Some(p.rows.n),
             Data::Chain { n, .. } => Some(*n),
             Data::Metadata => None,
         }
@@ -242,7 +268,7 @@ impl Admitted {
                 let b = Admitted { stored: self.stored.clone(), data: (**base).clone() };
                 b.encoded_bytes() + deltas.iter().map(|d| d.encoded_bytes()).sum::<usize>()
             }
-            Data::Queued(_) | Data::Metadata => 0,
+            Data::Metadata => 0,
         }
     }
 }
@@ -409,13 +435,15 @@ impl ContentStore {
                 let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(5)?);
                 Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), k, Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads },
-                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data) },
+                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data), store: Some(self.atoms_handle()) },
                 })))
             })?;
+            let mut read: Vec<Arc<Admitted>> = Vec::new();
             for row in rows {
                 let (space, key, k, frame) = row?;
                 frames += 1;
                 bytes += frame.encoded_bytes();
+                read.push(Arc::clone(&frame));
                 if k > 0 && key.1 == 0 {
                     chains.entry(space).or_default().insert(key.0.clone(), k);
                 }
@@ -435,6 +463,7 @@ impl ContentStore {
             }
             snapshot.confirmed = confirmed;
             drop(connection);
+            hold_symbols(&self.atoms, read.iter(), None)?;
             for (space, held) in snapshot.iter_mut() {
                 compose_chains(held, chains.get(space))?;
             }
@@ -531,7 +560,7 @@ impl ContentStore {
                 let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(4)?);
                 Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), k, Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads },
-                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?) } } else { Data::Metadata },
+                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(self.atoms_handle()) } } else { Data::Metadata },
                 })))
             })?;
             for frame in frames {
@@ -559,7 +588,7 @@ impl ContentStore {
                     let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                     Ok((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?, Arc::new(Admitted {
                         stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
-                        data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?) },
+                        data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(self.atoms_handle()) },
                     })))
                 })?;
                 for row in rows {
@@ -582,6 +611,8 @@ impl ContentStore {
                 out.insert((rel, 0), Arc::new(whole));
             }
         }
+        drop(connection);
+        hold_symbols(&self.atoms, out.values(), None)?;
         Ok(out)
     }
 
@@ -612,20 +643,32 @@ impl ContentStore {
     /// A run's memo entries its waves may look up (decision 0104: read before its first wave): in `space` (its
     /// plan's, `local_space`), each path's newest but those of `looked_up` (paths looked up before the first wave,
     /// from the store), held with the snapshot. Once a process for each space.
-    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>) -> StoreResult<(usize, usize)> {
-        let Some(snapshot) = self.snapshot() else { return Ok((0, 0)) };
+    /// `read`: what reads an entry's symbols (`memo::Syms`), held as the entries are admitted.
+    /// Also the paths whose entries it admitted: `None` when this process admitted the space's already (or holds no
+    /// snapshot), and which it is not known.
+    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>, read: SymbolReader<'_>) -> StoreResult<(usize, usize, Option<HashSet<String>>)> {
+        let Some(snapshot) = self.snapshot() else { return Ok((0, 0, None)) };
+        let trace = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some();
         if !snapshot.lock().expect("the frames' snapshot").admitted.insert(*space) {
-            return Ok((0, 0));
+            if trace {
+                eprintln!("rerail: memo entries of space {:02x}{:02x}: admitted already in this process", space[0], space[1]);
+            }
+            return Ok((0, 0, None));
         }
         let keys = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             newest_by_path(&connection, space, MEMO_RELS[0])?
         };
-        let keys: Vec<(Rel, i64)> = keys.into_iter().filter(|(_, path, _)| !looked_up.contains(path.as_str())).map(|(rel, _, part)| (rel, part)).collect();
+        let newest = keys.len();
+        let (keys, paths): (Vec<(Rel, i64)>, HashSet<String>) = keys.into_iter().filter(|(_, path, _)| !looked_up.contains(path.as_str())).map(|(rel, path, part)| ((rel, part), path)).unzip();
+        if trace {
+            eprintln!("rerail: memo entries of space {:02x}{:02x}: {newest} paths' newest, {} not looked up already ({} looked up)", space[0], space[1], keys.len(), looked_up.len());
+        }
         if keys.is_empty() {
-            return Ok((0, 0));
+            return Ok((0, 0, Some(paths)));
         }
         let got = self.read_frame_parts_from(space, &keys, true, false)?;
+        hold_symbols(&self.atoms, got.values(), Some(read))?;
         let bytes = got.values().map(|f| f.encoded_bytes()).sum::<usize>();
         let n = got.len();
         let mut snapshot = snapshot.lock().expect("the frames' snapshot");
@@ -633,7 +676,13 @@ impl ContentStore {
         for (k, f) in got {
             held.entry(k).or_insert(f);
         }
-        Ok((n, bytes))
+        Ok((n, bytes, Some(paths)))
+    }
+
+    /// Holds the stored atoms `frames` name (`hold_symbols`), the columns their types do not mark read by `read`: a
+    /// memo's entries read from the store before a run's waves (decision 0170).
+    pub fn hold_frame_symbols<'a>(&self, frames: impl IntoIterator<Item = &'a Arc<Admitted>>, read: SymbolReader<'_>) -> StoreResult<()> {
+        hold_symbols(&self.atoms, frames, Some(read))
     }
 
     /// Every stored frame of `rel` in `space`, by part, admitted (queued writes are not among them).
@@ -648,25 +697,29 @@ impl ContentStore {
         let mut st = connection.prepare_cached(
             "SELECT part, digest, reads, rows, types, data FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 ORDER BY part",
         )?;
-        let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], admitted_part)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// Run `token`'s use of `parts` of `rel` in `space`, queued behind the run: the space counts the run once, the
-    /// parts are marked as used by it, and the parts of `rel` no run used in the last `keep` runs of the space are
-    /// forgotten (an incremental store returns its dead rows).
-    pub fn queue_frame_parts_used(&self, space: [u8; 32], rel: Rel, parts: Vec<i64>, token: u64, keep: i64) {
-        let bytes = parts.len() * 8;
-        self.write_back("the frames' parts used", bytes, Vec::new(), Box::new(move |store| store.use_frame_parts(&space, &rel, &parts, token, keep)));
+        let atoms = self.atoms_handle();
+        let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], |row| admitted_part(row, &atoms))?;
+        let parts: Vec<(i64, Arc<Admitted>)> = rows.collect::<Result<_, _>>()?;
+        drop(st);
+        drop(connection);
+        hold_symbols(&self.atoms, parts.iter().map(|(_, f)| f), None)?;
+        Ok(parts)
     }
 
     /// Forgets `rel`'s frames in `space` but each path's newest `keep` (a memo relation, `MEMO_RELS`: an edited
-    /// file's earlier contents' entries, decision 0117), and returns how many it forgot.
-    pub fn keep_newest_by_path(&self, space: &[u8; 32], rel: &str, keep: usize) -> StoreResult<usize> {
+    /// file's earlier contents' entries, decision 0117), and returns how many it forgot. Only the paths whose frames
+    /// have one of `digests` (their documents' keys, `memo::doc_keys`) are looked at: the ones a run just wrote. Was
+    /// every frame of the relation, at each write: 30,000 files' memo writes read the relation's frames over and over
+    /// (posthog, six minutes of the writer while the run waited).
+    pub fn keep_newest_by_path(&self, space: &[u8; 32], rel: &str, keep: usize, digests: &[u64]) -> StoreResult<usize> {
+        if digests.is_empty() {
+            return Ok(0);
+        }
         let gone: Vec<(Rel, i64)> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2")?;
-            let rows = st.query_map(params![&space[..], rel], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
+            let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f INDEXED BY frames_by_digest JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2 AND f.digest IN rarray(?3)")?;
+            let digests: rusqlite::vtab::array::Array = std::rc::Rc::new(digests.iter().map(|&d| rusqlite::types::Value::from(d as i64)).collect());
+            let rows = st.query_map(params![&space[..], rel, digests], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
             let mut by: HashMap<([u8; 32], String), Vec<(i64, i64)>> = HashMap::new();
             for row in rows {
                 let (ident, part, reads, used) = row?;
@@ -687,30 +740,15 @@ impl ContentStore {
             return Ok(0);
         }
         let n = gone.len();
-        self.keep_frame_refs(space, &[], &[], &[], &[], &gone, None)?;
-        Ok(n)
-    }
-
-    /// `queue_frame_parts_used`, now.
-    pub fn use_frame_parts(&self, space: &[u8; 32], rel: &Rel, parts: &[i64], token: u64, keep: i64) -> StoreResult<()> {
-        self.immediate_transaction_once(|t| {
-            let run = count_run(t, space, token)?;
-            // Give SQLite the entire key set in one prepared statement. Each run
-            // orders it once, without rebuilding SQL and temporary sets per chunk.
-            if !parts.is_empty() {
-                let parts: rusqlite::vtab::array::Array = std::rc::Rc::new(parts.iter().copied().map(rusqlite::types::Value::from).collect());
-                // Marked in `frame_part_used`: the frames' records, with their rows, are not rewritten.
-                t.prepare_cached("UPDATE frame_part_used SET used = ?4 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN rarray(?5)")?
-                    .execute(params![&space[..], rel.name, &rel.ident[..], run, parts])?;
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(*space).or_default();
+            for key in &gone {
+                held.remove(key);
             }
-            // The parts no run used in the last `keep`, forgotten with their use.
-            let gone = "SELECT part FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4";
-            t.prepare_cached(&format!("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN ({gone})"))?
-                .execute(params![&space[..], rel.name, &rel.ident[..], run - keep])?;
-            t.prepare_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4")?
-                .execute(params![&space[..], rel.name, &rel.ident[..], run - keep])?;
-            Ok(())
-        })
+        }
+        self.write_frames(space, &[], 0, &[], &[], &gone, None)?;
+        Ok(n)
     }
 
     /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
@@ -726,17 +764,43 @@ impl ContentStore {
         })
     }
 
-    /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
+    /// `keep_frames`, queued behind the run (decision 0102): encoded here, as each is queued, and written by the store's
+    /// writer. The snapshot and the queued write share the encoded frame. Queued as rows, a frame's rows were held by
+    /// the queue while the writer encoded a copy of them: on internal_dead_code the run's last writes held 309 MB of
+    /// rows beside 138 MB of their encoding (and the kept part's own rows they were copied from).
     pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        self.queue_frames_retagged(space, puts, Vec::new(), Vec::new(), gone, used)
+        self.queue_encoded_retagged(space, puts.into_iter().map(Put::encoded).collect(), Vec::new(), Vec::new(), gone, used)
+    }
+
+    /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's
+    /// rows only until it is encoded.
+    pub fn queue_encoded(&self, space: [u8; 32], frames: Vec<Encoded>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_encoded_retagged(space, frames, Vec::new(), Vec::new(), gone, used)
     }
 
     /// `queue_frames`, with `retags` (frames whose rows stay, with their reads told again: no rows are written) and
     /// `deltas` (a relation's rows gone and added, written after its frame: decision 0117 step 4). A frame put whole
     /// (part 0) ends the deltas after it.
     pub fn queue_frames_retagged(&self, space: [u8; 32], puts: Vec<Put>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_encoded_retagged(space, puts.into_iter().map(Put::encoded).collect(), retags, deltas, gone, used)
+    }
+
+    /// `queue_frames_retagged` of frames encoded as they were made (`Put::encoded`); its deltas are encoded here.
+    pub fn queue_encoded_retagged(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Mapped)
+    }
+
+    /// `queue_encoded_retagged` for frames keyed by this process's numbering of symbols: rows whose untyped columns,
+    /// parts or digests are of atoms (the retained part's documents and granules). The store can map a typed value,
+    /// not a key: after a fork (decision 0170) they are not written, and the next run derives them again.
+    pub fn queue_encoded_keyed_by_symbols(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Unmapped)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn queue_encoded_as(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>, syms: super::write_back::Syms) {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
-        let mut delta_puts: Vec<Arc<Put>> = Vec::new();
+        let mut delta_frames: Vec<Encoded> = Vec::new();
         let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
         // A relation's deltas queued in this call so far (two of one relation follow each other).
         let mut composed: Vec<(Rel, Arc<Admitted>)> = Vec::new();
@@ -760,28 +824,27 @@ impl ContentStore {
             }
             let mut types = vec![DELTA];
             types.extend_from_slice(&d.types);
-            let put = Arc::new(Put { rel: d.rel.clone(), part: delta_part(k + 1), digest: 0, reads: Vec::new(), rows: Rows { types, rows, n: ng + na } });
-            let frame = Arc::new(Admitted { stored: Stored { digest: 0, reads: Vec::new() }, data: Data::Queued(Arc::clone(&put)) });
-            composed.push((d.rel.clone(), Arc::new(now.with_delta(Stored { digest: d.digest, reads: d.reads.clone() }, frame, ng, na))));
+            let delta = Put { rel: d.rel.clone(), part: delta_part(k + 1), digest: 0, reads: Vec::new(), rows: Rows { types, rows, n: ng + na } }.encoded();
+            composed.push((d.rel.clone(), Arc::new(now.with_delta(Stored { digest: d.digest, reads: d.reads.clone() }, Arc::clone(&delta.frame), ng, na))));
             let mut stored_reads = d.reads.clone();
             stored_reads.push((CHAIN.to_owned(), (k + 1) as u64));
             heads.push((d.rel, d.digest, stored_reads));
-            delta_puts.push(put);
+            delta_frames.push(delta);
         }
-        let bytes: usize = puts.iter().map(|p| p.rows.rows.len() * 8).sum::<usize>() + delta_puts.iter().map(|p| p.rows.rows.len() * 8).sum::<usize>();
+        let bytes: usize = frames.iter().chain(&delta_frames).map(|e| e.frame.encoded_bytes()).sum();
         // What a large write of frames holds, by relation (profiling only): what makes the store's writes large.
         if bytes > 4 << 20 && (std::env::var_os("RERAIL_PROFILE").is_some() || std::env::var_os("RERAIL_WRITES").is_some()) {
             let mut by: HashMap<&str, (usize, usize, usize)> = HashMap::new();
-            for p in &puts {
-                let e = by.entry(p.rel.name.as_str()).or_default();
+            for f in &frames {
+                let e = by.entry(f.rel.name.as_str()).or_default();
                 e.0 += 1;
-                e.1 += p.rows.n;
-                e.2 += p.rows.rows.len() * 8;
+                e.1 += f.frame.len().unwrap_or(0);
+                e.2 += f.frame.encoded_bytes();
             }
             let mut by: Vec<_> = by.into_iter().collect();
             by.sort_by(|a, b| b.1.2.cmp(&a.1.2));
             let top: Vec<String> = by.iter().take(15).map(|(r, (f, n, b))| format!("{r}: {f} frames, {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
-            eprintln!("rerail: frames queued: {:.1} MB in {} frames of {} relations; by relation: {}", bytes as f64 / 1048576.0, puts.len(), by.len(), top.join("; "));
+            eprintln!("rerail: frames queued: {:.1} MB in {} frames of {} relations; by relation: {}", bytes as f64 / 1048576.0, frames.len(), by.len(), top.join("; "));
             if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
                 let mut tsv = String::from("relation\tframes\trows\tbytes\n");
                 for (r, (f, n, b)) in &by {
@@ -791,15 +854,19 @@ impl ContentStore {
             }
         }
         let mut gone = gone;
-        gone.extend(self.ended_deltas(&space, puts.iter()));
-        let puts: Vec<_> = puts.into_iter().map(Arc::new).collect();
-        let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = puts.iter().map(|p| {
-            let frame = Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) });
-            (frame_key(&space, &p.rel, p.part), Some(Arc::new(Some(frame)) as Arc<dyn std::any::Any + Send + Sync>))
-        }).collect();
+        gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
+        // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0197).
+        if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
+            return;
+        }
+        let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = frames
+            .iter()
+            .map(|f| (frame_key(&space, &f.rel, f.part), Some(Arc::new(Some(Arc::clone(&f.frame))) as Arc<dyn std::any::Any + Send + Sync>)))
+            .collect();
         keys.extend(gone.iter().map(|(rel, part)| (frame_key(&space, rel, *part), Some(Arc::new(None::<Arc<Admitted>>) as Arc<dyn std::any::Any + Send + Sync>))));
         keys.extend(composed.iter().map(|(rel, f)| (frame_key(&space, rel, 0), Some(Arc::new(Some(Arc::clone(f))) as Arc<dyn std::any::Any + Send + Sync>))));
-        // Memory is ahead of the store: the snapshot holds what is queued (`preload_frames`).
+        // Memory is ahead of the store: the snapshot holds what is queued (`preload_frames`), the queued frames
+        // themselves.
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(space).or_default();
@@ -814,22 +881,19 @@ impl ContentStore {
                     held.insert((r.rel.clone(), r.part), frame);
                 }
             }
-            for p in &puts {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) }));
+            for f in &frames {
+                held.insert((f.rel.clone(), f.part), Arc::clone(&f.frame));
             }
             for key in &gone {
                 held.remove(key);
             }
             drop(snapshot);
-            // The confirmations as the writer will leave them (`keep_frame_refs`).
+            // The confirmations as the writer will leave them (`write_frames`).
             if let Some(snapshot) = self.snapshot() {
                 let mut snapshot = snapshot.lock().expect("the frames' snapshot");
                 let map = snapshot.confirmed.entry(space).or_default();
-                for p in &puts {
-                    map.remove(&confirm_key(&p.rel, p.part));
-                }
-                for p in &delta_puts {
-                    map.remove(&confirm_key(&p.rel, p.part));
+                for f in frames.iter().chain(&delta_frames) {
+                    map.remove(&confirm_key(&f.rel, f.part));
                 }
                 for (rel, _, _) in &heads {
                     map.remove(&confirm_key(rel, 0));
@@ -842,21 +906,19 @@ impl ContentStore {
                 }
             }
         }
-        self.write_back("frames", bytes, keys, Box::new(move |store| {
+        self.write_back_syms(syms, "frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
-            let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
-            let delta_refs: Vec<_> = delta_puts.iter().map(Arc::as_ref).collect();
-            let _ = store.keep_frame_refs(&space, &refs, &retags, &delta_refs, &heads, &gone, used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program)));
+            let rows: Vec<Framed> = frames.iter().chain(&delta_frames).filter_map(Encoded::framed).collect();
+            let _ = store.write_frames(&space, &rows, delta_frames.len(), &retags, &heads, &gone, used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program)));
             Ok(())
         }));
     }
 
-    /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, a program of run `token`
-    /// is over: the space counts the run if it has not yet, marks the relations the program used, and forgets those
-    /// the last [`RUNS`] runs did not use.
+    /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, the program's relations
+    /// in the space are recorded with it (`frame_program_used`), for collection (`collect_unreachable_frames`).
     pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let mut gone = gone.to_vec();
-        gone.extend(self.ended_deltas(space, puts.iter()));
+        gone.extend(self.ended_deltas(space, puts.iter().map(|p| (&p.rel, p.part))));
         // Written now, not queued: the confirmations this process holds lose these frames now too.
         if let Some(snapshot) = self.snapshot()
             && let Some(map) = snapshot.lock().expect("the frames' snapshot").confirmed.get_mut(space)
@@ -868,56 +930,78 @@ impl ContentStore {
                 map.remove(&confirm_key(rel, *part));
             }
         }
-        self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), &[], &[], &[], &gone, used)
+        let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
+        let stored: Vec<Stored> = puts.iter().map(|p| Stored { digest: p.digest, reads: p.reads.clone() }).collect();
+        let rows: Vec<Framed> = puts
+            .iter()
+            .zip(&blocks)
+            .zip(&stored)
+            .map(|((p, bytes), stored)| Framed { rel: &p.rel, part: p.part, stored, types: &p.rows.types, n: p.rows.n, bytes })
+            .collect();
+        let written = self.write_frames(space, &rows, 0, &[], &[], &gone, used);
+        drop(rows);
+        // The snapshot holds what is written, the blocks moved into it once written. Cloned into it before the write,
+        // the blocks were held twice while the transaction ran.
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(*space).or_default();
+            for ((p, block), stored) in puts.iter().zip(blocks).zip(stored) {
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block), store: None } }));
+            }
+            for key in &gone {
+                held.remove(key);
+            }
+        }
+        written
     }
 
     /// The delta frames that `puts` end (decision 0117 step 4): those after a frame put whole, as the snapshot holds
     /// them. Without a snapshot none is named; its reads name no deltas, so they are not read, and the next delta
     /// writes over them.
-    fn ended_deltas<'p>(&self, space: &[u8; 32], puts: impl Iterator<Item = &'p Put>) -> Vec<(Rel, i64)> {
+    fn ended_deltas<'p>(&self, space: &[u8; 32], puts: impl Iterator<Item = (&'p Rel, i64)>) -> Vec<(Rel, i64)> {
         let Some(snapshot) = self.snapshot() else { return Vec::new() };
         let snapshot = snapshot.lock().expect("the frames' snapshot");
         let Some(held) = snapshot.get(space) else { return Vec::new() };
         let mut out = Vec::new();
-        for p in puts.filter(|p| p.part == 0) {
-            if let Some(f) = held.get(&(p.rel.clone(), 0)) {
-                out.extend((1..=f.chain().0).map(|i| (p.rel.clone(), delta_part(i))));
+        for (rel, _) in puts.filter(|(_, part)| *part == 0) {
+            if let Some(f) = held.get(&(rel.clone(), 0)) {
+                out.extend((1..=f.chain().0).map(|i| (rel.clone(), delta_part(i))));
             }
         }
         out
     }
 
+    /// Writes encoded `rows` into `space` (each replacing its frame; the last `deltas` of them delta frames), with
+    /// `retags`, the deltas' `heads`, and `gone` forgotten, in one transaction; with `used`, as `keep_frames`.
     #[allow(clippy::too_many_arguments)]
-    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], retags: &[Retag], delta_puts: &[&Put], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
-        let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
-        let delta_blocks: Vec<Vec<u8>> = delta_puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
-        // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
-        if let Some(snapshot) = self.snapshot() {
-            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
-            let held = snapshot.entry(*space).or_default();
-            for (p, block) in puts.iter().zip(&blocks) {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block.clone()) } }));
-            }
-            for key in gone {
-                held.remove(key);
-            }
-        }
+    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let timed = std::env::var_os("RERAIL_WRITES").is_some();
         self.immediate_transaction_once(|t| {
             let mut at = std::time::Instant::now();
             let mut lap = |what: &str| if timed { eprintln!("RERAIL_WRITES frames {what}: {:.3} s", at.elapsed().as_secs_f64()); at = std::time::Instant::now(); };
-            // A run's first program counts it: what it writes and marks is of the new run.
+            // The space's counter stamps what is put (`frame_part_used`): a run's first program counts it, and a write
+            // of no run's (the memo's entries) counts itself, so a path's contents are ordered by when they were put
+            // (`keep_newest_by_path`). Only a write that puts counts: a use is not marked (decision 0227).
             let run = match used {
                 Some((_, token, _)) => count_run(t, space, token)?,
+                None if !rows.is_empty() => count_run(t, space, 0)?,
                 None => {
                     t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
                     t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?
                 }
             };
+            // Forked (decision 0170): the frames were encoded as they were made, in this process's ids; their symbol
+            // columns are written as the store numbers them, mapped in this transaction. Not forked: as encoded.
+            let mapped: Vec<Option<Vec<u8>>> = if self.atoms.forked() {
+                rows.iter().map(|f| f.store_block(|v| self.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop))).collect::<StoreResult<_>>()?
+            } else {
+                Vec::new()
+            };
+            let data_of = |i: usize, f: &Framed| -> Vec<u8> { mapped.get(i).and_then(Option::as_deref).unwrap_or(f.bytes).to_vec() };
             // A frame put whole has no deltas after it: its reads name none (`CHAIN`), so those left are not read.
             // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
-            for batch in puts.iter().zip(&blocks).chain(delta_puts.iter().zip(&delta_blocks)).collect::<Vec<_>>().chunks(96) {
+            for (c, batch) in rows.chunks(96).enumerate() {
                 let values = (0..batch.len()).map(|i| {
                     let p=3+9*i;
                     format!("(?1,?{p},?{},?{},?{},?{},?{},?{},?{},?{},?2)",p+1,p+2,p+3,p+4,p+5,p+6,p+7,p+8)
@@ -926,24 +1010,24 @@ impl ContentStore {
                     ON CONFLICT(space,rel,ident,part) DO UPDATE SET digest=excluded.digest, reads=excluded.reads, \
                     width=excluded.width, rows=excluded.rows, types=excluded.types, data=excluded.data, used=excluded.used");
                 let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into(),run.into()];
-                for (p,data) in batch {
-                    args.extend([p.rel.name.clone().into(),p.rel.ident.to_vec().into(),p.part.into(),(p.digest as i64).into(),
-                        encode_reads(&p.reads).into(),(p.rows.types.len() as i64).into(),(p.rows.n as i64).into(),p.rows.types.clone().into(),(*data).clone().into()]);
+                for (k, f) in batch.iter().enumerate() {
+                    args.extend([f.rel.name.clone().into(),f.rel.ident.to_vec().into(),f.part.into(),(f.stored.digest as i64).into(),
+                        encode_reads(&f.stored.reads).into(),(f.types.len() as i64).into(),(f.n as i64).into(),f.types.to_vec().into(),data_of(c * 96 + k, f).into()]);
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
             // Each frame's use, apart from its record (`frame_part_used`): three values a frame, so 300 a statement.
-            for batch in puts.iter().chain(delta_puts.iter()).collect::<Vec<_>>().chunks(300) {
+            for batch in rows.chunks(300) {
                 let values = (0..batch.len()).map(|i| format!("(?1,?{},?{},?{},?2)", 3 + 3 * i, 4 + 3 * i, 5 + 3 * i)).collect::<Vec<_>>().join(",");
                 let sql = format!("INSERT INTO frame_part_used(space,rel,ident,part,used) VALUES {values} \
                     ON CONFLICT(space,rel,ident,part) DO UPDATE SET used=excluded.used");
                 let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), run.into()];
-                for p in batch {
-                    args.extend([p.rel.name.clone().into(), p.rel.ident.to_vec().into(), p.part.into()]);
+                for f in batch {
+                    args.extend([f.rel.name.clone().into(), f.rel.ident.to_vec().into(), f.part.into()]);
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
-            lap(&format!("{} puts, {} deltas", puts.len(), delta_puts.len()));
+            lap(&format!("{} puts, {} deltas", rows.len() - deltas, deltas));
             // A relation with a delta after its frame: the frame's digest and reads are the relation's now.
             for (rel, digest, reads) in heads {
                 t.prepare_cached("UPDATE frames SET digest = ?5, reads = ?6 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
@@ -955,13 +1039,13 @@ impl ContentStore {
             // space's confirmations name it with its reads' hash now, one row for the space. A frame put, given a
             // delta's head or forgotten here loses its confirmation in the same transaction: a confirmation never
             // vouches for rows written after it.
-            if !(retags.is_empty() && puts.is_empty() && heads.is_empty() && gone.is_empty())  {
+            if !(retags.is_empty() && rows.is_empty() && heads.is_empty() && gone.is_empty()) {
                 let was: Option<Vec<u8>> = t.query_row("SELECT data FROM frame_confirmed WHERE space = ?1", [&space[..]], |r| r.get(0)).optional()?;
                 if was.is_some() || !retags.is_empty() {
                     let mut map = was.as_deref().map(decode_confirmed).unwrap_or_default();
                     let before = map.clone();
-                    for p in puts.iter().chain(delta_puts.iter()) {
-                        map.remove(&confirm_key(&p.rel, p.part));
+                    for f in rows {
+                        map.remove(&confirm_key(f.rel, f.part));
                     }
                     for (rel, _, _) in heads {
                         map.remove(&confirm_key(rel, 0));
@@ -991,71 +1075,148 @@ impl ContentStore {
             }
             lap(&format!("{} gone", gone.len()));
             if let Some((used, _, program)) = used {
-                // The run's use of the space, by program (decision 0117 step 5): one row a program a run. Programs over
-                // one root share its space and the relations they derive alike (decision 0103); counted by the space's
-                // runs alone, a policy's frames, its kept inputs above all, went unused for as many runs as the other
-                // policies made, and were collected after [`RUNS`] of them.
-                let runs: Vec<(Vec<u8>, i64, Vec<u64>)> = {
-                    let mut st = t.prepare_cached("SELECT program, run, rels FROM frame_program_used WHERE space = ?1")?;
-                    st.query_map([&space[..]], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?, decode_keys(&r.get::<_, Vec<u8>>(2)?))))?.collect::<Result<_, _>>()?
-                };
-                let was = runs.iter().find(|(p, r, _)| p.as_slice() == program.as_slice() && *r == run).map(|(_, _, k)| k);
+                // The relations the program derives in the space (decision 0227, reachability): one row a program,
+                // written when it first puts there or derives more. No run marks its use: collection keeps a
+                // relation's frames while a live program (a plan a kept manifest names) holds it here
+                // (`collect_unreachable_frames`). A warm run, which puts nothing, writes nothing.
+                let was: Option<Vec<u64>> = t
+                    .prepare_cached("SELECT rels FROM frame_program_used WHERE space = ?1 AND program = ?2 AND run = 0")?
+                    .query_row(params![&space[..], &program[..]], |r| Ok(decode_keys(&r.get::<_, Vec<u8>>(0)?)))
+                    .optional()?;
                 let mut keys: Vec<u64> = used.iter().map(used_key).collect();
-                keys.extend(was.into_iter().flatten().copied());
+                keys.extend(was.iter().flatten().copied());
                 keys.sort_unstable();
                 keys.dedup();
-                if was != Some(&keys) {
-                    t.prepare_cached("INSERT OR REPLACE INTO frame_program_used(space, program, run, rels) VALUES (?1, ?2, ?3, ?4)")?.execute(params![&space[..], &program[..], run, encode_keys(&keys)])?;
-                }
-                // Each program's last [`RUNS`] runs, this one among them, none [`ABANDON`] runs of the space old.
-                let mut by_program: HashMap<&[u8], Vec<(i64, &Vec<u64>)>> = HashMap::new();
-                for (p, r, k) in &runs {
-                    if !(p.as_slice() == program.as_slice() && *r == run) {
-                        by_program.entry(p.as_slice()).or_default().push((*r, k));
-                    }
-                }
-                by_program.entry(program.as_slice()).or_default().push((run, &keys));
-                let mut live: HashSet<u64> = HashSet::new();
-                let mut stale: Vec<(Vec<u8>, i64)> = Vec::new();
-                for (p, mut rs) in by_program {
-                    rs.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-                    for (i, (r, k)) in rs.into_iter().enumerate() {
-                        if i < RUNS as usize && r > run - ABANDON {
-                            live.extend(k.iter().copied());
-                        } else {
-                            stale.push((p.to_vec(), r));
-                        }
-                    }
-                }
-                for (p, r) in &stale {
-                    t.prepare_cached("DELETE FROM frame_program_used WHERE space = ?1 AND program = ?2 AND run = ?3")?.execute(params![&space[..], p, r])?;
+                if was.as_ref() != Some(&keys) {
+                    t.prepare_cached("INSERT OR REPLACE INTO frame_program_used(space, program, run, rels) VALUES (?1, ?2, 0, ?3)")?.execute(params![&space[..], &program[..], encode_keys(&keys)])?;
                 }
                 lap(&format!("{} used", used.len()));
-                // Collected: a frame put [`RUNS`] runs ago or before, whose relation none of those runs used.
-                let old: Vec<(String, Vec<u8>)> = {
-                    let mut st = t.prepare_cached("SELECT DISTINCT rel, ident FROM frame_part_used WHERE space = ?1 AND used <= ?2")?;
-                    st.query_map(params![&space[..], run - RUNS], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
-                };
-                let dead: Vec<(String, Vec<u8>)> = old.into_iter().filter(|(name, ident)| {
-                    <[u8; 32]>::try_from(ident.as_slice()).map_or(true, |ident| !live.contains(&used_key(&Rel { name: name.clone(), ident })))
-                }).collect();
-                for batch in dead.chunks(READ_BATCH) {
-                    let values = (0..batch.len()).map(|i| format!("(?{},?{})", 3 + 2 * i, 4 + 2 * i)).collect::<Vec<_>>().join(",");
-                    // The old parts of the dead relations, by their use (`frame_part_used`), forgotten with it.
-                    let old = format!("WITH dead(rel,ident) AS (VALUES {values}) SELECT u.space, u.rel, u.ident, u.part FROM frame_part_used u \
-                        JOIN dead d ON u.rel = d.rel AND u.ident = d.ident WHERE u.space = ?1 AND u.used <= ?2");
-                    let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), (run - RUNS).into()];
-                    for (name, ident) in batch {
-                        args.extend([name.clone().into(), ident.clone().into()]);
-                    }
-                    t.prepare_cached(&format!("DELETE FROM frames WHERE (space,rel,ident,part) IN ({old})"))?.execute(rusqlite::params_from_iter(args.clone()))?;
-                    t.prepare_cached(&format!("DELETE FROM frame_part_used WHERE (space,rel,ident,part) IN ({old})"))?.execute(rusqlite::params_from_iter(args))?;
-                }
-                lap(&format!("{} relations' old frames collected", dead.len()));
             }
             Ok(())
         })
     }
+}
+
+/// What reachability collected (`collect_unreachable_frames`): memo entries whose content no kept manifest names,
+/// and maintained frames of relations no live program derives, with the use rows that went with them.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Unreachable {
+    pub memo: usize,
+    pub maintained: usize,
+    pub programs: usize,
+    /// Of `programs`, those no manifest ever named (not in `corpus_plans` at all): a part whose key its run does not
+    /// name, whose frames every decision collects and every run derives again. Should stay 0.
+    pub unnamed: usize,
+}
+
+impl Unreachable {
+    pub fn any(&self) -> bool {
+        self.memo + self.maintained + self.programs > 0
+    }
+}
+
+/// Collects the frames nothing live reaches (decision 0227), in `t` (a write transaction). No run marks what it uses;
+/// what is kept follows from the kept manifests (`corpus_runs`'s keep decision):
+///
+/// - **A memo entry** (a live plan's space, `local_space`) is kept while a kept manifest names its content: its reads
+///   hold its document's sha256, and `corpus_live` the kept manifests' sources. A dead plan's whole space goes with
+///   the plan (`collect_corpus_pass`).
+/// - **A maintained frame** (a part's space) is kept while a live program holds its relation there: a program (a part's
+///   key) is live while a kept manifest names it (`corpus_plans`), and the relations it derives in the space are its
+///   `frame_program_used` row. A space no live program holds loses every frame.
+pub(super) fn collect_unreachable_frames(t: &Connection) -> rusqlite::Result<Unreachable> {
+    let mut out = Unreachable::default();
+    let live: HashSet<[u8; 32]> = t
+        .prepare("SELECT plan_digest FROM corpus_plans WHERE live = 1")?
+        .query_map([], |r| r.get::<_, Vec<u8>>(0))?
+        .filter_map(|p| p.ok()?.try_into().ok())
+        .collect();
+    // The kept manifests' contents, by sha256.
+    let contents: HashSet<[u8; 32]> = t
+        .prepare(
+            "SELECT DISTINCT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3 FROM corpus_live l \
+             JOIN source_objects s ON s.source_id = l.source_id JOIN hashes h ON h.hash_id = s.canonical_hash_id",
+        )?
+        .query_map([], |r| Ok(super::HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] }))?
+        .filter_map(|k| k.ok()?.sha256_bytes())
+        .collect();
+    let mut gone: Vec<([u8; 32], String, Vec<u8>, i64)> = Vec::new();
+    for plan in &live {
+        let space = local_space(plan);
+        let mut st = t.prepare_cached("SELECT rel, ident, part, reads FROM frames WHERE space = ?1")?;
+        let rows = st.query_map([&space[..]], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, i64>(2)?, r.get::<_, Vec<u8>>(3)?)))?;
+        for row in rows {
+            let (rel, ident, part, reads) = row?;
+            let reads = decode_reads(&reads);
+            // A memo entry's reads: its path and key, then its content's sha256 in four words.
+            if reads.len() != 5 || reads[1..].iter().any(|(n, _)| n != "sha256") {
+                continue;
+            }
+            let mut digest = [0u8; 32];
+            for (c, (_, v)) in digest.chunks_exact_mut(8).zip(&reads[1..]) {
+                c.copy_from_slice(&v.to_le_bytes());
+            }
+            if !contents.contains(&digest) {
+                gone.push((space, rel, ident, part));
+            }
+        }
+    }
+    out.memo = gone.len();
+    // The maintained spaces: each one's live programs' relations.
+    let rows: Vec<(Vec<u8>, Vec<u8>, i64, Vec<u8>)> = t
+        .prepare("SELECT space, program, run, rels FROM frame_program_used")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut held: HashMap<Vec<u8>, HashSet<u64>> = HashMap::new();
+    let mut dead_rows: Vec<(Vec<u8>, Vec<u8>, i64)> = Vec::new();
+    for (space, program, run, rels) in rows {
+        let entry = held.entry(space.clone()).or_default();
+        // A row of a run (before decision 0227) or of a dead program holds nothing.
+        if run == 0 && <[u8; 32]>::try_from(program.as_slice()).is_ok_and(|p| live.contains(&p)) {
+            entry.extend(decode_keys(&rels));
+        } else {
+            dead_rows.push((space, program, run));
+        }
+    }
+    out.programs = dead_rows.len();
+    let known: HashSet<Vec<u8>> = t.prepare("SELECT plan_digest FROM corpus_plans")?.query_map([], |r| r.get::<_, Vec<u8>>(0))?.collect::<Result<_, _>>()?;
+    out.unnamed = dead_rows.iter().filter(|(_, p, run)| *run == 0 && !known.contains(p)).count();
+    let before = gone.len();
+    for (space, rels) in &held {
+        let Ok(space) = <[u8; 32]>::try_from(space.as_slice()) else { continue };
+        let mut st = t.prepare_cached("SELECT rel, ident, part FROM frame_part_used WHERE space = ?1")?;
+        let rows = st.query_map([&space[..]], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, i64>(2)?)))?;
+        for row in rows {
+            let (rel, ident, part) = row?;
+            let Ok(id) = <[u8; 32]>::try_from(ident.as_slice()) else { continue };
+            if !rels.contains(&used_key(&Rel { name: rel.clone(), ident: id })) {
+                gone.push((space, rel, ident, part));
+            }
+        }
+    }
+    out.maintained = gone.len() - before;
+    // A dev trace (`RERAIL_FRAMES_TRACE`): each dead program row and each space's collected frames.
+    if std::env::var_os("RERAIL_FRAMES_TRACE").is_some() {
+        let hex = |b: &[u8]| b.iter().take(6).map(|x| format!("{x:02X}")).collect::<String>();
+        for (space, program, run) in &dead_rows {
+            eprintln!("RERAIL_FRAMES_TRACE dead row: space {} program {} run {run} known {}", hex(space), hex(program), known.contains(program));
+        }
+        let mut by: HashMap<String, usize> = HashMap::new();
+        for (space, rel, _, _) in &gone[before..] {
+            *by.entry(format!("{} {rel}", hex(space))).or_default() += 1;
+        }
+        for (k, n) in by {
+            eprintln!("RERAIL_FRAMES_TRACE collected: {k}: {n}");
+        }
+    }
+    for (space, rel, ident, part) in &gone {
+        t.prepare_cached("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?.execute(params![&space[..], rel, ident, part])?;
+        t.prepare_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?.execute(params![&space[..], rel, ident, part])?;
+    }
+    for (space, program, run) in &dead_rows {
+        t.prepare_cached("DELETE FROM frame_program_used WHERE space = ?1 AND program = ?2 AND run = ?3")?.execute(params![space, program, run])?;
+    }
+    Ok(out)
 }
 
 /// A frame's key in its space's confirmations: its relation's name and identity, and its part.
@@ -1088,6 +1249,91 @@ fn encode_confirmed(map: &HashMap<u64, u64>) -> Vec<u8> {
 
 fn decode_confirmed(bytes: &[u8]) -> HashMap<u64, u64> {
     bytes.chunks_exact(16).map(|c| (u64::from_le_bytes(c[..8].try_into().expect("8 bytes")), u64::from_le_bytes(c[8..].try_into().expect("8 bytes")))).collect()
+}
+
+/// A frame encoded to be queued (`Put::encoded`, `queue_encoded`): the queue, the snapshot and the writer share it.
+pub struct Encoded {
+    rel: Rel,
+    part: i64,
+    frame: Arc<Admitted>,
+}
+
+impl Encoded {
+    /// The frame as the writer writes it (none for a frame without rows).
+    fn framed(&self) -> Option<Framed<'_>> {
+        match &self.frame.data {
+            Data::Encoded { types, n, bytes, .. } => Some(Framed { rel: &self.rel, part: self.part, stored: &self.frame.stored, types, n: *n, bytes }),
+            Data::Metadata | Data::Chain { .. } => None,
+        }
+    }
+}
+
+impl Put {
+    /// This frame encoded, its rows dropped.
+    pub fn encoded(self) -> Encoded {
+        let Put { rel, part, digest, reads, rows } = self;
+        let bytes = super::cross_rows::encode(rows.types.len(), &rows.rows);
+        let Rows { types, n, rows } = rows;
+        drop(rows);
+        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Arc::new(bytes), store: None } }) }
+    }
+}
+
+/// An encoded frame to write (`write_frames`).
+struct Framed<'a> {
+    rel: &'a Rel,
+    part: i64,
+    stored: &'a Stored,
+    types: &'a [u8],
+    n: usize,
+    bytes: &'a [u8],
+}
+
+impl Framed<'_> {
+    /// Its bytes with each symbol column (`b's'`) passed through `map` (this process's ids to the store's, decision
+    /// 0170); `None` where it has none.
+    fn store_block(&self, mut map: impl FnMut(&mut [i64]) -> StoreResult<()>) -> StoreResult<Option<Vec<u8>>> {
+        let w = self.types.len();
+        if !self.types.contains(&b's') || self.n == 0 {
+            return Ok(None);
+        }
+        let mut cols = vec![Vec::new(); w];
+        super::cross_rows::decode(w, self.n, self.bytes, &mut cols)?;
+        for (c, col) in cols.iter_mut().enumerate() {
+            if self.types[c] == b's' {
+                map(col)?;
+            }
+        }
+        let mut rows = Vec::with_capacity(w * self.n);
+        for r in 0..self.n {
+            rows.extend(cols.iter().map(|c| c[r]));
+        }
+        Ok(Some(super::cross_rows::encode(w, &rows)))
+    }
+}
+
+/// What reads the store's ids a frame's rows name in columns its types do not mark (`b's'`): a memo entry's, whose
+/// rows are typed by its plan's declarations (`memo::Syms`), passed by the memo that reads them.
+pub type SymbolReader<'r> = &'r dyn Fn(&Admitted, &mut Vec<i64>) -> StoreResult<()>;
+
+/// Holds the stored atoms the symbol columns of `frames` (rows read from the store) name, in one read (decision
+/// 0170), as they are read before a run's waves: so the waves decode them without reading the store, and a string a
+/// wave interns that is not in memory is none of theirs. Every stored atom held here already, nothing is decoded.
+/// `read`: what reads the columns the frames' types do not mark (a memo entry's).
+fn hold_symbols<'a>(atoms: &super::atoms::Atoms, frames: impl IntoIterator<Item = &'a Arc<Admitted>>, read: Option<SymbolReader<'_>>) -> StoreResult<()> {
+    if !atoms.holds_by_reading() {
+        return Ok(());
+    }
+    let mut ids = Vec::new();
+    for frame in frames {
+        frame.stored_symbols(&mut ids)?;
+        if let Some(read) = read {
+            read(frame, &mut ids)?;
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    atoms.hold_named(&ids)
 }
 
 fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {
@@ -1123,23 +1369,16 @@ fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite
 }
 
 /// A frame read by part: `(part, digest, reads, rows, types, data)`.
-fn admitted_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Arc<Admitted>)> {
+fn admitted_part(row: &rusqlite::Row<'_>, atoms: &Arc<super::atoms::Atoms>) -> rusqlite::Result<(i64, Arc<Admitted>)> {
     Ok((row.get(0)?, Arc::new(Admitted {
         stored: Stored { digest: row.get::<_, i64>(1)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(2)?) },
-        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: Arc::new(row.get(5)?) },
+        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: Arc::new(row.get(5)?), store: Some(Arc::clone(atoms)) },
     })))
 }
 
 /// The entry a base frame's stored reads end with when deltas follow it (decision 0117 step 4): how many. A frame
 /// put whole has none, so deltas a put left behind are not read.
 const CHAIN: &str = "~deltas";
-
-/// How `CHAIN`'s entry starts in stored reads: its name's length and its name.
-fn chain_mark() -> Vec<u8> {
-    let mut out = (CHAIN.len() as u32).to_le_bytes().to_vec();
-    out.extend(CHAIN.as_bytes());
-    out
-}
 
 /// A frame's stored reads, and how many deltas follow it.
 fn decode_reads_chain(bytes: &[u8]) -> (Vec<(String, u64)>, u32) {
@@ -1175,92 +1414,7 @@ fn decode_reads_all(mut bytes: &[u8]) -> Vec<(String, u64)> {
 mod tests {
     use super::*;
 
-    /// A store made before `frame_part_used` (decision 0138) gets each frame's use from `frames.used` at its next
-    /// open, and its frames are marked and collected by it as any other.
-    #[test]
-    fn a_store_made_before_the_frames_use_table_gets_it_from_its_frames() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("store.sqlite");
-        let relation = rel("local", 1);
-        {
-            let store = ContentStore::open(&path).unwrap();
-            let puts: Vec<_> = (0..3).map(|part| Put { rel: relation.clone(), part, digest: 7, reads: vec![], rows: Rows { types: vec![0], rows: vec![part], n: 1 } }).collect();
-            store.keep_frames(&[42; 32], &puts, &[], None).unwrap();
-            // As an older binary leaves it: no table of the frames' use.
-            store.connection.lock().unwrap().execute_batch("DROP TABLE frame_part_used").unwrap();
-        }
-        let store = ContentStore::open(&path).unwrap();
-        let held: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frame_part_used", [], |r| r.get(0)).unwrap();
-        assert_eq!(held, 3, "every frame's use, from `frames.used`");
-        // Part 0 is used in two more runs; parts 1 and 2 are not, and go once two runs have passed.
-        store.use_frame_parts(&[42; 32], &relation, &[0], 0, 2).unwrap();
-        store.use_frame_parts(&[42; 32], &relation, &[0], 1, 2).unwrap();
-        store.use_frame_parts(&[42; 32], &relation, &[0], 2, 2).unwrap();
-        assert!(store.frame_rows(&[42; 32], &relation, 0).unwrap().is_some());
-        assert!(store.frame_rows(&[42; 32], &relation, 1).unwrap().is_none(), "an unused part expires");
-        let held: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frame_part_used", [], |r| r.get(0)).unwrap();
-        assert_eq!(held, 1, "a frame forgotten takes its use with it");
-    }
 
-    #[test]
-    fn frame_part_usage_is_one_bulk_update_and_preserves_retention() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let dir = tempfile::tempdir().unwrap();
-        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
-        let relation = rel("local", 1);
-        let puts: Vec<_> = (0..8193).map(|part| Put { rel: relation.clone(), part,
-            digest: 7, reads: vec![("input-source-identity".into(),7);8], rows: Rows { types: vec![0], rows: vec![part], n: 1 } }).collect();
-        store.keep_frames(&[42;32], &puts, &[], None).unwrap();
-        // These share either the space or the relation, but are outside the requested identity.
-        store.keep_frames(&[43;32], &puts[..1], &[], None).unwrap();
-        let other = Put { rel: rel("local",2), part:8192, digest:7, reads:vec![], rows:puts[0].rows.clone() };
-        store.keep_frames(&[42;32], &[other], &[], None).unwrap();
-        let pages = store.connection.lock().unwrap().query_row("PRAGMA page_count",[],|r|r.get::<_,i64>(0)).unwrap() as usize;
-        let cache_writes = || {
-            let (mut now,mut peak)=(0,0);
-            unsafe { rusqlite::ffi::sqlite3_db_status(store.connection.lock().unwrap().handle(),
-                rusqlite::ffi::SQLITE_DBSTATUS_CACHE_WRITE,&mut now,&mut peak,1); }
-            now as usize
-        };
-        cache_writes();
-        let counts = [AtomicUsize::new(0), AtomicUsize::new(0)];
-        unsafe extern "C" fn trace(event:u32, state:*mut std::ffi::c_void, stmt:*mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
-            let c = unsafe { &*state.cast::<[AtomicUsize;2]>() };
-            if event == rusqlite::ffi::SQLITE_TRACE_STMT {
-                c[0].fetch_add(1,Ordering::Relaxed);
-                unsafe { rusqlite::ffi::sqlite3_stmt_status(stmt.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1) };
-            } else {
-                let vm = unsafe { rusqlite::ffi::sqlite3_stmt_status(stmt.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1) };
-                c[1].fetch_add(vm as usize,Ordering::Relaxed);
-            }
-            0
-        }
-        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
-            rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace),
-            (&counts as *const [AtomicUsize;2]).cast_mut().cast()); }
-        // File order and digest-derived partition order are unrelated.
-        let parts: Vec<_> = (0..8192).map(|i| i*4051%8192).chain([7,7,-1]).collect();
-        let result=store.use_frame_parts(&[42;32],&relation,&parts,0,2);
-        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
-        result.unwrap();
-        let statements=counts[0].load(Ordering::Relaxed);
-        let vm=counts[1].load(Ordering::Relaxed);
-        let writes=cache_writes();
-        eprintln!("frame parts used: {statements} statements, {vm} VM instructions, {writes} page writes for {pages} database pages");
-        assert!(statements<=10,"usage must be one bulk update, independent of key count: {statements}");
-        assert!(vm<500_000,"usage must stay linear in keys: {vm}");
-        assert!(writes<2*pages,"bulk usage must not spill the same pages across key chunks: {writes} writes for {pages} pages");
-        assert!(store.frame_rows(&[42;32],&relation,8192).unwrap().is_some());
-        store.use_frame_parts(&[42;32],&relation,&parts,0,2).unwrap();
-        assert!(store.frame_rows(&[42;32],&relation,8192).unwrap().is_none(),"an unused part expires after two runs");
-        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_some());
-        assert!(store.frame_rows(&[43;32],&relation,0).unwrap().is_some());
-        assert!(store.frame_rows(&[42;32],&rel("local",2),8192).unwrap().is_some());
-        store.use_frame_parts(&[42;32],&relation,&[],0,2).unwrap();
-        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_some());
-        store.use_frame_parts(&[42;32],&relation,&[],0,2).unwrap();
-        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_none());
-    }
 
     #[test]
     fn frame_publication_batches_put_delete_and_usage_with_bounded_work() {
@@ -1293,8 +1447,7 @@ mod tests {
         }
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
             rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&counters as *const [AtomicUsize;2]).cast_mut().cast()); }
-        let refs: Vec<_> = changed.iter().collect();
-        let result = store.keep_frame_refs(&[1;32], &refs, &[], &[], &[], &gone, Some((&used, 1, [0; 32])));
+        let result = store.keep_frames(&[1;32], &changed, &gone, Some((&used, 1, [0; 32])));
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
         result.unwrap();
         eprintln!("frame publication total: {} statements, {} VM",counters[0].load(Ordering::Relaxed),counters[1].load(Ordering::Relaxed));
@@ -1524,6 +1677,52 @@ mod tests {
         assert_eq!(reader.frame_rows(&[1; 32], &r, 0).unwrap().unwrap().rows, [3]);
     }
 
+    /// Decision 0227: what is kept is what the kept manifests reach, with no run's marks. A memo entry stays while its
+    /// plan is live and a kept manifest names its content; a maintained relation while a live program (a plan a
+    /// manifest names) derives it in its space. A program's second write records nothing new.
+    #[test]
+    fn frames_are_kept_while_a_kept_manifest_reaches_them() {
+        use sha2::{Digest as _, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let (plan, program, gone_program) = ([5u8; 32], [7u8; 32], [8u8; 32]);
+        let text = b"x = 1\n";
+        let source = store.put_source(text, &[]).unwrap();
+        // A run of root /r, which read `source` and names `program` (a part's key) among its plans.
+        store.record_corpus_run_naming("/r", &[source], 1, 1, plan, &[program], 1).unwrap();
+        let memo = |path: &str, content: &[u8]| {
+            let digest: [u8; 32] = Sha256::digest(content).into();
+            let mut reads = vec![(path.to_owned(), 1u64)];
+            reads.extend(digest.chunks_exact(8).map(|c| ("sha256".to_owned(), u64::from_le_bytes(c.try_into().unwrap()))));
+            Put { rel: rel(MEMO_RELS[0], 1), part: path.len() as i64, digest: 1, reads, rows: Rows { types: vec![0], rows: vec![1], n: 1 } }
+        };
+        let space = local_space(&plan);
+        store.keep_frames(&space, &[memo("a.py", text), memo("old.py", b"y = 2\n")], &[], None).unwrap();
+        let maintained = [9u8; 32];
+        let (kept, dropped) = (rel("kept", 1), rel("dropped", 1));
+        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+        store.keep_frames(&maintained, &[put(&kept)], &[], Some((&[kept.clone()][..], 0, program))).unwrap();
+        store.keep_frames(&maintained, &[put(&dropped)], &[], Some((&[dropped.clone()][..], 0, gone_program))).unwrap();
+        let rows = |sql: &str| -> i64 { store.connection.lock().unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
+        let used = rows("SELECT total_changes()");
+        store.keep_frames(&maintained, &[], &[], Some((&[kept.clone()][..], 0, program))).unwrap();
+        assert_eq!(rows("SELECT total_changes()") - used, 1, "a program's relations again: only the space's count moves, nothing of its use");
+        let swept = {
+            let c = store.connection.lock().unwrap();
+            collect_unreachable_frames(&c).unwrap()
+        };
+        assert_eq!(swept, Unreachable { memo: 1, maintained: 1, programs: 1, unnamed: 1 }, "the gone program no manifest names");
+        assert!(store.frame_rows(&space, &rel(MEMO_RELS[0], 1), "a.py".len() as i64).unwrap().is_some(), "a kept manifest's content");
+        assert!(store.frame_rows(&space, &rel(MEMO_RELS[0], 1), "old.py".len() as i64).unwrap().is_none(), "content no manifest names");
+        let got = store.frames(&maintained, &[kept.clone(), dropped.clone()], 0).unwrap();
+        assert!(got.contains_key(&kept) && !got.contains_key(&dropped), "a live program's relation stays, a dead one's goes");
+        let again = {
+            let c = store.connection.lock().unwrap();
+            collect_unreachable_frames(&c).unwrap()
+        };
+        assert!(!again.any(), "nothing left to collect: {again:?}");
+    }
+
     fn rel(name: &str, i: u8) -> Rel {
         Rel { name: name.into(), ident: [i; 32] }
     }
@@ -1574,7 +1773,8 @@ mod tests {
             store.keep_frames(&space, &[put(100, "b.py")], &[], Some((&[out.clone()][..], 7, [0; 32]))).unwrap();
         }
         let space = local_space(&live);
-        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4).unwrap(), 2, "a.py's two oldest contents go");
+        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4, &[2]).unwrap(), 0, "only the paths of the digests given are looked at");
+        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4, &[1]).unwrap(), 2, "a.py's two oldest contents go");
         let parts: Vec<i64> = store.connection.lock().unwrap().prepare("SELECT part FROM frames WHERE space = ?1 ORDER BY part").unwrap().query_map([&space[..]], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(parts, vec![2, 3, 4, 5, 100]);
         let (frames, _) = store.preload_frames_live().unwrap();
@@ -1582,78 +1782,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn a_relation_no_run_used_for_four_runs_is_collected() {
-        let dir = std::env::temp_dir().join(format!("rerail-frames-gc-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let space = [2u8; 32];
-        let (kept, old) = (rel("kept", 1), rel("old", 1));
-        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some((&[kept.clone(), old.clone()][..], 0, [0; 32]))).unwrap();
-        for _ in 0..RUNS {
-            assert!(store.frames(&space, &[old.clone()], 0).unwrap().contains_key(&old));
-            store.keep_frames(&space, &[], &[], Some((&[kept.clone()][..], 0, [0; 32]))).unwrap();
-        }
-        let got = store.frames(&space, &[kept.clone(), old.clone()], 0).unwrap();
-        assert!(got.contains_key(&kept) && !got.contains_key(&old));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// The programs of one run that keep frames in one space (a phase's, P3's cross part, its loading cone) count one
-    /// run: however many there are, a relation one of them used is kept for the next [`RUNS`] runs.
-    #[test]
-    fn the_programs_of_one_run_count_one_run_of_their_space() {
-        let dir = std::env::temp_dir().join(format!("rerail-frames-runs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let space = [3u8; 32];
-        let (first, other) = (rel("first", 1), rel("other", 1));
-        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        // Run 7's first program keeps `first`; eight more programs of run 7 keep `other`.
-        store.keep_frames(&space, &[put(&first)], &[], Some((&[first.clone()][..], 7, [0; 32]))).unwrap();
-        for _ in 0..2 * RUNS {
-            store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 7, [0; 32]))).unwrap();
-        }
-        assert!(store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first), "one run, not nine");
-        // RUNS later runs that do not use it collect it.
-        for run in 8..8 + RUNS as u64 {
-            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], run, [0; 32]))).unwrap();
-        }
-        assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// Programs over one space each run in turn, one process each (a policy set's over one root): more of them than
-    /// [`RUNS`], each keeps what it used for its own next runs, and loses what its own last [`RUNS`] runs did not use.
-    #[test]
-    fn each_program_keeps_what_it_used_however_many_run_between() {
-        let dir = std::env::temp_dir().join(format!("rerail-frames-programs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let space = [4u8; 32];
-        let n = 2 * RUNS as u8 + 1;
-        let own: Vec<Rel> = (0..n).map(|i| rel(&format!("own{i}"), 1)).collect();
-        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        for round in 0..3 {
-            for i in 0..n {
-                let puts = if round == 0 { vec![put(&own[i as usize])] } else { Vec::new() };
-                store.keep_frames(&space, &puts, &[], Some((&[own[i as usize].clone()][..], 0, [i; 32]))).unwrap();
-            }
-            let got = store.frames(&space, &own, 0).unwrap();
-            assert!(own.iter().all(|r| got.contains_key(r)), "round {round}: a program's frames were collected by the others' runs");
-        }
-        // Program 0 runs on without its relation: its own last RUNS runs collect it; the others keep theirs.
-        let other = rel("other", 1);
-        store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 0, [0; 32]))).unwrap();
-        for _ in 1..RUNS {
-            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], 0, [0; 32]))).unwrap();
-        }
-        let got = store.frames(&space, &own, 0).unwrap();
-        assert!(!got.contains_key(&own[0]), "unused by its program's last runs");
-        assert!(own[1..].iter().all(|r| got.contains_key(r)));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }
 
 /// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.

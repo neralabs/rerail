@@ -24,7 +24,9 @@ pub mod grammar;
 pub mod ladder;
 mod error;
 pub mod native_cpu_block;
+pub mod native_cpu_walk;
 pub mod native_cpu_codegen;
+pub mod native_cpu_bytes;
 pub mod native_cpu_lanes;
 pub mod native_cpu_pressure;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
@@ -34,6 +36,7 @@ pub mod native_cpu_shape;
 pub mod clif_rust;
 pub mod rust_stream;
 pub mod native_cpu_stream;
+pub mod native_cpu_tape;
 pub mod native_ir;
 pub mod program;
 pub mod records;

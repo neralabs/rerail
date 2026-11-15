@@ -7,7 +7,7 @@ product language (`languages/sql.json`, `lang-sql`), read by tree-sitter-sql unt
 
 The engine reads a source file into a tape: its syntax tree in preorder, one code a node.
 
-The lean parsers of 0163 through 0205 write that tape directly. Each one writes exactly the tape
+The lean parsers of 0163 through 0237 write that tape directly. Each one writes exactly the tape
 tree-sitter's tree encodes to, and refuses any file it cannot read exactly. This decision builds the
 same parser for SQL, at rank 0, before tree-sitter-sql.
 
@@ -40,7 +40,7 @@ refused, and tree-sitter reads it with its own recovery.
 - **ast-index-spike indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 3,353
   SQL files (PostgreSQL's tests and contrib, sqlfluff's dialect fixtures, TimescaleDB). The oracle's
   set is 600 of them.
-- **0205 (lean Markdown), 0200 (lean CSS), 0199, 0198, 0196, 0195, 0193, 0163.** **Agrees and
+- **0237 (lean Markdown), 0200 (lean CSS), 0199, 0198, 0196, 0195, 0193, 0163.** **Agrees and
   follows:** the same crate shape, writer and oracle; "no error recovery: one behavior".
 - **0140 (the tape's writer).** **Agrees:** the parser writes through `rerail_tape_format::Writer`.
 - **The engine's implied-token automata (`tape::tokens`).** **Followed, by the automata
