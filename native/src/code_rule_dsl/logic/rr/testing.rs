@@ -463,6 +463,7 @@ fn sample(rows: &[Vec<String>]) -> String {
 
 // ---------------------------------------------------------------- printing
 
+#[cfg(test)]
 /// The text of each `.test` and `.fixtures` block of `src`, as written, in order: what a printer of the file's
 /// program (`flatten`) adds after it, so the file's tests go with it.
 #[cfg(test)]

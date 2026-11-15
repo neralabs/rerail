@@ -26,7 +26,7 @@
 //! 0155) named by its digest. The run's manifest names that source and the entry's plan (`named`), so collection keeps
 //! the entry while it keeps the run.
 
-use super::super::front::{Program, Value};
+use super::super::front::Value;
 use super::super::program_facts::{self, Facts};
 use super::super::program_text;
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
@@ -54,56 +54,41 @@ pub(super) struct Chosen {
     pub(super) nodes: f64,
 }
 
-/// A digest of everything the rewrites read of a program, and of what else changes their choices.
-pub(super) fn key(prog: &Program) -> [u8; 32] {
-    struct Hashing(Sha256);
-    impl std::fmt::Write for Hashing {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            self.0.update(s.as_bytes());
-            Ok(())
-        }
-    }
-    let mut hash = Hashing(Sha256::new());
-    hash.0.update(b"rerail.plan-choices/v1\0");
-    hash.0.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+/// A digest of everything the rewrites read of a program, and of what else changes their choices: the program's
+/// version's digest (decision 0173 §7: its rules, declarations, facts, inputs, outputs and every other field, as its
+/// image holds them, with its maintained parts'), kept as the version was made, so the key reads no rule. Both
+/// rewrites keep the program's meaning whatever its rules' order, so the digest, a sum, need not see it: a program of
+/// the same rules in another order takes the same choices, which derive the same rows.
+pub(super) fn key(p: &super::body::Placed) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.plan-choices/v2\0");
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     for switch in ["RERAIL_INLINE", "RERAIL_INLINE_ONLY", "RERAIL_OBSERVED_STEPS"] {
-        hash.0.update(b"\0");
-        hash.0.update(std::env::var(switch).unwrap_or_default().as_bytes());
+        hash.update(b"\0");
+        hash.update(std::env::var(switch).unwrap_or_default().as_bytes());
     }
-    // The rules (and each derived-again group's), most of a program, digested by their structure: formatting the whole
-    // program as text was 0.32 s of a 20-file edit's run (decision 0116, step 4). Every other field as its text. The
-    // fields are named, not `..`: a field added to `Program` is a compile error here until it is digested.
-    let Program {
-        decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies,
-        settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again, together, shapes, asked_by,
-    } = prog;
-    let rules_digest = super::super::derived::digest(|d| {
-        let mut rules_of = |rules: &[super::super::front::Rule]| {
-            d.u64(rules.len() as u64);
-            for r in rules {
-                super::digest_atom(d, &r.head);
-                d.u64(r.body.len() as u64);
-                r.body.iter().for_each(|l| super::digest_literal(d, l));
-            }
-        };
-        rules_of(rules);
-        for g in again {
-            rules_of(&g.rules);
-            rules_of(&g.deltas);
-        }
-    });
-    hash.0.update(b"\0rules\0");
-    hash.0.update(rules_digest.to_le_bytes());
     // A finding's message template is beside the program, not of it (decision 0225 §3): its edit plans nothing again.
-    let settings: Vec<&(String, String)> = settings.iter().filter(|(k, _)| k != crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE).collect();
-    let again_names: Vec<(&BTreeSet<String>, &BTreeSet<String>, &Vec<String>, &Vec<String>)> = again.iter().map(|g| (&g.scc, &g.owned, &g.reads, &g.olds)).collect();
-    let _ = std::fmt::Write::write_fmt(
-        &mut hash,
-        format_args!(
-            "\0{decls:?}\0{nullary:?}\0{lattice:?}\0{facts:?}\0{inputs:?}\0{outputs:?}\0{kindsets:?}\0{demand:?}\0{demand_dropped:?}\0{magic_extras:?}\0{magic_report:?}\0{gates:?}\0{policies:?}\0{settings:?}\0{natives:?}\0{rx_spans:?}\0{ast_patterns:?}\0{doc_scopes:?}\0{answers:?}\0{text_globs:?}\0{qualifiers:?}\0{tapes:?}\0{again_names:?}\0{together:?}\0{shapes:?}\0{asked_by:?}"
-        ),
-    );
-    hash.0.finalize().into()
+    // The settings are one `.about` relation of the version's digest (a sum of its fact relations' hashes): its hash
+    // is taken out and the settings other than `.message` put in, so the key reads no rule and a few settings.
+    use crate::code_rule_dsl::logic::program_image::Cell;
+    let v = &p.v;
+    let settings = v.about_facts().into_iter().find(|f| v.text(f.name()) == "setting");
+    hash.update(b"\0program\0");
+    hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).to_le_bytes());
+    for row in settings.into_iter().flat_map(|f| f.rows()) {
+        let cells: Vec<Cell> = row.collect();
+        let text = |c: &Cell| match *c { Cell::Int(i) => i.to_string(), Cell::Str(a) => v.text(a).to_owned() };
+        if cells.get(2).is_some_and(|k| text(k) == crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE) {
+            continue;
+        }
+        hash.update(b"\0setting");
+        for c in &cells {
+            hash.update(b"\0");
+            hash.update(text(c).as_bytes());
+        }
+    }
+    hash.update([u8::from(p.whole)]);
+    hash.finalize().into()
 }
 
 /// Whether choices made at `kept` nodes are taken at `now`.

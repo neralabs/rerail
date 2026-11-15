@@ -34,22 +34,14 @@ pub(super) fn clear() {
     CACHE.with(|c| c.borrow_mut().clear());
 }
 
-/// The text a composed plan is keyed by (`planned`) for a version the composed path edited (`stages`), which has no
-/// tree: its decode's, with the sets its maintained program runs together. A key is a digest of a program's tree's
-/// text until the program digests move onto versions (decision 0173, step 6); `plan::run` keys the run's version by
-/// its tree's.
-pub(super) fn tree_text(p: &Placed) -> Result<String> {
-    let prog = p.v.program(&super::super::front::Lists::default()).map_err(Error::Plan)?;
-    Ok(format!("{prog:?}\0{:?}", p.together()))
-}
-
-/// `p`'s composed query, keyed by `text`, its program's tree's text (`tree_text`), and the inputs' fields.
-pub(super) fn planned(p: &Placed, text: &str, db: &Connection, inputs: &mut Inputs) -> Result<Compiled> {
+/// `p`'s composed query, keyed by its program's digest (`Placed::digest`, decision 0173 §7: its version's and its
+/// maintained parts', so a version the composed path edited, `stages`, needs no tree) and the inputs' fields.
+pub(super) fn planned(p: &Placed, db: &Connection, inputs: &mut Inputs) -> Result<Compiled> {
     use sha2::{Digest, Sha256};
     let key: [u8; 32] = Sha256::digest(
         format!(
-            "compose-v3\0{text}\0{}\0{:?}\0{:?}\0{:?}",
-            inputs.facts, inputs.atoms, inputs.kept, inputs.batch
+            "compose-v4\0{:016x}\0{}\0{}\0{:?}\0{:?}\0{:?}",
+            p.digest(), p.whole, inputs.facts, inputs.atoms, inputs.kept, inputs.batch
         )
         .as_bytes(),
     )

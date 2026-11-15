@@ -511,6 +511,9 @@ pub struct Placed {
     pub maint: Option<Arc<Maint>>,
     /// The version's other fields, read once at the first `Fields::of` and shared by every clone after it.
     pub(super) fields: std::sync::OnceLock<Arc<super::fields::FieldsData>>,
+    /// The ids of `v`'s rules in order, made at the first `id` where `ids` is `None` and `v` numbers its rules other
+    /// than `0..size` (a view or an overlay: a split's part, decision 0244).
+    positions: std::sync::OnceLock<Arc<[RuleId]>>,
 }
 
 /// A maintained program's parts beside its version (decision 0215): each stratum that may be derived again
@@ -548,6 +551,23 @@ pub struct AgainRef {
 }
 
 impl Maint {
+    /// The parts' digest (decision 0173 §7): each stratum derived again (its relations by name, its rules' and deltas'
+    /// hashes) and each set run as one component, summed, so it reads no rule's text. A program's digest with its
+    /// version's is `Placed::digest`.
+    pub fn digest(&self) -> u64 {
+        use super::super::program_image::strings::hash;
+        let names = |rels: &[RelId]| self.names(rels).collect::<Vec<_>>().join("\0");
+        let rules = |ids: &[RuleId]| ids.iter().fold(0u64, |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())));
+        let mut d = 0u64;
+        for g in &self.again {
+            let text = format!("again\x01{}\x01{}\x01{}\x01{}\x01{:016x}\x01{:016x}", names(&g.scc), names(&g.owned), names(&g.reads), names(&g.olds), rules(&g.rules), rules(&g.deltas));
+            d = d.wrapping_add(hash(text.as_bytes()));
+        }
+        for t in &self.together {
+            d = d.wrapping_add(hash(format!("together\x01{}", names(t)).as_bytes()));
+        }
+        d
+    }
     /// The name of relation `r`, one of `v`'s.
     pub fn name(&self, r: RelId) -> &str {
         self.v.rel_name(r)
@@ -666,7 +686,7 @@ impl Maint {
 impl Placed {
     /// `rules` made into a version of their own, in order.
     pub fn made(rules: &[Rule]) -> Result<Placed> {
-        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None, fields: Default::default() })
+        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None, fields: Default::default(), positions: Default::default() })
     }
     /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
     /// fields (`About`), which the passes read beside the rules; and a maintained program's parts beside it
@@ -677,7 +697,7 @@ impl Placed {
             return Placed::made(&prog.rules);
         };
         let maint = if prog.again.is_empty() && prog.together.is_empty() { None } else { Some(Arc::new(Maint::of(&v, prog)?)) };
-        Ok(Placed { v, ids: None, whole: true, maint, fields: Default::default() })
+        Ok(Placed { v, ids: None, whole: true, maint, fields: Default::default(), positions: Default::default() })
     }
     /// The run's version of the program whose image this is (t36 item 7, step 2): normalized for the SQL kernel
     /// (`passes::normalize`, a derivation), with its stated facts apart where `apart` (`passes::stated_apart`, an
@@ -692,7 +712,7 @@ impl Placed {
         let sentinels = sentinels.iter().map(|&r| v.rel_name(r).to_owned()).collect();
         let (v, stated) = if apart { passes::stated_apart(&v).map_err(Error::Plan)? } else { (v, Vec::new()) };
         let stated = stated.iter().map(|&(r, s)| (v.rel_name(r).to_owned(), v.rel_name(s).to_owned())).collect();
-        Ok(Normalized { placed: Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default() }, sentinels, stated })
+        Ok(Normalized { placed: Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default(), positions: Default::default() }, sentinels, stated })
     }
     /// The program this version is, as the tree: its rules in the program's order, and a maintained program's parts
     /// (`Maint`). For a reader that still reads a tree: the program digests (decision 0173, step 6), the stored text,
@@ -707,7 +727,7 @@ impl Placed {
     /// A maintained form, a derivation of the run's version (decision 0241): its rules `v`'s in order, its fields
     /// its own, and its maintenance's parts beside it.
     pub fn derived(v: Arc<Version>, maint: Option<Arc<Maint>>) -> Placed {
-        Placed { v, ids: None, whole: true, maint, fields: Default::default() }
+        Placed { v, ids: None, whole: true, maint, fields: Default::default(), positions: Default::default() }
     }
     /// Its components, dependencies first, in the tree's order (`front::components_of`), its maintained program's
     /// sets run together.
@@ -721,11 +741,24 @@ impl Placed {
     }
     /// A version whose rules are `v`'s in order (a program's image).
     pub fn whole(v: Arc<Version>) -> Placed {
-        Placed { v, ids: None, whole: true, maint: None, fields: Default::default() }
+        Placed { v, ids: None, whole: true, maint: None, fields: Default::default(), positions: Default::default() }
     }
     /// `v`, the program's rule `k` its rule `ids[k]`.
     pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
-        Placed { v, ids: Some(ids.into()), whole, maint: None, fields: Default::default() }
+        Placed { v, ids: Some(ids.into()), whole, maint: None, fields: Default::default(), positions: Default::default() }
+    }
+    /// The program's digest (decision 0173 §7): its version's, kept as the version was made, less the rules the
+    /// program leaves out of it (where it is some of its version's rules), with its maintained parts'. A sum, so it
+    /// does not see the rules' order.
+    pub fn digest(&self) -> u64 {
+        let d = match &self.ids {
+            None => self.v.digest(),
+            Some(ids) => {
+                let all = self.v.rules().fold(0u64, |a, r| a.wrapping_add(r.hash()));
+                ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
+            }
+        };
+        self.maint.as_ref().map_or(d, |m| d.wrapping_add(m.digest()))
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {
@@ -733,7 +766,11 @@ impl Placed {
     }
     /// The id of the program's rule `k`.
     pub fn id(&self, k: usize) -> RuleId {
-        self.ids.as_ref().map_or(RuleId(k as u32), |ids| ids[k])
+        match &self.ids {
+            Some(ids) => ids[k],
+            None if matches!(*self.v, Version::Base { .. }) => RuleId(k as u32),
+            None => self.positions.get_or_init(|| self.v.rules().map(|r| r.id()).collect())[k],
+        }
     }
     /// The program's rules' ids, in its order.
     pub fn order(&self) -> Vec<RuleId> {

@@ -4539,7 +4539,7 @@ mod complete_answer_tests {
             let mut program = super::super::front::parse(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq($x) :- seed($x).\nshown($x) :- got($x).\n.output shown\n").unwrap();
             program.facts.insert("seed".into(), (0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect());
             program.answers.insert("req".into(), vec!["got".into()]);
-            let lowered = lower::Lowered { domains: lower::domains(&program).unwrap(), program, version: None,
+            let lowered = lower::Lowered { domains: lower::domains(&program).unwrap(), program: lower::Tree::given(program), version: None, maint: None,
                 ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
             let path = crate::code_rule_dsl::fixtures::temp();
             let _store = crate::content_store::ContentStore::open(&path).unwrap();
@@ -9048,17 +9048,39 @@ pub fn leaf_identity(f: Fields<'_>, rel: &str) -> [u8; 32] {
 /// `leaf_identity` of the relations of a program a caller holds as a tree, read from its version, made at the first
 /// ask (`Placed::of_program`); `None` for a program with no image.
 pub struct Leaves<'p> {
-    prog: &'p Program,
+    /// The tree, where the caller holds the program as one (`of`); `None` for one held as its version (`of_placed`).
+    prog: Option<&'p Program>,
     placed: std::cell::OnceCell<std::result::Result<body::Placed, String>>,
 }
 
 impl<'p> Leaves<'p> {
     pub fn of(prog: &'p Program) -> Leaves<'p> {
-        Leaves { prog, placed: std::cell::OnceCell::new() }
+        Leaves { prog: Some(prog), placed: std::cell::OnceCell::new() }
+    }
+    /// The leaves of a program the caller holds as its version: none is made.
+    pub fn of_placed(placed: body::Placed) -> Leaves<'static> {
+        let cell = std::cell::OnceCell::new();
+        let _ = cell.set(Ok(placed));
+        Leaves { prog: None, placed: cell }
     }
     /// The program's version, made at the first ask and shared by every identity read after it.
     fn placed(&self) -> Result<&body::Placed> {
-        self.placed.get_or_init(|| body::Placed::of_program(self.prog).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Plan(e.clone()))
+        self.placed.get_or_init(|| body::Placed::of_program(self.prog.expect("a tree or its version")).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Plan(e.clone()))
+    }
+    /// `identities` of the program, each stratum's rules found by their heads in the version (`front::rules_by_stratum`'s
+    /// order, the program's): for a caller that holds no tree.
+    pub fn identities_by_heads(&self, sccs: &[BTreeSet<String>]) -> Result<HashMap<String, [u8; 32]>> {
+        let p = self.placed()?;
+        let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
+        let mut keys: Vec<Vec<body::RuleKey>> = vec![Vec::new(); sccs.len()];
+        for k in 0..p.len() {
+            if let Some(&i) = at.get(p.v.rel_name(p.rule(k).head().rel())) {
+                keys[i].push(body::RuleKey::new(0, k));
+            }
+        }
+        let vs = body::Versions::of_placed(p.clone());
+        let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its identities are read from its version".into()))?;
+        Ok(identities(f, &vs, sccs, &keys))
     }
     pub fn identity(&self, rel: &str) -> Option<[u8; 32]> {
         Some(leaf_identity(self.placed().ok()?.fields().ok()?, rel))
@@ -9066,7 +9088,7 @@ impl<'p> Leaves<'p> {
     /// `identities` of the program, read from the same version as its leaves. Its strata's rules are trees the caller
     /// holds, the program's: their keys are found once, here.
     pub fn identities(&self, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> Result<HashMap<String, [u8; 32]>> {
-        let vs = body::Versions::with(self.prog, self.placed()?.clone());
+        let vs = body::Versions::with(self.prog.ok_or_else(|| Error::Plan("the program's rules are its version's: `identities_by_heads`".into()))?, self.placed()?.clone());
         let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its identities are read from its version".into()))?;
         let keys = by_stratum.iter().map(|rules| vs.keys_of(rules)).collect::<Result<Vec<_>>>()?;
         Ok(identities(f, &vs, sccs, &keys))
@@ -9505,8 +9527,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         let _span = super::profile::span(|| "the program's version".into());
         program.normalized(apart)?
     };
-    // The normalized program as the tree, decoded where a reader still reads one: the program digests (the choices'
-    // key, the composed path's), which are digests of the tree's text until decision 0173's step 6.
+    // The normalized program as the tree, decoded only for the version trace (a measurement aid).
     let lists = super::front::Lists::default();
     let normal_tree: std::cell::OnceCell<Program> = std::cell::OnceCell::new();
     let normal_tree = || -> Result<&Program> {
@@ -9560,8 +9581,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         // The composed query is one statement over every needed rule. Where SQLite cannot prepare it (a relation it
         // reads that only the engine holds, or SQLite's limits on a statement's references and nesting), the program
         // runs by strata instead, as one the composer does not accept does: composition is a plan, not a semantics.
-        // Keyed by the tree's text: the program digests are the tree's until decision 0173's step 6.
-        let plan=compose::planned(p,&format!("{:?}", normal_tree()?),db,&mut inputs.clone())?;
+        // Keyed by the program's digest (`Placed::digest`).
+        let plan=compose::planned(p,db,&mut inputs.clone())?;
         if let Err(e)=db.prepare_cached(&plan.sql) {
             super::profile::decision("composed relational query", || format!("declined: SQLite cannot prepare it ({e}); the program runs by strata"));
             if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
@@ -9617,7 +9638,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     let corpus = PLANS.with(|p| p.borrow().is_some());
     // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
-    let chosen_key = if corpus { Some(choices::key(normal_tree()?)) } else { None };
+    let chosen_key = if corpus { Some(choices::key(&normal_v)) } else { None };
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     // The program's version as the passes chose it (t36 item 6): their overlay, or the kept choice's, which the run
     // reads its rules from as it is; the program's own where nothing was rewritten.

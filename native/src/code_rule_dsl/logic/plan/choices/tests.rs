@@ -7,8 +7,16 @@
         let db = dir.join("store.sqlite");
         let program = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
         let rewritten = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(1).\n").unwrap();
-        let key = key(&program);
-        assert_ne!(key, super::key(&rewritten), "the key is the program's");
+        let placed = |p: &crate::code_rule_dsl::logic::front::Program| super::super::body::Placed::of_program(p).unwrap();
+        let key = key(&placed(&program));
+        assert_ne!(key, super::key(&placed(&rewritten)), "the key is the program's");
+        // A digest of the version (decision 0173 §7), a sum: the same rules in another order are the same program to
+        // the rewrites, and take the same choices.
+        let two = |a: &str, b: &str| super::super::super::rr::parse(&format!(".decl e(x: int)\n.decl g(x: int)\n.decl f(x: int)\n.output f\ne(1).\ng(2).\n{a}\n{b}\n")).unwrap();
+        let (ab, ba) = (two("f(x) :- e(x).", "f(x) :- g(x)."), two("f(x) :- g(x).", "f(x) :- e(x)."));
+        assert_ne!(format!("{:?}", ab.rules), format!("{:?}", ba.rules));
+        assert_eq!(super::key(&placed(&ab)), super::key(&placed(&ba)), "the key does not see the rules' order");
+        assert_ne!(super::key(&placed(&ab)), key, "nor is it the key of a program with a rule less");
         assert!(holds(1000.0, 10.0) && holds(1000.0, 2000.0) && !holds(1000.0, 2001.0));
         let prepared = [3u8; 32];
         {
@@ -107,4 +115,21 @@
         assert!(read_all(&store, &prepared).unwrap().is_empty(), "the choices do not read the plans");
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A finding's message template is beside the program (decision 0225 §3): programs that differ only in a
+    /// `.message` setting take one key, and any other setting is the program's and changes it.
+    #[test]
+    fn a_message_setting_is_not_in_the_choices_key() {
+        use crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE;
+        let with = |settings: &[(&str, &str)]| {
+            let mut p = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
+            p.settings = settings.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+            key(&super::super::body::Placed::of_program(&p).unwrap())
+        };
+        let base = with(&[(MESSAGE, "f \"one\"")]);
+        assert_eq!(base, with(&[(MESSAGE, "f \"two\"")]), "a message's edit keeps the key");
+        assert_eq!(base, with(&[]), "a message is no part of the key");
+        assert_ne!(base, with(&[(MESSAGE, "f \"one\""), ("inline", "e")]), "another setting is the program's");
+        assert_ne!(with(&[("inline", "e")]), with(&[("inline", "f")]), "and its value too");
     }
