@@ -3168,6 +3168,12 @@ fn rust_tapes_from_the_lean_parser_are_tree_sitters() {
         "fn h() { let s = r#\" raw \"#; let c = 'c'; let b = b\"bytes\"; let l = |a, b: u8| -> u8 { a + b }; a.b::<T>().await?; }\n",
         "macro_rules! m { ($x:expr, $($y:tt)*) => { $x + m!($($y)*) }; () => {} }\nmacro_rules! set( { $($k:expr),* } => {}; );\n",
         "unsafe extern \"C\" fn v(n: i32, mut args: ...) {}\ntype F = for<'a> fn(&'a str, _) -> &'a str;\nstatic S: Option<&str> = None;\n",
+
+        "#!/usr/bin/env run\nfn f<'r#a>(x: &'r#a u8) -> u8 { return { 1 }; }\n",
+        "pub(in crate::a) fn f() {}\npub(self) fn g() {}\nextern \"C\" { fn v(a: i32, _: ...); }\n",
+        "fn f() { let c = |x| _; match x { | _ => 1 } let b = a as u8 < c; let r = 0..; let x @ 1 = 2; }\n",
+        "fn f() where T: A, &'a T: B, (u8,): C, [u8; 1]: D { let g = a::<T>::b(); let d = ::a::b; }\n",
+        "impl X { const default fn f() {} default const unsafe fn g() {} }\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Rust).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3186,7 +3192,12 @@ fn rust_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
     // one behavior: tree-sitter's tape, or a refusal.
-    for invalid in ["fn f(a b) {}\n", "fn f() { let x = (1,\n", "struct S {\n", "fn f() { 'open }\n", "pub impl X {}\n", "fn f(_: fn(&_)) {}\n", "fn f() { x.1e0; }\n"] {
+    for invalid in ["fn f(a b) {}\n", "fn f() { let x = (1,\n", "struct S {\n", "fn f() { 'open }\n", "pub impl X {}\n", "fn f(_: fn(&_)) {}\n", "fn f() { x.1e0; }\n",
+        "fn f() where (): A {}\n", "type T = Box<dyn 'a + A>;\n", "fn f() { str![[a]]; }\n", "default impl T for F {}\n",
+        "struct S where A: B;\n", "fn f() {\u{2028}}\n", "fn f() { let c = |a, | a; }\n", "fn f() { a as T < b; }\n",
+        "fn f() { u8::<T>(); }\n", "type T = A::<B>;\n", "fn f() { let u8 @ 1 = 2; }\n", "type T = self;\n",
+        "type T = A<u8 = B>;\n", "impl X { const default: u8 = 1; }\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(rust_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }

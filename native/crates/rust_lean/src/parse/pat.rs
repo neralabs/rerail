@@ -13,10 +13,16 @@ impl<'a> P<'a> {
         let lead = or && first.kind == T::Pipe;
         let mut n = if lead {
             // `| a`: an `or_pattern` with its `|` stored (the rule's other choice starts with a
-            // pattern).
+            // pattern). `| _` is the gap's implied word: its `|` is left out, its `_` (no
+            // delimiter) stored.
             let n = self.open_in(K::OrPattern, s);
-            self.leaf(K::TPipe, f::NONE, C_NONE)?;
-            self.pattern_atom(PAT, K::OrPattern)?;
+            let after = self.peek_at(1);
+            if self.underscore(after) {
+                self.bump()?;
+            } else {
+                self.leaf(K::TPipe, f::NONE, C_NONE)?;
+            }
+            self.or_right()?;
             self.close(n);
             Some(n)
         } else if self.underscore(first) && !(or && self.peek_at(1).kind == T::Pipe) {
@@ -47,6 +53,32 @@ impl<'a> P<'a> {
         }
         self.depth -= 1;
         Ok(())
+    }
+
+    /// Whether the tuple pattern at `(` may hold a closure (the grammar's `tuple_pattern` takes
+    /// `closure_expression` elements, and tree-sitter reads `(| a | b)`, `(| a, b | c)` as one): an
+    /// element starts with `|`, and another `|` or a `,` follows it in the tuple, outside brackets
+    /// (`(| a, b)` is an error to tree-sitter). Not read.
+    fn closure_in_tuple(&mut self) -> bool {
+        let (mut depth, mut pipes, mut lead, mut comma) = (0usize, 0usize, false, false);
+        let mut k = 1;
+        loop {
+            let t = self.peek_at(k).kind;
+            match t {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace if depth == 0 => return lead && (pipes > 1 || comma),
+                T::RParen | T::RBracket | T::RBrace => depth -= 1,
+                T::Comma if depth == 0 => comma |= lead,
+                T::Pipe | T::PipePipe if depth == 0 => {
+                    let before = self.peek_at(k - 1).kind;
+                    lead |= k == 1 || before == T::Comma;
+                    pipes += if t == T::PipePipe { 2 } else { 1 };
+                }
+                T::Eof => return false,
+                _ => {}
+            }
+            k += 1;
+        }
     }
 
     /// An or-pattern's right side: a pattern, or `_` (stored: the `_` is no implied token there).
@@ -98,6 +130,9 @@ impl<'a> P<'a> {
                 Ok(n)
             }
             T::LParen => {
+                if self.closure_in_tuple() {
+                    return self.refuse();
+                }
                 let n = self.open_in(K::TuplePattern, s);
                 self.list(K::TuplePattern, T::RParen, true, true, |p| p.pattern(PAT, K::TuplePattern, true))?;
                 self.close(n);
@@ -273,6 +308,9 @@ impl<'a> P<'a> {
                 self.close(m);
                 Ok(m)
             }
+            // A primitive type's word is the grammar's token, no binding's name (`char @ 'a'`), and
+            // nor is a reserved identifier (`raw @ A`).
+            T::At if n.kind == K::Identifier && first.kind == T::Name && (w::is_primitive(first.word) || w::is_reserved(first.word)) => self.refuse(),
             T::At if n.kind == K::Identifier && first.kind == T::Name => {
                 let c = self.wrap(n, K::CapturedPattern, s, BARE);
                 self.tk(K::CapturedPattern, K::TAt, f::NONE)?;
