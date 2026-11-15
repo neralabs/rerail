@@ -296,14 +296,15 @@ and after, and with the library lowered together, on one file (144 rows) and on 
 
 Measured (M3 Max, release, one thread, 317 rules, one file; instructions, CPU):
 
-| Row | Before stage 2 | Now (stages 3 and 4) |
-|---|---|---|
-| Fresh store | 60.49 G, 4.61 s | 46.14 G, 3.55 s |
-| Store seeded by 10 files, then one file | 20.32 G, 1.54 s | 19.42 G, 1.51 s |
-| Warm | 6.20 G, 0.43 s | 6.23 G, 0.44 s |
-| One rule file edited | 42.66 G, 3.34 s | 27.17 G, 2.15 s |
+| Row | Before stage 2 | Stages 3 and 4 | With asking programs in scope, images as the stored form, scopes seeded once |
+|---|---|---|---|
+| Fresh store | 60.49 G, 4.61 s | 46.14 G, 3.55 s | 38.95 G, 2.99 s |
+| Store seeded by 10 files, then one file | 20.32 G, 1.54 s | 19.42 G, 1.51 s | 19.23 G, 1.50 s |
+| Warm | 6.20 G, 0.43 s | 6.23 G, 0.44 s | 6.22 G, 0.43 s |
+| One rule file edited | 42.66 G, 3.34 s | 27.17 G, 2.15 s | 22.72 G, 1.80 s |
 
-Every output relation is the same as before, on one file, on ten, and with a rule file edited. Loading cold is now
+Every output relation is the same as before, on one file, on ten, and with a rule file edited. On the default pool
+the fresh row takes 6.06 s CPU for 3.03 s wall (one thread: 3.06 s, 3.53 s): loading's pool loops are still to go. Loading cold is now
 about 2.0 s: the programs 0.48 s (0.25 s for the 301 in scope), the library 0.11 s, the merge 0.18 s, preparation
 0.67 s, the store's writer 0.43 s.
 
