@@ -393,7 +393,8 @@ Node rather than two. Set-up writes the `node` entry instead where it finds no `
 where `cmd.exe` would split a path of the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of
 `& ( ) ^ | < > , ; =`. Its look for `node` on `PATH` ends at the first folder on a server (`\\server\share`), which it
 never opens, since a share that does not answer holds each look for about 21 s, and it writes the `cmd.exe` entry
-there. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
+there. A drive letter mapped to such a share is looked into: set-up then waits about 21 s once, and each hook event
+afterwards does not. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
 exits 0 with no answer, as the launcher answers for a hook that fails, so Claude Code shows no hook error.
 `rerail update` chooses again from the `PATH` it runs with, and `rerail status` and the dashboard count Claude Code as
 connected in either case, without reading `PATH`.

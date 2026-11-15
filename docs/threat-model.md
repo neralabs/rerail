@@ -701,8 +701,8 @@ should not widen it.
   (`src/setup/harness-registration.ts`). Set-up writes that path only when `SystemRoot` makes it a full path, from a
   drive's root folder (`C:\`) or a UNC share, `cmd.exe` is there at set-up and `cmd.exe` reads each path of the entry
   as one word, and `node` otherwise: Windows completes any other path from a current folder or drive, and a hook's
-  current folder is the repository it runs in. Set-up's look for `node` on `PATH` ends at the first entry on a server,
-  which it never opens, and writes the `cmd.exe` entry there.
+  current folder is the repository it runs in. Set-up's look for `node` on `PATH` ends at the first entry that names
+  a server by its UNC path, which it never opens, and writes the `cmd.exe` entry there.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor
