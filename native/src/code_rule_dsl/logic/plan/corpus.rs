@@ -2514,7 +2514,6 @@ fn run_observed(
         let _span = crate::code_rule_dsl::logic::profile::span(|| "prepare connections".into());
         connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?
     };
-    let own_kept = session.as_ref().map(|s| Arc::clone(&s.own));
     let (path, cross_path) = match &session {
         Some(s) => (s.path.clone(), out.join("cross.sqlite")),
         None => (out.join("store.sqlite"), out.join("cross.sqlite")),
@@ -4689,13 +4688,6 @@ fn run_observed(
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure constants ({mix})"));
                     let measured = Own::measure(&sources, &constants);
                     own_once.insert(mix.clone(), (chunk_nodes_built, measured.clone()));
-                    if memoised {
-                        // Under its mix, its types, and as the program's last measured mix (a hit's fallbacks).
-                        let types = mix.split('/').next().unwrap_or_default();
-                        for key in [mix.clone(), format!("types/{types}"), "any".to_owned()] {
-                            record_own_counts(store, own_kept.as_ref(), &memo_program, &key, chunk_nodes_built, &measured, &late_sources);
-                        }
-                    }
                     measured
                 }
             };
@@ -8910,77 +8902,6 @@ const OWN_POSTINGS: &str = "own:postings:";
 /// (`stat_kind`), per (parent kind, child kind) its edges (`stat_edge`), the documents, and per (relation, column,
 /// constant) of the program's constants its rows (`stat_val`'s `n`). Summed over the chunks for the cross-file part:
 /// a document is in one chunk, so every count adds exactly.
-/// The store name of a chunk mix's measured tree counts under the file-local program `program`.
-fn own_name(program: &[u8; 32], mix: &str) -> String {
-    format!("own-counts/sample-v1/{}/{mix}", memo::plan_digest(program).iter().map(|b| format!("{b:02x}")).collect::<String>())
-}
-
-/// The tree counts a session's runs stored or read (`Session::own`), by name (`own_name`), with their stored source
-/// once it is known: its runs read them from memory, as the store's writer writes them behind them (decision 0102).
-pub(in crate::code_rule_dsl) type OwnKept = Arc<parking_lot::Mutex<HashMap<String, (usize, Own, Option<crate::content_store::SourceId>)>>>;
-/// The tree counts kept at most (each a few kilobytes).
-const OWN_KEPT_MAX: usize = 4096;
-
-/// A chunk mix's measured tree counts and the nodes they were measured over, stored by an earlier run (or this
-/// process's, from memory). Its source is named in the run's manifest (`held`), so collection keeps it (decision
-/// 0053); one still queued is named by its write (`record_own_counts`).
-fn own_counts(store: &ContentStore, kept: Option<&OwnKept>, program: &[u8; 32], mix: &str, held: &mut Vec<crate::content_store::SourceId>) -> Option<(usize, Own)> {
-    let key = own_name(program, mix);
-    if let Some((nodes, own, source)) = kept.and_then(|k| k.lock().get(&key).cloned()) {
-        held.extend(source);
-        return Some((nodes, own));
-    }
-    let digest = store.binding(&key).ok()??;
-    let source = store.source_by_hash(crate::content_store::HashKey::from_sha256_digest(digest)).ok()??;
-    let (nodes, own) = Own::decode(&store.get_source(source).ok()?)?;
-    held.push(source);
-    if let Some(kept) = kept {
-        keep_own(kept, key, nodes, own.clone(), Some(source));
-    }
-    Some((nodes, own))
-}
-
-fn keep_own(kept: &OwnKept, key: String, nodes: usize, own: Own, source: Option<crate::content_store::SourceId>) {
-    let mut kept = kept.lock();
-    if kept.len() >= OWN_KEPT_MAX && !kept.contains_key(&key) {
-        kept.clear();
-    }
-    kept.insert(key, (nodes, own, source));
-}
-
-/// Stores a chunk mix's measured tree counts, for a later run whose files of that mix are all read from the memo:
-/// kept in memory now, written behind the run (decision 0102). The write names its source in the run's manifest
-/// (`late`, read by the manifest's job, queued after this one).
-fn record_own_counts(store: &ContentStore, kept: Option<&OwnKept>, program: &[u8; 32], mix: &str, nodes: usize, own: &Own, late: &Late) {
-    let key = own_name(program, mix);
-    if let Some(kept) = kept {
-        keep_own(kept, key.clone(), nodes, own.clone(), None);
-    }
-    let kept = kept.cloned();
-    let bytes = own.encode(nodes);
-    let producer = memo::plan_digest(program);
-    let late = Arc::clone(late);
-    store.write_back_syms(
-        crate::content_store::write_back::Syms::None, "the tree counts",
-        bytes.len(),
-        Vec::new(),
-        Box::new(move |store| {
-            use sha2::Digest as _;
-            let source = store.put_source(&bytes, &[])?;
-            late.lock().expect("the late sources").push(source);
-            let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
-            let record = crate::content_store::DerivationRecord { output: key.clone(), producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
-            store.record_derivations(&[record])?;
-            if let Some(kept) = &kept
-                && let Some(entry) = kept.lock().get_mut(&key)
-            {
-                entry.2 = Some(source);
-            }
-            Ok(())
-        }),
-    );
-}
-
 #[derive(Clone, Default)]
 pub struct Own {
     pub kinds: BTreeMap<i64, (i64, i64)>,
@@ -9100,72 +9021,6 @@ impl Own {
         }
     }
 
-    /// The counts and the nodes they were measured over, as bytes (`own_counts`).
-    pub fn encode(&self, nodes: usize) -> Vec<u8> {
-        let mut b = Vec::new();
-        let int = |b: &mut Vec<u8>, v: i64| b.extend_from_slice(&v.to_le_bytes());
-        let text = |b: &mut Vec<u8>, t: &str| {
-            b.extend_from_slice(&(t.len() as u32).to_le_bytes());
-            b.extend_from_slice(t.as_bytes());
-        };
-        b.extend_from_slice(b"own1");
-        int(&mut b, nodes as i64);
-        int(&mut b, self.docs);
-        int(&mut b, self.kinds.len() as i64);
-        for (k, (n, size)) in &self.kinds {
-            [*k, *n, *size].into_iter().for_each(|v| int(&mut b, v));
-        }
-        int(&mut b, self.edges.len() as i64);
-        for ((p, c), n) in &self.edges {
-            [*p, *c, *n].into_iter().for_each(|v| int(&mut b, v));
-        }
-        int(&mut b, self.postings.len() as i64);
-        for ((rel, col, v), n) in &self.postings {
-            text(&mut b, rel);
-            text(&mut b, col);
-            int(&mut b, *v);
-            int(&mut b, *n);
-        }
-        b
-    }
-
-    pub fn decode(b: &[u8]) -> Option<(usize, Own)> {
-        let mut at = 4usize;
-        if b.get(..4)? != b"own1" {
-            return None;
-        }
-        let mut int = || -> Option<i64> {
-            let v = i64::from_le_bytes(b.get(at..at + 8)?.try_into().ok()?);
-            at += 8;
-            Some(v)
-        };
-        let nodes = int()? as usize;
-        let mut own = Own { docs: int()?, ..Own::default() };
-        for _ in 0..int()? {
-            let (k, n, size) = (int()?, int()?, int()?);
-            own.kinds.insert(k, (n, size));
-        }
-        for _ in 0..int()? {
-            let (p, c, n) = (int()?, int()?, int()?);
-            own.edges.insert((p, c), n);
-        }
-        let postings = int()?;
-        let text = |at: &mut usize| -> Option<String> {
-            let n = u32::from_le_bytes(b.get(*at..*at + 4)?.try_into().ok()?) as usize;
-            let t = String::from_utf8(b.get(*at + 4..*at + 4 + n)?.to_vec()).ok()?;
-            *at += 4 + n;
-            Some(t)
-        };
-        for _ in 0..postings {
-            let rel = text(&mut at)?;
-            let col = text(&mut at)?;
-            let v = i64::from_le_bytes(b.get(at..at + 8)?.try_into().ok()?);
-            let n = i64::from_le_bytes(b.get(at + 8..at + 16)?.try_into().ok()?);
-            at += 16;
-            own.postings.insert((rel, col, v), n);
-        }
-        Some((nodes, own))
-    }
 
     pub fn add(&mut self, other: &Own) {
         for (k, (n, size)) in &other.kinds {

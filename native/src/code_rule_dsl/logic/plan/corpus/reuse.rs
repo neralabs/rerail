@@ -166,8 +166,10 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss(&format!("no record under the run's key {} (programs {})", &key[..CUTOFF.len() + 12], texts.len()));
         return Ok(None);
     };
-    // The plans it names are for collection (`CUTOFF`), not reads to check.
-    let consulted: Vec<_> = decode_consulted(&consulted).into_iter().filter(|c| c.0 != "plan").collect();
+    // The plans it names are for collection (`CUTOFF`), not reads to check: the reused run names them, as the run
+    // that made the record did, so its outer run records the manifest it recorded then.
+    let (plans, consulted): (Vec<_>, Vec<_>) = decode_consulted(&consulted).into_iter().partition(|c| c.0 == "plan");
+    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
     let Some(outputs) = decode_outputs(&outputs) else {
         miss("the record's outputs do not decode");
         return Ok(None);
@@ -191,7 +193,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     }
     crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?;
-    let mut report = Report::default();
+    let mut report = Report { plans, ..Report::default() };
     for (name, bytes) in &outputs {
         std::fs::write(out.join(name), bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
         let rel = name.trim_end_matches(".csv").to_owned();

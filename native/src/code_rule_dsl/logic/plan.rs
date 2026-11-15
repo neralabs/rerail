@@ -1513,13 +1513,13 @@ pub fn stored_plans() -> Option<StoredPlans> {
 }
 
 /// This thread's kept plans, for a job on another thread to enter.
-pub fn share_plans() -> Option<SharedPlans> {
+fn share_plans() -> Option<SharedPlans> {
     PLANS.with(|p| p.borrow().clone())
 }
 
 /// While the guard lives, this thread plans with `plans` (another thread's, `share_plans`), into plans of its own
 /// (`OWN_PLANS`) taken into them as it ends.
-pub fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
+fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
     struct Entered(Option<SharedPlans>, Option<rustc_hash::FxHashMap<PlanKey, Kept>>);
     impl Drop for Entered {
         fn drop(&mut self) {
@@ -2518,7 +2518,7 @@ impl Model {
     }
 
     /// `plan_for_rows` under `cx`: its runners-up handed back there (decision 0207's trials).
-    pub(in crate::code_rule_dsl) fn plan_for_rows_in(&mut self, prog: &Program, b: &Body<'_>, at: usize, rows: f64, cx: &mut joins::SearchCx) -> Option<Vec<Step>> {
+    fn plan_for_rows_in(&mut self, prog: &Program, b: &Body<'_>, at: usize, rows: f64, cx: &mut joins::SearchCx) -> Option<Vec<Step>> {
         let rel = b.atom(at).map(|a| b.rel(a).to_owned())?;
         let was = self.stats.delta_rows.insert(rel.clone(), rows.max(1.0));
         let got = self.plan_inner_in(prog, b, Some(at), None, false, cx).ok().map(|((order, _, _), _)| order);
@@ -8722,7 +8722,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     };
     // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
-    let chosen_key = corpus.then(|| choices::key(prog));
+    // A program of no rules (a cross part whose every stratum is kept) has no choice to make, so none is kept for it:
+    // keeping one wrote to the store in the run after a cold one, for a program no other run plans.
+    let chosen_key = (corpus && !(prog.rules.is_empty() && prog.again.is_empty())).then(|| choices::key(prog));
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     let chosen: Option<std::sync::Arc<Program>>;
     // The chosen program's version (t36 item 6, step 5): the passes' overlay, or the kept choice's, which the run

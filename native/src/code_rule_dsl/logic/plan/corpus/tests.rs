@@ -1064,3 +1064,64 @@ fn a_runs_output_directory_is_rerails_own() {
     let names: Vec<String> = super::observe(|o| o.listing(dir.path()).unwrap().iter().map(|(n, _)| n.clone()).collect());
     assert_eq!(names, ["a.py"], "the outputs are not in the listing");
 }
+
+/// The run after a cold one, over what the cold run read unchanged, writes nothing (`RERAIL_WARM`): it names the same
+/// sources and plans, so it records no manifest of its own, and it makes no choice the cold run did not keep. It was
+/// news three ways: the cold run named a source no later run reads (a chunk's tree counts, still written though frames
+/// carry their own statistics since); a nested run reused whole (`reuse::reused`) named none of its plans; and the
+/// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
+/// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
+#[test]
+fn the_run_after_a_cold_one_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
+    let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
+    let base = kept.as_deref().unwrap_or(temp.path());
+    let src = base.join("src");
+    std::fs::create_dir_all(src.join("pkg")).unwrap();
+    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+    std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
+    std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+    let store = base.join("store.sqlite");
+    let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
+        let db = rusqlite::Connection::open(&store).unwrap();
+        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
+        rows.sort();
+        rows
+    };
+    // `warm`: the run under `RERAIL_WARM=list`, which ends its process with status 3 if it wrote anything.
+    let run = |warm: bool| {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
+            .env("RERAIL_TAPE_CACHE", &store)
+            .env("RERAIL_CHILD_RUN", &src)
+            .env("RERAIL_CHILD_OUT", base.join("out"));
+        if warm {
+            child.env("RERAIL_WARM", "list");
+        }
+        let output = child.output().unwrap();
+        // Each fault and the line after it, which says what was written.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = stderr.lines().collect();
+        let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines.get(i + 1).map_or(String::new(), |n| format!(" ({})", n.trim())))).collect();
+        assert!(output.status.success(), "the run's process: {}; {}", output.status, faults.join("; "));
+    };
+    run(false);
+    let cold = manifests();
+    assert!(!cold.is_empty(), "the cold run recorded its manifests");
+    run(true);
+    let warm = manifests();
+    let new: Vec<&(Vec<u8>, Vec<u8>)> = warm.iter().filter(|m| !cold.contains(m)).collect();
+    assert!(new.is_empty(), "the warm run named what the cold run named: no manifest of its own ({} new)", new.len());
+}
+
+/// One corpus run in a process of its own, for `the_run_after_a_cold_one_writes_nothing`.
+#[test]
+#[ignore = "a parent test runs it in a process of its own"]
+fn one_corpus_run_for_a_parent() {
+    let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rules.join("bandit-b301-pickle.rr")).unwrap();
+    super::run_all(&[program.as_str()], std::path::Path::new(&src), std::path::Path::new(&out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+}

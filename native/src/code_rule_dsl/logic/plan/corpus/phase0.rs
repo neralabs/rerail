@@ -300,6 +300,10 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     }
     // No corpus: an empty root, and the library a root the loader may read (`env`).
     // Canonical (`/private/var/...`, not `/var/...` on macOS), as the run's world names its roots: one journal root.
+    // Both are rerail's own (decision 0246), as the family `rerail-phase-0-…`: answered, never kept, and nothing above
+    // them watched for them. Canonicalizing the root had watched the whole temporary directory, whose news (other
+    // programs' files, the last process's outputs) the run after a cold one stored.
+    crate::content_store::observe::own(&std::env::temp_dir().join("rerail-phase-0"));
     let root = std::env::temp_dir().join("rerail-phase-0-root");
     std::fs::create_dir_all(&root).map_err(|e| PlanError::Plan(format!("{}: {e}", root.display())))?;
     let root = std::fs::canonicalize(&root).unwrap_or(root);

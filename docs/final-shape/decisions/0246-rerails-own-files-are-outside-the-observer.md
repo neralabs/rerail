@@ -25,6 +25,7 @@ rerail's own files are:
 | The content store, and every file named after it beside it (`<store>-wal`, `<store>.files`, `<store>.files.cookies/…`, `<store>.runs.lock`, `<store>.upkeep`) | the observer, from its own store's path (`<store>.files`) |
 | The cost statistics' file and the files named after it | `observe::own`, as the statistics start |
 | A directory a run writes its outputs into, and what is under it | `Observer::own_output`, as the run makes it; kept as `own:<dir>` in the observer's store, so the processes after know it |
+| Phase 0's scratch corpus and outputs (`$TMPDIR/rerail-phase-0-…`) | `observe::own`, as phase 0 makes them (decision 0250) |
 
 For these, the observer:
 
@@ -36,9 +37,14 @@ For these, the observer:
 
 An own file is still answered, so a rule that reads one gets its bytes; only the keeping and the news change.
 
-A file named after an own file (`<own>` followed by `.` or `-`) is its own too. The outputs' record is written once,
-the first time a directory is named. The observer's collection drops the records of output directories that are
-gone.
+A file named after an own file (`<own>` followed by `.` or `-`) is its own too. Asking about an own file watches
+nothing: no root above it is asked of the journal (decision 0250).
+
+The outputs' record is written once, the first time a directory is named, and only under a root the store has a
+cursor for: the journal of a later process reports only there. A directory named before its root is watched is
+recorded at the run's end, if a root covers it by then. Elsewhere it is own for this process alone. Phase 0's
+scratch outputs, one directory a run, were recorded each run. The observer's collection drops the records of
+output directories that are gone.
 
 ## What this gives up
 
@@ -55,3 +61,5 @@ gone.
 - `collection_drops_what_no_run_asks_any_more`: an output directory still there is kept, one removed goes.
 - `a_runs_output_directory_is_rerails_own` (engine): after a corpus run, its output directory is not in its root's
   listing.
+- `an_output_directory_is_recorded_once_and_only_under_a_watched_root` (store): named before its root is watched,
+  recorded at the run's end; outside any root, never recorded; the next process writes nothing again.

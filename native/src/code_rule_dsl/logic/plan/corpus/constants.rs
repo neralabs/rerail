@@ -133,12 +133,13 @@ pub(super) fn fold(
     let key = key(programs, root, options, &wanted);
     let was_kept = kept(&key, root, prog)?;
     let reused = was_kept.is_some();
-    // The plans the constants' run used, for the outer run's record (`Report::plans`): none when they were kept.
+    // The plans the constants' run used, for the outer run's record (`Report::plans`): kept with the constants, so a
+    // run that reuses them names the plans the run that derived them did, and records the same manifest.
     let ((texts, consulted), plans) = match was_kept {
-        Some(kept) => (kept, Vec::new()),
+        Some(kept) => kept,
         None => {
             let (derived, plans) = derive(programs, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
-            keep(&key, &derived.0, &derived.1)?;
+            keep(&key, &derived.0, &derived.1, &plans)?;
             (derived, plans)
         }
     };
@@ -192,7 +193,7 @@ fn derive(
 fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTreeSet<String>) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    h.update(b"rerail.constants/v1\0");
+    h.update(b"rerail.constants/v2\0");
     for p in programs {
         h.update(p.as_bytes());
         h.update([0]);
@@ -220,20 +221,27 @@ fn record_key(key: &str) -> String {
     format!("constants:{key}")
 }
 
-/// The constants kept under `key`, when what their run consulted is as it was.
-fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
-    let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
+/// What the constants of a key are kept as: each relation's rows, and the plans the run that derived them used.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Kept {
+    rows: std::collections::BTreeMap<String, String>,
+    plans: Vec<[u8; 32]>,
+}
+
+/// The constants kept under `key`, when what their run consulted is as it was, with the plans their run used.
+fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<(Derived, Vec<[u8; 32]>)>> {
+    let Some((consulted, record)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
     let consulted = super::reuse::decode_consulted(&consulted);
     if !super::world::World::new(root, prog).still(&consulted) {
         return Ok(None);
     }
-    let rows = serde_json::from_slice(&rows).map_err(|e| super::super::Error::Plan(e.to_string()))?;
-    Ok(Some((rows, consulted)))
+    let kept: Kept = serde_json::from_slice(&record).map_err(|e| super::super::Error::Plan(e.to_string()))?;
+    Ok(Some(((kept.rows, consulted), kept.plans)))
 }
 
-fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted: &[(String, String, String)]) -> Result<()> {
-    let rows = serde_json::to_vec(rows).unwrap_or_default();
+fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted: &[(String, String, String)], plans: &[[u8; 32]]) -> Result<()> {
+    let record = serde_json::to_vec(&Kept { rows: rows.clone(), plans: plans.to_vec() }).unwrap_or_default();
     let consulted = super::reuse::encode_consulted(consulted);
-    super::observe(|o| o.put_run_record(&record_key(key), &consulted, &rows));
+    super::observe(|o| o.put_run_record(&record_key(key), &consulted, &record));
     Ok(())
 }
