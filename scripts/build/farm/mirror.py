@@ -332,8 +332,11 @@ def work(job):
     host whose agent stopped or could not write is down for its back-off, and one whose run failed
     or read other files than this machine's is asked again what it holds (it may have been cleaned)."""
     if job.get("version") != farm.VERSION:
-        stale_install[0] = True
-        return failed(f"the mirror daemon is farm version {farm.VERSION}, the caller {job.get('version')}: it restarts")
+        # A newer caller: this daemon is the older install's, and makes way. An older one (a checkout
+        # with an older farm) is refused: its caller then runs here.
+        if (job.get("version") or 0) > farm.VERSION:
+            stale_install[0] = True
+        return failed(f"the mirror daemon is farm version {farm.VERSION}, the caller {job.get('version')}")
     name = job["host"]
     known = next((x for x in farm.hosts() if x["name"] == name), {"name": name})
     health = farm.health(known)
