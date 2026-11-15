@@ -90,8 +90,13 @@ pub(super) fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64) {
     COUNTS[TRIALS].fetch_add(1, Relaxed);
     let mut m = MEMO.write();
     let n = noted_mut(&mut m, key, rule);
-    merge_tried(n, steps(order), ratio.clamp(1e-6, 1e9));
+    merge_tried(n, steps(order), ratio.clamp(1e-6, 1e9), TRIAL_WEIGHT);
 }
+
+/// Decision 0247: how far a trial's estimate moves an order's measured ratio (in logs), against a run's
+/// `RUN_WEIGHT`. A trial measures a sample, scaled by walks; a run measures the line.
+const TRIAL_WEIGHT: f64 = 0.25;
+const RUN_WEIGHT: f64 = 0.5;
 
 /// A trial of `order` of line `key` (decision 0207): `work` rows of work against a price of `est` for the same
 /// sample, `cut` where it stopped at its budget.
@@ -104,10 +109,10 @@ pub(super) fn put_trial(key: PlanKey, rule: u64, order: &[Step], work: f64, est:
     put_tried(key, rule, order, if cut { ratio.max(1.0) } else { ratio });
 }
 
-fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64) {
+fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64, weight: f64) {
     match n.tried.iter_mut().find(|t| t.order == order) {
         Some(t) => {
-            t.ratio = (t.ratio * ratio).sqrt();
+            t.ratio = t.ratio.powf(1.0 - weight) * ratio.powf(weight);
             t.runs += 1;
         }
         None => {
@@ -545,7 +550,7 @@ pub fn choose(round: &mut [Choice]) {
             let measured = |i: usize| n.tried(&steps(&c.candidates[i].order)).is_some();
             let ran = (0..c.candidates.len()).find(|&i| measured(i) && walked_of(i) == Some(n.walked));
             if let Some(ran) = ran {
-                // Decision 0246: a walk varies by 20% to 30% (sd, 8 seeds on the data-layer files), so a walked
+                // Decision 0247: a walk varies by 20% to 30% (sd, 8 seeds on the data-layer files), so a walked
                 // order is costed as if it walked `WALK_MARGIN` higher: it displaces a measured order only where
                 // it walks about two deviations below (a walk 0.61 of the one that ran took a line from 5.66 M to
                 // 6.89 M).
@@ -744,7 +749,7 @@ pub fn critical_timed(strata: &[String], producers: &[Vec<usize>], runs: &[LineR
         if r.est > 0.0 {
             n.est = r.est;
             let ratio = (r.work.max(1.0) / r.est.max(1.0)).clamp(1e-6, 1e9);
-            merge_tried(n, r.order.clone(), ratio);
+            merge_tried(n, r.order.clone(), ratio, RUN_WEIGHT);
             if critical && (ratio > 2.0 || n.proposals.is_empty()) {
                 n.wants_search = true;
             }
@@ -785,7 +790,7 @@ pub(super) fn random_orders(vars: &[u128], start: Option<usize>, n: usize, rng: 
     out
 }
 
-/// Decision 0246: how far below the order that ran a walked order must walk to be taken on its walk alone.
+/// Decision 0247: how far below the order that ran a walked order must walk to be taken on its walk alone.
 pub(super) const WALK_MARGIN: f64 = 0.625;
 
 /// A wider search's result: its orders with their prices, or their walked work over the line, and the walked work of

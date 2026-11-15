@@ -144,7 +144,7 @@ fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     let mut round = vec![Choice { key: 210, candidates: candidates.clone(), chosen: 9, why: "" }];
     choose(&mut round);
     assert_eq!(round[0].chosen, 1, "walked: {}", round[0].why);
-    // Decision 0246: walked at 0.8 of the one that ran, within the walks' spread: not taken on its walk.
+    // Decision 0247: walked at 0.8 of the one that ran, within the walks' spread: not taken on its walk.
     propose(210, vec![(steps(&order(&[0, 1])), 4e5), (steps(&order(&[1, 0])), 3.2e5)], Some(4e5));
     let mut round = vec![Choice { key: 210, candidates, chosen: 9, why: "" }];
     choose(&mut round);
@@ -230,7 +230,9 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     put_tried(500, 1, &order, 16.0);
     let n = note(&500).unwrap();
     let t = n.tried.iter().find(|t| t.order == steps(&order)).expect("tried");
-    assert!((t.ratio - 8.0).abs() < 1e-9 && t.runs == 2, "a geometric mean over trials: {t:?}");
+    // Decision 0247: a trial moves the ratio a quarter of the way (in logs), as a run would half of it.
+    let quarter = 4f64.powf(0.75) * 16f64.powf(0.25);
+    assert!((t.ratio - quarter).abs() < 1e-9 && t.runs == 2, "a trial weighs a quarter: {t:?}");
     clear();
 }
 
@@ -511,7 +513,7 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     let walked = found.walked.expect("walked");
     let plain = WalkSnap { heavy: HashMap::new(), ..snap };
     let unsplit = plain.walk(rule, None, &order, vec![(order.clone(), 1.0)], &|| false).walked.expect("walked");
-    // Split, 1.08 of the work; drawn whole, 0.89 (1.76 before decision 0246 thinned by each step's size).
+    // Split, 1.08 of the work; drawn whole, 0.89 (1.76 before decision 0247 thinned by each step's size).
     assert!((walked / truth - 1.0).abs() < 0.15, "{walked} against {truth}");
     assert!((unsplit / truth - 1.0).abs() < 0.15, "unsplit {unsplit} against {truth}");
 }

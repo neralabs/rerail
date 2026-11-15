@@ -4054,7 +4054,7 @@ impl InRel {
         }
     }
 
-    /// Decision 0246: how many candidates a probe by `key` at `cols` reads before testing them, without reading
+    /// Decision 0247: how many candidates a probe by `key` at `cols` reads before testing them, without reading
     /// them: at least its matches, and exact where the index holds the key's columns alone. A walk weighs a
     /// binding's next step by it.
     pub fn probe_size(&self, cols: &[usize], key: &[i64]) -> f64 {
@@ -5423,6 +5423,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      collect: Option<&'c mut Vec<i64>>,
                      /// The row the first step is at (a count table's counts per row are by it).
                      at0: u32,
+                     /// Whether the first step has reached a row (`at0` is one): a cut before it left every row.
+                     seen0: bool,
                      /// Per atom step, the slots it binds that the steps before `upto` read, and `upto` (`factored`):
                      /// a row whose rest of the body fails before reaching `upto` fails by those values alone.
                      factor: Vec<Option<Factor>>,
@@ -5639,20 +5641,25 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         bump(0, s.rows as u64);
                         let added = std::cell::Cell::new(s.rows as u64);
                         let words = f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }).to_vec();
-                        cx.work += added.get();
-                        if cx.work > cx.budget { cx.stop = true; }
-                        for (w, &word) in words.iter().enumerate() {
+                        // The chunk's filter work is charged after its rows run (below): charged first, a chunk
+                        // whose filters alone spend the budget cut before its first row, every run (no progress).
+                        'rows: for (w, &word) in words.iter().enumerate() {
                             let mut m = word;
                             while m != 0 {
+                                // Cut (decision 0206): the rows from here on are left, so the row the cut stopped at
+                                // (`at0`) is the last one run, not one of these never run.
+                                if cx.stop { break 'rows; }
                                 let r = 64 * w + m.trailing_zeros() as usize;
                                 m &= m - 1;
                                 for &(slot, b) in &f.binds {
                                     slots[slot] = match b { rowcode::Bind::Column(k) => s.columns[k][r], rowcode::Bind::Param(k) => s.params[k] };
                                 }
-                                if i == 0 { cx.at0 = s.ids[r]; }
+                                if i == 0 { cx.at0 = s.ids[r]; cx.seen0 = true; }
                                 go(cx, i + 1 + f.steps, slots);
                             }
                         }
+                        cx.work += added.get();
+                        if cx.work > cx.budget { cx.stop = true; }
                         s.rows = 0;
                         s.ids.clear();
                         s.columns.iter_mut().for_each(Vec::clear);
@@ -5691,7 +5698,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                     if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
-                    if i == 0 { cx.at0 = id; }
+                    if i == 0 { cx.at0 = id; cx.seen0 = true; }
                     if let Some(Factor { read, n, upto }) = factor {
                         let mut key = [0i64; FACTOR_MAX];
                         for (x, &s) in read[..n].iter().enumerate() { key[x] = slots[s]; }
@@ -5868,7 +5875,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()],
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()],
                        factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None };
@@ -5881,7 +5888,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             out.clear();
             slots[y] = v;
             go(&mut cx, 0, &mut slots);
-            if cx.error.is_some() { break; }
+            if cx.error.is_some() || cx.stop { break; }
         },
         // The first two steps' pairs from a level's batch: each left row binds the first atom's slots (its rows
         // passed its tests already), each right row is checked as the walk checks it and binds the second's.
@@ -5891,13 +5898,15 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             c0[0].set(c0[0].get() + 1);
             let mut last = u32::MAX;
             for (li, rid) in p.pairs.iter() {
-                if cx.error.is_some() { break; }
+                // At a cut the pairs after it are left: `at0` stays at the row it stopped at.
+                if cx.error.is_some() || cx.stop { break; }
                 if li != last {
                     last = li;
                     let id0 = p.lids[li as usize];
                     let row = rows0.row(id0);
                     for &(c, s) in b0 { slots[s] = row.at(c); }
                     cx.at0 = id0;
+                    cx.seen0 = true;
                     c0[1].set(c0[1].get() + 1);
                     let c1 = &j.counts[1][0];
                     c1.set(c1.get() + 1);
@@ -5922,7 +5931,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let total = cx.list0.as_ref().map_or(0, |l| l.1.len() as u64);
         // Cut: the first step's rows from the one it stopped at; with no rows known, all (`None`).
         let left = cx.stop.then(|| cx.list0.as_ref().map(|(of, list)| {
-            let at = list.iter().rposition(|&x| x == cx.at0).unwrap_or(0);
+            let at = if cx.seen0 { list.iter().rposition(|&x| x == cx.at0).unwrap_or(0) } else { 0 };
             Rows0::of(*of, &list[at..])
         }));
         let done = match &left { Some(Some(l)) => total - l.n.min(total), Some(None) => 0, None => total };

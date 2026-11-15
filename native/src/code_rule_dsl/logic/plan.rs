@@ -8202,7 +8202,7 @@ impl<'a> Run<'a, '_> {
                     // search as before (decision 0207), and its request waits for the background.
                     match joins::walked(&key) {
                         Some((ran_w, props)) => {
-                            // Decision 0246: past the walks' spread (`WALK_MARGIN`).
+                            // Decision 0247: past the walks' spread (`WALK_MARGIN`).
                             let better: Vec<(Vec<Step>, f64)> = props.into_iter().filter(|(_, w)| *w < joins::WALK_MARGIN * ran_w).take(2).collect();
                             joins::log(|| format!("trials {}: the background's walked proposals, the order it ran at {ran_w:.0}: {}", r.head.rel, if better.is_empty() { "none better".to_owned() } else { better.iter().map(|(o, w)| format!("{} {w:.0}", o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."))).collect::<Vec<_>>().join(", ") }));
                             walked_props = better.clone();
@@ -12310,7 +12310,7 @@ impl<'a> Walker<'a> {
         if starts.is_empty() { return 0.0 }
         let n = self.slots.len();
         let mut bound = vec![false; n];
-        // Decision 0246: each binding carries the share of a lead row's bindings it stands for; a step's work is
+        // Decision 0247: each binding carries the share of a lead row's bindings it stands for; a step's work is
         // their sum.
         let w0 = 1.0 / starts.len() as f64;
         let mut sample: Vec<(f64, Vec<i64>)> = Vec::with_capacity(starts.len());
@@ -12360,7 +12360,7 @@ impl<'a> Walker<'a> {
             // back to `width` before the next expansion.
             let expands = !a.neg && !free.is_empty();
             let reservoir = if expands {
-                // Decision 0246: thinned by the next step's size. At most `16 * width` by weight first, then `width`
+                // Decision 0247: thinned by the next step's size. At most `16 * width` by weight first, then `width`
                 // by weight times each binding's candidates here (`probe_size`): a uniform thinning of equal weights
                 // dropped a large function's rows as often as a small one's, and walks varied by 27% to 41%.
                 if sample.len() > 16 * width { sample = self.priority(sample, 16 * width); }
@@ -12380,7 +12380,7 @@ impl<'a> Walker<'a> {
                 });
                 if checked { 16 * width } else { width }
             } else { width };
-            // Decision 0246: the matches carried on, each with the share it stands for: its binding's, times the
+            // Decision 0247: the matches carried on, each with the share it stands for: its binding's, times the
             // probe's estimate over the rows it read (a probe reads at most `reservoir` of its candidates). They
             // are thinned by priority sampling (`priority`). A uniform draw over the rows read gave a function of
             // 20,000 nodes the weight of one of 1,024, and walked the data-layer line `1.0.2.3.4.5` at 0.39 of
@@ -12429,7 +12429,7 @@ impl<'a> Walker<'a> {
 }
 
 impl Walker<'_> {
-    /// Decision 0246: priority sampling (Duffield, Lund and Thorup): `k` of `items`, each a weight and a binding,
+    /// Decision 0247: priority sampling (Duffield, Lund and Thorup): `k` of `items`, each a weight and a binding,
     /// whose weights estimate any subset's sum without bias. Each item's priority is its weight over a uniform
     /// draw; the `k` highest are kept. An item heavier than the next priority is always among them, and keeps its
     /// own weight: a large function's bindings are carried, not drawn. The others share what the items not that
