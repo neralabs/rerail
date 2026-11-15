@@ -11,10 +11,13 @@
  * One file a folder, `stopped-answers/<daemon pid>-<daemon start>/<digest of the folder's real path>.json` in the Rerail
  * home. It holds no path: the repository key the database records, how many folders up the checkout's top is, the
  * device and inode of the folder, the top and the top's `.git`, and when the daemon answered. A new daemon places every
- * folder again, so the first hook that keeps an answer from it removes the folders of the daemons before it.
+ * folder again, so the first hook that keeps an answer from it removes the folders of the daemons before it. A link in
+ * place of the file or of either folder above it is never followed.
  */
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, type BigIntStats } from "node:fs";
+import {
+  closeSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, type BigIntStats,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
@@ -22,6 +25,7 @@ import { storedPath } from "../engine/catalog/checkout-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { recordedCheckoutStopped } from "../engine/catalog/repository-registry.js";
 import { replaceFile } from "../engine/file-replace.js";
+import { openNoFollowSync } from "../engine/no-follow.js";
 import { openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -189,9 +193,15 @@ function keptFile(daemon: DaemonIdentity, folder: string, home = defaultRerailHo
   return join(home, STOPPED_ANSWERS_DIR, `${daemon.pid}-${daemon.startedAt}`, `${name}.json`);
 }
 
+/** The answer kept at `file`; undefined where none is there whole, a look fails, or a link is at its name, which is never followed. */
 function readKept(file: string): KeptAnswer | undefined {
   try {
-    return keptSchema.safeParse(JSON.parse(readFileSync(file, "utf8"))).data;
+    const descriptor = openNoFollowSync(file, constants.O_RDONLY);
+    try {
+      return keptSchema.safeParse(JSON.parse(readFileSync(descriptor, "utf8"))).data;
+    } finally {
+      closeSync(descriptor);
+    }
   } catch {
     return undefined;
   }

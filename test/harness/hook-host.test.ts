@@ -1016,14 +1016,35 @@ interface KeptAnswerTraffic {
   readonly renames: string[];
 }
 
-/** Records {@link KeptAnswerTraffic} of the hook host the test loads next (`startCheckHost`), through `node:fs` and `node:fs/promises`. */
+/**
+ * Records {@link KeptAnswerTraffic} of the hook host the test loads next (`startCheckHost`), through `node:fs` and
+ * `node:fs/promises`. The hook opens a kept answer refusing a link at its name (`openNoFollowSync`) and reads it by its
+ * descriptor, so an open that fails is a read that fails.
+ */
 function watchKeptAnswers(): KeptAnswerTraffic {
   const traffic: KeptAnswerTraffic = { reads: [], renames: [] };
   const kept = (path: unknown): boolean => typeof path === "string" && path.includes(`${sep}stopped-answers${sep}`) && path.endsWith(".json");
   vi.doMock("node:fs", async () => {
     const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const descriptors = new Set<number>();
+    const openSync = (...args: Parameters<typeof actual.openSync>): number => {
+      if (!kept(args[0])) return actual.openSync(...args);
+      try {
+        const descriptor = actual.openSync(...args);
+        descriptors.add(descriptor);
+        return descriptor;
+      } catch (error) {
+        traffic.reads.push({ code: codeOf(error) });
+        throw error;
+      }
+    };
+    const closeSync = (descriptor: number): void => {
+      descriptors.delete(descriptor);
+      actual.closeSync(descriptor);
+    };
     const readFileSync = (...args: Parameters<typeof actual.readFileSync>): ReturnType<typeof actual.readFileSync> => {
-      if (!kept(args[0])) return actual.readFileSync(...args);
+      const [from] = args;
+      if (!kept(from) && !(typeof from === "number" && descriptors.has(from))) return actual.readFileSync(...args);
       try {
         const text = actual.readFileSync(...args);
         traffic.reads.push({ text: String(text) });
@@ -1033,7 +1054,8 @@ function watchKeptAnswers(): KeptAnswerTraffic {
         throw error;
       }
     };
-    return { ...actual, default: { ...actual, readFileSync }, readFileSync };
+    const replaced = { openSync, closeSync, readFileSync };
+    return { ...actual, default: { ...actual, ...replaced }, ...replaced };
   });
   vi.doMock("node:fs/promises", async () => {
     const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
