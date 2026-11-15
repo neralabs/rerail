@@ -1702,10 +1702,19 @@ impl<'a> P<'a> {
     }
 
     fn disjunction(&mut self, s: Slot) -> R<N> {
-        let mut left = self.conjunction(s)?;
+        let left = self.conjunction(s)?;
+        // Each `or` wraps the chain so far at its start: held by the writer until the chain ends, then put
+        // before it in one move (`Writer::open_chain`), so a chain costs its length, not its length squared.
+        let chain = self.w.open_chain(left.at);
+        let r = self.disjunction_chain(left, s);
+        self.w.end_chain(chain);
+        r
+    }
+
+    fn disjunction_chain(&mut self, mut left: N, s: Slot) -> R<N> {
         while self.peek() == T::Or {
+            self.rekey(left.at, slot(f::LEFT, Ctx::Expr));
             let n = self.wrap(left, K::BooleanOperator, s);
-            self.rekey(left.at + 1, slot(f::LEFT, Ctx::Expr));
             self.leaf(K::TOr, f::OPERATOR, C_NONE);
             self.conjunction(slot(f::RIGHT, Ctx::Expr))?;
             self.close(n);
@@ -1715,10 +1724,17 @@ impl<'a> P<'a> {
     }
 
     fn conjunction(&mut self, s: Slot) -> R<N> {
-        let mut left = self.inversion(s)?;
+        let left = self.inversion(s)?;
+        let chain = self.w.open_chain(left.at);
+        let r = self.conjunction_chain(left, s);
+        self.w.end_chain(chain);
+        r
+    }
+
+    fn conjunction_chain(&mut self, mut left: N, s: Slot) -> R<N> {
         while self.peek() == T::And {
+            self.rekey(left.at, slot(f::LEFT, Ctx::Expr));
             let n = self.wrap(left, K::BooleanOperator, s);
-            self.rekey(left.at + 1, slot(f::LEFT, Ctx::Expr));
             self.leaf(K::TAnd, f::OPERATOR, C_NONE);
             self.inversion(slot(f::RIGHT, Ctx::Expr))?;
             self.close(n);
@@ -1781,19 +1797,28 @@ impl<'a> P<'a> {
     /// Binary operators from precedence `min` up, by precedence climbing.
     fn binary(&mut self, s: Slot, min: u8) -> R<N> {
         self.deeper()?;
-        let mut left = self.unary(s)?;
+        let left = self.unary(s)?;
+        // A chain at its first operand (`disjunction`'s).
+        let chain = self.w.open_chain(left.at);
+        let r = self.binary_chain(left, s, min);
+        self.w.end_chain(chain);
+        let left = r?;
+        self.depth -= 1;
+        Ok(left)
+    }
+
+    fn binary_chain(&mut self, mut left: N, s: Slot, min: u8) -> R<N> {
         while let Some((prec, op)) = binop(self.peek()) {
             if prec < min {
                 break;
             }
+            self.rekey(left.at, slot(f::LEFT, Ctx::Primary));
             let n = self.wrap(left, K::BinaryOperator, s);
-            self.rekey(left.at + 1, slot(f::LEFT, Ctx::Primary));
             self.leaf(op, f::OPERATOR, C_NONE);
             self.binary(slot(f::RIGHT, Ctx::Primary), if op == K::TPow { prec } else { prec + 1 })?;
             self.close(n);
             left = n;
         }
-        self.depth -= 1;
         Ok(left)
     }
 
@@ -1827,28 +1852,35 @@ impl<'a> P<'a> {
         self.postfix_from(a, s)
     }
 
-    /// Attributes, calls and subscripts after `left`, in `s`.
-    fn postfix_from(&mut self, mut left: N, s: Slot) -> R<N> {
+    /// Attributes, calls and subscripts after `left`, in `s`: a chain at `left` (`disjunction`'s).
+    fn postfix_from(&mut self, left: N, s: Slot) -> R<N> {
+        let chain = self.w.open_chain(left.at);
+        let r = self.postfix_chain(left, s);
+        self.w.end_chain(chain);
+        r
+    }
+
+    fn postfix_chain(&mut self, mut left: N, s: Slot) -> R<N> {
         loop {
             match self.peek() {
                 T::Dot => {
+                    self.rekey(left.at, slot(f::OBJECT, Ctx::Primary));
                     let n = self.wrap(left, K::Attribute, s);
-                    self.rekey(left.at + 1, slot(f::OBJECT, Ctx::Primary));
                     self.bump();
                     self.name(f::ATTRIBUTE)?;
                     self.close(n);
                     left = n;
                 }
                 T::LParen => {
+                    self.rekey(left.at, slot(f::FUNCTION, Ctx::Primary));
                     let n = self.wrap(left, K::Call, s);
-                    self.rekey(left.at + 1, slot(f::FUNCTION, Ctx::Primary));
                     self.arguments(f::ARGUMENTS, true)?;
                     self.close(n);
                     left = n;
                 }
                 T::LBracket => {
+                    self.rekey(left.at, slot(f::VALUE, Ctx::Primary));
                     let n = self.wrap(left, K::Subscript, s);
-                    self.rekey(left.at + 1, slot(f::VALUE, Ctx::Primary));
                     self.subscript()?;
                     self.close(n);
                     left = n;

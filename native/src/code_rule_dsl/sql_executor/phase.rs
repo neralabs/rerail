@@ -34,7 +34,7 @@ enum Keys {
 }
 
 #[derive(Clone)]
-struct Output {
+pub struct Output {
     table: String,
     source: String,
     old: versions::Version,

@@ -37,7 +37,7 @@ pub mod extension;
 pub use setfix::{flush_symbols, wave0_changes, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
 /// A connection's identity for the state a run leaves with it (`setfix::scope`).
 pub use setfix::scope as setfix_scope;
-pub use setfix::symbol_text;
+pub use setfix::{symbol_text, symbol_texts};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub mod component {
     pub use super::setfix::lab;

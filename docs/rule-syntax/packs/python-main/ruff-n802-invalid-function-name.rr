@@ -57,7 +57,7 @@ n802_visitor_class(n) :- n802_demand_visitor_class(n), kind(n, "class_definition
 // local_visitor(n): the JSON util `local-visitor`, used where the JSON says `matches: "local-visitor"`
 .decl n802_local_visitor(n: node)
 n802_local_visitor(n) :- n802_demand_local_visitor(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), n802_visitor_class(st2),
+    st2 = b1, n802_visitor_class(st2),
     (site_scope(b1, "module") ; site_scope(b1, "function")).
 n802_local_visitor(n) :- n802_demand_local_visitor(n), n802_visitor_attr(n).
 n802_local_visitor(n) :- n802_demand_local_visitor(n), kind(n, "subscript"),
@@ -73,7 +73,7 @@ n802_handler_class(n) :- n802_demand_handler_class(n), kind(n, "class_definition
 // local_handler(n): the JSON util `local-handler`, used where the JSON says `matches: "local-handler"`
 .decl n802_local_handler(n: node)
 n802_local_handler(n) :- n802_demand_local_handler(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), n802_handler_class(st2),
+    st2 = b1, n802_handler_class(st2),
     (site_scope(b1, "module") ; site_scope(b1, "function")).
 n802_local_handler(n) :- n802_demand_local_handler(n), n802_handler_attr(n).
 n802_local_handler(n) :- n802_demand_local_handler(n), kind(n, "subscript"),
@@ -143,8 +143,7 @@ n802_demand_visitor_attr(n) :- n802_demand_local_visitor(n).
 // demand_visitor_class: the nodes visitor_class is asked at (its recursion looks at every descendant)
 .decl n802_demand_visitor_class(n: node)
 n802_demand_visitor_class(st2) :- n802_demand_local_visitor(n), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
-    (site_scope(b1, "module") ; site_scope(b1, "function")).
+    ref_site(n, b1), st2 = b1, (site_scope(b1, "module") ; site_scope(b1, "function")).
 n802_demand_visitor_class(c6) :- n802_demand_visitor_attr(n), kind(n, "attribute"),
     field(n, "attribute", c1), node(_, c1, _, _, _), A = c1, field(n, "object", c2),
     kind(c2, "identifier"), ref_site(c2, b3),
@@ -168,8 +167,7 @@ n802_demand_handler_attr(n) :- n802_demand_local_handler(n).
 // demand_handler_class: the nodes handler_class is asked at (its recursion looks at every descendant)
 .decl n802_demand_handler_class(n: node)
 n802_demand_handler_class(st2) :- n802_demand_local_handler(n), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
-    (site_scope(b1, "module") ; site_scope(b1, "function")).
+    ref_site(n, b1), st2 = b1, (site_scope(b1, "module") ; site_scope(b1, "function")).
 n802_demand_handler_class(c6) :- n802_demand_handler_attr(n), kind(n, "attribute"),
     field(n, "attribute", c1), node(_, c1, _, _, _), A = c1, field(n, "object", c2),
     kind(c2, "identifier"), ref_site(c2, b3),

@@ -29,8 +29,8 @@ ruf032_float_operand(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 // float_expr(n): the JSON util `float-expr`, used where the JSON says `matches: "float-expr"`
 .decl ruf032_float_expr(n: node)
 ruf032_float_expr(n) :- kind(n, "float"), match("[^jJ]*", n).
-ruf032_float_expr(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("[+-]", c1),
-    field(n, "argument", c2), ruf032_float_operand(c2).
+ruf032_float_expr(n) :- kind(n, "unary_operator"), ruf032_tok_has_1(n), field(n, "argument", c9),
+    ruf032_float_operand(c9).
 
 // first_arg(n): the JSON util `first-arg`, used where the JSON says `matches: "first-arg"`
 .decl ruf032_first_arg(n: node)
@@ -65,7 +65,7 @@ ruf032_float_operand_decimal_from_float_literal_in_string_annotation(n) :- kind(
 ruf032_float_expr_decimal_from_float_literal_in_string_annotation(n) :- kind(n, "float"),
     match("[^jJ]*", n).
 ruf032_float_expr_decimal_from_float_literal_in_string_annotation(n) :- kind(n, "unary_operator"),
-    ruf032_tok_has_1(n), child(n, c9, _),
+    ruf032_tok_has_2(n), child(n, c9, _),
     ruf032_float_operand_decimal_from_float_literal_in_string_annotation(c9).
 
 // first_arg_decimal_from_float_literal_in_string_annotation(n): the JSON util `first-arg`, used where the JSON says `matches: "first-arg"`
@@ -87,13 +87,25 @@ ruf032_in_string(n, ARG) :- (kind(n, "string") ; kind(n, "concatenated_string"))
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^[+-]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf032_tok_has_1(n: node)
 .stored ruf032_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf032_tok_has_1(n) :- child(n, c1, _), glob("[+-]", c1).
+ruf032_tok_has_1(n) :- field(n, "operator", c1), glob("[+-]", c1).
 ruf032_tok_has_1(n) :- op(n, t2), match("[+-]", t2).
 ruf032_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 ruf032_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 ruf032_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^[+-]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf032_tok_has_2(n: node)
+.stored ruf032_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf032_tok_has_2(n) :- child(n, c1, _), glob("[+-]", c1).
+ruf032_tok_has_2(n) :- op(n, t2), match("[+-]", t2).
+ruf032_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf032_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf032_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 
 // counted_1(n): the siblings the JSON `nthChild.ofRule` counts

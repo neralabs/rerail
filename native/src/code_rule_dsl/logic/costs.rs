@@ -37,6 +37,11 @@ pub const RETRAIN_AFTER: usize = 2_000;
 /// The least time between two trainings.
 pub const RETRAIN_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
 
+/// The cost statistics' file, if any: a run holds it against upkeep (`upkeep::run_begins`).
+pub fn file() -> Option<PathBuf> {
+    path()
+}
+
 fn path() -> Option<PathBuf> {
     match std::env::var("RERAIL_COSTS") {
         Ok(v) if v == "off" || v.is_empty() => None,
@@ -97,7 +102,18 @@ fn write() {
         *w = open(&path).ok();
         // Past `KEPT`, the oldest of this machine's samples go.
         if let Some(db) = w.as_ref() {
-            let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < (SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2)", rusqlite::params![machine(), KEPT]);
+            // Once a file: the samples of jobs with no units, which price nothing (`read_samples`).
+            if db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).is_ok_and(|v| v < 1) {
+                let _ = db.execute_batch("DELETE FROM samples WHERE units <= 0; PRAGMA user_version = 1;");
+            }
+            // Only once past `KEPT` by an eighth, then back to `KEPT`: asked first, a read down the index. Cut to
+            // `KEPT` each time, every process that wrote samples deleted the last runs' few thousand (510,377 kept,
+            // a delete each run).
+            let over = db.query_row("SELECT 1 FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2", rusqlite::params![machine(), KEPT + KEPT / 8], |_| Ok(())).is_ok();
+            let cut: Option<f64> = over.then(|| db.query_row("SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2", rusqlite::params![machine(), KEPT], |r| r.get(0)).ok()).flatten();
+            if let Some(cut) = cut {
+                let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < ?2", rusqlite::params![machine(), cut]);
+            }
         }
     }
     let Some(db) = w.as_mut() else {
@@ -156,9 +172,11 @@ fn write() {
 /// of each), oldest first.
 pub fn read_samples(db: &rusqlite::Connection, limit: i64, per_form: i64) -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
     let machine = machine();
-    // The newest overall, then each lane and form's newest (an index search each: `samples_by_form`).
+    // The newest overall, then each lane and form's newest (an index search each: `samples_by_form`). A job with
+    // no units (a stream's, as `strata`) prices nothing, so none is read: stored by binaries from before they were
+    // left out (`score`), they were 489k of the newest 500k.
     let mut ids: std::collections::BTreeSet<i64> = db
-        .prepare("SELECT rowid FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT ?2")?
+        .prepare("SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY at DESC LIMIT ?2")?
         .query_map(rusqlite::params![machine, limit], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     // The lanes and forms, by a seek each down `samples_by_form` (a skip scan): `DISTINCT` read every one of the
@@ -177,7 +195,7 @@ pub fn read_samples(db: &rusqlite::Connection, limit: i64, per_form: i64) -> rus
         )?
         .query_map([&machine], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let mut newest = db.prepare("SELECT rowid FROM samples WHERE machine = ?1 AND lane = ?2 AND forms = ?3 ORDER BY at DESC LIMIT ?4")?;
+    let mut newest = db.prepare("SELECT rowid FROM samples WHERE machine = ?1 AND lane = ?2 AND forms = ?3 AND units > 0 ORDER BY at DESC LIMIT ?4")?;
     for (lane, forms) in &groups {
         for id in newest.query_map(rusqlite::params![machine, lane, forms, per_form], |r| r.get::<_, i64>(0))? {
             ids.insert(id?);
@@ -321,7 +339,7 @@ fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool, 
             TRAINING.store(false, Ordering::Release);
             return;
         }
-        self::fit(&path, &samples, false);
+        self::fit(&path, &samples, false, &|| false);
         TRAINING.store(false, Ordering::Release);
     });
     if spawned.is_err() {
@@ -334,9 +352,10 @@ fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool, 
 const TRAINING_THREADS: usize = 2;
 
 /// Trains a model on `samples` on the caller's thread and a pool of [`TRAINING_THREADS`] (at the utility quality
-/// of service, or upkeep's with `upkeep`), and puts it in place and saves it when it wins.
+/// of service, or upkeep's with `upkeep`), and puts it in place and saves it when it wins. Given up between its
+/// phases once `stop` says so (a run began, under upkeep): whether it was.
 #[cfg(target_os = "macos")]
-fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool) {
+fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool, stop: &(dyn Fn() -> bool + Sync)) -> bool {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(TRAINING_THREADS)
             .thread_name(|i| format!("rerail-cost-model-{i}"))
@@ -352,11 +371,14 @@ fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool) {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let config = rerail_accel::cost_model::CostConfig::default();
             match &pool {
-                Ok(pool) => pool.install(|| rerail_accel::cost_model::train(samples, &config, MIN_TRAIN)),
+                Ok(pool) => pool.install(|| rerail_accel::cost_model::train_until(samples, &config, MIN_TRAIN, stop)),
                 Err(e) => Err(e.to_string()),
             }
         }));
         let took = started.elapsed().as_secs_f64();
+        if stop() && matches!(&r, Ok(Err(_))) {
+            return true;
+        }
         match r {
             Ok(Ok(t)) => {
                 let saved = save(path, t.model.as_deref(), &t.comparison);
@@ -373,6 +395,7 @@ fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool) {
             Ok(Err(e)) => model_state(format!("no model trained: {e}")),
             Err(_) => model_state("the model's training panicked".into()),
         }
+        false
 }
 
 /// The cost model's retraining as an upkeep job (decision 0190 §4): due once [`RETRAIN_AFTER`] samples were
@@ -402,21 +425,28 @@ impl rerail_accel::upkeep::Job for Retrain {
         TRAINING_THREADS
     }
 
-    fn step(&mut self, _: &rerail_accel::upkeep::Slice) -> Result<rerail_accel::upkeep::Step, String> {
+    fn file(&self) -> Option<PathBuf> {
+        path()
+    }
+
+    fn step(&mut self, slice: &rerail_accel::upkeep::Slice) -> Result<rerail_accel::upkeep::Step, String> {
         crate::code_rule_dsl::logic::profile::behind_the_run();
         use std::sync::atomic::Ordering;
         let Some(path) = path() else { return Ok(rerail_accel::upkeep::Step::Done) };
         if TRAINING.swap(true, Ordering::AcqRel) {
             return Ok(rerail_accel::upkeep::Step::Done);
         }
-        WRITTEN.store(0, Ordering::Relaxed);
-        *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
+        let written = WRITTEN.swap(0, Ordering::Relaxed);
+        let trained_at = TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()).replace(std::time::Instant::now());
         let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ, READ_PER_FORM));
         let out = match r {
-            Ok(samples) => {
-                fit(&path, &samples, true);
-                Ok(rerail_accel::upkeep::Step::Done)
+            // Stopped by a run that began: still due, as before it, for after the run.
+            Ok(samples) if fit(&path, &samples, true, &slice.stopper()) => {
+                WRITTEN.fetch_add(written, Ordering::Relaxed);
+                *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = trained_at;
+                Ok(rerail_accel::upkeep::Step::More)
             }
+            Ok(_) => Ok(rerail_accel::upkeep::Step::Done),
             Err(e) => Err(format!("{}: {e}", path.display())),
         };
         TRAINING.store(false, Ordering::Release);

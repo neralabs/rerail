@@ -191,6 +191,11 @@
 .decl token_before(x: loc, t: span)                     // the token just before node or token x
 .decl token_after(x: loc, t: span)                      // the token just after node or token x
 .input first_token, last_token, token_before, token_after
+// end_point(n, p): the point where n ends, an empty span at its end offset: its line is end_line's (a node ending
+// with a line terminator ends on the next line) and its col the byte column there. A finding can sit on it: main's
+// `witness.end`. Read off n's own span, not a token, so a token the tape leaves out cannot move it.
+.decl end_point(n: node, p: span)
+.input end_point
 // The source around a node, for layout questions (a line break, a `;`, spacing): structural_before(n, s) holds
 // the source between n's start and the end of the node just before it among its parent's stored children (or
 // the parent's start, for a first child); structural_after(n, s) the source between n's end and the start of

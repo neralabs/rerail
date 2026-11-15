@@ -478,7 +478,7 @@ pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
 /// buffer (`heavy_of_device`) where the round's rows make a launch pay (`gpu_pays`), else on the CPU, one pass over
 /// each relation's rows (its source, where it has one), the relations spread over the pool. A request names the
 /// relation's source and, where the engine holds it, the relation itself: the device reads the columns of one it
-/// holds in place (decision 0223).
+/// holds in place (decision 0261).
 pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
     use rayon::prelude::*;
     use crate::code_rule_dsl::logic::device::StatColumn;

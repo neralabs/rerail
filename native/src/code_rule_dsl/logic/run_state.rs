@@ -70,6 +70,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "DOC", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "KEPT", Thread, "dialects by grammar: any thread's gives the same"),
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "LOCATED", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/facts/vtab/syntax.rs", "TEXTS", Carried, ""),
     ("src/code_rule_dsl/import_target/mod.rs", "VIEW", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/logic/derived.rs", "MEMO", Carried, ""),
     ("src/code_rule_dsl/logic/derived.rs", "SESSION_MEMO", Outermost, "a session's derived values between its runs: taken and put back by the outermost run"),
@@ -80,9 +81,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/lanes.rs", "QUEUED", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/lanes.rs", "SUSPENDABLE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
-    ("src/code_rule_dsl/logic/native/setfix.rs", "LIMIT", Call, "a limited walk's budget, set around the walk it limits and taken by it (decision 0206)"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
-    ("src/code_rule_dsl/logic/native/setfix.rs", "SPENT", Call, "what a limited walk did, taken by the call that set its limit (decision 0206)"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "ARENA", Thread, "this thread's device waves and launches"),
@@ -116,12 +115,15 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/switches.rs", "DEPTH", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/session.rs", "FULL", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
+    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "TOGETHER", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
+    ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "FILLING", Thread, "this thread fills the tests' store template"),
+    ("src/reactor.rs", "KEPT", Outermost, "the reactor's session between its commands, taken by each command (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/demand.rs", "WHOLE", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/joins.rs", "ROUND", Call, "a planning round's choices, opened and finished by the call that plans its lines (decision 0203 §2)"),
-    ("src/code_rule_dsl/logic/plan/joins.rs", "SEARCHED", Call, "the last search's runners-up, taken by its caller (decision 0203)"),
-    ("src/code_rule_dsl/logic/plan/joins.rs", "WIDE", Call, "set while one wider search runs (decision 0203 §5)"),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED", Carried, ""),
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
@@ -129,6 +131,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's lock"),
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
     ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),
+    ("src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
     ("src/code_rule_dsl/logic/rr.rs", "READS", Call, "the libraries read while `recording` runs; a job records its own and hands them back (`rr::recorded_on_worker`)"),
     ("src/code_rule_dsl/logic/strings/functions.rs", "CACHE", Thread, "compiled regexes by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/matcher/binding.rs", "FOLLOWING", Call, "the state of one call in progress on this thread, set and read within it"),
@@ -171,6 +174,9 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/semver/mod.rs", "SIMPLE_SUBSETS", Thread, "a count of this thread's work, read by tests and the profile"),
     ("src/code_rule_dsl/sql_admission.rs", "CURRENT", Carried, ""),
     ("src/code_rule_dsl/sql_executor/runtime.rs", "LIMITED", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/tape.rs", "ALL_TOKENS", Call, "one parse in progress keeps every token (`with_all_tokens`, capture-tapes' format-11 baseline)"),
+    ("src/code_rule_dsl/tape.rs", "LAST", Thread, "this thread's previous read of each tape part, for its read-pattern counts (E17)"),
+    ("src/code_rule_dsl/tape.rs", "PAUSED", Call, "a decode in progress on this thread, whose reads are not counted (E17)"),
     ("src/code_rule_dsl/tape/navigation.rs", "COUNTERS", Thread, "a count of this thread's tape steps, read by tests"),
     ("src/code_rule_dsl/typing/file_local/split_memo.rs", "SPLITS", Carried, ""),
     ("src/code_rule_dsl/value/names.rs", "UNAVAILABLE", Call, "set by a lookup on this thread, taken by its caller (`take_unavailable`)"),
@@ -275,6 +281,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::demand::carried,
     super::plan::placement::carried,
     super::plan::corpus::switches::carried,
+    super::plan::corpus::session::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,
@@ -284,6 +291,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
 fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["STAGE"], &super::profile::STAGE);
+    c.cloned(&["TEXTS"], &crate::code_rule_dsl::facts::vtab::syntax::TEXTS);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }
 

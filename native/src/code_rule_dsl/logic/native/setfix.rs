@@ -72,6 +72,8 @@ pub mod spec;
 mod survivor_tests;
 #[cfg(test)]
 mod cut_tests;
+#[cfg(test)]
+mod base_probe;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;
@@ -95,6 +97,11 @@ impl Interner {
     /// so it must not hold the registered cursor's lock across SQLite execution.
     fn for_loading(shared: &RwLock<Self>) -> Self {
         Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None }
+    }
+    /// The atom `id` would give `s`, if it would not make one (`Atoms::existing`): found as interning finds it, with
+    /// no read interning would not make.
+    fn held(&self, s: &str) -> Option<i64> {
+        self.atoms.existing(s).map(i64::from)
     }
     fn id(&mut self, s: &str) -> i64 {
         match self.atoms.intern(s) {
@@ -254,6 +261,13 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
 }
 
 /// Decode a composed output through the shared atom arena, without a SQL query per row.
+/// The texts of `atoms`, read under one lock of `conn`'s symbols.
+pub fn symbol_texts(conn: &Connection, atoms: &[i64]) -> Result<Vec<String>> {
+    let symbols = symbols(conn)?;
+    let s = symbols.read().unwrap();
+    atoms.iter().map(|&a| if s.known(a)? { Ok(s.name(a).to_owned()) } else { Err(err(format!("no symbol {a}"))) }).collect()
+}
+
 pub fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
     let symbols=symbols(conn)?;
     let s=symbols.read().unwrap();
@@ -1075,10 +1089,9 @@ struct Limit { budget: u64, only: Option<(usize, Rows0)> }
 /// What a limited walk did: its work, and at a cut the first step's rows left (`None`: not cut; `Some(None)`: cut,
 /// with every row left).
 struct Spent { work: u64, left: Option<Option<Rows0>>, done: u64, led: bool }
-thread_local! {
-    static LIMIT: std::cell::RefCell<Option<Limit>> = const { std::cell::RefCell::new(None) };
-    static SPENT: std::cell::RefCell<Option<Spent>> = const { std::cell::RefCell::new(None) };
-}
+/// A walk's limit, handed to it (`run_join_in_each` takes it, so no walk nested in it sees it), and what the walk
+/// did under it, handed back.
+struct Limited { limit: Option<Limit>, spent: Option<Spent> }
 
 /// Decision 0090's levels for a recursive stratum: which of its kept rows are gone, decided in level order. Per
 /// relation `h` of the stratum, a line names five relations of the component:
@@ -1690,7 +1703,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         for (pi, p) in comp.probes.iter().enumerate() {
             let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
             runs += 1;
-            let n = run_seed(j, p.head, store, &mut syms, &mut fresh)?;
+            let n = run_seed(j, p.head, store, &mut syms, &mut fresh, None)?;
             visits += n;
             per[pi].1 += n;
         }
@@ -1937,12 +1950,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 // At a step no longer known: the run reads all its rows.
                 None => { CUTS[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
             }) } else { None };
-            if budget.is_some() || only.is_some() {
-                LIMIT.with(|l| *l.borrow_mut() = Some(Limit { budget: budget.unwrap_or(u64::MAX), only }));
-            }
-            let n = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh)? } else { run_join(j, p.head, store, &mut syms, &mut fresh)? };
-            LIMIT.with(|l| l.borrow_mut().take());
-            if let Some(b) = budget && let Some(spent) = SPENT.with(|s| s.borrow_mut().take()) {
+            let mut limited = (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None });
+            let n = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh, limited.as_mut())? } else { run_join_limited(j, p.head, store, &mut syms, &mut fresh, limited.as_mut())? };
+            if let Some(b) = budget && let Some(spent) = limited.and_then(|l| l.spent) {
                 p.budget.set(Some(b.saturating_sub(spent.work)));
                 if let Some(left) = spent.left {
                     p.budget.set(None);
@@ -2476,10 +2486,9 @@ pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&Joi
     let mut out = Vec::new();
     let n = rows.n;
     let kept = rows.clone();
-    LIMIT.with(|l| *l.borrow_mut() = Some(Limit { budget, only: Some((at, rows)) }));
-    let got = run_join_in(j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None);
-    LIMIT.with(|l| l.borrow_mut().take());
-    let spent = SPENT.with(|s| s.borrow_mut().take());
+    let mut limited = Limited { limit: Some(Limit { budget, only: Some((at, rows)) }), spent: None };
+    let got = run_join_in_each(j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None, None, Some(&mut limited));
+    let spent = limited.spent;
     for (c, [a, b]) in j.counts.iter().zip(counts) { c[0].set(a); c[1].set(b); }
     let made_rows = got?;
     syms.check()?;
@@ -2525,13 +2534,12 @@ pub fn trial_own(conn: impl Scoped, name: &str, spec: &JoinSpec, size: &dyn Fn(u
     let rows = Rows0::of(RowsOf::of(src), &picked);
     let n = rows.n;
     scalars::register(&j.steps, Some(&store));
-    LIMIT.with(|l| *l.borrow_mut() = Some(Limit { budget, only: Some((0, rows)) }));
     // The rows made are collected and dropped: a join emits to its head's fresh rows otherwise.
     let mut out = Vec::new();
-    let got = run_join_in(&j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None);
+    let mut limited = Limited { limit: Some(Limit { budget, only: Some((0, rows)) }), spent: None };
+    let got = run_join_in_each(&j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None, None, Some(&mut limited));
     drop(out);
-    LIMIT.with(|l| l.borrow_mut().take());
-    let spent = SPENT.with(|s| s.borrow_mut().take());
+    let spent = limited.spent;
     let made = got?;
     syms.check()?;
     CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2804,6 +2812,21 @@ pub fn cat_symbols(conn: &Connection, a: i64, b: i64) -> i64 {
     let syms = symbols(conn).expect("the connection's symbols");
     let mut syms = syms.write().unwrap();
     cat(&mut syms, a, b)
+}
+
+/// `cat`'s text if it is an atom (`Interner::held`): none made.
+fn cat_held(syms: &mut Interner, a: i64, b: i64) -> Option<i64> {
+    if syms.name(a).is_empty() {
+        return Some(b);
+    }
+    let mut s = std::mem::take(&mut syms.buf);
+    s.clear();
+    syms.atoms.with_str(a as crate::content_store::atoms::Sym, |a| s.push_str(a));
+    s.push('.');
+    syms.atoms.with_str(b as crate::content_store::atoms::Sym, |b| s.push_str(b));
+    let id = syms.held(&s);
+    syms.buf = s;
+    id
 }
 
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
@@ -5114,12 +5137,95 @@ pub enum Step {
 /// `forms`: per step, its count-table form's state (`table`).
 /// `spec`: the digest of the spec it was read from, which a level's batch keeps its pairs by (`level`).
 pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usize, multi: Vec<(usize, Vec<usize>)>, pub counts: Vec<[std::cell::Cell<u64>; 2]>,
+                      /// Per step, the texts it makes that are only looked up or not read (`probes`): `PROBE_*` and
+                      /// `UNREAD_*` of a `@dot`'s, a function's or a split's parts. None is interned.
+                      pub probes: Vec<u8>,
                       pub fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64,
                       /// Rows passed over by a factored step (`factored`): counted in `counts` as joined, not walked.
                       pub passed_over: std::cell::Cell<u64> }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     join_rule(conn, &JoinSpec::parse(spec).map_err(err)?, syms)
+}
+
+impl Step {
+    /// Whether the step reads slot `x`.
+    pub fn mentions(&self, x: usize) -> bool {
+        let k = |key: &Key| matches!(key, Key::Slot(s) if *s == x);
+        match self {
+            Step::Unused { .. } => false,
+            Step::Atom { keys, .. } | Step::Scalar { keys, .. } | Step::StrJoin { keys, .. } => keys.iter().any(|(_, key)| k(key)),
+            Step::Cat { a, b, .. } => k(a) || k(b),
+            Step::Split { whole, ka, kb, .. } => k(whole) || k(ka) || k(kb),
+            Step::Eq { a, b } | Step::Ne { a, b } | Step::Lt { a, b, .. } | Step::Doc { a, b, .. } => k(a) || k(b),
+            Step::Let { b, .. } => k(b),
+            Step::Func { args, .. } => args.iter().any(k),
+            Step::DocOf { out, n, bind } => k(n) || (!*bind && *out == x),
+            Step::Test { s, p, .. } => k(s) || k(p),
+            Step::In { a, .. } => k(a),
+        }
+    }
+}
+
+pub(crate) const PROBE_OUT: u8 = 1;
+pub(crate) const PROBE_A: u8 = 2;
+pub(crate) const PROBE_B: u8 = 4;
+/// Read by nothing (`UNREAD_OUT`, `_A`, `_B`): the text must exist (a function's NULL ends the branch) but needs no
+/// atom, nor a lookup: the slot holds 0. `match("(?<m>…): *(?<rest>.*)", l)` binds `rest` for no reader.
+pub(crate) const UNREAD_OUT: u8 = 8;
+pub(crate) const UNREAD_A: u8 = 16;
+pub(crate) const UNREAD_B: u8 = 32;
+/// Read only as text (decision 0223): every later reader is a `cat`'s part or a text function's text argument, so
+/// the text is held in the join's scratch for its branch (`Ctx::texts`, a value `SCRATCH + i`), as the device holds
+/// one in its arena, and needs no atom. The findings' JSON is one text of thirty pieces: each piece was an atom.
+pub(crate) const TEXT_OUT: u8 = 64;
+
+/// The first value of a text held in a join's scratch (`TEXT_OUT`): below every atom and every integer a rule reads.
+const SCRATCH: i64 = i64::MIN / 2;
+
+/// Which texts the steps make only to look them up: a `@dot`, a text function's result or a split's part whose slot no
+/// head reads, and every later step reads only as a key of a positive atom. Such a text needs no atom of its own: one
+/// with no atom (`Interner::held`, found as interning finds one, none made) is in no row, and the join's branch ends
+/// there. Interned instead, every split of every qualified name and every `@dot` probe was a new atom (12.7 M
+/// over PostHog, 789 MB in the store). A step that tests its result against a bound slot (`bind: false`) probes
+/// whatever reads the slot: a text that is no atom is no bound slot's value.
+fn probes(steps: &[Step], out: &[Term]) -> Vec<u8> {
+    let in_head = |x: usize| out.iter().any(|t| match t { Term::Slot(s) => *s == x, Term::Cat(a, b) => *a == x || *b == x, Term::Const(_) => false });
+    // `unread`, `probe` or 0 by what reads slot `x` after step `from`. A positive atom reads a slot only as a key
+    // (`mentions`); any other reader (a test of its name, a negative atom, which must see a miss as "no row") needs it.
+    let use_of = |from: usize, x: usize, unread: u8, probe: u8| {
+        if in_head(x) {
+            return 0;
+        }
+        let mut readers = steps[from + 1..].iter().filter(|step| step.mentions(x)).peekable();
+        if readers.peek().is_none() {
+            return unread;
+        }
+        if readers.all(|step| matches!(step, Step::Atom { neg: false, .. })) { probe } else { 0 }
+    };
+    // Whether every reader of slot `x` after step `from` reads it as text alone (`TEXT_OUT`).
+    let as_text = |from: usize, x: usize| {
+        let me = |k: &Key| matches!(k, Key::Slot(s) if *s == x);
+        let mut readers = steps[from + 1..].iter().filter(|step| step.mentions(x)).peekable();
+        !in_head(x) && readers.peek().is_some() && readers.all(|step| match step {
+            Step::Cat { out, a, b, .. } => *out != x && (me(a) || me(b)),
+            Step::Func { kinds, args, out, .. } => {
+                *out != x && args.iter().zip(kinds.iter()).all(|(a, k)| !me(a) || matches!(k, crate::code_rule_dsl::logic::strings::functions::Kind::Text))
+            }
+            _ => false,
+        })
+    };
+    steps
+        .iter()
+        .enumerate()
+        .map(|(i, step)| match step {
+            Step::Cat { bind: false, .. } | Step::Func { bind: false, .. } => PROBE_OUT,
+            Step::Cat { out, bind: true, .. } | Step::Func { out, bind: true, .. } if as_text(i, *out) => TEXT_OUT,
+            Step::Cat { out, bind: true, .. } | Step::Func { out, bind: true, .. } => use_of(i, *out, UNREAD_OUT, PROBE_OUT),
+            Step::Split { a, b, .. } => a.map_or(0, |x| use_of(i, x, UNREAD_A, PROBE_A)) | b.map_or(0, |x| use_of(i, x, UNREAD_B, PROBE_B)),
+            _ => 0,
+        })
+        .collect()
 }
 
 /// A native join's steps from its spec: each slot bound by its first step, tested by later ones.
@@ -5329,22 +5435,29 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
     let counts = steps.iter().map(|_| Default::default()).collect();
     let fused = if env_set!("RERAIL_NO_ROW_PROGRAMS") { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
     let forms = (0..steps.len()).map(|_| table::StepForm::default()).collect();
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, spec: level::digest(spec), passed_over: Default::default() })
+    let probes = probes(&steps, &out);
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, probes, spec: level::digest(spec), passed_over: Default::default() })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
 fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> Result<u64> {
-    run_join_in(j, head, store, syms, fresh, &[], None, None)
+    run_join_limited(j, head, store, syms, fresh, None)
+}
+
+/// `run_join` under a limit (decision 0206), what it did handed back in `limited`.
+fn run_join_limited(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], limited: Option<&mut Limited>) -> Result<u64> {
+    run_join_in_each(j, head, store, syms, fresh, &[], None, None, None, limited)
 }
 
 /// Runs a seed join: from its pairs when a level's batch made them (`level`), else by the host's walk.
-fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> Result<u64> {
+fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], limited: Option<&mut Limited>) -> Result<u64> {
     match level::take(j)? {
         Some(p) => {
             level::USED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // From a level's pairs: unlimited.
             run_join_in(j, head, store, syms, fresh, &[], None, Some(&p))
         }
-        None => run_join(j, head, store, syms, fresh),
+        None => run_join_limited(j, head, store, syms, fresh, limited),
     }
 }
 
@@ -5373,12 +5486,12 @@ fn run_join_collect(j: &JoinRule, store: &Store, syms: &mut Interner, preset: &[
 /// its edges, node after node), not one per value.
 fn run_join_each(j: &JoinRule, store: &Store, syms: &mut Interner, y: usize, next: &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>) -> Result<u64> {
     let mut out = Vec::new();
-    run_join_in_each(j, 0, store, syms, &mut [], &[], Some(&mut out), None, Some((y, next)))
+    run_join_in_each(j, 0, store, syms, &mut [], &[], Some(&mut out), None, Some((y, next)), None)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>, paired: Option<&level::Paired>) -> Result<u64> {
-    run_join_in_each(j, head, store, syms, fresh, preset, collect, paired, None)
+    run_join_in_each(j, head, store, syms, fresh, preset, collect, paired, None, None)
 }
 
 /// Whether a positive atom of `j` reads an input relation known to be empty, so the whole conjunction is: the CPU's
@@ -5390,10 +5503,10 @@ pub fn reads_empty_input(j: &JoinRule) -> bool {
 
 #[allow(clippy::too_many_arguments)]
 fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>,
-                    paired: Option<&level::Paired>, each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>) -> Result<u64> {
-    // The limit `run` set for this walk (decision 0206), taken so that no walk nested in it sees it. A walk for
-    // each value, or from a level's pairs, runs unlimited.
-    let limit = LIMIT.with(|l| l.borrow_mut().take()).filter(|_| each.is_none() && paired.is_none());
+                    paired: Option<&level::Paired>, each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>, mut limited: Option<&mut Limited>) -> Result<u64> {
+    // The limit `run` handed this walk (decision 0206). A walk for each value, or from a level's pairs, runs
+    // unlimited.
+    let limit = limited.as_mut().and_then(|l| l.limit.take()).filter(|_| each.is_none() && paired.is_none());
     // An empty required relation makes the entire conjunction empty. Check once per
     // invocation, before expanding another input; the next wave can grow this relation.
     // Negative atoms and scalar aggregates do not obey this rule.
@@ -5417,6 +5530,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     }
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
+                     /// The texts the branch being walked holds as text alone (`TEXT_OUT`), by `value - SCRATCH`: each
+                     /// dropped as its step's branch returns.
+                     texts: Vec<String>,
                      /// Each step's place in the runs of the order it probes (`Index::find_at`): the step's keys come
                      /// in a sorted batch where they can (`scan_order`), so each probe starts where the last ended.
                      hints: Vec<[u32; runs::HINTS]>,
@@ -5526,6 +5642,29 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, tagged, m, |q, i| vals[q as usize * m + i], cmp); }, |a, b| key_cmp(a, b).is_le());
         runs::presorted::site_known(runs::presorted::SCAN, taken as u64);
         Some(order.into_iter().map(|q| lo + q).collect())
+    }
+    /// The text a scratch value names (`TEXT_OUT`), if `v` is one.
+    fn scratch<'s>(cx: &'s Ctx<'_, '_>, v: i64) -> Option<&'s str> {
+        let at = v.checked_sub(SCRATCH).filter(|&at| at >= 0 && v < 0)?;
+        cx.texts.get(at as usize).map(String::as_str)
+    }
+    /// Value `v`'s text: a scratch text's, or an atom's.
+    fn text(cx: &Ctx<'_, '_>, v: i64) -> String {
+        scratch(cx, v).map_or_else(|| cx.syms.name(v), str::to_owned)
+    }
+    /// The value a step's made text `t` gets, by how its slot is read (`probes`): held as text, none, looked up
+    /// (-1: no atom, so no row holds it), or interned.
+    fn text_value(cx: &mut Ctx<'_, '_>, probe: u8, t: String) -> i64 {
+        if probe & TEXT_OUT != 0 {
+            cx.texts.push(t);
+            SCRATCH + cx.texts.len() as i64 - 1
+        } else if probe & UNREAD_OUT != 0 {
+            0
+        } else if probe & PROBE_OUT != 0 {
+            cx.syms.held(&t).unwrap_or(-1)
+        } else {
+            cx.syms.id(&t)
+        }
     }
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
         if cx.error.is_some() || cx.stop { return; }
@@ -5812,8 +5951,30 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let (x, y) = (val(slots, *a), val(slots, *b));
                 if x < y || (*or_eq && x == y) { go(cx, i + 1, slots) }
             }
+            Step::Cat { out, a, b, bind } if j.probes[i] & TEXT_OUT != 0 || [val(slots, *a), val(slots, *b)].iter().any(|v| scratch(cx, *v).is_some()) => {
+                // A part or the whole held as text (`TEXT_OUT`): `@dot` of the texts, as `cat` makes it.
+                let (x, y) = (val(slots, *a), val(slots, *b));
+                let first = text(cx, x);
+                let joined = if first.is_empty() { None } else { Some(format!("{first}.{}", text(cx, y))) };
+                let mark = cx.texts.len();
+                let v = match joined {
+                    None if j.probes[i] & TEXT_OUT != 0 || scratch(cx, y).is_none() => y,
+                    None => text_value(cx, j.probes[i], text(cx, y)),
+                    Some(t) => text_value(cx, j.probes[i], t),
+                };
+                if v == -1 && j.probes[i] & PROBE_OUT != 0 { return }
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+                cx.texts.truncate(mark);
+            }
             Step::Cat { out, a, b, bind } => {
-                let v = cat(cx.syms, val(slots, *a), val(slots, *b));
+                let v = if j.probes[i] & UNREAD_OUT != 0 {
+                    0
+                } else if j.probes[i] & PROBE_OUT != 0 {
+                    match cat_held(cx.syms, val(slots, *a), val(slots, *b)) { Some(v) => v, None => return }
+                } else {
+                    cat(cx.syms, val(slots, *a), val(slots, *b))
+                };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
             }
@@ -5822,8 +5983,19 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let w = cx.syms.name(val(slots, *whole)).to_owned();
                 for p in std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))) {
                     let (x, y) = p.map_or(("", w.as_str()), |p| (&w[..p], &w[p + 1..]));
-                    match a { Some(s) => slots[*s] = cx.syms.id(x), None => if cx.syms.name(val(slots, *ka)) != x { continue } }
-                    match b { Some(s) => slots[*s] = cx.syms.id(y), None => if cx.syms.name(val(slots, *kb)) != y { continue } }
+                    let probe = j.probes[i];
+                    match a {
+                        Some(s) if probe & UNREAD_A != 0 => slots[*s] = 0,
+                        Some(s) if probe & PROBE_A != 0 => match cx.syms.held(x) { Some(v) => slots[*s] = v, None => continue },
+                        Some(s) => slots[*s] = cx.syms.id(x),
+                        None => if cx.syms.name(val(slots, *ka)) != x { continue },
+                    }
+                    match b {
+                        Some(s) if probe & UNREAD_B != 0 => slots[*s] = 0,
+                        Some(s) if probe & PROBE_B != 0 => match cx.syms.held(y) { Some(v) => slots[*s] = v, None => continue },
+                        Some(s) => slots[*s] = cx.syms.id(y),
+                        None => if cx.syms.name(val(slots, *kb)) != y { continue },
+                    }
                     go(cx, i + 1, slots);
                 }
             }
@@ -5832,21 +6004,27 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Step::Func { name, kinds, args, out, bind } => {
                 use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
                 let value = {
-                    let mut text = Vec::new();
+                    let mut texts = Vec::new();
                     let mut numbers = Vec::new();
                     for (k, a) in kinds.iter().zip(args) {
-                        match k { Kind::Text => text.push(cx.syms.name(val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                        match k { Kind::Text => texts.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
                     }
-                    let text: Vec<&str> = text.iter().map(String::as_str).collect();
-                    eval(name, &text, &numbers)
+                    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+                    eval(name, &texts, &numbers)
                 };
+                let mark = cx.texts.len();
                 let v = match value {
                     rusqlite::types::Value::Integer(n) => n,
-                    rusqlite::types::Value::Text(s) => cx.syms.id(&s),
+                    // Looked up and no atom: no row holds it.
+                    rusqlite::types::Value::Text(s) => match text_value(cx, j.probes[i], s) {
+                        -1 if j.probes[i] & PROBE_OUT != 0 => return,
+                        v => v,
+                    },
                     _ => return,
                 };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
+                cx.texts.truncate(mark);
             }
             Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },
             Step::DocOf { out, n, bind } => {
@@ -5875,7 +6053,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()],
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()],
                        factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None };
@@ -5935,7 +6113,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Rows0::of(*of, &list[at..])
         }));
         let done = match &left { Some(Some(l)) => total - l.n.min(total), Some(None) => 0, None => total };
-        SPENT.with(|s| *s.borrow_mut() = Some(Spent { work: cx.work, left, done, led }));
+        if let Some(l) = limited {
+            l.spent = Some(Spent { work: cx.work, left, done, led });
+        }
     }
     match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}
 }

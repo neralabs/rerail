@@ -48,6 +48,30 @@ UP030_format_literals_annotation(CALL, n) :- (kind(n, "string") ; kind(n, "conca
     parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, child(c2, c3, _),
     kind(c3, "attribute"), child(c3, c4, _), up030_permuted(c4), up030_alt_5(c2).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^format$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up030_tok_has_1(n: node)
+.stored up030_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up030_tok_has_1(n) :- field(n, "attribute", c12), glob("format", c12).
+up030_tok_has_1(n) :- op(n, t13), match("format", t13).
+up030_tok_has_1(n) :- child(n, c19, _), structural_before(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g14).
+up030_tok_has_1(n) :- child(n, c19, _), structural_after(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g14).
+up030_tok_has_1(n) :- node_text(n, g14), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g14).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^format$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up030_tok_has_2(n: node)
+.stored up030_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up030_tok_has_2(n) :- field(n, "attribute", c10), glob("format", c10).
+up030_tok_has_2(n) :- op(n, t11), match("format", t11).
+up030_tok_has_2(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g12).
+up030_tok_has_2(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g12).
+up030_tok_has_2(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g12).
+
 // demand_permuted: the nodes permuted is asked at (its recursion looks at every descendant)
 .decl up030_demand_permuted(n: node)
 up030_demand_permuted(c44) :- up030_demand_permuted(n), kind(n, "parenthesized_expression"),
@@ -108,8 +132,7 @@ up030_alt_3(n) :- up030_alt_2(n),
     !fa_unknown(n), !fa_brace_missing_open(n).
 up030_alt_3(n) :- kind(n, "call"), field(n, "arguments", c8),
     kind(c8, "generator_expression"), field(n, "function", c9), kind(c9, "attribute"),
-    field(c9, "attribute", c10), glob("format", c10), field(c9, "object", c11),
-    up030_in_order(c11).
+    up030_tok_has_2(c9), field(c9, "object", c18), up030_in_order(c18).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 .decl up030_alt_5(n: node)

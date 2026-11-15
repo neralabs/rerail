@@ -5161,21 +5161,22 @@ the relation); raised columns are kept with their note in the store (`rr_join_ra
 `rerail_accel::gpu::join::column_stats`, one command buffer a round, exact.
 
 
-## O173. A trial's estimate under its line's work on a correlated key (decision 0223)
+## O173. A trial's estimate under its line's work on a correlated key (decision 0261)
 
 On the self-join seed `call_ret`, a stratified trial (decision 0221) estimates the winning order at 0.69 of the
-line's work per row, even when each part is estimated by ratio to its rows' sizes (decision 0223). The sample is
+line's work per row, even when each part is estimated by ratio to its rows' sizes (decision 0261). The sample is
 representative by size, so the gap is per-row work the key's size does not explain: the returns a function
 reaches (decision 0216 §3). Open: a size that sees that correlation, from exact pair statistics (0203 §3), or a
 larger heavy share under a larger cap; neither is tuned.
 
-Closed (2026-11-14, decision 0226): each order is estimated by its work at a row's key, from pair counts with
+Closed (2026-11-14, decision 0262): each order is estimated by its work at a row's key, from pair counts with
 the filters on the key's atoms: 0.97 of the line's work on `call_ret`.
 
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
-Status: the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). Open: a rule's numbering is made again at each
-split (keep it with the body's digest), and `split_constants` works on names.
+Status: superseded by decision 0225 (draft): the split's questions become rules over the image, after 0173 stage 2. the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). A body's numbering is kept with its digest for the run, and every fixpoint, `split_constants`'s included, runs on
+numbered relations (0210 §10: 21.61 → 21.24 G). Open: a split's boundary and results are string sets (`Split`), and
+`RuleIndex` is keyed by text.
 
 After decision 0210's first five steps, a cold dl1 batch's main thread still spent about 10% in `typing::file_local::split_in`.
 Its location and filter fixpoints build a `BTreeSet<String>` of variables for each rule in each round, and

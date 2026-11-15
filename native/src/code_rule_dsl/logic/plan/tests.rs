@@ -881,6 +881,8 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
 .output name
 "#;
     let out = dir.join("out");
+    #[cfg(target_os = "linux")]
+    let store = out.join("store.sqlite");
     for (i, [a, b]) in [["alpha", "beta"], ["gamma", "delta"]].into_iter().enumerate() {
         let root = dir.join(format!("corpus-{i}"));
         std::fs::create_dir_all(&root).unwrap();
@@ -1113,6 +1115,9 @@ fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, Strin
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let mut got = Vec::new();
     let mut native = 0;
+    // Each mode derives from scratch: kept across runs (decision 0077 §4), the second run's strata were the first's,
+    // and the native engine solved none.
+    let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
     for modes in ["", "program"] {
         let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
         let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));

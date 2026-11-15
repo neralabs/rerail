@@ -4,17 +4,15 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-// The self dev-dependency owns the production allocator. Keep it linked even
-// when split-crate tests no longer reference one of its exported types.
-#[cfg(test)]
-extern crate rerail_engine as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
-/// so `cargo test` checks how the build validates the language registry.
+/// so `cargo test` checks how the build validates the language registry. What only `build.rs` calls is
+/// dead here.
 #[cfg(test)]
+#[allow(dead_code)]
 mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 #[cfg(test)]
@@ -29,6 +27,7 @@ pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
+pub use rerail_store::source_tree;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
@@ -45,10 +44,9 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. A test build links the engine
-// again as its own dev-dependency (`test-hooks`), whose copy declares the allocator (kept linked by the
-// `extern crate rerail_engine as _` above; `rust_allocations_reach_the_profile_allocator` checks it).
-#[cfg(not(any(test, windows, target_family = "wasm", feature = "system-allocator")))]
+// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// (`rust_allocations_reach_the_profile_allocator` checks it).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: Sampled = Sampled;
 

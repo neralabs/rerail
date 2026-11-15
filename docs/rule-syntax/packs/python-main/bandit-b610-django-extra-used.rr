@@ -17,18 +17,16 @@ B610(n) :- n ~ `$R.extra($$$)`, field(n, "function", c1), field(c1, "object", c2
 .decl b610_queryset_receiver(n: node)
 b610_queryset_receiver(n) :- kind(n, "identifier"),
     match("(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)", n).
-b610_queryset_receiver(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    match("(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)", c1).
-b610_queryset_receiver(n) :- kind(n, "call"), field(n, "function", c2),
-    kind(c2, "attribute"), field(c2, "object", c3), b610_queryset_receiver(c3).
-b610_queryset_receiver(n) :- kind(n, "call"), field(n, "function", c4),
-    ( kind(c4, "identifier"), glob("get_queryset", c4)
-    ; kind(c4, "attribute"), field(c4, "attribute", c1), glob("get_queryset", c1)
+b610_queryset_receiver(n) :- kind(n, "attribute"), b610_tok_has_1(n).
+b610_queryset_receiver(n) :- kind(n, "call"), field(n, "function", c9),
+    kind(c9, "attribute"), field(c9, "object", c10), b610_queryset_receiver(c10).
+b610_queryset_receiver(n) :- kind(n, "call"), field(n, "function", c11),
+    ( kind(c11, "identifier"), glob("get_queryset", c11)
+    ; kind(c11, "attribute"), b610_tok_has_3(c11)
     ).
 
 b610_queryset_receiver(n) :- (kind(n, "identifier"), glob("self", n) ; n ~ `super()`),
-    inside(n, p6, "class_definition"), field(p6, "superclasses", c7),
-    match(".*(?:^|[(,\\s])(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:[A-Za-z0-9_]*QuerySet|Manager|BaseManager|BaseUserManager)\\b.*", c7).
+    inside(n, p20, "class_definition"), b610_tok_has_4(p20).
 
 // string(n): the JSON util `string`, used where the JSON says `matches: "string"`
 .decl b610_string(n: node)
@@ -43,6 +41,58 @@ b610_strings(n) :- kind(n, "list"), count : { child(n, c1, _), !b610_alt_3(c1) }
 // string_pairs(n): the JSON util `string-pairs`, used where the JSON says `matches: "string-pairs"`
 .decl b610_string_pairs(n: node)
 b610_string_pairs(n) :- kind(n, "dictionary"), count : { child(n, c1, _), !b610_alt_5(c1) } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b610_tok_has_1(n: node)
+.stored b610_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b610_tok_has_1(n) :- field(n, "attribute", c1),
+    match("(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)", c1).
+b610_tok_has_1(n) :- op(n, t2),
+    match("(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)", t2).
+b610_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)).*)$", g3).
+b610_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)).*)$", g3).
+b610_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:.*(?:(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)).*)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^get_queryset$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b610_tok_has_2(n: node)
+.stored b610_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b610_tok_has_2(n) :- field(n, "attribute", c12), glob("get_queryset", c12).
+b610_tok_has_2(n) :- op(n, t13), match("get_queryset", t13).
+b610_tok_has_2(n) :- child(n, c19, _), structural_before(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:get_queryset)(?:\\W.*)?)$", g14).
+b610_tok_has_2(n) :- child(n, c19, _), structural_after(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:get_queryset)(?:\\W.*)?)$", g14).
+b610_tok_has_2(n) :- node_text(n, g14), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:get_queryset)(?:\\W.*)?)$", g14).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^get_queryset$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b610_tok_has_3(n: node)
+.stored b610_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b610_tok_has_3(n) :- field(n, "attribute", c1), glob("get_queryset", c1).
+b610_tok_has_3(n) :- op(n, t2), match("get_queryset", t2).
+b610_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:get_queryset)(?:\\W.*)?)$", g3).
+b610_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:get_queryset)(?:\\W.*)?)$", g3).
+b610_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:get_queryset)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "(?:^|[(,\\s])(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:[A-Za-z0-9_]*QuerySet|Manager|BaseManager|BaseUserManager)\\b": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b610_tok_has_4(n: node)
+.stored b610_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b610_tok_has_4(n) :- field(n, "superclasses", c21),
+    match(".*(?:^|[(,\\s])(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:[A-Za-z0-9_]*QuerySet|Manager|BaseManager|BaseUserManager)\\b.*", c21).
+b610_tok_has_4(n) :- op(n, t22),
+    match(".*(?:^|[(,\\s])(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:[A-Za-z0-9_]*QuerySet|Manager|BaseManager|BaseUserManager)\\b.*", t22).
+b610_tok_has_4(n) :- child(n, c28, _), structural_before(c28, g23),
+    match("(?s)^(?:.*\\S*?(?:(?:^|[(,\\s])(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:[A-Za-z0-9_]*QuerySet|Manager|BaseManager|BaseUserManager)\\b)\\S*.*)$", g23).
+b610_tok_has_4(n) :- child(n, c28, _), structural_after(c28, g23),
+    match("(?s)^(?:.*\\S*?(?:(?:^|[(,\\s])(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:[A-Za-z0-9_]*QuerySet|Manager|BaseManager|BaseUserManager)\\b)\\S*.*)$", g23).
+b610_tok_has_4(n) :- node_text(n, g23), !child(n, _, _),
+    match("(?s)^(?:.*\\S*?(?:(?:^|[(,\\s])(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:[A-Za-z0-9_]*QuerySet|Manager|BaseManager|BaseUserManager)\\b)\\S*.*)$", g23).
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl b610_args_plain(l: node, a: node, i: number)

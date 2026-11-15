@@ -407,8 +407,9 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
     }
     let mut pass = Pass { prog: &original, local: &local, locations: &locations, same_doc: &same_doc, rules_of, shapes: BTreeMap::new() };
     let cross: Vec<usize> = (0..original.rules.len()).filter(|i| !local.contains(original.rules[*i].head.rel.as_str())).collect();
-    // What may not be cut: read by a native, negated, in an aggregate, an output, a lattice, a gate's.
-    let mut whole: BTreeSet<String> = original.natives.values().flat_map(|n| n.reads()).map(str::to_owned).collect();
+    // What may not be cut: read by a cross-file native (a file-local one reads its input in the chunk, not the
+    // export), negated, in an aggregate, an output, a lattice, a gate's.
+    let mut whole: BTreeSet<String> = original.natives.iter().filter(|(rel, _)| !local.contains(rel.as_str())).flat_map(|(_, n)| n.reads()).map(str::to_owned).collect();
     whole.extend(original.outputs.iter().cloned());
     whole.extend(original.lattice.keys().cloned());
     whole.extend(original.gates.iter().map(|(r, _)| r.clone()));

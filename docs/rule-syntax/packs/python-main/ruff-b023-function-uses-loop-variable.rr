@@ -9,7 +9,7 @@
 // B023(n): a finding at node n, from clause `function-uses-loop-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation B023(at: node, n: loc) "Bind `{n}` as a default argument, such as `{n}={n}`, so the function keeps this iteration's value."
+.violation B023(at: node, n_mv: loc) "Bind `{n_mv}` as a default argument, such as `{n_mv}={n_mv}`, so the function keeps this iteration's value."
     suppress noqa "B023"
 B023(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, b023_load_name(n),
     (b023_function_body(n, N) ; within(n, p1), b023_function_body(p1, N)).

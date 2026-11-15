@@ -1,0 +1,46 @@
+#!/bin/sh
+# Installs the build farm for this user (README.md): the scripts and the farm's sccache under
+# ~/.local/share/rerail-farm, the machine's one cargo configuration for Rerail's builds in
+# ~/.cargo/config.toml ("One configuration"), and a farm configuration to fill in at
+# ~/.config/rerail-farm/farm.json (kept if there is one). Hosts need nothing installed (the scripts
+# they run are sent with each command): only ssh without a password, and the toolchain of
+# rust-toolchain.toml, which this checks.
+# Usage: setup [--force] [path-to-patched-sccache]
+#   --force installs this checkout's farm over a newer installed version (a downgrade).
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+share=$HOME/.local/share/rerail-farm
+config=$HOME/.config/rerail-farm
+force=
+if [ "${1:-}" = "--force" ]; then force=1; shift; fi
+version() { sed -n 's/^VERSION = \([0-9]*\)$/\1/p' "$1" 2>/dev/null; }
+mine=$(version "$here/farm.py")
+installed=$(version "$share/farm.py")
+if [ -n "$installed" ] && [ "$installed" -gt "$mine" ] && [ -z "$force" ]; then
+  echo "setup: the installed farm is version $installed, this checkout's $mine: not installed over it" >&2
+  echo "       (merge the newer farm into this checkout, or --force to go back)" >&2
+  exit 1
+fi
+mkdir -p "$share/bin" "$config"
+for f in farm.py mirror.py rustc-wrapper farm-rustc farm-cc farm-agent status diagnose; do
+  install -m 0755 "$here/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
+done
+install -m 0755 "$here/../../dev/clean-target" "$share/clean-target.tmp" && mv "$share/clean-target.tmp" "$share/clean-target"
+ln -sf farm-cc "$share/farm-c++"
+# What an earlier version installed and this one has not: copy and NFS modes.
+for f in remote-rustc shared-volume; do [ -e "$share/$f" ] && mv "$share/$f" "${TMPDIR:-/tmp}/rerail-farm-old-$f.$$"; done
+if [ $# -gt 0 ]; then install -m 0755 "$1" "$share/bin/sccache.tmp" && mv "$share/bin/sccache.tmp" "$share/bin/sccache"; fi
+[ -f "$config/farm.json" ] || [ -f "$config/hosts.json" ] || cp "$here/farm.example.json" "$config/farm.json"
+"$here/cargo-config"
+toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain.toml")
+python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import farm; [print(h["name"]) for h in farm.hosts() if h.get("enabled", True)]' "$here" |
+while read -r host; do
+  if ssh -o BatchMode=yes -o ConnectTimeout=3 "$host" "~/.cargo/bin/rustup toolchain list | grep -q '^$toolchain' || ~/.cargo/bin/rustup toolchain install $toolchain --profile minimal" </dev/null; then
+    echo "$host: ready"
+  else
+    echo "$host: unreachable or without rustup, skipped"
+  fi
+done
+# Keeps the farm's files on the hosts out of their backups (and reports Spotlight's indexing of them).
+"$here/host-privacy" || true
+"$share/status" || true

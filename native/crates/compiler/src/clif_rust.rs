@@ -71,11 +71,16 @@ pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)], address
     for (_, _, n) in addresses {
         writeln!(out, "/// An address of the running process's (set before the first call).\npub static {n}: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);\n").unwrap();
     }
-    out.push_str("#[inline(always)]\nfn sp() -> u64 {\n    let s: u64;\n    // SAFETY: reads the stack pointer.\n    unsafe { core::arch::asm!(\"mov {}, sp\", out(reg) s, options(nomem, nostack, preserves_flags)) };\n    s\n}\n\n");
     let mut structured = 0;
+    let mut bodies = String::new();
     for (id, f) in funcs {
-        structured += usize::from(function(&mut out, *id, f).map_err(|e| format!("u0:{id}: {e}"))?);
+        structured += usize::from(function(&mut bodies, *id, f).map_err(|e| format!("u0:{id}: {e}"))?);
     }
+    // The stack pointer's read, where a function takes it (`GetStackPointer`).
+    if bodies.contains("sp()") {
+        out.push_str("#[inline(always)]\nfn sp() -> u64 {\n    let s: u64;\n    // SAFETY: reads the stack pointer.\n    unsafe { core::arch::asm!(\"mov {}, sp\", out(reg) s, options(nomem, nostack, preserves_flags)) };\n    s\n}\n\n");
+    }
+    out.push_str(&bodies);
     writeln!(out, "/// The functions whose graph is structured control (the rest irreducible, a loop over a `match`).\npub const STRUCTURED: (usize, usize) = ({structured}, {});\n", funcs.len()).unwrap();
     for &(entry, n) in entries {
         let f = &funcs.iter().find(|(id, _)| *id == entry).ok_or("no entry")?.1;
@@ -679,6 +684,18 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let InstructionData::Brif { blocks, .. } = data else { return Err("a branch with no blocks".into()) };
             format!("if {} != 0 {} else {}", args[0], goto(f, &blocks[0], 0, name, jump)?, goto(f, &blocks[1], 1, name, jump)?)
         }
+        // A jump table: a `match`, its arms the table's (successors 1 on), the rest the default
+        // (successor 0), as `successors` lists them; rustc makes it a table again.
+        Opcode::BrTable => {
+            let InstructionData::BranchTable { table, .. } = data else { return Err("a jump table of nothing".into()) };
+            let jt = &f.dfg.jump_tables[*table];
+            let mut s = format!("match {} {{ ", args[0]);
+            for (i, call) in jt.as_slice().iter().enumerate() {
+                write!(s, "{i} => {} ", goto(f, call, i + 1, name, jump)?).unwrap();
+            }
+            write!(s, "_ => {} }}", goto(f, &jt.default_block(), 0, name, jump)?).unwrap();
+            s
+        }
         op => return Err(format!("the opcode {op}")),
     })
 }
@@ -698,6 +715,8 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
     let u = |e: String| set(format!("unsafe {{ {e} }}"));
     Ok(match op {
         Opcode::Band if is(rt, types::I8X16) => u(format!("vandq_u8({}, {})", args[0], args[1])),
+        Opcode::Isub if is(rt, types::I8X16) => u(format!("vsubq_u8({}, {})", args[0], args[1])),
+        Opcode::Iadd if is(rt, types::I8X16) => u(format!("vaddq_u8({}, {})", args[0], args[1])),
         Opcode::Bor if is(rt, types::I8X16) => u(format!("vorrq_u8({}, {})", args[0], args[1])),
         Opcode::Bxor if is(rt, types::I8X16) => u(format!("veorq_u8({}, {})", args[0], args[1])),
         Opcode::Bnot if is(rt, types::I8X16) => u(format!("vmvnq_u8({})", args[0])),

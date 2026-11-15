@@ -65,6 +65,48 @@ and the split and magic self-checks pass.
    `at(relation, column)` and build no key. Keying `Model` by `RelId` as a whole (0173 stage 2) waits on the
    planner taking a program version (t36 item 7), which is not started.
 
+   *Merged (2026-11-14):* the hub had meanwhile numbered the statistics (decision 0209 step 1: `table::ColMap`,
+   each relation's columns a block of slots in one array, by `RelId`), so that form is kept and this `ColMap` was
+   dropped. What it saved on a fork is kept on 0209's form: `Stats::dfreq` holds each frequency map in an `Arc`,
+   so a fork copies a pointer per column, not the map.
+10. **The split numbered for the run.** §6 numbered each rule in scope again at every split, and the constants
+    and filters fixpoints still read names. Now:
+    - A rule body's form (`shape::Form`: its variables, their classes, the value tapes and binders, each read's
+      relation by its name's address) reads only the body. So the run keeps it with the body's digest in the split
+      memo's bodies (`split_memo::Body`), made the first time a split asks for it. A split numbers only the bodies a
+      round rewrote.
+    - Each split numbers its relations by their name's address (`shape::Rels`). A `Name` is interned, one address
+      per name, so a read's relation is found with no hashing or comparing of its text. What the split asks of a
+      relation by name (a fact, an input, a run constant, a chunk's value, a text test, its text columns, its base
+      location columns, its rules, its readers) is asked once per split.
+    - The constants, locations, filters and file-local fixpoints all run on these numbers, and their rounds are lists
+      of numbers.
+    - The keys read each rule's body entry once. Each thread of the pool takes the memo's lock once for its share,
+      not once per rule. The relations' digests are keyed by `Name`.
+
+    The split's results are unchanged. A dump of every split and every `constant_relations` answer on dl1 (48 and
+    52) was the same, byte for byte, from the old code and the new.
+11. **`simplify`'s congruence on numbers.** A run calls `congruence` about 24 times (each `simplify`, each
+    `merge_identical` after the file-local joins, `corpus::scoping`), over 27,664 rules in all on dl1. Only 30% of
+    those are a body an earlier call saw (19,306 distinct), so keeping the templates for the run would save little
+    and be a store of its own. Instead each call does less:
+    - the candidates are numbered once, and every other relation a rule names after them;
+    - a rule's template keeps the relations it reads as numbers, not a `String` copy of each name;
+    - each refinement round labels a read by a vector index (its class, or its own number), not by a lookup in a
+      string-keyed map and a `&str` label compared by text;
+    - what keeps a relation its own (`fixed`: inputs, demand, gates) is a set made once, not a scan of each list
+      per candidate;
+    - a candidate's distinct rules are counted with foldhash, not SipHash, and its column types are `Name`s;
+    - a rule is copied only when its constants are abstracted.
+
+    Every `congruence` result on dl1 (26) was the same from the old code and the new.
+12. **The lowerer's span patterns on numbers.** `span_patterns` keyed each column's spans by `(String, column)`,
+    with a `to_string` for each lookup, and its rules, readers and reading sites by text. The relations are now
+    numbered by their names' addresses, and the spans, the demand, the readers and the sites are vectors by
+    number. The rounds are unchanged: each reads the columns as the round before left them. Every pass's result on
+    dl1 (99 lowerings: `rx_spans`, the AST patterns) was the same from the old code and the new. dl1 has no span
+    pattern, so the lowerer's span tests are what exercises the fixpoint.
+
 ## Measured
 
 dl1, `RERAIL_THREADS=4`, cold, `--profile profiling`, alternating A/B runs:
@@ -80,6 +122,8 @@ dl1, `RERAIL_THREADS=4`, cold, `--profile profiling`, alternating A/B runs:
 | strata on numbers (after the Typing merge) | 22.60 → 22.25 G (load 20–24) |
 | domains, text-kind demand, keep factors | 22.64 → 21.96 G (load 63–78) |
 | column statistics by relation | 21.71–21.78 → 21.49–21.65 G (load 26–28) |
+| the split numbered for the run | 21.61 → 21.24 G (medians of five pairs, load 78–98) |
+| congruence and span patterns on numbers (together) | 21.37 → 20.80 G (medians of five pairs, load 57–69) |
 
 The set as a whole, against the engine built just after the hub merge (one of the earlier steps was already in
 that engine), at load 76–84: instructions 23.64 → 22.90 G, CPU 2.99 → 2.83 s (medians). Walls at that load are
@@ -94,9 +138,14 @@ runs at its starter's depth (`switches::within`) and takes nothing.
 
 ## What remains
 
+This line of work ends at §12: decision 0225 (draft) replaces constant-factor work on the tree's passes with their
+move onto the program's image, as rules the engine maintains. The numberings above are stand-ins until then.
+
 These are open items (O-split-in-strings and the others in open-items.md):
-- `split_in`'s rule numbering runs for every rule in scope at each split; a rule's intrinsic part (its variables,
-  classes and tapes) could be kept with its body's digest across splits. `split_constants` still works on names.
+- A split still starts each relation outside its cone from the kept split's string sets, and gives its results as
+  string sets and maps (`Split`), which `split_explained` copies. `RuleIndex` is keyed by text.
+- `canonical` still builds a relabelled copy of each rule and prints it, once per rule per `congruence` call.
+- `keeps::choose` is on names until 0173 stage 2.
 - `Board::finish` is 15% of the main thread, mostly waiting on the pool (`LockLatch`).
 - `memcmp` is 14.6%, spread over the string-keyed BTree lookups of many passes.
 - `keeps::choose` still keys its refusals, bounds and estimates by name (`BTreeMap<&str, …>`, `BTreeSet<String>`),

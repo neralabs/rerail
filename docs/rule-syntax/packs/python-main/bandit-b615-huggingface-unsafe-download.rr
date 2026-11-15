@@ -57,36 +57,83 @@ b615_alias_writer(n, HEAD) :- node(_, HEAD, _, _, _), kind(n, "dotted_name"),
 // writer_case gives the strings each copy had.
 //   HEAD: metavariable of the calling rule, passed in (bound by the caller)
 .decl b615_writer(n: node, key: symbol, head: loc)
-b615_writer(n, q1, HEAD) :- b615_segment_case(q1), b615_alias_writer(n, HEAD),
+b615_writer(n, q1, HEAD) :- b615_writer_case(q1), b615_alias_writer(n, HEAD),
     ( kind(n, "dotted_name"), glob(q1, n)
     ; kind(n, "aliased_import"), field(n, "name", c1), child(c1, c2, _), kind(c2, "identifier"), glob(q1, c2)
     ; child(p1, n, _), kind(p1, "import_from_statement"), field(p1, "module_name", c3), has(c3, c4, "identifier"), glob(q1, c4)
     ).
 
 
-// segment(n, key): 3 copies of one rule set (`segment-datasets`, `segment-huggingface-hub`, `segment-transformers`), folded into one: row `key` of
-// segment_case gives the strings each copy had.
-.decl b615_segment(n: node, key: symbol)
-b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1),
+// segment_transformers(n): the JSON util `segment-transformers`, used where the JSON says `matches: "segment-transformers"`
+.decl b615_segment_transformers(n: node)
+b615_segment_transformers(n) :- b615_demand_segment_transformers(n),
     kind(n, "parenthesized_expression"), child(n, c1, _), !kind(c1, "comment"),
-    b615_segment(c1, q1).
-b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "attribute"),
-    field(n, "attribute", c2), glob(q1, c2).
-b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "attribute"),
-    field(n, "object", c3), b615_segment(c3, q1).
-b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    glob(q1, n),
-    count : { ref_site(n, b4), (st5 = b4, kind(st5, "aliased_import") ; inside(b4, st5, "aliased_import")) } = 0.
-b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    ref_site(n, b6), (st7 = b6 ; within(b6, st7)), kind(st7, "aliased_import"),
-    field(st7, "name", c8), child(c8, c9, _), kind(c9, "identifier"), glob(q1, c9).
-b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    ref_site(n, b10), (st11 = b10 ; within(b10, st11)),
-    inside(st11, p12, "import_from_statement"), field(p12, "module_name", c13),
-    has(c13, c14, "identifier"), glob(q1, c14).
-b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    node(_, n, _, _, _), HEAD = n, count : { ref_site(n, b15), main_form(b15, "import") } = 0,
-    within(n, p16), precedes(s17, p16), within(c18, s17), b615_writer(c18, q1, HEAD).
+    b615_segment_transformers(c1).
+b615_segment_transformers(n) :- b615_demand_segment_transformers(n), kind(n, "attribute"),
+    b615_tok_has_1(n).
+b615_segment_transformers(n) :- b615_demand_segment_transformers(n), kind(n, "attribute"),
+    field(n, "object", c10), b615_segment_transformers(c10).
+b615_segment_transformers(n) :- b615_demand_segment_transformers(n), kind(n, "identifier"),
+    glob("transformers", n),
+    count : { ref_site(n, b11), (st12 = b11, kind(st12, "aliased_import") ; inside(b11, st12, "aliased_import")) } = 0.
+b615_segment_transformers(n) :- b615_demand_segment_transformers(n), kind(n, "identifier"),
+    ref_site(n, b13), (st14 = b13 ; within(b13, st14)), kind(st14, "aliased_import"),
+    field(st14, "name", c15), child(c15, c16, _), kind(c16, "identifier"),
+    glob("transformers", c16).
+b615_segment_transformers(n) :- b615_demand_segment_transformers(n), kind(n, "identifier"),
+    ref_site(n, b17), st18 = b17, inside(st18, p19, "import_from_statement"),
+    field(p19, "module_name", c20), has(c20, c21, "identifier"),
+    glob("transformers", c21).
+b615_segment_transformers(n) :- b615_demand_segment_transformers(n), kind(n, "identifier"),
+    node(_, n, _, _, _), HEAD = n, count : { ref_site(n, b22), main_form(b22, "import") } = 0,
+    within(n, p23), precedes(s24, p23), within(c25, s24),
+    b615_writer(c25, "transformers", HEAD).
+
+// segment_datasets(n): the JSON util `segment-datasets`, used where the JSON says `matches: "segment-datasets"`
+.decl b615_segment_datasets(n: node)
+b615_segment_datasets(n) :- b615_demand_segment_datasets(n), kind(n, "parenthesized_expression"),
+    child(n, c1, _), !kind(c1, "comment"), b615_segment_datasets(c1).
+b615_segment_datasets(n) :- b615_demand_segment_datasets(n), kind(n, "attribute"), b615_tok_has_2(n).
+b615_segment_datasets(n) :- b615_demand_segment_datasets(n), kind(n, "attribute"),
+    field(n, "object", c10), b615_segment_datasets(c10).
+b615_segment_datasets(n) :- b615_demand_segment_datasets(n), kind(n, "identifier"),
+    glob("datasets", n),
+    count : { ref_site(n, b11), (st12 = b11, kind(st12, "aliased_import") ; inside(b11, st12, "aliased_import")) } = 0.
+b615_segment_datasets(n) :- b615_demand_segment_datasets(n), kind(n, "identifier"),
+    ref_site(n, b13), (st14 = b13 ; within(b13, st14)), kind(st14, "aliased_import"),
+    field(st14, "name", c15), child(c15, c16, _), kind(c16, "identifier"),
+    glob("datasets", c16).
+b615_segment_datasets(n) :- b615_demand_segment_datasets(n), kind(n, "identifier"),
+    ref_site(n, b17), st18 = b17, inside(st18, p19, "import_from_statement"),
+    field(p19, "module_name", c20), has(c20, c21, "identifier"), glob("datasets", c21).
+b615_segment_datasets(n) :- b615_demand_segment_datasets(n), kind(n, "identifier"), node(_, n, _, _, _), HEAD = n,
+    count : { ref_site(n, b22), main_form(b22, "import") } = 0, within(n, p23),
+    precedes(s24, p23), within(c25, s24), b615_writer(c25, "datasets", HEAD).
+
+// segment_huggingface_hub(n): the JSON util `segment-huggingface-hub`, used where the JSON says `matches: "segment-huggingface-hub"`
+.decl b615_segment_huggingface_hub(n: node)
+b615_segment_huggingface_hub(n) :- b615_demand_segment_huggingface_hub(n),
+    kind(n, "parenthesized_expression"), child(n, c1, _), !kind(c1, "comment"),
+    b615_segment_huggingface_hub(c1).
+b615_segment_huggingface_hub(n) :- b615_demand_segment_huggingface_hub(n), kind(n, "attribute"),
+    b615_tok_has_3(n).
+b615_segment_huggingface_hub(n) :- b615_demand_segment_huggingface_hub(n), kind(n, "attribute"),
+    field(n, "object", c10), b615_segment_huggingface_hub(c10).
+b615_segment_huggingface_hub(n) :- b615_demand_segment_huggingface_hub(n), kind(n, "identifier"),
+    glob("huggingface_hub", n),
+    count : { ref_site(n, b11), (st12 = b11, kind(st12, "aliased_import") ; inside(b11, st12, "aliased_import")) } = 0.
+b615_segment_huggingface_hub(n) :- b615_demand_segment_huggingface_hub(n), kind(n, "identifier"),
+    ref_site(n, b13), (st14 = b13 ; within(b13, st14)), kind(st14, "aliased_import"),
+    field(st14, "name", c15), child(c15, c16, _), kind(c16, "identifier"),
+    glob("huggingface_hub", c16).
+b615_segment_huggingface_hub(n) :- b615_demand_segment_huggingface_hub(n), kind(n, "identifier"),
+    ref_site(n, b17), st18 = b17, inside(st18, p19, "import_from_statement"),
+    field(p19, "module_name", c20), has(c20, c21, "identifier"),
+    glob("huggingface_hub", c21).
+b615_segment_huggingface_hub(n) :- b615_demand_segment_huggingface_hub(n), kind(n, "identifier"),
+    node(_, n, _, _, _), HEAD = n, count : { ref_site(n, b22), main_form(b22, "import") } = 0,
+    within(n, p23), precedes(s24, p23), within(c25, s24),
+    b615_writer(c25, "huggingface_hub", HEAD).
 
 // named(n, key): 3 copies of one rule set (`named-from-pretrained`, `named-hub-download`, `named-load-dataset`), folded into one: row `key` of
 // named_case gives the strings each copy had.
@@ -115,19 +162,17 @@ b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), nod
 .decl b615_hf_callee(n: node)
 b615_hf_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     !kind(c1, "comment"), b615_hf_callee(c1).
-b615_hf_callee(n) :- b615_named(n, "from_pretrained"), b615_segment(n, "transformers").
-b615_hf_callee(n) :- b615_named(n, "load_dataset"), b615_segment(n, "datasets").
-b615_hf_callee(n) :- b615_named(n, "hub_download"), b615_segment(n, "huggingface_hub").
+b615_hf_callee(n) :- b615_named(n, "from_pretrained"), b615_segment_transformers(n).
+b615_hf_callee(n) :- b615_named(n, "load_dataset"), b615_segment_datasets(n).
+b615_hf_callee(n) :- b615_named(n, "hub_download"), b615_segment_huggingface_hub(n).
 
 // revision_keyword(n): the JSON util `revision-keyword`, used where the JSON says `matches: "revision-keyword"`
 .decl b615_revision_keyword(n: node)
-b615_revision_keyword(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("revision", c1).
+b615_revision_keyword(n) :- kind(n, "keyword_argument"), b615_tok_has_4(n).
 
 // commit_id_keyword(n): the JSON util `commit-id-keyword`, used where the JSON says `matches: "commit-id-keyword"`
 .decl b615_commit_id_keyword(n: node)
-b615_commit_id_keyword(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("commit_id", c1).
+b615_commit_id_keyword(n) :- kind(n, "keyword_argument"), b615_tok_has_5(n).
 
 // hex_revision(n): the JSON util `hex-revision`, used where the JSON says `matches: "hex-revision"`
 .decl b615_hex_revision(n: node)
@@ -145,8 +190,8 @@ b615_bandit_truthy(n) :- b615_ast_constant(n),
 // nonconstant_revision(n): the JSON util `nonconstant-revision`, used where the JSON says `matches: "nonconstant-revision"`
 .decl b615_nonconstant_revision(n: node)
 b615_nonconstant_revision(n) :- field(n, "arguments", c1), kind(c1, "argument_list"),
-    child(c1, c2, _), kind(c2, "keyword_argument"), field(c2, "name", c3),
-    glob("{revision,commit_id}", c3), field(c2, "value", c4), !b615_ast_constant(c4).
+    child(c1, c2, _), kind(c2, "keyword_argument"), b615_tok_has_6(c2),
+    field(c2, "value", c11), !b615_ast_constant(c11).
 
 // pinned_revision(n): the JSON util `pinned-revision`, used where the JSON says `matches: "pinned-revision"`
 .decl b615_pinned_revision(n: node)
@@ -164,6 +209,66 @@ b615_local_path_first_argument(n) :- field(n, "arguments", c1), kind(c1, "argume
     b615_ast_constant(c2), value(c2, v6),
     (prefix("./", v6) ; prefix("/", v6) ; prefix("../", v6)).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^transformers$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b615_tok_has_1(n: node)
+.stored b615_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b615_tok_has_1(n) :- field(n, "attribute", c2), glob("transformers", c2).
+b615_tok_has_1(n) :- op(n, t3), match("transformers", t3).
+b615_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:transformers)(?:\\W.*)?)$", g4).
+b615_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:transformers)(?:\\W.*)?)$", g4).
+b615_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:transformers)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^datasets$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b615_tok_has_2(n: node)
+.stored b615_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b615_tok_has_2(n) :- field(n, "attribute", c2), glob("datasets", c2).
+b615_tok_has_2(n) :- op(n, t3), match("datasets", t3).
+b615_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:datasets)(?:\\W.*)?)$", g4).
+b615_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:datasets)(?:\\W.*)?)$", g4).
+b615_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:datasets)(?:\\W.*)?)$", g4).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^huggingface_hub$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b615_tok_has_3(n: node)
+.stored b615_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b615_tok_has_3(n) :- field(n, "attribute", c2), glob("huggingface_hub", c2).
+b615_tok_has_3(n) :- op(n, t3), match("huggingface_hub", t3).
+b615_tok_has_3(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:huggingface_hub)(?:\\W.*)?)$", g4).
+b615_tok_has_3(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:huggingface_hub)(?:\\W.*)?)$", g4).
+b615_tok_has_3(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:huggingface_hub)(?:\\W.*)?)$", g4).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^revision$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b615_tok_has_4(n: node)
+.stored b615_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b615_tok_has_4(n) :- field(n, "name", c1), glob("revision", c1).
+b615_tok_has_4(n) :- op(n, t2), match("revision", t2).
+b615_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:revision)(?:\\W.*)?)$", g3).
+b615_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:revision)(?:\\W.*)?)$", g3).
+b615_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:revision)(?:\\W.*)?)$", g3).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^commit_id$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b615_tok_has_5(n: node)
+.stored b615_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b615_tok_has_5(n) :- field(n, "name", c1), glob("commit_id", c1).
+b615_tok_has_5(n) :- op(n, t2), match("commit_id", t2).
+b615_tok_has_5(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:commit_id)(?:\\W.*)?)$", g3).
+b615_tok_has_5(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:commit_id)(?:\\W.*)?)$", g3).
+b615_tok_has_5(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:commit_id)(?:\\W.*)?)$", g3).
+
 // truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
 .decl b615_truthy_value(n: node, b: symbol)
 b615_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
@@ -178,15 +283,41 @@ b615_truthy_value(n, "false") :- value(n, x),
 b615_truthy_value(n, "true") :- value(n, x),
     (value_type(x, "str") ; value_type(x, "bytes")), x != "".
 
-// demand_segment: the nodes segment is asked at (its recursion looks at every descendant)
-.decl b615_demand_segment(n: node)
-b615_demand_segment(c1) :- b615_demand_segment(n), b615_segment_case(q1),
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^(revision|commit_id)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b615_tok_has_6(n: node)
+.stored b615_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b615_tok_has_6(n) :- field(n, "name", c3), glob("{revision,commit_id}", c3).
+b615_tok_has_6(n) :- op(n, t4), match("(revision|commit_id)", t4).
+b615_tok_has_6(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:revision)(?:\\W.*)?|(?:.*\\W)?(?:commit_id)(?:\\W.*)?)$", g5).
+b615_tok_has_6(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:revision)(?:\\W.*)?|(?:.*\\W)?(?:commit_id)(?:\\W.*)?)$", g5).
+b615_tok_has_6(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:revision)(?:\\W.*)?|(?:.*\\W)?(?:commit_id)(?:\\W.*)?)$", g5).
+
+// demand_segment_datasets: the nodes segment_datasets is asked at (its recursion looks at every descendant)
+.decl b615_demand_segment_datasets(n: node)
+b615_demand_segment_datasets(c1) :- b615_demand_segment_datasets(n),
     kind(n, "parenthesized_expression"), child(n, c1, _).
-b615_demand_segment(c3) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "attribute"),
-    field(n, "object", c3).
-b615_demand_segment(n) :- b615_named(n, "from_pretrained").
-b615_demand_segment(n) :- b615_named(n, "load_dataset").
-b615_demand_segment(n) :- b615_named(n, "hub_download").
+b615_demand_segment_datasets(c10) :- b615_demand_segment_datasets(n), kind(n, "attribute"),
+    field(n, "object", c10).
+b615_demand_segment_datasets(n) :- b615_named(n, "load_dataset").
+
+// demand_segment_huggingface_hub: the nodes segment_huggingface_hub is asked at (its recursion looks at every descendant)
+.decl b615_demand_segment_huggingface_hub(n: node)
+b615_demand_segment_huggingface_hub(c1) :- b615_demand_segment_huggingface_hub(n),
+    kind(n, "parenthesized_expression"), child(n, c1, _).
+b615_demand_segment_huggingface_hub(c10) :- b615_demand_segment_huggingface_hub(n),
+    kind(n, "attribute"), field(n, "object", c10).
+b615_demand_segment_huggingface_hub(n) :- b615_named(n, "hub_download").
+
+// demand_segment_transformers: the nodes segment_transformers is asked at (its recursion looks at every descendant)
+.decl b615_demand_segment_transformers(n: node)
+b615_demand_segment_transformers(c1) :- b615_demand_segment_transformers(n),
+    kind(n, "parenthesized_expression"), child(n, c1, _).
+b615_demand_segment_transformers(c10) :- b615_demand_segment_transformers(n),
+    kind(n, "attribute"), field(n, "object", c10).
+b615_demand_segment_transformers(n) :- b615_named(n, "from_pretrained").
 
 // set_1: node kinds from a JSON `any`
 .decl b615_set_1(v: symbol)
@@ -199,9 +330,9 @@ b615_named_case("from_pretrained", "7", "from_pretrained", "6").
 b615_named_case("hub_download", "11", "{hf_hub_download,snapshot_download,repository_id}", "10").
 b615_named_case("load_dataset", "9", "load_dataset", "8").
 
-// segment_case: one row per relation folded into segment: its key, then the strings that differed.
-.decl b615_segment_case(key: symbol)
-b615_segment_case("datasets"). b615_segment_case("huggingface_hub"). b615_segment_case("transformers").
+// writer_case: one row per relation folded into writer: its key, then the strings that differed.
+.decl b615_writer_case(key: symbol)
+b615_writer_case("datasets"). b615_writer_case("huggingface_hub"). b615_writer_case("transformers").
 
 // counted(n): 6 identical copies of one rule set (`counted_10`, `counted_11`, `counted_6` and 3 more), folded into one.
 .decl b615_counted(n: node)

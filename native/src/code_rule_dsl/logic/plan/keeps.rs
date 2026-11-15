@@ -63,6 +63,11 @@ pub(super) const M: f64 = 4.0;
 pub(super) const K: usize = 4;
 /// At most this many reader copies made by inlining one relation.
 pub(super) const COPIES: usize = 8;
+/// At most this many copies of one rule of the program, over every pass of the inlining (`inline::inline`): each pass may multiply
+/// a rule's copies (a negated read of a relation of several rules is their product), and a chain of inlined relations
+/// compounds them. `lazy-architecture` (data-layer) took 8 GB in 7 s unfolding, over one file. A rule past it keeps
+/// its read, and the relation read keeps its rules (stored).
+pub(super) const RULE_COPIES: usize = COPIES * 4;
 /// A relation estimated under this many rows is stored without pricing: its rows cost little either way.
 const SMALL: f64 = 1024.0;
 
@@ -1665,6 +1670,21 @@ pub mod tests {
         let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let first = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists).rule(got.v.rule(got.rules[0].0).unwrap());
         assert_eq!(first.to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
+    }
+
+    /// A rule's copies over every pass stay within `RULE_COPIES`: each read of a two-rule inlined relation doubles
+    /// them, and six reads would make 64. Past the bound the rule keeps its read, so the relation keeps its rules.
+    #[test]
+    fn unfolding_stops_at_a_rules_copy_bound() {
+        let reader = rule("o(x) :- r(x), r(y1), r(y2), r(y3), r(y4), r(y5).");
+        let base = super::super::body::made(&[reader, rule("r(z) :- a(z)."), rule("r(z) :- b(z).")]).unwrap();
+        let got = super::inline::inline(&base, &base.rules().map(|r| r.id()).collect::<Vec<_>>(), &BTreeSet::from(["r".to_owned()])).unwrap();
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
+        let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists);
+        let copies: Vec<Rule> = got.rules.iter().map(|e| tree.rule(got.v.rule(e.0).unwrap())).filter(|r| r.head.rel == "o").collect();
+        assert_eq!(copies.len(), RULE_COPIES);
+        assert!(copies.iter().all(|r| r.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "r").count() == 1));
+        assert!(got.unfinished.contains("r"), "the relation keeps its rules");
     }
 
     /// A model of `prog` whose inputs have the rows and distinct values by column given.

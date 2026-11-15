@@ -22,7 +22,7 @@ simdjson's design. This decision records:
 
 ## How it was measured
 
-- **Cost:** each crate's `costs` example (`examples/costs.rs`) under `/usr/bin/time -l`,
+- **Cost:** each crate's `<language>_costs` example (`examples/<language>_costs.rs`; `costs` before the examples were named apart) under `/usr/bin/time -l`,
   profiling build. The numbers are instructions retired, the least of 3 runs.
   - The list is read once, then each pass tapes every file: 15 passes (20 for `.rr`).
   - Cycles are given too, but the machine's load was 25 to 55 while measuring, so they are noisy.

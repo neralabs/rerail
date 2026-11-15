@@ -543,13 +543,16 @@ impl Scoreboard {
                 p.wall += w;
             }
         });
-        if KEEP.load(Ordering::Relaxed) {
+        // A job with no units (a stream's: `strata`, the whole strata loop) prices nothing, and its wall would be
+        // fitted as its lane's submission: not kept.
+        let units: f64 = t.items.iter().map(|i| i.units).sum();
+        if KEEP.load(Ordering::Relaxed) && units > 0.0 {
             let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
             let sample = Sample {
                 lane: t.lane,
                 forms: t.items.iter().map(|i| i.form).collect::<Vec<_>>().join(","),
                 launches: t.items.len() as u32,
-                units: t.items.iter().map(|i| i.units).sum(),
+                units,
                 estimate: est,
                 host_estimate: host_est,
                 wall: ran,
@@ -571,7 +574,6 @@ impl Scoreboard {
         if let Some(f) = trace() {
             let mut forms: Vec<&str> = t.items.iter().map(|i| i.form).collect();
             forms.dedup();
-            let units: f64 = t.items.iter().map(|i| i.units).sum();
             let thread = std::thread::current().name().unwrap_or("?").to_owned();
             let ph: Vec<String> = phases.iter().map(|&(name, _, c, w)| format!("{name}={:.1}/{:.1}", c * 1e6, w * 1e6)).collect();
             let line = format!(

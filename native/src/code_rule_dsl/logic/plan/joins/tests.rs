@@ -91,13 +91,9 @@ fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together()
     choose(&mut round);
     assert_eq!(round[0].chosen, 1, "{}", round[0].why);
     // In a round, the choices are recorded and made together at its end.
-    let open = Round::open();
-    assert!(deferred(&Choice { key: 200, candidates: candidates.clone(), chosen: 0, why: "" }));
-    assert!(deferred(&Choice { key: 201, candidates, chosen: 0, why: "" }));
-    assert_eq!(Round::len(), 2);
-    let made = open.finish();
+    let round = vec![Choice { key: 200, candidates: candidates.clone(), chosen: 0, why: "" }, Choice { key: 201, candidates, chosen: 0, why: "" }];
+    let made = finish_round(round);
     assert_eq!(made.iter().map(|c| c.chosen).collect::<Vec<_>>(), vec![1, 0]);
-    assert!(!deferred(&made[0]), "no round is open after it finished");
     clear();
 }
 

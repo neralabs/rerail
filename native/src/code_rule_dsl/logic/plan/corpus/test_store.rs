@@ -29,6 +29,20 @@ fn copies() -> PathBuf {
 /// build), so they are many while one works.
 const STALE: std::time::Duration = std::time::Duration::from_secs(3600);
 
+thread_local! {
+    /// This thread fills the template (`make`): its runs take the switches without making it first.
+    static FILLING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The template made, before a test's thread takes the switches (`switches::reading`, `switches::set`): no thread waits
+/// for it while it holds them, so its runs never wait behind a thread that waits for it. Off a test's thread (`own`:
+/// a pool's, or a process the tests start) nothing reads the template, so nothing makes it.
+pub(super) fn ready() {
+    if !FILLING.with(std::cell::Cell::get) && std::thread::current().name().is_some_and(|n| n.contains("::")) {
+        template();
+    }
+}
+
 /// The template for this build: made once, by whichever process gets there first.
 pub fn template() -> &'static Path {
     static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -64,7 +78,11 @@ fn make(path: &Path) {
     let filled = std::thread::Builder::new()
         .name("store template".into())
         // Test plumbing, not a run's SQL: the strict mode (`RERAIL_SQL_STRICT`) leaves it alone.
-        .spawn(move || super::switches::within(depth, || crate::code_rule_dsl::logic::profile::behind(|| fill(&filling))))
+        .spawn(move || {
+            // Its runs skip `ready` (they fill the template), and take nothing the thread that waits on them holds.
+            FILLING.with(|f| f.set(true));
+            super::switches::within(depth, || crate::code_rule_dsl::logic::profile::behind(|| fill(&filling)))
+        })
         .expect("the template's thread")
         .join()
         .unwrap_or_else(|panic| Err(panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()));

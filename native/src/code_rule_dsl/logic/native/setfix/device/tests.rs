@@ -418,7 +418,7 @@
         }
     }
 
-    /// Decision 0223: the device's column statistics read a relation it holds in place (its resident upload), and
+    /// Decision 0261: the device's column statistics read a relation it holds in place (its resident upload), and
     /// are the same as over the values gathered on the host; a relation it does not hold is gathered.
     #[test]
     fn column_statistics_read_a_resident_relation_in_place() {

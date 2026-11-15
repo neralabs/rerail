@@ -28,9 +28,9 @@ ruf024_dict_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 // fromkeys_callee(n): the JSON util `fromkeys-callee`, used where the JSON says `matches: "fromkeys-callee"`
 .decl ruf024_fromkeys_callee(n: node)
 ruf024_fromkeys_callee(n) :- kind(n, "attribute"), field(n, "object", c1), ruf024_dict_ref(c1),
-    field(n, "attribute", c2), glob("fromkeys", c2).
-ruf024_fromkeys_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    !kind(c3, "comment"), ruf024_fromkeys_callee(c3).
+    ruf024_tok_has_1(n).
+ruf024_fromkeys_callee(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    !kind(c10, "comment"), ruf024_fromkeys_callee(c10).
 
 // mutable_name(n): the JSON util `mutable-name`, used where the JSON says `matches: "mutable-name"`
 .decl ruf024_mutable_name(n: node)
@@ -57,6 +57,18 @@ ruf024_mutable_value(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 // positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
 .decl ruf024_positional(n: node)
 ruf024_positional(n) :- node(_, n, _, _, _), !ruf024_alt_3(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^fromkeys$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf024_tok_has_1(n: node)
+.stored ruf024_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf024_tok_has_1(n) :- field(n, "attribute", c2), glob("fromkeys", c2).
+ruf024_tok_has_1(n) :- op(n, t3), match("fromkeys", t3).
+ruf024_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:fromkeys)(?:\\W.*)?)$", g4).
+ruf024_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:fromkeys)(?:\\W.*)?)$", g4).
+ruf024_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:fromkeys)(?:\\W.*)?)$", g4).
 
 // set_1: symbols from the JSON `resolves.import`
 .decl ruf024_set_1(v: symbol)

@@ -14,7 +14,7 @@
 // `options` carries JSON settings that have no .rr form yet.
 .violation FBT001(at: node, name: loc) "Make the boolean parameter `{name}` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
     suppress noqa "FBT001"
-FBT001_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !fbt001_tok_follows_4(n),
+FBT001_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !fbt001_tok_follows_5(n),
     child(p8, n, _),
     (kind(p8, "typed_parameter") ; kind(p8, "typed_default_parameter")),
     field(p8, "type", c9), fbt001_bool_annotation(c9),
@@ -44,9 +44,10 @@ fbt001_fn_ref(n, FN) :- kind(n, "parenthesized_expression"), child(n, c1, _), fb
 // setter(n): the JSON util `setter`, used where the JSON says `matches: "setter"`
 //   FN: metavariable this relation binds for the calling rule
 .decl fbt001_setter(n: node, fn: loc)
-fbt001_setter(n, FN) :- kind(n, "attribute"), field(n, "attribute", c1), glob("setter", c1),
-    field(n, "object", c2), fbt001_fn_ref(c2, FN).
-fbt001_setter(n, FN) :- kind(n, "parenthesized_expression"), child(n, c3, _), fbt001_setter(c3, FN).
+fbt001_setter(n, FN) :- kind(n, "attribute"), fbt001_tok_has_1(n), field(n, "object", c9),
+    fbt001_fn_ref(c9, FN).
+fbt001_setter(n, FN) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    fbt001_setter(c10, FN).
 
 // checked_function(n): the JSON util `checked-function`, used where the JSON says `matches: "checked-function"`
 .decl fbt001_checked_function(n: node)
@@ -75,13 +76,13 @@ fbt001_typing_optional(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // generic_head(n): the JSON util `generic-head`, used where the JSON says `matches: "generic-head"`
 .decl fbt001_generic_head(n: node)
-fbt001_generic_head(n) :- fbt001_tok_precedes_1(n), child(p8, n, _), kind(p8, "subscript").
+fbt001_generic_head(n) :- fbt001_tok_precedes_2(n), child(p8, n, _), kind(p8, "subscript").
 fbt001_generic_head(n) :- kind(n, "identifier"), child(p9, n, _), kind(p9, "generic_type").
 
 // slice_item(n): the JSON util `slice-item`, used where the JSON says `matches: "slice-item"`
 .decl fbt001_slice_item(n: node)
 fbt001_slice_item(n) :- !glob("[\\[\\],]", n),
-    ( fbt001_tok_follows_2(n), child(p1, n, _), kind(p1, "subscript")
+    ( fbt001_tok_follows_3(n), child(p1, n, _), kind(p1, "subscript")
     ; child(p2, n, _), kind(p2, "type_parameter")
     ).
 
@@ -111,7 +112,7 @@ fbt001_bool_annotation(n) :- fbt001_demand_bool_annotation(n),
     (kind(n, "type") ; kind(n, "parenthesized_expression")), child(n, c4, _),
     fbt001_bool_annotation(c4).
 fbt001_bool_annotation(n) :- fbt001_demand_bool_annotation(n),
-    (kind(n, "binary_operator") ; kind(n, "union_type")), fbt001_tok_has_3(n),
+    (kind(n, "binary_operator") ; kind(n, "union_type")), fbt001_tok_has_4(n),
     child(n, c13, _), fbt001_bool_annotation(c13).
 fbt001_bool_annotation(n) :- fbt001_demand_bool_annotation(n), child(n, c14, _), fbt001_generic_head(c14),
     fbt001_typing_union(c14), fbt001_alt_6(n).
@@ -119,46 +120,58 @@ fbt001_bool_annotation(n) :- fbt001_demand_bool_annotation(n), child(n, c17, _),
     fbt001_typing_optional(c17), !fbt001_slice_comma(n), within_stop(c18, n, fbt001_stop_3),
     fbt001_slice_item(c18), fbt001_bool_annotation(c18).
 
-// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl fbt001_tok_precedes_1(n: node)
-.stored fbt001_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fbt001_tok_precedes_1(n) :- next_sibling(n, s1), glob("\\[", s1).
-fbt001_tok_precedes_1(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^setter$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fbt001_tok_has_1(n: node)
+.stored fbt001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fbt001_tok_has_1(n) :- field(n, "attribute", c1), glob("setter", c1).
+fbt001_tok_has_1(n) :- op(n, t2), match("setter", t2).
+fbt001_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?)$", g3).
+fbt001_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?)$", g3).
+fbt001_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fbt001_tok_precedes_2(n: node)
+.stored fbt001_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fbt001_tok_precedes_2(n) :- next_sibling(n, s1), glob("\\[", s1).
+fbt001_tok_precedes_2(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
     node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
     match("\\[", t2).
-fbt001_tok_precedes_1(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:\\[).*)$", g3).
+fbt001_tok_precedes_2(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:\\[).*)$", g3).
 
-// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl fbt001_tok_follows_2(n: node)
-.stored fbt001_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fbt001_tok_follows_2(n) :- precedes(s1, n), glob("\\[", s1).
-fbt001_tok_follows_2(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fbt001_tok_follows_3(n: node)
+.stored fbt001_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fbt001_tok_follows_3(n) :- precedes(s1, n), glob("\\[", s1).
+fbt001_tok_follows_3(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
     en7 <= st6, match("\\[", t2).
-fbt001_tok_follows_2(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:\\[).*)$", g3).
-fbt001_tok_follows_2(n) :- precedes(o5, n), structural_before(o5, g3),
+fbt001_tok_follows_3(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:\\[).*)$", g3).
+fbt001_tok_follows_3(n) :- precedes(o5, n), structural_before(o5, g3),
     match("(?s)^(?:.*(?:\\[).*)$", g3).
 
-// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl fbt001_tok_has_3(n: node)
-.stored fbt001_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fbt001_tok_has_3(n) :- child(n, c5, _), glob("|", c5).
-fbt001_tok_has_3(n) :- op(n, t6), match("\\|", t6).
-fbt001_tok_has_3(n) :- child(n, c12, _), structural_before(c12, g7),
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fbt001_tok_has_4(n: node)
+.stored fbt001_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fbt001_tok_has_4(n) :- child(n, c5, _), glob("|", c5).
+fbt001_tok_has_4(n) :- op(n, t6), match("\\|", t6).
+fbt001_tok_has_4(n) :- child(n, c12, _), structural_before(c12, g7),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
-fbt001_tok_has_3(n) :- child(n, c12, _), structural_after(c12, g7),
+fbt001_tok_has_4(n) :- child(n, c12, _), structural_after(c12, g7),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
-fbt001_tok_has_3(n) :- node_text(n, g7), !child(n, _, _),
+fbt001_tok_has_4(n) :- node_text(n, g7), !child(n, _, _),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
 
-// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^[=:]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl fbt001_tok_follows_4(n: node)
-.stored fbt001_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fbt001_tok_follows_4(n) :- precedes(s1, n), glob("[=:]", s1).
-fbt001_tok_follows_4(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^[=:]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fbt001_tok_follows_5(n: node)
+.stored fbt001_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fbt001_tok_follows_5(n) :- precedes(s1, n), glob("[=:]", s1).
+fbt001_tok_follows_5(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
     en7 <= st6, match("[=:]", t2).
-fbt001_tok_follows_4(n) :- structural_before(n, g3),
+fbt001_tok_follows_5(n) :- structural_before(n, g3),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[=:])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
-fbt001_tok_follows_4(n) :- precedes(o5, n), structural_before(o5, g3),
+fbt001_tok_follows_5(n) :- precedes(o5, n), structural_before(o5, g3),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[=:])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 
 // demand_alt_6: the nodes alt_6 is asked at (its recursion looks at every descendant)
@@ -176,7 +189,7 @@ fbt001_demand_bool_annotation(c1) :- fbt001_demand_bool_tuple(n), kind(n, "tuple
 fbt001_demand_bool_annotation(c4) :- fbt001_demand_bool_annotation(n),
     (kind(n, "type") ; kind(n, "parenthesized_expression")), child(n, c4, _).
 fbt001_demand_bool_annotation(c13) :- fbt001_demand_bool_annotation(n),
-    (kind(n, "binary_operator") ; kind(n, "union_type")), fbt001_tok_has_3(n),
+    (kind(n, "binary_operator") ; kind(n, "union_type")), fbt001_tok_has_4(n),
     child(n, c13, _).
 fbt001_demand_bool_annotation(c18) :- fbt001_demand_bool_annotation(n), child(n, c17, _),
     fbt001_generic_head(c17), fbt001_typing_optional(c17), within_stop(c18, n, fbt001_stop_3),

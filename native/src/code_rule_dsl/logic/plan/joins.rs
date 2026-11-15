@@ -447,38 +447,17 @@ pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, wal
     m.dirty = true;
 }
 
-thread_local! {
-    /// The last search's runners-up on this thread (`plan_search`), taken by its caller.
-    static SEARCHED: std::cell::RefCell<Vec<(Vec<Step>, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// While set, searches are exact up to `WIDE_GREEDY` joins and never take the greedy order first.
-    static WIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// While a round is open (`Round`), the choices its lines asked for.
-    static ROUND: std::cell::RefCell<Option<Vec<Choice>>> = const { std::cell::RefCell::new(None) };
+/// A search's context (decision 0203), handed down to it and read back by its caller: whether it is wide (exact up
+/// to `WIDE_GREEDY` joins, never the greedy order first), and its runners-up, best first.
+#[derive(Default)]
+pub(super) struct SearchCx {
+    pub wide: bool,
+    pub runners_up: Vec<(Vec<Step>, f64)>,
 }
 
-pub(super) fn searched_put(alternatives: Vec<(Vec<Step>, f64)>) {
-    SEARCHED.with(|s| *s.borrow_mut() = alternatives);
-}
-
-pub(super) fn searched_take() -> Vec<(Vec<Step>, f64)> {
-    SEARCHED.with(|s| std::mem::take(&mut *s.borrow_mut()))
-}
-
-pub(super) fn wide() -> bool {
-    WIDE.with(std::cell::Cell::get)
-}
-
-/// The greedy bound of this thread's searches.
-pub(super) fn greedy_limit(run: usize) -> usize {
-    if wide() { WIDE_GREEDY.max(run) } else { run }
-}
-
-/// Runs `f` with searches wide (`WIDE`).
-pub(super) fn widely<T>(f: impl FnOnce() -> T) -> T {
-    let was = WIDE.with(|w| w.replace(true));
-    let got = f();
-    WIDE.with(|w| w.set(was));
-    got
+/// The greedy bound of a search, `wide` or not.
+pub(super) fn greedy_limit(run: usize, wide: bool) -> usize {
+    if wide { WIDE_GREEDY.max(run) } else { run }
 }
 
 /// An order a choice weighs, at its price now.
@@ -606,42 +585,11 @@ pub fn choose(round: &mut [Choice]) {
     }
 }
 
-/// A round of choices (decision 0203 §2): while it is open, a line planned on this thread records its choice here
-/// and keeps the search's best; `finish` chooses them all at once.
-pub(super) struct Round(Option<Vec<Choice>>);
-
-impl Round {
-    pub(super) fn open() -> Round {
-        Round(ROUND.with(|r| r.borrow_mut().replace(Vec::new())))
-    }
-    /// The choices recorded so far.
-    pub(super) fn len() -> usize {
-        ROUND.with(|r| r.borrow().as_ref().map_or(0, Vec::len))
-    }
-    pub(super) fn finish(mut self) -> Vec<Choice> {
-        let mut got = ROUND.with(|r| std::mem::replace(&mut *r.borrow_mut(), self.0.take())).unwrap_or_default();
-        choose(&mut got);
-        got
-    }
-}
-
-impl Drop for Round {
-    fn drop(&mut self) {
-        if let Some(was) = self.0.take() {
-            ROUND.with(|r| *r.borrow_mut() = Some(was));
-        }
-    }
-}
-
-/// Records `choice` in the open round, if one is: `true` where it was (the caller keeps the search's best).
-pub(super) fn deferred(choice: &Choice) -> bool {
-    ROUND.with(|r| match r.borrow_mut().as_mut() {
-        Some(v) => {
-            v.push(choice.clone());
-            true
-        }
-        None => false,
-    })
+/// A round of choices (decision 0203 §2): the lines planned while it was open recorded their choices (each kept
+/// the search's best, `Model::plan_rule_live_in`); chosen here all at once, after one batch prediction.
+pub(super) fn finish_round(mut round: Vec<Choice>) -> Vec<Choice> {
+    choose(&mut round);
+    round
 }
 
 /// One line as it ran: its stratum, key, rule, the order it ran last, its measured work, its price for the rows it

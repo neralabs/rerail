@@ -899,6 +899,7 @@ fn every_field() -> Program {
     p.natives.insert("dfs_y".into(), Native::DfsFirst { edge: "e".into(), target: "t".into(), roots: None });
     p.natives.insert("match_x".into(), Native::MatchAll { input: "src".into(), pattern: "(a)(b)?".into(), groups: vec!["g2".into(), "g1".into()], positions: true });
     p.natives.insert("match_y".into(), Native::MatchAll { input: "src".into(), pattern: "c".into(), groups: vec![], positions: false });
+    p.natives.insert("tt_x".into(), Native::TextTest { input: "src".into(), column: 0, op: "contains".into(), patterns: vec!["b".into(), "a".into()] });
     p.natives.insert("comp_x".into(), Native::Components { edge: "e".into(), own: "own".into() });
     p.natives.insert("through_x".into(), Native::ReachThrough { reach: "reach_x".into(), map: "m".into() });
     p.natives.insert("py_x".into(), Native::Python { kind: "calls".into(), input: "src".into(), targets: Some("tg".into()) });
@@ -925,6 +926,7 @@ fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &su
     match s {
         S::DfsFirst { edge, target, roots } => Native::DfsFirst { edge: r(*edge), target: r(*target), roots: roots.map(r) },
         S::MatchAll { input, pattern, groups, positions } => Native::MatchAll { input: r(*input), pattern: t(*pattern), groups: groups.iter().map(|&g| t(g)).collect(), positions: *positions },
+        S::TextTest { input, column, op, patterns } => Native::TextTest { input: r(*input), column: *column, op: t(*op), patterns: patterns.iter().map(|&p| t(p)).collect() },
         S::PythonCandidates { input, targets, context, member } => Native::PythonCandidates { input: r(*input), targets: r(*targets), context: t(*context), member: t(*member) },
         S::Python { kind, input, targets } => Native::Python { kind: t(*kind), input: r(*input), targets: targets.map(r) },
         S::Components { edge, own } => Native::Components { edge: r(*edge), own: r(*own) },
@@ -1038,7 +1040,7 @@ fn fields_agree(p: &Program) {
 #[test]
 fn a_versions_fields_say_what_the_tree_says() {
     let mut n = 0;
-    for (_path, prog) in pack_programs() {
+    for (_, prog) in pack_programs() {
         if encode(&prog).is_err() {
             continue;
         }

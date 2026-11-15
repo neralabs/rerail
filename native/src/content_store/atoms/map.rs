@@ -664,7 +664,7 @@ impl Atoms {
 /// Every stored column that holds atoms, and how it crosses the store's boundary when this process's numbering differs
 /// from the store's (decision 0170). With `NOT_ATOMS`, it classifies every integer, untyped and blob column of the
 /// store's schema: a test (`every_stored_column_is_classified`) fails on a column in neither, so a new column of atoms
-/// is mapped, or said to be none, before it is kept.
+/// is mapped, or said to be none, before it is kept. Only that test reads the two tables.
 #[cfg(test)]
 pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("atom_segment", "first", "the store's atoms themselves: their numbering is the store's"),
@@ -705,7 +705,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("completed_directory_reuse", &["tree_hash_id", "package_hash_id", "catalog_hash_id"]),
     ("completed_workspace_revisions", &["workspace_id", "revision", "catalog_hash_id", "completed_at"]),
     ("context_check_results", &["source_id", "context_hash_id", "check_id", "codec_id", "raw_length", "frame"]),
-    ("corpus_decided", &["singleton", "run", "time"]),
+    ("corpus_decided", &["singleton", "run", "time", "swept"]),
     ("corpus_live", &["source_id", "grammar_version", "tape_format"]),
     ("corpus_manifest_plans", &["manifest_id", "plan_digest"]),
     ("corpus_manifests", &["manifest_id", "root_id", "last_run", "last_time", "grammar_version", "tape_format", "plan_digest", "digest", "sources", "lane"]),

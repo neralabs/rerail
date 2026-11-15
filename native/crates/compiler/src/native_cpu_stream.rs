@@ -100,8 +100,12 @@ pub struct Ctx {
     id_of: *mut u16,
     code_kf: *mut u32,
     code_first: *mut u32,
+    /// Tier 1's records' layout (`records::RecordLayout`): the bytes from a token's start,
+    /// last or code to the next token's (4 in columns, 12 in rows).
+    record_stride: u64,
 }
 
+const RECORD_STRIDE: i32 = std::mem::offset_of!(Ctx, record_stride) as i32;
 const SIZE_C: i32 = std::mem::offset_of!(Ctx, size_c) as i32;
 const OFF_C: i32 = std::mem::offset_of!(Ctx, off_c) as i32;
 const TAIL_C: i32 = std::mem::offset_of!(Ctx, tail_c) as i32;
@@ -150,6 +154,8 @@ const STACK_BASE: i32 = 224;
 const STACK_LIMIT: i32 = 232;
 const FRAME_SHIFT: i32 = 240;
 const STATE: i32 = 248;
+// The offsets are a 64-bit target's: the JIT that reads them runs on none other (wasm32 has none).
+#[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, stack_base) == STACK_BASE as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
 
 // The working rows (`native_cpu_tape`): a node's key, start and end, 12 bytes. The tape's columns
@@ -926,6 +932,8 @@ enum WordFn {
     TokenMark { index: u16 },
     /// A local check over the token's bytes (`Words::local_checks`, its index): 1 where it holds.
     Check { index: u16 },
+    /// A gap mark tier 2 tests itself (`native_cpu_block::lazy_marks`), its order.
+    LazyMark { order: u8 },
 }
 
 /// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
@@ -974,6 +982,96 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
     }
 }
 
+/// Whether gap mark `o`'s mask has a bit from the byte after the grammar token before's first
+/// to the token's (`records::gap_marks`), 1 or 0: the records before past the extras (a stated
+/// loop, `Step::Token`), none where that token's word is an `unless after` one; then the mask's
+/// words from the bytes (`native_cpu_bytes`), a stated loop of words.
+#[allow(clippy::too_many_arguments)]
+fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cpu_bytes::Bytewise<'_>, o: u16, extra: Option<u8>, unless: &[u16], heads: &mut Vec<(Block, Step)>) -> Value {
+    let flags = MemFlags::trusted();
+    let (codes, starts, bytes, len) = ((e.ctx)(f, CODES), (e.ctx)(f, STARTS), (e.ctx)(f, BYTES), (e.ctx)(f, LEN));
+    let next = (e.get)(f, Mem::Next);
+    let s = (e.get)(f, Mem::Start);
+    let here = f.ins().iadd_imm(next, -1);
+    let zero = f.ins().iconst(types::I64, 0);
+    let one = f.ins().iconst(types::I64, 1);
+    let (back, none, found, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(back, types::I64);
+    f.append_block_param(found, types::I64);
+    f.append_block_param(found, types::I64);
+    f.append_block_param(done, types::I64);
+    f.ins().jump(back, &[BlockArg::from(here)]);
+    // The grammar token before: the records before, past the extras.
+    f.switch_to_block(back);
+    heads.push((back, Step::Token));
+    let j = f.block_params(back)[0];
+    let first = f.ins().icmp_imm(IntCC::Equal, j, 0);
+    let on = f.create_block();
+    f.ins().brif(first, none, &[], on, &[]);
+    f.switch_to_block(on);
+    let j = f.ins().iadd_imm(j, -1);
+    let stride = (e.ctx)(f, RECORD_STRIDE);
+    let off = f.ins().imul(j, stride);
+    let ca = f.ins().iadd(codes, off);
+    let c = f.ins().uload32(flags, ca, 0);
+    let sa = f.ins().iadd(starts, off);
+    let st = f.ins().uload32(flags, sa, 0);
+    let from = f.ins().iadd_imm(st, 1);
+    match extra {
+        Some(x) => {
+            let bit = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(x));
+            let bit = f.ins().band_imm(bit, 1);
+            f.ins().brif(bit, back, &[BlockArg::from(j)], found, &[BlockArg::from(from), BlockArg::from(c)]);
+        }
+        None => {
+            f.ins().jump(found, &[BlockArg::from(from), BlockArg::from(c)]);
+        }
+    }
+    // None before: from the file's first byte, no word before.
+    f.switch_to_block(none);
+    f.ins().jump(found, &[BlockArg::from(zero), BlockArg::from(zero)]);
+    f.switch_to_block(found);
+    let (from, c) = (f.block_params(found)[0], f.block_params(found)[1]);
+    // `unless after`: the word before, one of its words.
+    let word = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
+    let word = f.ins().band_imm(word, 0xff);
+    for &w in unless {
+        let same = f.ins().icmp_imm(IntCC::Equal, word, i64::from(w));
+        let on = f.create_block();
+        f.ins().brif(same, done, &[BlockArg::from(zero)], on, &[]);
+        f.switch_to_block(on);
+    }
+    // The mask's words from `from` to `s`, from the bytes.
+    let consts = crate::native_cpu_block::Consts::make(f);
+    let file = crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even };
+    let words = f.create_block();
+    f.append_block_param(words, types::I64);
+    let q0 = f.ins().ushr_imm(from, 6);
+    let qs = f.ins().ushr_imm(s, 6);
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, from, s);
+    let go = f.create_block();
+    f.ins().brif(past, done, &[BlockArg::from(zero)], go, &[]);
+    f.switch_to_block(go);
+    f.ins().jump(words, &[BlockArg::from(q0)]);
+    f.switch_to_block(words);
+    heads.push((words, Step::Block));
+    let q = f.block_params(words)[0];
+    let p = f.ins().ishl_imm(q, 6);
+    let x = bw.word(f, &file, o, p, heads);
+    let lim = f.ins().iadd_imm(s, 1);
+    let m = within_word(f, q, from, lim);
+    let x = f.ins().band(x, m);
+    let any = f.ins().icmp_imm(IntCC::NotEqual, x, 0);
+    let more = f.create_block();
+    f.ins().brif(any, done, &[BlockArg::from(one)], more, &[]);
+    f.switch_to_block(more);
+    let last = f.ins().icmp(IntCC::Equal, q, qs);
+    let q1 = f.ins().iadd_imm(q, 1);
+    f.ins().brif(last, done, &[BlockArg::from(zero)], words, &[BlockArg::from(q1)]);
+    f.switch_to_block(done);
+    f.block_params(done)[0]
+}
+
 /// Whether token mark `m`'s tokens follow at the token (`Words::token_marks`): each element's
 /// record, the records' codes from the one before `Next`, the extras (`extra_bit`) skipped; 1 or
 /// 0. Each turn of a skip is a record's: a stated `Token` loop.
@@ -982,7 +1080,8 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
 /// value at each of its 64 places at once (`local_word`), and the test one AND. 1 where it holds
 /// at a bit, else 0. No loop over bits or bytes. The token's start and end are passed: the
 /// state may be the caller's variables.
-fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+#[allow(clippy::too_many_arguments)]
+fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, bytewise: Option<&crate::native_cpu_bytes::Bytewise<'_>>, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let (outputs_p, stride, lasts_stride) = ((e.ctx)(f, OUTPUTS), (e.ctx)(f, OUTPUT_STRIDE), (e.ctx)(f, LASTS_STRIDE));
     let (bytes, len) = ((e.ctx)(f, BYTES), (e.ctx)(f, LEN));
     let consts = crate::native_cpu_block::Consts::make(f);
@@ -1003,7 +1102,16 @@ fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::
     let (body, zero) = (f.create_block(), f.ins().iconst(types::I64, 0));
     f.ins().brif(past, done, &[BlockArg::from(zero)], body, &[]);
     f.switch_to_block(body);
-    let word = mask_word(f, base, lasts_stride, w);
+    // From the bytes, where they make the mask (`native_cpu_bytes`): the CPU's tier 1 makes
+    // none of it. Else its row's word.
+    let word = match bytewise {
+        Some(b) => {
+            let file = crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even };
+            let p = f.ins().ishl_imm(w, 6);
+            b.word(f, &file, output as u16, p, heads)
+        }
+        None => mask_word(f, base, lasts_stride, w),
+    };
     let ones = f.ins().iconst(types::I64, -1);
     let s = f.ins().band_imm(start, 63);
     let lo = f.ins().ishl(ones, s);
@@ -1234,8 +1342,9 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
     let next = (e.get)(f, Mem::Next);
     let here = f.ins().iadd_imm(next, -1);
     let (no, yes) = (f.create_block(), f.create_block());
+    let stride = (e.ctx)(f, RECORD_STRIDE);
     let code_at = |f: &mut FunctionBuilder<'_>, j: Value| {
-        let off = f.ins().ishl_imm(j, 2);
+        let off = f.ins().imul(j, stride);
         let a = f.ins().iadd(codes, off);
         f.ins().uload32(flags, a, 0)
     };
@@ -1986,9 +2095,11 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
         field_set(f, ctx, Mem::Taken, code);
     }
     f.ins().return_(&[zero]);
-    // The token's record: its first byte, last byte and code, from three columns.
+    // The token's record: its first byte, last byte and code, where tier 1's layout has them
+    // (`Ctx::record_stride`).
     f.switch_to_block(token);
-    let off = f.ins().ishl_imm(next, 2);
+    let stride = load(f, RECORD_STRIDE);
+    let off = f.ins().imul(next, stride);
     let column = |f: &mut FunctionBuilder<'_>, at: i32| {
         let c = load(f, at);
         let a = f.ins().iadd(c, off);
@@ -2628,19 +2739,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         flags.push(("enable_multi_ret_implicit_sret", "true"));
     }
     let mut builder = if cut.unsigned {
-        // `Cut::unsigned`: return addresses not signed (Cranelift signs them on every macOS
-        // target; an arm64 process, not arm64e, does not need it). The JIT's own flags, as
-        // `JITBuilder::with_flags` sets them.
-        use cranelift_codegen::settings::Configurable;
-        let mut shared = cranelift_codegen::settings::builder();
-        for (k, v) in flags.iter().copied().chain([("use_colocated_libcalls", "false"), ("is_pic", "false")]) {
-            shared.set(k, v).map_err(|_| Error::BackendFailure)?;
-        }
-        let isa = cranelift_codegen::isa::lookup_by_name("aarch64-apple-darwin")
-            .map_err(|_| Error::BackendFailure)?
-            .finish(cranelift_codegen::settings::Flags::new(shared))
-            .map_err(|_| Error::BackendFailure)?;
-        JITBuilder::with_isa(isa, default_libcall_names())
+        unsigned_builder(&flags)?
     } else {
         JITBuilder::with_flags(&flags, default_libcall_names()).map_err(|_| Error::BackendFailure)?
     };
@@ -3024,7 +3123,14 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                 end_bits |= 1 << order;
             }
         }
-        let rest_bits: i64 = if in_code >= 64 { 0 } else { -1i64 << in_code };
+        // The gap marks tier 2 tests itself (`lazy_marks`): live at every token, each tested
+        // where a state asks.
+        let lazy: Vec<(u8, u16)> = native.block_programs.first().and_then(|b| b.records.as_ref().map(|r| (b, r))).map_or(Vec::new(), |(b, r)| {
+            let bw = crate::native_cpu_bytes::Bytewise::of(b);
+            crate::native_cpu_block::lazy_marks(r, &|o| bw.can(o))
+        });
+        let lazy_bits: i64 = lazy.iter().fold(0, |a, &(k, _)| a | 1 << k);
+        let rest_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | lazy_bits;
         let one = f.ins().iconst(types::I64, 1);
         let before_first = f.ins().iconst(types::I64, -1);
         let pick = f.create_block();
@@ -3390,8 +3496,12 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // three columns; no select, no compare but the end's. The record pass checked
                     // the columns (the totals' flag).
                     f.switch_to_block(token);
+                    // The records' stride (`records::RecordLayout`): columns or rows, tier 1's.
+                    let rb = if clustered { pinned(&mut f) } else { ctx };
+                    let stride = f.ins().load(types::I64, MemFlags::trusted().with_readonly().with_can_move(), rb, RECORD_STRIDE);
+                    let roff = f.ins().imul(next, stride);
                     let load_at = |f: &mut FunctionBuilder<'_>, c: Value| {
-                        let at = slot(f, c, next);
+                        let at = f.ins().iadd(c, roff);
                         f.ins().uload32(flags, at, 0)
                     };
                     let (s, l, c) = (load_at(&mut f, starts_p), load_at(&mut f, lasts_p), load_at(&mut f, codes_p));
@@ -3631,6 +3741,39 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         let taken = f.create_block();
                         f.ins().brif(lit, taken, &[], skip, &[]);
                         f.switch_to_block(taken);
+                        // A gap mark tier 2 tests itself: at the stream's end, the end's (its
+                        // bit in `Live` there); else its mask from the grammar token before.
+                        if let Some(&(_, o)) = lazy.iter().find(|&&(k, _)| k == order) {
+                            let at_end = mget(&mut f, Mem::AtEnd);
+                            let (ask, holds) = (f.create_block(), f.create_block());
+                            f.ins().brif(at_end, holds, &[], ask, &[]);
+                            f.switch_to_block(ask);
+                            let key = WordFn::LazyMark { order };
+                            if !word_fns.contains_key(&key) {
+                                let bn = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
+                                let r = bn.records.as_ref().ok_or(Error::UnsupportedBackend)?;
+                                let unless: Vec<u16> = r.unless.iter().filter(|&&(k, _)| k == order).map(|&(_, w)| w).collect();
+                                let extra = r.extra;
+                                let name = format!("tempo_word_{}", word_fns.len());
+                                let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
+                                    let ctx = q[0];
+                                    let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+                                    let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+                                    let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+                                    let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a mark does not refuse");
+                                    let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+                                    let bw = crate::native_cpu_bytes::Bytewise::of(bn);
+                                    let v = lazy_mark(g, &env, &bw, o, extra, &unless, hs);
+                                    g.ins().return_(&[v]);
+                                })?;
+                                word_fns.insert(key, made);
+                            }
+                            let (id, sig, _) = &word_fns[&key];
+                            let c = pinned(&mut f);
+                            let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
+                            f.ins().brif(r, holds, &[], skip, &[]);
+                            f.switch_to_block(holds);
+                        }
                         // A token mark (decision 0129): its tokens follow, from the records.
                         if let Some(i) = pattern {
                             let m = native.token_marks[usize::from(i)].clone();
@@ -3779,9 +3922,16 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let c = native.local_checks.get(usize::from(check)).cloned().ok_or(Error::UnsupportedBackend)?;
                     let form = crate::rust_stream::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(c.mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    // The mask from the bytes where they make it: the check's function reads it
+                    // there, a call a token of the kind, no row to load first.
+                    let bytewise = native.block_programs.first().map(crate::native_cpu_bytes::Bytewise::of).filter(|b| b.can(output as u16));
+                    let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
+                    let slow = f.create_block();
+                    if bytewise.is_some() {
+                        f.ins().jump(slow, &[]);
+                    } else {
                     // Most tokens: no bit of the mask from the start on, in the start's word, and
                     // the token ends in it. One load.
-                    let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
                     let w = f.ins().ushr_imm(start, 6);
                     let off = f.ins().imul_imm(output_stride, output as i64);
                     let base = f.ins().iadd(outputs_p, off);
@@ -3793,8 +3943,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let other = f.ins().icmp(IntCC::NotEqual, wl, w);
                     let any = f.ins().icmp_imm(IntCC::NotEqual, word, 0);
                     let go = f.ins().bor(any, other);
-                    let slow = f.create_block();
                     f.ins().brif(go, slow, &[], fall, &[]);
+                    }
                     f.switch_to_block(slow);
                     // Always a function of its own, one a check: rare code, out of the arm's.
                     let r = {
@@ -3808,7 +3958,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                 let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
                                 let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a check returns whether it holds");
                                 let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-                                let v = check_word(g, &env, &c, &form, output, q[1], q[2], hs);
+                                let v = check_word(g, &env, &c, &form, output, bytewise.as_ref(), q[1], q[2], hs);
                                 g.ins().return_(&[v]);
                             })?;
                             word_fns.insert(key, made);
@@ -5028,6 +5178,8 @@ pub struct Tier1View {
     pub totals: *const u8,
     pub totals_stride: usize,
     pub totals_mask: u64,
+    /// The bytes from a token's record field to the next token's (`records::RecordLayout`).
+    pub record_stride: usize,
 }
 
 /// The buffers one call writes, sized from the stream and the program's `Bounds`.
@@ -5227,6 +5379,7 @@ impl CompiledStream {
             id_of: tape.id_of.as_mut_ptr(),
             code_kf: tape.code_kf.as_mut_ptr(),
             code_first: tape.code_first.as_mut_ptr(),
+            record_stride: tier1.record_stride as u64,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the
         // state in `ctx`.
@@ -5268,6 +5421,7 @@ impl CompiledStream {
             lasts_stride: 8 * n,
             outputs: all.as_ptr(),
             output_stride: 8,
+            record_stride: crate::records::RecordLayout::Columns.stride() as usize,
             totals: totals.as_ptr().cast(),
             totals_stride: 8,
             totals_mask: u64::MAX,
@@ -5436,9 +5590,15 @@ impl Parser {
         let extracts = self.tier1.extracts.len();
         let starts = self.stream(batch, self.tier2.starts);
         let outputs = batch.out[row.out as usize..].as_ptr();
-        // The records' other columns: the last bytes, and the codes after the extracts'.
         let lasts = self.stream(batch, self.tier2.lasts);
-        let codes = batch.positions[(row.positions + extracts as u64 * row.capacity) as usize..].as_ptr();
+        // The records where tier 1's layout has them (`records::RecordLayout`): a token's start,
+        // last and code, a column each or a row a token.
+        let (layout, cols) = match &self.tier1.records {
+            Some(t) => (t.layout, [u64::from(t.starts), u64::from(t.lasts), extracts as u64]),
+            None => (crate::records::RecordLayout::Columns, [self.tier2.starts.unwrap_or(0) as u64, self.tier2.lasts.unwrap_or(0) as u64, extracts as u64]),
+        };
+        let field = |k: usize| batch.positions[(row.positions + layout.index(k, 0, cols, row.capacity)) as usize..].as_ptr();
+        let (starts_p, lasts_p, codes) = (field(crate::records::FIELD_START), field(crate::records::FIELD_LAST), field(crate::records::FIELD_CODE));
         let none = [0u64];
         let totals = match batch.counts.get(row.counts as usize + extracts..) {
             Some(t) if !t.is_empty() => t,
@@ -5449,9 +5609,9 @@ impl Parser {
         // its blocks; each stream has `capacity` slots, at least two past its count; the tape is
         // sized for the stream.
         let view = Tier1View {
-            starts: starts.0.as_ptr(),
+            starts: if self.tier2.starts.is_some() { starts_p } else { starts.0.as_ptr() },
             nstarts: starts.1.min(lasts.1),
-            lasts: lasts.0.as_ptr(),
+            lasts: if self.tier2.lasts.is_some() { lasts_p } else { lasts.0.as_ptr() },
             codes,
             lasts_stride: 8 * self.tier1.outputs,
             outputs,
@@ -5459,6 +5619,7 @@ impl Parser {
             totals: totals.as_ptr().cast(),
             totals_stride: 8,
             totals_mask: u64::MAX,
+            record_stride: layout.stride() as usize,
         };
         let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
         if r != 0 {
@@ -5466,4 +5627,27 @@ impl Parser {
         }
         Ok(())
     }
+}
+
+/// `Cut::unsigned`'s builder: return addresses not signed (Cranelift signs them on every macOS target; an arm64
+/// process, not arm64e, does not need it). The JIT's own flags, as `JITBuilder::with_flags` sets them.
+#[cfg(not(target_family = "wasm"))]
+fn unsigned_builder(flags: &[(&str, &str)]) -> Result<JITBuilder, Error> {
+    use cranelift_codegen::settings::Configurable;
+    let mut shared = cranelift_codegen::settings::builder();
+    for (k, v) in flags.iter().copied().chain([("use_colocated_libcalls", "false"), ("is_pic", "false")]) {
+        shared.set(k, v).map_err(|_| Error::BackendFailure)?;
+    }
+    let isa = cranelift_codegen::isa::lookup_by_name("aarch64-apple-darwin")
+        .map_err(|_| Error::BackendFailure)?
+        .finish(cranelift_codegen::settings::Flags::new(shared))
+        .map_err(|_| Error::BackendFailure)?;
+    Ok(JITBuilder::with_isa(isa, default_libcall_names()))
+}
+
+/// wasm32 has no JIT (`cranelift-jit-wasm`): the builder fails as `with_flags`'s does, and the caller takes the
+/// interpreter's path.
+#[cfg(target_family = "wasm")]
+fn unsigned_builder(flags: &[(&str, &str)]) -> Result<JITBuilder, Error> {
+    JITBuilder::with_flags(flags, default_libcall_names()).map_err(|_| Error::BackendFailure)
 }

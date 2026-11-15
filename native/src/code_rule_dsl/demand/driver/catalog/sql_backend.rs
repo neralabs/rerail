@@ -2192,20 +2192,8 @@ impl PackedRow {
         row
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) const fn row_kind(&self) -> RowKind {
-        self.row_kind
-    }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn is_complete(&self) -> bool {
-        self.complete != 0
-    }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn error_code(&self) -> Option<&str> {
-        self.error_code.as_deref()
-    }
 
     pub(in crate::code_rule_dsl) fn from_sql_row(row: &rusqlite::Row<'_>) -> SqlResult<Self> {
         let row_kind = match row.get::<_, i64>(1)? {

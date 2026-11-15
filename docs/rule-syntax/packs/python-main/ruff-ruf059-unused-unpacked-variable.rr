@@ -13,7 +13,7 @@
 // RUF059(n): a finding at node n, from clause `unused-unpacked-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF059(at: node, n: loc) "Unpacked variable `{n}` is never used; rename it to `_{n}` or `_` to mark it unused, or use it."
+.violation RUF059(at: node, n_mv: loc) "Unpacked variable `{n_mv}` is never used; rename it to `_{n_mv}` or `_` to mark it unused, or use it."
     suppress noqa "RUF059"
 RUF059(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
     main_form(b1, f2), ruf059_set_7(f2),

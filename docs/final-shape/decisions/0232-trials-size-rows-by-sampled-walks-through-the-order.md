@@ -1,12 +1,12 @@
 # 0232: A trial sizes a row by a sampled walk through the order, which measures checks, chains, cycles and triangles
 
-Status: built (2026-11-14). Replaces decision 0226's pair counts (`KeyModel`) with `plan::Walker`, probing through
-`InRel::probe_each`. Closes 0226's three open items.
+Status: built (2026-11-14). Replaces decision 0262's pair counts (`KeyModel`) with `plan::Walker`, probing through
+`InRel::probe_each`. Closes 0262's three open items.
 
 ## Intro
 
 A checked line's trials run each candidate order over a few of the line's rows, and scale that work up to the line.
-On a skewed key, decision 0221 split the sample into rows of heavy keys and the rest. Decision 0226 scaled each
+On a skewed key, decision 0221 split the sample into rows of heavy keys and the rest. Decision 0262 scaled each
 part by an estimate of each row's work: per key value, the rows of each atom on the key, and their pair counts with
 one-variable checks. It got the self-join seed `call_ret` to 0.97 of its line's work.
 
@@ -85,7 +85,7 @@ line's 874 a row:
 
 | Sizes | Share | Walk time | Probes |
 |---|---|---|---|
-| Pair counts (0226) | 0.97 | 29 ms (pair counts) | — |
+| Pair counts (0262) | 0.97 | 29 ms (pair counts) | — |
 | Walks, stride thinning, narrow before checks | 0.70–1.02 (run to run) | 753 ms – 8 s | 30–51 k |
 | Walks, reservoir, wide before checks, budget per order and part | 0.97 | 107 ms | 61.6 k |
 | The same, one budget a line (built) | 0.97 | 38 ms | 21.5 k |
