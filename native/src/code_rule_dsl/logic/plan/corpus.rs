@@ -920,6 +920,9 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>, i
     // program that asks nothing of it is lowered against its modules (decision 0246 §2), not with its declarations.
     let mut library_files: Vec<std::path::PathBuf> = Vec::new();
     let mut lowered_library: Option<std::sync::Arc<crate::code_rule_dsl::logic::rr::Library>> = None;
+    // The store rule images are read from and kept in (decision 0264): the engine build's, dropped at the end of the
+    // combine, which writes what it queued.
+    let mut image_store: Option<std::sync::Arc<crate::content_store::ContentStore>> = None;
     if !copied && modular.iter().flatten().count() > 1 {
         let _library = crate::code_rule_dsl::logic::profile::span(|| "the libraries, once (decision 0089)".into());
         let mut declared_in: BTreeMap<&str, &std::path::Path> = BTreeMap::new();
@@ -936,11 +939,12 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>, i
                 library_files.push(path.clone());
             }
         }
-        lowered_library = Some(crate::code_rule_dsl::logic::rr::lower_library(&library_files)?);
+        image_store = crate::code_rule_dsl::logic::rr::image_store();
+        lowered_library = Some(crate::code_rule_dsl::logic::rr::lower_library(&library_files, image_store.as_deref())?);
     }
     let in_scope = lowered_library.as_deref().filter(|l| !l.modules.is_empty());
     // Each program lowered in scope is kept in the store as its image (decision 0246 §6).
-    let images = if in_scope.is_some() && cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { phases::reading_store() } else { None };
+    let images = image_store.filter(|_| in_scope.is_some());
     let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower each program".to_owned());
     // Each distinct scope seeded once (decision 0246 §2), before the programs lowered in it.
     let mut scoped: Vec<crate::code_rule_dsl::logic::rr::Scoped> = Vec::new();
