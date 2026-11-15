@@ -274,6 +274,42 @@ lowering is a small part of loading. The edited row's 24 G `combine` is the 317 
 then combined with the library (`combine_read`). That is stage 3's work. Every output relation is the same before
 and after, and with the library lowered together, on one file (144 rows) and on ten (1,044 rows).
 
+## Stages 3, 4 and 7, as built so far (2026-11-15)
+
+- **Every program is lowered in its libraries' scope** (`rr::Text::lower_in`, `lower::link_in`): its own clauses,
+  as a module against the library modules its includes reach, and the whole-program half over them with the scope
+  seeded; the scope's names are then taken out (core's and the kind sets stay, as `own_part` left them). No program
+  lowers the library's declarations again: the Python pack made 110,927 relations a program lowered and `own_part`
+  took out. A program that asks of the library (decision 0089 §3) gets its request's cone from the linked library
+  (`with_cone`): made at link time, as §2 decided. The combined program before hiding: 5,788 rules (7,611).
+- **Each program, and the linked library, is an image in the store**, under its text (or its modules) and its
+  scope's module keys. A store that holds them reads them: nothing is lowered or linked again. An image is pinned
+  with a lease (7 days) that each run reading it renews: `pin_held_sources` pins nothing outside a run's hold, so
+  collection took every image at the end of its run (stage 2's were never read back). Naming them in the run's
+  record is still to do.
+- **Hiding is kept by delta across its rounds** (`hiding::Delta`): which rules reach a guest, what the columns gain
+  (a least fixpoint started from the round before's), which are definite (a greatest fixpoint, made again over the
+  cone of the change), and each round's analysis of only the rules whose inputs changed. Hiding the Python pack:
+  0.07 s (0.40 s), release. The library's part of it is not yet kept with the library's image.
+- **A stored program is its image** (`program_text::store`): encoded once, kept under its bytes' digest. Not printed,
+  read back, encoded, decoded and digested by `{:?}` three times.
+
+Measured (M3 Max, release, one thread, 317 rules, one file; instructions, CPU):
+
+| Row | Before stage 2 | Now (stages 3 and 4) |
+|---|---|---|
+| Fresh store | 60.49 G, 4.61 s | 46.14 G, 3.55 s |
+| Store seeded by 10 files, then one file | 20.32 G, 1.54 s | 19.42 G, 1.51 s |
+| Warm | 6.20 G, 0.43 s | 6.23 G, 0.44 s |
+| One rule file edited | 42.66 G, 3.34 s | 27.17 G, 2.15 s |
+
+Every output relation is the same as before, on one file, on ten, and with a rule file edited. Loading cold is now
+about 2.0 s: the programs 0.48 s (0.25 s for the 301 in scope), the library 0.11 s, the merge 0.18 s, preparation
+0.67 s, the store's writer 0.43 s.
+
+Open, found on the way: `typing::phase_tests::types_resolves_names_bases_members_and_annotations_by_symbol` fails
+("a dotted annotation through `import pkg.m`"), at stage 2's commit too, so before this work.
+
 ## Aligned with django-bugs (decisions 0239, 0240)
 
 - **Symbols by content.** A module image holds its names as strings, and a reader takes its own ids of them, as

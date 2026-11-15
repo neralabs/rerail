@@ -202,15 +202,13 @@ impl Text {
 
     /// The text's own program, lowered as a module against the library's modules its includes reach and linked in
     /// their scope (`lower::link_in`, decision 0246 §2): what `lower(false)` gives less what `own_part` takes out,
-    /// without lowering the library's declarations again. For a text that asks nothing of the library (its own
-    /// clauses add to none of its relations); `None` for a text that includes nothing. `store` holds it as a program
+    /// without lowering the library's declarations again. A text that asks of the library has its request's part
+    /// copied from the linked library (`with_cone`). `None` for a text that includes nothing. `store` holds it as a program
     /// image (decision 0246 §6) under its text `src` and its scope's keys: a store that holds it reads it, and the
     /// text is not lowered.
-    pub fn lower_in(self, src: &str, library: &Library, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
+    pub fn lower_in(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
         let Read::Modular { files, own } = self.0 else { return Ok(None) };
-        let paths: Vec<PathBuf> = files.iter().map(|(p, _, _)| p.clone()).collect();
-        let (scope, keys) = library.scope(&paths);
-        let key = program_key(src, &keys);
+        let key = program_key(src, &scoped.keys);
         if let Some(store) = store
             && let Ok(Some(id)) = store.source_by_alias(key)
             && let Ok(bytes) = store.get_source(id)
@@ -224,8 +222,19 @@ impl Text {
         let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
-        let m = lower::lower_module_in(own, &scope)?;
-        let program = lower::link_in(m, &scope, core_names())?;
+        let m = lower::lower_module_seeded(own, &scoped.seeds)?;
+        let mut program = lower::link_seeded(m, &scoped.seeds, core_names())?;
+        // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
+        // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
+        // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
+        let declared: BTreeSet<String> = files.iter().flat_map(|(_, _, statements)| statements.iter()).filter_map(|(item, _)| match item {
+            syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => Some(name.clone()),
+            _ => None,
+        }).collect();
+        let asked: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
+        if !asked.is_empty() {
+            with_cone(&mut program, &library.program, &asked, &declared);
+        }
         if let Some(store) = store
             && let Ok(bytes) = encode_program(&program)
             && keep_image(store, "a program image", key, bytes)
@@ -298,7 +307,29 @@ pub struct Library {
     pub program: Program,
 }
 
+impl Text {
+    /// The library files a modular text includes, as `Library::scope` reads them; `None` for a plain one.
+    pub fn files(&self) -> Option<Vec<PathBuf>> {
+        match &self.0 {
+            Read::Modular { files, .. } => Some(files.iter().map(|(p, _, _)| p.clone()).collect()),
+            Read::Plain(_) => None,
+        }
+    }
+}
+
+/// A scope of a library, seeded once for every program lowered in it (`Text::lower_in`): its modules' keys.
+pub struct Scoped {
+    pub keys: Vec<crate::content_store::HashKey>,
+    seeds: lower::Seeds,
+}
+
 impl Library {
+    /// The scope of a program whose library files are `files`, seeded.
+    pub fn scoped(&self, files: &[PathBuf]) -> Scoped {
+        let (scope, keys) = self.scope(files);
+        Scoped { keys, seeds: lower::seeds(&scope) }
+    }
+
     /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
     /// with their keys.
     pub fn scope(&self, files: &[PathBuf]) -> (Vec<&lower::Module>, Vec<crate::content_store::HashKey>) {
@@ -507,6 +538,66 @@ fn keep_image(store: &crate::content_store::ContentStore, what: &'static str, ke
 fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
     use crate::content_store::write_back::Syms;
     store.write_back_unless_full(Syms::None, "an image's lease", 0, Vec::new(), Box::new(move |store| store.pin_source(id, IMAGE_OWNER, image_lease())));
+}
+
+/// Adds to `program`, which derives library relations `asked`, the linked library's part a request copies (decision
+/// 0089 §3): the library relations reading `asked`, through any rule or native, with `asked` themselves; and the
+/// relations their rules read that no library file declares (lowering's helpers), with their own. Their rules,
+/// declarations, natives, facts and lattices, as the library has them.
+fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>, declared: &BTreeSet<String>) {
+    use super::front::Literal;
+    fn reads(r: &super::front::Rule) -> Vec<&str> {
+        r.body.iter().filter_map(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
+            _ => None,
+        }).collect()
+    }
+    let mut cone: BTreeSet<String> = asked.clone();
+    loop {
+        let before = cone.len();
+        for r in &library.rules {
+            if !cone.contains(r.head.rel.as_str()) && reads(r).iter().any(|b| cone.contains(*b)) {
+                cone.insert(r.head.rel.to_string());
+            }
+        }
+        for (rel, n) in &library.natives {
+            if !cone.contains(rel) && n.reads().iter().any(|b| cone.contains(*b)) {
+                cone.insert(rel.clone());
+            }
+        }
+        if cone.len() == before {
+            break;
+        }
+    }
+    let core = core_names();
+    let mut take = cone;
+    let mut work: Vec<String> = take.iter().cloned().collect();
+    while let Some(rel) = work.pop() {
+        let read: Vec<String> = library.rules.iter().filter(|r| r.head.rel.as_str() == rel).flat_map(|r| reads(r).into_iter().map(str::to_owned)).chain(library.natives.get(&rel).into_iter().flat_map(|n| n.reads().into_iter().map(str::to_owned))).collect();
+        for b in read {
+            if !declared.contains(&b) && !core.contains(&b) && !take.contains(&b) && (library.rules.iter().any(|r| r.head.rel.as_str() == b) || library.natives.contains_key(&b)) {
+                take.insert(b.clone());
+                work.push(b);
+            }
+        }
+    }
+    for r in library.rules.iter().filter(|r| take.contains(r.head.rel.as_str())) {
+        if !program.rules.contains(r) {
+            program.rules.push(r.clone());
+        }
+    }
+    for (rel, cols) in library.decls.iter().filter(|(r, _)| take.contains(r.as_str())) {
+        program.decls.entry(rel.clone()).or_insert_with(|| cols.clone());
+    }
+    for (rel, n) in library.natives.iter().filter(|(r, _)| take.contains(*r)) {
+        program.natives.entry(rel.clone()).or_insert_with(|| n.clone());
+    }
+    for (rel, rows) in library.facts.iter().filter(|(r, _)| take.contains(*r)) {
+        program.facts.entry(rel.clone()).or_insert_with(|| rows.clone());
+    }
+    for (rel, d) in library.lattice.iter().filter(|(r, _)| take.contains(*r)) {
+        program.lattice.entry(rel.clone()).or_insert_with(|| d.clone());
+    }
 }
 
 /// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.

@@ -953,20 +953,34 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     // Each program lowered in scope is kept in the store as its image (decision 0246 §6).
     let images = if in_scope.is_some() && cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { phases::reading_store() } else { None };
     let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower each program".to_owned());
+    // Each distinct scope seeded once (decision 0246 §2), before the programs lowered in it.
+    let mut scoped: Vec<crate::code_rule_dsl::logic::rr::Scoped> = Vec::new();
+    let scope_of: Vec<Option<usize>> = match in_scope {
+        Some(library) => texts.iter().map(|t| t.as_ref().and_then(|t| t.files())).map(|files| {
+            let files = files?;
+            let keys = library.scope(&files).1;
+            Some(scoped.iter().position(|s| s.keys == keys).unwrap_or_else(|| {
+                scoped.push(library.scoped(&files));
+                scoped.len() - 1
+            }))
+        }).collect(),
+        None => vec![None; texts.len()],
+    };
     let each: Vec<_> = programs
         .par_iter()
         .zip(&own_only)
         .zip(texts.par_iter_mut())
-        .map(|((text, &own_only), slot)| recorded_on_worker(|| -> Result<Program> {
+        .zip(&scope_of)
+        .map(|(((text, &own_only), slot), scope_of)| recorded_on_worker(|| -> Result<Program> {
             if let Some(read) = read.filter(|_| programs.len() == 1) {
                 return given(read.clone());
             }
             if let Some(read) = slot.take() {
-                if own_only && let Some(library) = in_scope {
+                if let Some(library) = in_scope && let Some(k) = *scope_of {
                     let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
                     // Its library's relations are the library's, declared there, not in the program: it is handed the
                     // run's rows (0249) but not checked for its own declarations (`front::declared`).
-                    let mut prog = read.lower_in(text, library, images.as_deref())?.expect("a modular text");
+                    let mut prog = read.lower_in(text, library, &scoped[k], images.as_deref())?.expect("a modular text");
                     extra.add_to(&mut prog);
                     return Ok(prog);
                 }
@@ -1008,7 +1022,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     // Not held once after all: a program read without its libraries' rules is read whole.
     if !shared {
         for ((prog, text), &own_only) in parsed.iter_mut().zip(programs).zip(&own_only) {
-            if own_only {
+            if own_only || in_scope.is_some() {
                 *prog = parse(text)?;
             }
         }

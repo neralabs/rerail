@@ -343,7 +343,35 @@ pub fn lower_module(statements: Vec<Statement>) -> Result<Module, Error> {
 
 /// `statements` lowered as a module whose includes are `scope` (each module it reaches, once): its clauses read their
 /// declarations, inputs, lattices, kind sets and natives, and the result holds only its own (`Module`).
+/// A scope seeded once (decision 0246 §2): a lowerer holding what a scope's modules give the modules lowered in it,
+/// with what it took and the scope's tape types. Every program of a run in the same scope starts from a copy.
+pub struct Seeds {
+    l: Lowerer,
+    seeded: Seeded,
+    given: BTreeMap<String, Vec<String>>,
+    /// The demands the scope's modules stated.
+    printed: BTreeSet<String>,
+}
+
+/// `scope`, seeded (`Seeds`).
+pub fn seeds(scope: &[&Module]) -> Seeds {
+    let _seeding = crate::code_rule_dsl::logic::profile::span(|| "seed a scope".to_owned());
+    let mut l = Lowerer::default();
+    let seeded = l.seed(scope);
+    let mut given: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for m in scope {
+        given.extend(m.written.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+    let printed = scope.iter().flat_map(|m| m.l.printed_demands.iter().cloned()).collect();
+    Seeds { l, seeded, given, printed }
+}
+
 pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<Module, Error> {
+    lower_module_seeded(statements, &seeds(scope))
+}
+
+/// `lower_module_in`, in a scope seeded already.
+pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
     let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
     let written: BTreeMap<String, Vec<String>> = statements
         .iter()
@@ -352,16 +380,12 @@ pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<
             _ => None,
         })
         .collect();
-    let mut given: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for m in scope {
-        given.extend(m.written.iter().map(|(k, v)| (k.clone(), v.clone())));
-    }
-    super::tape_type::check_in(&statements, &given)?;
+    super::tape_type::check_in(&statements, &seeds.given)?;
     drop(typing);
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the statements".to_owned());
     let declares_docof = statements.iter().any(|(item, _)| matches!(item, Item::Decl { name, .. } if name == "docof"));
-    let mut l = Lowerer::default();
-    let seeded = l.seed(scope);
+    let mut l = seeds.l.clone();
+    let seeded = seeds.seeded.clone();
     let mut clauses = Vec::new();
     // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
     let mut last_heads: Option<Vec<String>> = None;
@@ -446,9 +470,7 @@ pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<
     // The demands the text states (a printed program's): its own declarations, as read, and those its includes
     // stated. A demand an include's lowering made is not one: this module makes its own.
     l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d) && !seeded.decls.contains(**d)).map(|d| (*d).to_owned()).collect();
-    for m in scope {
-        l.printed_demands.extend(m.l.printed_demands.iter().cloned());
-    }
+    l.printed_demands.extend(seeds.printed.iter().cloned());
     for (heads, body, edits, line) in clauses {
         // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
         if !edits.is_empty() {
@@ -585,6 +607,7 @@ impl Module {
 }
 
 /// What `Lowerer::seed` took from a module's includes, which `Lowerer::unseed` takes out again.
+#[derive(Clone)]
 struct Seeded {
     decls: BTreeSet<String>,
     inputs: BTreeSet<String>,
@@ -873,8 +896,13 @@ pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
 /// declarations from any part. Only for a module whose clauses add to no relation of its scope (it asks nothing of
 /// the library, decision 0089 §3): the scope's `.violation`s are the library's, and their findings are its rules.
 pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<Program, Error> {
-    let mut l = Lowerer::default();
-    let seeded = l.seed(scope);
+    link_seeded(m, &seeds(scope), core)
+}
+
+/// `link_in`, in a scope seeded already.
+pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<Program, Error> {
+    let mut l = seeds.l.clone();
+    let seeded = &seeds.seeded;
     l.violations.clear();
     l.append(m);
     let mut program = whole(l)?;
