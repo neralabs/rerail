@@ -1,15 +1,9 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
-import {
-  gitSearchEnds,
-  readCloneIdAt,
-  repositoryFolderName,
-  repositoryIdentityLocation,
-  type RepositoryIdentityLocation,
-} from "../engine/catalog/repository-identity.js";
+import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import {
   checkoutStatus,
   createCheckoutResolver,
@@ -17,7 +11,6 @@ import {
   nestedCheckouts,
   parentCheckouts,
   recordCheckout,
-  recordedStopped,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -94,45 +87,11 @@ export function readOnlyStartState(workspace: string, databasePath = defaultRera
     hasStartTables(database) ? stateOf(checkoutStatus(database, lookupCheckout(database, workspace))) : undefined);
 }
 
-/**
- * Whether the daemon would read `workspace` as stopped (`startStateReader`), told without running Git and only on
- * positive evidence: a checkout recorded where Git's search there settles (`gitSearchEnds`), whose repository the
- * database reads stopped, and no end of that search reading otherwise (`recordedStopped`). False wherever that is not
- * shown, so the caller asks the daemon: a search the filesystem leaves open (a folder on a server among them), a
- * checkout only its remote could place, one no record holds, one that reads started, a recorded checkout the walk
- * passed without its `.git`, or a database this process cannot read whole and at once. The database is opened as it is, beside the daemon (`openAsIsAtOnce`),
- * so this never writes it and never waits on another process: a file that needs this build's schema steps first, one
- * another process holds, and one whose WAL or the WAL's index is gone are left to the daemon. SQLite's error for a
- * database it opened and cannot read, one without the start tables or one another process locked once it was open
- * among them, is thrown.
- */
-export function stoppedWithoutGit(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
-  const ends = gitSearchEnds(workspace);
-  return ends !== undefined && !ends.some(placedByRemote)
-    && readOnly(databasePath, database => recordedStopped(database, ends), openAsIsAtOnce) === true;
-}
-
-/** The database as it is, read beside the daemon (`besideDaemon`): where it cannot be read whole and at once, the daemon answers. */
-function openAsIsAtOnce(databasePath: string): RerailDatabase {
-  return openRerailDatabaseAsIs(databasePath, { besideDaemon: true });
-}
-
-/**
- * A Git checkout with no clone id yet, as a repository Rerail never recorded and a new clone are: the daemon places it by
- * its remote, which only Git reads, so the database is not opened to answer there.
- */
-function placedByRemote(end: RepositoryIdentityLocation): boolean {
-  return end.git && readCloneIdAt(end.identityPath) === undefined;
-}
-
-/**
- * `read` over a read-only connection `open` gives: by default one that first runs this build's schema steps over a
- * writable one where the file lacks them (`openRerailDatabase`). Undefined when the database cannot be opened or read.
- */
-function readOnly<T>(databasePath: string, read: (database: RerailDatabase) => T, open = openReadOnly): T | undefined {
+/** `read` over a read-only connection; undefined when the database cannot be opened or read. */
+function readOnly<T>(databasePath: string, read: (database: RerailDatabase) => T): T | undefined {
   let database: RerailDatabase;
   try {
-    database = open(databasePath);
+    database = openRerailDatabase(databasePath, { readonly: true });
   } catch {
     return undefined;
   }
@@ -141,10 +100,6 @@ function readOnly<T>(databasePath: string, read: (database: RerailDatabase) => T
   } finally {
     database.$client.close();
   }
-}
-
-function openReadOnly(databasePath: string): RerailDatabase {
-  return openRerailDatabase(databasePath, { readonly: true });
 }
 
 const NOT_SET_UP: SessionNoteRules = { setUp: false };
