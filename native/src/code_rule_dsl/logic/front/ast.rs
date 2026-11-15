@@ -279,10 +279,6 @@ pub struct Program {
     /// relation: for each of its rules, in order, the relations whose readers it serves. `prune` keeps a request
     /// rule only while one of them is reached, as a reader's request is kept with the reader.
     pub asked_by: BTreeMap<String, Vec<BTreeSet<String>>>,
-    /// The widened copies lowering made of relations that read an attribute on request (decision 0174's
-    /// `rr_wide_<attr>_<r>`), each with the relation it copies. `prune` reads a copy left with its relation's own
-    /// rules (a request rule that read the attribute pruned with its readers) as that relation.
-    pub widened: BTreeMap<String, String>,
     /// Join shape directives (`.shape`, O-join-shape-directives), each on the rules of its relation and every form
     /// made from them.
     pub shapes: Vec<Shape>,

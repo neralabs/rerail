@@ -3441,9 +3441,10 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
         let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
-        // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them: renumbered by their
-        // first appearance in the pruned rules, as dropped clauses no longer take numbers before them.
-        let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
+        // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them, and `simplify` its fresh
+        // variables (`rr_earlier27_f18`): renumbered by their first appearance in the pruned rules, as dropped
+        // clauses no longer take numbers before them.
+        let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)(_[a-z][a-z0-9_]*)?\b").unwrap();
         let shape = |mut p: Program| {
             // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
             // (`corpus::run_observed`), those a library derives (embeds, loads) and those lowering makes of a body's
@@ -3454,13 +3455,18 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                     p.outputs.push(rel.to_owned());
                 }
             }
+            // Then simplified and pruned again, as `corpus::run_observed` prepares it: identical relations merge
+            // (`simplify::merge_identical`), so a widened copy (decision 0174) whose kept rules are its relation's own
+            // once its unreached readers' requests are pruned is read as that relation.
+            let mut p = front::prune(p);
+            crate::code_rule_dsl::logic::simplify::simplify(&mut p);
             let mut p = front::prune(p);
             let kept = p.rules.clone();
             let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
             let mut renumber = |s: &str| -> String {
                 helper.replace_all(s, |c: &regex::Captures| {
                     let n = names.len();
-                    names.entry(c[0].to_owned()).or_insert_with(|| format!("rr_{}#{n}", &c[1])).clone()
+                    names.entry(c[0].to_owned()).or_insert_with(|| format!("rr_{}#{n}{}", &c[1], c.get(3).map_or("", |m| m.as_str()))).clone()
                 }).into_owned()
             };
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
