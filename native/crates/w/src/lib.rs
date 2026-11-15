@@ -24,7 +24,7 @@ pub mod code_rule_dsl {
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
         pub mod facts_a;
-        #[path = "vtab"]
+        #[cfg_attr(any(test, feature = "test-hooks"), path = "vtab")]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             #[cfg(any(test, feature = "test-hooks"))]
@@ -234,7 +234,7 @@ pub mod code_rule_dsl {
     pub mod violations;
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod walks;
-    #[path = "waves"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "waves")]
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
         pub mod relational;

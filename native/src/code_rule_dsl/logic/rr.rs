@@ -12,7 +12,7 @@
 //! not the program's: they are left out (`python/calls.rr`'s).
 
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
-#[path = "rr/aggregate_demand"]
+#[cfg_attr(any(test, feature = "test-hooks"), path = "rr/aggregate_demand")]
 pub mod aggregate_demand {
     pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
     #[cfg(any(test, feature = "test-hooks"))]
@@ -37,7 +37,7 @@ pub use rerail_rr_syntax::tape;
 pub fn nodes(src: &str) -> Vec<tape::Node> {
     tape::nodes(&tape(src)).expect("the lean parser's image decodes")
 }
-#[path = "rr"]
+#[cfg_attr(any(test, feature = "test-hooks"), path = "rr")]
 pub mod tape_type {
     pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
     #[cfg(any(test, feature = "test-hooks"))]
@@ -375,12 +375,20 @@ pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::State
             Error::Syntax(m) => Error::Syntax(format!("{}: {m}", paths[members[0]].display())),
             e => e,
         })?;
+        // Written by the store's writer, behind the run (decisions 0104, 0240 §1); dropped where its queue is full, as
+        // a tape is: the next run lowers the module again.
         if let Some(store) = &store
             && let Ok(bytes) = module_image::encode(&m)
-            && let Ok(id) = store.put_source(&bytes, &[key])
         {
-            let _ = store.pin_held_sources(&[id]);
-            crate::code_rule_dsl::prof::count("rr.module_image_written", 1);
+            use crate::content_store::write_back::{Key, Syms};
+            let n = bytes.len();
+            let queued = store.write_back_unless_full(Syms::None, "a module image", n, vec![(Key::of(&[b"module_image", &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
+                let id = store.put_source(&bytes, &[key])?;
+                store.pin_held_sources(&[id])
+            }));
+            if queued {
+                crate::code_rule_dsl::prof::count("rr.module_image_written", 1);
+            }
         }
         modules.push(m);
     }

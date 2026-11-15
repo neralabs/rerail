@@ -256,6 +256,24 @@ Not yet, and why:
 - **A module image is pinned while a run holds it, not named in the run's record.** Collection may drop it, and the
   next run lowers that module again. Naming images in the record goes with stage 7 (the stored form).
 
+Measured (M3 Max, one thread, the 317 converted Python rules, `logic` over one file of the corpus; process
+instructions, CPU in seconds):
+
+| Row | Before | Stage 2 |
+|---|---|---|
+| Fresh store | 60.49 G, 4.61 s | 60.12 G, 4.70 s |
+| Store seeded by 10 files, then one file | 20.32 G, 1.54 s | 19.39 G, 1.49 s |
+| Warm (the same run again) | 6.20 G, 0.43 s | 6.26 G, 0.44 s |
+| One rule file edited on the seeded store | 42.66 G, 3.34 s | 43.59 G, 3.49 s |
+
+With one rule file edited, the store holds every module's image but not the prepared program, which is the case
+images are for. Reading them saves 0.2–0.3 G against `RERAIL_MODULE_IMAGES=off` (43.49 and 43.58 G against 43.78
+and 43.90 G, two pairs), under 1%. On a fresh store, lowering one module at a time costs about 0.3 G more than
+lowering the files together (`combine` 26.01 G against 25.70 G). So stage 2 is neutral on cost. The library's
+lowering is a small part of loading. The edited row's 24 G `combine` is the 317 programs: each is lowered,
+then combined with the library (`combine_read`). That is stage 3's work. Every output relation is the same before
+and after, and with the library lowered together, on one file (144 rows) and on ten (1,044 rows).
+
 ## Aligned with django-bugs (decisions 0239, 0240)
 
 - **Symbols by content.** A module image holds its names as strings, and a reader takes its own ids of them, as
