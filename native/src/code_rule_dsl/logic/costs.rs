@@ -415,7 +415,7 @@ pub fn start() {
             }
         });
         // Read beside the run (its preparation reads none of it): a tenth of a second of a cold batch's first run.
-        let spawned = std::thread::Builder::new().name("rerail-costs read".into()).spawn(move || {
+        let spawned = rerail_accel::exec::service("rerail-costs read", None, move || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
             let _ = std::panic::catch_unwind(read);
             done();
