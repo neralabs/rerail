@@ -48,7 +48,11 @@ Planner 128 and engine 52 pass.
 ## Open
 
 - **`3.2.0.1.4.5`'s 21% is the walker's steps.** Its lead rows are read whole. Its work grows with a function's size
-  twice, at `inf(f, n)` and again at `inf(f, k)`, and the thinning sizes only the next step. A two-step lookahead,
-  or a wider walk in the idle job, would carry it.
+  twice, at `inf(f, n)` and again at `inf(f, k)`, and the thinning sizes only the next step.
+  - Tried and dropped: multiply the size by each later expansion whose key the binding already holds (one index
+    count each). It walked `3.2.0.1.4.5` at 36% and `1.0.2.3.4.5` at 58% (21% and 23% without). The check between
+    them (`kind(n, "call")`) keeps a function's calls, so the second step grows with calls times size, not size
+    squared, and the overstated size raised the variance.
+  - Left: the check's pass share at the key (a lookahead through the check), or a wider walk in the idle job.
 - **The walks read low** (0.71 to 0.90 of the work). The choice compares walks with the walk of the order that ran,
   so a bias they share cancels; one they do not share remains.
