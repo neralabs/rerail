@@ -11961,6 +11961,14 @@ fn walk_salt(part: &str) -> u64 {
     WALK_SALT.with(|s| s.get()).wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
+/// How many lead rows past the checks a background walk draws, at most (`RERAIL_WALK_STARTS`), within the draw's
+/// cap of `64 * walk_rows` read. Decision 0248: 4 times `walk_rows`. The walker thins them by each step's size, so
+/// more cost little: at 512 the orders led by the calls varied by 23% and 33% (sd, 8 seeds), at 128 by 31% and 39%,
+/// for the same search CPU.
+fn walk_starts() -> usize {
+    std::env::var("RERAIL_WALK_STARTS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| 4 * joins::walk_rows())
+}
+
 /// `RERAIL_WALK_REPEAT`: a measurement aid. A background search walks each order this many times more, each under
 /// other seeds, and logs their mean and spread. The ranking keeps the first walk.
 fn walk_repeat() -> usize {
@@ -12103,7 +12111,7 @@ impl WalkSnap {
             let mut draw = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
             let batch = 16 * joins::walk_rows();
             let (mut est, mut read, mut kept, mut exact) = (0.0, 0u64, 0u64, false);
-            while survivors.len() < joins::walk_rows() && (read as usize) < 64 * joins::walk_rows() {
+            while survivors.len() < walk_starts() && (read as usize) < 64 * joins::walk_rows() {
                 let mut got = Vec::new();
                 let n = rel.probe_sample(&cols, &key, batch, &mut draw, &mut |row| got.push((0..a.args.len()).map(row).collect::<Vec<i64>>()));
                 est = n;
@@ -12117,6 +12125,47 @@ impl WalkSnap {
             }
             (if read > 0 { est * kept as f64 / read as f64 } else { 0.0 }, exact)
         };
+        // Decision 0248: where the draw stopped short of its rows, past a check that passes few, the survivors are
+        // found through the check: its rows by its constants, where they are within the draw's cap, each probing
+        // the lead by the variables they share. They are then every lead row past the checks, not a sample. A
+        // check passing 0.3% left 49 rows of 8,192 drawn, and `2.3.0.1.4.5`'s walks varied by 31% from the draw.
+        let (mut survivors, mut exact, mut exact_share) = (survivors, exact, None);
+        if !exact && Some(lead) != first && survivors.len() < walk_starts() && rows > 0.0 && let Some(lrel) = self.rels.get(a.rel.as_ref()) {
+            let cap = 64 * joins::walk_rows();
+            for c in checks.iter().filter(|c| !c.neg) {
+                let Some(crel) = self.rels.get(c.rel.as_ref()) else { continue };
+                let (mut ccols, mut ckey, mut known) = (Vec::new(), Vec::new(), true);
+                for (i, t) in c.args.iter().enumerate() {
+                    match t {
+                        Term::Int(v) => { ccols.push(i); ckey.push(*v) }
+                        Term::Str(x) => match self.syms.get(x.as_ref()) { Some(&v) => { ccols.push(i); ckey.push(v) } None => known = false },
+                        _ => {}
+                    }
+                }
+                if !known || ccols.is_empty() || crel.probe_size(&ccols, &ckey) > cap as f64 { continue }
+                // (the check's column, the lead's) for each variable they share
+                let links: Vec<(usize, usize)> = c.args.iter().enumerate().filter_map(|(i, t)| if matches!(t, Term::Var(_)) { a.args.iter().position(|u| u == t).map(|lc| (i, lc)) } else { None }).collect();
+                if links.is_empty() { continue }
+                let (mut found, mut over): (Vec<Vec<i64>>, bool) = (Vec::new(), false);
+                crel.probe_each(&ccols, &ckey, &mut |row| {
+                    if over { return }
+                    let (mut lcols, mut lkey) = (cols.clone(), key.clone());
+                    for &(i, lc) in &links { if !lcols.contains(&lc) { lcols.push(lc); lkey.push(row(i)); } }
+                    lrel.probe_each(&lcols, &lkey, &mut |l| {
+                        let r: Vec<i64> = (0..a.args.len()).map(l).collect();
+                        if same.iter().all(|&(d, c)| r[d] == r[c]) && passes(&r, None) { found.push(r) }
+                    });
+                    over = found.len() > cap;
+                });
+                if over { continue }
+                found.sort_unstable();
+                found.dedup();
+                exact_share = Some(found.len() as f64 / rows);
+                survivors = found;
+                exact = true;
+                break;
+            }
+        }
         if !exact && survivors.len() < 16 { return None }
         // Per lead row: each check reads what passed the ones before it.
         let (mut work, mut share) = (0.0, 1.0);
@@ -12124,6 +12173,7 @@ impl WalkSnap {
             work += share;
             share *= if reached[i] > 0 { passed[i] as f64 / reached[i] as f64 } else { 0.0 };
         }
+        let share = exact_share.unwrap_or(share);
         let mut st = Starts { rows: survivors, lead_rows: rows, checks: checks.len(), checks_work: work, share, cold: 1.0, hot: None };
         // Decision 0245: split by a heavy key, as the inline trials do (0221, 0233). A delta's sample is not split:
         // its rows are not a relation to draw by key.
@@ -12149,7 +12199,7 @@ impl WalkSnap {
             // drawn, as the uniform draw: a check passing 0.3% left 6 rows of one round's 2,080.
             let mut by: Vec<(f64, usize, usize)> = vec![(0.0, 0, 0); ordered.len()];
             let (mut hot_rows, mut drawn) = (Vec::new(), 0usize);
-            while hot_rows.len() < joins::walk_rows() && drawn < 64 * joins::walk_rows() && all > 0.0 {
+            while hot_rows.len() < walk_starts() && drawn < 64 * joins::walk_rows() && all > 0.0 {
                 let before = drawn;
                 for (i, (&h, &size)) in ordered.iter().zip(&sizes).enumerate() {
                     if size == 0.0 { continue }

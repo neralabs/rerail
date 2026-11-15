@@ -535,6 +535,32 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     assert!((unsplit / truth - 1.0).abs() < 0.15, "unsplit {unsplit} against {truth}");
 }
 
+#[test]
+fn a_walk_past_a_rare_check_starts_from_the_checks_rows() {
+    use crate::code_rule_dsl::logic::native::component::InRel;
+    use crate::code_rule_dsl::logic::plan::{Step, WalkSnap};
+    use std::collections::HashMap;
+    // From every node, a check on a kind 10 nodes of 30,000 have, then the function's nodes and their kinds.
+    let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 9), r(f, m), k(m, 2).\n.output h\n").unwrap();
+    let rule = &p.rules[0];
+    let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
+    for f in 1..=1000i64 {
+        for i in 0..30 {
+            let n = f * 100 + i;
+            r.push([f, n]);
+            k.push([n, if i == 0 && f <= 10 { 9 } else if i < 20 { 2 } else { 3 }]);
+        }
+    }
+    let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
+    let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: HashMap::new() };
+    let order: Vec<Step> = [0usize, 1, 2, 3].iter().map(|&at| Step { at, mode: None }).collect();
+    // Decision 0248: the draw of 8,192 rows finds about 3 past the check, too few to measure; through the check's 10
+    // rows, every lead row past it is found.
+    let found = snap.walk(rule, None, &order, vec![(order.clone(), 1.0)], &|| false);
+    // Each node read by the check; the 10 past it, read by the function's step; their functions' 30 nodes each.
+    assert_eq!(found.walked, Some(30_000.0 + 10.0 + 300.0));
+}
+
 fn steps_of(o: &[usize]) -> Vec<StoredStep> {
     o.iter().map(|&at| (at as u16, None)).collect()
 }
