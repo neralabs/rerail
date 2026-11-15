@@ -4101,17 +4101,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let len = f.ins().isub(next_after, s);
     let kind = f.ins().band_imm(entry, 0xff);
     // A reader's token's kind and marks (`Reader::retag`), where it gives them.
-    let (kind, tag_marks) = match retag {
-        Some(tag) if r.readers.iter().any(|rd| rd.retag.is_some()) => {
-            let has = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, tag, 0);
-            let k = f.ins().band_imm(tag, 0xff);
-            let kind = f.ins().select(has, k, kind);
-            let m = f.ins().band_imm(tag, !0xff);
-            let m = f.ins().select(has, m, zero);
-            (kind, Some(m))
-        }
-        _ => (kind, None),
-    };
+    let retag = retag.filter(|_| r.readers.iter().any(|rd| rd.retag.is_some()));
     // A punctuation of the fused pair rule (`TOKEN_PUNCT`): its code bits by its first byte
     // and its length, a load beside the entry's, no word looked up, as the lean lexer's.
     if common {
@@ -4134,14 +4124,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
         f.switch_to_block(rest);
     }
-    // A first byte no word starts: no word to look up, its code the kind and a reader's marks.
+    // A token a reader says (`Reader::retag`, a comment): its tag is its code, its kind and
+    // marks, and it is no word (`records::pass`), as the lean lexer's comment branch.
+    if let Some(tag) = retag {
+        let rest = f.create_block();
+        let has = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, tag, 0);
+        f.ins().brif(has, coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), tag.into(), hits.into()], rest, &[]);
+        f.switch_to_block(rest);
+    }
+    // A first byte no word starts: no word to look up, its code the kind.
     let looked = f.create_block();
     let wordy = f.ins().band_imm(entry, 1 << TOKEN_WORDY);
-    let plain = match tag_marks {
-        Some(m) => f.ins().bor(kind, m),
-        None => kind,
-    };
-    f.ins().brif(wordy, looked, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), plain.into(), hits.into()]);
+    f.ins().brif(wordy, looked, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), kind.into(), hits.into()]);
     f.switch_to_block(looked);
     let key = cut_to(f, raw, len);
     let h1 = f.ins().bxor(key, len);
@@ -4160,13 +4154,6 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let w = f.ins().ushr_imm(meta, 8);
     let bits = f.ins().select(hit, w, zero);
     let mut code = f.ins().bor(kind, bits);
-    let kind = match tag_marks {
-        Some(m) => {
-            code = f.ins().bor(code, m);
-            f.ins().bor(kind, m)
-        }
-        None => kind,
-    };
     // The word itself, where a mark or a long word's tail needs it.
     let word_of = |f: &mut FunctionBuilder<'_>| {
         let x = f.ins().ushr_imm(bits, i64::from(crate::records::KIND_BITS));

@@ -1417,7 +1417,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20   bad = bad || l < s || s < after;\n\
              \x20   const uint len = l + 1u - s;\n\
              \x20   uint kind = record_kinds_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
-             \x20   const uint word = record_word_{p}(bytes, f, s, len);\n\
+             \x20   uint word = record_word_{p}(bytes, f, s, len);{unword}\n\
              \x20   uint marks = 0u;{marks}{retags}{gaps}{checks}\n\
              \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
              \x20 }}\n\
@@ -1432,6 +1432,8 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 r.checks.iter().filter(|c| c.rule == rule).fold(0u32, |a, c| a | 1 << bit_of(c)).to_string()
             })),
             // A reader's kind and marks by its start mask (`Records::retags`).
+            // A token a reader says is no word (`records::pass`).
+            unword = r.retags.iter().map(|t| format!(" if (record_bit(out, f, {}u, s)) word = 0u;", t.o)).collect::<String>(),
             retags = r
                 .retags
                 .iter()

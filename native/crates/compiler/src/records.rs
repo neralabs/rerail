@@ -596,12 +596,15 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         after = l as u64 + 1;
         let len = (l + 1).saturating_sub(s);
         let mut kind = u32::from(records.kinds[usize::from(bytes.get(s).copied().unwrap_or(0))]);
-        let word = table.word(bytes, s, len);
+        let mut word = table.word(bytes, s, len);
         let mut marks = 0u32;
         let bit_of = |o: u16| outputs.get(usize::from(o)).and_then(|v| v.get(s / 64)).is_some_and(|x| x >> (s % 64) & 1 == 1);
+        // A token a reader reads and says (a comment) is no word, as a lexer looks no
+        // comment up (`Reader::retag`).
         for t in records.retags.iter().filter(|t| bit_of(t.o)) {
             kind = u32::from(t.kind);
             marks |= t.marks;
+            word = 0;
         }
         let retagged: u32 = records.retags.iter().fold(0, |a, t| a | t.marks);
         for (k, &(o, w)) in records.marks.iter().enumerate().filter(|&(k, _)| retagged >> k & 1 == 0) {

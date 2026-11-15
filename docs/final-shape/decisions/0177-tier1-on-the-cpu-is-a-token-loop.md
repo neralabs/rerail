@@ -1116,3 +1116,37 @@ Open: if the always-true test's mask moves from "made at the
 tokens" into the CPU body's stored outputs, one refusal flag flips
 (a string open at the file's end). Nothing reads that mask now. It
 stays at the tokens, but the flip is not yet explained.
+
+## A comment's tag is its code (2026-11-15)
+
+**Intro.** The lean lexer's comment branch records the comment and
+goes on. It never looks a comment up as a word. The generated loop
+did, because `/` starts a word (the `/` punctuation):
+
+```
+// Before: every token past the rule took the word step.
+kind = has_tag ? tag_kind : entry_kind;   // four selects
+if wordy(entry) { look the word up }      // a comment too
+// After: a reader's tag is the code.
+if has_tag { code = tag; goto coded; }
+```
+
+**The rule.** A token a reader reads and tags (`Reader::retag`, a
+comment) is no word. The interpreter (`records::pass`) and Metal set
+its word to none; the CPU's token loop takes its tag as its code and
+skips the lookup. rr's only word starting with `/` is one byte long
+and a comment is two bytes or more, so rr's codes do not change.
+
+The first try kept the selects and cleared the word bit when tagged.
+Comments went down 29, but the other kinds rose about 2 each, because
+rustc assigned the loop's registers differently. The branch removes
+the selects too:
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 101.6 | 99.2 | 97.9 |
+| Punctuation | 56.6 | 55.4 | 53.5 |
+| Mixed | 61.1 | 59.9 | 63.1 |
+| Strings | 368 | 360 | 241 |
+| Numbers | 233 | 226 | 107 |
+| Comments | 371 | 338 | 193 |
