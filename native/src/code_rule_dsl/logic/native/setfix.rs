@@ -72,6 +72,8 @@ pub mod spec;
 mod survivor_tests;
 #[cfg(test)]
 mod cut_tests;
+#[cfg(test)]
+mod inputs_tests;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;
@@ -1238,6 +1240,13 @@ pub fn forget_scope(at: usize) {
     }
     if let Ok(mut p) = SCOPE_PATHS.lock() {
         p.remove(&at);
+    }
+    // Its loaded inputs: a connection opened later at its address binds sources of its own.
+    if let Ok(mut i) = INPUTS.lock() {
+        i.remove(&at);
+    }
+    if let Ok(mut c) = CHANGING.lock() {
+        c.remove(&at);
     }
     crate::code_rule_dsl::logic::plan::forget_connection(at);
     forget_engine(at);
@@ -3067,7 +3076,7 @@ pub fn unindex(conn: &Connection, tables: &[String]) {
 pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
     let path = conn_path(conn).to_string();
     let reads = |key: &InputKey| key.sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| tables.iter().any(|t| t == w));
-    if let Some(m) = INPUTS.lock().unwrap().get_mut(&path) { m.retain(|key, _| !reads(key)); }
+    if let Some(m) = INPUTS.lock().unwrap().get_mut(&conn.at()) { m.retain(|key, _| !reads(key)); }
     STORED.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
 }
 
@@ -4243,41 +4252,44 @@ impl InRel {
         }).clone()
     }
 }
-/// Input relations loaded for joins, by database and spec, for the run that loaded them: the base relations are
-/// vtabs rebound per batch, so a load is not reused across runs (`forget_inputs`). T cached them for its process,
-/// which ran one program over one facts file.
-static INPUTS: LazyLock<Mutex<HashMap<String, HashMap<InputKey, Arc<InRel>>>>> = LazyLock::new(Default::default);
+/// Input relations loaded for joins, by connection (its scope) and spec, for the run that loaded them: the base
+/// relations are vtabs rebound per batch, so a load is not reused across runs (`forget_inputs`). A connection's, not
+/// its database's: connections on one database bind sources of their own (a run's chunks evaluating at once, decision
+/// 0254), and one's run must neither read nor drop another's. T cached them for its process, which ran one program
+/// over one facts file.
+static INPUTS: LazyLock<Mutex<HashMap<usize, HashMap<InputKey, Arc<InRel>>>>> = LazyLock::new(Default::default);
 
 /// Drops the input relations loaded on `conn`'s database: a run starts over the relations bound now.
 pub fn forget_inputs(conn: &Connection) {
     let path = conn_path(conn).to_string();
-    let changing = CHANGING.lock().unwrap().get(&path).cloned();
+    let at = conn.at();
+    let changing = CHANGING.lock().unwrap().get(&at).cloned();
     let Some(changing) = changing else {
-        INPUTS.lock().unwrap().remove(&path);
+        INPUTS.lock().unwrap().remove(&at);
         STORED.lock().unwrap().retain(|(p, _), _| *p != path);
         return;
     };
     // Kept: base inputs (`b:` specs) that read none of the relations that change between runs; their rows and
     // indexes are the same in the next run. Derived inputs (`d:`, a SQL stratum's table) are made again.
     let reads_changing = |sel: &str| sel.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| changing.contains(w));
-    if let Some(m) = INPUTS.lock().unwrap().get_mut(&path) { m.retain(|key, _| key.base && !reads_changing(&key.sql)); }
+    if let Some(m) = INPUTS.lock().unwrap().get_mut(&at) { m.retain(|key, _| key.base && !reads_changing(&key.sql)); }
     STORED.lock().unwrap().retain(|(p, table), _| *p != path || (!table.starts_with("main.") && !table.starts_with("temp.") && !reads_changing(table)));
 }
 
-/// Relations whose rows change between the native runs on `conn` (`keep_inputs`): while set, `forget_inputs` keeps
-/// every other base input loaded, with its indexes.
-static CHANGING: LazyLock<Mutex<HashMap<String, std::collections::BTreeSet<String>>>> = LazyLock::new(Default::default);
+/// Relations whose rows change between the native runs on `conn` (`keep_inputs`), by connection: while set,
+/// `forget_inputs` keeps every other base input loaded, with its indexes.
+static CHANGING: LazyLock<Mutex<HashMap<usize, std::collections::BTreeSet<String>>>> = LazyLock::new(Default::default);
 
 /// Runs on `conn` that read the same inputs but for `changing` (the bounded rounds: each round rebinds only its
 /// `__prev` inputs) keep the others loaded; `None` ends it, and the next `forget_inputs` drops everything.
 pub fn keep_inputs(conn: &Connection, changing: Option<std::collections::BTreeSet<String>>) {
-    let path = conn_path(conn).to_string();
+    let at = conn.at();
     match changing {
         Some(c) => {
-            CHANGING.lock().unwrap().insert(path, c);
+            CHANGING.lock().unwrap().insert(at, c);
         }
         None => {
-            CHANGING.lock().unwrap().remove(&path);
+            CHANGING.lock().unwrap().remove(&at);
         }
     }
 }
@@ -4289,9 +4301,9 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
 
 fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<Arc<InRel>> {
     let conn = conn.db();
-    let path: &str = &conn_path(conn);
-    if let Some(r) = INPUTS.lock().unwrap().get(path).and_then(|m| m.get(spec)) { return Ok(r.clone()); }
-    let keep = |rel: &Arc<InRel>| { INPUTS.lock().unwrap().entry(path.to_owned()).or_default().insert(spec.clone(), rel.clone()); };
+    let at = conn.at();
+    if let Some(r) = INPUTS.lock().unwrap().get(&at).and_then(|m| m.get(spec)) { return Ok(r.clone()); }
+    let keep = |rel: &Arc<InRel>| { INPUTS.lock().unwrap().entry(at).or_default().insert(spec.clone(), rel.clone()); };
     let _load = crate::code_rule_dsl::logic::profile::span(|| "open: input load".into());
     let base = spec.base;
     let (table, cols, types) = (&spec.sql, &spec.cols, spec.types.as_bytes());
