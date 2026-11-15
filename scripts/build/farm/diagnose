@@ -4,6 +4,7 @@ makes it compile crates other worktrees already compiled.
 
     scripts/build/farm/diagnose [DIR]     # one checkout (default: the current directory's)
     scripts/build/farm/diagnose --all     # every sibling worktree, one block each
+    scripts/build/farm/diagnose --brief   # the findings alone (what the farm's wrapper prints at builds)
 
 It only reads: the checkout, its target directory, cargo's fingerprints, the running processes and
 the farm's state. "The others" are the sibling worktrees (the checkout's parent directory): a
@@ -56,9 +57,10 @@ FIELDS = ("rustc", "features", "declared_features", "target", "profile", "path",
 
 class Report:
     def __init__(self):
-        self.lines, self.advice = [], []
+        self.lines, self.advice, self.brief, self.current = [], [], [], None
 
     def section(self, title):
+        self.current = title
         self.lines.append(f"\n{title}")
 
     def ok(self, text):
@@ -66,6 +68,10 @@ class Report:
 
     def warn(self, text, advice=None):
         self.lines.append(f"  WARN  {text}")
+        # The brief findings leave out running builds (the wrapper sees its own build) and the
+        # per-profile detail (diagnose prints it).
+        if self.current != "Running builds" and not text.startswith(" "):
+            self.brief.append(text if len(text) <= 200 else text[:197] + "...")
         if advice and advice not in self.advice:
             self.advice.append(advice)
 
@@ -631,7 +637,7 @@ def run_env(argv, env):
 
 
 def main(argv):
-    everything, rest = False, []
+    everything, brief, rest = False, False, []
     while argv:
         a = argv.pop(0)
         if a in ("-h", "--help"):
@@ -639,12 +645,23 @@ def main(argv):
             return 0
         if a == "--all":
             everything = True
+        elif a == "--brief":
+            brief = True
         elif a.startswith("-"):
             sys.exit(f"diagnose: unknown option {a} (--help)")
         else:
             rest.append(a)
     here = os.path.realpath(rest[0] if rest else os.getcwd())
     top = run(["git", "rev-parse", "--show-toplevel"], here).strip() or here
+    if brief:
+        r = diagnose(top, sizes=False)
+        for line in r.brief:
+            print(line)
+        # Not the feature-unification advice: no checkout can act on it alone (it is the hub's).
+        for a in r.advice:
+            if not a.startswith("features:"):
+                print(f"to do: {a}")
+        return 0
     s = sccache_summary()
     if everything:
         trees = [top] + siblings_of(top)
