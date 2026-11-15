@@ -8,8 +8,8 @@ structure is added, changed, or moved into its block.
 Decision 0266 puts the engine's data in a few big blocks, each one of the engine's meaningful things:
 
 - a program;
-- a batch of documents;
-- a phase's facts;
+- a chunk of documents and their file-local facts;
+- a phase's cross-file facts;
 - a run's outputs;
 - a store's atoms;
 - a wave's journal.
@@ -46,28 +46,29 @@ Notation:
 | Compiled sets, prefilters, anchor postings (`compile/sets.rs`, `text/canon.rs`, `waves/relational/syntax/packed.rs`) | host and device matchers | `matchers: Vec<Matcher>`: DFA tables, set `Bits`, postings as an `IntTable` grouped by an `IntTable` of starts. |
 | Plan for a kernel: stratum specs, steps, slots | `setfix::open`, Metal strata | `strata[s].plan`: its steps and slots. `Placed` and `Fields` stay Rust while being planned. |
 
-## `Batch`: a chunk of documents in flight
+## `Chunk`: a chunk of documents and everything made of them
 
 | Today | Readers | Place in the block |
 |---|---|---|
 | Source text, per document; copied into a residency slab on Metal | lexers, Metal lexing | `docs[d].source: Vec<u8>` |
 | Tape (`crates/tape_format`): a header of offsets, aligned columns | matchers, native facts, Metal tape kernels | `docs[d].tape: Tape`: `code: IntTable`, `size`, `off`, `tail`, `parent` (each an `IntTable`), `text: StringTable`. A tape is a structure, not a block. |
-| `DocView` (`crates/metal/src/slabs.rs`, 96 bytes) and its MSL copy; `DocTable`; `Slabs { s0..s3 }` | Metal tape kernels | Gone. The batch root's `docs: Vec<Doc>` is the table; a document's place is its index, and its tape is a nested structure. |
+| `DocView` (`crates/metal/src/slabs.rs`, 96 bytes) and its MSL copy; `DocTable`; `Slabs { s0..s3 }` | Metal tape kernels | Gone. The chunk root's `docs: Vec<Doc>` is the table; a document's place is its index, and its tape is a nested structure. |
 | Long texts (`syntax::LongTexts`, an index by document key) | the `text` functions | `long: StringTable` and `long_by_key: HashTable<i64, u32>` |
 | Python facts (`matcher/python_facts::Batch`: `BTreeMap<NodeRange, Vec<NodeFacts>>`) | matchers, vtab | `docs[d].python: Vec<NodeFacts>`, sorted by range |
 | File digests | the store, memo keys | `docs[d].digest: [u8; 32]`, `paths: StringTable` |
+| The chunk's file-local relations (made by its job, 0254) | the chunk's job; their exports go to the cross part | `facts: Table<Relation>`, written after the documents, each relation's rows grouped by document. A document's rows are its range, which is what the memo keeps. |
 
-## `Facts`: a phase's relations, as a run derives them
+## `Facts`: a phase's cross-file relations, as a run derives them
 
 | Today | Readers | Place in the block |
 |---|---|---|
-| `setfix::Rel`: `Rows` (segments `Arc<Vec<i64>>` plus a tail), `idx: Vec<Index>`, `pending: HashTable<u32>`, `sketches`, `dead: Vec<u64>`, `level: Vec<u32>`, `sorted`, `Lat`, `KeptStats` | setfix's joins, Metal strata | `relations[r]`: `columns: Vec<Column>` (each an `IntTable`; chunked while the block is open, contiguous once frozen), `indexes`, `pending: HashTable`, `dead: Opt<Bits>`, `levels: Opt<IntTable>`, `sorted: Vec<Run>`, `stats: Vec<ColumnStats>` (sketches and kept stats included), `lattice: Opt<Lattice>` |
+| `setfix::Rel`: `Rows` (segments `Arc<Vec<i64>>` plus a tail), `idx: Vec<Index>`, `pending: HashTable<u32>`, `sketches`, `dead: Vec<u64>`, `level: Vec<u32>`, `sorted`, `Lat`, `KeptStats` | setfix's joins, Metal strata | `relations[r]`: `columns: Vec<Column>` (`Rows`: a `Grow` of doubling column-major chunks, 0266 §5), `indexes`, `pending: HashTable`, `dead: Opt<Bits>`, `levels: Opt<IntTable>`, `sorted: Vec<Run>`, `stats: Vec<ColumnStats>` (sketches and kept stats included), `lattice: Opt<Lattice>` |
 | `setfix::InRel`: rows, `idx: Mutex<HashMap<u64, Arc<Csr>>>`, `chains`, `view` | probes, Metal joins | a relation of the full `Facts` block (a kept or lower-stratum relation). Each index is in its `indexes`, built once per key. The `Mutex<HashMap>` goes. |
 | `setfix::Csr`: `table: HashTable<(u32,u32,u32)>`, `ids: Vec<u32>`, `order` | probes | `relations[r].indexes[i]`: `key: Vec<u16>`, `table: HashTable<u64, u32>`, `rows: IntTable` |
 | The extension's `InRel` (`native/extension/setfix.rs`) | the extension path | a relation, as above |
 | Metal join state: `metal_join::Batch`, `Resident`; `SortJob` (`accel/src/gpu/join.rs`, device pointers mirrored by hand) | Metal | The relations are read in place from the pinned block. `SortJob` becomes a `structure!`, and its pointers are paths resolved at launch (0266 §6). |
 | `accel`: `table.metal` codes and offsets, `closure.metal` CSR and bitsets, as positional buffers | `accel` kernels | relation columns and indexes, read in place through `kernel!` arguments |
-| Maintained runs: kept relations plus this run's changes (0077, 0083) | setfix, the session | a `Facts` delta block naming the kept full block: added rows, dead rows |
+| Maintained runs: kept relations plus this run's changes (0077, 0083) | setfix, the session | a cumulative `Facts` delta naming the kept full block: added rows, dead rows, replaced statistics; rolled up by the cost rule (0266 §6) |
 | Kept statistics, sketches | the planner | `relations[r].stats` |
 
 ## `Outputs`: a run's outputs
@@ -75,14 +76,14 @@ Notation:
 | Today | Readers | Place in the block |
 |---|---|---|
 | `plan/output.rs` `Rows`: `types`, `vals`, `texts`, `ids: HashMap`, `bare` | the outcome, sessions, the writer | `relations[r]`: the same `Relation` structure as `Facts`, plus `texts: StringTable` |
-| The output image stack (`outputs.rro`, overlays folded at depth 8) | sessions, findings | an `Outputs` full block and at most one delta |
+| The output image stack (`outputs.rro`, overlays folded at depth 8) | sessions, findings | an `Outputs` full block and one cumulative delta |
 | Findings: rows of a `.violation`'s relation | the report | `relations[r]` of the violation relations |
 
 ## `Atoms`: a store's atoms
 
 | Today | Readers | Place in the block |
 |---|---|---|
-| `content_store/atoms.rs` `Interner`: stored segments read from SQLite, pending atoms above `base` | every run, the writer | full block: `text: StringTable`, `hash: HashTable<u64, u32>`. The pending atoms are its delta block. |
+| `content_store/atoms.rs` `Interner`: stored segments read from SQLite, pending atoms above `base` | every run, the writer | full block: `text: StringTable`, `hash: HashTable<u64, u32>`. The pending atoms are its delta block. A roll-up appends them. |
 
 ## `Journal`: a wave's writes (0260 §8)
 
@@ -90,8 +91,8 @@ Notation:
 |---|---|---|
 | `write_back` closures per wave (0259 stage 1) | the store's writer | the block itself, in a file |
 | Frames (`content_store/frames.rs`: `Rows`, `Rel`, `Stored`, `Retag`; varint deltas in `Arc<Vec<u8>>`) | the store, maintained runs | `frames: Vec<Frame>`: each a relation subtree copied whole from `Facts`, plus its reads and digest |
-| Memo entries (`corpus/memo.rs` `Entry`: `BTreeMap`s of rows and outputs; a `MemoBlob` image, decoded on a hit) | the corpus run | `memo: Vec<MemoEntry>`: per document, its relation subtrees. A stored entry is this subtree's bytes, so a hit is one copy into `Facts`. |
-| Tapes, sources to store | the store | `tapes`: subtrees copied from the `Batch` |
+| Memo entries (`corpus/memo.rs` `Entry`: `BTreeMap`s of rows and outputs; a `MemoBlob` image, decoded on a hit) | the corpus run | `memo: Vec<MemoEntry>`: per document, its range of the chunk. A stored entry is that range's bytes, so a hit is one copy into a new `Chunk`. |
+| Tapes, sources to store | the store | `tapes`: ranges copied from the `Chunk` |
 
 ## What stays Rust
 
@@ -113,7 +114,7 @@ Not yet surveyed field by field: the SQL executor's arenas (`sql_executor/compon
 | Today | In the block model |
 |---|---|
 | `accel/src/gpu/shared.rs`: power-of-two classes from 16 KiB; inputs copied when not page-aligned | Each block is a page-aligned mapping, pinned once, so no input is copied. Kernel scratch is a `Scratch` block per device, reused. |
-| `crates/metal` `MappedBuffer`, `slabs.rs` (64 MiB slabs) | The same: residency slabs become `Batch` blocks. |
+| `crates/metal` `MappedBuffer`, `slabs.rs` (64 MiB slabs) | The same: residency slabs become `Chunk` blocks. |
 | MLDB's `memory_region.rs` (the forest's port): region states | The blocks' states: open, frozen, retired. |
 
 ## Gaps the survey found

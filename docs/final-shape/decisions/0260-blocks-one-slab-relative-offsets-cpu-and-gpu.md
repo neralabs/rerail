@@ -155,7 +155,7 @@ Each step leaves the engine working and measured:
    shared header. The module image follows when 0246 is merged. Reading maps or views the bytes in place: the
    program image's copy into a `Vec<u128>` goes.
 2. **The pool.** A mapping per block (anonymous and file-backed), and MLDB's region states (the forest's port,
-   placed in the engine). Tapes' residency slabs become `Batch` blocks (0266 §1).
+   placed in the engine). Tapes' residency slabs become `Chunk` blocks (0266 §1).
 3. **The journal block** (§8): first the frames (the largest writes; the snapshot reads the block), then memo
    entries, then tapes and sources, each removing its closure. Then the guard: no `write_back` queues a closure.
 4. **Facts as blocks.** The relations a wave hands to the next (today `Vec`-based `Rel`s and `Rows`) become blocks
