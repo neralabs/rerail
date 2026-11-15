@@ -677,8 +677,10 @@ def farm_rustc(argv0, args):
     marker = env.pop("RERAIL_FARM_HOT", None)
     if marker:
         open(marker, "w").close()
-    # A crate this checkout compiled incrementally before compiles here again, from that state.
-    if inc and has_incremental(inc, crate):
+    # A workspace crate that missed is being edited: it compiles here, incrementally, so its next
+    # edit starts from that state. Sent to a host, it compiled whole there (20 s for logic), and
+    # again whole here on the next edit, with no state to start from.
+    if inc:
         log(f"{crate}: missed, incremental here")
         local(rustc, args + ["-C", f"incremental={inc}"])
     if remote_eligible(args):
@@ -692,16 +694,7 @@ def farm_rustc(argv0, args):
             finally:
                 lock.release()
     log(f"{crate}: missed, here")
-    local(rustc, args + (["-C", f"incremental={inc}"] if inc else []))
-
-
-def has_incremental(root, crate):
-    """Whether `crate` has incremental state under cargo's `-C incremental` directory, which every crate
-    of the profile shares: rustc keeps each crate's in a `<crate>-<hash>` directory of its own."""
-    try:
-        return any(d.startswith(crate + "-") for d in os.listdir(root))
-    except OSError:
-        return False
+    local(rustc, args)
 
 
 def local(rustc, args):
