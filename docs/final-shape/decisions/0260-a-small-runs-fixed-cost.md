@@ -80,6 +80,11 @@ into a tape, which must leave out what corpus tapes do. In instructions, 2.8 G b
   included files, by reading every library file's statements (9 ms), and the combined program, only to read a few
   settings off it (11 ms). The cutoff's check reported apart before was this one: `rr.sh` runs the outer run with
   the cutoff off.
+
+  Decision 0103 §8 says the whole-run cutoff is no cache to move: in the target shape, a run with no changed input
+  has an empty delta and does nothing. Moving phase 0 there would cost more today. A warm maintained run with no
+  change (the outer run here, cutoff off) is 110 ms of main-thread samples, against phase 0's 27 behind its cutoff.
+  Phase 0 can drop its cutoff once a warm maintained run's fixed cost is below the cutoff's.
 - Building the partial indexes on the shared file the first time took about a second, once.
 
 ## Tests
