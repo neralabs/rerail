@@ -112,6 +112,7 @@ enum Native<'v> {
     ReachThrough { reach: &'v str, map: &'v str },
     Python { kind: &'v str, input: &'v str, targets: Option<&'v str> },
     PythonCandidates { input: &'v str, targets: &'v str, context: &'v str, member: &'v str },
+    TextTest { input: &'v str, column: usize, op: &'v str, patterns: Vec<&'v str> },
 }
 
 #[derive(Debug)]
@@ -145,6 +146,7 @@ fn native<'v>(f: &Fields<'v>, rel: &str) -> Option<Native<'v>> {
         S::ReachThrough { reach, map } => Native::ReachThrough { reach: r(*reach), map: r(*map) },
         S::Python { kind, input, targets } => Native::Python { kind: t(*kind), input: r(*input), targets: targets.map(r) },
         S::PythonCandidates { input, targets, context, member } => Native::PythonCandidates { input: r(*input), targets: r(*targets), context: t(*context), member: t(*member) },
+        S::TextTest { input, column, op, patterns } => Native::TextTest { input: r(*input), column: *column, op: t(*op), patterns: patterns.iter().map(|&p| t(p)).collect() },
     })
 }
 

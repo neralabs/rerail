@@ -415,6 +415,10 @@ pub enum Native {
     /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
     /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
     MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
+    /// A text test (`@op(s, patterns) = 1`) over a column the program derives: the rows of `input` whose `column`
+    /// passes it, each distinct string tested by the run's vocabulary with every other test at once (decision 0037),
+    /// once a run (`logic::strings::as_relations`). A row is there as its input row is and its string passes.
+    TextTest { input: String, column: usize, op: String, patterns: Vec<String> },
     /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
     Components { edge: String, own: String },
@@ -438,7 +442,7 @@ impl Native {
                 *target = rename(target);
                 if let Some(roots) = roots { *roots = rename(roots); }
             }
-            Native::MatchAll { input, .. } => *input = rename(input),
+            Native::MatchAll { input, .. } | Native::TextTest { input, .. } => *input = rename(input),
             Native::PythonCandidates {input,targets,..} => { *input=rename(input); *targets=rename(targets); },
             Native::Python {input,targets,..} => { *input=rename(input); if let Some(t)=targets {*t=rename(t);} },
             Native::Components { edge, own } => {
@@ -459,7 +463,7 @@ impl Native {
     pub fn reads(&self) -> Vec<&str> {
         match self {
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
-            Native::MatchAll { input, .. } => vec![input.as_str()],
+            Native::MatchAll { input, .. } | Native::TextTest { input, .. } => vec![input.as_str()],
             Native::PythonCandidates {input,targets,..} => vec![input.as_str(),targets.as_str()],
             Native::Python {input,targets,..} => std::iter::once(input.as_str()).chain(targets.as_deref()).collect(),
             Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],

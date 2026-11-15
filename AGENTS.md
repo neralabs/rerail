@@ -24,6 +24,10 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
+The farm's wrapper runs `scripts/dev/clean-target` on each target directory hourly: it removes the
+builds no current build was made from, debug objects no binary names, and stale incremental state.
+Never run a full `cargo clean`.
+
 ### Test tiers (cargo-nextest)
 
 `.config/nextest.toml` splits the library's tests in two tiers (docs/final-shape/notes/t37, §2).
@@ -51,6 +55,7 @@ the file there are no hosts, and every command below runs here instead.
 
 ```
 scripts/build/farm/status                          # which hosts are usable now, and why not
+scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host

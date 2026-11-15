@@ -1715,13 +1715,16 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .collect();
     let fixed = |r: &str| fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r);
     debug_assert!(prog.rules.iter().map(|r| r.head.rel.as_str()).all(|r| fixed(r) == self::fixed(prog, r)));
+    // Only relations the program reads (a rule or a native) or outputs: one nothing reads is read by name if at all
+    // (`env`'s settings, `unconverged`, a guest policy), and merged it would be renamed away.
+    let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).chain(prog.natives.values().flat_map(|n| n.reads())).chain(prog.outputs.iter().map(String::as_str)).collect();
     let cands: Vec<&str> = rules_of
         .keys()
         .copied()
         .chain(prog.facts.iter().filter(|(_, f)| !f.is_empty()).map(|(r, _)| r.as_str()))
         .collect::<BTreeSet<&str>>()
         .into_iter()
-        .filter(|r| !fixed(r))
+        .filter(|r| !fixed(r) && read.contains(r))
         .collect();
     // The candidates by number, in `cands`' order; every other relation a rule names numbered after them, each a
     // label of its own in every round.
@@ -2093,6 +2096,8 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     }
     let mut rename: BTreeMap<String, String> = BTreeMap::new();
     let mut taken: BTreeSet<String> = prog.decls.keys().cloned().map(String::from).collect();
+    // Each class's rules are one member's: the member it is named after, or its first where its name is new.
+    let mut firsts: BTreeSet<String> = BTreeSet::new();
     for g in &groups {
         let suffixes: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(_, s)| s)).collect();
         let spaces: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(p, _)| p)).collect();
@@ -2120,16 +2125,21 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
                 taken.insert(name.clone());
                 name
             }
-            _ => g.iter().find(|r| !is_output(r)).unwrap_or(&g[0]).clone(),
+            // Named after its member with the shortest name: a lowering's copy of a relation (`rr_wide_<attr>_<r>`)
+            // is that relation's name with a prefix, so the relation names it.
+            _ => g.iter().filter(|r| !is_output(r)).min_by_key(|r| r.len()).unwrap_or(&g[0]).clone(),
         };
+        if !g.contains(&to) {
+            firsts.insert(g[0].clone());
+        }
         for r in g {
             if *r != to {
                 rename.insert(r.clone(), to.clone());
             }
         }
     }
-    // One class's rules are kept: its first member's, renamed. An output merged keeps its name, as a copy of the class.
-    let firsts: BTreeSet<String> = groups.iter().map(|g| g[0].clone()).collect();
+    // One class's rules are kept, renamed: its namesake's (not renamed), or its first member's. An output merged
+    // keeps its name, as a copy of the class.
     let outputs: Vec<(String, String)> = rename.iter().filter(|(from, _)| prog.outputs.iter().any(|o| o == *from)).map(|(f, t)| (f.clone(), t.clone())).collect();
     let mut copies: Vec<Rule> = Vec::new();
     for (from, to) in &outputs {
@@ -2305,6 +2315,35 @@ pub mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("!m1($n), doc($d, $p, _)") && !out[0].contains("m2") && out[0].matches("doc(").count() == 1, "{}", out[0]);
         assert!(!prog.decls.contains_key("b2") && !prog.decls.contains_key("m2"));
+    }
+
+    /// A relation nothing reads keeps its name, though it equals a read one: the engine may read it by name (`env`'s
+    /// settings). A class is named after its shortest member: a copy's name is its relation's with a prefix.
+    #[test]
+    fn unread_relations_stay_and_a_class_takes_its_shortest_name() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl base(n: number)
+            .input base
+            .decl env(k: symbol, v: symbol)
+            env("load.budget", "9").
+            .decl cfg(k: symbol, v: symbol)
+            cfg("load.budget", "9").
+            .decl q(n: number)
+            .decl rr_wide_node_text_q(n: number)
+            q(n) :- base(n).
+            rr_wide_node_text_q(n) :- base(n).
+            .decl out(n: number, v: symbol)
+            .output out
+            out(n, v) :- q(n), rr_wide_node_text_q(n), cfg(_, v).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.merged, vec![("q".to_owned(), "rr_wide_node_text_q".to_owned())]);
+        assert!(prog.facts.contains_key("env") && prog.facts.contains_key("cfg"), "{:?}", prog.facts.keys().collect::<Vec<_>>());
+        // The class keeps one member's rules: its namesake's, not its first's as well.
+        assert_eq!(prog.rules.iter().filter(|r| r.head.rel == "q").count(), 1, "{:?}", prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>());
     }
 
     /// Two atoms of one keyed row merge by renaming the later's variable, in the head's computed terms too: the

@@ -1179,7 +1179,8 @@ fn reach(prog: &Program, roots: Vec<String>, gated: bool) -> (BTreeSet<String>, 
 }
 
 /// Drops the rules of relations no output reads, directly or through other rules, and the request rules none of
-/// whose readers is read (`reach`). T's `prune`.
+/// whose readers is read (`reach`). T's `prune`. Facts stay: the engine reads some by name, read by no rule (`env`'s
+/// settings, `corpus::World`; `unconverged`, the pending round).
 pub fn prune(mut prog: Program) -> Program {
     let (need, kept) = reach(&prog, prog.outputs.clone(), true);
     // The record follows the rules kept: each request relation's kept rules, in order, with their readers.

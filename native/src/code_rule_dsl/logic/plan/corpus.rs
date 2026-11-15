@@ -77,6 +77,41 @@ pub use inputs::parameters as input_parameters;
 pub mod world;
 pub mod connections;
 pub mod reuse;
+
+/// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
+/// kept): each changes the prepared program, so each is in its key. The run's other switches are not: the key also
+/// keys a session's kept frames, which a diagnostic switch turned on mid-session must not make cold. A switch read in
+/// lowering or preparation is listed here or as changing none, which a test checks
+/// (`every_switch_lowering_reads_is_classified`).
+pub const PREPARING: &[&str] = &[
+    // Lowering and its passes.
+    "RERAIL_NODE_SOURCES",
+    "RERAIL_TEXT_NODES",
+    "RERAIL_SPAN_PREFILTER",
+    "RERAIL_NODE_ANCHORS",
+    "RERAIL_NODE_IDS",
+    "RERAIL_NEAREST_BUFFERS",
+    "RERAIL_ORDER_RAW",
+    "RERAIL_FACTORIZE",
+    "RERAIL_EXPORT_DEMAND",
+    "RERAIL_CROSS_MEMO",
+    "RERAIL_REACH_INDEX",
+    // `simplify`.
+    "RERAIL_EXISTENCE_COUNTS",
+    "RERAIL_INLINE_FILTERS",
+    "RERAIL_JOIN_KEYS",
+    "RERAIL_PROJECT_COLUMNS",
+    // `run_observed`'s preparation.
+    "RERAIL_TEXT_TESTS",
+    "RERAIL_DEMAND",
+    "RERAIL_AST_PARTS",
+    "RERAIL_AST_PART_CAPTURES",
+    "RERAIL_SAME",
+    "RERAIL_RULE_ORDER",
+    "RERAIL_INLINE",
+    "RERAIL_INLINE_ONLY",
+];
+
 pub mod phase0;
 pub mod cross_memo;
 pub mod switches;
@@ -2639,6 +2674,12 @@ fn run_observed(
         if !factorizing {
             hash.update(b"\0factorize:off");
         }
+        // The switches that change what is prepared: a program prepared under one value is not another's. Only
+        // these: the key also keys a session's kept frames, so a diagnostic switch turned on mid-session must not
+        // make the next run cold.
+        for switch in PREPARING {
+            hash.update(format!("\0{switch}={}", std::env::var(switch).unwrap_or_default()).as_bytes());
+        }
         hash.finalize().into()
     };
     // The lowered program's atoms are the store's: the same strings must still be the same atoms.
@@ -2951,7 +2992,8 @@ fn run_observed(
     if let Some(c) = compiled.filter(|c| c.read + c.built + c.lazy > 0) {
         crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read from the store, {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
     }
-    let vocabulary = vocabulary.again();
+    // The run's text tests, each string tested once: the batches' and every program the run evaluates (`Hooks::texts`).
+    let vocabulary = Arc::new(vocabulary.again());
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
     }
@@ -3449,7 +3491,7 @@ fn run_observed(
         for (rel, _, measured) in &repository {
             stats.measured(rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
         }
-        let got = super::run_atoms_native_over(consts, &db, "main", stats, rels.iter().cloned().collect(), modes)?;
+        let got = texts_run(consts, &db, stats, rels.iter().cloned().collect(), modes, &vocabulary)?;
         for rel in rels {
             let width = lowered.program.decls[rel.as_str()].len();
             let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
@@ -4755,7 +4797,7 @@ fn run_observed(
                         }
                         modules.bind(&db, rel, Arc::clone(source))?;
                     }
-                    let got = super::run_atoms_native_over(slice, &db, "main", round, BTreeSet::new(), modes)?;
+                    let got = texts_run(slice, &db, round, BTreeSet::new(), modes, &vocabulary)?;
                     let new = made.make(guests::requests(&got.outputs), &docs, tapes.as_ref()).map_err(Error::Plan)?;
                     if new.is_empty() {
                         break;
@@ -4889,7 +4931,7 @@ fn run_observed(
         // written to `x` and measured as soon as no later stratum reads it, and dropped: the chunk's exports are not
         // all held to its end.
         let got = if memoised {
-            super::run_atoms_native_over(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes)?
+            texts_run(&local, &db, stats, split.exports.iter().cloned().collect(), modes, &vocabulary)?
         } else {
             let mut hand = |rel: &str| -> Result<()> {
                 if !split.exports.iter().any(|e| e == rel) {
@@ -4905,7 +4947,7 @@ fn run_observed(
                 }
                 Ok(())
             };
-            super::run_atoms_native_hooked(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), ..Default::default() })?
+            super::run_atoms_native_hooked(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), texts: Some(Arc::clone(&vocabulary)), ..Default::default() })?
         };
         drop(running);
         if chunk_nodes_built > 0 {
@@ -5332,6 +5374,7 @@ fn run_observed(
         let modes = modes.to_owned();
         // Each relation's column types (`retain::types_of`): the cone's kept inputs are digested by content (decision 0212).
         let decl_types: HashMap<String, Vec<u8>> = lowered.program.decls.keys().map(|r| (r.to_string(), retain::types_of(&lowered.program, &lowered.domains, r))).collect();
+        let vocabulary_cone = Arc::clone(&vocabulary);
         let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>, usize)> {
             let db2 = connections::Cone::take_db(&cone_slot, &db_path)?;
             let statements = Statements::on_as(&db2, ".cone");
@@ -5410,7 +5453,7 @@ fn run_observed(
                 }
             });
             let still_ref = still_fn.as_ref().map(|f| f as &dyn Fn(&str, &[i64]) -> bool);
-            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: still_ref });
+            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: still_ref, texts: &vocabulary_cone });
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
                 load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).rounds = true;
@@ -5458,7 +5501,7 @@ fn run_observed(
                 fixpoint_keeps.extend(r.asks().cloned());
             }
             load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).bound = false;
-            let mut got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats.clone(), fixpoint_keeps.clone(), &modes, &mut recording, Some(&mut posting), cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata))?;
+            let mut got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats.clone(), fixpoint_keeps.clone(), &modes, &mut recording, Some(&mut posting), cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata), Some(Arc::clone(&vocabulary_cone)))?;
             // Where the budget bound, strata kept from the last run carried its loads, which need not be the nearest
             // ones now: the fixpoint runs again with none kept, its loads in levels (decision 0145).
             let mut cone_strata = cone_kept.as_ref().and_then(|k| k.strata);
@@ -5472,7 +5515,7 @@ fn run_observed(
                 }
                 cone_kept = None;
                 asks.borrow_mut().recorded = Some(cone_rounds::Answers::default());
-                got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, fixpoint_keeps, &modes, &mut recording, Some(&mut posting), None)?;
+                got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, fixpoint_keeps, &modes, &mut recording, Some(&mut posting), None, Some(Arc::clone(&vocabulary_cone)))?;
                 cone_strata = None;
             }
             let recorded = asks.borrow_mut().recorded.take().unwrap_or_default();
@@ -6447,7 +6490,7 @@ fn run_observed(
     if let Some(plan) = &cross_plan {
         let components_span = crate::code_rule_dsl::logic::profile::span(|| "import components".into());
         let held: BTreeSet<String> = cross_memo::HELD.iter().map(|r| (*r).to_owned()).collect();
-        let got = super::run_atoms_native_over(&part(plan.components.clone(), None), &db, "main", cross_stats.clone(), held, modes)?;
+        let got = texts_run(&part(plan.components.clone(), None), &db, cross_stats.clone(), held, modes, &vocabulary)?;
         let edges: Vec<(i64, i64)> = held_rows(&db, &got, cross_memo::HELD[1], 2)?.into_iter().map(|r| (r[0], r[1])).collect();
         let mut keys: HashMap<i64, String> = HashMap::new();
         let mut rows = Vec::new();
@@ -6951,7 +6994,7 @@ fn run_observed(
                                 walked: (0, 0, 0),
                                 atoms: None,
                             };
-                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), ..Default::default() };
+                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
                             let (rows_read, rels_read) = kept.admitted();
                             if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
@@ -6969,7 +7012,7 @@ fn run_observed(
                             step(&format!("driven: {reached} of {of} strata reached, {} maintained, {} derived again, {quiet} quiet", driver.counts.0, driver.counts.1));
                             got
                         }
-                        None => super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?,
+                        None => texts_run(part, &db, stats, keep, modes, &vocabulary)?,
                     };
                     drop(s);
                     let Binder { constants, mut measured_kept, mut bound_old, mut lazies, .. } = binder;
@@ -7157,7 +7200,7 @@ fn run_observed(
                         }
                         let mut vkeep = wanted.clone();
                         vkeep.extend(derived.iter().filter(|rel| !plain.program.outputs.contains(*rel)).cloned());
-                        let again = super::run_atoms_native_over(&plain, &db, "main", vstats, vkeep, modes)?;
+                        let again = texts_run(&plain, &db, vstats, vkeep, modes, &vocabulary)?;
                         let mut shown = 0;
                         let rows_of = |h: &Arc<crate::code_rule_dsl::logic::native::component::InRel>, width: usize| -> Vec<Vec<i64>> {
                             let s = h.source((0..width).map(|c| format!("c{c}")).collect());
@@ -7360,7 +7403,7 @@ fn run_observed(
                         Ok(())
                     };
                     let strata = kept_strata.as_mut().map(|k| k as &mut dyn super::KeptStrata);
-                    let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), strata, ..Default::default() } } else { super::Hooks::default() };
+                    let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), strata, texts: Some(Arc::clone(&vocabulary)), ..Default::default() } } else { super::Hooks { texts: Some(Arc::clone(&vocabulary)), ..Default::default() } };
                     let got = super::run_atoms_native_hooked(&cross, &db, "main", cross_stats, wanted.clone(), modes, hooks)?;
                     if let Some(k) = kept_strata {
                         let written = k.written_rows;
@@ -7392,7 +7435,7 @@ fn run_observed(
                     let mut pre_held: BTreeSet<String> = held.iter().filter(|r| pre_derived.contains(*r)).cloned().collect();
                     pre_held.extend(copied.iter().cloned());
                     let decls = ps.pre.decls.clone();
-                    let got = super::run_atoms_native_over(&part(ps.pre, None), &db, "main", cross_stats.clone(), pre_held, modes)?;
+                    let got = texts_run(&part(ps.pre, None), &db, cross_stats.clone(), pre_held, modes, &vocabulary)?;
                     if wanted.contains("returns") && pre_derived.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
@@ -7421,7 +7464,7 @@ fn run_observed(
                 None => cone.cone,
             };
             let cone_rules = if collect_rows { round_prog.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(round_prog, None), &bounded.hops, &held, &round_stats, modes, k.expect("declared"), &mut rounds)?;
+            let got = run_rounds(&db, &modules, part(round_prog, None), &bounded.hops, &held, &round_stats, modes, k.expect("declared"), &mut rounds, &vocabulary)?;
             collect(&db, &got, &cone_rules)?;
             if wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
@@ -7454,7 +7497,7 @@ fn run_observed(
             crate::code_rule_dsl::logic::native::forget_inputs(&db);
             let rest_wanted: BTreeSet<String> = wanted.iter().filter(|w| rest.rules.iter().any(|r| r.head.rel == **w)).cloned().collect();
             let rest = part(rest, None);
-            let got = super::run_atoms_native_over(&rest, &db, "main", st, rest_wanted.clone(), modes)?;
+            let got = texts_run(&rest, &db, st, rest_wanted.clone(), modes, &vocabulary)?;
             collect(&db, &got, &rest.program)?;
             if rest_wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
@@ -7462,7 +7505,7 @@ fn run_observed(
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
         } else {
             let all_rules = if collect_rows { bounded.program.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(bounded.program, None), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
+            let got = run_rounds(&db, &modules, part(bounded.program, None), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds, &vocabulary)?;
             collect(&db, &got, &all_rules)?;
             if wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
@@ -8126,14 +8169,19 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+/// `run_atoms_native_over` with the run's text tests (`Hooks::texts`).
+fn texts_run(lowered: &lower::Lowered, db: &Connection, given: super::Stats, kept: BTreeSet<String>, modes: &str, texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> Result<Outcome> {
+    super::run_atoms_native_hooked(lowered, db, "main", given, kept, modes, super::Hooks { texts: Some(Arc::clone(texts)), ..Default::default() })
+}
+
+fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds, texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> Result<Outcome> {
     // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
     // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
     let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
     // Each round rebinds only the `__prev` inputs (and the pending round adds a fact): the other inputs stay loaded.
     let changing: BTreeSet<String> = hops.iter().map(|rel| format!("{rel}{}", cross_rounds::PREV)).chain([cross_rounds::UNCONVERGED.to_owned()]).collect();
     crate::code_rule_dsl::logic::native::keep_inputs(db, Some(changing));
-    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round);
+    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round, texts);
     crate::code_rule_dsl::logic::native::keep_inputs(db, None);
     crate::code_rule_dsl::logic::native::forget_inputs(db);
     out
@@ -8141,7 +8189,7 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
-fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool) -> Result<Outcome> {
+fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool, texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).map(String::from).collect() };
     let mut prev_rows: BTreeMap<String, Vec<Vec<i64>>> = hops.iter().map(|rel| (rel.clone(), Vec::new())).collect();
@@ -8167,7 +8215,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
         prev_totals.apply(&mut st);
         // A hop relation the program outputs is written to its table, to be decoded; the others are held.
         let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().collect();
-        let got = super::run_atoms_native_over(round, db, "main", st, held, modes)?;
+        let got = texts_run(round, db, st, held, modes, texts)?;
         // This round's rows of the hop relations: from the engine, or their table.
         let measure = crate::code_rule_dsl::logic::profile::span(|| "hop rows: copy and measure".into());
         let mut rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();

@@ -298,6 +298,8 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     /// Whether a carried request of the file system (`rr::WORLD`) still has the answer the last run kept: the
     /// journal names no change at its path since (decision 0105). Such a key is not asked again.
     pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64]) -> bool>,
+    /// The run's text tests (`plan::Hooks::texts`).
+    pub(in crate::code_rule_dsl) texts: &'a Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 }
 
 /// The digest of the file system's answers `kept` holds as inputs (`rr::WORLD`'s relations): what a record of the
@@ -432,7 +434,7 @@ impl RoundProgram {
             }
             let given: Vec<(String, Arc<dyn Source>, u64, bool)> = bound.iter().map(|(r, (s, d))| (r.clone(), Arc::clone(s), *d, !fresh.contains(r))).collect();
             drop(s);
-            let ran = maintained::run(Some(on.store), on.db, on.modules, on.lowered, on.key, &given, kept.take(), &mut stats, on.keep, on.modes)?;
+            let ran = maintained::run(Some(on.store), on.db, on.modules, on.lowered, on.key, &given, kept.take(), &mut stats, on.keep, on.modes, on.texts)?;
             strata = (strata.0 + ran.strata.0, ran.strata.1);
             maintained_n += ran.maintained;
             again += ran.derived_again;
