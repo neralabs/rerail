@@ -41,7 +41,7 @@ thread_local! {
 thread_local! {
     /// While a phase runs, what it reads from earlier phases: worked out once (`facts`), and taken as it is by the
     /// phase's own run, which would otherwise run those phases again.
-    static HANDED_DOWN: std::cell::RefCell<Vec<(String, Facts)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static HANDED_DOWN: std::cell::RefCell<Vec<(String, std::sync::Arc<Facts>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Phase 1's name (`sources.rr`): run first, once for a run, by the runner (`corpus::run_observed`), not as a phase a
@@ -63,14 +63,22 @@ pub(super) struct PhaseOne {
 }
 
 thread_local! {
-    static PHASE_ONE: std::cell::RefCell<Option<std::rc::Rc<PhaseOne>>> = const { std::cell::RefCell::new(None) };
+    static PHASE_ONE: std::cell::RefCell<Option<std::sync::Arc<PhaseOne>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Carries the phases under way, what they were handed and phase 1's result to a job on another thread
+/// (`run_state`): a run there is inside the same phases, and takes the same documents.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["RUNNING"], &RUNNING);
+    c.cloned(&["HANDED_DOWN"], &HANDED_DOWN);
+    c.cloned(&["PHASE_ONE"], &PHASE_ONE);
 }
 
 /// Holds phase 1's result for the run until dropped.
-pub(super) struct PhaseOneHeld(Option<std::rc::Rc<PhaseOne>>);
+pub(super) struct PhaseOneHeld(Option<std::sync::Arc<PhaseOne>>);
 impl PhaseOneHeld {
     pub(super) fn enter(one: PhaseOne) -> PhaseOneHeld {
-        PhaseOneHeld(PHASE_ONE.with(|p| p.borrow_mut().replace(std::rc::Rc::new(one))))
+        PhaseOneHeld(PHASE_ONE.with(|p| p.borrow_mut().replace(std::sync::Arc::new(one))))
     }
 }
 impl Drop for PhaseOneHeld {
@@ -80,7 +88,7 @@ impl Drop for PhaseOneHeld {
 }
 
 /// Phase 1's result, while a run that ran it is under way on this thread, if it read `root` in `label`.
-pub(super) fn phase_one(root: &Path, label: &str) -> Option<std::rc::Rc<PhaseOne>> {
+pub(super) fn phase_one(root: &Path, label: &str) -> Option<std::sync::Arc<PhaseOne>> {
     PHASE_ONE.with(|p| p.borrow().clone()).filter(|o| o.root == root && o.label == label)
 }
 
@@ -88,7 +96,7 @@ pub(super) fn phase_one(root: &Path, label: &str) -> Option<std::rc::Rc<PhaseOne
 struct HandedDown;
 impl HandedDown {
     fn enter(name: &str, facts: Facts) -> HandedDown {
-        HANDED_DOWN.with(|h| h.borrow_mut().push((name.to_owned(), facts)));
+        HANDED_DOWN.with(|h| h.borrow_mut().push((name.to_owned(), std::sync::Arc::new(facts))));
         HandedDown
     }
 }
@@ -336,7 +344,7 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
     // A phase's own run: its upstream facts were worked out by the run that started it.
     if let Some(me) = declared(prog)
-        && let Some(f) = HANDED_DOWN.with(|h| h.borrow().last().filter(|(n, _)| *n == me.name).map(|(_, f)| f.clone()))
+        && let Some(f) = HANDED_DOWN.with(|h| h.borrow().last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
     {
         return Ok((f, Vec::new()));
     }

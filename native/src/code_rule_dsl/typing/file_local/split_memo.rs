@@ -9,11 +9,15 @@
 //! no relation reads one inside, so each keeps its place in every fixpoint; that is why the result equals a whole
 //! split (`RERAIL_SPLIT_CHECK=1` computes both and compares them).
 //!
-//! The kept splits are read and replaced under a lock, but never computed under it.
+//! The kept splits are a run's own (decision 0192): each run opens its own at its start (`own`) and gives its caller's
+//! back as it ends, and a job of the run shares them (`carried`). A nested run, on any thread, keeps its splits apart
+//! from its caller's, whose program it would otherwise push out. They are read and replaced under a lock, but never
+//! computed under it.
 
 use super::{RuleIndex, Split, split_in};
-use crate::code_rule_dsl::logic::front::Program;
-use std::collections::{BTreeSet, HashMap};
+use crate::code_rule_dsl::logic::front::{List, Literal, Program};
+use rustc_hash::FxHashMap as HashMap;
+use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
@@ -33,13 +37,72 @@ struct Kept {
     split: Arc<Split>,
 }
 
-static SPLITS: Mutex<Vec<Arc<Kept>>> = Mutex::new(Vec::new());
+/// A run's kept splits, shared with its jobs, and the digests of the rule bodies its keys have read.
+type Splits = Arc<Held>;
 
-fn hasher() -> std::collections::hash_map::DefaultHasher {
-    std::collections::hash_map::DefaultHasher::new()
+#[derive(Default)]
+struct Held {
+    kept: Mutex<Vec<Arc<Kept>>>,
+    /// Each rule body digested in this run, by its list's address, with the list itself: holding it keeps the
+    /// address its own and the list shared, so an edit of the body copies it first (`List::make_mut`) and gets a new
+    /// address. A round of the push rewrites a few rules and shares the rest, so the keys of the next split hash only
+    /// what it changed: hashing every rule each split was 4.6% of a cold batch's main thread.
+    bodies: parking_lot::RwLock<HashMap<(usize, usize), (List<Literal>, u64)>>,
 }
 
-fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>) -> Keys {
+thread_local! {
+    /// The kept splits of the run under way on this thread (`own`); `None` outside a run, where a split keeps nothing.
+    static SPLITS: std::cell::RefCell<Option<Splits>> = std::cell::RefCell::new(None);
+}
+
+/// Carries the run's kept splits to a job on another thread (`logic::run_state`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["SPLITS"], &SPLITS);
+}
+
+/// A run's own kept splits on this thread until dropped, when its caller's come back.
+pub(in crate::code_rule_dsl) fn own() -> impl Drop {
+    struct Own(Option<Splits>);
+    impl Drop for Own {
+        fn drop(&mut self) {
+            SPLITS.with(|s| s.replace(self.0.take()));
+        }
+    }
+    Own(SPLITS.with(|s| s.replace(Some(Splits::default()))))
+}
+
+fn kept_splits() -> Option<Splits> {
+    SPLITS.with(|s| s.borrow().clone())
+}
+
+/// The keys' hasher: foldhash's quality hasher with a fixed seed, so a key is the same on every thread of the run.
+/// std's SipHash, over every rule of a pack's program on every split, was 2% of a cold batch's main thread.
+fn hasher() -> impl Hasher {
+    use std::hash::BuildHasher;
+    foldhash::quality::FixedState::with_seed(0x5eed_5011_7000_0001).build_hasher()
+}
+
+/// A rule body's digest: the one this run made for this very list, else hashed now (and added to `new`, for the run
+/// to keep with the list).
+fn body_digest(body: &List<Literal>, held: Option<&Held>, new: &mut Vec<((usize, usize), (List<Literal>, u64))>) -> u64 {
+    let slice = body.as_slice();
+    let at = (slice.as_ptr() as usize, slice.len());
+    if let Some(held) = held
+        && !slice.is_empty()
+        && let Some((_, d)) = held.bodies.read().get(&at)
+    {
+        return *d;
+    }
+    let mut h = hasher();
+    slice.hash(&mut h);
+    let d = h.finish();
+    if held.is_some() && !slice.is_empty() {
+        new.push((at, (body.clone(), d)));
+    }
+    d
+}
+
+fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>, held: Option<&Held>) -> Keys {
     let mut g = hasher();
     // Only the inputs a split asks about: whether a derived relation, a fact or a phase's export is an input
     // (`split_constants`, `run_constant`, the constant facts). An input that is none of them is read as a base relation
@@ -53,21 +116,35 @@ fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>) -> Keys
     format!("{:?}", prog.natives).hash(&mut g);
     // Each relation's digest on the pool's threads (a pack's program has thousands).
     use rayon::prelude::*;
-    let heads = derived
+    let heads_new = derived
         .iter()
         .copied()
         .collect::<Vec<&str>>()
         .par_iter()
         .map(|rel| {
             let mut h = hasher();
+            let mut new = Vec::new();
             prog.decls.get(*rel).hash(&mut h);
-            index.rules_of(rel).for_each(|r| r.hash(&mut h));
-            ((*rel).to_owned(), h.finish())
+            for r in index.rules_of(rel) {
+                r.head.hash(&mut h);
+                h.write_u64(body_digest(&r.body, held, &mut new));
+            }
+            ((*rel).to_owned(), h.finish(), new)
         })
-        .collect::<HashMap<String, u64>>();
+        .collect::<Vec<_>>();
+    let mut heads: HashMap<String, u64> = HashMap::with_capacity_and_hasher(heads_new.len() + prog.decls.len(), Default::default());
+    let mut new_bodies = Vec::new();
+    for (rel, digest, new) in heads_new {
+        heads.insert(rel, digest);
+        new_bodies.extend(new);
+    }
+    if let Some(held) = held
+        && !new_bodies.is_empty()
+    {
+        held.bodies.write().extend(new_bodies);
+    }
     // A base relation's declaration is its own key, as a derived relation's rules are: a relation that stops being
     // derived (factorizing hands an export on as its parts) changes only what reads it, not every relation.
-    let mut heads = heads;
     for (rel, cols) in prog.decls.iter().filter(|(rel, _)| !derived.contains(rel.as_str())) {
         let mut h = hasher();
         b"base".hash(&mut h);
@@ -90,8 +167,9 @@ fn changed(was: &Keys, now: &Keys) -> Vec<String> {
 pub(super) fn split(prog: &Program) -> Arc<Split> {
     let index = RuleIndex::of(prog);
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    let keys = keys(prog, &index, &derived);
-    let kept: Vec<Arc<Kept>> = SPLITS.lock().expect("the kept splits").clone();
+    let held = kept_splits();
+    let keys = keys(prog, &index, &derived, held.as_deref());
+    let kept: Vec<Arc<Kept>> = held.as_ref().map(|h| h.kept.lock().expect("the kept splits").clone()).unwrap_or_default();
     let closest = kept
         .iter()
         .filter(|k| k.keys.global == keys.global)
@@ -138,16 +216,21 @@ pub(super) fn split(prog: &Program) -> Arc<Split> {
         }
     };
     let split = Arc::new(split);
-    let made = Arc::new(Kept { keys, split: Arc::clone(&split) });
-    let mut kept = SPLITS.lock().expect("the kept splits");
-    if kept.len() >= KEPT {
-        kept.remove(0);
+    if let Some(held) = held {
+        let made = Arc::new(Kept { keys, split: Arc::clone(&split) });
+        let mut kept = held.kept.lock().expect("the kept splits");
+        if kept.len() >= KEPT {
+            kept.remove(0);
+        }
+        kept.push(made);
     }
-    kept.push(made);
     split
 }
 
-/// Drops the kept splits: preparation is done with them.
+/// Drops the run's kept splits: its preparation is done with them.
 pub fn forget() {
-    SPLITS.lock().expect("the kept splits").clear();
+    if let Some(held) = kept_splits() {
+        held.kept.lock().expect("the kept splits").clear();
+        held.bodies.write().clear();
+    }
 }

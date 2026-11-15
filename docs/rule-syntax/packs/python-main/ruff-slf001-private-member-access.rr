@@ -159,7 +159,7 @@ slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "subscript"), field(n, "value
     !slf001_annotated_head(c18), slf001_same_class_type(c18, CLS, SELFTAG).
 slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "subscript"), field(n, "value", c19),
     slf001_annotated_head(c19), slf001_tok_has_2(n), field(n, "subscript", c28),
-    precedes_stop(s29, c28, slf001_counted_11), glob("\\[", s29),
+    precedes_stop(s29, c28, slf001_stop_13), glob("\\[", s29),
     slf001_same_class_type(c28, CLS, SELFTAG).
 
 // same_class_callee(n): the JSON util `same-class-callee`, used where the JSON says `matches: "same-class-callee"`
@@ -182,7 +182,7 @@ slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression")
 //   CLS, SELFTAG: metavariables this relation binds for the calling rule
 .decl slf001_same_class_value(n: node, cls: loc, selftag: loc)
 slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "identifier"), glob("self", n),
-    ref_site(n, b1), site_form(b1, "parameter"), slf001_free(n, CLS, SELFTAG).
+    ref_site(n, b1), main_form(b1, "parameter"), slf001_free(n, CLS, SELFTAG).
 slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "call"), field(n, "function", c2),
     slf001_same_class_callee(c2, CLS, SELFTAG).
 slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression"),
@@ -202,7 +202,7 @@ slf001_plain_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sl
 
 // class_itself(n): the JSON util `class-itself`, used where the JSON says `matches: "class-itself"`
 .decl slf001_class_itself(n: node)
-slf001_class_itself(n) :- kind(n, "identifier"), ref_site(n, b1), site_form(b1, "definition"),
+slf001_class_itself(n) :- kind(n, "identifier"), ref_site(n, b1), main_form(b1, "definition"),
     (st2 = b1 ; within(b1, st2)), kind(st2, "class_definition"), node(_, st2, _, _, _), DEF = st2,
     inside(n, p3, "class_definition"), field(_, "body", n), node(_, p3, _, _, _), DEF = p3,
     count : { slf001_stop_14_within(n, p4), (kind(p4, "list_comprehension") ; kind(p4, "set_comprehension") ; kind(p4, "dictionary_comprehension") ; kind(p4, "generator_expression")), count : { slf001_stop_14_within(p4, p5), (kind(p5, "function_definition") ; kind(p5, "lambda")) } = 0 } = 0.
@@ -214,7 +214,7 @@ slf001_scope_node(n) :- (kind(n, "function_definition") ; kind(n, "lambda") ; ki
 // same_class_instance(n): the JSON util `same-class-instance`, used where the JSON says `matches: "same-class-instance"`
 .decl slf001_same_class_instance(n: node)
 slf001_same_class_instance(n) :- kind(n, "identifier"),
-    ( ref_site(n, b1), site_form(b1, "parameter"), (st1 = b1 ; within(b1, st1)), slf001_receiver_parameter(st1)
+    ( ref_site(n, b1), main_form(b1, "parameter"), (st1 = b1 ; within(b1, st1)), slf001_receiver_parameter(st1)
     ; slf001_alt_18(n, CLS, SELFTAG), (text(SELFTAG, t1_1), text(CLS, t1_1), @doc(SELFTAG) = @doc(CLS) ; inside(n, p3_2, "class_definition"), field(_, "body", n), field(p3_2, "name", c4_2), text(c4_2, t_cls1_2), text(CLS, t_cls1_2), @doc(c4_2) = @doc(CLS) )
     ).
 
@@ -279,6 +279,10 @@ slf001_counted_11(n) :- node(_, n, _, _, _), !kind(n, "comment").
 .decl slf001_counted_12(n: node)
 slf001_counted_12(n) :- kind(n, "type").
 
+// stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl slf001_stop_13(n: node)
+slf001_stop_13(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
 // stop_14(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl slf001_stop_14(n: node)
 slf001_stop_14(n) :- slf001_scope_node(n).
@@ -287,23 +291,23 @@ slf001_stop_14(n) :- slf001_scope_node(n).
 //   CLS, SELFTAG: metavariables this relation binds for the calling rule
 .decl slf001_alt_18(n: node, cls: loc, selftag: loc)
 slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b1),
-    (site_form(b1, "assignment") ; site_form(b1, "named")), binding_value(b1, x2),
+    (main_form(b1, "assignment") ; main_form(b1, "named")), binding_value(b1, x2),
     slf001_same_class_value(x2, CLS, SELFTAG).
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b3), site_form(b3, "with"),
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b3), main_form(b3, "with"),
     (st4 = b3 ; within(b3, st4)),
     ( slf001_with_same_class_value(st4, CLS, SELFTAG)
     ; within(st4, p1), slf001_with_same_class_value(p1, CLS, SELFTAG)
     ).
 
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b6), site_form(b6, "annotated"),
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b6), main_form(b6, "annotated"),
     site_annotation(b6, o7), slf001_same_class_type(o7, CLS, SELFTAG).
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b8), site_form(b8, "parameter"),
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b8), main_form(b8, "parameter"),
     (st9 = b8 ; within(b8, st9)),
     ( kind(st9, "typed_default_parameter")
     ; kind(st9, "typed_parameter"), child(st9, c1, _), kind(c1, "identifier")
     ),
     field(st9, "type", c11), slf001_same_class_type(c11, CLS, SELFTAG).
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b12), site_form(b12, "definition"),
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b12), main_form(b12, "definition"),
     (st13 = b12 ; within(b12, st13)), kind(st13, "function_definition"),
     field(st13, "return_type", c14), slf001_same_class_type(c14, CLS, SELFTAG).
 

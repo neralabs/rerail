@@ -1,10 +1,10 @@
 //! Decision 0209 §3: the planner's statistics as flat arrays.
 //!
 //! A relation is numbered once in the process (`rel_id`), by its name. A statistic of relations (`RelMap`) is an
-//! array by that number. A statistic of columns (`ColMap`) gives each relation a block of slots, one a column, in one
-//! array: a column is a slot (`ColId`), found by two array reads once its relation's number is known. Readers that
-//! hold numbers (`Model`'s prepared atoms) read slots; readers by name pay one lookup of the name, not a string built
-//! per key.
+//! array by that number. A statistic of columns (`ColMap`) gives each relation number its columns' shared vector: a
+//! column is found by two array reads once its relation's number is known, and a strand's model shares a relation's
+//! columns by a count (decision 0210 §9). Readers that hold numbers (`Model`'s prepared atoms) read by number; readers
+//! by name pay one lookup of the name, not a string built per key.
 
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
@@ -12,8 +12,6 @@ use std::sync::{Arc, LazyLock};
 
 /// A relation's number in this process.
 pub type RelId = u32;
-/// A column's slot in a `ColMap`.
-pub type ColId = u32;
 
 #[derive(Default)]
 struct Names {
@@ -152,151 +150,160 @@ impl<T, S: AsRef<str>> Extend<(S, T)> for RelMap<T> {
     }
 }
 
-/// A statistic of columns: each relation's columns a block of slots in one array.
+/// A statistic of columns (`Model::ndv`, `Stats::fan`, `dfreq`, `heavy`): per relation number, its columns one shared
+/// vector. A reader with the relation's number finds a column by two reads (decision 0209 §3); a strand's model
+/// (`Model::fork`) takes a relation's columns by a count, and a write copies only that relation's (decision 0210 §9).
 #[derive(Clone, Debug)]
 pub struct ColMap<T> {
-    /// Per relation number, its block's first slot and its width (`u32::MAX`: none yet).
-    base: Vec<(ColId, u32)>,
-    vals: Vec<Option<T>>,
-    n: usize,
+    rels: Vec<Option<Arc<Vec<Option<T>>>>>,
 }
 
 impl<T> Default for ColMap<T> {
     fn default() -> Self {
-        ColMap { base: Vec::new(), vals: Vec::new(), n: 0 }
+        ColMap { rels: Vec::new() }
     }
 }
 
-/// A block's least width: most relations are this narrow, so a block seldom moves.
-const WIDTH: u32 = 4;
-
-impl<T> ColMap<T> {
+impl<T: Clone> ColMap<T> {
     pub fn new() -> Self {
         Self::default()
     }
-    /// The slot of column `c` of relation `rel`, where its block has one.
-    #[inline]
-    pub fn col_id(&self, rel: RelId, c: usize) -> Option<ColId> {
-        let &(b, w) = self.base.get(rel as usize)?;
-        (b != u32::MAX && (c as u32) < w).then(|| b + c as u32)
-    }
-    #[inline]
-    pub fn at(&self, id: ColId) -> Option<&T> {
-        self.vals.get(id as usize).and_then(Option::as_ref)
-    }
     #[inline]
     pub fn at_rel(&self, rel: RelId, c: usize) -> Option<&T> {
-        self.col_id(rel, c).and_then(|id| self.at(id))
+        self.rels.get(rel as usize)?.as_ref()?.get(c)?.as_ref()
     }
+    /// Column `c` of `rel`, by name.
     #[inline]
-    pub fn get_at(&self, rel: &str, c: usize) -> Option<&T> {
+    pub fn at(&self, rel: &str, c: usize) -> Option<&T> {
         find(rel).and_then(|r| self.at_rel(r, c))
     }
     #[inline]
     pub fn get<S: AsRef<str>>(&self, k: &(S, usize)) -> Option<&T> {
-        self.get_at(k.0.as_ref(), k.1)
+        self.at(k.0.as_ref(), k.1)
     }
     pub fn get_mut<S: AsRef<str>>(&mut self, k: &(S, usize)) -> Option<&mut T> {
-        let id = self.col_id(find(k.0.as_ref())?, k.1)?;
-        self.vals.get_mut(id as usize).and_then(Option::as_mut)
+        let r = find(k.0.as_ref())? as usize;
+        let cols = self.rels.get_mut(r)?.as_mut()?;
+        cols.get(k.1)?.as_ref()?;
+        Arc::make_mut(cols)[k.1].as_mut()
     }
-    /// The slot of column `c` of `rel`, its block made or widened for it.
-    fn slot(&mut self, rel: RelId, c: usize) -> usize {
+    /// The slot of column `c` of `rel`, its vector made, widened or unshared for it.
+    fn slot(&mut self, rel: RelId, c: usize) -> &mut Option<T> {
         let r = rel as usize;
-        if self.base.len() <= r {
-            self.base.resize(r + 1, (u32::MAX, 0));
+        if self.rels.len() <= r {
+            self.rels.resize_with(r + 1, || None);
         }
-        let (b, w) = self.base[r];
-        if b != u32::MAX && (c as u32) < w {
-            return (b + c as u32) as usize;
+        let cols = Arc::make_mut(self.rels[r].get_or_insert_with(Default::default));
+        if cols.len() <= c {
+            cols.resize(c + 1, None);
         }
-        // A new block at the end, wide enough; a block outgrown moves there with its values.
-        let width = (c as u32 + 1).max(WIDTH).max(w * 2);
-        let at = self.vals.len() as u32;
-        self.vals.resize_with(self.vals.len() + width as usize, || None);
-        if b != u32::MAX {
-            for i in 0..w {
-                let v = self.vals[(b + i) as usize].take();
-                self.vals[(at + i) as usize] = v;
-            }
-        }
-        self.base[r] = (at, width);
-        (at + c as u32) as usize
+        &mut cols[c]
     }
     pub fn insert_at_rel(&mut self, rel: RelId, c: usize, v: T) -> Option<T> {
-        let i = self.slot(rel, c);
-        let old = self.vals[i].replace(v);
-        if old.is_none() {
-            self.n += 1;
-        }
-        old
+        self.slot(rel, c).replace(v)
     }
     pub fn insert<S: AsRef<str>>(&mut self, k: (S, usize), v: T) -> Option<T> {
         self.insert_at_rel(rel_id(k.0.as_ref()), k.1, v)
     }
+    /// The value at `k`, `v` put there first where there is none (as `entry(…).or_insert(v)`).
+    pub fn or_insert<S: AsRef<str>>(&mut self, k: (S, usize), v: T) -> &mut T {
+        self.slot(rel_id(k.0.as_ref()), k.1).get_or_insert(v)
+    }
+    /// The value of `k`, made with `f` where it has none.
+    pub fn entry_or_insert_with<S: AsRef<str>>(&mut self, k: (S, usize), f: impl FnOnce() -> T) -> &mut T {
+        self.slot(rel_id(k.0.as_ref()), k.1).get_or_insert_with(f)
+    }
     pub fn remove<S: AsRef<str>>(&mut self, k: &(S, usize)) -> Option<T> {
-        let id = self.col_id(find(k.0.as_ref())?, k.1)?;
-        let old = self.vals[id as usize].take();
-        if old.is_some() {
-            self.n -= 1;
-        }
-        old
+        let r = find(k.0.as_ref())? as usize;
+        let cols = self.rels.get_mut(r)?.as_mut()?;
+        cols.get(k.1)?.as_ref()?;
+        Arc::make_mut(cols)[k.1].take()
     }
     pub fn contains_key<S: AsRef<str>>(&self, k: &(S, usize)) -> bool {
         self.get(k).is_some()
     }
     pub fn len(&self) -> usize {
-        self.n
+        self.rels.iter().flatten().map(|cols| cols.iter().filter(|v| v.is_some()).count()).sum()
     }
     pub fn is_empty(&self) -> bool {
-        self.n == 0
+        self.len() == 0
     }
     /// The columns with a value: (relation, column), value.
     pub fn iter(&self) -> impl Iterator<Item = ((Arc<str>, usize), &T)> {
-        self.base.iter().enumerate().filter(|(_, (b, _))| *b != u32::MAX).flat_map(move |(r, &(b, w))| {
-            (0..w).filter_map(move |c| self.vals[(b + c) as usize].as_ref().map(|v| ((rel_name(r as RelId), c as usize), v)))
+        self.rels.iter().enumerate().filter_map(|(r, cols)| Some((r, cols.as_ref()?))).flat_map(|(r, cols)| {
+            let name = rel_name(r as RelId);
+            cols.iter().enumerate().filter_map(move |(c, v)| Some(((Arc::clone(&name), c), v.as_ref()?)))
         })
     }
     /// Relation `rel`'s columns with a value.
     pub fn of_rel(&self, rel: &str) -> impl Iterator<Item = (usize, &T)> {
-        let block = find(rel).and_then(|r| self.base.get(r as usize).copied()).filter(|(b, _)| *b != u32::MAX);
-        block.into_iter().flat_map(move |(b, w)| (0..w).filter_map(move |c| self.vals[(b + c) as usize].as_ref().map(|v| (c as usize, v))))
+        let cols = find(rel).and_then(|r| self.rels.get(r as usize)).and_then(Option::as_ref);
+        cols.into_iter().flat_map(|cols| cols.iter().enumerate().filter_map(|(c, v)| Some((c, v.as_ref()?))))
     }
     pub fn clear(&mut self) {
-        self.base.clear();
-        self.vals.clear();
-        self.n = 0;
-    }
-    /// The value of `k`, made with `f` where it has none.
-    pub fn entry_or_insert_with<S: AsRef<str>>(&mut self, k: (S, usize), f: impl FnOnce() -> T) -> &mut T {
-        let i = self.slot(rel_id(k.0.as_ref()), k.1);
-        if self.vals[i].is_none() {
-            self.vals[i] = Some(f());
-            self.n += 1;
-        }
-        self.vals[i].as_mut().expect("just set")
+        self.rels.clear();
     }
     /// Keeps the columns `keep` says to.
     pub fn retain(&mut self, mut keep: impl FnMut(&str, usize, &mut T) -> bool) {
-        for (r, &(b, w)) in self.base.iter().enumerate() {
-            if b == u32::MAX {
-                continue;
-            }
+        for (r, cols) in self.rels.iter_mut().enumerate() {
+            let Some(cols) = cols else { continue };
             let name = rel_name(r as RelId);
-            for c in 0..w {
-                let slot = &mut self.vals[(b + c) as usize];
-                if let Some(v) = slot.as_mut()
-                    && !keep(&name, c as usize, v)
+            // A shared vector is copied only where a column goes.
+            let mut gone: Vec<usize> = Vec::new();
+            for (c, v) in Arc::make_mut(cols).iter_mut().enumerate() {
+                if let Some(x) = v.as_mut()
+                    && !keep(&name, c, x)
                 {
-                    *slot = None;
-                    self.n -= 1;
+                    gone.push(c);
+                }
+            }
+            let cols = Arc::make_mut(cols);
+            for c in gone {
+                cols[c] = None;
+            }
+        }
+    }
+    /// Takes `from`'s columns of `rel` below `width`, shared by a count where none is cut (`Model::fork`).
+    pub fn share_from(&mut self, from: &ColMap<T>, rel: &str, width: usize) {
+        let Some(r) = find(rel) else { return };
+        let Some(cols) = from.rels.get(r as usize).and_then(Option::as_ref) else { return };
+        let r = r as usize;
+        if self.rels.len() <= r {
+            self.rels.resize_with(r + 1, || None);
+        }
+        self.rels[r] = Some(if cols.len() <= width { Arc::clone(cols) } else { Arc::new(cols[..width].to_vec()) });
+    }
+    /// Sets `rel`'s columns below `width` to `from`'s (each taken, or none), as one entry each was moved
+    /// (`Model::absorb`).
+    pub fn take_from(&mut self, from: &mut ColMap<T>, rel: &str, width: usize) {
+        let Some(r) = find(rel) else { return };
+        let ri = r as usize;
+        let theirs = from.rels.get_mut(ri).and_then(Option::take);
+        let mine = self.rels.get(ri).and_then(Option::as_ref);
+        if let Some(t) = &theirs
+            && mine.is_none()
+            && t.len() <= width
+        {
+            if self.rels.len() <= ri {
+                self.rels.resize_with(ri + 1, || None);
+            }
+            self.rels[ri] = Some(Arc::clone(t));
+            return;
+        }
+        for c in 0..width {
+            match theirs.as_ref().and_then(|t| t.get(c)).cloned().flatten() {
+                Some(v) => {
+                    self.insert_at_rel(r, c, v);
+                }
+                None => {
+                    self.remove(&(rel, c));
                 }
             }
         }
     }
 }
 
-impl<T, S: AsRef<str>> FromIterator<((S, usize), T)> for ColMap<T> {
+impl<T: Clone, S: AsRef<str>> FromIterator<((S, usize), T)> for ColMap<T> {
     fn from_iter<I: IntoIterator<Item = ((S, usize), T)>>(it: I) -> Self {
         let mut m = ColMap::new();
         for (k, v) in it {
@@ -306,7 +313,7 @@ impl<T, S: AsRef<str>> FromIterator<((S, usize), T)> for ColMap<T> {
     }
 }
 
-impl<T, S: AsRef<str>> Extend<((S, usize), T)> for ColMap<T> {
+impl<T: Clone, S: AsRef<str>> Extend<((S, usize), T)> for ColMap<T> {
     fn extend<I: IntoIterator<Item = ((S, usize), T)>>(&mut self, it: I) {
         for (k, v) in it {
             self.insert(k, v);
@@ -330,7 +337,7 @@ impl<T> std::ops::Index<&String> for RelMap<T> {
     }
 }
 
-impl<T, S: AsRef<str>> std::ops::Index<&(S, usize)> for ColMap<T> {
+impl<T: Clone, S: AsRef<str>> std::ops::Index<&(S, usize)> for ColMap<T> {
     type Output = T;
     #[track_caller]
     fn index(&self, k: &(S, usize)) -> &T {
@@ -578,13 +585,17 @@ mod tests {
         let mut fan: ColMap<f64> = ColMap::new();
         fan.insert(("t_rel_a", 1), 1.5);
         fan.insert(("t_rel_b".to_owned(), 0), 2.5);
-        // Past the block's width: the block moves, with its values.
+        // Past the relation's columns: its vector grows, with its values.
         fan.insert(("t_rel_a", 9), 9.5);
-        assert_eq!((fan.get(&("t_rel_a", 1)), fan.get_at("t_rel_a", 9), fan.get(&("t_rel_b", 0)), fan.get(&("t_rel_a", 2))), (Some(&1.5), Some(&9.5), Some(&2.5), None));
+        assert_eq!((fan.get(&("t_rel_a", 1)), fan.at("t_rel_a", 9), fan.get(&("t_rel_b", 0)), fan.get(&("t_rel_a", 2))), (Some(&1.5), Some(&9.5), Some(&2.5), None));
         assert_eq!(fan.len(), 3);
         let a = find("t_rel_a").unwrap();
-        let id = fan.col_id(a, 9).unwrap();
-        assert_eq!(fan.at(id), Some(&9.5));
+        assert_eq!(fan.at_rel(a, 9), Some(&9.5));
+        // A fork shares a relation's columns by a count; a write copies only that relation's.
+        let mut fork: ColMap<f64> = ColMap::new();
+        fork.share_from(&fan, "t_rel_a", 16);
+        fork.insert(("t_rel_a", 9), 0.5);
+        assert_eq!((fan.at("t_rel_a", 9), fork.at("t_rel_a", 9), fork.at("t_rel_a", 1)), (Some(&9.5), Some(&0.5), Some(&1.5)));
         assert_eq!(fan.of_rel("t_rel_a").collect::<Vec<_>>(), vec![(1, &1.5), (9, &9.5)]);
         fan.retain(|_, c, _| c != 1);
         assert_eq!((fan.len(), fan.get(&("t_rel_a", 1))), (2, None));

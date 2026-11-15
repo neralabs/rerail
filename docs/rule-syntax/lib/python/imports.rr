@@ -26,14 +26,14 @@ fn_or_lambda("function_definition"). fn_or_lambda("lambda").
 
 // impmod(i, m): `from ... import` statement i names module m, when we can resolve it to a dotted name.
 // Rule 1: absolute, `from a.b import x` gives "a.b". Rule 2: `from . import x` in package p gives p.
-// Rule 3: `from .m import x` in package p gives "p.m". Only single-dot relative forms here; rel_base handles more.
+// Rule 3: `from .m import x` in package p gives "p.m". Any number of dots: rel_base strips one package per extra
+// dot (`from ..m import x` in package "a.b" gives "a.m"). A base of "" means the import climbs above the top
+// package (or the importer has none): it is not placed, and irel_open binds its names as unknown.
 // pkg(d, p) is the package of the importing document ("" for a top-level script, which has no package).
 .decl impmod(i: node, m: symbol)
 impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m).
-impmod(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
-    child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "".
-impmod(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
-    child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "".
+impmod(i, p) :- rel_base(i, p), p != "", field(i, "module_name", mn), !child(mn, _, 1).
+impmod(i, @dot(p, m)) :- rel_base(i, p), p != "", field(i, "module_name", mn), child(mn, dn, 1), text(dn, m).
 // rifrom(s, x, m, y): in syntactic scope s, `from m import y` binds local name x. Without an alias x = y
 // (rule 1); with `from m import y as x`, x is the alias (rule 2).
 .decl rifrom(s: node, x: symbol, m: symbol, y: symbol)
@@ -49,7 +49,7 @@ ribind(s, x, @dot(m, y)) :- rifrom(s, x, m, y).
 ribind(s, t, t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t), nearest(i, s, scope).
 ribind(s, a, m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, m),
     field(x, "alias", al), text(al, a), nearest(i, s, scope).
-// A relative import the facts cannot place (two or more dots, or outside a package): what it binds is unknown.
+// A relative import the facts cannot place (one that climbs above the top package, or outside a package): what it binds is unknown.
 // These names are still bound (so lookup stops there and does not fall through to a builtin), but as untracked
 // targets: the rows go into python/names' rotgt, which python/calls treats as an unknown value.
 .decl irel_open(i: node)

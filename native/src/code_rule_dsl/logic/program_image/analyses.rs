@@ -4,6 +4,7 @@
 //! fields by `About`, and is checked against its tree form on the pack programs (`tests`).
 //!
 //! The strata come in an order of ids, where the tree form's come in an order of names: each is dependencies first.
+//! `components_by_name` gives them in the tree form's order, for a reader whose output follows it.
 use super::about::{About, NativeKind};
 use super::handles::{AggRef, Lit, TermRef};
 use super::version::Version;
@@ -89,21 +90,75 @@ fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId, Rel
 pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
     let (derived, edges, aggs) = components(v, about);
     let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
+    match first_unstratified(v, &sccs, &edges, &aggs, true).into_iter().next() {
+        Some(e) => Err(e),
+        None => Ok(Strata { sccs, edges }),
+    }
+}
+
+/// The dependency edges by name, as `front::strata` gives them: each derived relation's dependencies among the derived
+/// relations, with whether each is negative.
+pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic::front::Edges {
+    let (_, edges, _) = components(v, about);
+    let mut out = crate::code_rule_dsl::logic::front::Edges::new();
+    for (h, w, neg) in edges.iter() {
+        out.entry(v.rel_name(h).to_owned()).or_default().insert((v.rel_name(w).to_owned(), neg));
+    }
+    out
+}
+
+/// The components as `front::components_of` makes them, in its order: the relations numbered in the order of their
+/// names, each set of `together` (a maintained program's, `body::Maint`) one component where it can be, and the
+/// tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the
+/// composed query lists its definitions in it); `strata` gives them in an order of ids.
+pub fn components_by_name(v: &Version, about: &About, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
+    let (mut by_name, edges, aggs) = components(v, about);
+    by_name.sort_unstable_by(|a, b| v.rel_name(*a).cmp(v.rel_name(*b)));
+    const NONE: u32 = u32::MAX;
+    let mut place = vec![NONE; v.rel_end() as usize];
+    for (i, r) in by_name.iter().enumerate() {
+        place[r.index()] = i as u32;
+    }
+    let mut succ: Vec<Vec<(u32, bool)>> = vec![Vec::new(); by_name.len()];
+    for (h, w, neg) in edges.iter() {
+        let (h, w) = (place[h.index()], place[w.index()]);
+        if h != NONE && w != NONE {
+            succ[h as usize].push((w, neg));
+        }
+    }
+    for s in &mut succ {
+        s.sort_unstable();
+    }
+    let aggs = aggs.iter().map(|(h, w)| (place[h.index()], place[w.index()])).collect();
+    crate::code_rule_dsl::logic::front::components_of_graph(by_name.iter().map(|&r| v.rel_name(r)).collect(), succ, aggs, together)
+}
+
+/// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each
+/// (`front::unstratified`; `strata` stops at the first).
+pub fn unstratified(v: &Version, about: &About) -> Vec<Error> {
+    let (derived, edges, aggs) = components(v, about);
+    let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
+    first_unstratified(v, &sccs, &edges, &aggs, false)
+}
+
+/// The first error of each component a negative edge closes a cycle in (`first`: only the first component's).
+fn first_unstratified(v: &Version, sccs: &[Vec<RelId>], edges: &Edges, aggs: &[(RelId, RelId)], first: bool) -> Vec<Error> {
     let mut at = vec![usize::MAX; v.rel_end() as usize];
     for (i, scc) in sccs.iter().enumerate() {
         for r in scc {
             at[r.index()] = i;
         }
     }
+    let mut out = Vec::new();
     for (i, scc) in sccs.iter().enumerate() {
-        for &h in scc {
+        'scc: for &h in scc {
             for (w, neg) in edges.of_head(h) {
                 if !neg || at[w.index()] != i {
                     continue;
                 }
                 let names = |s: &[RelId]| s.iter().map(|&r| v.rel_name(r).to_owned()).collect::<BTreeSet<_>>();
                 let (head, dep) = (v.rel_name(h).to_owned(), v.rel_name(w).to_owned());
-                return Err(if aggs.binary_search(&(h, w)).is_ok() {
+                out.push(if aggs.binary_search(&(h, w)).is_ok() {
                     Error::AggregationInRecursion { head, aggregated: dep, component: names(scc) }
                 } else {
                     Error::NotStratifiable {
@@ -112,10 +167,14 @@ pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
                         negated: dep,
                     }
                 });
+                if first {
+                    return out;
+                }
+                break 'scc;
             }
         }
     }
-    Ok(Strata { sccs, edges })
+    out
 }
 
 /// Strongly connected components of `nodes` (sorted) under `edges`, dependencies first, each sorted. Iterative.

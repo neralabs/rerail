@@ -103,11 +103,63 @@ pub struct Projection {
     /// `docof` from `node`, `rr::lower::projections`; a program may name an output as a base relation is named). A
     /// bound table of that name would be the planner's to drop.
     pub derived: BTreeSet<String>,
+    /// `rx_spans` compiled, once for the run's projection, not again for every batch it binds.
+    pub compiled_rx: CompiledSpans,
+}
+
+/// A projection's `rx_span` patterns compiled: each one's regex and, over a document's source or lines, its block
+/// program (`span_prefilter`). Made on the first batch and shared by the projection's clones; kept with the patterns it
+/// was made from, so a clone whose patterns differ compiles its own. A run's library loads bind a batch a window of
+/// files, and each compiled every pattern again: 3% of a cold batch's main thread.
+#[derive(Clone, Default)]
+pub struct CompiledSpans(Arc<std::sync::OnceLock<(Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>, Vec<CompiledSpan>)>>);
+
+/// One `rx_span` pattern, compiled: its regex and its block program, if it has one.
+type CompiledSpan = (regex::Regex, Option<Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>>);
+
+impl std::fmt::Debug for CompiledSpans {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CompiledSpans({})", self.0.get().map_or(0, |(_, c)| c.len()))
+    }
+}
+
+impl CompiledSpans {
+    /// `patterns` compiled: the kept ones when they were made from these, else compiled now (and kept if none were).
+    fn of(&self, patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, String)]) -> StoreResult<Vec<CompiledSpan>> {
+        if let Some((from, compiled)) = self.0.get()
+            && from.as_slice() == patterns
+        {
+            return Ok(compiled.clone());
+        }
+        let compiled = compile_spans(patterns)?;
+        let _ = self.0.set((patterns.to_vec(), compiled.clone()));
+        Ok(compiled)
+    }
+}
+
+/// Compiles `rx_span`'s patterns, each on the pool's threads, a class of every character first written as any
+/// character (`unfolded`). Over a document's source or its lines, each with its block program (decision 0081 §3): the
+/// bytes a match can end after, chunk at a time, so the regex runs only where one can.
+fn compile_spans(patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, String)]) -> StoreResult<Vec<CompiledSpan>> {
+    use crate::code_rule_dsl::logic::front::ast::SpanIn;
+    use rayon::prelude::*;
+    let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
+    patterns
+        .par_iter()
+        .map(|(within, re)| {
+            let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
+            let prefilter = match within {
+                SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
+                _ => None,
+            };
+            regex::Regex::new(&compiled).map(|r| (r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
+        })
+        .collect()
 }
 
 impl Projection {
     pub fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new(), compiled_rx: CompiledSpans::default() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -131,7 +183,7 @@ impl Projection {
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
         let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived, compiled_rx: CompiledSpans::default() }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
@@ -272,19 +324,36 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     made
 }
 
-/// The batches whose documents' texts `long_node_text` reads, by document key: the latest batch to hold each
-/// document, weakly (a chunk's batch is dropped when its run is done; its entries then read nothing).
-static TEXTS: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, (std::sync::Weak<Batch>, usize)>>> = std::sync::LazyLock::new(Default::default);
+/// The batches whose documents' texts `long_node_text` reads, by store and document key: the latest batch to hold
+/// each document, weakly (a chunk's batch is dropped when its run is done; its entries then read nothing). A document
+/// key is a store's: two runs of one process over two stores (the tests', each its own copy of one template) number
+/// their documents alike, and keyed by the document alone one run read the other's batch and lost its long texts.
+static TEXTS: std::sync::LazyLock<std::sync::RwLock<HashMap<(Option<std::path::PathBuf>, u32), (std::sync::Weak<Batch>, usize)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The store a run's documents are numbered in (`plan::corpus::tape_cache_path`), registered at load
+/// (`install_text_store`); without one, one store.
+static TEXT_STORE: std::sync::OnceLock<fn() -> Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+
+/// Registers what names the run's store (once, at load).
+pub fn install_text_store(store: fn() -> Option<std::path::PathBuf>) {
+    let _ = TEXT_STORE.set(store);
+}
+
+fn text_store() -> Option<std::path::PathBuf> {
+    TEXT_STORE.get().and_then(|store| store())
+}
 
 /// Hold `batch`'s documents for `long_node_text`.
 fn hold_texts(batch: &Arc<Batch>) {
+    let store = text_store();
     let mut texts = TEXTS.write().unwrap_or_else(|p| p.into_inner());
     // Entries of dropped batches go once they are as many as the live ones.
     if texts.len() > 4096 && texts.len() > 2 * batch.docs.len() {
         texts.retain(|_, (b, _)| b.strong_count() > 0);
     }
     for (i, p) in batch.docs.iter().enumerate() {
-        texts.insert(p.key, (Arc::downgrade(batch), i));
+        texts.insert((store.clone(), p.key), (Arc::downgrade(batch), i));
     }
 }
 
@@ -293,7 +362,9 @@ fn hold_texts(batch: &Arc<Batch>) {
 /// Only the nodes a rule binds are read and interned (decision 0108 §1).
 pub(crate) fn long_node_text(n: i64) -> Option<String> {
     let (key, low) = ((n >> 32) as u32, n as u32);
-    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
+    // The run's store, as the batch was held under it (`hold_texts`): only the nodes a rule binds past the bound ask.
+    let store = text_store();
+    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&(store, key)).cloned()?;
     let batch = batch.upgrade()?;
     let p = &batch.docs[i];
     let local = p.local_of(low)?;
@@ -321,62 +392,124 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
         }
         rule.get("all")?.as_array()?.iter().find_map(|r| r.get("kind").and_then(|k| k.as_str()).map(str::to_owned))
     };
+    // A node's kinds to a fixpoint, on numbers: each kind name interned (`kind_ids`), a set of kinds a sorted vector of
+    // them, each derived relation's columns a vector by its number, and each rule head variable's constraints found
+    // once (`fixers`). Looked up by an owned `(String, usize)` key and cloned as sets of names at every step of every
+    // round, the fixpoint was most of this function.
     // `None` is any kind.
-    type Kinds = Option<BTreeSet<String>>;
-    let roots: HashMap<&str, Kinds> = matchers.iter().map(|(rel, text, _)| (rel.as_str(), root_kind(text).map(|k| BTreeSet::from([bare(&k)])))).collect();
-    let derived: BTreeSet<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    let mut columns: HashMap<(String, usize), Kinds> = HashMap::new();
-    let column = |columns: &HashMap<(String, usize), Kinds>, rel: &str, c: usize| -> Kinds {
-        if derived.contains(rel) {
-            columns.get(&(rel.to_owned(), c)).cloned().unwrap_or(Some(BTreeSet::new()))
-        } else if c == 0 && let Some(root) = roots.get(rel) {
-            root.clone()
-        } else {
-            None
+    type Kinds = Option<Vec<u32>>;
+    let kind_table: std::cell::RefCell<(HashMap<String, u32>, Vec<String>)> = Default::default();
+    let intern = |k: String| -> u32 {
+        let mut t = kind_table.borrow_mut();
+        if let Some(&n) = t.0.get(&k) {
+            return n;
         }
+        let n = t.1.len() as u32;
+        t.1.push(k.clone());
+        t.0.insert(k, n);
+        n
     };
-    let of_var = |columns: &HashMap<(String, usize), Kinds>, body: &[Literal], v: &str| -> Kinds {
-        let mut kinds: Kinds = None;
+    let roots: HashMap<&str, Kinds> = matchers.iter().map(|(rel, text, _)| (rel.as_str(), root_kind(text).map(|k| vec![intern(bare(&k))]))).collect();
+    let derived: Vec<&str> = {
+        let mut d: Vec<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        d.sort_unstable();
+        d.dedup();
+        d
+    };
+    let derived_id: HashMap<&str, u32> = derived.iter().enumerate().map(|(i, r)| (*r, i as u32)).collect();
+    /// What fixes a variable's kinds where an atom reads it.
+    enum Fix {
+        /// A derived relation's column.
+        Column(u32, usize),
+        /// Kinds known whatever the round (`kind(v, "K")`, a matcher's root), or any (`None`).
+        Known(Option<Vec<u32>>),
+    }
+    let fixers = |body: &[Literal], v: &str| -> Vec<Fix> {
+        let mut out = Vec::new();
         for a in body.iter().filter_map(Literal::atom).filter(|a| !a.neg) {
             for (c, t) in a.args.iter().enumerate() {
                 if !matches!(t, Term::Var(x) if x == v) {
                     continue;
                 }
-                let fixed = match (a.rel.as_str(), c, a.args.get(1)) {
-                    ("kind", 0, Some(Term::Str(k))) => Some(BTreeSet::from([bare(k)])),
-                    ("kind", _, _) => None,
-                    (rel, c, _) => column(columns, rel, c),
-                };
-                kinds = match (kinds, fixed) {
-                    (None, k) => k,
-                    (k, None) => k,
-                    (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
-                };
+                out.push(match (a.rel.as_str(), c, a.args.get(1)) {
+                    ("kind", 0, Some(Term::Str(k))) => Fix::Known(Some(vec![intern(bare(k))])),
+                    ("kind", _, _) => Fix::Known(None),
+                    (rel, c, _) => match derived_id.get(rel) {
+                        Some(&d) => Fix::Column(d, c),
+                        None if c == 0 && let Some(root) = roots.get(rel) => Fix::Known(root.clone()),
+                        None => Fix::Known(None),
+                    },
+                });
             }
         }
-        kinds
+        out
     };
+    fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
+        a.iter().copied().filter(|k| b.binary_search(k).is_ok()).collect()
+    }
+    fn union(a: &[u32], b: &[u32]) -> Vec<u32> {
+        let mut u: Vec<u32> = a.iter().chain(b).copied().collect();
+        u.sort_unstable();
+        u.dedup();
+        u
+    }
+    // A variable's kinds under `columns`: the intersection of what fixes it (any, when nothing does).
+    fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
+        let mut kinds: Kinds = None;
+        for f in fixes {
+            let fixed: Option<&[u32]> = match f {
+                Fix::Column(d, c) => match columns[*d as usize].get(*c) {
+                    Some(k) => k.as_deref(),
+                    None => Some(&[]),
+                },
+                Fix::Known(k) => k.as_deref(),
+            };
+            kinds = match (kinds, fixed) {
+                (None, k) => k.map(<[u32]>::to_vec),
+                (k, None) => k,
+                (Some(a), Some(b)) => Some(intersect(&a, b)),
+            };
+        }
+        kinds
+    }
+    // Each derived relation's columns, as wide as its widest head; each rule head variable's fixers.
+    let mut columns: Vec<Vec<Kinds>> = vec![Vec::new(); derived.len()];
+    let mut heads: Vec<(u32, usize, Vec<Fix>)> = Vec::new();
+    for rule in &program.rules {
+        let h = derived_id[rule.head.rel.as_str()];
+        let width = &mut columns[h as usize];
+        if width.len() < rule.head.args.len() {
+            width.resize(rule.head.args.len(), Some(Vec::new()));
+        }
+        for (c, t) in rule.head.args.iter().enumerate() {
+            let Term::Var(v) = t else { continue };
+            heads.push((h, c, fixers(&rule.body, v)));
+        }
+    }
     loop {
         let mut changed = false;
-        for rule in &program.rules {
-            for (c, t) in rule.head.args.iter().enumerate() {
-                let Term::Var(v) = t else { continue };
-                let kinds = of_var(&columns, &rule.body, v);
-                let entry = columns.entry((rule.head.rel.to_string(), c)).or_insert(Some(BTreeSet::new()));
-                let joined = match (&*entry, kinds) {
-                    (None, _) | (_, None) => None,
-                    (Some(a), Some(b)) => Some(a.union(&b).cloned().collect()),
-                };
-                if *entry != joined {
-                    *entry = joined;
-                    changed = true;
-                }
+        for (h, c, fixes) in &heads {
+            let kinds = fold(&columns, fixes);
+            let entry = &mut columns[*h as usize][*c];
+            let joined = match (&*entry, kinds) {
+                (None, _) | (_, None) => None,
+                (Some(a), Some(b)) => Some(union(a, &b)),
+            };
+            if *entry != joined {
+                *entry = joined;
+                changed = true;
             }
         }
         if !changed {
             break;
         }
     }
+    // A text atom's variable's kinds, by name.
+    let of_var = |body: &[Literal], v: &str| -> Option<BTreeSet<String>> {
+        let fixes = fixers(body, v);
+        let names = kind_table.borrow();
+        fold(&columns, &fixes).map(|ks| ks.into_iter().map(|k| names.1[k as usize].clone()).collect())
+    };
     // A rule (by head relation) that reads `v`'s long text by `@rr_node_text(v)`: its twin (`long_text_twins`).
     // Found in one pass: each (head, variable) a rule reads so.
     let twins: HashSet<(&str, &str)> = program
@@ -487,7 +620,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
                 wide.get_or_insert_with(|| rule.head.rel.to_string());
                 continue;
             };
-            let fixed = of_var(&columns, &rule.body, v);
+            let fixed = of_var(&rule.body, v);
             if let Some(nodes) = &mut read {
                 match &fixed {
                     Some(k) => nodes.kinds.extend(k.iter().cloned()),
@@ -2566,26 +2699,10 @@ impl Batch {
         let wants_trees = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         let wants_units = core && projection.reads.as_ref().is_some_and(|r| r.contains("def_digest"));
         let wants_digests = wants_trees || wants_units;
-        // `rx_span`'s regexes, compiled once for the batch.
-        // Over a document's source or its lines, each with its block program (decision 0081 §3): the bytes a match can
-        // end after, chunk at a time, so the regex runs only where one can.
-        // Each on the pool's threads, a class of every character first written as any character (`unfolded`).
+        // `rx_span`'s regexes, compiled once for the run's projection (`CompiledSpans`).
         let rx_spans: Vec<core_rr::SpanPattern> = if core {
-            use rayon::prelude::*;
-            projection
-                .rx_spans
-                .par_iter()
-                .map(|(within, re)| {
-                    use crate::code_rule_dsl::logic::front::ast::SpanIn;
-                    let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
-                    let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
-                    let prefilter = match within {
-                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
-                        _ => None,
-                    };
-                    regex::Regex::new(&compiled).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
-                })
-                .collect::<StoreResult<_>>()?
+            let compiled = projection.compiled_rx.of(&projection.rx_spans)?;
+            projection.rx_spans.iter().zip(compiled).map(|((within, re), (r, prefilter))| (within.clone(), re.as_str(), r, prefilter)).collect()
         } else {
             Vec::new()
         };

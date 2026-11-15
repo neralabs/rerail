@@ -129,11 +129,11 @@ ruf049_demand_enum_class(st2) :- ruf049_demand_enum_ref(n), kind(n, "identifier"
     site_stop_at_global(b1), (st2 = b1 ; within(b1, st2)).
 ruf049_demand_enum_class(n) :- node(_, AN, _, _, _), ruf049_demand_alt_3(n),
     kind(n, "class_definition"), field(n, "name", c1), node(_, c1, _, _, _), MN = c1, text(MN, t2),
-    text(AN, t2), site_latest(c1), @doc(MN) = @doc(AN).
-ruf049_demand_enum_class(c4) :- node(_, AN, _, _, _), ruf049_demand_alt_3(n),
-    kind(n, "decorated_definition"), field(n, "definition", c4),
-    kind(c4, "class_definition"), field(c4, "name", c5), node(_, c5, _, _, _), MN = c5, text(MN, t6),
-    text(AN, t6), site_latest(c5), @doc(MN) = @doc(AN).
+    text(AN, t2), bind_name(c1, b4), site_latest(b4), @doc(MN) = @doc(AN).
+ruf049_demand_enum_class(c5) :- node(_, AN, _, _, _), ruf049_demand_alt_3(n),
+    kind(n, "decorated_definition"), field(n, "definition", c5),
+    kind(c5, "class_definition"), field(c5, "name", c6), node(_, c6, _, _, _), MN = c6, text(MN, t7),
+    text(AN, t7), bind_name(c6, b9), site_latest(b9), @doc(MN) = @doc(AN).
 
 // demand_enum_ref: the nodes enum_ref is asked at (its recursion looks at every descendant)
 .decl ruf049_demand_enum_ref(n: node)
@@ -157,10 +157,12 @@ ruf049_set_2("enum.StrEnum"). ruf049_set_2("enum.ReprEnum"). ruf049_set_2("enum.
 //   MN: metavariable this relation binds for the calling rule
 .decl ruf049_alt_3(n: node, an: loc, mn: loc)
 ruf049_alt_3(n, AN, MN) :- ruf049_demand_alt_3(n), kind(n, "class_definition"), field(n, "name", c1),
-    node(_, c1, _, _, _), MN = c1, text(MN, t2), text(AN, t2), site_latest(c1), ruf049_enum_class(n, AN, MN), @doc(MN) = @doc(AN).
+    node(_, c1, _, _, _), MN = c1, text(MN, t2), text(AN, t2), bind_name(c1, b4), site_latest(b4),
+    ruf049_enum_class(n, AN, MN), @doc(MN) = @doc(AN).
 ruf049_alt_3(n, AN, MN) :- ruf049_demand_alt_3(n), kind(n, "decorated_definition"),
-    field(n, "definition", c4), kind(c4, "class_definition"), field(c4, "name", c5),
-    node(_, c5, _, _, _), MN = c5, text(MN, t6), text(AN, t6), site_latest(c5), ruf049_enum_class(c4, AN, MN), @doc(MN) = @doc(AN).
+    field(n, "definition", c5), kind(c5, "class_definition"), field(c5, "name", c6),
+    node(_, c6, _, _, _), MN = c6, text(MN, t7), text(AN, t7), bind_name(c6, b9), site_latest(b9),
+    ruf049_enum_class(c5, AN, MN), @doc(MN) = @doc(AN).
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 .decl ruf049_alt_4(n: node)

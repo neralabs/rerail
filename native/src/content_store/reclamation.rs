@@ -240,11 +240,17 @@ impl ContentStore {
     /// SQLite's busy timeout alone, failed the pass while parallel writers held the store (O-collector-busy-flake).
     pub(super) fn collect_held(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
         let report = retry_busy(&mut BusyRetries::default(), || self.collect_held_once(now, batch))?;
-        retry_busy(&mut BusyRetries::default(), || {
+        // Free pages back to the file system, a write of its own after the pass committed: a writer holding the
+        // store past the retries leaves them to the next pass. Failing the pass for it failed a collector whose rows
+        // were already collected.
+        match retry_busy(&mut BusyRetries::default(), || {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
             incremental_vacuum(&connection, 4096)
-        })?;
+        }) {
+            Ok(()) | Err(StoreError::Busy) => {}
+            Err(error) => return Err(error),
+        }
         self.decompressed_cache
             .lock()
             .expect("decompressed cache mutex poisoned")

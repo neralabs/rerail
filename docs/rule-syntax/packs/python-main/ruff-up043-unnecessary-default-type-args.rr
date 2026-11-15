@@ -41,12 +41,6 @@ up043_async_generator(n) :- kind(n, "parenthesized_expression"), child(n, c1, _)
 .decl up043_element(n: node)
 up043_element(n) :- node(_, n, _, _, _), !up043_alt_2(n).
 
-// sole(n): the JSON util `sole`, used where the JSON says `matches: "sole"`
-.decl up043_sole(n: node)
-up043_sole(n) :- node(_, n, _, _, _),
-    count : { up043_stop_1_precedes(n, s1), glob("\\,", s1) } = 0,
-    k3 = count : { precedes(s2, n), up043_element(s2) }, k3 <= 0.
-
 // tail_generator(n): the JSON util `tail-generator`, used where the JSON says `matches: "tail-generator"`
 .decl up043_tail_generator(n: node)
 up043_tail_generator(n) :- up043_none(n), k2 = count : { precedes(n, s1), up043_element(s1) }, k2 <= 0,

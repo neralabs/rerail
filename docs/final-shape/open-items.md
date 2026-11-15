@@ -5019,6 +5019,54 @@ the split memo with the run beside it.
 dependency on the step before it runs on the pool, beside that step. Measured: `dl1` cold, same findings, with the
 overlapped steps' wall shown by `RERAIL_TIMELINE`. See O-typing-run-overlap for the largest such step.
 
+**Progress (2026-11-13, decision 0192).** Every thread-local is listed with its class (`logic::run_state::STATE`),
+and every job the engine starts carries the run's context (`run_state::Carry`: `Jobs::spawn`, `beside`, the strata's
+`Ambient`). The strict mode's waves are per run (a carried stage). Tests and a commit check refuse an unlisted
+thread-local. The bridged typing run runs beside phase 1. Still open:
+- the split memo is process-wide (exact under two runs, but they can push out each other's entries);
+- two pieces of run context are not carried yet (`plan::PLANNED_NOW`, `choices::DURABLE`), pinned;
+- the other nested runs (phase 0's, the constants') still run in order.
+
+**Closed (2026-11-14, decision 0197).**
+- The split memo is the run's own: a carried thread-local that each run opens as it begins (`split_memo::own`).
+- Both NotYet entries are carried. `PLANNED_NOW` is now `RunPlans::planned_now`, and `DURABLE` is carried as an
+  `Arc`. The NotYet count is pinned at 0.
+- Neither of the remaining nested runs has anything to overlap:
+  - the constants' run never starts on `dl1`, `struct.rr` or the Python pack, because `constants::foldable` is empty
+    there. An early start was built, then backed out unmeasured, because nothing ran.
+  - phase 0 is one batched `bootstrap.rr` run (about 0.2 s of CPU), and every later step needs its graphs. The nested
+    runs find their graphs kept (under 1 ms each).
+
+## O-cone-kept-plans. A kept plan changes the cross-file cone's result
+
+**Seen (2026-11-13, decision 0192).** When the cone's job (`beside("the cone of requests")`, plan/corpus.rs) runs
+with the run's kept plans (`enter_plans`), one test fails:
+`phases::tests::phase_1_loads_the_libraries_the_imports_reach_and_a_reader_takes_them`. After `b.pyi` is edited to
+import `c`, the second run's `lib` rows are `a, b, builtins`, without `c`. Without the plans (as before decision
+0192), they are right. A plan is an order and a price; it should never change rows. So either a kept plan carries
+something that depends on the inputs, or its key misses an input of the cone's (its delta, its sources).
+
+The cone now enters no plans (`enter_plans(None)`), and plans every rule afresh.
+
+**Closure:** find what the kept plan carries into the cone's second run. Then the cone shares the run's plans like
+every other job, the `enter_plans(None)` goes, and the test passes with them.
+
+**Closed (2026-11-14).** Not the plans: whether a thread holds kept plans is also how a run knows it is a corpus run
+(`plan.rs`, `let corpus = PLANS…is_some()`), and a corpus run makes its planning choices. Testing each switch apart:
+- with the plans, the budget off: fails;
+- with the plans, the choices neither reused nor made: passes;
+- the choices made afresh each run: fails;
+- inlining off: fails, so the culprit is the negation split (`demand::split_negations`).
+
+The split computes a relation only for the keys its readers reach. The cone keeps its strata for the next run, so the
+next run's new key (`c`, imported by the edited `b.pyi`) had no rows and no delta to make them: spike O125's case,
+which the session's cross-file part already avoids with `demand::whole_relations`. The cone now does the same
+whenever it keeps its strata (`cone_kept`), and takes the run's plans. The phase-1 library test, the cone, session and
+kept-strata tests pass (115); `dl1`'s findings and instructions are unchanged, cold and warm.
+
+Left as a note: "holds kept plans" standing for "a corpus run" is a second meaning on one switch. That is how this
+bug stayed hidden.
+
 ## O-typing-run-overlap. The bridged typing run waits for the whole combined program
 
 **Seen (2026-11-13).** The bridged typing run (`bridge::facts` → `run_typed`) is about 0.3 s of the cold run's
@@ -5036,6 +5084,9 @@ The typing program's own text does not depend on the policies. Only the outputs 
 
 Measured as the typing run's wall overlapping the combine's on `dl1`, with findings unchanged. O-batch-typing-once
 is the same run's repetition across a batch's policies.
+
+**Progress (2026-11-13, decision 0192).** The typing run now runs beside phase 1, as a job that carries the run's
+context. It still starts after the combine; both options above remain.
 
 ## O-demand-negation-rounds. The negation split checks every reader again each round
 
@@ -5120,3 +5171,16 @@ larger heavy share under a larger cap; neither is tuned.
 
 Closed (2026-11-14, decision 0226): each order is estimated by its work at a row's key, from pair counts with
 the filters on the key's atoms: 0.97 of the line's work on `call_ret`.
+
+## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
+
+Status: the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). Open: a rule's numbering is made again at each
+split (keep it with the body's digest), and `split_constants` works on names.
+
+After decision 0210's first five steps, a cold dl1 batch's main thread still spent about 10% in `typing::file_local::split_in`.
+Its location and filter fixpoints build a `BTreeSet<String>` of variables for each rule in each round, and
+`rule_local` makes a `format!("rr_value_tape:{v}")` for each value tape. A form numbered by variable (each rule's
+variables as small integers, made once per rule body and kept with the body's digest by the split memo) would
+remove the allocations and the string comparisons. `_platform_memcmp`, 14.6% of the main thread, is spread over
+string-keyed BTree lookups like these across many passes (tarjan, components, `fork_with`, `keeps::choose`,
+`text_kind_demand`). `Board::finish`, 15%, is the main thread waiting on the pool: it is not work to cut.

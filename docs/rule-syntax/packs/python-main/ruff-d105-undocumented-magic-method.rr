@@ -120,7 +120,7 @@ d105_alt_6(n) :- d105_demand_alt_6(n),
     count : { within(n, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0,
     field(n, "name", c3),
     ( count : { inside(c3, p1, "module"), d105_stop_10_within(c1, p1), d105_dunder_all(c1) } = 0
-    ; site_exported(c3)
+    ; bind_name(c3, b1), site_exported(b1)
     ).
 
 

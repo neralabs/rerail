@@ -322,6 +322,45 @@ impl Keeper {
         out
     }
 
+    /// Maps the values its exact maps count in symbol columns with `f` (decision 0170: this process's ids to the
+    /// store's as the blob is written, back as it is read), all in one call. `syms` gives a relation's symbol columns
+    /// (by its key and width); a relation it does not know keeps no exact maps when `strict`, so its constants are
+    /// counted from the rows held. The sketches hash the values as they are counted, and stay as they are: a run
+    /// across numberings perturbs their estimates, never a finding.
+    pub(super) fn map_symbols(&mut self, syms: &dyn Fn(&str, usize) -> Option<Vec<bool>>, strict: bool, f: impl FnOnce(&mut [i64]) -> crate::content_store::StoreResult<()>) -> crate::content_store::StoreResult<()> {
+        let mut taken: Vec<(String, usize, Vec<i64>)> = Vec::new();
+        let mut values: Vec<i64> = Vec::new();
+        for (rel, stats) in self.rels.iter_mut() {
+            let width = stats.columns().len();
+            let Some(cols) = syms(rel, width).filter(|c| c.len() == width) else {
+                if strict {
+                    for c in 0..width {
+                        stats.take_exact(c);
+                    }
+                }
+                continue;
+            };
+            for c in (0..width).filter(|&c| cols[c]) {
+                if let Some(pairs) = stats.take_exact(c) {
+                    let (vs, ns): (Vec<i64>, Vec<i64>) = pairs.into_iter().unzip();
+                    values.extend(vs);
+                    taken.push((rel.clone(), c, ns));
+                }
+            }
+        }
+        if !values.is_empty() {
+            f(&mut values)?;
+        }
+        let mut values = values.into_iter();
+        for (rel, c, ns) in taken {
+            let pairs = ns.into_iter().map(|n| (values.next().expect("one a count"), n)).collect();
+            if let Some(stats) = self.rels.get_mut(&rel) {
+                stats.put_exact(c, pairs);
+            }
+        }
+        Ok(())
+    }
+
     /// Export `key`'s value documents and how many counted files hold each (`holders`).
     pub(super) fn holders(&self, key: &str) -> Option<&rustc_hash::FxHashMap<i64, i64>> {
         self.holders.get(key)

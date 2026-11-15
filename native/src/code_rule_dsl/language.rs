@@ -4,8 +4,8 @@
 //! grammar, and which capabilities a language supports. The language registry
 //! (`languages/*.json`, `docs/language-packs.md`) is their one source: `build.rs` validates it
 //! and generates `GrammarDialect`'s production variants, `DIALECTS`, `CodeRuleLanguage`,
-//! `PLANNED_LANGUAGES`, `Family`, `Family::of`, `Family::honours` and `with_adapter!` from it
-//! (`language_registry.rs` in `OUT_DIR`). The host routes files by the same registry's suffixes
+//! `PLANNED_LANGUAGES`, `Family`, `Family::of` and `Family::honours` from it (`language_registry.rs`
+//! in `OUT_DIR`), and `with_adapter!` beside it (`with_adapter.rs`, for the test kit). The host routes files by the same registry's suffixes
 //! (`SOURCE_LANGUAGES` in code-rule-languages.ts); the repository index receives them.
 //!
 //! Three layers:
@@ -404,16 +404,14 @@ struct Dialect {
 }
 
 // `grammar_dialect!`, `DIALECTS`, `registry_grammar`, `CodeRuleLanguage` (`ALL`, `name`,
-// `dialects`, `family`, `capability`), `PLANNED_LANGUAGES`, `Family` (`ALL`, `of`, `honours`) and
-// `with_adapter!`.
+// `dialects`, `family`, `capability`), `PLANNED_LANGUAGES` and `Family` (`ALL`, `of`, `honours`). `with_adapter!`
+// is written beside it (`with_adapter.rs`), for the test kit.
 include!(concat!(env!("OUT_DIR"), "/language_registry.rs"));
 
 // `GrammarDialect`: the registry's supported dialects, then grammars only tests parse (tape round
 // trips over other shapes, the transducer's grammar census), each with the ast-grep language that
 // lends it pattern syntax. No file or code rule selects a test-only grammar.
 grammar_dialect! {
-    Java => SupportLang::Java,
-    CSharp => SupportLang::CSharp,
     Cpp => SupportLang::Cpp,
     C => SupportLang::C,
     Bash => SupportLang::Bash,

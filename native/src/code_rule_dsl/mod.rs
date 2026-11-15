@@ -1294,6 +1294,9 @@ mod language {
             #[allow(unused_imports)]
             use std::borrow::Cow;
         }
+        // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
+        pub mod csharp;
+        pub mod java;
         pub use rerail_lang_json::code_rule_dsl::language::adapter::json;
         #[cfg(test)]
         pub mod kit;
@@ -1988,7 +1991,7 @@ pub(crate) mod logic {
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
 /// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
-    pub(crate) use super::logic::profile::{behind_the_run, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
+    pub(crate) use super::logic::profile::{behind_the_run, inside_waves, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
 }
 #[path = "sql_executor"]
 mod sql_executor {
@@ -4753,7 +4756,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, ecma::Ecma, format::Format, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, csharp::Csharp, ecma::Ecma, format::Format, java::Java, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4774,6 +4777,10 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Json, &Pack::<Json>::NEW);
     register(Family::Format, &Pack::<Format>::NEW);
     language::register_base(Family::Format, &Pack::<Format>::NEW);
+    register(Family::Java, &Pack::<Java>::NEW);
+    language::register_base(Family::Java, &Pack::<Java>::NEW);
+    register(Family::Csharp, &Pack::<Csharp>::NEW);
+    language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
     // The linters' suppressions, in the order `suppress` is parsed and checked in.
     {
         use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
@@ -4867,6 +4874,8 @@ pub(crate) fn install_languages() {
     logic::strings::install_functors(functors::register_functors);
     // The run's executors, by binding.
     facts::core::install_executors(logic::lanes::executor_for);
+    // The store a run's documents are numbered in, which the long texts are held under.
+    facts::vtab::syntax::install_text_store(logic::plan::corpus::tape_cache_path);
     // A tape's prefilter rows, which the push path derives.
     facts::families::install_prefilter_image(|tape, doc, interrupted| prefilter::image(tape, doc, &interrupted));
     // An owned connection's demand module.
@@ -4916,8 +4925,12 @@ pub(crate) fn install_languages() {
         }
         // Python's format strings (decision 0176): guests only, parsed by Ruff's parsers' ports.
         if cfg!(feature = "lang-python") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::PercentFormat, name: "percent-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: &literal::format_tape::FormatStrings(language::GrammarDialect::PercentFormat) });
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::BraceFormat, name: "brace-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: &literal::format_tape::FormatStrings(language::GrammarDialect::BraceFormat) });
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::PercentFormat, name: "percent-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::PercentFormat); &P } });
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::BraceFormat, name: "brace-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::BraceFormat); &P } });
+        }
+        // ESLint's directive comments (decision 0194): guests only, parsed by main's directive parser.
+        if cfg!(feature = "lang-typescript") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::EslintDirective, name: "ESLint directive comments", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::EslintDirective); &P } });
         }
         // The lean ECMAScript parser (`tape::ecma_lean`, decision 0184); a file it refuses goes to
         // the dialect's tree-sitter grammar.
@@ -4927,6 +4940,26 @@ pub(crate) fn install_languages() {
         if cfg!(feature = "lang-typescript") {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::TypeScript, name: "lean TypeScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::TYPESCRIPT });
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Tsx, name: "lean TSX parser", rank: 0, runs: true, parser: &tape::ecma_lean::TSX });
+        }
+        if cfg!(feature = "lang-rust") {
+            // The lean Rust parser (`tape::rust_lean`, decision 0193); a file it refuses goes to
+            // tree-sitter-rust.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Rust, name: "lean Rust parser", rank: 0, runs: true, parser: &tape::rust_lean::Lean });
+        }
+        if cfg!(feature = "lang-java") {
+            // The lean Java parser (`tape::java_lean`, decision 0195); a file it refuses goes to
+            // tree-sitter-java.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Java, name: "lean Java parser", rank: 0, runs: true, parser: &tape::java_lean::Lean });
+        }
+        if cfg!(feature = "lang-csharp") {
+            // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
+            // tree-sitter-c-sharp.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
+        }
+        if cfg!(feature = "lang-php") {
+            // The lean PHP parser (`tape::php_lean`, decision 0197); a file it refuses goes to
+            // tree-sitter-php.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Php, name: "lean PHP parser", rank: 0, runs: true, parser: &tape::php_lean::Lean });
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
