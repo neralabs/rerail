@@ -773,8 +773,9 @@ fn split_in(
 /// columns whose values in one row lie in one document (`cross_rounds::bound`: a join through them crosses no file).
 #[derive(Clone)]
 pub struct Programs {
-    pub local: crate::code_rule_dsl::logic::front::Program,
-    pub cross: crate::code_rule_dsl::logic::front::Program,
+    /// The parts' trees: shared by each run's copy of the split (`lower::Tree`), copied only where a run edits one.
+    pub local: crate::code_rule_dsl::logic::plan::lower::Tree,
+    pub cross: crate::code_rule_dsl::logic::plan::lower::Tree,
     pub exports: Vec<String>,
     pub base: Vec<String>,
     /// Each derived relation's location columns (`split_located`).
@@ -893,7 +894,7 @@ pub fn assemble(
         let cross = v.part(&in_cross, &c.inputs, &c.outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local }).ok()?;
         Some(Parts { local, cross })
     });
-    Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants, versions }
+    Programs { local: crate::code_rule_dsl::logic::plan::lower::Tree::given(l), cross: crate::code_rule_dsl::logic::plan::lower::Tree::given(c), exports, base, locations, same_doc, file_local: local, constants, versions }
 }
 
 /// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations

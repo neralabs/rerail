@@ -336,7 +336,7 @@ pub fn prepared_of(
     Ok(Prepared {
         prog,
         vocabulary: Arc::new(vocabulary),
-        lowered: lower::Lowered { program, version: None, maint: None, domains, ops, dialect },
+        lowered: lower::Lowered { program: lower::Tree::given(program), version: None, maint: None, domains, ops, dialect },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
@@ -346,6 +346,9 @@ pub fn prepared_of(
         merged,
         split,
         interned,
+        cone: Default::default(),
+        maintained: Default::default(),
+        parts: Default::default(),
     })
 }
 

@@ -104,7 +104,7 @@ pub(in crate::code_rule_dsl) fn run(
             bind(rel, Arc::clone(source))?;
         }
     }
-    let clean = kept.as_ref().map(|k| cut.sources(k, &part.program)).unwrap_or_default();
+    let clean = kept.as_ref().map(|k| cut.sources(k, &|r| part.program.inputs.iter().any(|i| i == r))).unwrap_or_default();
     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
         // A derived relation kept is read in place, with its indexes (decision 0090 step 3).
         if let Some(held) = &held {

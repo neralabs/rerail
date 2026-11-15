@@ -118,6 +118,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/demand.rs", "WHOLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/lower.rs", "TREE_READS", Thread, "this thread's counts of trees decoded and copied"),
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's lock"),

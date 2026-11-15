@@ -46,6 +46,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
     let mut failed = false;
     let gated: BTreeSet<&str> = prog.gates.iter().map(|(g, _)| g.as_str()).collect();
     let mut rules: Vec<Rule> = Vec::new();
+    let mut decls: Vec<(String, Vec<(front::Name, front::Name)>)> = Vec::new();
     let (mut through, mut kept) = (0, 0);
     // A stratum of one relation is recursive when a rule of it reads it: found in one pass over the rules (a pass
     // per stratum was quadratic, thousands of strata by tens of thousands of rules).
@@ -75,7 +76,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
                     let cols: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
                     b.declare(&name, &cols);
                 }
-                out.program.decls.insert(name.clone().into(), decl.iter().map(|(c, t)| (c.into(), t.into())).collect());
+                decls.push((name.clone(), decl.iter().map(|(c, t)| (c.into(), t.into())).collect()));
                 if let Some(d) = cross.domains.get(h.as_str()).cloned() {
                     out.domains.entry(name.clone()).or_insert(d);
                 }
@@ -96,8 +97,17 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
             }
         }
     }
-    out.program.rules = rules;
     out.version = super::made_from(cross.version.is_some(), b.filter(|_| !failed).and_then(|b| b.finish().ok()).map(|(v, _)| v), "the supports");
+    // The tree: the version's where there is one (`lower::Tree::of`, decoded by no reader on the run's path), else the
+    // cross part's edited.
+    match &out.version {
+        Some(v) => out.program = lower::Tree::of(v.clone()),
+        None => {
+            let p = &mut *out.program;
+            p.rules = rules;
+            p.decls.extend(decls.into_iter().map(|(n, d)| (n.into(), d.into_iter().collect())));
+        }
+    }
     (out, through, kept)
 }
 

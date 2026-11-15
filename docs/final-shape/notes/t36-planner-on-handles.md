@@ -769,3 +769,23 @@ ported, over the targeted tests and dl1.
   - Guard: `Lowered::placed`'s debug check states that a version made from another's has the tree's digest too.
   - Checked: `choices`, `compose`, `memo`, `session`, `retain`, `cross_memo`, `keeps`, `cone`, `maintain` and the 91
     corpus tests with the guards on.
+
+- **The run's parts are their versions; a session run decodes and copies no tree** (2026-11-15).
+  - `Lowered::program` is a `lower::Tree`: a tree given, or a version's (`Tree::of`, `Tree::maintained` with its
+    maintained parts), decoded only where a reader asks. A clone shares the tree, and a decode made through either;
+    an edit of a shared tree copies it. Each decode and each copy is counted per thread with the last place
+    (`trees_decoded`, `trees_copied`) and, profiling, every place named as a decision.
+  - The split's parts (`Programs::local`, `cross`) are `Tree`s: the run's `shared_split.clone()` copies none.
+  - Made on the version, the tree then the new version's: `maintain::rewrite`'s program (it decoded its version
+    each session run), the session's cut (`Cut::program`), the supports, the qualifiers (`qualify`, in place of
+    tree edits and `requalified`), the input deltas' declarations, the run's constants and the parts less them.
+    The rewrite's reads of the cut and the session's reads of the maintained part are its fields
+    (`constants_tested_in`, `derived_widths_in`, `Fields`); `constants_tested`'s closure is one, `tested_through`.
+  - Made once for a prepared program, and shared by its later runs: the cone of requests (`cone_of`,
+    `Prepared::cone`; every run that loads documents derived it from a copy of the cross-file part), the maintained
+    cross-file part (`maintained_cross_of`, `Prepared::maintained`, for the part's digest and the session's settings),
+    and the run's parts (`Prepared::parts`, for the constants a run finds). A run whose cross memo split the
+    cross-file part makes its own. A reader of these trees decodes them once, not each run.
+  - Not ported: the run's other readers of the parts' trees (the joined text tests, the chunks' programs, the
+    cross-file part's readers), which read the shared trees; they go with their own steps of item 7.
+  - Guard: `a_maintained_run_decodes_and_copies_no_tree` (a maintained run, with the outputs of an empty store's).
