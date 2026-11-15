@@ -886,10 +886,17 @@ const CHILD_OPEN_WAIT_MS = 2_000;
 const CHILD_END_WAIT_MS = 1_000;
 
 /**
+ * The child's own pipe, past its stdin, stdout and stderr, which go nowhere: where it says it began and that it is
+ * done (`CHILD_OPEN`). A preload in the person's NODE_OPTIONS runs in the child before its script and may print on
+ * stdout or stderr; what it prints never reaches this pipe, so it never speaks for the child.
+ */
+const CHILD_PIPE_FD = 3;
+
+/**
  * The child's work: say it began, open each file named after its script to read it and close it, then say it is done;
  * the daemon reports what an open throws. The writes are synchronous, so the first leaves before an open that waits.
  */
-const CHILD_OPEN = "const fs = require('node:fs'); fs.writeSync(1, 'b'); for (const file of process.argv.slice(1)) { try { fs.closeSync(fs.openSync(file, 'r')); } catch {} } fs.writeSync(1, 'd');";
+const CHILD_OPEN = `const fs = require('node:fs'); fs.writeSync(${CHILD_PIPE_FD}, 'b'); for (const file of process.argv.slice(1)) { try { fs.closeSync(fs.openSync(file, 'r')); } catch {} } fs.writeSync(${CHILD_PIPE_FD}, 'd');`;
 
 /**
  * Windows: what one Node child did when asked to open `files` to read them. Windows has no open that skips another
@@ -897,15 +904,17 @@ const CHILD_OPEN = "const fs = require('node:fs'); fs.writeSync(1, 'b'); for (co
  * open that reads it until its holder acknowledges the break, and a holder that never does holds it until it closes the
  * file. The child's open waits in the daemon's place: an open waiting in the daemon itself would keep its process from
  * exiting until the holder lets go, long after `rerail daemon start` stopped waiting. The opens get
- * `CHILD_OPEN_WAIT_MS` from the moment the child says it began, so a busy machine's slow Node start does not eat into
- * them, and the start gets `CHILD_START_WAIT_MS`; a child past either bound is ended. A child that cannot be spawned,
+ * `CHILD_OPEN_WAIT_MS` from the moment the child says on its own pipe (`CHILD_PIPE_FD`) that it began, so a busy
+ * machine's slow Node start does not eat into them, and the start gets `CHILD_START_WAIT_MS`; a child past either bound
+ * is ended. Only what the child says there counts, never what a preload prints. A child that cannot be spawned,
  * or ends before it began, never leads to an open in the daemon. Once the child's opens are through, any break is
  * acknowledged, and the daemon's own open does not wait.
  */
 async function openedInChild(files: readonly string[]): Promise<ChildOpen> {
   let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(process.execPath, ["-e", CHILD_OPEN, ...files], { stdio: ["ignore", "pipe", "ignore"] });
+    // Its stdin, stdout and stderr go nowhere; the pipe at index `CHILD_PIPE_FD` is what it says.
+    child = spawn(process.execPath, ["-e", CHILD_OPEN, ...files], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
   } catch (error) {
     return unstarted(`could not start: ${errorText(error)}`);
   }
@@ -932,12 +941,16 @@ async function childOpen(child: ReturnType<typeof spawn>): Promise<ChildOpen> {
       child.on("error", error => resolve(unstarted(`could not start: ${error.message}`)));
       // Only after all its output, so a child that said it is done counts as done however soon it ends.
       child.on("close", code => resolve(unstarted(`ended (exit code ${code ?? "none"}) before it opened them`)));
+      // Unset when the spawn failed for want of file handles (EMFILE), which `error` answers.
+      const pipe = child.stdio?.[CHILD_PIPE_FD];
+      if (!(pipe instanceof Readable)) return;
       // A failed read only ends its output, which `close` or a bound then answers; unheard, it would throw here.
-      child.stdout?.on("error", () => undefined);
+      pipe.on("error", () => undefined);
+      // Only the child's own script writes to its pipe: "b" as it begins its opens, then "d" once they are through.
       let said = "";
-      child.stdout?.on("data", (chunk: Buffer) => {
+      pipe.on("data", (chunk: Buffer) => {
         said += chunk.toString();
-        if (said.includes("d")) resolve(OPENED);
+        if (said === "bd") resolve(OPENED);
         else if (said === "b") {
           clearTimeout(timer);
           timer = setTimeout(resolve, CHILD_OPEN_WAIT_MS, HELD);
