@@ -796,10 +796,14 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
 }
 
 /// The executor of a binding (the run's lanes: every lane under the device binding, the cores' otherwise), registered
-/// at load (`install_executors`); without one, a fresh executor of the machine's lanes.
-pub(crate) fn executor_for(device: bool) -> &'static rerail_accel::Executor {
-    static OWN: std::sync::LazyLock<rerail_accel::Executor> = std::sync::LazyLock::new(rerail_accel::Executor::new);
-    EXECUTORS.get().map_or(&*OWN, |executor| executor(device))
+/// at load (`install_executors`); without one, a fresh executor of the machine's lanes, made only then (making it
+/// compiles the GPU's kernels and builds the Neural Engine's lane).
+pub fn executor_for(device: bool) -> &'static rerail_accel::Executor {
+    static OWN: std::sync::OnceLock<rerail_accel::Executor> = std::sync::OnceLock::new();
+    match EXECUTORS.get() {
+        Some(executor) => executor(device),
+        None => OWN.get_or_init(rerail_accel::Executor::new),
+    }
 }
 
 static EXECUTORS: std::sync::OnceLock<fn(bool) -> &'static rerail_accel::Executor> = std::sync::OnceLock::new();

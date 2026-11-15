@@ -101,6 +101,7 @@ fn gpu() -> Option<&'static Gpu> {
 
 /// This lane's backend, when this machine has a Metal device and the kernels compiled.
 pub fn backend() -> Option<Arc<dyn Backend>> {
+    crate::lanes::ask_device_lane();
     gpu().map(|gpu| {
         // The joins' small path compiles in the background, so the first chunk's batch does not wait for it.
         join::prewarm();
