@@ -1220,4 +1220,38 @@ describe("Git reads and their output limit", () => {
     expect(ending(child)).toEqual({ exitCode: null, signalCode: process.platform === "win32" ? "SIGTERM" : "SIGKILL" });
     expect(endProcessTree).toHaveBeenCalledTimes(process.platform === "win32" ? 0 : 1);
   }, 30_000);
+
+  // Linux only. Windows ends a process on SIGTERM whatever it asked for, so there the listing ends at once and lists no
+  // file, as the test of a listing past 64 MiB above shows; on macOS, where no CI job runs these tests, it has not run.
+  it.runIf(process.platform === "linux")("reads a listing past the 64 MiB a listing takes as late when its Git ignores SIGTERM and prints no more, and ends that Git at the read's time limit", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    vi.mocked(endProcessTree).mockClear();
+    // A timer made before the read's timers are faked runs on the real clock.
+    const late = stillWaiting(PAST_LIMIT_WAIT_MS);
+    fakeReadTimers({ limitTimer: true });
+    const started = gitInPlace(`process.on('SIGTERM', () => {}); ${printsAndStays(LISTING_LIMIT + 1, "a.py\0")}`);
+    const read = gitModifiedOrUntrackedPaths(root);
+    const child = await started;
+    // Once the read has sent SIGTERM, the clock and the timers move past its time limit of 10 s.
+    await vi.waitFor(() => expect(child.killed).toBe(true), { timeout: PAST_LIMIT_WAIT_MS, interval: 10 });
+    clockAhead(11_000);
+    vi.advanceTimersByTime(11_000);
+    // Undefined, not none: Git did not say which files changed, so a walk asks the listing once more off its path.
+    await expect(Promise.race([read, late])).resolves.toBeUndefined();
+    expect(ending(child)).toEqual({ exitCode: null, signalCode: "SIGKILL" });
+    expect(endProcessTree).toHaveBeenCalledTimes(1);
+  }, 30_000);
+
+  it("answers what Git printed when it writes more to its stderr than a read takes, since that stderr is the null device", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    vi.mocked(endProcessTree).mockClear();
+    // In Git's place: writes 2 MiB to its stderr, then `abc` to its output, and exits with status 0. Had the read kept a
+    // pipe for that stderr and not read it, this program would wait at its write there until the read's time limit.
+    const started = gitInPlace(`const fs = require('node:fs'); fs.writeSync(2, Buffer.alloc(${2 * READ_LIMIT}, 'e')); fs.writeSync(1, 'abc');`);
+    const read = gitHead(root);
+    const child = await started;
+    await expect(Promise.race([read, stillWaiting(PAST_LIMIT_WAIT_MS)])).resolves.toBe("abc");
+    expect(ending(child)).toEqual({ exitCode: 0, signalCode: null });
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
 });
