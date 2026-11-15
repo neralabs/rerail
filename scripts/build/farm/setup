@@ -24,4 +24,6 @@ while read -r host; do
     echo "$host: unreachable or without rustup, skipped"
   fi
 done
+# Keeps the farm's files on the hosts out of their backups (and reports Spotlight's indexing of them).
+"$here/host-privacy" || true
 "$share/status" || true

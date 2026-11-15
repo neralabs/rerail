@@ -43,6 +43,7 @@ whose copy or run failed there: it runs here instead, and only that run's output
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host |
 | `status` | what the farm can use now: each host probed, and why one is not usable |
+| `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
 | `setup` | installs all of it here, a configuration to fill in, and the toolchain on each host |
 | `shared-volume` | the NFS export here and the mount on each host |
 | `build-sccache` | builds the patched sccache from upstream and runs `setup` with it |
@@ -116,6 +117,15 @@ A host takes a compile per core while nobody has touched its keyboard or mouse f
 half as many otherwise (`HIDIdleTime`). Compiles take slots in turn across the hosts (each host's
 first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
 Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
+
+### The hosts' backups and indexing
+
+A host holds the farm's copies (`~/orca`, at this machine's paths), Relax and the caches. Left
+alone, Time Machine backs them up and Spotlight indexes every file the mirror writes (over 200,000
+on one host). `host-privacy` (run by `setup`) excludes them from Time Machine, which needs no
+root. Spotlight ignores a folder's `.metadata_never_index` (macOS 15), and the paths cannot take the
+`.noindex` suffix, so `host-privacy --spotlight` puts them in Spotlight's privacy list with sudo,
+once per host, from a terminal. Its report counts what Spotlight still has indexed.
 
 ## Health
 
