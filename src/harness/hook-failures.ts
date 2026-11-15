@@ -294,21 +294,32 @@ function fileId({ dev, ino }: BigIntStats, name: string): string {
 }
 
 /**
- * Removes each log a hook left under its own name, once that hook has ended and the file was last written before the
- * period `rerail status` counts, as of `now` (epoch ms): no hook moves such a log on, so without this the Rerail home
- * would keep it for good. A file stays while the hook named in it runs, since that hook may still move it on, and while
- * it may hold failures status counts. A hook that moves the log aside calls this, so it runs once per 256 KB of failures.
+ * Removes each log a hook left under its own name that no hook has changed for the period `rerail status` counts, as of
+ * `now` (epoch ms): no hook moves such a log on, so without this the Rerail home would keep it for good. A take, a move
+ * on, a give-back and a write each set the file's change time, and no hook runs for a day, so the hook that took such a
+ * log has ended, whatever process has its pid now. A hook held up since it opened the log to append opened it by the
+ * live name, which the file lost at a change, and read its clock before that: a failure it writes into the file after the
+ * removal is older than the period status counts, as is every failure the file holds. A hook that moves the log aside
+ * calls this, once per 256 KB of failures.
  */
 function removeStrandedLogs(home: string, now: number): void {
-  for (const { name, pid } of takenLogs(home)) {
+  for (const name of takenLogs(home)) {
     const path = join(home, name);
     try {
-      if (pid === process.pid || statSync(path).mtimeMs >= now - HOOK_FAILURE_WINDOW_MS) continue;
-      if (processState(pid) === "gone") unlinkSync(path);
+      if (lastChangeAt(path) < now - HOOK_FAILURE_WINDOW_MS) unlinkSync(path);
     } catch {
       // Moved on or removed by another hook, or refused: a later move tries again.
     }
   }
+}
+
+/**
+ * When the file at `path` last changed, epoch ms: the later of its change time and its write time, so that a file system
+ * that keeps no change time still gives the last write.
+ */
+function lastChangeAt(path: string): number {
+  const { ctimeMs, mtimeMs } = statSync(path);
+  return Math.max(ctimeMs, mtimeMs);
 }
 
 /** How far back `rerail status` looks for hook failures. */
@@ -602,24 +613,13 @@ function oldestOf(parts: readonly LogPart[]): number | undefined {
   return oldest;
 }
 
-/** A log a hook took to move aside, by its name, and the pid of that hook. */
-interface TakenLog {
-  name: string;
-  pid: number;
-}
-
-/** The logs hooks took to move aside, in the Rerail home `home`; none when it cannot be listed. */
-function takenLogs(home: string): TakenLog[] {
-  let names: string[];
+/** The names of the logs hooks took to move aside, in the Rerail home `home`; none when it cannot be listed. */
+function takenLogs(home: string): string[] {
   try {
-    names = readdirSync(home);
+    return readdirSync(home).filter(name => TAKEN_LOG.test(name));
   } catch {
     return [];
   }
-  return names.flatMap(name => {
-    const pid = TAKEN_LOG.exec(name)?.[1];
-    return pid === undefined ? [] : [{ name, pid: Number(pid) }];
-  });
 }
 
 /**

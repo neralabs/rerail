@@ -292,21 +292,47 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     expect(log.failures.map(entry => entry.reason)).toEqual(["the daemon did not answer", "after"]);
   });
 
-  it("removes a log a stopped hook left at the next move, once it holds nothing from the period status counts", async () => {
+  // A move a day after a stopped hook's log last changed. Windows soon hands a freed pid to another process: this test's
+  // parent process stands for one that has the stopped hook's pid now.
+  it("removes a log a stopped hook left at the next move once it has not changed for a day, whatever process has its pid now", async () => {
     const rerailHome = await home();
     const day = 24 * 60 * 60 * 1_000;
-    const now = 3 * day;
     const takenLog = (pid: number): string => `${HOOK_FAILURES_FILE}.${pid}.${randomUUID()}.old`;
     // No process holds this pid: Linux's pids stay below 2^22, and Windows' are multiples of 4.
-    const stopped = 2 ** 31 - 1;
-    const left = { stoppedLongAgo: takenLog(stopped), stoppedToday: takenLog(stopped), running: takenLog(process.ppid) };
-    for (const [name, writtenAt] of [[left.stoppedLongAgo, now - day - 1_000], [left.stoppedToday, now - day + 60_000], [left.running, now - 2 * day]] as const) {
-      writeFileSync(join(rerailHome, name), `${fullLine}\n`);
-      utimesSync(join(rerailHome, name), writtenAt / 1_000, writtenAt / 1_000);
-    }
+    const left = [takenLog(2 ** 31 - 1), takenLog(process.ppid)];
+    for (const name of left) writeFileSync(join(rerailHome, name), `${fullLine}\n`);
+    const changed = Date.now();
+    const moveAt = (at: number): string[] => {
+      writeFullLog(rerailHome);
+      recordLast(rerailHome, at);
+      return logFiles(rerailHome);
+    };
+    const parts = [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`];
+    expect({ withinTheDay: moveAt(changed + day - 60_000), past: moveAt(changed + day + 60_000) }).toEqual({
+      withinTheDay: [...parts, ...left].sort(),
+      past: parts,
+    });
+  });
+
+  // A running hook took the full log a moment ago, though no hook wrote to it for a day, and a hook held up since it
+  // opened the log before the take writes into it after another hook moved a log aside. Removed for its write time, the
+  // log would take that failure with it.
+  it("keeps the failure a held-up hook writes into a log a running hook took, though the log was last written a day ago", async () => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
     writeFullLog(rerailHome);
-    recordLast(rerailHome, now);
-    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`, left.running, left.stoppedToday].sort());
+    const dayAgo = (Date.now() - 25 * 60 * 60 * 1_000) / 1_000;
+    utimesSync(live, dayAgo, dayAgo);
+    const heldUp = openSync(live, "a");
+    try {
+      renameSync(live, join(rerailHome, `${HOOK_FAILURES_FILE}.${process.ppid}.${randomUUID()}.old`));
+      writeFullLog(rerailHome);
+      recordLast(rerailHome, Date.now());
+      writeSync(heldUp, `${JSON.stringify(failure(Date.now(), "HeldUp"))}\n`);
+    } finally {
+      closeSync(heldUp);
+    }
+    expect(readHookFailures(rerailHome, Date.now() - 60_000).failures.map(entry => entry.event)).toContain("HeldUp");
   });
 
   it("says since when it counts from the log moved aside, not from an older log a hook was stopped holding", async () => {
