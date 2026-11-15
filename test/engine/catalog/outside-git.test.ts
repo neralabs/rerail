@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
-import { createCheckoutResolver } from "../../../src/engine/catalog/repository-registry.js";
-import { runGit } from "../../../src/engine/git.js";
+import { createCheckoutResolver, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
+import { gitText, runGit } from "../../../src/engine/git.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { startStateReader } from "../../../src/runtime/index.js";
 import { linkFolder } from "../../support/platform/links.js";
@@ -14,7 +14,7 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
-  return { ...actual, runGit: vi.fn(actual.runGit) };
+  return { ...actual, runGit: vi.fn(actual.runGit), gitText: vi.fn(actual.gitText) };
 });
 
 const temporaryDirectories: string[] = [];
@@ -77,6 +77,17 @@ describe("a folder outside Git", () => {
     }
 
     expect(locateCalls(folder)).toBe(0);
+  });
+
+  it("Rerail runs in starts no Git process to look for a remote each time a session starts there", async () => {
+    const root = await plainRoot();
+    const folder = join(root, "notes");
+    mkdirSync(folder);
+    const db = database(root);
+
+    for (let session = 0; session < 3; session += 1) expect(recordCheckout(db, folder).git).toBe(false);
+
+    expect(locateCalls(folder) + vi.mocked(gitText).mock.calls.filter(([cwd]) => cwd === folder).length).toBe(0);
   });
 
   it("is placed in a repository made in it or above it after it was asked about", async () => {
