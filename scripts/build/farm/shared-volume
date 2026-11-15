@@ -77,9 +77,13 @@ client)
   sudo cp "$tmp" "$map"
   rm -f "$tmp"
   grep -q "auto_rerail_farm" /etc/auto_master || echo "/-			auto_rerail_farm	-nobrowse" | sudo tee -a /etc/auto_master >/dev/null
-  # What was copied to these paths before the volume (the farm's copy mode) moves aside.
+  # Never move or mount over anything of the host's own: a directory already at the path is the
+  # host's (its owner's work), not the farm's. An earlier version moved it aside as .copied-TIME,
+  # which hid the host's own ~/orca from everything on it.
   for d in $exported; do
-    if [ -d "$d" ] && ! mount | grep -q " on $d "; then mv "$d" "$d.copied-$(date +%s)"; fi
+    if [ -e "$d" ] && ! mount | grep -q " on $d "; then
+      echo "$d exists on this host: not mounting over it" >&2; exit 3
+    fi
   done
   # A mount with the old options goes; the next access mounts with the new ones.
   for d in $exported; do mount | grep -q " on $d (nfs" && sudo umount -f "$d"; done
