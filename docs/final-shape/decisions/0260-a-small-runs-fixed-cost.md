@@ -73,6 +73,24 @@ The binary holds 6.1 MB more for the encoded automata (SQL's 1.7 MB). Measured o
 of main-thread samples became 7 ms. What is left decodes the automata for a rule's `pattern`: a pattern is parsed
 into a tape, which must leave out what corpus tapes do. In instructions, 2.8 G became 2.6 G.
 
+## The cost statistics read when a run has work
+
+Every run read this machine's 20,000 newest priced samples as it started, fitted rates and the cost model from them,
+and registered their upkeep. That was 40 to 56 ms of CPU on a thread of its own. The upkeep named the machine by
+making the Metal device, which was 13 ms of the main thread, and the CPU executor made one more Metal device for no
+reason: it built an executor of every lane only to ask whether the SME lane was present. A warm run that changes
+nothing prices nothing.
+
+- `costs::start` only keeps and writes samples now. The read, and the upkeep with it, begins where the run first has
+  work (`costs::begin_read`): a chunk with documents to evaluate, or a cut with strata to run. It also begins when
+  something first asks a price. Learned rates and the cost model wait on `rerail_accel::price::first_price`, which
+  waits on what `before_first_price` names (`costs::ready`). The read's own thread never waits for itself
+  (`READING`).
+- The CPU executor asks `sme::backend` for the SME lane, which checks the CPU itself.
+
+Measured on `dl1` (warm, cutoff off): 2.6 G instructions became 2.06 to 2.35 G, and user CPU went from 0.22 to
+0.18 s. Sampled time was 311 ms and is now 230 ms; the main thread's run went from 99 to 76 ms.
+
 ## Open
 
 - Phase 0 in every process (~27 ms of main-thread samples): its nested run of `bootstrap.rr` for the texts' include
@@ -83,7 +101,7 @@ into a tape, which must leave out what corpus tapes do. In instructions, 2.8 G b
 
   Decision 0103 §8 says the whole-run cutoff is no cache to move: in the target shape, a run with no changed input
   has an empty delta and does nothing. Moving phase 0 there would cost more today. A warm maintained run with no
-  change (the outer run here, cutoff off) is 110 ms of main-thread samples, against phase 0's 27 behind its cutoff.
+  change (the outer run here, cutoff off) was 110 ms of main-thread samples (76 after the statistics' read, below), against phase 0's 27 behind its cutoff.
   Phase 0 can drop its cutoff once a warm maintained run's fixed cost is below the cutoff's.
 - Building the partial indexes on the shared file the first time took about a second, once.
 
@@ -95,3 +113,9 @@ into a tape, which must leave out what corpus tapes do. In instructions, 2.8 G b
   address no image holds finds none.
 - `the_automata_built_with_the_build_are_the_grammars` (engine): for every grammar, the automata and the census the
   build wrote agree with those built from its JSON in process.
+- `a_run_with_no_work_reads_no_cost_statistics` (logic): in a process of its own, starting the statistics reads
+  nothing, and `ready` reads them.
+- `the_run_after_a_cold_one_writes_nothing` (engine) failed before this, for causes of its own. A job was handed the
+  test's own store copy where the process named its store (`test_store::carried`). And the test's sources were
+  read inside the observer's racy window, so the warm run hashed them again, correctly. The test now waits the
+  window out.
