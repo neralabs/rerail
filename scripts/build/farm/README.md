@@ -138,8 +138,9 @@ the previous build, its debug objects and its incremental state behind, and carg
 them. So the wrapper starts `scripts/dev/clean-target --wait` (installed beside it) on a build's
 target directory, at most once an hour per directory, detached and at nice 19. It waits for that
 build to end (cargo's lock on the profile directory), then removes what no build can use any more:
-another rustc's artifacts, builds of a unit with a newer one and over an hour old, debug objects no
-binary names, incremental state of crates no longer built or untouched for a day. Each target
+another rustc's artifacts, builds that none of the current builds was made from (a mark and sweep
+over cargo's own dependency records, an hour's grace), debug objects no binary names, incremental
+state of crates no longer built or untouched for a day. Each target
 directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 `RERAIL_FARM_NO_TIDY=1` keeps a build from starting one.
 
