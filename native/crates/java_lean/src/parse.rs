@@ -611,13 +611,6 @@ impl<'a> P<'a> {
         Ok(t)
     }
 
-    fn expect(&mut self, kind: T) -> R<Tok> {
-        if self.peek() != kind {
-            return self.refuse();
-        }
-        self.bump()
-    }
-
     /// The next token as a leaf.
     #[inline(always)]
     fn leaf(&mut self, kind: K, field: u8, class: u8) -> R<N> {

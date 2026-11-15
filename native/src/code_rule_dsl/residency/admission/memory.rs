@@ -51,11 +51,14 @@ pub(crate) fn sample(phase: &str) -> Option<Sample> {
 fn resident() -> Option<u64> {
     let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::zeroed();
     let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+    unsafe extern "C" {
+        /// The task's own port, which `mach_task_self()` reads.
+        static mach_task_self_: libc::mach_port_t;
+    }
     // SAFETY: task_info writes this C-layout buffer; count describes its capacity in words.
-    #[allow(deprecated)]
     let code = unsafe {
         libc::task_info(
-            libc::mach_task_self(),
+            mach_task_self_,
             libc::MACH_TASK_BASIC_INFO,
             info.as_mut_ptr().cast(),
             &mut count,

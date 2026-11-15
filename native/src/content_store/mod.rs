@@ -151,7 +151,7 @@ pub fn search_index_family_writes() -> usize {
     SEARCH_INDEX_FAMILY_WRITES.load(Ordering::Relaxed)
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 thread_local! {
     static WRITE_LOCK_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static WRITE_LOCK_SECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -159,10 +159,10 @@ thread_local! {
 }
 
 /// Marks this thread as holding a publication write transaction until dropped.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) struct WriteLockSection;
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 impl WriteLockSection {
     pub(super) fn enter() -> Self {
         WRITE_LOCK_HELD.with(|held| held.set(true));
@@ -171,7 +171,7 @@ impl WriteLockSection {
     }
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 impl Drop for WriteLockSection {
     fn drop(&mut self) {
         WRITE_LOCK_HELD.with(|held| held.set(false));
@@ -180,7 +180,7 @@ impl Drop for WriteLockSection {
 
 /// Returns `(write sections entered, SHA-256 digests computed inside them)` on this thread
 /// since the last call, and resets both.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
     (
         WRITE_LOCK_SECTIONS.with(|sections| sections.replace(0)),
@@ -210,7 +210,7 @@ impl HashKey {
     }
 
     pub fn sha256(bytes: &[u8]) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
             HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
         }
@@ -222,7 +222,7 @@ impl HashKey {
     /// named-only tape holds no source text, so two sources of one shape and one set of token
     /// lengths store the same bytes; each is its own tape, as it carries its own source.
     pub fn tape_identity(source: Self, tape: &[u8]) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
             HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
         }

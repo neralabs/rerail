@@ -1331,13 +1331,6 @@ fn admitted_part(row: &rusqlite::Row<'_>, atoms: &Arc<super::atoms::Atoms>) -> r
 /// put whole has none, so deltas a put left behind are not read.
 const CHAIN: &str = "~deltas";
 
-/// How `CHAIN`'s entry starts in stored reads: its name's length and its name.
-fn chain_mark() -> Vec<u8> {
-    let mut out = (CHAIN.len() as u32).to_le_bytes().to_vec();
-    out.extend(CHAIN.as_bytes());
-    out
-}
-
 /// A frame's stored reads, and how many deltas follow it.
 fn decode_reads_chain(bytes: &[u8]) -> (Vec<(String, u64)>, u32) {
     let mut reads = decode_reads_all(bytes);
