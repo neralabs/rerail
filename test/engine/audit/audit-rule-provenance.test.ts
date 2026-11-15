@@ -463,11 +463,12 @@ describe("audit rule provenance", () => {
       expect(bytesInUse(path) - upgraded).toBeLessThan(Buffer.byteLength(JSON.stringify(app)) / 2);
 
       // An older Rerail sharing the file writes its provenance inline still, and it reads back the same. A later move
-      // leaves it there, where the older Rerail reads it too.
+      // leaves it there, where the older Rerail reads it too. It began a millisecond after the step, whatever the clock
+      // read meanwhile.
       const sharing = new Database(path);
       try {
-        const now = Date.now();
-        sharing.prepare(INLINE_AUDIT).run("older-after", "session-a", "/home/dev/app", JSON.stringify(worktree), now + 1, now + 2);
+        const after = stepAppliedAt(path) + 1;
+        sharing.prepare(INLINE_AUDIT).run("older-after", "session-a", "/home/dev/app", JSON.stringify(worktree), after, after + 1);
       } finally {
         sharing.close();
       }
