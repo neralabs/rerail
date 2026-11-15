@@ -705,8 +705,9 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
         return Err("no exports".into());
     }
     let node_col = |rel: &str, c: usize| rel.starts_with(ast) || program.decls.get(rel).and_then(|ts| ts.get(c)).is_some_and(|(_, t)| is_node(t));
-    // What a node holds itself; `child` and `field` go down from their first column.
-    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment"];
+    // What a node holds itself; `child` and `field` go down from their first column. `rr_long_text_node(n)` is a
+    // long-text twin's (`long_text_twins`): that `n`'s text is past the inline bound, made from the projected nodes.
+    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
     let down = |rel: &str| match rel { "child" => Some(1), "field" => Some(2), _ => None };
     let tree = |rel: &str| LOCAL.contains(&rel) || down(rel).is_some();
     let bare = |k: &str| k.rsplit(':').next().unwrap_or(k).to_owned();
