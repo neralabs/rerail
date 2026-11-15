@@ -45,6 +45,7 @@ import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
 import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 // The lookup of a named engine socket works as it does; a test stands in for one call of it at a time.
@@ -1785,6 +1786,87 @@ const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void
   },
 ];
 
+/** The clone id file of the Git checkout `checkout`, whose `.git` is a folder (`repositoryIdentityLocation`). */
+function cloneIdFile(checkout: string): string {
+  return join(checkout, ".git", "rerail-repository-id");
+}
+
+/**
+ * Mirrors the folder `source` over `dest` in place, as `rsync -a --delete` or a sync tool does: folders stay, each file is
+ * written beside its name and renamed over it, and what `source` lacks is removed. Git's read-only files are made
+ * writable first on Windows, which refuses a rename over a read-only file.
+ */
+function mirrorOver(source: string, dest: string): void {
+  for (const name of readdirSync(dest).filter(each => !existsSync(join(source, each)))) {
+    const path = join(dest, name);
+    if (lstatSync(path).isDirectory()) removeFolderSync(path);
+    else retried(() => rmSync(path, { force: true }));
+  }
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const [from, to] = [join(source, entry.name), join(dest, entry.name)];
+    if (entry.isDirectory()) {
+      mkdirSync(to, { recursive: true });
+      mirrorOver(from, to);
+      continue;
+    }
+    copyFileSync(from, `${to}.sync~`);
+    if (process.platform === "win32" && existsSync(to)) chmodSync(to, 0o666);
+    retried(() => renameSync(`${to}.sync~`, to));
+  }
+}
+
+/**
+ * Changes after the daemon answered stopped in a folder of `app`, a repository stopped as a whole, that keep the folder,
+ * the checkout's top and its `.git` the same on disk but have the daemon read the checkout's clone id as `started`'s, a
+ * started repository with a `src` folder: it then places the checkout in that repository by its clone id and answers
+ * started, since `lookupAt` reads the clone id file again on every answer and the checkout has no on/off of its own.
+ * `arrange` names the folder the hooks run in and gives the change.
+ */
+const cloneIdsChanged: Array<{ what: string; arrange: (root: string, app: string, started: string) => { folder: string; change: () => void } }> = [
+  {
+    what: "its clone id file is written over with the started repository's",
+    arrange: (_root, app, started) => ({ folder: join(app, "src"), change: () => copyFileSync(cloneIdFile(started), cloneIdFile(app)) }),
+  },
+  {
+    what: "the started checkout is mirrored over it in place, as rsync -a --delete or a sync tool does",
+    arrange: (_root, app, started) => ({ folder: join(app, "src"), change: () => mirrorOver(started, app) }),
+  },
+  {
+    what: "the clone id file of its Git folder, which a linked worktree of it shares, is written over with the started repository's",
+    arrange: (root, app, started) => {
+      const worktree = join(root, "wt");
+      git(app, "worktree", "add", "-q", worktree);
+      inDatabase(database => recordCheckout(database, worktree));
+      return { folder: worktree, change: () => copyFileSync(cloneIdFile(started), cloneIdFile(app)) };
+    },
+  },
+  {
+    what: "Git no longer takes its .git, so the daemon places it outside Git, whose clone id file names the started repository's",
+    arrange: (root, app, started) => ({
+      folder: app,
+      change: () => {
+        // Without a HEAD Git passes over the .git folder, and the ceiling keeps it from the folders above the test's.
+        rmSync(join(app, ".git", "HEAD"));
+        vi.stubEnv("GIT_CEILING_DIRECTORIES", realpathSync.native(root));
+        mkdirSync(join(app, ".rerail"));
+        copyFileSync(cloneIdFile(started), join(app, ".rerail", "repository-id"));
+      },
+    }),
+  },
+];
+
+/**
+ * Ways a linked worktree's `.git` file names its Git folder through a link, which the hook never follows: a link to the
+ * repository's own folder, and on Windows a link to a server that does not answer, where Windows holds each look about
+ * 21 s.
+ */
+const gitFoldersThroughALink: Array<{ what: string; link: (app: string, path: string) => void; daemonSays: string; started: boolean }> = [
+  { what: "a link to its repository's folder", link: (app, path) => folderLink(app, path), daemonSays: "stopped", started: false },
+  ...(process.platform === "win32"
+    ? [{ what: "a link to a server that does not answer", link: (_app: string, path: string) => symlinkSync(`\\\\${silentServer()}\\share`, path, "dir"), daemonSays: "started", started: true }]
+    : []),
+];
+
 /**
  * Two start checks in each of `folders`, beside a daemon that answers late as a live one reads the folder, its Git
  * stopping right above each folder where `ceiling` says: where the hook repeated stopped though the daemon reads
@@ -1920,6 +2002,59 @@ describe("the hook start check", () => {
       host.proofs.nextCheck();
       expect({ started: await host.hookRerailStarted("claude-code", join(app, "src")), checked: host.proofs.found.at(-1), requests: daemon.requests, ended: daemon.ended() })
         .toEqual({ started: true, checked: false, requests: ["/api/presentation"], ended: 0 });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.each(cloneIdsChanged)("waits for a late daemon where it last answered stopped in a repository stopped as a whole, once $what, and takes its answer of started", async ({ arrange }) => {
+    const root = await temporaryDirectory({ started: false });
+    const started = startedApp(join(root, "started"));
+    mkdirSync(join(started, "src"));
+    const app = gitRepository(join(root, "app"));
+    startTestRepository(app);
+    stopRerail(app, silently, { repository: true });
+    mkdirSync(join(app, "src"));
+    const { folder, change } = arrange(root, app, started);
+    const host = await startCheckHost();
+    await keptStopped(host, folder);
+    change();
+    const daemon = await daemonAnsweringAfterProof(host, repository => host.daemonReads(repository));
+    try {
+      host.proofs.nextCheck();
+      expect({
+        daemonReads: host.daemonReads(realpathSync.native(folder)), started: await host.hookRerailStarted("claude-code", folder),
+        checked: host.proofs.found.at(-1), requests: daemon.requests, ended: daemon.ended(),
+      }).toEqual({ daemonReads: "started", started: true, checked: false, requests: ["/api/presentation"], ended: 0 });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.for(gitFoldersThroughALink)("waits for a late daemon in a linked worktree whose .git file names its Git folder through $what, which it never follows", async ({ link, daemonSays, started }, { skip }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = gitRepository(join(root, "app"));
+    startTestRepository(app);
+    stopRerail(app, silently, { repository: true });
+    const worktree = join(root, "wt");
+    git(app, "worktree", "add", "-q", worktree);
+    inDatabase(database => recordCheckout(database, worktree));
+    const host = await startCheckHost();
+    await keptStopped(host, worktree);
+    try {
+      link(app, join(root, "linked"));
+    } catch (error) {
+      if (codeOf(error) === "EPERM") skip("this user may not make a symbolic link");
+      throw error;
+    }
+    // Written in place, as an editor that keeps the file does: the .git file is the same on disk.
+    writeFileSync(join(worktree, ".git"), `gitdir: ${join(root, "linked", ".git", "worktrees", "wt")}\n`);
+    const daemon = await daemonAnsweringAfterProof(host, daemonSays);
+    try {
+      host.proofs.nextCheck();
+      expect({ started: await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", worktree)), checked: host.proofs.found.at(-1) })
+        .toEqual({ started, checked: false });
+      expect(host.proofs.took.at(-1)).toBeLessThan(GIVEN_UP_WITHIN_MS);
     } finally {
       await daemon.close();
     }
