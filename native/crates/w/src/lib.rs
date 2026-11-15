@@ -1,7 +1,9 @@
 //! W: the matcher, scopes, values, suppressions, demand and the workspace's model.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-#![allow(dead_code, unused_imports)]
+// The mounts below are facades: a module globs its owner's, and repeats its file's imports for the
+// children it mounts (`super::*`); an import and the glob name the same item.
+#![allow(dead_code, unused_imports, hidden_glob_reexports)]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
@@ -87,7 +89,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::LazyLock;
     }
-    #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         // eslint: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
@@ -99,9 +100,7 @@ pub mod code_rule_dsl {
         use serde::{Deserialize, Serialize};
     }
     pub mod literal;
-    #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
@@ -116,7 +115,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
@@ -166,7 +164,7 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
     pub mod suppress;
-    #[path = "tape"]
+    #[cfg_attr(test, path = "tape")]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[cfg(test)]
