@@ -964,7 +964,11 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
             if let Some(read) = slot.take() {
                 if own_only && let Some(library) = in_scope {
                     let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
-                    return given(read.lower_in(text, library, images.as_deref())?.expect("a modular text"));
+                    // Its library's relations are the library's, declared there, not in the program: it is handed the
+                    // run's rows (0249) but not checked for its own declarations (`front::declared`).
+                    let mut prog = read.lower_in(text, library, images.as_deref())?.expect("a modular text");
+                    extra.add_to(&mut prog);
+                    return Ok(prog);
                 }
                 return given(read.lower(!own_only)?);
             }
