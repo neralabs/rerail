@@ -4787,6 +4787,65 @@ pub struct Run<'a, 'b> {
 /// rows each produced relation gains.
 pub type Answer<'a> = &'a mut dyn FnMut(&str, &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>>;
 
+/// A complete request relation has no pending recursive work before its consumer. Resume held keys at once,
+/// grouped by request family, as a quiet recursive component does. Never publish the protocol rows as facts.
+/// (Ported from Data-layer-rule-expressivity d659df1c4: held-back keys of a complete request were lost before its
+/// non-recursive consumer ran.)
+fn answer_complete(answer: Answer<'_>, request: &str, keys: &[Vec<i64>]) -> Result<BTreeMap<String, Vec<Vec<i64>>>> {
+    let mut pending = BTreeMap::from([(request.to_owned(), keys.to_vec())]);
+    let mut produced: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+    while !pending.is_empty() {
+        let mut held: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+        for (request, keys) in pending {
+            for (rel, rows) in answer(&request, &keys)? {
+                if let Some(request) = rel.strip_prefix(super::answers::HELD_BACK) {
+                    if !rows.is_empty() { held.entry(request.to_owned()).or_default().extend(rows); }
+                } else { produced.entry(rel).or_default().extend(rows); }
+            }
+        }
+        pending = held;
+    }
+    Ok(produced)
+}
+
+#[cfg(test)]
+mod complete_answer_tests {
+    use super::*;
+
+    #[test]
+    fn complete_answers_resume_deferred_batches_before_consumers() {
+        // Source witness: plan_scope_side_effects.scan_repo must load an external file link.
+        // Its load requests are already complete, so loaded is in a later stratum, not their SCC.
+        // Exercise that execution path with a whole demand batch, both all-held and mixed answers.
+        for immediate in [0, 1] {
+            let mut program = super::super::front::parse(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq($x) :- seed($x).\nshown($x) :- got($x).\n.output shown\n").unwrap();
+            program.facts.insert("seed".into(), (0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect());
+            program.answers.insert("req".into(), vec!["got".into()]);
+            let lowered = lower::Lowered { domains: lower::domains(&program).unwrap(), program,
+                ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
+            let path = crate::code_rule_dsl::fixtures::temp();
+            let _store = crate::content_store::ContentStore::open(&path).unwrap();
+            let db = Connection::open(&path).unwrap();
+            let mut batches = Vec::new();
+            let mut answer = |rel: &str, keys: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+                assert_eq!(rel, "req");
+                batches.push(keys.to_vec());
+                if batches.len() == 1 {
+                    Ok(vec![("got".into(), keys[..immediate].to_vec()),
+                        (format!("{}req", super::super::answers::HELD_BACK), keys[immediate..].to_vec())])
+                } else { Ok(vec![("got".into(), keys.to_vec())]) }
+            };
+            let result = run_atoms_native_answering(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), "program", &mut answer, None, None).unwrap();
+            assert_eq!(result.outputs["shown"].len(), 1000, "later consumers must see all deferred positives");
+            assert_eq!(result.outputs["shown"].iter().map(|s| s.parse::<i64>().unwrap()).collect::<BTreeSet<_>>(), (0..1000).collect(), "every returned value stays exact");
+            assert_eq!(batches.len(), 2, "held keys resume as one batch, never one callback per key");
+            assert_eq!(batches[0].len(), 1000);
+            assert_eq!(batches[1].len(), 1000-immediate);
+            assert_eq!(batches[1], batches[0][immediate..], "the complete deferred payload resumes unchanged");
+        }
+    }
+}
+
 /// The runner's answers to requests, without a wait (decision 0114 §3): a request is posted and its answer is an
 /// event, taken when it has come.
 pub trait Asking {
@@ -10884,7 +10943,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         };
                         let answer = run.answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{req}: a request, and no one to answer it")))?;
                         let mut mine = Vec::new();
-                        for (p, got) in answer(&req, &asked)? {
+                        for (p, got) in answer_complete(answer, &req, &asked)? {
                             if p == *rel { mine.extend(got) } else { run.answered.entry(p).or_default().extend(got) }
                         }
                         mine
