@@ -529,8 +529,8 @@ fn live_threads() -> Vec<(u32, String)> {
         let mut list: libc::thread_act_array_t = std::ptr::null_mut();
         let mut count: libc::mach_msg_type_number_t = 0;
         // SAFETY: the task's own threads; the list and each port's right are given back below.
+        // The task's own port: what C's `mach_task_self()` reads (libc's function of that name is deprecated).
         unsafe extern "C" {
-            // What `mach_task_self()` reads: the task's own port, set as the process starts.
             static mach_task_self_: libc::mach_port_t;
         }
         let task = unsafe { mach_task_self_ };

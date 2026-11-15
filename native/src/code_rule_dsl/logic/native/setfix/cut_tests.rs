@@ -128,6 +128,45 @@ fn a_whole_plan_is_cut_and_a_finished_trial_keeps_its_rows() {
     closure::semi_naive_here(false);
 }
 
+/// Decision 0206, a first step fused with its filters (`rowcode`): a cut inside a chunk stops the chunk at the row it
+/// is at, so the rows after it are left and read by the wave going on. Before, the chunk's loop went on naming each
+/// row it passed over as reached: the cut left one row, and the fixpoint lost what the rest derive.
+#[test]
+fn a_fused_first_step_cut_leaves_the_rows_after_its_row() {
+    let edges: Vec<String> = (0..300).flat_map(|i| [format!("({i}, {})", i + 1), format!("({i}, {})", (i * 7) % 300)]).collect();
+    let setup = |db: &Connection| {
+        db.execute_batch(&format!("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES {};\nCREATE TABLE path(c0, c1); INSERT INTO path SELECT c0, c1 FROM edge;\nCREATE TABLE node(c0); INSERT INTO node SELECT DISTINCT c1 FROM edge;", edges.join(", "))).unwrap();
+    };
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    let node = format!("t:b:{}:{}:i", hex("node"), hex("c0"));
+    closure::semi_naive_here(true);
+    // `ne v0 v1` after the delta: the first step is fused with it into a row program.
+    let fused_first = format!("pos d0 v0 v1\nne v0 v1\npos {input} v1 v2\npos {node} v2\nhead v0 v2");
+    let spec = format!("name cutf\nrel path ii\njoin 0 0 {}", hex(&fused_first));
+    let rows = |db: &Connection| -> Vec<(i64, i64)> { pairs(db, "SELECT DISTINCT c0, c1 FROM path ORDER BY c0, c1") };
+    let whole = {
+        let db = connection();
+        setup(&db);
+        open(&db, &spec).unwrap();
+        assert_eq!(run(&db, "cutf", 0).unwrap().split_whitespace().last(), Some("1"));
+        close(&db, "cutf").unwrap();
+        rows(&db)
+    };
+    let db = connection();
+    setup(&db);
+    open(&db, &spec).unwrap();
+    assert!(matches!(&component(&db, "cutf").unwrap().lock().unwrap().probes[0].body, Body::Join(j) if j.fused[0].is_some()), "the first step is fused");
+    set_budgets(&db, "cutf", &[(0, Some(300))]).unwrap();
+    let report = run(&db, "cutf", 1).unwrap();
+    assert_eq!(report.split_whitespace().last(), Some("5"), "cut: {report}");
+    let cut = take_cut(&db, "cutf").unwrap().expect("a cut");
+    assert!(cut.left > 1 && cut.done < 300, "a cut in the chunk leaves the rows after its row: {cut:?}");
+    assert_eq!(run(&db, "cutf", 0).unwrap().split_whitespace().last(), Some("1"));
+    close(&db, "cutf").unwrap();
+    assert_eq!(rows(&db), whole, "the fixpoint is the unlimited run's");
+    closure::semi_naive_here(false);
+}
+
 /// Decision 0206 over a fused first step (an atom with the test after it run a chunk of rows at a time, `rowcode`):
 /// a cut inside a chunk leaves the chunk's rows from the one it stopped at. Before, the chunk's loop went on past the
 /// cut, moving the row it stopped at to the chunk's last, so the rows between were reported done and never run (a

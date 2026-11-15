@@ -45,7 +45,8 @@ mkdir -p "$here/results"
 for build in $builds; do
     flags=""
     [ "$build" = native ] && flags="-C target-cpu=native"
-    RUSTFLAGS="$flags" CARGO_TARGET_DIR="target-$build" nice -n 19 cargo build --bin tape16
+    # The native build differs on purpose (its own target directory, `target-cpu=native`): the farm allows it.
+    RERAIL_FARM_ANY_ENV=1 RUSTFLAGS="$flags" CARGO_TARGET_DIR="target-$build" nice -n 19 cargo build --bin tape16
     for c in "$here"/cap/*.cap; do
         name=$(basename "$c" .cap)
         res="$here/results/$host-$cmd-$build-$name.md"
