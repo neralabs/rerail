@@ -1076,6 +1076,11 @@ impl<'a> Row<'a> {
     pub fn hash(&self) -> u128 {
         self.rel.hash(self.i)
     }
+    /// The integer column `c` holds for it, as the run held it: a node's value itself, however the image shows it
+    /// (a text column's is its string's index).
+    pub fn raw(&self, c: usize) -> i64 {
+        self.rel.col(c)[self.i]
+    }
 }
 
 impl std::fmt::Debug for Row<'_> {

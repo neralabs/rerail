@@ -340,8 +340,8 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
         .map(|(k, p)| crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(p), &root, &root.join(format!("alone{k}")), &serde_json::Value::Null).unwrap())
         .collect();
     let alone: Vec<Vec<String>> = reports.iter().map(codes).collect();
-    // Each finding written: its one JSON text (`rr::lower::findings`).
-    let written = |k: usize| -> Vec<String> { crate::code_rule_dsl::logic::plan::output::shown(&root.join("out").join(k.to_string()), "rr_diagnostic").unwrap_or_default().into_iter().map(|r| r[0].clone()).collect() };
+    // Each finding written in the member's own directory, as the CLI reports it (`tools::diagnostics`).
+    let written = |k: usize| -> Vec<String> { crate::code_rule_dsl::tools::diagnostics(&root.join("out").join(k.to_string())).unwrap_or_default().iter().map(|d| d.to_string()).collect() };
     let (w0, w1, w2) = (written(0), written(1), written(2));
     let _ = std::fs::remove_dir_all(&root);
     for p in [&a, &b, &c] {

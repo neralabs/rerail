@@ -160,7 +160,9 @@ count.
    other dialects' findings joined by `Builder::union`), liveness's counts, `test-rr`'s samples, phases, phase 0,
    constants and the typing bridge. The tests (about 25 files) compare `shown()` rows, as nested arrays, not tab
    lines; T's golden fixtures are T's `.csv` files and are read as such. The text readers are deleted, and the
-   source guard is added.
+   source guard (`text_readers_guard_tests::no_rule_or_fact_is_read_from_text`) fails on any new split on a tab in
+   product code; the sites left (a `.input` file, the coverage ledger, the typing spike's dumps, the y-graph
+   fixtures, the lean parsers' edit oracles, a consulted read's two-part key) are listed with their reasons.
 6. **Typed upstream** (built): nothing upstream of the image is text either.
    - A memo entry holds each output as `Rows` (`memo::Entry::outputs`: its types, values and texts), framed as
      `OUT_TYPE`/`OUT_ROW`/`OUT_TEXT` (`memo::numbering`) and decoded by `Rows::of_parts`, which refuses a text
@@ -171,6 +173,8 @@ count.
      The store keeps them as blobs (`observe::run_record`). Keys: `rerail.run-reuse/v3`, `rerail.constants/v3`.
    - `decoded_outputs` types each column first (§1), then reads its cells. `Rows` has no ragged form, `to_text`,
      `line`, `lines` or `from_lines`. `push` asserts the width and refuses a text in an int column.
+   - A NULL in an int or node column is `output::NULL` (`i64::MIN`), read as `Value::Null` and shown `None`; in a
+     text column it is the text `None`. A text in an integer column is a plan error, not a row.
    - `Outcome::text` became `Outcome::shown`.
 
 Still text, for step 5 of this plan: each `rr_diagnostic` row is one JSON text the rules make, parsed by serde in the

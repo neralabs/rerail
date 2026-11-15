@@ -712,10 +712,10 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
             break;
         }
     }
-    // The relations findings come from: the outputs, and what `rr_diagnostic` (lowering's findings) reads. Each
+    // The relations findings come from: the outputs, and what the finding relations (lowering's findings) read. Each
     // incomplete one is named with how many of its rules read an incomplete relation (the granularity is the rule).
     let mut reported: Vec<String> = program.outputs.clone();
-    for rule in program.rules.iter().filter(|r| r.head.rel == "rr_diagnostic") {
+    for rule in program.rules.iter().filter(|r| crate::code_rule_dsl::logic::rr::is_diagnostic(&r.head.rel)) {
         reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.to_string()));
     }
     let mut seen = std::collections::BTreeSet::new();

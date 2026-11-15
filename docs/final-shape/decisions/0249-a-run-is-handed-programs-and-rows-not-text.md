@@ -75,6 +75,27 @@ components (`components.rr`) is asked of its settings and relations, not searche
 of it is handed the same program (`constants::derive`, `run_handed`). `tools::run_program` no longer prints the
 program it read.
 
+### 6. A finding is a row of typed columns
+
+A finding was one `rr_diagnostic` row: a JSON text the rules concatenated (`json_str`, `to_string`, `concat`),
+which the CLI parsed with serde. Each `.violation` (and each error directive) now has its own relation,
+`rr_diagnostic_<digest of policy, clause and form>` (`rr::lower::findings`, `is_diagnostic`). A finding's node form
+and its `@place` form are two relations, since their `at` columns differ in type. A row describes itself:
+
+| columns | type |
+|---|---|
+| `policy`, `clause`, `code`, `path` | text (a code from a non-text column: its text) |
+| `line` | number |
+| `at` | the finding's node (a node), or `0` (a place's) |
+| `message` | text |
+| `tagged`, then `tag` when it is 1 | number, then the tag column's type |
+| `name<i>`, `value<i>` for each parameter | text, then the parameter's own type |
+
+A reader needs no program. `tools::diagnostics` makes the CLI's JSON object of each row from its values: a text is a
+string, an integer a number, a node its value as the run held it (`Row::raw`), NULL `null`. These are the values the
+JSON text held. A pack's programs share the relations, as they share `violation` (`corpus::own_names`): each is
+named by its policy. `run_pack` gives each member the rows whose `policy` is its own.
+
 ## Still text
 
 - Phase programs. `phases` appends `.output …` (and phase 1's `.language …`) to a phase program's source before
@@ -91,5 +112,7 @@ External inputs stay text: the user's `.rr` files, `.input` files, JSON policies
 - `settings_become_env_rows_for_a_program_that_declares_env` (`tools`): `rerail.env` and `--env` read, and given
   as rows.
 - The waves' `merged` test checks that the wave program holds the merged rules and facts as they are.
+- `lowered_findings` (rr tests) and the pack test (`tape_tests`) read the findings through `tools::diagnostics`; the
+  tests of `run-rr` compare the JSON it reports, as before.
 - The typing tests (`typing::oracle_tests`, `plan::tests`) run with `declared_ret` rows. The rr tests'
   `a_language_of_several_dialects_runs_over_each` runs every dialect through the option.

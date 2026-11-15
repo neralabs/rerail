@@ -2398,9 +2398,8 @@ fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
     let out = root.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &root, None, &out, "program",
         crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    // Each diagnostic is one JSON text the rules made (`rr::lower::findings`).
-    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap();
-    let rows = outputs.rows("rr_diagnostic").iter().map(|r| serde_json::from_str(r.get(0).text().expect("a text")).unwrap()).collect();
+    // Each diagnostic, from its finding relation's typed row (`rr::lower::findings`, `tools::diagnostic`).
+    let rows = crate::code_rule_dsl::tools::diagnostics(&out).unwrap();
     std::fs::remove_dir_all(root).unwrap();
     rows
 }

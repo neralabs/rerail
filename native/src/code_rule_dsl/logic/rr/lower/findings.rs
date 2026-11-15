@@ -1,9 +1,35 @@
 //! Lossless public findings, lowered through the same relational planner as the rule. The existing
-//! five-column `violation` output is an index, not the full diagnostic. One JSON symbol per diagnostic
-//! preserves tabs, newlines, numeric parameters, tags and distinct witnesses through the CSV transport.
+//! five-column `violation` output is an index, not the full diagnostic. Each `.violation` (and each error
+//! directive) has its own relation of typed columns (decision 0249 §6, `diagnostic_name`): a row describes itself
+//! (policy, clause, code, path, line, at, message, its tag and each parameter's name beside its value), so tabs,
+//! newlines, numeric parameters, tags and distinct witnesses are kept as values, and no reader parses a text.
 use super::*;
 
-const OUTPUT: &str = "rr_diagnostic";
+/// The relations' name's start: `rr_diagnostic_<digest>`, one relation for each finding and form (a node's or a
+/// place's).
+pub const PREFIX: &str = "rr_diagnostic_";
+
+/// The columns before a finding's parameters: its policy, clause, code, path, line, place (`at`), message, and
+/// whether it has a tag (`tagged`, then `tag`).
+pub const HEAD: [&str; 8] = ["policy", "clause", "code", "path", "line", "at", "message", "tagged"];
+
+/// Whether `rel` is a finding's relation.
+pub fn is_diagnostic(rel: &str) -> bool {
+    rel.starts_with(PREFIX)
+}
+
+/// A finding's relation, by its policy, clause and form: the same in every program of a run, and another for each
+/// policy, so a pack's programs share them as they share `violation` (`corpus::own_names`).
+fn diagnostic_name(policy: &str, clause: &str, place: bool) -> String {
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    h.update(policy.as_bytes());
+    h.update([0]);
+    h.update(clause.as_bytes());
+    h.update([0, u8::from(place)]);
+    let d: [u8; 32] = h.finalize().into();
+    format!("{PREFIX}{}", d[..8].iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
 
 fn v(name: &str) -> Term { Term::Var(name.to_owned().into()) }
 fn s(text: &str) -> Term { Term::Str(text.to_owned().into()) }
@@ -14,14 +40,20 @@ fn atom(rel: &str, args: Vec<Term>) -> Literal {
 fn concat(terms: Vec<Term>) -> Term {
     terms.into_iter().reduce(|a, b| call("concat", vec![a, b])).unwrap_or_else(|| s(""))
 }
-fn json(value: Term) -> Term { call("json_str", vec![value]) }
 fn number(value: Term) -> Term { call("to_string", vec![value]) }
+/// A finding column's type as its relation's column holds it: a text, a node, or the column's own.
+fn column_type(ty: &str) -> &str {
+    match ty {
+        "symbol" | "sym" => "sym",
+        "node" | "span" | "loc" => "node",
+        "number" | "int" => "int",
+        other => other,
+    }
+}
 
 impl Lowerer {
     /// Error directives use the same public diagnostic transport as ordinary violations.
     pub(super) fn error_diagnostic(&mut self, policy: &str, clause: &str, code: &str, body: Vec<Literal>) -> Result<(), Error> {
-        self.prog.decls.insert(OUTPUT.to_owned().into(), [("json".into(), "sym".into())].into());
-        if !self.prog.outputs.iter().any(|name| name == OUTPUT) { self.prog.outputs.push(OUTPUT.to_owned()); }
         let finding = Violation {
             name: clause.to_owned(), arity: 1, code: FindingCode::Constant(code.to_owned()), node: false,
             places: true, columns: vec![("at".to_owned(), "span".to_owned())], message: String::new(), tag: None,
@@ -30,10 +62,6 @@ impl Lowerer {
     }
 
     pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
-        self.prog.decls.insert(OUTPUT.to_owned().into(), [("json".into(), "sym".into())].into());
-        if !self.prog.outputs.iter().any(|name| name == OUTPUT) {
-            self.prog.outputs.push(OUTPUT.to_owned());
-        }
         let cols: Vec<Term> = (0..finding.arity).map(|i| v(&format!("rr_v{i}"))).collect();
         let mut body = vec![atom(&finding.name, cols.clone())];
         if finding.node {
@@ -120,27 +148,33 @@ impl Lowerer {
         text.push_str(rest);
         pieces.push(s(&text));
         let message = concat(pieces);
+        // A code from a column of another type than text: its text, as a code is.
         let code = match &finding.code {
             FindingCode::Name => s(&finding.name),
             FindingCode::Constant(code) => s(code),
-            FindingCode::Column(i) => cols[*i].clone(),
+            FindingCode::Column(i) if matches!(finding.columns[*i].1.as_str(), "symbol" | "sym") => cols[*i].clone(),
+            FindingCode::Column(i) => number(cols[*i].clone()),
         };
-        let tag = finding.tag.map(|i| {
-            if matches!(finding.columns[i].1.as_str(), "symbol" | "sym") { json(cols[i].clone()) }
-            else { number(cols[i].clone()) }
-        }).unwrap_or_else(|| s("null"));
-        let mut terms = vec![s("{\"policy\":"), json(s(policy)), s(",\"clause\":"), json(s(&finding.name)),
-                             s(",\"code\":"), json(code), s(",\"path\":"), json(v("rr_p")),
-                             s(",\"line\":"), number(v("rr_l")), s(",\"at\":"), number(at),
-                             s(",\"tag\":"), tag, s(",\"message\":"), json(message), s(",\"parameters\":{")];
-        for (i, (name, ty)) in finding.columns.iter().enumerate().skip(1) {
-            if i > 1 { terms.push(s(",")); }
-            terms.push(s(&format!("{}:", rerail_rr_syntax::syntax::quote(name))));
-            terms.push(if matches!(ty.as_str(), "symbol" | "sym") { json(cols[i].clone()) } else { number(cols[i].clone()) });
+        // The row: the head (`HEAD`), the tag when there is one, and each parameter's name beside its value.
+        let at_type = if place { "int" } else { column_type(&finding.columns[0].1) };
+        let mut decl: Vec<(String, String)> = HEAD.iter().zip(["sym", "sym", "sym", "sym", "int", at_type, "sym", "int"]).map(|(c, t)| ((*c).to_owned(), t.to_owned())).collect();
+        let mut args = vec![s(policy), s(&finding.name), code, v("rr_p"), v("rr_l"), at, message, Term::Int(i64::from(finding.tag.is_some()))];
+        if let Some(i) = finding.tag {
+            decl.push(("tag".to_owned(), column_type(&finding.columns[i].1).to_owned()));
+            args.push(cols[i].clone());
         }
-        terms.push(s("}}"));
-        body.push(Literal::Cmp { l: v("rr_json"), op: "=", r: concat(terms) });
-        self.prog.rules.push(Rule { head: Atom { rel: OUTPUT.to_owned().into(), args: [v("rr_json")].into(), neg: false, gated: false }, body: body.into() });
+        for (i, (name, ty)) in finding.columns.iter().enumerate().skip(1) {
+            decl.push((format!("name{i}"), "sym".to_owned()));
+            decl.push((format!("value{i}"), column_type(ty).to_owned()));
+            args.push(s(name));
+            args.push(cols[i].clone());
+        }
+        let rel = diagnostic_name(policy, &finding.name, place);
+        self.prog.decls.insert(rel.clone().into(), decl.into_iter().map(|(c, t)| (c.into(), t.into())).collect::<Vec<_>>().into());
+        if !self.prog.outputs.iter().any(|name| *name == rel) {
+            self.prog.outputs.push(rel.clone());
+        }
+        self.prog.rules.push(Rule { head: Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }, body: body.into() });
         Ok(())
     }
 }

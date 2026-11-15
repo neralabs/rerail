@@ -264,10 +264,57 @@ pub fn run_rr(
 ) -> Result<serde_json::Value, String> {
     use super::logic::rr;
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
-    if !program.outputs.iter().any(|name| name == "rr_diagnostic") {
+    if !program.outputs.iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
     run_program(path, program, &files, root, out, options)
+}
+
+/// The findings of the run whose outputs are in `dir`, as the CLI reports them: every finding relation's rows
+/// (`rr::lower::findings`), each as its JSON object.
+pub fn diagnostics(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
+    let mut all = Vec::new();
+    for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
+        for row in outputs.rows(rel) {
+            all.push(diagnostic(&row)?);
+        }
+    }
+    Ok(all)
+}
+
+/// A finding's row as its JSON object: `policy`, `clause`, `code`, `path`, `line`, `at`, `tag` (`null` for none),
+/// `message`, and `parameters` by name. Each value as its column holds it: a text a string, an integer or a node a
+/// number (a node's value as the run held it), NULL `null`. Nothing is parsed.
+fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Result<serde_json::Value, String> {
+    use crate::code_rule_dsl::logic::plan::output::Value;
+    let value = |c: usize| -> serde_json::Value {
+        match row.get(c) {
+            Value::Text(t) => serde_json::json!(t),
+            Value::Int(n) => serde_json::json!(n),
+            Value::Node(_) => serde_json::json!(row.raw(c)),
+            Value::Null => serde_json::Value::Null,
+        }
+    };
+    let head = super::logic::rr::DIAGNOSTIC_HEAD;
+    if row.len() < head.len() {
+        return Err(format!("a finding's row of {} values, not at least {}", row.len(), head.len()));
+    }
+    let mut finding = serde_json::Map::new();
+    for (c, name) in head.iter().enumerate().take(head.len() - 1) {
+        finding.insert((*name).to_owned(), value(c));
+    }
+    let tagged = row.get(head.len() - 1).int() == Some(1);
+    let mut c = head.len();
+    finding.insert("tag".to_owned(), if tagged { c += 1; value(c - 1) } else { serde_json::Value::Null });
+    let mut parameters = serde_json::Map::new();
+    while c + 1 < row.len() {
+        let name = row.get(c).text().ok_or("a finding's parameter name: not a text")?.to_owned();
+        parameters.insert(name, value(c + 1));
+        c += 2;
+    }
+    finding.insert("parameters".to_owned(), serde_json::Value::Object(parameters));
+    Ok(serde_json::Value::Object(finding))
 }
 
 /// `run_rr` of a program already read: `path`'s, or a test's (decision 0130, `rr::testing`).
@@ -304,12 +351,7 @@ pub fn run_program(
             options["dialect"] = serde_json::json!(dialect);
         }
         let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
-        // Each diagnostic: one JSON text the rules made (`rr::lower::findings`; step 5 makes them columns).
-        let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
-        for row in outputs.rows("rr_diagnostic") {
-            let json = row.get(0).text().ok_or("rr_diagnostic: not a text")?;
-            rows.push(serde_json::from_str::<serde_json::Value>(json).map_err(|e| e.to_string())?);
-        }
+        rows.extend(diagnostics(dir)?);
         files_read += report.files;
         nodes += report.nodes;
         phases.extend(report.phases);
@@ -403,7 +445,7 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
             });
             let language = corpus::run_language(root, &own, &with_reuse(options)).ok()?;
             let id = own.settings.iter().find(|(k, _)| k == "policy").and_then(|(_, t)| t.split('"').nth(1)).unwrap_or_default().to_owned();
-            let findings = own.outputs.iter().any(|o| o == "rr_diagnostic");
+            let findings = own.outputs.iter().any(|o| rr::is_diagnostic(o));
             let metadata = rr::metadata(&own).ok()?;
             (one_dialect && findings).then_some((language, id, metadata))
         });
@@ -450,23 +492,26 @@ fn run_pack(
     };
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&dir).map_err(|e| e.to_string())?;
-    let all = outputs.rows("rr_diagnostic");
-    let mut rows: Vec<Vec<crate::code_rule_dsl::logic::plan::output::Row<'_>>> = group.members.iter().map(|_| Vec::new()).collect();
-    for row in &all {
-        let json = row.get(0).text().ok_or("rr_diagnostic: not a text")?;
-        let finding: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        let Some(at) = finding["policy"].as_str().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
-        each[at].push(finding);
-        rows[at].push(*row);
+    // Each member's rows of each finding relation, by the policy each row names (its first column).
+    type Rows<'a> = Vec<crate::code_rule_dsl::logic::plan::output::Row<'a>>;
+    let mut rows: Vec<std::collections::BTreeMap<String, Rows<'_>>> = group.members.iter().map(|_| std::collections::BTreeMap::new()).collect();
+    for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
+        for row in outputs.rows(rel) {
+            let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
+            each[at].push(diagnostic(&row)?);
+            rows[at].entry(rel.to_owned()).or_default().push(row);
+        }
     }
-    let types = outputs.get("rr_diagnostic").map(|r| r.types().to_vec()).unwrap_or_else(|| vec![crate::code_rule_dsl::logic::plan::output::col::TEXT]);
     let mut done = Vec::with_capacity(group.members.len());
     for (((&k, found), rows), metadata) in group.members.iter().zip(each).zip(rows).zip(&group.metadata) {
         let own = out.join(k.to_string());
         std::fs::create_dir_all(&own).map_err(|e| format!("{}: {e}", own.display()))?;
         // Its own outputs, a base of its findings alone (decision 0239).
         let mut image = crate::code_rule_dsl::logic::plan::output::Builder::new(outputs.images().last().map_or(0, crate::code_rule_dsl::logic::plan::output::Image::flags), false);
-        image.rows_of("rr_diagnostic", &types, &rows);
+        for (rel, rows) in &rows {
+            let types = outputs.get(rel).map(|r| r.types().to_vec()).unwrap_or_default();
+            image.rows_of(rel, &types, rows);
+        }
         crate::code_rule_dsl::logic::plan::output::write(&own, &image.finish()).map_err(|e| format!("{}: {e}", own.display()))?;
         let run = serde_json::json!({"path": paths[k].display().to_string(), "files": report.files, "metadata": metadata, "together": group.members.len()});
         done.push((found, run));
