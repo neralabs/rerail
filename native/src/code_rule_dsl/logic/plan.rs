@@ -5147,12 +5147,13 @@ impl<'a> Run<'a, '_> {
     /// A text test over strings the run answered (`front::Native::TextTest`) over a relation the engine holds: the
     /// rows of `input` whose `column` passes `op` of `patterns`, its distinct strings tested by the run's vocabulary
     /// with its other tests at once, each once a run; held as the engine's relation. `None`: the input is not held.
-    fn native_text_test(&mut self, rel: &str, input: &str, column: usize, op: &str, patterns: &[String]) -> Result<Option<usize>> {
+    /// `natively`: whether the engine made the input (`native_rels`, which a stratum is lent, `Run::lent`).
+    fn native_text_test(&mut self, rel: &str, input: &str, natively: bool, column: usize, op: &str, patterns: &[String]) -> Result<Option<usize>> {
         use super::native::component;
         if self.model.inputs.atoms.is_none() {
             return Ok(None);
         }
-        let held = if self.native_rels.contains(input) {
+        let held = if natively {
             component::derived(self.db, input)
         } else if self.fields().is_input(input) {
             crate::code_rule_dsl::facts::vtab::bound_source(self.db, input)
@@ -5225,6 +5226,13 @@ impl<'a> Run<'a, '_> {
         self.model.stats.card.insert(r.to_owned(), if at_least_one { n.max(1.0) } else { n });
         Ok(())
     }
+}
+
+/// Whether a text-test stratum's rules are its native's definition (`h(x…) :- input(x…), test`), so the native makes
+/// its rows: in a maintained form its relation's rules are its old rows and its new ones (`maintain`), made as rules,
+/// while its `h__ins` and a stratum derived again are the definition.
+fn text_test_defined(rules: &[&Rule], input: &str) -> bool {
+    matches!(rules, [r] if r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()).eq([input]))
 }
 
 /// Adds a native join's step counts ("in:out" per step, `set_fixpoint_steps`) to the observed fanouts of the binding
@@ -6351,10 +6359,11 @@ impl<'a> Run<'a, '_> {
         // placed, the device's text-test form.
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
             && let Some(super::program_image::NativeSpec::TextTest { input, column, op, patterns }) = f.native(rel).map(|n| &n.spec)
+            && text_test_defined(rules, f.rel_name(*input))
         {
             if !placement::device_on() {
                 let (input, op, patterns) = (f.rel_name(*input).to_owned(), f.text(*op).to_owned(), patterns.iter().map(|&p| f.text(p).to_owned()).collect::<Vec<_>>());
-                if self.native_text_test(rel, &input, *column, &op, &patterns)?.is_some() {
+                if self.native_text_test(rel, &input, native_rels.contains(&input), *column, &op, &patterns)?.is_some() {
                     return Ok(Native::Ran);
                 }
                 self.why_not = Some("a text test whose input the engine does not hold".into());
@@ -10118,7 +10127,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
             && !placement::device_on()
             && let Some(NativeSpec::TextTest { input, column, op, patterns }) = f0.native(rel).map(|n| &n.spec)
-            && let Some(n) = run.native_text_test(rel, f0.rel_name(*input), *column, f0.text(*op), &patterns.iter().map(|&p| f0.text(p).to_owned()).collect::<Vec<_>>())?
+            && text_test_defined(&rules, f0.rel_name(*input))
+            && let Some(n) = run.native_text_test(rel, f0.rel_name(*input), run.native_rels.contains(f0.rel_name(*input)), *column, f0.text(*op), &patterns.iter().map(|&p| f0.text(p).to_owned()).collect::<Vec<_>>())?
         {
             super::profile::stratum(&skey, "text test over a held relation (the run's vocabulary)", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());

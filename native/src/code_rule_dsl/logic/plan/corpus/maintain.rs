@@ -299,9 +299,8 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
             let test = crate::code_rule_dsl::logic::strings::test_literal(v[column].clone(), &op, &patterns);
             rules.push(Rule { head: head(named(rel, "ins")), body: [atom(named(&input, "plus"), v.clone(), false), test].into() });
             part.program.natives.insert(named(rel, "ins"), front::Native::TextTest { input: named(&input, "plus"), column, op, patterns });
-            // Its rules are now its old rows and the new ones: made natively from the whole input it would be
-            // tested again, every string.
-            part.program.natives.remove(rel.as_str());
+            // Its rules are now its old rows and the new ones, which the run makes as rules (`text_test_defined`):
+            // it stays a native, so a run that derives it again (`Again`) makes it from the vocabulary.
             rules.push(Rule { head: head((*rel).clone()), body: [atom(named(rel, "old"), v.clone(), false), atom(named(rel, "del"), v.clone(), true)].into() });
             rules.push(Rule { head: head((*rel).clone()), body: [atom(named(rel, "ins"), v.clone(), false)].into() });
             for piece in ["del", "ins"] {

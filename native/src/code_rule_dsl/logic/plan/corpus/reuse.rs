@@ -38,9 +38,8 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE"];
 
 /// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
-/// a key: the run's (`key`) and the prepared program's (`corpus::run_observed`, where `RERAIL_TEXT_TESTS`,
-/// `RERAIL_NODE_SOURCES` and `RERAIL_AST_PARTS` change what is prepared).
-pub(super) fn switches() -> Vec<u8> {
+/// the run's key.
+fn switches() -> Vec<u8> {
     let mut switches: Vec<(String, String)> = std::env::vars_os()
         .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
         .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))

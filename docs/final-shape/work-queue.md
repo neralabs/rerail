@@ -88,7 +88,8 @@ into notes once the queue is done).
     marks the answered columns.
   - *Sessions.* A text-test stratum is maintained exactly (maintain.rs: `h__del` from `input__minus`, `h__ins` the
     native over `input__plus`), in both maintained paths (the 0117 run sends it to its form rather than deriving it
-    again). Test `a_cross_file_text_test_is_maintained_as_a_filter` (profile: "stratum rr_texttest_0_0 maintained").
+    again). Not exercised: the session test reaches no text-test stratum (cross-file `node_text` is empty, question
+    2), so every run derives its strata again; it is ignored with that reason.
   - `RERAIL_TEXT_TESTS=row` keeps answered tests per row, to compare.
   - *Measured* (47 authored data-layer programs that test `node_text`, 50 data-layer files sampled across the
     checkout, cold store each, strict): outputs identical on all 47; 44 run both ways, 3 fail both ways (Q12). Work
@@ -124,6 +125,15 @@ into notes once the queue is done).
        output, input or facts): test `a_printed_native_text_test_is_read_back_as_itself`.
     7. With the device on, the text test is not made on the host: its rule (the test row by row) runs as placed,
        the device's text-test form, as before Q2.
+  - *Review 2* (42f34ad0e): (1) `native_stratum_` runs under `Run::lent`, which takes `native_rels`, so
+    `native_text_test` never saw an input the engine made and declined (an `Err` in a 0117 form); (2) every switch in
+    the prepared key keys a session's kept frames too, so a diagnostic switch mid-session made it cold
+    (session test `a_session_inserts_only_rows_new_against_the_survivors` failed); (3) with `rel` no longer native
+    in its form, a stratum the run derives again (`Again`) tested every row; (4) the Sessions claim above was false.
+    Fixed: `native_text_test` is told whether the engine made its input; a text-test native makes a stratum only
+    where its rules are its definition (`text_test_defined`), so `rel` stays native (maintained form: its rules run;
+    derived again and `h__ins`: the vocabulary); the prepared key hashes only the switches lowering and preparation
+    read (`corpus::PREPARING`); the Sessions bullet corrected.
 
 ### Q3. No duplicate widened copies; the dropping test strict again
 
@@ -154,6 +164,15 @@ into notes once the queue is done).
     kept its facts, and `merge_identical` then named a class after the unread `annt_fixed` (equal facts) in place of
     the read `argt_fixed`. `prune` now drops the facts of relations nothing reads, as `convert::reachable` already
     did. dropping_unreached: 8 passed.
+  - *Review 2* (04b412200): (1) dropping unread facts loses facts the engine reads by name with no rule (`env`'s
+    settings in `corpus::World`: `load.budget` and the setting roots; `unconverged`, the pending round); (2) the
+    widened regex made relations like `rr_wide_node_text_air301_key` count as numbered helpers, their bodies
+    uncompared; (3) `simplify` makes ground rules facts, which the test did not compare; (4) the Done-when was not
+    asserted. Fixed: `prune` keeps facts again (documented why); `simplify`'s `merge` names a class after a member a
+    rule or native reads, so an unread equal relation never names it; the test's helper regex is the old one, a
+    second matches only `simplify`'s renamed-apart variables (`rr_<name><k>_[ft]<k>`); the test compares the facts of
+    the relations its rules name and the outputs', and asserts that no widened copy is left with its relation's own
+    rules.
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 

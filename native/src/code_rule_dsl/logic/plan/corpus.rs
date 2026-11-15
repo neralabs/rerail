@@ -77,6 +77,24 @@ pub use inputs::parameters as input_parameters;
 pub mod world;
 pub mod connections;
 pub mod reuse;
+
+/// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
+/// kept): each changes the prepared program, so each is in its key. A switch added to lowering or preparation is
+/// added here.
+const PREPARING: &[&str] = &[
+    "RERAIL_TEXT_TESTS",
+    "RERAIL_NODE_SOURCES",
+    "RERAIL_AST_PARTS",
+    "RERAIL_TEXT_NODES",
+    "RERAIL_SPAN_PREFILTER",
+    "RERAIL_NODE_ANCHORS",
+    "RERAIL_NODE_IDS",
+    "RERAIL_NEAREST_BUFFERS",
+    "RERAIL_DEMAND",
+    "RERAIL_EXISTENCE_COUNTS",
+    "RERAIL_INLINE",
+    "RERAIL_INLINE_ONLY",
+];
 pub mod phase0;
 pub mod cross_memo;
 pub mod switches;
@@ -2624,10 +2642,12 @@ fn run_observed(
         if !factorizing {
             hash.update(b"\0factorize:off");
         }
-        // The switches that change what is prepared (`RERAIL_TEXT_TESTS`, `RERAIL_NODE_SOURCES` …): a program
-        // prepared under one is not another's.
-        hash.update(b"\0switches\0");
-        hash.update(reuse::switches());
+        // The switches that change what is prepared: a program prepared under one value is not another's. Only
+        // these: the key also keys a session's kept frames, so a diagnostic switch turned on mid-session must not
+        // make the next run cold.
+        for switch in PREPARING {
+            hash.update(format!("\0{switch}={}", std::env::var(switch).unwrap_or_default()).as_bytes());
+        }
         hash.finalize().into()
     };
     // The lowered program's atoms are the store's: the same strings must still be the same atoms.
