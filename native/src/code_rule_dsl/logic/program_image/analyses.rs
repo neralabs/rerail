@@ -96,6 +96,17 @@ pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
     }
 }
 
+/// The dependency edges by name, as `front::strata` gives them: each derived relation's dependencies among the derived
+/// relations, with whether each is negative.
+pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic::front::Edges {
+    let (_, edges, _) = components(v, about);
+    let mut out = crate::code_rule_dsl::logic::front::Edges::new();
+    for (h, w, neg) in edges.iter() {
+        out.entry(v.rel_name(h).to_owned()).or_default().insert((v.rel_name(w).to_owned(), neg));
+    }
+    out
+}
+
 /// The components as `front::components_of` makes them, in its order: the relations numbered in the order of their
 /// names, each set of `together` (a maintained program's, `body::Maint`) one component where it can be, and the
 /// tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the

@@ -590,3 +590,43 @@ ported, over the targeted tests and dl1.
     tests.
   - Checked after: logic `plan::` (110); the engine filters above and `corpus::` (in chunks). dl1 (images required, profiling build): the same 48 findings cold and warm as the
     baseline; 48.4 G instructions cold and 2.6 G warm, the baseline engine 46.6 G and 2.6 G beside it (load 70-90).
+
+- **Item 7, step 8: `plan::run` takes a version** (2026-11-15).
+  - `plan::run(program, db, inputs, lowering, hooks)` takes the program's version (`body::Placed`, a whole image) and,
+    for a lowered program, the lowering's domains and dialect (`lower::Lowering`, borrowed from a `Lowered`). It
+    normalizes the version (`Placed::normalized`: `passes::normalize`, then `passes::stated_apart` where the run holds
+    stated facts apart), which also gives the sentinel relations and the stated pairs by name; the domains are widened
+    from them, reading the normalized version's declarations. No tree pass runs in `run`: `sql_kernel::normalize` and
+    `plan::stated_apart` are left to the tests that check the version passes against them.
+  - The passes take and give versions: `keeps::choose(base, model)` and `demand::split_negations(placed, model)` give
+    the relations they chose and their overlay; the trees they decoded are gone. `choices::Chosen` holds the version
+    alone. The store's writer decodes it for the text it keeps (`Placed::program`, on the writer's thread); a choice
+    kept as text alone is read and its image made when it is looked up.
+  - The run reads from the chosen version: its strata (`Placed::components`, in the tree's order), their edges
+    (`analyses::edges_by_name`), the projections (`analyses::projections`), the rule lists (`keys_by_stratum` over the
+    version) and the literal counts charged to the passes. `Run` holds no tree (`prog` and `trees` are gone), and its
+    version 0 is `Versions::of_placed`. `Run::tree` decodes a rule for the readers that still take one (the
+    fixpoints' made rules, the profile's and the spike's rule text). The SQL path's chosen head is its handles' text
+    (`Body::show_head`). The program analysis is decoded from the version when first asked (`Model::analysis_of`), on
+    the SQL kernel's path only; made eagerly for an inlined program before, it is now made when asked, as for the
+    demand split's.
+  - `run_sql`, `run_sql_native`, `run_atoms` and `run_native_inputs` make the version of the tree they are given
+    (`Placed::of_program`), which `run` made at its top before: every caller still holds a tree until step 9.
+  - Still the tree's, and why: the program digests. `choices::key` and the composed path's key are digests of the
+    normalized program's text, so a corpus run (or a composed one) decodes the normalized version once for them, until
+    decision 0173 step 6. The measurement aids (`RERAIL_VERSION_TRACE`, `RERAIL_INLINE_DUMP`, `RERAIL_RUN_DUMP`)
+    decode only when they are on.
+  - Checked while porting, by oracles removed after: the normalized version, decoded, equalled the tree passes'
+    program by its `Debug` text, with the same sentinels and stated pairs; each pass's overlay, decoded, equalled the
+    tree the pass gave (inlining, the demand split, a kept choice's program against its version); and over the chosen
+    version, decoded, the strata, the edges, the projections and the rules' heads in order equalled the tree's. (The
+    tree's edges hold an empty set for a native that reads nothing derived, where the version's hold no entry; every
+    reader reads them by `get`.) Over logic `plan::` (110), the engine's maintain, again, retain, edit, session, cone,
+    supports, kept, frame, strata, keeps, demand, negation, inline, choices, phase0, answer, native, setfix,
+    program_image, forms, rewrite, prepared, cross, file_local, compose and `rr::` tests, and `corpus::` (in chunks).
+  - Checked after: the same tests, without the oracles. dl1 (images required, profiling build, fresh stores, run
+    alternately with the baseline engine): the same 48 findings cold and warm; cold 47.5 and 49.4 G instructions
+    against the baseline's 50.7 and 49.9 G, warm 2.7 G on both (load about 18).
+  - Seen: `long_text_fallback_keeps_short_and_long_results_across_memo_replay` (its second run's rows, `rr_comparison.rs`
+    line 340) failed in three of four runs of the `keeps` filter, with the oracles and without them, and passed alone
+    and in the fourth. It plans through `corpus::run_with_options` like its neighbours; not traced here. Open.

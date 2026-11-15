@@ -418,11 +418,10 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
     (ready && !bound.contains(y)).then_some(y)
 }
 
-/// The versions of the programs whose rules a run plans, each encoded once, and a rule of one named by its key
-/// (`RuleKey`: the version's place and the rule's place in the program's rules). Until `plan::run` takes a version
-/// (t36 item 7), the run's programs are trees: the run's rule lists hold keys, made where each list is made, and a
-/// tree a caller still holds finds its key by its address (`key`), once, where its list is made. A program is added
-/// once it is final: its rules do not move after. A maintained form is a version of its own (`push`), with no tree.
+/// The versions of the programs whose rules a run plans, and a rule of one named by its key (`RuleKey`: the version's
+/// place and the rule's place in the program's rules). The run's program is version 0 (`of_placed`), and a maintained
+/// form a version of its own (`push`). A caller that holds a program as a tree (`with`) finds a rule's key by its
+/// address (`key`), once, where its list is made. A program is added once it is final: its rules do not move after.
 #[derive(Clone, Default)]
 pub struct Versions(Vec<(usize, usize, Placed)>, Vec<AgainAt>);
 
@@ -619,15 +618,28 @@ impl Placed {
     }
     /// The run's version of the program whose image this is (t36 item 7, step 2): normalized for the SQL kernel
     /// (`passes::normalize`, a derivation), with its stated facts apart where `apart` (`passes::stated_apart`, an
-    /// overlay), as `plan::run` normalizes the program. A version of rules alone stays one, made of `normalized`'s.
-    pub fn normalized(&self, apart: bool, normalized: &Program) -> Result<Placed> {
+    /// overlay), as `plan::run` normalizes the program. Also the relations given a presence column (the sentinels),
+    /// and the pairs `(rel, rel__stated)`, by name.
+    pub fn normalized(&self, apart: bool) -> Result<Normalized> {
         use super::super::program_image::passes;
         if !self.whole || self.ids.is_some() {
-            return Placed::made(&normalized.rules);
+            return Err(Error::Plan("the program has no image: its run reads it from its version".into()));
         }
-        let (v, _) = passes::normalize(&self.v).map_err(Error::Plan)?;
-        let v = if apart { passes::stated_apart(&v).map_err(Error::Plan)?.0 } else { v };
-        Ok(Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default() })
+        let (v, sentinels) = passes::normalize(&self.v).map_err(Error::Plan)?;
+        let sentinels = sentinels.iter().map(|&r| v.rel_name(r).to_owned()).collect();
+        let (v, stated) = if apart { passes::stated_apart(&v).map_err(Error::Plan)? } else { (v, Vec::new()) };
+        let stated = stated.iter().map(|&(r, s)| (v.rel_name(r).to_owned(), v.rel_name(s).to_owned())).collect();
+        Ok(Normalized { placed: Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default() }, sentinels, stated })
+    }
+    /// The program this version is, as the tree: its rules in the program's order, and a maintained program's parts
+    /// (`Maint`). For a reader that still reads a tree: the program digests (decision 0173, step 6), the stored text,
+    /// the measurement aids.
+    pub fn program(&self, lists: &super::super::front::Lists) -> Result<Program> {
+        let mut prog = super::super::program_image::Tree::new(&self.v, lists).program_of(self.order().into_iter().map(|id| self.v.rule(id).expect("a rule of its version"))).map_err(Error::Plan)?;
+        if let Some(m) = &self.maint {
+            (prog.again, prog.together) = m.to_tree(lists);
+        }
+        Ok(prog)
     }
     /// A maintained form, a derivation of the run's version (decision 0241): its rules `v`'s in order, its fields
     /// its own, and its maintenance's parts beside it.
@@ -675,6 +687,14 @@ impl Placed {
     pub fn body(&self, k: usize) -> Body<'_> {
         Body::of(&self.v, self.rule(k))
     }
+}
+
+/// A program's version as `plan::run` normalizes it (`Placed::normalized`): the version, the relations given a
+/// presence column, and the pairs `(rel, rel__stated)` whose stated facts were moved apart.
+pub struct Normalized {
+    pub placed: Placed,
+    pub sentinels: std::collections::BTreeSet<String>,
+    pub stated: Vec<(String, String)>,
 }
 
 /// A rule of a run: the version it is a rule of (its place in the run's `Versions`; the program's is 0) and its id

@@ -326,6 +326,21 @@ pub struct Lowered {
     pub dialect: GrammarDialect,
 }
 
+impl Lowered {
+    /// What the program's run reads beside its version (`plan::run`).
+    pub fn lowering(&self) -> Lowering<'_> {
+        Lowering { domains: &self.domains, dialect: self.dialect }
+    }
+}
+
+/// What a lowered program's run reads beside its version (`plan::run`, t36 item 7 step 8): each relation's column
+/// domains, and the dialect its kinds are of.
+#[derive(Clone, Copy)]
+pub struct Lowering<'l> {
+    pub(in crate::code_rule_dsl) domains: &'l Domains,
+    pub dialect: GrammarDialect,
+}
+
 struct Constants<'a> {
     tag: u8,
     kinds: KindCatalog,

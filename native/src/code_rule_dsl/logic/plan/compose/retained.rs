@@ -2,7 +2,7 @@
 use super::*;
 use crate::code_rule_dsl::logic::native::component;
 
-pub fn run(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>) -> Result<Outcome> {
+pub fn run(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>) -> Result<Outcome> {
     let Some(ks) = hooks.strata.take() else { return stages::run(p,db,inputs,lowered,hooks) };
     let f = p.fields()?;
     let roots: BTreeSet<String> = f.outputs().map(str::to_owned).chain(inputs.kept.iter().cloned()).collect();

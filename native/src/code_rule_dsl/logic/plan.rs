@@ -1717,6 +1717,15 @@ impl Model {
         }))
     }
 
+    /// `analysis` of program `p`, a version: decoded for it the first time it is asked for (the analysis reads the
+    /// tree).
+    pub fn analysis_of(&self, p: &body::Placed) -> Result<std::sync::Arc<super::analysis::ProgramAnalysis>> {
+        if let Some(a) = self.analysis.get() {
+            return Ok(std::sync::Arc::clone(a));
+        }
+        Ok(self.analysis(&p.program(&Default::default())?))
+    }
+
     fn card(&self, rel: &str) -> f64 {
         // `node` is the corpus's nodes, except where a batch binds it: then its estimate is the batch's.
         if rel == "node" && !self.inputs.batch.contains_key(rel) {
@@ -4069,7 +4078,6 @@ struct Driving {
 }
 
 struct Run<'a, 'b> {
-    prog: &'a Program,
     /// The run's connection; only its scope in a stratum run off the run's thread (`strand`, decision 0113).
     db: crate::code_rule_dsl::facts::vtab::Db<'a>,
     model: Model,
@@ -4099,12 +4107,8 @@ struct Run<'a, 'b> {
     /// maintained forms placed since (`RunInputs`).
     inputs: Arc<RunInputs<'a>>,
     /// The run's programs' rules as versions (`body::Versions`), which the planner reads them by: the program's,
-    /// and each maintained form's as it is placed (t36 item 2, until `run` takes a version).
+    /// and each maintained form's as it is placed.
     versions: Arc<body::Versions>,
-    /// The program's rules as trees, version 0's, for the readers that still read one (the fixpoints' made rules,
-    /// the profile's rule text): a rule of a later version (a maintained form, a stratum's rules derived again) is
-    /// decoded where one is read (`tree`). The run's rule lists hold keys.
-    trees: &'a [Rule],
     /// The version among `versions` whose fields the run reads (`fields`): 0, the program's; a maintained form's
     /// while the run plans or runs its pieces (`set_version`).
     version: usize,
@@ -4223,15 +4227,12 @@ impl<'a> Run<'a, '_> {
     fn fields(&self) -> Fields<'_> {
         self.versions.whole(self.version)
     }
-    /// The tree of rule `k`, a rule of one of the run's versions: for the readers that still read the tree. A
-    /// program's rule is its tree; a later version's is decoded.
-    fn tree(&self, k: RuleKey) -> std::borrow::Cow<'a, Rule> {
-        if k.version() == 0 {
-            return std::borrow::Cow::Borrowed(&self.trees[k.index()]);
-        }
+    /// The tree of rule `k`, a rule of one of the run's versions, decoded: for the readers that still read the tree
+    /// (the fixpoints' made rules, the profile's rule text).
+    fn tree(&self, k: RuleKey) -> Rule {
         let p = self.versions.placed(k.version());
         let lists = super::front::Lists::default();
-        std::borrow::Cow::Owned(super::program_image::Tree::new(&p.v, &lists).rule(p.rule(k.index())))
+        super::program_image::Tree::new(&p.v, &lists).rule(p.rule(k.index()))
     }
     /// Adds maintained form `form` (a derivation of the run's version, decision 0241) to the run's versions, and its
     /// inputs to the run's: its version's place.
@@ -5434,7 +5435,6 @@ impl<'a> Run<'a, '_> {
         let arena = super::native::component::prime(&self.db)?;
         let model = self.model.fork(self.versions.whole(self.version), reads, rules, resolve.iter().copied())?;
         Ok(Strand(Run {
-            prog: self.prog,
             db: self.db.detached(),
             model,
             views: Arc::clone(&self.views),
@@ -5448,7 +5448,6 @@ impl<'a> Run<'a, '_> {
             projections: Arc::clone(&self.projections),
             inputs: Arc::clone(&self.inputs),
             versions: Arc::clone(&self.versions),
-            trees: self.trees,
             version: self.version,
             answer: None,
             asking: None,
@@ -5471,7 +5470,6 @@ impl<'a> Run<'a, '_> {
         let fields: Vec<Fields<'_>> = forms.iter().map(|f| vs.whole(f.0)).collect();
         let model = self.model.fork_with(&|r: &str| fields.iter().find_map(|f| f.arity(r)).unwrap_or(0), reads, rules);
         Ok(Strand(Run {
-            prog: self.prog,
             version: forms[0].0,
             db: self.db.detached(),
             model,
@@ -5486,7 +5484,6 @@ impl<'a> Run<'a, '_> {
             projections: Arc::clone(&self.projections),
             inputs: Arc::clone(&self.inputs),
             versions: Arc::clone(&self.versions),
-            trees: self.trees,
             answer: None,
             asking: None,
             why_class: None,
@@ -7181,7 +7178,7 @@ pub fn run_sql(prog: &Program, facts: &Path) -> Result<Outcome> {
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
     // (DISTINCT, sorts, materialized subqueries) in memory.
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
-    run(prog, &db, Inputs::file(), None, Hooks::default())
+    run(&body::Placed::of_program(prog)?, &db, Inputs::file(), None, Hooks::default())
 }
 
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
@@ -7196,7 +7193,7 @@ pub fn run_sql_native(
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
     load(&db)?;
-    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, Hooks::default())
+    run(&body::Placed::of_program(prog)?, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, Hooks::default())
 }
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
@@ -7215,7 +7212,7 @@ pub fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Resu
         given: None,
         kept: BTreeSet::new(),
     };
-    let out = run(&lowered.program, db, inputs, Some(lowered), Hooks::default());
+    let out = run(&body::Placed::of_program(&lowered.program)?, db, inputs, Some(lowered.lowering()), Hooks::default());
     super::native::flush_symbols(db)?;
     out
 }
@@ -7687,7 +7684,7 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, 
     connection::run(db,1,||super::native::register(db))?;
     connection::run(db,2,||super::native::register_symbols(db))?;
     super::native::forget_inputs(db);
-    let out = run(&lowered.program, db, inputs, Some(lowered), hooks);
+    let out = run(&body::Placed::of_program(&lowered.program)?, db, inputs, Some(lowered.lowering()), hooks);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
     let flush = super::profile::span(|| "flush symbols".into());
@@ -7908,36 +7905,60 @@ pub fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
 
 
 
-pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hooks: Hooks<'_>) -> Result<Outcome> {
-    let input = prog;
-    let (mut normalized,sentinels)=sql_kernel::normalize(prog)?;
+/// Runs program `program`, its version (a whole image: decision 0173, t36 item 7 step 8), over `db`: `lowering` the
+/// lowering's domains where the program is lowered (decision 0009).
+pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Option<lower::Lowering<'_>>, mut hooks: Hooks<'_>) -> Result<Outcome> {
     // A relation of rules and stated facts: its facts are a relation of facts alone, read by one rule, so the engine
     // holds them as it holds every relation, and no table is loaded with them in the run's waves (decision 0104).
     let apart = inputs.atoms.is_some() && !inputs.native.is_empty();
-    let stated = if apart { stated_apart(&mut normalized) } else { Vec::new() };
-    super::version_trace::note("plan.normalize", prog, &normalized);
-    let prog=&normalized;
-    let adjusted=lowered.map(|l|{
-        let mut domains=l.domains.clone();
-        for rel in &sentinels {if let Some(columns)=domains.get_mut(rel){while columns.len()<prog.decls[rel.as_str()].len(){columns.insert(0,lower::Domain::Int);}}}
-        for (rel, apart) in &stated {if let Some(columns)=domains.get(rel).cloned(){domains.insert(apart.clone(),columns);}}
-        lower::Lowered{program:prog.clone(),domains,ops:l.ops,dialect:l.dialect}
+    // The program's version as the run reads it (t36 item 7, step 2): normalized by the version passes
+    // (`passes::normalize`, `stated_apart`), which the planner reads its rules and fields from, and the passes below
+    // edit.
+    let body::Normalized { placed: normal_v, sentinels, stated } = {
+        let _span = super::profile::span(|| "the program's version".into());
+        program.normalized(apart)?
+    };
+    // The normalized program as the tree, decoded where a reader still reads one: the program digests (the choices'
+    // key, the composed path's), which are digests of the tree's text until decision 0173's step 6.
+    let lists = super::front::Lists::default();
+    let normal_tree: std::cell::OnceCell<Program> = std::cell::OnceCell::new();
+    let normal_tree = || -> Result<&Program> {
+        if let Some(t) = normal_tree.get() {
+            return Ok(t);
+        }
+        let t = normal_v.program(&lists)?;
+        Ok(normal_tree.get_or_init(|| t))
+    };
+    if super::version_trace::on() {
+        super::version_trace::note("plan.normalize", &program.program(&lists)?, normal_tree()?);
+    }
+    // The lowering's domains, with the columns normalizing added: a sentinel's presence column first, and a relation's
+    // stated facts apart under its own domains.
+    let domains = lowering.map(|l| {
+        let f = normal_v.fields().expect("a whole version");
+        let mut domains = l.domains.clone();
+        for rel in &sentinels {
+            if let Some(columns) = domains.get_mut(rel) {
+                while columns.len() < f.width(rel) {
+                    columns.insert(0, lower::Domain::Int);
+                }
+            }
+        }
+        for (rel, apart) in &stated {
+            if let Some(columns) = domains.get(rel).cloned() {
+                domains.insert(apart.clone(), columns);
+            }
+        }
+        domains
     });
-    let lowered=adjusted.as_ref();
+    let lowered = lowering.zip(domains.as_ref()).map(|(l, domains)| lower::Lowering { domains, dialect: l.dialect });
     let setup = super::profile::span(|| "setup".into());
     connection::run(db,4,||super::strings::register(db))?;
     connection::run(db,8,||super::native::aggregation::register_sum(db))?;
-    // The program's version (t36 item 7, step 2), made here where the composed path is asked, which reads it (step
-    // 6), and taken by the run below where that path declines.
-    let version = || -> Result<body::Placed> {
-        let _span = super::profile::span(|| "the program's version".into());
-        body::Placed::of_program(input)?.normalized(apart, prog)
-    };
-    let mut early: Option<body::Placed> = None;
     if inputs.atoms.is_some() && inputs.given.is_some() && PLANS.with(|p|p.borrow().is_some())
         && hooks.answer.is_none()
-        && compose::enabled() && compose::accepts(early.insert(version()?))? {
-        let p=early.as_ref().expect("the version, made above");
+        && compose::enabled() && compose::accepts(&normal_v)? {
+        let p=&normal_v;
         let f=p.fields()?;
         let needed=compose::needed(f,f.outputs().chain(inputs.kept.iter().map(String::as_str)));
         let reads:Vec<String>=f.inputs().filter(|r|needed.contains(*r)).map(str::to_owned).collect();
@@ -7953,7 +7974,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         // reads that only the engine holds, or SQLite's limits on a statement's references and nesting), the program
         // runs by strata instead, as one the composer does not accept does: composition is a plan, not a semantics.
         // Keyed by the tree's text: the program digests are the tree's until decision 0173's step 6.
-        let plan=compose::planned(p,&format!("{prog:?}"),db,&mut inputs.clone())?;
+        let plan=compose::planned(p,&format!("{:?}", normal_tree()?),db,&mut inputs.clone())?;
         if let Err(e)=db.prepare_cached(&plan.sql) {
             super::profile::decision("composed relational query", || format!("declined: SQLite cannot prepare it ({e}); the program runs by strata"));
             if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
@@ -7997,12 +8018,6 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     }
     drop(setup);
     let planning = super::profile::span(|| "statistics and plan".into());
-    // The program's version (t36 item 7, step 2): its input's image, normalized by the version passes, which the
-    // planner reads its rules and fields from, and the passes below edit.
-    let normal_v = match early {
-        Some(v) => v,
-        None => version()?,
-    };
     let mut model = {
         let _span = super::profile::span(|| "statistics".into());
         make_plan(&normal_v, db, inputs)?
@@ -8010,20 +8025,19 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let demand_span = super::profile::span(|| "demand".into());
     // The literals a whole-program transformation reads, charged to it (here the demand split, then the strata).
     if super::profile::on() {
-        super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
+        super::profile::work(super::profile::Unit::Literal, literals(&normal_v));
     }
     let corpus = PLANS.with(|p| p.borrow().is_some());
     // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
-    let chosen_key = corpus.then(|| choices::key(prog));
+    let chosen_key = if corpus { Some(choices::key(normal_tree()?)) } else { None };
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
-    let chosen: Option<std::sync::Arc<Program>>;
-    // The chosen program's version (t36 item 6, step 5): the passes' overlay, or the kept choice's, which the run
-    // reads its rules from as it is; `None` where the run makes its program's (`Versions::of`).
-    let placed: Option<body::Placed>;
+    // The program's version as the passes chose it (t36 item 6): their overlay, or the kept choice's, which the run
+    // reads its rules from as it is; the program's own where nothing was rewritten.
+    let placed: body::Placed;
     // The relations inlined, for the outcome (a session stores, never inlines, what it keeps: decision 0099).
     let inlined_rels: BTreeSet<String>;
-    let prog: &Program = match reused {
+    match reused {
         Some(c) => {
             let nodes = model.stats.nodes;
             super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
@@ -8034,49 +8048,43 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             if !c.demanded.is_empty() {
                 super::profile::decision("demand (decision 0048)", || format!("{} relations computed only for the keys their readers reach: {}", c.demanded.len(), c.demanded.join(", ")));
             }
-            if c.program.is_some() {
+            placed = match c.version {
                 // The program run is the rewritten one: its analysis is that program's, made when asked.
-                crate::threads::drop_behind(std::mem::take(&mut model.analysis));
-            }
-            // Not rewritten: the program's own version.
-            placed = match &c.program {
-                Some(_) => c.version,
-                None => Some(normal_v),
+                Some(v) => {
+                    crate::threads::drop_behind(std::mem::take(&mut model.analysis));
+                    v
+                }
+                // Not rewritten: the program's own version.
+                None => normal_v,
             };
-            chosen = c.program;
-            chosen.as_deref().unwrap_or(prog)
         }
         None => {
             // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
             // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
             let mut inlined_names = Vec::new();
             let chose = super::profile::span(|| "inline or store".into());
-            // The program's version, made once: each pass edits the one before as an overlay.
-            let base = corpus.then(|| normal_v.clone());
-            let choice = match &base {
-                Some(base) => keeps::choose(prog, base, &mut model).map_err(Error::Plan)?,
-                None => None,
-            };
-            let mut inlined_placed = None;
+            // The program's version: each pass edits the one before as an overlay.
+            let choice = if corpus { keeps::choose(&normal_v, &mut model).map_err(Error::Plan)? } else { None };
             drop(chose);
             let inlined = match choice {
-                Some((p, done, v)) => {
-                    inlined_placed = Some(v);
-                    super::version_trace::note("plan.inline", prog, &p);
+                Some((done, v)) => {
+                    if super::version_trace::on() {
+                        super::version_trace::note("plan.inline", normal_tree()?, &v.program(&lists)?);
+                    }
                     super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
                     // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
                     if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
                         use std::io::Write;
                         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                            for r in &p.rules {
+                            for r in &v.program(&lists)?.rules {
                                 let _ = writeln!(f, "{r}");
                             }
                         }
                     }
-                    let _a = super::profile::span(|| "analysis of the inlined program".into());
-                    crate::threads::drop_behind(std::mem::replace(&mut model.analysis, std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&p)).into()));
+                    // The program run is the inlined one: its analysis is that program's, made when asked.
+                    crate::threads::drop_behind(std::mem::take(&mut model.analysis));
                     inlined_names = done;
-                    Some(p)
+                    Some(v)
                 }
                 None => None,
             };
@@ -8084,47 +8092,54 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
             let mut demanded_names = Vec::new();
             let splitting = super::profile::span(|| "negation split".into());
-            let split_neg = match inlined_placed.as_ref().or(base.as_ref()) {
-                Some(v) => demand::split_negations(inlined.as_ref().unwrap_or(prog), v, &model),
-                None => None,
-            };
-            let mut split_placed = None;
+            let split_neg = if corpus { demand::split_negations(inlined.as_ref().unwrap_or(&normal_v), &model) } else { None };
             drop(splitting);
             let split = match split_neg {
-                Some((p, demanded, v)) => {
-                    split_placed = Some(v);
-                    super::version_trace::note("plan.demand", inlined.as_ref().unwrap_or(prog), &p);
+                Some((demanded, v)) => {
+                    if super::version_trace::on() {
+                        let from = match &inlined {
+                            Some(i) => i.program(&lists)?,
+                            None => normal_tree()?.clone(),
+                        };
+                        super::version_trace::note("plan.demand", &from, &v.program(&lists)?);
+                    }
                     super::profile::decision("demand (decision 0048)", || {
                         format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
                     });
                     // The program run is the split one: its analysis is that program's, made when asked.
                     crate::threads::drop_behind(std::mem::take(&mut model.analysis));
                     demanded_names = demanded;
-                    Some(p)
+                    Some(v)
                 }
                 None => None,
             };
-            chosen = split.or(inlined).map(std::sync::Arc::new);
-            let rewritten = split_placed.or(inlined_placed);
+            let rewritten = split.or(inlined);
             inlined_rels = inlined_names.iter().cloned().collect();
             if let Some(k) = chosen_key {
-                choices::remember(k, choices::Chosen { program: chosen.clone(), version: rewritten.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
+                choices::remember(k, choices::Chosen { version: rewritten.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
             }
             // Not rewritten: the program's own version, made above.
-            placed = rewritten.or(Some(normal_v));
-            chosen.as_deref().unwrap_or(prog)
+            placed = rewritten.unwrap_or(normal_v);
         }
-    };
+    }
     drop(demand_span);
     let strata_span = super::profile::span(|| "strata".into());
     if super::profile::on() {
-        super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
+        super::profile::work(super::profile::Unit::Literal, literals(&placed));
     }
-    let (sccs, deps) = strata(prog)?;
+    // The run's version 0, whole (t36 item 7): the run reads the program's rules and fields from it (`f0` here,
+    // `Run::fields` in its helpers).
+    let Some(_) = Fields::of(&placed) else { return Err(Error::Plan("the program has no image: its fields are read from its version".into())) };
+    // Read once (above), and shared by this clone.
+    let p0 = placed.clone();
+    let f0 = Fields::of(&p0).expect("a whole version");
+    let sccs = p0.components()?;
+    let deps = super::program_image::analyses::edges_by_name(f0.v, f0.about);
     // A debugging aid: `RERAIL_RUN_DUMP=<file>` appends the rules each run is given, by stratum.
     if let Some(path) = std::env::var_os("RERAIL_RUN_DUMP") {
         use std::io::Write as _;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let prog = p0.program(&lists)?;
             let _ = writeln!(f, "== run of {} rules", prog.rules.len());
             for scc in &sccs {
                 let _ = writeln!(f, "-- stratum {scc:?}");
@@ -8141,25 +8156,15 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     // the dependency order, and T's plans in it.
     let (sccs, level_of) = by_level(sccs, &deps, model.inputs.native.contains("program"));
     // Each relation's rules, as keys of the program's version (its rule `k` is the program's rule `k`), in the
-    // program's order: made once, from the tree the version was made from.
+    // program's order.
     let mut rules_by: IndexMap<&str, Vec<RuleKey>> = IndexMap::new();
-    for (k, r) in prog.rules.iter().enumerate() {
-        rules_by.entry(r.head.rel.as_str()).or_default().push(RuleKey::program(k));
+    for k in 0..p0.len() {
+        rules_by.entry(p0.v.rel_name(p0.rule(k).head().rel())).or_default().push(RuleKey::program(k));
     }
     drop(strata_span);
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    // The run's version 0, whole (t36 item 7): the run reads the program's fields from it (`f0` here, `Run::fields`
-    // in its helpers). A kept choice stored as text has none; a version of rules alone is the program's image made now.
-    let placed = match placed {
-        Some(p) if p.whole => p,
-        _ => body::Placed::of_program(prog)?,
-    };
-    let Some(_) = Fields::of(&placed) else { return Err(Error::Plan("the program has no image: its fields are read from its version".into())) };
-    // Read once (above), and shared by this clone.
-    let p0 = placed.clone();
-    let f0 = Fields::of(&p0).expect("a whole version");
     // Inputs kept in the engine from an earlier run (a session's, decision 0090 step 3) are read in place, as native
     // relations, with the indexes they have.
     let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| f0.is_input(r)).collect();
@@ -8180,7 +8185,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let (mut issued_forms, mut issued_jobs, mut ran_by_jobs) = (0usize, 0usize, 0usize);
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
-    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::with(prog, placed)), trees: &prog.rules, version: 0, answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
+    let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(f0, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -8202,7 +8208,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     crate::code_rule_dsl::facts::vtab::forget_views(db);
     // Relations the program's rules or outputs name (a part of a split program declares the whole's).
     let vs0 = Arc::clone(&run.versions);
-    let named: HashSet<&str> = body::Versions::keys(0, prog.rules.len())
+    let named: HashSet<&str> = body::Versions::keys(0, p0.len())
         .flat_map(|r| std::iter::once(vs0.head_at(r)).chain(reads_of(&vs0, r)))
         .chain(f0.outputs())
         .chain(f0.fact_rels().into_iter().map(|f| f0.text(f.name())))
@@ -8310,10 +8316,10 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     // Each native relation is dropped after the last stratum that reads it (an output, a relation kept for the caller
     // and a gate's relations stay to the end).
     // Each stratum's rules (an index into `sccs`), as keys of the program's version, read by their handles.
-    let by_stratum = keys_by_stratum(prog, &sccs);
+    let by_stratum = keys_by_stratum(&p0, &sccs);
     // The program's version alone (version 0, as in `run.versions`, so its keys are the same): what the strata's
     // readers below read the program's rules by, apart from the forms the run adds to its own.
-    let run_vs = body::Versions::with(prog, p0.clone());
+    let run_vs = body::Versions::of_placed(p0.clone());
     let mut last = last_reads(f0, &run_vs, &sccs, &by_stratum, &run.views);
     let first = first_reads(f0, &run_vs, &sccs, &by_stratum, &run.views);
     // Decision 0090 §4: each maintained stratum's other form, derived again. Its form is chosen at its first piece,
@@ -8323,9 +8329,6 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let stratum_of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
     // A maintained program's strata derived again (decision 0215): read from its version's `Maint`.
     let maint0: Option<Arc<body::Maint>> = p0.maint.clone();
-    if maint0.is_none() && (!prog.again.is_empty() || !prog.together.is_empty()) {
-        return Err(Error::Plan("a maintained program whose version has no maintenance's parts".into()));
-    }
     let groups: &[body::AgainRef] = maint0.as_deref().map_or(&[], |m| m.again.as_slice());
     let owner: HashMap<&str, usize> = maint0.as_deref().map_or_else(HashMap::new, |m| m.again.iter().enumerate().flat_map(|(i, g)| m.names(&g.owned).map(move |r| (r, i))).collect());
     let again_at: Vec<Option<usize>> = groups
@@ -8391,7 +8394,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();
     loop {
-        let more: Vec<String> = body::Versions::keys(0, prog.rules.len())
+        let more: Vec<String> = body::Versions::keys(0, p0.len())
             .filter(|&r| pinned.contains(run.versions.head_at(r)) && run.views.contains(run.versions.head_at(r)))
             .flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>())
             .filter(|r| !pinned.contains(r.as_str()))
@@ -8522,7 +8525,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut evaluated: Vec<usize> = Vec::new();
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
-    let mut board = (issue::on() && native.contains("program") && prog.again.is_empty() && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
+    let mut board = (issue::on() && native.contains("program") && groups.is_empty() && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
     // A maintained run issues its forms as jobs a level at a time (above the board, which issues the base program's).
     let issue_driven = maintaining.is_some() && issue::on() && native.contains("program") && strata_kept.is_none() && !matches!(std::env::var("RERAIL_STRATA_PARALLEL").as_deref(), Ok("off"));
     if maintaining.is_some() {
@@ -8740,7 +8743,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     let (form_v, adopted) = m.form(&v0, &rules, scc, &moved, &mut run.model)?;
                     if std::env::var_os("RERAIL_VERSION_TRACE").is_some() {
                         let lists = super::front::Lists::default();
-                        super::version_trace::note("plan.form", prog, &form_v.v.program(&lists).map_err(Error::Plan)?);
+                        super::version_trace::note("plan.form", &p0.program(&lists)?, &form_v.v.program(&lists).map_err(Error::Plan)?);
                     }
                     let k = run.add_form(form_v)?;
                     let form_v = run.versions.placed(k).clone();
@@ -9225,7 +9228,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     run.answer_logs.entry(at).or_default().entry(rel.clone()).or_default().extend(rows.iter().cloned());
                 }
                 // An input's rows are the caller's to bind; a relation no rule reads has no table.
-                if f0.is_input(rel) || rows.is_empty() || !body::Versions::keys(0, prog.rules.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str())) {
+                if f0.is_input(rel) || rows.is_empty() || !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str())) {
                     continue;
                 }
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
@@ -9309,7 +9312,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             // session's part, `prog.again`): its seeds join deltas of a few rows, below the batch's `MIN_LEFT`, so
             // planning and specifying them ahead only doubled their planning (O125 steps 01-03: -5% cycles without
             // it). `RERAIL_LEVEL_JOINS=on` batches them as before.
-            let batched = super::native::setfix::level::on() && (prog.again.is_empty() || std::env::var("RERAIL_LEVEL_JOINS").is_ok_and(|v| v == "on"));
+            let batched = super::native::setfix::level::on() && (groups.is_empty() || std::env::var("RERAIL_LEVEL_JOINS").is_ok_and(|v| v == "on"));
             let native_ones: Vec<usize> = if !batched { Vec::new() } else { level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect() };
             // Chained (decision 0100 §11): the next level's seed joins whose relations are already held go in this
             // batch too, so their launch and its latency run under this level's strata, not before the next's.
@@ -9446,8 +9449,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             outcome.chosen.push(Chosen {
                 rule: rule.number().expect("a rule of the program"),
                 steps: order.iter().map(|s| (s.at, s.mode)).collect(),
-                // The head's text is the tree's (`Display`).
-                head: run.tree(rule).head.to_string(),
+                // The head's text is the tree's (`Display`), written from its handles.
+                head: b.show_head(),
                 anchor: order.first().map_or_else(|| "scalar".into(), |s| b.show(s.at)),
                 walks: order.iter().filter_map(|s| s.mode.map(|m| (b.show(s.at), m.name()))).collect(),
                 work: work.round_ties_even() as i64,
@@ -9517,7 +9520,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e| Error::Plan(e.to_string()))?;
         let _ = writeln!(f, "== run {at}");
         let mut all: BTreeSet<String> = sccs.iter().flatten().cloned().collect();
-        all.extend(body::Versions::keys(0, prog.rules.len()).flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>()));
+        all.extend(body::Versions::keys(0, p0.len()).flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>()));
         let dir = std::env::var_os("RERAIL_REL_DIR").map(|d| std::path::Path::new(&d).join(format!("run{at}")));
         if let Some(d) = &dir { let _ = std::fs::create_dir_all(d); }
         for r in &all {
@@ -9809,13 +9812,18 @@ fn thread_cpu() -> f64 {
     (user + kernel).as_secs_f64()
 }
 
-/// Each stratum's rules, as keys of the program's version (`RuleKey::program`: `prog`'s rule `k` is its rule `k`), in
-/// the program's order. Made once, from the tree the version was made from.
-pub fn keys_by_stratum(prog: &Program, sccs: &[BTreeSet<String>]) -> Vec<Vec<RuleKey>> {
+/// The literals of `p`'s rules, each head one: what a whole-program pass over them reads (the profile's work).
+fn literals(p: &body::Placed) -> u64 {
+    (0..p.len()).map(|k| 1 + p.rule(k).body().count() as u64).sum()
+}
+
+/// Each stratum's rules, as keys of the program's version `p` (`RuleKey::program`: the program's rule `k`), in the
+/// program's order.
+pub fn keys_by_stratum(p: &body::Placed, sccs: &[BTreeSet<String>]) -> Vec<Vec<RuleKey>> {
     let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
     let mut by: Vec<Vec<RuleKey>> = vec![Vec::new(); sccs.len()];
-    for (k, r) in prog.rules.iter().enumerate() {
-        if let Some(&j) = of.get(r.head.rel.as_str()) {
+    for k in 0..p.len() {
+        if let Some(&j) = of.get(p.v.rel_name(p.rule(k).head().rel())) {
             by[j].push(RuleKey::program(k));
         }
     }
@@ -9849,7 +9857,7 @@ pub fn decode_kept(
     }
     let prog = &lowered.program;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
-    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.len()), db, Some(lowered), "", true, &BTreeSet::new(), &names)
+    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.len()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
 /// The program's outputs as text rows, sorted (symbols as text, kinds and fields by name), and per
@@ -9862,7 +9870,7 @@ fn decoded_outputs(
     is_input: &dyn Fn(&str) -> bool,
     arity: &dyn Fn(&str) -> Option<usize>,
     db: &Connection,
-    lowered: Option<&lower::Lowered>,
+    lowered: Option<lower::Lowering<'_>>,
     facts: &str,
     atoms: bool,
     kept: &BTreeSet<String>,

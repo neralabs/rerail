@@ -382,5 +382,5 @@ pub fn outputs(
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
     let prog = &lowered.program;
     let outputs: Vec<&str> = prog.outputs.iter().map(String::as_str).collect();
-    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.len()), db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())
+    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.len()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())
 }

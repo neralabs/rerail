@@ -90,10 +90,10 @@ pub(in crate::code_rule_dsl) fn whole_relations() -> impl Drop {
     Reset(WHOLE.with(|w| w.replace(true)))
 }
 
-/// `prog` with each demandable relation computed for the keys its readers reach (the module's split), and what was
-/// demanded; `None` where nothing is, or where the split would not stratify or type. Read from `placed`, the program's
-/// version (t36 item 6: `over`), which must be the whole program.
-pub(super) fn split_negations(prog: &Program, placed: &Placed, model: &super::Model) -> Option<(Program, Vec<String>, Placed)> {
+/// What was demanded, and the program's version `placed` with each demandable relation computed for the keys its
+/// readers reach (the module's split, an overlay of `placed`); `None` where nothing is, or where the split would not
+/// stratify or type. `placed` must be the whole program (t36 item 6: `over`).
+pub(super) fn split_negations(placed: &Placed, model: &super::Model) -> Option<(Vec<String>, Placed)> {
     if WHOLE.with(|w| w.get()) {
         return None;
     }
@@ -111,7 +111,7 @@ pub(super) fn split_negations(prog: &Program, placed: &Placed, model: &super::Mo
     let mut rounds = 0;
     loop {
         rounds += 1;
-        match split_with(prog, &f, placed, model, &candidates) {
+        match split_with(&f, placed, model, &candidates) {
             Ok(split) => {
                 super::super::profile::decision("demand (decision 0048)", || format!("split in {rounds} rounds"));
                 return Some(split);
@@ -127,31 +127,21 @@ pub(super) fn split_negations(prog: &Program, placed: &Placed, model: &super::Mo
     }
 }
 
-/// `prog` split for `candidates`, or the candidates whose split failed: the readings `over::analyse`'s, the split an
+/// The program's version `base` split for `candidates`, or the candidates whose split failed: the readings `over::analyse`'s, the split an
 /// overlay of the version (`overlaid`), its strata checked over that overlay.
-fn split_with(prog: &Program, f: &Fields<'_>, base: &Placed, model: &super::Model, candidates: &BTreeSet<&str>) -> Result<(Program, Vec<String>, Placed), BTreeSet<String>> {
+fn split_with(f: &Fields<'_>, base: &Placed, model: &super::Model, candidates: &BTreeSet<&str>) -> Result<(Vec<String>, Placed), BTreeSet<String>> {
     let (splits, decls, nullary) = over::analyse(f, base, model, candidates)?;
-    let mut out = prog.clone();
-    for (pre, cols) in &decls {
-        out.decls.insert(pre.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
-    }
-    out.nullary.extend(nullary.iter().cloned());
     let demanded: Vec<String> = candidates.iter().map(|r| (*r).to_owned()).collect();
-    for rel in &demanded {
-        let name = format!("demand_{rel}");
-        out.decls.insert(name.into(), prog.decls[rel.as_str()].clone());
-    }
-    // The split as an overlay of the program's version (t36 item 6, step 3), decoded for the rest of the run, which
-    // reads its rules from the version (step 5). A demanded relation's rules read its demand first (`overlaid`).
-    let placed;
-    (out.rules, placed) = overlaid(base, prog, candidates, &splits, &decls, &nullary).map_err(|e| BTreeSet::from([e]))?;
+    // The split as an overlay of the program's version (t36 item 6, step 3). A demanded relation's rules read its
+    // demand first (`overlaid`).
+    let placed = overlaid(base, candidates, &splits, &decls, &nullary).map_err(|e| BTreeSet::from([e]))?;
     // A split that closes a cycle through a negation (a reader's body reading what the negated relation depends on)
     // leaves the program as it was.
     // Every failing component at once, not the first: a round per component was a split and strata per round.
     let about = super::super::program_image::About::of(&placed.v);
     let errors = super::super::program_image::analyses::unstratified(&placed.v, &about);
     if errors.is_empty() {
-        return Ok((out, demanded, placed));
+        return Ok((demanded, placed));
     }
     let mut failed: BTreeSet<String> = BTreeSet::new();
     for e in &errors {
@@ -181,7 +171,7 @@ struct Split {
 /// The split as an overlay of `base`, the program's version (its rule `k` the program's rule `k`), its rules in the
 /// tree's order: each reader replaced by its `pre_<i>` and itself over that, each demanded relation's rules reading
 /// its demand first, then the demands.
-fn overlaid(base: &Placed, prog: &Program, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize, Split>, decls: &[(String, Vec<(String, String)>)], nullary: &[String]) -> Result<(Vec<Rule>, Placed), String> {
+fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize, Split>, decls: &[(String, Vec<(String, String)>)], nullary: &[String]) -> Result<Placed, String> {
     let v: &Version = &base.v;
     let mut b = Builder::on(&base.v);
     // The splits' and the demands' declarations, and the flags, so the version stays the whole program.
@@ -196,11 +186,12 @@ fn overlaid(base: &Placed, prog: &Program, candidates: &BTreeSet<&str>, splits: 
     }
     b.add_nullary(nullary);
     let (mut seq, mut removed, mut added, mut demands) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for (ri, rule) in prog.rules.iter().enumerate() {
+    for ri in 0..base.len() {
         let id = base.id(ri);
         let r = v.rule(id).expect("a program rule");
-        let own = candidates.contains(rule.head.rel.as_str());
-        let demand = format!("demand_{}", rule.head.rel);
+        let head = v.rel_name(r.head().rel());
+        let own = candidates.contains(head);
+        let demand = format!("demand_{head}");
         let fresh: Vec<String> = (0..r.head().arity()).map(|i| format!("rr_demanded{i}")).collect();
         let (own_args, computed) = demand_terms(v, r, &fresh);
         let Some(s) = splits.get(&ri) else {
@@ -273,10 +264,7 @@ fn overlaid(base: &Placed, prog: &Program, candidates: &BTreeSet<&str>, splits: 
     if let Some(order) = renumbered(&base.v, &removed, &added, made) {
         seq.iter_mut().for_each(|id| *id = order[id]);
     }
-    let lists = super::super::front::Lists::default();
-    let mut tree = super::super::program_image::Tree::new(&out, &lists);
-    let rules = seq.iter().map(|&id| tree.rule(out.rule(id).expect("a split rule"))).collect();
-    Ok((rules, Placed::new(out, seq, base.whole)))
+    Ok(Placed::new(out, seq, base.whole))
 }
 
 /// `demand_atom`'s arguments over the version: the head's, each computed one a fresh variable, and the checks that

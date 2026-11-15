@@ -155,7 +155,7 @@ pub(super) fn component(
     let mut emitted = emit::Emitted {
         constant_rows: Default::default(),
         value_types: std::sync::Arc::new(f.decls_by_name().into_iter().map(|(r, c)| (r.to_owned(), c.into_iter().map(String::from).collect())).collect()),
-        analysis: run.model.analysis(run.prog),
+        analysis: run.model.analysis_of(run.versions.placed(0))?,
         program: p,
         queries,
         setup: vec![],

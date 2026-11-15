@@ -881,7 +881,6 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
 .output name
 "#;
     let out = dir.join("out");
-    let store = out.join("store.sqlite");
     for (i, [a, b]) in [["alpha", "beta"], ["gamma", "delta"]].into_iter().enumerate() {
         let root = dir.join(format!("corpus-{i}"));
         std::fs::create_dir_all(&root).unwrap();
@@ -1846,7 +1845,7 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
-    let result = run(&p, &db, inputs, None, Hooks::default());
+    let result = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default());
     unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), 0, None, std::ptr::null_mut()); }
     let result = result.unwrap();
     assert_eq!(result.outputs["captured"].len(), 1000);
@@ -2054,7 +2053,7 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
-    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
+    let out = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default()).unwrap();
     let mut o: Vec<String> = out.outputs["o"].iter().map(|r| format!("{r:?}")).collect();
     o.sort();
     assert_eq!(o.len(), 2, "{o:?}");
@@ -2391,7 +2390,7 @@ fn o148_plans_and_their_work() {
         // SAFETY: the connection outlives the run; the callback reads only its arguments.
         unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
         COSTS.lock().unwrap().clear();
-        let got = super::run(&program(name), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let got = super::run(&body::Placed::of_program(&program(name)).unwrap(), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
         for c in &got.chosen {
             lines.push(format!("PLAN\t{name}\t{}", chosen_line(c)));
         }
@@ -2548,6 +2547,6 @@ fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
-    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
+    let out = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default()).unwrap();
     assert_eq!(out.outputs["o"].len(), 1, "{:?}", out.outputs["o"]);
 }

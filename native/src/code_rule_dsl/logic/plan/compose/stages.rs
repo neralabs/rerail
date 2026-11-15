@@ -143,7 +143,7 @@ impl Compiled {
     }
 }
 
-pub(super) fn run(p: &Placed, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>) -> Result<Outcome> {
+pub(super) fn run(p: &Placed, db: &Connection, inputs: Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>) -> Result<Outcome> {
     run_with(p,db,inputs,lowered,hooks,BTreeSet::new())
 }
 
@@ -196,7 +196,7 @@ fn changes(p: &Placed, inputs: &Inputs) -> Result<BTreeSet<String>> {
     Ok(out)
 }
 
-pub(super) fn run_with(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>) -> Result<Outcome> {
+pub(super) fn run_with(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>) -> Result<Outcome> {
     let mut remaining=p.clone();
     simplify(&mut remaining,db,&mut inputs,&mut resident)?;
     let changes=changes(&remaining,&inputs)?;
@@ -218,7 +218,7 @@ pub(super) fn run_with(p: &Placed, db: &Connection, mut inputs: Inputs, lowered:
     run_stages(&remaining,db,&mut inputs,lowered,hooks,resident,&mut executions)
 }
 
-fn run_stages(p: &Placed, db: &Connection, inputs: &mut Inputs, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>, executions: &mut usize) -> Result<Outcome> {
+fn run_stages(p: &Placed, db: &Connection, inputs: &mut Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>, executions: &mut usize) -> Result<Outcome> {
     let mut remaining=p.clone();
     while *executions<STAGES {
         simplify(&mut remaining,db,inputs,&mut resident)?;

@@ -483,7 +483,7 @@ impl Compiled {
         &self,
         db: &Connection,
         f: Fields<'_>,
-        lowered: Option<&lower::Lowered>,
+        lowered: Option<lower::Lowering<'_>>,
         hooks: &mut Hooks<'_>,
     ) -> Result<Outcome> {
         self.bind_aliases(db)?;
@@ -547,7 +547,7 @@ impl Compiled {
         self.finish(db,f,lowered,hooks,values)
     }
 
-    fn finish(&self, db: &Connection, f: Fields<'_>, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>,
+    fn finish(&self, db: &Connection, f: Fields<'_>, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>,
         values: BTreeMap<String,Vec<Vec<SqlValue>>>) -> Result<Outcome> {
         let mut out = Outcome::default();
         for (rel, rows) in values {

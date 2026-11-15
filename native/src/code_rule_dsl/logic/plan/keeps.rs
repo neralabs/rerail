@@ -68,9 +68,9 @@ const SMALL: f64 = 1024.0;
 
 pub(super) mod inline;
 
-/// The choices, and the program with the inlined relations unfolded into their readers; `None` when nothing is
-/// inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.
-pub(super) fn choose(prog: &Program, base: &Placed, model: &mut Model) -> Result<Option<(Program, Vec<String>, Placed)>, String> {
+/// The relations inlined, and the program's version with them unfolded into their readers (an overlay of `base`);
+/// `None` when nothing is inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.
+pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, Placed)>, String> {
     // The program's fields beside its rules, read from its version; a program of no image (maintenance's parts: a
     // session's maintained program) inlines nothing, its relations each `no_inline` or a session's piece.
     let Some(f) = Fields::of(base).filter(|_| base.maint.is_none()) else {
@@ -299,18 +299,12 @@ pub(super) fn choose(prog: &Program, base: &Placed, model: &mut Model) -> Result
     // observation of that reader (`copied`).
     let got = inline::inline(&base.v, &base.order(), &inline)?;
     copied(got.rules.iter().filter(|(_, _, into)| !into.is_empty()).map(|(id, o, into)| (super::body::Body::of(&got.v, got.v.rule(*id).expect("a rule")).observed_key(), super::body::Body::of(&base.v, base.v.rule(*o).expect("a base rule")).observed_key(), into)));
-    // The program as inlining left it, decoded for the rest of the run, which reads its rules from the version
-    // (`Placed`, t36 item 6, step 5) and the rest of the program from the tree (until item 7).
-    let lists = crate::code_rule_dsl::logic::front::Lists::default();
-    let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists);
-    let mut out = prog.clone();
-    out.rules = got.rules.iter().map(|(id, _, _)| tree.rule(got.v.rule(*id).expect("a rule"))).collect();
     let done: Vec<String> = inline.into_iter().filter(|r| !got.unfinished.contains(r)).collect();
     if done.is_empty() {
         return Ok(None);
     }
     let placed = Placed::new(Arc::clone(&got.v), got.rules.iter().map(|(id, _, _)| *id).collect(), base.whole);
-    Ok(Some((out, done, placed)))
+    Ok(Some((done, placed)))
 }
 
 /// A candidate's price (`price_all`): too small to price, a reader copy that does not plan, or weighed.
@@ -1507,7 +1501,7 @@ pub mod tests {
                 model.stats.fan.insert((rel.to_owned(), c), rows / n);
             }
         }
-        let chosen = choose(&prog, &Placed::of_program(&prog).unwrap(), &mut model).unwrap();
+        let chosen = choose(&Placed::of_program(&prog).unwrap(), &mut model).unwrap();
         assert!(chosen.is_none(), "edge inlined into reach's recursion");
     }
 
@@ -1573,7 +1567,7 @@ pub mod tests {
                 model.ndv.insert((rel.into(), c), d);
             }
         }
-        let decided = |model: &mut Model| choose(&prog, &Placed::of_program(&prog).unwrap(), model).unwrap().map(|(_, done, _)| done).unwrap_or_default();
+        let decided = |model: &mut Model| choose(&Placed::of_program(&prog).unwrap(), model).unwrap().map(|(done, _)| done).unwrap_or_default();
         let reader = prog.rules.iter().find(|r| r.head.rel == "agg").unwrap();
         let def = prog.rules.iter().find(|r| r.head.rel == "ctx").unwrap();
         let copy = &inline::unfold_rules(reader, 0, &[def], 0).unwrap()[0];
@@ -1750,7 +1744,7 @@ pub mod tests {
         let made = super::super::body::alone(&prog.rules[0]).unwrap();
         let (_, planned) = calibrated_rows(Placed::of_program(&prog).unwrap().fields().unwrap(), &model, &super::super::body::nth(&made, 0)).unwrap();
         assert!(planned >= SMALL, "r planned at {planned} rows");
-        let chosen = choose(&prog, &Placed::of_program(&prog).unwrap(), &mut model).unwrap();
-        assert!(chosen.is_none(), "r inlined: {:?}", chosen.map(|c| c.1));
+        let chosen = choose(&Placed::of_program(&prog).unwrap(), &mut model).unwrap();
+        assert!(chosen.is_none(), "r inlined: {:?}", chosen.map(|c| c.0));
     }
 }
