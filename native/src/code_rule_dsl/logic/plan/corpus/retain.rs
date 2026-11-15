@@ -518,6 +518,14 @@ pub(in crate::code_rule_dsl) fn kept_source(
 }
 
 impl Retained {
+    /// The part taken under program `key`, another program of the same cross part (`keys`): its rows are the cross
+    /// program's, its inputs compared by digest (`cut`), and its documents answered only under the file-local
+    /// program they were read under (`docs`).
+    pub(in crate::code_rule_dsl) fn rekeyed(mut self, key: [u8; 32]) -> Self {
+        self.key = key;
+        self
+    }
+
     /// What a run of program `key` kept, read back from the store in a new process (t32 4.1, `kept_strata::load`):
     /// each input's digest and source, and each relation's rows as the engine holds them. Nothing measured.
     /// `digested`: inputs known by their digest alone (no rows kept: unchanged, or derived again if they changed).

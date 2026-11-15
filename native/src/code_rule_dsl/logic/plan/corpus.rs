@@ -7004,7 +7004,9 @@ fn run_observed(
                     part_keys.lock().expect("the parts' keys").push(ckey);
                     let mut cells = cell.lock().expect("the session's cross-file part");
                     // Taken out while the run uses it; a run that fails leaves no kept part for this program.
-                    let mut cell = cells.remove(&ckey);
+                    // Kept by the cross program alone (`binds`): a file-local rule's edit changes `ckey`, not the part's
+                    // program, whose inputs `cut` compares by digest. The part is taken under this run's key.
+                    let mut cell = cells.remove(&binds).map(|c| c.rekeyed(ckey));
                     let mut kept_frames = None;
                     if kept_part.is_some() {
                         let (loaded, p) = kept_strata::load(store, root, ckey, binds, &cross.program, &cross.domains, &cross_sccs, &cross_inputs, &digests)?;
@@ -7748,7 +7750,7 @@ fn run_observed(
                     }
                     // Written: what is past the budget is not held for this process's next run.
                     next.let_go_past();
-                    cells.insert(ckey, next);
+                    cells.insert(binds, next);
                 }
                 None => {
                     let exported: BTreeSet<&String> = split.exports.iter().collect();
