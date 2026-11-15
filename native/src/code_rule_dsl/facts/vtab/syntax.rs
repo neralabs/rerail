@@ -334,19 +334,36 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     made
 }
 
-/// The batches whose documents' texts `long_node_text` reads, by document key: the latest batch to hold each
-/// document, weakly (a chunk's batch is dropped when its run is done; its entries then read nothing).
-static TEXTS: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, (std::sync::Weak<Batch>, usize)>>> = std::sync::LazyLock::new(Default::default);
+/// The batches whose documents' texts `long_node_text` reads, by store and document key: the latest batch to hold
+/// each document, weakly (a chunk's batch is dropped when its run is done; its entries then read nothing). A document
+/// key is a store's: two runs of one process over two stores (the tests', each its own copy of one template) number
+/// their documents alike, and keyed by the document alone one run read the other's batch and lost its long texts.
+static TEXTS: std::sync::LazyLock<std::sync::RwLock<HashMap<(Option<std::path::PathBuf>, u32), (std::sync::Weak<Batch>, usize)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The store a run's documents are numbered in (`plan::corpus::tape_cache_path`), registered at load
+/// (`install_text_store`); without one, one store.
+static TEXT_STORE: std::sync::OnceLock<fn() -> Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+
+/// Registers what names the run's store (once, at load).
+pub fn install_text_store(store: fn() -> Option<std::path::PathBuf>) {
+    let _ = TEXT_STORE.set(store);
+}
+
+fn text_store() -> Option<std::path::PathBuf> {
+    TEXT_STORE.get().and_then(|store| store())
+}
 
 /// Hold `batch`'s documents for `long_node_text`.
 fn hold_texts(batch: &Arc<Batch>) {
+    let store = text_store();
     let mut texts = TEXTS.write().unwrap_or_else(|p| p.into_inner());
     // Entries of dropped batches go once they are as many as the live ones.
     if texts.len() > 4096 && texts.len() > 2 * batch.docs.len() {
         texts.retain(|_, (b, _)| b.strong_count() > 0);
     }
     for (i, p) in batch.docs.iter().enumerate() {
-        texts.insert(p.key, (Arc::downgrade(batch), i));
+        texts.insert((store.clone(), p.key), (Arc::downgrade(batch), i));
     }
 }
 
@@ -355,7 +372,9 @@ fn hold_texts(batch: &Arc<Batch>) {
 /// Only the nodes a rule binds are read and interned (decision 0108 §1).
 pub(crate) fn long_node_text(n: i64) -> Option<String> {
     let (key, low) = ((n >> 32) as u32, n as u32);
-    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
+    // The run's store, as the batch was held under it (`hold_texts`): only the nodes a rule binds past the bound ask.
+    let store = text_store();
+    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&(store, key)).cloned()?;
     let batch = batch.upgrade()?;
     let p = &batch.docs[i];
     let local = p.local_of(low)?;

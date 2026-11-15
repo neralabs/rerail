@@ -24,6 +24,7 @@ mod tier2_aot {
 // is the irreducible fallback, a loop over a `match` (`clif_rust`).
 const _: () = assert!(tier1_aot::STRUCTURED.0 == tier1_aot::STRUCTURED.1, "a tier 1 function is irreducible: a loop over a match");
 
+#[cfg(feature = "generated")]
 use rerail_compiler::{clif_rust, native_cpu_block, native_cpu_stream, native_ir, rust_stream};
 
 /// Which tiers run the ahead-of-time build.

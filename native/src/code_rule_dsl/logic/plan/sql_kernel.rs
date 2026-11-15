@@ -81,7 +81,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
     })
 }
 
-pub fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
+pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
     let mut p = program_for(run, &BTreeSet::from([rel.into()]))?;
     p.steps.push(schedule::Step {
         output: rel.into(),
@@ -97,7 +97,7 @@ pub fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
     )? as usize)
 }
 
-pub fn component(
+pub(super) fn component(
     run: &mut Run<'_, '_>,
     scc: &BTreeSet<String>,
     planned: &[(super::body::RuleKey, Vec<Step>)],
@@ -106,9 +106,10 @@ pub fn component(
     let mut p = program_for(run, scc)?;
     let mut queries = Vec::new();
     let vs = std::sync::Arc::clone(&run.versions);
+    let pf = vs.whole(run.version);
     for (rule, order) in planned {
         let b = vs.at(*rule);
-        let q = run.model.checked_query(run.prog, &b, order, None, None)?;
+        let q = run.model.checked_query(pf, &b, order, None, None)?;
         p.steps.push(schedule::Step {
             output: b.rel(b.head()).to_string(),
             stratum: 0,
@@ -126,9 +127,9 @@ pub fn component(
                     && !a.neg()
                     && scc.contains(b.rel(a))
                 {
-                    let (order, _, _) = run.model.plan_rule(run.prog, &b, Some(i))?;
+                    let (order, _, _) = run.model.plan_rule(pf, &b, Some(i))?;
                     let at = order.iter().position(|s| s.at == i).expect("delta atom");
-                    let q = run.model.checked_query(run.prog, &b, &order, Some(at), None)?;
+                    let q = run.model.checked_query(pf, &b, &order, Some(at), None)?;
                     p.steps.push(schedule::Step {
                         output: b.rel(b.head()).to_string(),
                         stratum: 0,
@@ -154,7 +155,7 @@ pub fn component(
     let mut emitted = emit::Emitted {
         constant_rows: Default::default(),
         value_types: std::sync::Arc::new(f.decls_by_name().into_iter().map(|(r, c)| (r.to_owned(), c.into_iter().map(String::from).collect())).collect()),
-        analysis: run.model.analysis(run.prog),
+        analysis: run.model.analysis_of(run.versions.placed(0))?,
         program: p,
         queries,
         setup: vec![],

@@ -35,6 +35,8 @@ pub(in crate::code_rule_dsl) fn is_support(rel: &str) -> bool {
 /// so, and how many kept their form.
 pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowered, usize, usize) {
     let mut out = cross.clone();
+    // Its rules are made here: the version of `cross` is not theirs.
+    out.version = None;
     let prog = &cross.program;
     let Ok(sccs) = front::components_of(prog) else { return (out, 0, 0) };
     let gated: BTreeSet<&str> = prog.gates.iter().map(|(g, _)| g.as_str()).collect();
@@ -167,7 +169,7 @@ mod tests {
         )
         .unwrap();
         let domains = lower::domains(&prog).unwrap();
-        let cross = lower::Lowered { program: prog, domains, ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
+        let cross = lower::Lowered { program: prog, version: None, domains, ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
         let (out, through, _) = supports(&cross);
         assert_eq!(through, 1);
         let sup = out.program.decls.keys().find(|r| is_support(r)).expect("a support relation").to_string();

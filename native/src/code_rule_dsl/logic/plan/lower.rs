@@ -342,9 +342,36 @@ pub(in crate::code_rule_dsl) fn rule_head_domains(rule: &super::super::front::Ru
 #[derive(Clone)]
 pub struct Lowered {
     pub program: Program,
+    /// `program`'s version, where the caller made it from another's (a split's part, decision 0244): `plan::run`
+    /// reads it in place of an image made of `program`. `None` once `program` is edited, and for a program made here.
+    pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     pub domains: Domains,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
+    pub dialect: GrammarDialect,
+}
+
+impl Lowered {
+    /// What the program's run reads beside its version (`plan::run`).
+    pub fn lowering(&self) -> Lowering<'_> {
+        Lowering { domains: &self.domains, dialect: self.dialect }
+    }
+    /// The version `plan::run` reads: `version`, else an image made of `program` (`Placed::of_program`).
+    pub fn placed(&self) -> super::Result<super::body::Placed> {
+        match &self.version {
+            Some(v) if self.program.again.is_empty() && self.program.together.is_empty() => {
+                Ok(super::body::Placed::whole(v.clone()))
+            }
+            _ => super::body::Placed::of_program(&self.program),
+        }
+    }
+}
+
+/// What a lowered program's run reads beside its version (`plan::run`, t36 item 7 step 8): each relation's column
+/// domains, and the dialect its kinds are of.
+#[derive(Clone, Copy)]
+pub struct Lowering<'l> {
+    pub(in crate::code_rule_dsl) domains: &'l Domains,
     pub dialect: GrammarDialect,
 }
 
@@ -523,7 +550,7 @@ pub fn lower(
         }
     }
     let ops = [names["+"], names["-"], names["*"]];
-    Ok(Lowered { program: out, domains, ops, dialect })
+    Ok(Lowered { program: out, version: None, domains, ops, dialect })
 }
 
 impl Lowered {
