@@ -818,6 +818,64 @@ Every node decodes right, on every corpus.
   byte-aligned form with 8-bit codes in place of 16 takes about 4.57 B a node in memory (mixed:
   4.63) and 1.88 on disk with zstd and a dictionary (mixed: 2.04).
 
+### Step 13: codes numbered by frequency, one cutoff a language (E21)
+
+Step 12 still reads through a table: a 512-byte one for every node, and the 128 KiB 2-D one for the
+1–3% whose byte is shared. Even a table of the shared bytes' columns alone would take 24–36 KiB of
+a 128 KiB L1. E21 (`Rank8` in `src/code8.rs`, printed by `tape16 code8`) takes the table away.
+
+- Each language numbers its codes by frequency, most frequent first (chosen on the even files,
+  measured on the odd). The numbering is the code: a rule's kind test names numbers.
+- A code numbered below the language's cutoff (255) is stored as its own number. The read is
+  `if byte < cut { byte }`: one compare, no load past the byte.
+- A code past the cutoff is stored as a prefix byte (255), and its low byte goes to the block's
+  side list (offset in the block, low byte; a start a 256-node block). Several prefixes (cutoff
+  252, 240, 224) would each cover fewer codes, but put more nodes in the list: the share only grows.
+- Languages with 256 codes or fewer (JSON, `.rr`, SQL, small TypeScript) have no cutoff at all.
+
+```text
+byte:   0 .. 254          255
+        the code itself   prefix: code = 255 + low, low from the block's side list
+```
+
+| | data-layer Python | rerail Python | rerail Rust | rerail TypeScript | rerail JavaScript |
+|---|---|---|---|---|---|
+| nodes past the cutoff, files the numbering was not chosen on | 0.36% | 0.73% | 1.10% | 1.12% | 0.43% |
+| the same, on the files it was chosen on | 0.27% | 0.39% | 0.94% | 0.51% | 0.11% |
+| step 12, for comparison: nodes on a shared byte + escaped | 1.06% + 0.04% | 1.78% + 0.31% | 3.21% + 0.09% | 2.04% + 0.21% | 0.90% + 0.33% |
+| nodes past cutoffs 252 / 240 / 224 (4, 16, 32 prefixes) | 0.39 / 0.53 / 0.77% | 0.84 / 1.02 / 1.36% | 1.13 / 1.39 / 1.79% | 1.15 / 1.27 / 1.50% | 0.45 / 0.64 / 0.90% |
+| memory, B a node: E21 / step 12 | 1.026 / 1.020 | 1.036 / 1.031 | 1.039 / 1.020 | 1.041 / 1.025 | 1.031 / — |
+| read at random, ns (M3): the byte / E21's code / step 12's code / 9-bit | 0.34 / 0.57 / 0.61 / 0.72 | 0.35 / 0.56 / 0.61 / 0.77 | 0.35 / 0.63 / 0.64 / 0.74 | 0.33 / 0.57 / 0.59 / 0.76 | 0.31 / 0.51 / 0.52 / 0.79 |
+| read in order, ns (M3): the byte / E21's code / step 12's code | 0.02 / 0.49 / 0.50 | 0.02 / 0.49 / 0.49 | 0.02 / 0.52 / 0.52 | 0.02 / 0.48 / 0.51 | 0.03 / 0.46 / 0.47 |
+| on disk, zstd + dictionary, B a node: E21 / step 12 | 0.243 / 0.238 | 0.364 / 0.360 | 0.323 / 0.305 | 0.293 / 0.280 | 0.320 / 0.345 |
+
+Every node decodes right, on every corpus and cutoff. Timings from one run on the M3 (load 6).
+
+- **No table, and fewer nodes off the fast path.** Frequency puts 99% of nodes or more below the
+  cutoff: 0.36–1.12% past it on files the numbering never saw, against 1.1–3.5% that step 12 sends
+  to its 128 KiB table or the escape list. Nothing is held in L1 for the read but the bytes.
+- **Reads as fast as step 12's, or slightly faster** (0.51–0.63 ns at random, 0.46–0.52 in order),
+  so the 512-byte table was not what step 12 paid for either. What is left over the byte alone
+  (about 0.25 ns at random) is the compare and branch in the loop. In order, the byte alone
+  vectorises (0.02 ns) and the branching read does not.
+- **Sweeps compare bytes and never confirm** for a code below the cutoff. A code past it is the
+  byte 255 and a side-list check, for 0.4–1.1% of nodes. A test for a set of codes (a kind under
+  several fields) is a 256-bit set (32 B) a rule, or a few compares; frequency order does not keep
+  a kind's codes adjacent, so ranges are not available.
+- **One prefix is best.** More prefixes (smaller cutoff) push more nodes into the list (Python
+  0.36 → 0.77% at 32 prefixes) to make the low byte smaller, which saves nothing at a byte.
+- **Memory and disk are within a few percent of step 12.** The side list is larger (2 B a node past
+  the cutoff, against 3 B an escape on fewer nodes), so memory is 0.5–2% higher; disk is level to
+  6% higher (Rust), and lower on JavaScript.
+- **The numbering is fixed a language and format version.** On the files it was chosen on, 0.11–
+  0.94% of nodes are past the cutoff, and a code no corpus showed lands there. The
+  numbering should be chosen once, on a large corpus, and kept stable.
+- **Small samples mislead.** Data-layer JavaScript (5 files, 302 measured nodes) shows 4.6% past
+  the cutoff; it is left out of the table.
+- **Removing the field from the code would end the tail.** Kind, flags and supertypes take 183–268
+  values (step 12), so all but Rust would fit below 255 with no side list. That needs the field
+  stored or derived elsewhere; not measured.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -982,3 +1040,7 @@ In order. Each step is measured on all three corpora, every answer checked.
     memory, 38–44% less disk; the byte reads 2.3× faster than 9 bits at random, the code
     15–20% faster. With them the byte-aligned form is the
     smallest in memory and on disk.
+13. **Codes numbered by frequency (E21).** Done: one cutoff a language (255), the byte is the code
+    below it, a prefix and the block's side list past it; 0.36–1.12% of nodes past it, no table,
+    reads level with step 12 or faster, memory and disk within a few percent. Replaces step 12's
+    tables in 0156.

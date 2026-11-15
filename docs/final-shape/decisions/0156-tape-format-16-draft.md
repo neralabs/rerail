@@ -563,10 +563,14 @@ keeps the same bits.
   41–78%. Codes bit-packed with slots, gaps and lengths at byte widths cost 4.63 B a node in memory
   and 2.04 on disk with a dictionary on Python (XF 4.59 and 3.37, format 15 8.63 and 2.34); LZ4 HC
   with a dictionary is within 7% of zstd there. The absolute checkpoints do not compress (0.25 B a
-  node at K = 8). Codes fit in 8 bits for every language measured (E20, step 12): one byte a code in
-  every context, overloaded where the previous node's byte tells two codes apart, through a
-  128 KiB table a language; 0.04–0.31% of nodes escape, every repeat keeps its bytes. With them
-  the all-byte form takes about 4.57 B a node in memory and 1.88 on disk on Python.
+  node at K = 8). Codes fit in 8 bits for every language measured (E20, E21, t39 steps 12–13):
+  each language numbers its codes by frequency, and a byte below its cutoff (255) is the code
+  itself, with no table; a code past it is the prefix 255 with its low byte in the block's side
+  list (0.36–1.12% of nodes on files the numbering never saw). A language with 256 codes or fewer
+  has no cutoff. Every repeat keeps its bytes. The numbering is fixed a language and format
+  version. With them the all-byte form takes about 4.57 B a node in memory and 1.88 on disk on
+  Python. (E20's overloading by the previous byte, through a 128 KiB table a language, took fewer
+  escapes but sent 1–3% of reads to the table, for no faster reads.)
 - **At rest, with random access.** Fixed blocks of N nodes, each a 4-byte index entry naming a
   repeat (in the file, or a pool), raw bytes, or one LZ4 block over the language's dictionary (E19,
   step 11): one decode a read, 1–5% over whole arrays at N = 4,096, 4–11% at 1,024, 14–23% at 256

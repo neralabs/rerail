@@ -12,6 +12,9 @@
 //! The shared bytes are chosen greedily, then improved by moving one code at a time to the byte where it
 //! escapes least, on the even files; escapes are counted on the odd ones (a new file meets pairs the table has
 //! not seen). The same is measured with the parent's byte as the context, which a read pays a parent for.
+//!
+//! E21 (t39 step 13, `Rank8`): the same files with codes numbered by frequency and one cutoff a language, so a
+//! byte below it is the code with no table at all.
 
 use crate::capture::File;
 use crate::codec::{self, Codec, Dictionary};
@@ -347,6 +350,7 @@ pub struct Report {
     /// On disk, B a node (measured files, dictionary from the others): zstd 3, LZ4 HC 9: 8-bit (bytes + side),
     /// language width bit-packed, 16 bits.
     pub disk: [[f64; 2]; 3],
+    pub rank: RankReport,
 }
 
 pub fn run(files: &[&File]) -> Report {
@@ -397,7 +401,27 @@ pub fn run(files: &[&File]) -> Report {
         wrong: 0,
         ns: [[0.0; 2]; 6],
         disk: [[0.0; 2]; 3],
+        rank: RankReport { tail: [0; 4], tail_train: 0, side_bytes: 0, wrong: 0, ns: [[0.0; 2]; 2], disk: [0.0; 2] },
     };
+    // E21: numbered by frequency on the training files.
+    let num = rank_numbers(nc, &train);
+    let mut by_num = vec![0u32; nc];
+    for (k, &r) in num.iter().enumerate() {
+        by_num[r as usize] = k as u32;
+    }
+    for c in &train {
+        r.rank.tail_train += Rank8::new(c, &num, 255).tail_nodes() as u64;
+    }
+    for c in &test {
+        for (j, &cut) in CUTS.iter().enumerate() {
+            let r8 = Rank8::new(c, &num, cut);
+            r.rank.tail[j] += r8.tail_nodes() as u64;
+            if j == 0 {
+                r.rank.side_bytes += r8.side_bytes() as u64;
+            }
+            r.rank.wrong += (0..c.len()).filter(|&i| u64::from(by_num[r8.get(i) as usize]) != c.code[i]).count() as u64;
+        }
+    }
     for c in &train {
         r.escapes_train += store(c, &a, Ctx::Prev).1.len() as u64;
     }
@@ -459,6 +483,9 @@ pub fn run(files: &[&File]) -> Report {
         both(&order, n, &best, |i| p9.get(i)),
         both(&order, n, &best, |i| u64::from(c8.get_ident(i))),
     ];
+    let r8 = Rank8::new(c, &num, 255);
+    r.rank.ns = [both(&order, n, &best, |i| u64::from(r8.byte(i))), both(&order, n, &best, |i| u64::from(r8.get(i)))];
+    drop(r8);
     // The renumbered read agrees with the code wherever the byte is unshared.
     r.wrong += (0..n).filter(|&i| c8.one[c8.byte(i) as usize] != SHARED && c8.get_ident(i) as u16 != c8.one[c8.byte(i) as usize] && c8.get_ident(i) != u32::from(c8.byte(i))).count() as u64;
     // Every read agrees with the plain decode.
@@ -491,6 +518,16 @@ pub fn run(files: &[&File]) -> Report {
             }
             r.disk[k] = [z as f64 / r.measured_nodes as f64, l as f64 / r.measured_nodes as f64];
         }
+        let tr: Vec<Vec<u8>> = train.iter().map(|c| Rank8::new(c, &num, 255).disk_bytes()).collect();
+        let d = Dictionary::train(&tr, 64 << 10);
+        let mut lz = Lz4::new(true, &d.bytes);
+        let (mut z, mut l) = (0u64, 0u64);
+        for c in &test {
+            let x = Rank8::new(c, &num, 255).disk_bytes();
+            z += codec::compress(Codec::Zstd, &x, &d, 0).len() as u64;
+            l += lz.compress(&x).len() as u64;
+        }
+        r.rank.disk = [z as f64 / r.measured_nodes as f64, l as f64 / r.measured_nodes as f64];
     }
     r
 }
@@ -522,5 +559,126 @@ pub fn print(title: &str, r: &Report) {
     println!("| on disk, B a node, zstd 3 + dict / LZ4 HC + dict: 8-bit | {:.3} / {:.3} |", r.disk[0][0], r.disk[0][1]);
     println!("| the same: {}-bit packed | {:.3} / {:.3} |", bits(r.codes), r.disk[1][0], r.disk[1][1]);
     println!("| the same: 16-bit | {:.3} / {:.3} |", r.disk[2][0], r.disk[2][1]);
+    let k = &r.rank;
+    println!("| E21, numbered by frequency: nodes past the cutoff 255 / 252 / 240 / 224 (measured; 255 on the chosen) | {} / {} / {} / {} ({}) |", pct(k.tail[0], r.measured_nodes), pct(k.tail[1], r.measured_nodes), pct(k.tail[2], r.measured_nodes), pct(k.tail[3], r.measured_nodes), pct(k.tail_train, r.train_nodes));
+    println!("| E21 memory, B a node (cutoff 255); decoded wrong | {:.3}; {} |", 1.0 + k.side_bytes as f64 / r.measured_nodes.max(1) as f64, k.wrong);
+    println!("| E21 read at random / in order, ns: the byte alone; the code (compare, side list past the cutoff) | {:.2} / {:.2}; {:.2} / {:.2} |", k.ns[0][0], k.ns[0][1], k.ns[1][0], k.ns[1][1]);
+    println!("| E21 on disk, zstd 3 + dict / LZ4 HC + dict (bytes + side list) | {:.3} / {:.3} |", k.disk[0], k.disk[1]);
     println!();
+}
+
+/// E21: codes numbered by frequency (on the files the numbering is chosen on), so a stored byte below the
+/// language's cutoff `cut` is the code itself: no table. A byte at or past the cutoff is a prefix: the code is
+/// `cut + (byte - cut) * per + low`, with `low` in the block's side list (offset byte, low byte), one entry a
+/// node past the cutoff. A read is a compare; a code-set sweep for codes below the cutoff compares bytes and
+/// never confirms.
+pub struct Rank8 {
+    bytes: Vec<u8>,
+    cut: u32,
+    per: u32,
+    start: Vec<u32>,
+    off: Vec<u8>,
+    low: Vec<u8>,
+}
+
+/// The numbering: code -> number, most frequent first (codes unseen in `train` last, in code order).
+pub fn rank_numbers(ncodes: usize, train: &[&Cols]) -> Vec<u32> {
+    let mut freq = vec![0u64; ncodes];
+    for c in train {
+        for &k in &c.code {
+            freq[k as usize] += 1;
+        }
+    }
+    let mut order: Vec<usize> = (0..ncodes).collect();
+    order.sort_by_key(|&k| (std::cmp::Reverse(freq[k]), k));
+    let mut num = vec![0u32; ncodes];
+    for (r, &k) in order.iter().enumerate() {
+        num[k] = r as u32;
+    }
+    num
+}
+
+impl Rank8 {
+    /// `cut` bytes stand for themselves; the rest (256 - cut) are prefixes sharing the remaining numbers.
+    pub fn new(c: &Cols, num: &[u32], cut: u32) -> Rank8 {
+        let ncodes = num.len() as u32;
+        let cut = if ncodes <= 256 { 256 } else { cut };
+        let per = if cut >= 256 { 1 } else { (ncodes - cut).div_ceil(256 - cut) };
+        assert!(per <= 256, "{ncodes} codes do not fit a cutoff of {cut}");
+        let n = c.len();
+        let blocks = n.div_ceil(BLOCK);
+        let mut bytes = vec![0u8; n];
+        let mut start = vec![0u32; blocks + 1];
+        let (mut off, mut low) = (Vec::new(), Vec::new());
+        for i in 0..n {
+            let r = num[c.code[i] as usize];
+            if r < cut {
+                bytes[i] = r as u8;
+            } else {
+                let t = r - cut;
+                bytes[i] = (cut + t / per) as u8;
+                start[i / BLOCK + 1] += 1;
+                off.push((i % BLOCK) as u8);
+                low.push((t % per) as u8);
+            }
+        }
+        for b in 0..blocks {
+            start[b + 1] += start[b];
+        }
+        Rank8 { bytes, cut, per, start, off, low }
+    }
+    #[inline(always)]
+    pub fn byte(&self, i: usize) -> u8 {
+        // SAFETY: callers pass i < len.
+        unsafe { *self.bytes.get_unchecked(i) }
+    }
+    /// The code's number: the byte below the cutoff, else the prefix and the side list.
+    #[inline(always)]
+    pub fn get(&self, i: usize) -> u32 {
+        let v = u32::from(self.byte(i));
+        if v < self.cut {
+            return v;
+        }
+        self.tail(i, v)
+    }
+    #[cold]
+    #[inline(never)]
+    fn tail(&self, i: usize, v: u32) -> u32 {
+        let b = i / BLOCK;
+        let (s, e) = (self.start[b] as usize, self.start[b + 1] as usize);
+        let k = self.off[s..e].binary_search(&((i % BLOCK) as u8)).expect("a node past the cutoff is listed");
+        self.cut + (v - self.cut) * self.per + u32::from(self.low[s + k])
+    }
+    pub fn tail_nodes(&self) -> usize {
+        self.off.len()
+    }
+    pub fn side_bytes(&self) -> usize {
+        self.start.len() * 4 + self.off.len() + self.low.len()
+    }
+    /// The stored bytes with the side list after them, as written to disk.
+    pub fn disk_bytes(&self) -> Vec<u8> {
+        let mut b = self.bytes.clone();
+        for (&o, &l) in self.off.iter().zip(&self.low) {
+            b.push(o);
+            b.push(l);
+        }
+        b
+    }
+}
+
+/// The cutoffs E21 measures the tail share at: one prefix byte, 4, 16, 32.
+pub const CUTS: [u32; 4] = [255, 252, 240, 224];
+
+/// E21 over a language's files: tail share at each cutoff (measured files, numbering on the others), memory,
+/// reads, disk.
+pub struct RankReport {
+    /// Nodes past each cutoff of CUTS, measured files; and at 255 on the files it was chosen on.
+    pub tail: [u64; 4],
+    pub tail_train: u64,
+    pub side_bytes: u64,
+    pub wrong: u64,
+    /// ns a read at random / in order: the byte alone; the code (cutoff 255).
+    pub ns: [[f64; 2]; 2],
+    /// zstd 3 + dict / LZ4 HC + dict, B a node, cutoff 255.
+    pub disk: [f64; 2],
 }

@@ -14,7 +14,7 @@
 //! tape16 inplace <cap>                                E10: in-memory tapes read in place, every question costed
 //! tape16 disk  <cap>                                   E18: the forms on disk, zstd and LZ4: bytes, decode, matches
 //! tape16 ralz  <cap>                                   E19: LZ4 in fixed blocks, stored as repeats, raw or LZ4
-//! tape16 code8 <cap>                                   E20: codes in 8 bits, overloaded by the adjacent code
+//! tape16 code8 <cap>                                   E20: codes in 8 bits, overloaded by the adjacent code; E21: numbered by frequency, one cutoff
 //! tape16 gpu   <cap> [--dict KB] [--k K] [--cut N]      E3: the LZ codecs decoded on Metal
 //! ```
 
