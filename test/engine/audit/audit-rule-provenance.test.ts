@@ -153,6 +153,75 @@ function recordAsOlder(path: string, auditId: string, provenance: readonly Audit
   }
 }
 
+/** When the file ran the step that keeps each provenance once (epoch ms). */
+function stepAppliedAt(path: string): number {
+  const database = new Database(path, { readonly: true });
+  try {
+    return database.prepare("SELECT applied_at FROM schema_migrations WHERE id = ?").pluck().get(RULE_PROVENANCE_STEP) as number;
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * Records `count` audits in one statement, so SQLite copies `text` without a round trip per audit: `<prefix>-<n>`, each
+ * with `text` in its row and naming `provenanceId` (null, as a Rerail older than this one writes each audit), the first
+ * beginning at `from` (epoch ms) and each later one a millisecond after the one before.
+ */
+function recordMany(path: string, { prefix, count, from, text, provenanceId = null }: {
+  prefix: string; count: number; from: number; text: string; provenanceId?: number | null;
+}): void {
+  const database = new Database(path);
+  try {
+    database.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i + 1 < ?)
+      INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, catalog_revision, rule_revisions_json,
+        rule_provenance_json, rule_provenance_id, paths_json, started_at, finished_at, status, violations_json, failures_json)
+      SELECT ? || '-' || i, 'session-b', '/home/dev/app', 'touched-files', 'steer', 1, 'catalog', '[]', ?, ?, '[]', ? + i,
+        ? + i + 1, 'completed', '[]', '[]' FROM n`).run(count, prefix, text, provenanceId, from, from);
+  } finally {
+    database.close();
+  }
+}
+
+/** The id of the stored copy of `[]`, which this build's store names for every audit that ran no rules, stored first. */
+function storedEmptyProvenance(path: string): number {
+  const database = new Database(path);
+  try {
+    const digest = createHash("sha256").update("[]").digest("hex");
+    database.prepare("INSERT OR IGNORE INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, '[]')").run(digest);
+    return database.prepare("SELECT provenance_id FROM audit_rule_provenances WHERE digest = ?").pluck().get(digest) as number;
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * Times each run of every statement this thread prepares from here on (`get`, `all` and `run`), and puts `prepare`
+ * back. A move's thread prepares its own statements, which this does not see.
+ */
+function timeStatements(): { totalMs: () => number; restore: () => void } {
+  const runs: number[] = [];
+  const prepare = Database.prototype.prepare;
+  const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
+    const statement = prepare.call(this, source);
+    for (const kind of ["get", "all", "run"] as const) {
+      const original = statement[kind].bind(statement) as (...values: unknown[]) => unknown;
+      Object.assign(statement, {
+        [kind]: (...values: unknown[]) => {
+          const began = performance.now();
+          try {
+            return original(...values);
+          } finally {
+            runs.push(performance.now() - began);
+          }
+        },
+      });
+    }
+    return statement;
+  });
+  return { totalMs: () => runs.reduce((total, ms) => total + ms, 0), restore: () => spy.mockRestore() };
+}
+
 /** The start of the line a move writes while it waits for an older Rerail sharing the file. */
 const WAITS_FOR_OLDER = "moving the rule provenance of audits recorded before this Rerail's upgrade waits until";
 
@@ -326,7 +395,7 @@ describe("audit rule provenance", () => {
     try {
       // The upgrade leaves each provenance inline, where the store reads it, until the move.
       readsAsWritten();
-      expect(await move(path)).toBe(16);
+      expect(await move(path)).toBe(18);
       // The move's pages went through the WAL; it is emptied once the move ends, not kept that size while the store
       // holds the file.
       expect(statSync(`${path}-wal`).size).toBe(0);
@@ -368,7 +437,7 @@ describe("audit rule provenance", () => {
     const before = readAsOlder(path, olderIds);
     expect(provenanceTexts(before)).toEqual(written.map(({ text }) => text));
 
-    expect(await move(path)).toBe(4);
+    expect(await move(path)).toBe(5);
     const store = new SqliteAuditStore(path);
     let ids: string[];
     let current: (AuditRecord | undefined)[];
@@ -779,6 +848,74 @@ describe("audit rule provenance", () => {
       writer.close();
     }
   }, 15_000);
+
+  it("reads no row of the audits an older Rerail recorded after the step, in its last batch or on its calling thread once nothing is left", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
+    openRerailDatabase(path).$client.close();
+    // An older Rerail sharing the file then records 2,000 audits, each with its provenance in its row: about 200 KB,
+    // with the audit's start after it.
+    const text = JSON.stringify(provenanceOf("/home/dev/app", 700));
+    expect(text.length).toBeGreaterThan(190_000);
+    recordMany(path, { prefix: "older-after", count: 2_000, from: stepAppliedAt(path) + 1, text });
+    // Eight days on, so the move does not wait for them.
+    const clock = (): number => Date.now() + 8 * 24 * 3_600_000;
+
+    // The longest time from one of the move's pauses to the next: one batch, and the check before it. A batch that read
+    // the start of each of those 2,000 rows held the write lock 125 ms on Linux and 470 ms on Windows.
+    const gaps: number[] = [];
+    let last: number | undefined;
+    const pause = (): Promise<void> => {
+      const now = performance.now();
+      if (last !== undefined) gaps.push(now - last);
+      last = now;
+      return Promise.resolve();
+    };
+    expect(await move(path, { clock, pause })).toBe(20);
+    expect(Math.max(...gaps)).toBeLessThan(25);
+    expect(inlineAudits(path)).toBe(2_000);
+
+    // A later start finds nothing left to move and starts no thread. On its calling thread, the daemon's, which answers
+    // hooks, reading the start of each of those rows took 18 to 1,134 ms on a real daemon's start.
+    const timed = timeStatements();
+    try {
+      expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(0);
+    } finally {
+      timed.restore();
+    }
+    expect(timed.totalMs()).toBeLessThan(20);
+  }, 120_000);
+
+  it("reads one audit row on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
+    openRerailDatabase(path).$client.close();
+    // An older Rerail sharing the file records an audit; this build records 50,000 after it, each without rules.
+    const at = recordAsOlder(path, "older-beside", provenanceOf("/home/dev/app", 20));
+    recordMany(path, { prefix: "ruleless", count: 50_000, from: at + 1, text: "[]", provenanceId: storedEmptyProvenance(path) });
+    const stop = new AbortController();
+    // The timer the wait sleeps on ends the wait on its first pass.
+    const timer = (): Promise<void> => {
+      stop.abort();
+      return Promise.reject(new Error("stopped"));
+    };
+    const stderr = spyOnStderr();
+    const timed = timeStatements();
+    let logged = "";
+    try {
+      expect(await moveRuleProvenancesInWorker(path, stop.signal, { timer })).toBe(0);
+    } finally {
+      timed.restore();
+      logged = stderr.logged();
+      stderr.restore();
+    }
+
+    expect(logged).toContain(`began at ${new Date(at).toISOString()}.`);
+    // Reading the start of every audit in the week, and the row of each that began after the older Rerail's, took
+    // 69 ms on Linux and 195 ms on Windows.
+    expect(timed.totalMs()).toBeLessThan(20);
+    expect(inlineAudits(path)).toBe(21);
+  }, 60_000);
 
   it("ends at once, moving nothing, when a stop comes before it opens its writer while another connection holds the write lock", async () => {
     const path = await fileOfTheBuildBefore();

@@ -4,7 +4,8 @@
  * the daemon starts it once it serves (`daemon.ts`), on a worker thread of its own (`moveRuleProvenancesInWorker`), so
  * its batches and checkpoints never hold the thread that answers requests. That thread only reads, on a read-only
  * connection, whether audits are left to move and whether an older Rerail's audit makes the move wait (`moveState`):
- * at the start, after each pass of the wait, and once the move's thread ends. Each batch of audits is one write
+ * at the start, after each pass of the wait, and once the move's thread ends. Each of those reads is one audit row,
+ * found through `audits_rule_provenance` (`UNNAMED`), however long the history. Each batch of audits is one write
  * transaction sized to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep
  * recording while it runs; a process stopped partway loses at most one batch, and the next run goes on from what is
  * left. Until an audit moves, the audit store reads its provenance inline. The move never waits inside SQLite for
@@ -18,11 +19,16 @@
  *
  * A Rerail older than the step reads an audit's provenance only from the audit's own row, so it reads `[]` for each
  * audit the move took it from. The move therefore waits while such a Rerail may still be using the file: until
- * `OLDER_WRITE_WINDOW_MS` has passed since the last audit that names no stored copy began, with rules or without, those
- * recorded before the step included (`lastOlderWrite`), checked before the move starts and again before each batch.
- * This Rerail's audit store names a stored copy for every audit it writes, `[]` included, so only an older Rerail
- * writes an audit that names none. With only this Rerail running, the move starts a week after the last audit
- * recorded before the step.
+ * `OLDER_WRITE_WINDOW_MS` has passed since the last recorded audit that names no stored copy began, with rules or
+ * without, those recorded before the step included (`lastOlderWrite`), checked before the move starts and again before
+ * each batch. This Rerail's audit store names a stored copy for every audit it writes, `[]` included, and the move
+ * names one for every audit it takes, so only an older Rerail writes an audit that names none. With only this Rerail
+ * running, the move starts a week after the last audit recorded before the step.
+ *
+ * Every audit is recorded as it begins, so rowids follow the order audits began in. The move takes the audits that
+ * name no stored copy in that order, up to the first that began after the step: from there on each is an older
+ * Rerail's, recorded after the step, which keeps its provenance in its row, hundreds of kilobytes with its start after
+ * it. Neither the move nor a read of its state reads such a row past that first one.
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -115,8 +121,9 @@ interface OlderWrites {
 }
 
 /**
- * What a file asks of the move: nothing; to move audits; or to wait until `until`, since an audit that names no stored
- * copy of its provenance, as an older Rerail writes each audit, began at `at`, less than the window before.
+ * What a file asks of the move: nothing; to move audits; or to wait until `until`, since the last recorded audit that
+ * names no stored copy of its provenance, as an older Rerail writes each audit, began at `at`, less than the window
+ * before.
  */
 type MoveState =
   | { readonly kind: "none" }
@@ -162,12 +169,12 @@ const STOPPED = Symbol("stopped");
 type Free = <T>(step: () => T) => Promise<T | typeof STOPPED>;
 
 /**
- * Moves the provenance of every audit that held it inline when the file ran `audit-rule-provenance-once`, then empties
- * the WAL its batches filled into the file (`emptyWalAfterMove`). Audits that an older Rerail sharing the file writes
- * after that step keep theirs inline, where both versions read it. While an audit that names no stored copy, as an
- * older Rerail writes each audit, has begun within the window, one recorded before the step included, the move takes
- * nothing, or stops before its next batch (`lastOlderWrite`). A file that does not exist yet holds nothing to move,
- * and the move does not create it. Resolves to how many audits it moved.
+ * Moves the provenance of every audit that held it inline when the file ran `audit-rule-provenance-once`, `[]`
+ * included, then empties the WAL its batches filled into the file (`emptyWalAfterMove`). Audits that an older Rerail
+ * sharing the file writes after that step keep theirs inline, where both versions read it. While the last recorded
+ * audit that names no stored copy, as an older Rerail writes each audit, began within the window, one recorded before
+ * the step included, the move takes nothing, or stops before its next batch (`lastOlderWrite`). A file that does not
+ * exist yet holds nothing to move, and the move does not create it. Resolves to how many audits it moved.
  */
 export async function moveRuleProvenances(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
   const older = olderWritesOf(options);
@@ -269,13 +276,15 @@ function nextBatchSize(size: number, took: number, most: number): number {
  * once no audit is left to move or `signal` stops it. Its batches and checkpoints then never run on the calling
  * thread, which in the daemon answers the requests hooks send: on a loaded Windows machine one batch of 100 audits took
  * 3.6 s, past the 2 s a hook's health probe waits. `signal` stops the move before its next step. A file with nothing
- * to move, read on the calling thread, starts no thread.
+ * to move, read on the calling thread, starts no thread. What the calling thread reads of the file is one audit row a
+ * read (`moveState`), however long the history.
  *
- * While an audit that names no stored copy of its provenance has begun within `olderWindowMs` (`OLDER_WRITE_WINDOW_MS`
- * unless a test passes its own), recorded before the step or by an older Rerail since, this thread starts no move:
- * stderr says why and until when, and it waits on a timer that holds nothing open, reading the file and the clock again
- * at least once in `OLDER_WAIT_PASS_MS` (`olderPass`). A move such an audit stopped before its next batch waits the
- * same way; one that ended with work left for any other reason goes on at the next start, as before.
+ * While the last recorded audit that names no stored copy of its provenance began within `olderWindowMs`
+ * (`OLDER_WRITE_WINDOW_MS` unless a test passes its own), one recorded before the step or by an older Rerail since,
+ * this thread starts no move: stderr says why and until when, and it waits on a timer that holds nothing open, reading
+ * the file and the clock again at least once in `OLDER_WAIT_PASS_MS` (`olderPass`). A move such an audit stopped
+ * before its next batch waits the same way; one that ended with work left for any other reason goes on at the next
+ * start, as before.
  */
 export async function moveRuleProvenancesInWorker(
   path: string,
@@ -444,13 +453,26 @@ function stepAppliedAt(database: RerailDatabase): number | undefined {
     .get(RULE_PROVENANCE_STEP);
 }
 
-/** The audits the move takes: those holding their provenance inline that started no later than the step ran (`?`). */
-const TAKEN = "started_at <= ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]'";
+/**
+ * The audits that name no stored copy of their provenance, through `audits_rule_provenance`, which lists them by rowid,
+ * the order they were recorded in: a statement that takes them in that order reads only the rows it returns. The hint
+ * keeps that plan whatever statistics an `ANALYZE` leaves, and makes a file without the index fail the statement
+ * rather than read every audit's row; this build's DDL creates the index on every writable open, the daemon's included.
+ */
+const UNNAMED = "audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL";
+
+/** Which audits one batch takes: up to `limit` after rowid `after`, of those that began no later than `upTo`. */
+interface BatchRange {
+  readonly after: number;
+  readonly upTo: number;
+  readonly limit: number;
+}
 
 /**
  * What the file asks of the move (`MoveState`), read on a read-only connection: once the move has ended, each later
  * daemon start finds nothing and opens no writer, so it takes no write lock. A read-only open runs a pending step
- * through a writable open first, as it does for any reader.
+ * through a writable open first, as it does for any reader. Each of its reads is one audit row, however long the
+ * history (`takes`, `lastOlderWrite`).
  */
 function moveState(path: string, older: OlderWrites): MoveState {
   const database = openRerailDatabase(path, { readonly: true });
@@ -463,8 +485,8 @@ function moveState(path: string, older: OlderWrites): MoveState {
 }
 
 /**
- * Nothing when no audit is left to take; a wait while audits are left to take and an audit that names no stored copy
- * began within the window (`lastOlderWrite`); else the move.
+ * Nothing when no audit is left to take; a wait while audits are left to take and the last recorded audit that names
+ * no stored copy began within the window (`lastOlderWrite`); else the move.
  */
 function stateAt(client: Client, upTo: number, older: OlderWrites): MoveState {
   if (!takes(client, upTo)) return NONE;
@@ -472,45 +494,45 @@ function stateAt(client: Client, upTo: number, older: OlderWrites): MoveState {
   return at === undefined ? MOVE : { kind: "wait", at, until: at + older.windowMs };
 }
 
-/** Whether an audit the move takes is left. */
+/**
+ * Whether an audit the move takes is left: the first recorded audit that names no stored copy began no later than the
+ * step (`upTo`). The move takes them in the order they were recorded, up to the first that began after the step, so
+ * once that one comes first none is left. One row: the start of every audit an older Rerail recorded after the step
+ * sits after its provenance, and reading the start of each of 2,400 such audits took 1.1 s on a cold cache.
+ */
 function takes(client: Client, upTo: number): boolean {
-  return client.prepare<[number], number>(`SELECT 1 FROM audits WHERE ${TAKEN} LIMIT 1`).pluck().get(upTo) !== undefined;
+  const first = client.prepare<[], number>(`SELECT started_at FROM ${UNNAMED} ORDER BY rowid LIMIT 1`).pluck().get();
+  return first !== undefined && first <= upTo;
 }
 
 /**
- * When the last audit began that names no stored copy of its provenance, of those that began less than
- * `older.windowMs` before `older.clock()` or later; undefined when none did. Only a Rerail older than the step writes
- * an audit so, with its provenance in the audit's own row or `[]` there when it ran no rules, and it reads each audit's
- * provenance only from that row. This Rerail's audit store names a stored copy for every audit, `[]` included, so its
- * own audits never count. The audits recorded before the step count as well: a Rerail that ran then may still run
- * beside this one, and record its next audit days later. The audits that began in the window come from
- * `audits_session_started`, which holds each one's start, and only their rows are read, the latest first: a row that
- * holds its provenance runs to hundreds of kilobytes with the start after it, so reading the start of every recorded
- * audit from its row would read the whole history.
+ * When the last recorded audit that names no stored copy of its provenance began, when that was less than
+ * `older.windowMs` before `older.clock()` or later; undefined otherwise, or when every audit names one. Only a Rerail
+ * older than the step writes an audit so, with its provenance in the audit's own row or `[]` there when it ran no
+ * rules, and it reads each audit's provenance only from that row. This Rerail's audit store names a stored copy for
+ * every audit, `[]` included, so its own audits never count. The audits recorded before the step count as well, until
+ * the move takes them: a Rerail that ran then may still run beside this one, and record its next audit days later.
+ * Every audit is recorded as it begins, so the last recorded is the one such a Rerail began last: one row however many
+ * audits the week holds, where reading the start of each of 50,000 took 69 ms on Linux and 195 ms on Windows.
  */
 function lastOlderWrite(client: Client, { clock, windowMs }: OlderWrites): number | undefined {
-  const began = client.prepare<[number], { row: number; at: number }>(
-    "SELECT rowid AS row, started_at AS at FROM audits INDEXED BY audits_session_started WHERE started_at > ?",
-  ).all(clock() - windowMs);
-  const older = client.prepare<[number], number>("SELECT 1 FROM audits WHERE rowid = ? AND rule_provenance_id IS NULL").pluck();
-  return began.sort((one, other) => other.at - one.at).find(({ row }) => older.get(row) !== undefined)?.at;
+  const at = client.prepare<[], number>(`SELECT started_at FROM ${UNNAMED} ORDER BY rowid DESC LIMIT 1`).pluck().get();
+  return at !== undefined && at > clock() - windowMs ? at : undefined;
 }
 
 /**
- * Moves up to `limit` audits after rowid `after` that started no later than `upTo`, in one write transaction: each
- * names the stored copy of its JSON text instead, stored first when no audit had the same text, and keeps `[]` inline.
- * The text moves as it is, so every audit reads the same provenance after. Its key is the SHA-256 of the text, as the
- * audit store keys the provenance it writes, so the store's later audits of the same rules name the copy moved here.
- * The last rowid it moved and how many, or undefined when none was left.
+ * Moves up to `limit` audits after rowid `after` that name no stored copy, up to the first that began after the step
+ * (`takenAfter`), in one write transaction: each names the stored copy of its JSON text instead, stored first when no
+ * audit had the same text, and keeps `[]` inline. An audit whose provenance is `[]` names the stored copy of `[]`, as
+ * the store's audits that run no rules do, so no audit recorded before the step is left naming none. The text moves as
+ * it is, so every audit reads the same provenance after. Its key is the SHA-256 of the text, as the audit store keys
+ * the provenance it writes, so the store's later audits of the same rules name the copy moved here. The last rowid it
+ * moved and how many, or undefined when none was left.
  */
-function moveBatch(
-  database: RerailDatabase,
-  { after, upTo, limit }: { after: number; upTo: number; limit: number },
-): { last: number; moved: number } | undefined {
+function moveBatch(database: RerailDatabase, { after, upTo, limit }: BatchRange): { last: number; moved: number } | undefined {
   const client = database.$client;
   return client.transaction(() => {
-    const rows = client.prepare<[number, number, number], { row: number; json: string }>(`SELECT rowid AS row, rule_provenance_json AS json
-      FROM audits WHERE rowid > ? AND ${TAKEN} ORDER BY rowid LIMIT ?`).all(after, upTo, limit);
+    const rows = takenAfter(client, { after, upTo, limit });
     const stored = client.prepare<[string], number>("SELECT provenance_id FROM audit_rule_provenances WHERE digest = ?").pluck();
     const store = client.prepare<[string, string]>("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)");
     const name = client.prepare<[number, number]>("UPDATE audits SET rule_provenance_id = ?, rule_provenance_json = '[]' WHERE rowid = ?");
@@ -521,6 +543,24 @@ function moveBatch(
     const last = rows.at(-1);
     return last === undefined ? undefined : { last: last.row, moved: rows.length };
   }).immediate();
+}
+
+/**
+ * Up to `limit` audits after rowid `after` that name no stored copy of their provenance, in the order they were
+ * recorded, each with its provenance's text, ending before the first that began after the step (`upTo`). From that one
+ * on, each such audit is one a Rerail older than the step recorded after it, whose provenance stays in its row: the
+ * batch reads none of their rows past the first. Under the batch's write lock, reading the start of each of 2,000 such
+ * rows took 125 ms on Linux and 470 ms on Windows.
+ */
+function takenAfter(client: Client, { after, upTo, limit }: BatchRange): { row: number; json: string }[] {
+  const audits = client.prepare<[number, number, number], { row: number; json: string | null }>(`SELECT rowid AS row,
+    CASE WHEN started_at <= ? THEN rule_provenance_json END AS json FROM ${UNNAMED} AND rowid > ? ORDER BY rowid LIMIT ?`);
+  const taken: { row: number; json: string }[] = [];
+  for (const { row, json } of audits.iterate(upTo, after, limit)) {
+    if (json === null) break;
+    taken.push({ row, json });
+  }
+  return taken;
 }
 
 /** `ms` in whole days from two days up, in whole minutes from one minute up, else in seconds. */
