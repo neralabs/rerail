@@ -2932,6 +2932,15 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "const q = a + b as T + c.d!.e<F>(g) satisfies H;\nconst r = a * b as U | V;\n",
         "async function f() { await (a)!; await (a)<T>(); await (a as B).c() }\n",
         "const g = f<string>(x)!.y satisfies Z;\nimport q = require('q');\nimport type { R } from 'r' with { type: 'json' };\n",
+        // `x as A.B.C` is `(x as A.B).C` but where the `as` starts a parenthesized expression's,
+        // an array's or an object's first element.
+        "f(a as B.C.D)\nx = (b, a as B.C.D)\ny = [b, a as B.C.D]\nz = { j: 1, k: f(a as B.C.D) }\n",
+        "(a as B.C.D)\nx = [...a as B.C.D]\ny = { k: a as B.C.D }\nz = (c + a as B.C.D).e\n",
+        // A tagged template with type arguments.
+        "x = f<T>`t`\ny = a.f<{ a: string }>`t ${b}`\n",
+        // A modifier at its line's end names the member, but `static` before a name and `get`.
+        "class A {\n  public\n  m() {}\n  static\n  *g() {}\n  readonly\n  r: string\n}\n",
+        "class B {\n  static\n  m() {}\n  get\n  n() {}\n  static\n  x = 1\n}\n",
     ];
     let tsx = ["const C = <T,>(p: T) => <Table<T> rows={p} />;\n"];
     let cases: [(Dialect, Vec<&str>); 3] = [

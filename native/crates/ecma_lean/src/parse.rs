@@ -272,6 +272,10 @@ struct P<'a> {
     /// parameter's default value is tried twice for each enclosing one: `(a = (b = (c = …`, as
     /// minifiers write, took time exponential in the nesting.
     no_arrow: std::collections::HashSet<u32>,
+    /// Where the first element of the parenthesized expression, array or object (its first
+    /// property's value) being read starts. An `as` whose left side starts there keeps a dotted
+    /// type whole (`(x as A.B.C)`); elsewhere tree-sitter reads `(x as A.B).C`.
+    cover: u32,
     extras: Vec<Extra>,
     e: usize,
     w: Writer<Widths>,
@@ -307,6 +311,7 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             next: 0,
             relexes: 0,
             no_arrow: std::collections::HashSet::new(),
+            cover: u32::MAX,
             extras: Vec::new(),
             e: 0,
             w: Writer::new(0, widths, src.len() / 3 + 16),
@@ -2650,13 +2655,28 @@ impl<'a> P<'a> {
             self.tk(kind, K::TConst, f::NONE)?;
         } else if self.peek() == T::Name && self.peek_at(1).kind == T::Dot && {
             members = self.dotted_names();
-            self.asi && members >= 2 && !matches!(self.peek_at(2 * members + 1).kind, T::Lt | T::LBracket | T::Pipe | T::Amp)
+            members >= 2 && self.w.start(start) != self.cover && !matches!(self.peek_at(2 * members + 1).kind, T::Lt | T::LBracket | T::Pipe | T::Amp)
         } {
             // `x as A.B.C`: tree-sitter reads `(x as A.B).C`.
             self.type_reference_k(slot(f::NONE, Ctx::Type), members - 1)?;
         } else {
             members = 0;
             self.ty(slot(f::NONE, Ctx::Type))?;
+            // `x as A | B.C.D`: tree-sitter reads `(x as A | B.C).D`, which this type's reading
+            // does not split.
+            let mut j = self.i;
+            let mut names = 0;
+            while j > 0 && self.toks[j - 1].kind == T::Name {
+                names += 1;
+                if j < 2 || self.toks[j - 2].kind != T::Dot {
+                    j -= 1;
+                    break;
+                }
+                j -= 2;
+            }
+            if names >= 3 && j > 0 && matches!(self.toks[j - 1].kind, T::Pipe | T::Amp) {
+                return self.refuse();
+            }
         }
         self.close(n);
         let mut e = n;
@@ -2900,6 +2920,13 @@ impl<'a> P<'a> {
                             self.close(n);
                             e = n;
                         }
+                        // `f<T>\`…\``: a tagged template with type arguments.
+                        T::Backtick if !self.stops() && is_primary(e.kind) => {
+                            let n = self.wrap(N { at: start, kind: e.kind }, K::CallExpression, s, slot(f::FUNCTION, Ctx::Primary));
+                            self.template(slot(f::ARGUMENTS, Ctx::Bare))?;
+                            self.close(n);
+                            e = n;
+                        }
                         T::Semi | T::RParen | T::RBracket | T::RBrace | T::Comma | T::Colon | T::Eof => {
                             let n = self.wrap(N { at: start, kind: e.kind }, K::InstantiationExpression, s, slot(f::NONE, Ctx::Primary));
                             self.close(n);
@@ -3073,7 +3100,13 @@ impl<'a> P<'a> {
                 Ok(n)
             }
             T::Slash | T::SlashEq => self.regex(s),
-            T::LParen => self.parenthesized(s),
+            T::LParen => {
+                let saved = self.cover;
+                self.cover = self.first_element_start(1);
+                let r = self.parenthesized(s);
+                self.cover = saved;
+                r
+            }
             T::LBracket => self.array(s),
             T::LBrace => self.object(s),
             T::Lt if self.dialect != Dialect::TypeScript => self.jsx(s),
@@ -3244,7 +3277,11 @@ impl<'a> P<'a> {
 
     fn array(&mut self, s: Slot) -> R<N> {
         let n = self.open_in(K::Array, s);
-        self.bracket_list(n, Self::array_element)?;
+        let saved = self.cover;
+        self.cover = self.first_element_start(1);
+        let r = self.bracket_list(n, Self::array_element);
+        self.cover = saved;
+        r?;
         self.close(n);
         self.after = V_EXPR;
         Ok(n)
@@ -3260,6 +3297,27 @@ impl<'a> P<'a> {
 
     fn object(&mut self, s: Slot) -> R<N> {
         let n = self.open_in(K::Object, s);
+        // The first property's value: after `k:`, or a spread's.
+        let first = if matches!(self.peek_at(1).kind, T::Name | T::Str | T::Number) && self.peek_at(2).kind == T::Colon {
+            self.first_element_start(3)
+        } else if self.peek_at(1).kind == T::Ellipsis {
+            self.first_element_start(1)
+        } else {
+            u32::MAX
+        };
+        let cover = std::mem::replace(&mut self.cover, first);
+        let r = self.object_rest(n);
+        self.cover = cover;
+        r
+    }
+
+    /// Where the element at token `k` from here starts, past a spread's `...`.
+    fn first_element_start(&mut self, k: usize) -> u32 {
+        let t = self.peek_at(k);
+        if t.kind == T::Ellipsis { self.peek_at(k + 1).start } else { t.start }
+    }
+
+    fn object_rest(&mut self, n: N) -> R<N> {
         self.bump()?;
         let saved = self.asi;
         self.asi = false;

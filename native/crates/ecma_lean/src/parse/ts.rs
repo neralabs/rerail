@@ -1375,6 +1375,12 @@ impl<'a> P<'a> {
                 break;
             }
             let next = self.peek_at(1);
+            // A modifier at its line's end is the member's name (`public` then a line); `get` and
+            // `set` are an accessor's across the line, and `static` is a modifier across it but
+            // before a generator's `*`.
+            if next.nl && !matches!(t.word, w::GET | w::SET) && !(t.word == w::STATIC && next.kind != T::Star) {
+                break;
+            }
             if let Some(k) = accessibility(t.word) {
                 let a = self.open(K::AccessibilityModifier, f::NONE, C_NONE);
                 self.leaf(k, f::NONE, C_NONE)?;
@@ -1407,7 +1413,7 @@ impl<'a> P<'a> {
                 w::ASYNC if !next.nl => {
                     self.leaf(K::TAsync, f::NONE, C_NONE)?;
                 }
-                w::GET | w::SET if !next.nl => {
+                w::GET | w::SET => {
                     let k = if t.word == w::GET { K::TGet } else { K::TSet };
                     self.leaf(k, f::NONE, C_NONE)?;
                     break;
