@@ -1604,3 +1604,40 @@ Counts, reported (before this change, after; lean):
 | Strings | 288.5 | 293.2 | 240.6 |
 | Numbers | 171.9 | 172.0 | 107.3 |
 | Comments | 265.2 | 270.6 | 193.2 |
+
+### The token path, read against lean's
+
+A trace of a line of words, stepped by instruction, has two token
+paths. Both have lean's shape.
+
+A word that is not a keyword takes 47 instructions. It loads the
+byte word at the start, then the pair mask's bit. It finds the
+token's row in the class table, finds the token's end from the run
+word, then writes the record. The next start is the low bit of the
+starts left, and the loop goes back. Lean takes 67 instructions for
+the same token, with the same steps.
+
+A word that may be a keyword takes 72. The 25 more are the keyword
+probe, the same probe as lean's:
+
+```
+cmp   len, #8 ; csel        // at most 8 bytes
+lsl / lsr     bytes, shift  // the word's bytes alone
+eor   len                   // and its length
+mul   mult ; lsr #55        // the hash
+ldp   [table + hash]        // the keyword's bytes and kind
+ccmp ; csel                 // a match keeps the kind
+```
+
+Three differences from lean remain. All three are register choices,
+not steps:
+
+- The hash multiplier is loaded from the stack at each probe. Lean
+  keeps it in a register (`x19`). The multiplier is `kept` so rustc
+  does not rebuild it at each use; rustc then spills it.
+- The bytes' address is reloaded at the loop's back branch, since
+  its register held the token's kind. Lean keeps its address in a
+  register and loads its two masks from the stack instead.
+- The probe's shift, `(8 - len) * 8`, is three instructions
+  (`lsl`, `sub`, `and`). Lean's is two (`lsl`, `neg`), since the
+  shift amount is taken mod 64.
