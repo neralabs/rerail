@@ -63,7 +63,7 @@ pub(super) fn assignment(t: T) -> Option<K> {
 
 pub(super) const P_COND: u8 = 2;
 pub(super) const P_CONST: u8 = 3;
-const P_REL: u8 = 10;
+pub(super) const P_REL: u8 = 10;
 const P_WITH: u8 = 14;
 const P_SWITCH: u8 = 15;
 const P_RANGE: u8 = 16;
@@ -188,7 +188,7 @@ impl<'a> P<'a> {
                     left = self.wrap(left, K::RangeExpression, s, EXPR);
                     self.tk(K::RangeExpression, K::TDotDot)?;
                     if starts_operand(self.tok()) {
-                        self.binary_expr(EXPR, P_RANGE + 1)?;
+                        self.binary_expr(EXPR, P_RANGE)?;
                     }
                     self.close(left);
                 }
@@ -240,21 +240,21 @@ impl<'a> P<'a> {
                 n
             }
             T::Star => {
-                // A pointer indirection: an lvalue of an lvalue.
-                let n = self.open(K::PrefixUnaryExpression, s.field, lvalue_class(s.ctx))?;
-                self.leaf(K::TStar, f::NONE, C_NONE)?;
-                let inner = self.unary(slot(f::NONE, Ctx::Lv))?;
-                if !self.lvalue_node(inner) {
-                    return self.refuse();
+                // Its class marks it an lvalue while a postfix operator may wrap it (`rekey`
+                // keeps that class, moved to the operand's context); left alone, its own.
+                let n = self.indirection(s, C_L)?;
+                let m = self.postfix(n, s)?;
+                if m.kind == K::PrefixUnaryExpression {
+                    let (_, field, _, extra) = unkey(self.w.key(n.at));
+                    self.w.set_key(n.at, key(K::PrefixUnaryExpression, field, lvalue_class(s.ctx), extra));
                 }
-                self.close(n);
-                n
+                m
             }
             T::DotDot => {
                 let n = self.open_in(K::RangeExpression, s)?;
                 self.tk(K::RangeExpression, K::TDotDot)?;
                 if starts_operand(self.tok()) {
-                    self.binary_expr(EXPR, P_RANGE + 1)?;
+                    self.binary_expr(EXPR, P_RANGE)?;
                 }
                 self.close(n);
                 n
@@ -291,6 +291,23 @@ impl<'a> P<'a> {
                 self.postfix(n, s)?
             }
         };
+        self.depth -= 1;
+        Ok(n)
+    }
+
+    /// A pointer indirection (`*p`): an lvalue of an lvalue, without its postfix operators.
+    /// Tree-sitter reduces it (`prec.right(UNARY)`) before an access, a call or `++` after the
+    /// operand: those take the indirection (`*p[0]` is `(*p)[0]`).
+    fn indirection(&mut self, s: Slot, class: u8) -> R<N> {
+        self.deeper()?;
+        let n = self.open(K::PrefixUnaryExpression, s.field, class)?;
+        self.leaf(K::TStar, f::NONE, C_NONE)?;
+        let inner_slot = slot(f::NONE, Ctx::Lv);
+        let inner = if self.peek() == T::Star { self.indirection(inner_slot, C_L)? } else { self.primary(inner_slot)? };
+        if !self.lvalue_node(inner) {
+            return self.refuse();
+        }
+        self.close(n);
         self.depth -= 1;
         Ok(n)
     }
@@ -364,7 +381,7 @@ impl<'a> P<'a> {
             // `(a[0])[1]`, `(a[i]) - b`: a cast to an array type with sizes, to tree-sitter.
             let n = self.open_in(K::CastExpression, s)?;
             self.tk(K::CastExpression, K::TLParen)?;
-            self.array_type_with_ranks(slot(f::TYPE, Ctx::Type))?;
+            self.array_type_with_ranks(slot(f::TYPE, Ctx::Type), false)?;
             self.punct_tk(K::CastExpression, T::RParen, false)?;
             let v = self.unary(slot(f::VALUE, Ctx::Expr))?;
             self.bare(v)?;
@@ -872,7 +889,7 @@ impl<'a> P<'a> {
             T::LParen if self.scan_type_base(1).is_some_and(|e| self.kind_at(e) == T::LBracket) => {
                 let n = self.open_in(K::ArrayCreationExpression, s)?;
                 self.tk(K::ArrayCreationExpression, K::TNew)?;
-                self.array_type_with_ranks(slot(f::TYPE, Ctx::Bare))?;
+                self.array_type_with_ranks(slot(f::TYPE, Ctx::Bare), true)?;
                 if self.peek() == T::LBrace {
                     self.initializer(BARE)?;
                 }
@@ -937,7 +954,7 @@ impl<'a> P<'a> {
                 if self.kind_at(base) == T::LBracket {
                     let n = self.open_in(K::ArrayCreationExpression, s)?;
                     self.tk(K::ArrayCreationExpression, K::TNew)?;
-                    self.array_type_with_ranks(slot(f::TYPE, Ctx::Bare))?;
+                    self.array_type_with_ranks(slot(f::TYPE, Ctx::Bare), true)?;
                     if self.peek() == T::LBrace {
                         self.initializer(BARE)?;
                     }
@@ -1026,7 +1043,7 @@ impl<'a> P<'a> {
         }
         let n = self.open_in(K::StackallocExpression, s)?;
         self.tk(K::StackallocExpression, K::TStackalloc)?;
-        self.array_type_with_ranks(slot(f::TYPE, Ctx::Bare))?;
+        self.array_type_with_ranks(slot(f::TYPE, Ctx::Bare), true)?;
         if self.peek() == T::LBrace {
             self.initializer(BARE)?;
         }

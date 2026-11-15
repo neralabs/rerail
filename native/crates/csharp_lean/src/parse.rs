@@ -347,6 +347,8 @@ struct Chain {
     last: usize,
     /// The lowest precedence among its binary operators.
     low: u8,
+    /// Whether an `as` right after the constant, with no operator after it, ends it.
+    as_ends: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1128,9 +1130,10 @@ impl<'a> P<'a> {
     // ---- The file.
 
     fn compilation_unit(&mut self) -> R<()> {
-        // The root starts at its first token or extra (past the file's leading white space).
+        // The root starts at its first token or extra (past the file's leading white space); with
+        // neither, at the file's end (`[3..3]` for a byte-order mark alone).
         let first = self.tok().start.min(self.extras.first().map_or(u32::MAX, |x| x.start));
-        let first = if self.tok().kind == T::Eof && self.extras.is_empty() { 0 } else { first };
+        let first = if self.tok().kind == T::Eof && self.extras.is_empty() { self.src.len() as u32 } else { first };
         let root = self.w.push(key(K::CompilationUnit, f::NONE, C_NONE, false), first);
         while self.peek() != T::Eof {
             self.toplevel()?;

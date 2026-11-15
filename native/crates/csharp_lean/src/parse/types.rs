@@ -168,7 +168,7 @@ impl<'a> P<'a> {
     }
 
     /// An array creation's type: its element type, then ranks (with sizes).
-    pub(super) fn array_type_with_ranks(&mut self, s: Slot) -> R<N> {
+    pub(super) fn array_type_with_ranks(&mut self, s: Slot, creation: bool) -> R<N> {
         self.deeper()?;
         let t = self.tok();
         let mut n = match t.kind {
@@ -195,14 +195,27 @@ impl<'a> P<'a> {
         if self.peek() != T::LBracket {
             return self.refuse();
         }
-        while self.peek() == T::LBracket {
+        // In a creation (`creation`), a rank with sizes after the first is an element access
+        // over it (`new int[4][2]` is `(new int[4])[2]`).
+        let mut first = true;
+        while self.peek() == T::LBracket && (first || !creation || self.rank_is_bare(0)) {
             n = self.wrap(n, K::ArrayType, slot(f::TYPE, Ctx::Bare), slot(f::TYPE, Ctx::Bare));
             self.rank()?;
             self.close(n);
+            first = false;
         }
         self.rekey(n.at, s);
         self.depth -= 1;
         Ok(n)
+    }
+
+    /// Whether the `[` `k` tokens ahead opens a rank without sizes (`[]`, `[,]`).
+    fn rank_is_bare(&mut self, k: usize) -> bool {
+        let mut j = k + 1;
+        while self.kind_at(j) == T::Comma {
+            j += 1;
+        }
+        self.kind_at(j) == T::RBracket
     }
 
     /// `tuple_type`: `(` elements `)`, two or more, each a type and a name.

@@ -1,6 +1,6 @@
 //! Patterns: `is`, `case` labels, switch expression arms, and the designations they bind.
 
-use super::expr::{P_COND, P_CONST, binary_prec, is_binary};
+use super::expr::{P_COND, P_CONST, P_REL, binary_prec, is_binary};
 use super::*;
 
 impl<'a> P<'a> {
@@ -23,6 +23,14 @@ impl<'a> P<'a> {
         if let Some(e) = self.scan_type(k)
             && self.kind_at(e - 1) == T::Gt
             && matches!(self.kind_at(e), T::Amp | T::AmpAmp | T::Star | T::Minus | T::Plus | T::Bang | T::Tilde | T::PlusPlus | T::MinusMinus)
+        {
+            return self.refuse();
+        }
+        // `x is A.B as O` is a member access over the `is`: not read.
+        if self.is_ident_at(1)
+            && self.kind_at(2) == T::Dot
+            && let Some(e) = self.scan_type(1)
+            && self.is_word_at(e, w::AS)
         {
             return self.refuse();
         }
@@ -81,6 +89,10 @@ impl<'a> P<'a> {
         if continues {
             return None;
         }
+        // A type before `as` is an `is_expression`'s (`x is A as O`).
+        if after.kind == T::Name && after.word == w::AS {
+            return Some((false, after.kind));
+        }
         Some((self.name_only(1, e), after.kind))
     }
 
@@ -90,8 +102,9 @@ impl<'a> P<'a> {
     /// with operators before its `?`, `or`/`and` patterns with another `is`, the text's end).
     fn chain_scan(&mut self, from: usize) -> Option<Chain> {
         let (mut k, mut depth) = (from, 0u32);
-        let mut c = Chain { end: 0, last_is: None, others: 0, last: from, low: u8::MAX };
+        let mut c = Chain { end: 0, last_is: None, others: 0, last: from, low: u8::MAX, as_ends: false };
         let (mut ops, mut combinator) = (0u32, false);
+        let (mut prev, mut as_first) = (None, false);
         loop {
             let t = self.peek_at(k);
             match t.kind {
@@ -105,6 +118,12 @@ impl<'a> P<'a> {
                 T::Question if ops == 0 && !matches!(self.kind_at(k + 1), T::Dot | T::LBracket) => break,
                 T::Question => return None,
                 T::Name if matches!(t.word, w::OR | w::AND) => combinator = true,
+                // `as` right after the constant, with no operator after it, is an
+                // `as_expression` over the `is` (`x is null as O`); with one (`x is 1 as O ?? q`),
+                // the constant's. After an operator that binds tighter than it (`x is 1 + 2 as O`),
+                // tree-sitter's reading is not read.
+                T::Name if t.word == w::AS && ops == 0 => as_first = true,
+                T::Name if t.word == w::AS && prev.is_some_and(|p| p > P_REL) => return None,
                 T::Name if t.word == w::IS => {
                     c.last_is = Some(k);
                     c.others += 1;
@@ -112,6 +131,7 @@ impl<'a> P<'a> {
                 }
                 k2 if is_binary(k2) => {
                     ops += 1;
+                    prev = binary_prec(k2);
                     c.last = k + 1;
                     c.low = c.low.min(binary_prec(k2).expect("a binary operator"));
                 }
@@ -121,6 +141,7 @@ impl<'a> P<'a> {
             k += 1;
         }
         c.end = k;
+        c.as_ends = as_first && ops == 0;
         // `or`/`and` patterns with another `is` in the chain (`y is A && b is C or D && …`):
         // tree-sitter's grouping there is not read.
         if combinator && c.others > 0 {
@@ -575,13 +596,15 @@ impl<'a> P<'a> {
             }
             Cmode::Start(min) => {
                 // With a left operand, as `constant_alone` reads it.
+                let Some(c) = self.chain_scan(0) else { return self.refuse() };
+                // A chain that `as` ends is the constant alone, below the `as`.
+                let as_ends = c.as_ends;
                 let (alone, has_is) = if min > P_CONST {
                     let Some(alone) = self.constant_alone(0, min) else { return self.refuse() };
-                    let Some(c) = self.chain_scan(0) else { return self.refuse() };
-                    (alone, c.others > 0)
+                    (alone || as_ends, c.others > 0)
                 } else {
                     let Some(has_is) = self.constant_takes() else { return self.refuse() };
-                    (false, has_is)
+                    (as_ends, has_is)
                 };
                 if alone {
                     self.binary_expr(lit, u8::MAX)?;

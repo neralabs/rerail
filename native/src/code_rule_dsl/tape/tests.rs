@@ -3487,6 +3487,13 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         // type in arguments and brackets; casts to sized arrays and of collections; a
         // parenthesized lvalue's class at a statement's start; `nameof(C)` in a case label.
         "class A { void F() { a = p && b is X == 1; b = f() && b is X && 2; c = !a && r is V && p is W; d = (n == 1) && p[0] is L && 2; e = r is > 0 and < 5 ? 1 : 2; f(a * null); g = x[a * b]; h = (T[])[1]; i = (a[0]) - b; (t).ToString(); switch (y) { case nameof(C): break; } using (await t) { } j = y is 4 && b is 5; } }\n",
+        // `as` after an `is` with no operator after it wraps the `is`; with one, it is the
+        // constant's. A pointer indirection takes no postfix operator (`*p[0]` is `(*p)[0]`); a
+        // creation's later rank with sizes is an element access; `..` is right-associative.
+        "unsafe class A { void F() { a = y is null as O; b = y is A as O; c = y is 1 as O ?? q; d = p && y is not null as O; e = *p[0].q; *p[0] = 1; f = **p[0]; g = new int[4][2][3]; h = new int[4][]; i = 1..3..5; j = a[..3..]; } }\n",
+        // A text of a BOM or blanks alone: the root starts at its end.
+        "\u{feff}",
+        "  \n",
         "namespace N { class A { void F() { f(await t); x = new (A a, B b)[3]; y = (c is D<K, V> d && d.E); if (x is (_, 1) or (1, _)) { } if (x is (A a, B b) z) { } if (x is [1, _] or [_, _, 3]) { } switch ((a, b)) { case (_, _) when c: break; } } } };\n",
     ];
     let grammar = Grammar::new(GrammarDialect::CSharp).unwrap();
