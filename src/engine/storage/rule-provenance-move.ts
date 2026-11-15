@@ -5,13 +5,13 @@
  * its batches and checkpoints never hold the thread that answers requests. That thread only reads, on a read-only
  * connection, whether audits are left to move and whether an older Rerail's audit makes the move wait (`moveState`):
  * at the start, after each pass of the wait, and once the move's thread ends. Each of those reads is one audit row,
- * found through `audits_rule_provenance` (`UNNAMED`), however long the history. Each batch of audits is one write
- * transaction sized to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep
- * recording while it runs; a process stopped partway loses at most one batch, and the next run goes on from what is
- * left. Until an audit moves, the audit store reads its provenance inline. The move never waits inside SQLite for
- * another connection: it awaits a pause and tries again, for as long as another connection holds the write lock, so a
- * stop reaches it between two tries, and a long hold, such as `rerail scrub`'s on a large file, pauses the move
- * without ending it.
+ * found through `audits_rule_provenance` (`UNNAMED`), however long the history, and one more, read in full, for each
+ * audit whose damaged provenance a move left as it is (`takes`). Each batch of audits is one write transaction sized
+ * to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep recording while it
+ * runs; a process stopped partway loses at most one batch, and the next run goes on from what is left. Until an audit
+ * moves, the audit store reads its provenance inline. The move never waits inside SQLite for another connection: it
+ * awaits a pause and tries again, for as long as another connection holds the write lock, so a stop reaches it between
+ * two tries, and a long hold, such as `rerail scrub`'s on a large file, pauses the move without ending it.
  *
  * The pages a batch frees stay in the file, zeroed as every delete's are (`secure_delete`, `database.ts`), and new
  * history reuses them before the file grows again. No `VACUUM` runs here: one holds the write lock until it ends, and
@@ -279,7 +279,8 @@ function nextBatchSize(size: number, took: number, most: number): number {
  * thread, which in the daemon answers the requests hooks send: on a loaded Windows machine one batch of 100 audits took
  * 3.6 s, past the 2 s a hook's health probe waits. `signal` stops the move before its next step. A file with nothing
  * to move, read on the calling thread, starts no thread. What the calling thread reads of the file is one audit row a
- * read (`moveState`), however long the history.
+ * read (`moveState`), however long the history, and one more for each audit whose damaged provenance a move left as it
+ * is.
  *
  * While the last recorded audit that names no stored copy of its provenance began within `olderWindowMs`
  * (`OLDER_WRITE_WINDOW_MS` unless a test passes its own), one recorded before the step or by an older Rerail since,
@@ -366,9 +367,12 @@ function sayWaitsForOlder(path: string, { at, until }: { at: number; until: numb
 }
 
 /**
- * The line for each audit a batch left as it is (`moveBatch`), once, from the batch that left it: a later batch of the
- * same move starts after it, and a later start's checks pass over it (`takes`). The move's thread writes it to its
- * stderr, which Node pipes to the daemon's, `daemon.log`.
+ * The line for each audit a batch left as it is (`moveBatch`), from the batch that reaches it. A later batch of the
+ * same move starts after it, and once that move has ended a later start's checks pass over it (`takes`), so a move
+ * that runs to its end names it once. A move stopped before its end starts again at the next start from the first
+ * audit that names no stored copy, and names it again; a file whose audits left to move are all such audits starts no
+ * move, and no line names them. The move's thread writes it to its stderr, which Node pipes to the daemon's,
+ * `daemon.log`.
  */
 function sayLeftAsItIs(path: string, auditIds: readonly string[]): void {
   for (const auditId of auditIds) {
@@ -502,7 +506,8 @@ interface TakenAudit {
  * What the file asks of the move (`MoveState`), read on a read-only connection: once the move has ended, each later
  * daemon start finds nothing and opens no writer, so it takes no write lock. A read-only open runs a pending step
  * through a writable open first, as it does for any reader. Each of its reads is one audit row, however long the
- * history (`takes`, `lastOlderWrite`).
+ * history (`takes`, `lastOlderWrite`), and `takes` reads one more for each audit whose damaged provenance a move left
+ * as it is.
  */
 function moveState(path: string, older: OlderWrites): MoveState {
   const database = openRerailDatabase(path, { readonly: true });
@@ -529,7 +534,9 @@ function stateAt(client: Client, upTo: number, older: OlderWrites): MoveState {
  * leaves as they are (`holdable`), began no later than the step (`upTo`). The move takes them in the order they were
  * recorded, up to the first that began after the step, so once that one comes first none is left. One row, and one
  * more for each audit left as it is before it: the start of every audit an older Rerail recorded after the step sits
- * after its provenance, and reading the start of each of 2,400 such audits took 1.1 s on a cold cache.
+ * after its provenance, and reading the start of each of 2,400 such audits took 1.1 s on a cold cache. An audit left as
+ * it is is read in full and its text parsed, at every start: about 0.1 ms, and 0.4 ms on a cold cache, for one of
+ * 189 KB on Linux x64. Only a damaged file or a hand edit makes one.
  */
 function takes(client: Client, upTo: number): boolean {
   const firsts = client.prepare<[number], number | null>(

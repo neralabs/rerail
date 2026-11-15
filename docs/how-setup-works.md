@@ -576,8 +576,9 @@ upgrades the file returns at once and other processes keep writing during the mo
 database, as `rerail scrub` does for seconds on a large file, the move waits and tries again every 150 ms, then goes
 on; stopping the daemon ends that wait at once. A daemon stopped partway goes on at its next start. Each check the
 daemon makes on the thread that answers hooks, whether audits are left to move and whether an older Rerail recorded
-one in the last 7 days, reads one audit through an index, however long the history: a later start finds nothing left
-to move that way and takes no write lock.
+one in the last 7 days, reads one audit through an index, however long the history, and one more for each audit
+whose damaged rule provenance the move left as it is (below): a later start finds nothing left to move that way and
+takes no write lock.
 
 The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
 them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds
@@ -599,7 +600,11 @@ sleeps the move starts at most an hour late. A move that finds such an audit bef
 waits the same way; the audits it has not reached keep their provenance in their row. The move takes the audits in
 the order they were recorded and stops at the first one an older Rerail recorded after the update, so it reads none of
 the later ones' rows. An audit whose rule provenance in its row is not a JSON array, which only a damaged file or a
-hand edit leaves, stays as it is and reads as before; the move names it once in `daemon.log` and moves the rest.
+hand edit leaves, stays as it is and reads as before, while the others move. The move names such an audit in
+`daemon.log` when it reaches it: once when the move runs to its end, again at the next start after a move stopped
+partway, and not at all when every audit left to move is such an audit, since no move starts then. Each daemon start
+reads every such audit in full on the thread that answers hooks: about 0.1 ms for one of 189 KB, and 0.4 ms when the
+file is not in the page cache (Linux x64).
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
