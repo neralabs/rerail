@@ -1,0 +1,9 @@
+{
+  "hosts": [
+    {"name": "builder-a", "cores": 16, "mirror": true, "tests": true, "link_match": "%IFNAME"},
+    {"name": "builder-b", "cores": 8, "enabled": false}
+  ],
+  "min_free_gb": 40,
+  "max_rtt_ms": 150,
+  "min_mbps": 8
+}

@@ -13,7 +13,7 @@ keyed on the checkout's path saw each worktree's crates as different. The farm f
   the same in every checkout. A crate compiled in one worktree is a hit in all the others.
   This needs the engine not to write its checkout's path into its build (decision 0224).
 - **Spreading.** On a miss, a dependency's library crate compiles on another Mac when one has a free core
-  (the hosts in `~/.config/rerail-farm/hosts.json`, reached by ssh). The sources, the crate's dependencies' `.rmeta` files and
+  (the hosts of the local configuration, reached by ssh; see Configuration). The sources, the crate's dependencies' `.rmeta` files and
   its `OUT_DIR` are copied to the same absolute paths there, only what changed since the last copy,
   and the outputs are copied back.
 - **Editing.** A workspace crate that misses is being edited here: it compiles incrementally on
@@ -42,10 +42,11 @@ whose copy or run failed there: it runs here instead, and only that run's output
 | `remote-rustc` | runs one compile on a remote Mac (copy and shared modes) |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host |
-| `setup` | installs all of it, and `remote-rustc` on each host |
+| `status` | what the farm can use now: each host probed, and why one is not usable |
+| `setup` | installs all of it here, a configuration to fill in, and the toolchain on each host |
 | `shared-volume` | the NFS export here and the mount on each host |
 | `sccache-patches/` | the farm's patch on sccache, on top of #3021 and #3022 |
-| `hosts.example.json` | the hosts, copied to `~/.config/rerail-farm/hosts.json` |
+| `farm.example.json` | a configuration to start from (generic names), copied to `~/.config/rerail-farm/farm.json` |
 
 ## Setup
 
@@ -58,9 +59,12 @@ The sccache is upstream main with PRs #3021 (`SCCACHE_BASEDIRS_REMAP_PATHS`) and
 the crate types that link when `SCCACHE_CACHE_LINKED` is set (proc macros, build scripts, the
 engine's cdylib: upstream never does), keyed also on the linker's and the SDK's versions; accepts
 `--extern proc_macro` without a path; and keeps `SOURCE_DATE_EPOCH`, which upstream drops, so a C
-file that uses `__TIME__` (mimalloc's) is cached. Each host needs ssh without a password (its name in
-`hosts.json` is a name ssh connects to: a `Host` entry of `~/.ssh/config`), the
-toolchain of `rust-toolchain.toml`, and a copy of `~/.cargo/registry/src` at the same path:
+file that uses `__TIME__` (mimalloc's) is cached. Nothing of the farm is installed on a host:
+`remote-rustc` and `farm-agent` are sent with each command and run by the host's `/usr/bin/python3`.
+Each host needs ssh without a password (its name in `farm.json` is a name ssh connects to: a `Host`
+entry of `~/.ssh/config`), the toolchain of `rust-toolchain.toml` (`setup` installs it),
+`cargo-nextest` for `scripts/dev/test-remote`, and, for copy mode only, a copy of
+`~/.cargo/registry/src` at the same path:
 
 ```
 rsync -a ~/.cargo/registry/src/ HOST:.cargo/registry/src/
@@ -84,13 +88,49 @@ alone takes 90 s at a load of 80).
 `JEMALLOC_OVERRIDE` set to a prebuilt `libjemalloc_pic.a` saves `tikv-jemalloc-sys`'s 3-minute
 configure-and-make in every new target directory; its build script is never cached.
 
-## Hosts
+## Configuration
 
-`hosts.json` lists `{"name", "cores", "enabled", "shared"}`. A host takes a compile per core while
-nobody has touched its keyboard or mouse for 5 minutes, and half as many otherwise (`HIDIdleTime`,
-read at most every 30 s). Not its load average: macOS's background analysis (Photos, Spotlight)
-keeps that high on an idle Mac, at a priority every compile preempts. A host behind a slow link is
-better disabled.
+The farm's configuration is local to this Mac and never in git: `$RERAIL_FARM_CONFIG` if set, else
+`~/.config/rerail-farm/farm.json` (`farm.example.json` shows its shape). Without one there are no
+hosts, and everything compiles and tests here, as without the farm.
+
+| Key | Meaning |
+|---|---|
+| `hosts` | the hosts: `{"name", "cores", "enabled", "mirror", "tests", "shared", "link_match"}` |
+| `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
+| `enabled` | `false` leaves a host out (default `true`) |
+| `mirror`, `shared` | how its compiles get their inputs (Live mirror, Shared volume; else copied) |
+| `tests` | whether `scripts/dev/test-remote` runs there (default: `mirror`) |
+| `link_match` | text the address the host sees this Mac connect from must contain (e.g. an interface's zone); when the link drops to WiFi the address changes and the host is not used |
+| `min_free_gb` | free disk a host needs (default 40) |
+| `max_rtt_ms` | the slowest round trip a host may have (default 150) |
+| `min_mbps` | the least throughput to it, MB/s (default 8) |
+
+A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
+half as many otherwise (`HIDIdleTime`). Not its load average: macOS's background analysis (Photos,
+Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
+
+## Health
+
+Hosts come and go: they sleep, leave the network, fall back to WiFi, fill their disk, or have their
+copies cleaned. Nothing waits on one for long, and anything a host cannot do runs here.
+
+- **Probe.** Before a host is used its health is read: one ssh command (3 s to connect) reports the
+  address it sees this Mac at, its free disk, its idle time and its mounts; the round trip is
+  timed, and every 10 minutes (or while it is slow) a 4 MB transfer measures the throughput. A
+  host off its `link_match`, short of disk, or past the limits is not used.
+- **Cache and back-off.** A healthy record holds 30 s, shared by every worktree (one caller probes,
+  the others read). A host found down is not probed again for 30 s, doubling to 30 minutes, so a
+  sleeping host costs nothing.
+- **Lost mid-job.** A compile whose copy or run fails there runs here, and the host is marked down
+  when its connection or agent is gone, or its disk is full (agent code 70). A test run whose ssh
+  connection drops (exit 255) runs again here.
+- **Cleaned copies.** The mirror remembers what it sent each host, and a host restarted or cleaned
+  forgets: an agent is asked what it holds when it starts, a compile that read a stale file clears
+  what was sent, and `test-remote` asks the host again for every file of the checkout before it runs.
+
+`scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
+with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).
 
 ## Shared volume
 

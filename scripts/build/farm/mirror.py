@@ -55,8 +55,7 @@ class Host:
 
     def __init__(self, name):
         self.name = name
-        farm.CHANNEL[0] = "mirror"
-        self.proc = subprocess.Popen(farm.ssh(name, os.path.join(farm.SHARE, "farm-agent")),
+        self.proc = subprocess.Popen(farm.ssh(name, farm.on_host("farm-agent"), "mirror"),
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=open(farm.state("mirror", f"{name}.err"), "ab"))
         self.lock = threading.Lock()
@@ -69,8 +68,8 @@ class Host:
     def alive(self):
         return not self.closed and self.proc.poll() is None
 
-    def ask(self, header):
-        """Sends `header` with an id and waits for the agent's reply to it."""
+    def ask(self, header, timeout=farm.COMPILE_SECONDS):
+        """Sends `header` with an id and waits for the agent's reply to it (None: none came)."""
         done = threading.Event()
         with self.lock:
             if self.closed:
@@ -79,14 +78,22 @@ class Host:
             job_id = self.next_id
             self.waiting[job_id] = {"event": done, "result": None}
             send(self.proc.stdin, dict(header, id=job_id))
-        done.wait(farm.COMPILE_SECONDS)
+        done.wait(timeout)
         return self.waiting.pop(job_id, {}).get("result")
+
+    def stop(self):
+        with self.lock:
+            self.closed = True
+        try:
+            self.proc.kill()
+        except OSError:
+            pass
 
     def learn(self, paths):
         """What the host already has of `paths` (from an earlier connection), asked once a path."""
         unknown = [p for p in paths if p not in self.sent]
         if unknown:
-            reply = self.ask({"op": "have", "paths": unknown})
+            reply = self.ask({"op": "have", "paths": unknown}, timeout=60)
             for p, seen in zip(unknown, (reply or {}).get("seen") or []):
                 self.sent[p] = seen
 
@@ -168,6 +175,16 @@ def host(name):
         return h
 
 
+def drop(name, h, why=None):
+    """Stops `h`, `name`'s agent; with `why`, the host is down for its back-off (`farm.mark_down`)."""
+    with hosts_lock:
+        if hosts.get(name) is h:
+            del hosts[name]
+    h.stop()
+    if why:
+        farm.mark_down(name, why)
+
+
 def checkout_files(checkout):
     began, names = lists.get(checkout, (0, None))
     if names is None or time.time() - began > LIST_SECONDS:
@@ -222,16 +239,47 @@ def handle(conn):
         conn.close()
 
 
+def failed(why):
+    return {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": why}
+
+
 def work(job):
-    h = host(job["host"])
+    """Sends what `job` may read, then runs it. What fails here never fails twice the same way: a
+    host whose agent stopped or could not write is down for its back-off, and one whose run failed
+    or read other files than this machine's is asked again what it holds (it may have been cleaned)."""
+    name = job["host"]
+    known = next((x for x in farm.hosts() if x["name"] == name), {"name": name})
+    health = farm.health(known)
+    if not health.get("ok"):
+        return failed(f"{name} is not usable: {health.get('why')}")
+    h = host(name)
     started = time.time()
-    files = needed(job, job["since"])
-    h.learn([p for p, _ in files])
-    for path, st in files:
-        h.put(path, st)
+    try:
+        files = needed(job, job["since"])
+        if job.get("verify"):
+            for p, _ in files:
+                h.sent.pop(p, None)
+        h.learn([p for p, _ in files])
+        for path, st in files:
+            h.put(path, st)
+    except OSError as e:
+        drop(name, h, f"the mirror's connection broke: {e!r}")
+        return failed(f"the connection to {name} broke while sending")
     sent = time.time()
     result = h.run(job["run"]) if h.alive() else None
-    reply = result or {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": "the agent stopped"}
+    if result is None:
+        drop(name, h, "its mirror agent stopped, or did not answer")
+        reply = failed("the agent stopped")
+    elif result["code"] == 70:
+        drop(name, h, f"a file could not be written there (its disk full, or not writable): {result.get('stderr', '')[-200:]}")
+        reply = result
+    else:
+        reply = result
+        cwd = job["run"].get("cwd", "/")
+        stale = [p for p, seen in result.get("read", {}).items()
+                 if seen is None or list(stat(os.path.join(cwd, p)) or [])[:2] != seen]
+        if result["code"] != 0 or stale:
+            h.sent.clear()
     reply["times"] = {"sync": round(sent - started, 3), "compile": round(time.time() - sent, 3), "files": len(files)}
     return reply
 

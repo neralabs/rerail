@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -312,51 +313,182 @@ def cc(argv0, args):
 # ---- a miss
 
 
+# The local configuration (README.md, "Configuration"): never in git. Its keys, with their defaults:
+DEFAULTS = {
+    "hosts": [],
+    # A host is used only while its disk has this much free, its round trip is this short and the
+    # link carries this much: a host that dropped to WiFi or a busy network is no faster than here.
+    "min_free_gb": 40,
+    "max_rtt_ms": 150,
+    "min_mbps": 8,
+}
+# How long a host's health is believed: an answer that it is usable, and the first wait after it was
+# not (doubled each time it is still not, up to the last).
+HEALTHY_SECONDS = 30
+DOWN_SECONDS = (30, 1800)
+# The throughput probe's size, and how often it is sent (it is the slowest part of the probe).
+PROBE_BYTES = 4 << 20
+PROBE_SECONDS = 600
+
+
+def config_path():
+    """The configuration file read: `$RERAIL_FARM_CONFIG`, else `~/.config/rerail-farm/farm.json`, else
+    the older `hosts.json` (a bare list of hosts); None when there is none."""
+    path = os.environ.get("RERAIL_FARM_CONFIG") or os.path.join(CONFIG, "farm.json")
+    return next((p for p in (path, HOSTS) if os.path.exists(p)), None)
+
+
+def config():
+    """The farm's configuration (`config_path`). No file: no hosts, and everything runs here."""
+    for p in filter(None, [config_path()]):
+        try:
+            data = json.load(open(p))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, list):
+            data = {"hosts": data}
+        return dict(DEFAULTS, **data)
+    return dict(DEFAULTS)
+
+
 def hosts():
+    return [h for h in config()["hosts"] if h.get("name")]
+
+
+def read_json(path, default):
     try:
-        return json.load(open(HOSTS))
+        return json.load(open(path))
     except (OSError, ValueError):
-        return []
+        return default
+
+
+def write_json(path, data):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    json.dump(data, open(tmp, "w"))
+    os.replace(tmp, path)
+
+
+def mark_down(name, why):
+    """Records that `name` failed in use (its agent stopped, a file could not be written there): it
+    is not used until its back-off ends, and the next health check asks again."""
+    path = state("health", name)
+    h = read_json(path, {})
+    failures = h.get("failures", 0) + 1
+    wait = min(DOWN_SECONDS[0] * 2 ** (failures - 1), DOWN_SECONDS[1])
+    h.update(ok=False, why=why, failures=failures, checked=time.time(), down_until=time.time() + wait)
+    write_json(path, h)
+    log(f"{name}: down for {wait} s: {why}")
+
+
+def probe(host, cfg):
+    """Asks `host` how it is, over ssh: its idle time, free disk, NFS mounts, the address it sees this
+    machine connect from, then the round trip and (every PROBE_SECONDS) the link's throughput.
+    Returns the health record, `ok` with `why` when not."""
+    name = host["name"]
+    previous = read_json(state("health", name), {})
+    h = {"checked": time.time(), "ok": False, "failures": previous.get("failures", 0),
+         "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0)}
+    script = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1;'
+              " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}';"
+              " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
+    try:
+        out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        out = None
+    if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 3:
+        h["why"] = "unreachable (off, asleep, or off the network)"
+        return h
+    lines = out.stdout.splitlines()
+    client = h["client"] = (lines[0].split() or [""])[0]
+    try:
+        h["free_gb"] = int(lines[1].split()[3]) // (1 << 20)
+        h["idle_s"] = int(lines[2]) / 1e9
+    except (ValueError, IndexError):
+        h["why"] = "its answer could not be read"
+        return h
+    h["mounts"] = [m for m in lines[3:] if m]
+    started = time.time()
+    try:
+        subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
+        h["rtt_ms"] = round((time.time() - started) * 1000)
+    except subprocess.TimeoutExpired:
+        h["rtt_ms"] = 5000
+    link = host.get("link_match")
+    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+        started = time.time()
+        try:
+            subprocess.run(ssh(name, "cat >/dev/null", "health"), input=os.urandom(PROBE_BYTES), capture_output=True, timeout=10)
+            h["mbps"] = round(PROBE_BYTES / (1 << 20) / (time.time() - started), 1)
+        except subprocess.TimeoutExpired:
+            h["mbps"] = 0
+        h["mbps_at"] = time.time()
+    if link and link not in client:
+        h["why"] = f"not on its link: it sees this machine as {client or '?'}, without {link!r}"
+    elif h["free_gb"] < cfg["min_free_gb"]:
+        h["why"] = f"{h['free_gb']} GB free, under {cfg['min_free_gb']}"
+    elif h["rtt_ms"] > cfg["max_rtt_ms"]:
+        h["why"] = f"a {h['rtt_ms']} ms round trip, over {cfg['max_rtt_ms']}"
+    elif (h["mbps"] or 0) < cfg["min_mbps"]:
+        h["why"] = f"{h['mbps']} MB/s, under {cfg['min_mbps']}"
+    else:
+        h["ok"], h["why"], h["failures"] = True, "", 0
+    return h
+
+
+def health(host, fresh=False):
+    """`host`'s health: probed at most every HEALTHY_SECONDS while usable, and after its back-off
+    ends while not (`mark_down`, or a failed probe). One caller probes; the others read the last
+    record meanwhile. `fresh` probes now."""
+    name = host["name"]
+    path = state("health", name)
+    h = read_json(path, None)
+    now = time.time()
+    if h is not None and not fresh:
+        if h.get("ok") and now - h.get("checked", 0) < HEALTHY_SECONDS:
+            return h
+        if not h.get("ok") and now < h.get("down_until", 0):
+            return h
+    lock = Lock(path + ".lock", blocking=fresh)
+    if not lock.held:
+        lock.release()
+        return h or {"ok": False, "why": "not probed yet"}
+    try:
+        h = probe(host, config())
+        if not h["ok"]:
+            h["failures"] = h.get("failures", 0) + 1
+            h["down_until"] = now + min(DOWN_SECONDS[0] * 2 ** (h["failures"] - 1), DOWN_SECONDS[1])
+        write_json(path, h)
+        # `ship` reads what the host mounts (never copy under its NFS mounts); unknown stays unknown.
+        if "mounts" in h:
+            open(state("mounts", name) + ".tmp", "w").write("\n".join(h["mounts"]))
+            os.replace(state("mounts", name) + ".tmp", state("mounts", name))
+        log(f"{name}: {'usable' if h['ok'] else 'not usable: ' + h['why']} ({h.get('rtt_ms')} ms, {h.get('mbps')} MB/s, {h.get('free_gb')} GB free)")
+        return h
+    finally:
+        lock.release()
+
+
+def usable(kind=None):
+    """The enabled hosts that are usable now, most cores first; `kind` ("mirror", "tests") keeps those
+    the configuration names for it."""
+    out = []
+    for host in hosts():
+        if not host.get("enabled", True) or (kind and not host.get(kind, kind == "tests" and host.get("mirror"))):
+            continue
+        if health(host).get("ok"):
+            out.append(host)
+    return sorted(out, key=lambda h: -h.get("cores", 0))
 
 
 def capacity(host):
-    """How many compiles `host` takes now, read at most every 30 s: one per core while nobody has used
-    it for 5 minutes, half as many while someone does. Not its load average: macOS's background
-    work (Photos' and Spotlight's analysis) keeps that high on an idle machine, and runs at a
-    priority every compile preempts."""
-    path = state("load", host["name"])
-    try:
-        st = os.stat(path)
-        if time.time() - st.st_mtime < 30:
-            return int(open(path).read() or 0)
-    except (OSError, ValueError):
-        pass
-    # One compile asks; the others take the last answer meanwhile (none at first).
-    lock = Lock(path + ".lock", blocking=False)
-    if not lock.held:
-        lock.release()
-        try:
-            return int(open(path).read() or 0)
-        except (OSError, ValueError):
-            return 0
-    try:
-        out = subprocess.run(ssh(host["name"], "ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}';"
-                                 " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'"),
-                             capture_output=True, text=True, timeout=5)
-        lines = out.stdout.splitlines() if out.returncode == 0 else []
-        idle = int(lines[0]) / 1e9 if lines else None
-        mounts = state("mounts", host["name"])
-        open(mounts + ".tmp", "w").write("\n".join(lines[1:]))
-        os.replace(mounts + ".tmp", mounts)
-    except (subprocess.TimeoutExpired, ValueError, IndexError):
-        idle = None
-    finally:
-        lock.release()
-    free = 0 if idle is None else host["cores"] if idle > USER_IDLE_SECONDS else host["cores"] // 2
-    log(f"{host['name']}: idle {idle} s, takes {free}")
-    open(path + ".tmp", "w").write(str(free))
-    os.replace(path + ".tmp", path)
-    return free
+    """How many compiles `host` takes now: none while it is not usable (`health`); one per core while
+    nobody has used it for 5 minutes, half as many while someone does. Not its load average: macOS's
+    background work (Photos' and Spotlight's analysis) keeps that high on an idle machine, and runs
+    at a priority every compile preempts."""
+    h = health(host)
+    if not h.get("ok"):
+        return 0
+    return host["cores"] if h.get("idle_s", 0) > USER_IDLE_SECONDS else host["cores"] // 2
 
 
 # The ssh connection a compile's calls go over: one master per slot, since sshd serves only so many
@@ -364,11 +496,18 @@ def capacity(host):
 CHANNEL = ["load"]
 
 
-def ssh(host, command):
-    control = state("ssh", f"{host}.{CHANNEL[0]}")
+def ssh(host, command, channel=None):
+    control = state("ssh", f"{host}.{channel or CHANNEL[0]}")
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ServerAliveInterval=5",
             "-o", "ServerAliveCountMax=3", "-o", "ControlMaster=auto", "-o", f"ControlPath={control}",
             "-o", "ControlPersist=10m", host, command]
+
+
+def on_host(script):
+    """The command that runs this farm's `script` (remote-rustc, farm-agent) on a host: its text goes
+    with the command, so a host needs nothing installed and a cleaned one still works."""
+    here = os.path.join(os.path.dirname(os.path.realpath(__file__)), script)
+    return "exec /usr/bin/python3 -u -c " + shlex.quote(open(here).read())
 
 
 def remote_slot():
@@ -523,7 +662,7 @@ def remote(host, rustc, args, env, since):
     request = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir],
                "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
     try:
-        run = subprocess.run(ssh(name, os.path.join(SHARE, "remote-rustc")), input=json.dumps(request).encode(),
+        run = subprocess.run(ssh(name, on_host("remote-rustc")), input=json.dumps(request).encode(),
                              capture_output=True, timeout=COMPILE_SECONDS)
     except subprocess.TimeoutExpired:
         return give_up("the compile timed out")
@@ -582,7 +721,7 @@ def run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up)
                "depinfo": os.path.join(out_dir, crate_extra + ".d") if "dep-info" in emits(args) else None,
                "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
     try:
-        run = subprocess.run(ssh(host["name"], os.path.join(SHARE, "remote-rustc")), input=json.dumps(request).encode(),
+        run = subprocess.run(ssh(host["name"], on_host("remote-rustc")), input=json.dumps(request).encode(),
                              capture_output=True, timeout=COMPILE_SECONDS)
     except subprocess.TimeoutExpired:
         return give_up("the compile timed out")

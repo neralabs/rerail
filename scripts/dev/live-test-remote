@@ -4,7 +4,7 @@
     scripts/dev/live-test-remote [--host NAME] [--verbose] PACKAGE [--lib | --test NAME] [-- FILTER...]
 
 Runs `relax test --live PACKAGE ...` on a host of the build farm (scripts/build/farm: a host with
-`"mirror": true` in hosts.json, the first one by default) in this checkout's copy there, and
+`"mirror": true` in the farm's configuration, the first one by default) in this checkout's copy there, and
 prints its verdicts here. Each file saved in this checkout is sent to the host through the farm's
 live mirror, where Relax's own watcher sees it written and patches the running tests: the JIT,
 the live process and Relax's store are the host's, and this machine spends only the send.
@@ -32,14 +32,11 @@ import mirror  # noqa: E402
 SKIPPED = ("target/", "tmp/", "working-data/", ".git/", "node_modules/", ".claude/")
 
 
-def mirror_hosts():
-    return [h for h in farm.hosts() if h.get("enabled", True) and h.get("mirror")]
-
-
-def send(host, files=(), roots=()):
-    """Sends what changed of `files` and `roots` to the host, through the farm's mirror daemon."""
+def send(host, files=(), roots=(), verify=False):
+    """Sends what changed of `files` and `roots` to the host, through the farm's mirror daemon;
+    `verify` asks the host again what it holds first (it may have been cleaned)."""
     reply = mirror.compile({"host": host, "since": time.time(), "roots": [list(r) for r in roots],
-                            "files": list(files),
+                            "files": list(files), "verify": verify,
                             "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
     if reply is None or reply.get("code") != 0:
         sys.exit(f"live-test-remote: could not send to {host}: {(reply or {}).get('why') or (reply or {}).get('stderr')}")
@@ -97,10 +94,12 @@ def main(argv):
             verbose, argv = True, argv[1:]
     if not argv:
         sys.exit(__doc__)
-    hosts = mirror_hosts()
     if host is None:
+        hosts = farm.usable("mirror")
         if not hosts:
-            sys.exit("live-test-remote: no host has \"mirror\": true in " + farm.HOSTS)
+            reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
+            sys.exit("live-test-remote: no usable host with \"mirror\": true" + (f" ({'; '.join(reasons)})" if reasons else "")
+                     + "; run `relax test --live` here instead")
         host = hosts[0]["name"]
     relax = os.environ.get("RELAX") or subprocess.run(["which", "relax"], capture_output=True, text=True).stdout.strip()
     if not relax:
@@ -110,7 +109,7 @@ def main(argv):
 
     started = time.time()
     roots = [(CHECKOUT, "checkout")] + ([(os.path.realpath(std), "tree")] if std else [])
-    t = send(host, files=[relax], roots=roots)
+    t = send(host, files=[relax], roots=roots, verify=True)
     print(f"live-test-remote: {host}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
 
     env = {"RUSTC_WRAPPER": "", "RELAX_ALLOW_C": "1"} | ({"RELAX_STD": os.path.realpath(std)} if std else {})
@@ -120,8 +119,7 @@ def main(argv):
     # command stops Relax when its input (this connection) ends.
     remote = f"cd {shlex.quote(os.path.join(CHECKOUT, 'native'))} && export PATH=$HOME/.cargo/bin:$PATH && " \
              f"( {command} ) & p=$!; cat >/dev/null; kill $p 2>/dev/null; wait $p"
-    farm.CHANNEL[0] = "live"
-    proc = subprocess.Popen(farm.ssh(host, remote), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(farm.ssh(host, remote, "live"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     pushed = [None]
 
@@ -134,7 +132,8 @@ def main(argv):
                 pushed[0] = None
             elif verbose or "error" in line.split(":", 1)[0] or line.startswith(("relax: ", "relax live")) or "panicked" in line:
                 print(line.rstrip(), flush=True)
-        print(f"live-test-remote: the session on {host} ended", flush=True)
+        print(f"live-test-remote: the session on {host} ended (a lost host ends it: start it again,"
+              " on another host or here)", flush=True)
         os._exit(proc.wait() or 0)
 
     threading.Thread(target=show, daemon=True).start()
