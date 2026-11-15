@@ -5212,3 +5212,13 @@ seed joins cut at 100k–200k rows of work, trials whose orders cost 5× their p
 statistics with a 449,720-row side, heavy-value splits (`xd_`, `xk_`) over 85–120k first-atom rows. A handoff whose
 replacement is cut too goes on unbounded ("the replacement goes on", `p68_rr_agg20`). The strata trace is written
 when the loop ends, so a killed run names no stratum.
+
+## O-pse-alone-strict. A pack of PSE's rule file alone aborts strict SQL (2026-11-15)
+
+Status: open. Found while bisecting O-cold-seed-join. With the data-layer candidates' `plan-scope-side-effects.rr`
+as the only rule file, a cold strict run over 25 data-layer files stops with
+`RERAIL_SQL_STRICT: SQL inside the waves` at `SELECT c0 FROM main."plan"`, from `Fx::open` in the cross-file part.
+It still does so after 0267. The whole pack runs strict. The likely cause is that with one program, the cross part
+reads the file-local export `plan` through SQL (`setfix::input_of`): one fixpoint binds the exports as empty,
+lazily filled sources, and `view()` applies only to base inputs. Next: bind such an export as a view of its
+rows, and check that a program alone and in a pack read its exports the same way.
