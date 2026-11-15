@@ -28,7 +28,13 @@ into notes once the queue is done).
   theirs' guard (330d9cc2c): narrowing through `child(p, v, _)` only when the program does not derive `child`.
 - **Done when**: the guard is in ours' `parents_of`, with a test where a program deriving `child` reads every
   node's text; the syntax tests pass.
-- **Record**: —
+- **Record**: done. 69855a67f puts theirs' guard into ours' `parents_of` (`redefined`, syntax.rs 527: a base name
+  `kind`/`node`/`field`/`child` with rules other than `node`'s projection) and guards `kind`, `node`, `fields_of` and
+  the leaf field the same way. Test `a_derived_base_name_narrows_no_text`. Reviewer: the code keeps both sides;
+  no tracked or generated program loses narrowing (only projections derive `kind`; nothing derives `node`, `field`,
+  `child`); one finding, that the test's `child` case also derived `kind`, so the `child` guard was untested. Fixed:
+  a case deriving `child` alone, shown to fail with the guard removed and pass with it. Syntax tests: 28 passed,
+  0 failed, 3 ignored (ignored before; the commit's "33" was wrong).
 
 ### Q2. Text tests over `node_text`, `token` and `value` answered on request use the vocabulary
 
@@ -40,17 +46,27 @@ into notes once the queue is done).
 - **Done when**: a text test over node_text answered on request is answered from a vocabulary of the answered
   texts, measured on a data-layer rule that tests node_text (work and atoms before/after), with the same findings.
   The `vocabulary_columns` filter added in 36625e820 is gone.
-- **Design (draft)**: before 0174, `node_text` was a batch input in `TEXT_COLUMNS`: the batch interned its strings
-  and `Vocabulary::rows` (strings.rs 255) tested each new string once against every test's compiled searchers.
-  Answered on request, its strings are atoms made during the run (`@rr_node_text_any`), after the batch's
-  vocabulary was tested. A text test whose string comes from such a derived column is turned, as now, into an
-  atom over a test relation, but that relation is made natively: a native step (like `Native::MatchAll`,
-  plan.rs 5082, which reads the distinct strings of a derived relation's column) reads the distinct strings of
-  the column, runs `Vocabulary::rows` over them (all tests at once, each string once per run through `seen`) and
-  inserts the passing symbols. `vocabulary_columns` then seeds every `TEXT_COLUMNS` relation again; a derived one
-  is answered by the native step. This holds for any derived string column, not only `node_text`. To check: the
-  Metal path (no host work, the guard test), the session's maintenance of the test relation, and the planner's
-  cardinality for it (`card`, plan.rs 1694).
+- **Design**:
+  - *Why the tests broke.* Before 0174, `node_text` was a batch input in `TEXT_COLUMNS`. The batch interned its
+    strings, and `Vocabulary::rows` (strings.rs 255) tested each string the run had not seen against every test's
+    compiled searchers at once (syntax.rs 3773 fills `strtest_<k>` from them). Answered on request, `node_text`,
+    `token` and `value` are atoms made during the run (`@rr_node_text_any`, `@rr_node_value`, the token rules),
+    after the batch's strings were tested.
+  - *The test relation over an answered column.* `as_relations` turns a test whose string is bound by an answered
+    column into an atom over a relation made natively: `Native::TextTest { input, column, test }` (`test` the
+    `strtest_<k>` it answers for), next to `Native::MatchAll`, which reads a derived column's distinct strings the
+    same way (plan.rs 5082). A test bound by a batch column reads `strtest_<k>` as now.
+  - *Running it.* The native reads the input column's distinct symbols and their texts and calls the run's own
+    `Vocabulary::rows` on them. Its `seen` is shared with the batch's fill: a string is tested once a run,
+    against all tests at once. The plan's `Inputs` carries the run's vocabulary (`corpus::Prepared::vocabulary`).
+  - *Sessions.* A native stratum is not maintained today (maintain.rs 156: "a relation made natively"): each
+    run would test every answered string again. A text test's rows depend on each input string alone, so it is
+    maintained as a filter: new strings tested, gone strings removed. This is required, not a follow-up (no reads
+    of unchanged data).
+  - *Everything a native touches:* `Native`'s `rename_reads` and `reads`, program_facts rows, program_image
+    `NativeSpec` and its tests, the plan-choice and program digests, `native_relation`'s dispatch, the planner's
+    estimate (`card`), the Metal path (no host work: the guard test's list), kept strata.
+  - `vocabulary_columns` seeds every `TEXT_COLUMNS` relation again: the filter added in 36625e820 goes.
 - **Record**: —
 
 ### Q3. No duplicate widened copies; the dropping test strict again

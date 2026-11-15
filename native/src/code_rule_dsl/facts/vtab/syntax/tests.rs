@@ -1166,6 +1166,9 @@ fn a_derived_base_name_narrows_no_text() {
         ("field(p, \"name\", c) :- edge(p, c).", "out(t) :- field(_, \"name\", n), text(n, t)."),
         ("field(p, \"attribute\", c) :- edge(p, c).", "out(t) :- field(_, \"attribute\", n), text(n, t)."),
         ("child(p, c, 0) :- edge(p, c).\nkind(n, \"dotted_name\") :- edge(n, _).", "out(t) :- kind(n, \"dotted_name\"), child(n, c, 0), text(c, t)."),
+        // `child` alone derived, `kind` the base relation: only the `child` guard keeps `parents_of` from narrowing
+        // the child's text to the children of `dotted_name` nodes.
+        ("child(p, c, 0) :- edge(p, c).", "out(t) :- kind(n, \"dotted_name\"), child(n, c, 0), text(c, t)."),
         // `node`'s projection and a rule of the program's own: `kind` is the program's.
         ("kind(n, k) :- node(_, n, k, _, _).\nkind(n, \"call\") :- edge(n, _).", "out(t) :- kind(n, \"call\"), text(n, t)."),
     ] {
