@@ -1296,7 +1296,8 @@ pub struct RunPlans {
 fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
     super::derived::digest(|d| {
         d.str("line");
-        b.digest(d);
+        d.u64(b.key() as u64);
+        d.u64((b.key() >> 64) as u64);
         d.u64(first.map_or(u64::MAX, |f| f as u64));
     })
 }
@@ -1808,7 +1809,7 @@ impl Model {
     /// as the delta that probes it, from the same change, so its keys follow the delta's, and what is measured of
     /// it before the fixpoint is a snapshot. Neither an absence proof nor a containment share holds against it.
     fn changes_with_the_delta(&self, rel: &str) -> bool {
-        self.stats.solving.contains(rel) && ["__ins", "__redo", "__del"].iter().any(|s| rel.ends_with(s))
+        ["__ins", "__redo", "__del"].iter().any(|s| rel.ends_with(s)) && self.stats.solving.contains(rel)
     }
 
     /// Positive joins whose keys cannot occur in the forced first atom's values. Not a maintenance delta of the
@@ -1820,14 +1821,20 @@ impl Model {
         let Some(delta) = b.atom(first) else { return Vec::new() };
         let drel = b.rel(delta);
         let dargs = b.args(first);
-        let values: Vec<_> = (0..dargs.len()).map(|c| self.small_values(drel, c)).collect();
+        // A delta column's values, made only where another atom shares its variable.
+        let values: Vec<std::cell::OnceCell<Option<Vec<&Constant>>>> = (0..dargs.len()).map(|_| std::cell::OnceCell::new()).collect();
         (0..b.len()).filter_map(|i| {
             let a = b.plain_atom(i)?;
-            if i == first || a.neg() || self.changes_with_the_delta(b.rel(a)) { return None; }
+            if i == first || a.neg() { return None; }
             let args = b.args(i);
+            // Only an atom sharing a variable with the delta can miss its keys: tested by the terms first, the
+            // relation's name after.
+            let shares = |v| args.iter().any(|t| matches!(t, TermRef::Var(x) if *x == v));
+            if !dargs.iter().any(|t| matches!(*t, TermRef::Var(v) if shares(v))) || self.changes_with_the_delta(b.rel(a)) { return None; }
             dargs.iter().enumerate().any(|(c, t)| {
                 let TermRef::Var(v) = *t else { return false };
-                let Some(from) = &values[c] else { return false };
+                if !shares(v) { return false; }
+                let Some(from) = values[c].get_or_init(|| self.small_values(drel, c)) else { return false };
                 if from.is_empty() { return false; }
                 args.iter().enumerate().any(|(at, t)| matches!(t, TermRef::Var(x) if *x == v)
                     && self.small_values(b.rel(a), at).is_some_and(|to| !to.is_empty() && from.iter().all(|v| !to.contains(v))))
@@ -1919,9 +1926,10 @@ impl Model {
         if plan_fresh() || !plan_budget() {
             return Some("no budget");
         }
-        let key = self.plan_key("", b, first);
+        let misses = self.delta_misses(b, first);
+        let key = self.plan_key_at("", b, first, &misses);
         let Some(kept) = plans_get(&key) else { return Some("no kept plan") };
-        if self.budget_takes(&kept, b, first, &self.live_sizes(b, first)).is_some() {
+        if self.budget_takes(&kept, b, first, &self.live_sizes_at(b, first, &misses)).is_some() {
             return None;
         }
         Some(match (&kept.4, kept.5) {
@@ -2038,7 +2046,8 @@ impl Model {
         if plan_fresh() {
             return self.plan_inner(pf, b, first, None, true);
         }
-        let key = self.plan_key("", b, first);
+        let misses = self.delta_misses(b, first);
+        let key = self.plan_key_at("", b, first, &misses);
         let nodes = self.stats.nodes.max(1.0);
         let Some(kept) = plans_find(&key, b.len(), nodes) else {
             plan_cache(0);
@@ -2048,7 +2057,7 @@ impl Model {
         // A line with work queued for its next plan (decision 0203: a wider search, a proposal not tried) is searched.
         let pending = joins::pending(&key);
         let kept = if pending { None } else { kept };
-        let sizes = self.live_sizes(b, first);
+        let sizes = self.live_sizes_at(b, first, &misses);
         if super::profile::on() {
             PLANS.with(|p| {
                 if let Some(s) = p.borrow().as_ref() {
@@ -2255,15 +2264,22 @@ impl Model {
 
     /// A kept plan's key: the rule as text, the delta (`first`) and the component solved, after `kind`.
     fn plan_key(&self, kind: &str, b: &Body<'_>, first: Option<usize>) -> PlanKey {
+        self.plan_key_at(kind, b, first, &self.delta_misses(b, first))
+    }
+
+    /// `plan_key` with the line's `delta_misses`, which a plan call finds once for its keys and its sizes
+    /// (`live_sizes_at`). The rule is written by its digest (`Body::key`), made once per body.
+    fn plan_key_at(&self, kind: &str, b: &Body<'_>, first: Option<usize>, misses: &[usize]) -> PlanKey {
         let _span = super::profile::span(|| "key".into());
         super::derived::digest(|d| {
             d.str(kind);
-            b.digest(d);
+            d.u64(b.key() as u64);
+            d.u64((b.key() >> 64) as u64);
             d.u64(first.map_or(u64::MAX, |f| f as u64));
             d.u64(self.stats.solving_digest as u64);
             d.u64((self.stats.solving_digest >> 64) as u64);
             // A changed key domain can make another order cheaper while row and distinct counts stay fixed.
-            for i in self.delta_misses(b, first) { d.u64(i as u64); }
+            for &i in misses { d.u64(i as u64); }
             // A join shape directive narrows the search: an order kept without it is not this rule's.
             for shape in self.shapes_for(b.rel(b.head())) { d.str(&shape.text); }
             // Exact statistics measured for the rule (decision 0203 §3) price it anew: its kept prices are not taken.
@@ -2297,29 +2313,36 @@ impl Model {
 
     /// Live cardinalities followed by the distributions the price reads. A delta's size affects whether a
     /// search pays for itself; its distinct values and fanouts can change the cheapest order even at fixed size.
-    pub fn live_sizes(&self, b: &Body<'_>, _first: Option<usize>) -> Vec<f64> {
-        let mut sizes = self.read_sizes(b);
-        if let Some(a) = _first.and_then(|f| b.atom(f)) {
+    pub fn live_sizes(&self, b: &Body<'_>, first: Option<usize>) -> Vec<f64> {
+        self.live_sizes_at(b, first, &self.delta_misses(b, first))
+    }
+
+    /// `live_sizes` with the line's `delta_misses` (`plan_key_at`'s). Each atom's relation is found once, and its
+    /// columns read by its number (decision 0209 §3), not by name a column at a time.
+    fn live_sizes_at(&self, b: &Body<'_>, first: Option<usize>, misses: &[usize]) -> Vec<f64> {
+        let mut sizes = Vec::with_capacity(2 + 4 * b.len());
+        sizes.extend(self.read_sizes(b));
+        if let Some(a) = first.and_then(|f| b.atom(f)) {
             sizes.push(self.stats.delta_rows.get(b.rel(a)).copied().unwrap_or(-1.0));
         }
         for i in (0..b.len()).filter(|&i| b.atom(i).is_some()) {
             let rel = b.rel(b.atom(i).expect("an atom"));
+            let id = table::find(rel);
             for (c,t) in b.args(i).iter().enumerate() {
                 if matches!(t, TermRef::Wild) { continue; }
-                sizes.push(self.ndv.at(&rel, c).copied().unwrap_or(1.0));
-                sizes.push(self.stats.fan.at(&rel, c).copied().unwrap_or(1.0));
+                sizes.push(id.and_then(|r| self.ndv.at_rel(r, c)).copied().unwrap_or(1.0));
+                sizes.push(id.and_then(|r| self.stats.fan.at_rel(r, c)).copied().unwrap_or(1.0));
                 if let Some(k) = b.constant(*t) {
                     let n = if rel == "kind" && c == 1 {
                         self.kind_frequency(&k)
                     } else {
-                        self.stats.dfreq.at(&rel, c).map(|f|f.get(&k).copied().unwrap_or(0))
+                        id.and_then(|r| self.stats.dfreq.at_rel(r, c)).map(|f|f.get(&k).copied().unwrap_or(0))
                             .or_else(||self.stats.const_freq(rel,&self.col(rel,c),&k))
                     };
                     sizes.push(n.map_or(-1.0, |n| if n == 0 { -2.0 } else { n as f64 }));
                 }
             }
         }
-        let misses = self.delta_misses(b, _first);
         // One bit per literal; 1 -> 4 crosses PRICE_DRIFT and also changes the driver's exact signature.
         sizes.extend((0..b.len()).map(|i| if misses.contains(&i) { 4.0 } else { 1.0 }));
         sizes
@@ -2381,11 +2404,12 @@ impl Model {
         if PLANS.with(|p| p.borrow().is_none()) {
             return self.plan_inner(pf, b, first, None, true);
         }
-        let key = self.plan_key("live ", b, first);
+        let misses = self.delta_misses(b, first);
+        let key = self.plan_key_at("live ", b, first, &misses);
         // The state kept before the last (O-live-replan item 4): sizes that alternate between waves (a distinct
         // count of 1, then 3, then 1) find their earlier price here instead of searching again.
         let earlier = key ^ (1u128 << 127);
-        let sizes = self.live_sizes(b, first);
+        let sizes = self.live_sizes_at(b, first, &misses);
         let cardinalities = 1 + usize::from(first.is_some()) + b.read_count();
         // The last price, and the work of the order when it was searched.
         let kept = plans_find(&key, b.len(), self.stats.nodes.max(1.0)).flatten().and_then(|k| Some((k.4.clone()?, k.1)));
@@ -2410,7 +2434,7 @@ impl Model {
             });
         };
         // A line with work queued for its next plan (decision 0203) is searched.
-        let line = (joins::any_noted() || joins::pricing()).then(|| self.plan_key("", b, first));
+        let line = (joins::any_noted() || joins::pricing()).then(|| self.plan_key_at("", b, first, &misses));
         let kept = if line.is_some_and(|l| joins::pending(&l)) { None } else { kept };
         if let Some((priced, searched)) = &kept {
             if near(&priced.sizes, &sizes) && self.valid_live_driver(&priced.got.0.0, b, first) {
