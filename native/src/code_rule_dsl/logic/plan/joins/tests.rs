@@ -141,9 +141,14 @@ fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     assert_eq!(round[0].chosen, 0, "priced: {}", round[0].why);
     // The background walked the other at a quarter of the one that ran: 50 in the run's units, against its 200.
     propose(210, vec![(steps(&order(&[0, 1])), 4e5), (steps(&order(&[1, 0])), 1e5)], Some(4e5));
-    let mut round = vec![Choice { key: 210, candidates, chosen: 9, why: "" }];
+    let mut round = vec![Choice { key: 210, candidates: candidates.clone(), chosen: 9, why: "" }];
     choose(&mut round);
     assert_eq!(round[0].chosen, 1, "walked: {}", round[0].why);
+    // Decision 0246: walked at 0.8 of the one that ran, within the walks' spread: not taken on its walk.
+    propose(210, vec![(steps(&order(&[0, 1])), 4e5), (steps(&order(&[1, 0])), 3.2e5)], Some(4e5));
+    let mut round = vec![Choice { key: 210, candidates, chosen: 9, why: "" }];
+    choose(&mut round);
+    assert_eq!(round[0].chosen, 0, "within the walks' spread: {}", round[0].why);
     clear();
 }
 
@@ -479,9 +484,9 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     let walked = found.walked.expect("walked");
     let plain = WalkSnap { heavy: HashMap::new(), ..snap };
     let unsplit = plain.walk(rule, None, &order, vec![(order.clone(), 1.0)], &|| false).walked.expect("walked");
-    // Split, 1.04 of the work; drawn whole, 1.76: the uniform draw's hot rows each stand for a large function.
-    assert!((walked / truth - 1.0).abs() < 0.1, "{walked} against {truth}");
-    assert!((unsplit / truth - 1.0).abs() > 3.0 * (walked / truth - 1.0).abs(), "unsplit {unsplit}, split {walked}, against {truth}");
+    // Split, 1.08 of the work; drawn whole, 0.89 (1.76 before decision 0246 thinned by each step's size).
+    assert!((walked / truth - 1.0).abs() < 0.15, "{walked} against {truth}");
+    assert!((unsplit / truth - 1.0).abs() < 0.15, "unsplit {unsplit} against {truth}");
 }
 
 fn steps_of(o: &[usize]) -> Vec<StoredStep> {

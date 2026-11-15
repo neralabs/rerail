@@ -8202,7 +8202,8 @@ impl<'a> Run<'a, '_> {
                     // search as before (decision 0207), and its request waits for the background.
                     match joins::walked(&key) {
                         Some((ran_w, props)) => {
-                            let better: Vec<(Vec<Step>, f64)> = props.into_iter().filter(|(_, w)| *w < ran_w).take(2).collect();
+                            // Decision 0246: past the walks' spread (`WALK_MARGIN`).
+                            let better: Vec<(Vec<Step>, f64)> = props.into_iter().filter(|(_, w)| *w < joins::WALK_MARGIN * ran_w).take(2).collect();
                             joins::log(|| format!("trials {}: the background's walked proposals, the order it ran at {ran_w:.0}: {}", r.head.rel, if better.is_empty() { "none better".to_owned() } else { better.iter().map(|(o, w)| format!("{} {w:.0}", o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."))).collect::<Vec<_>>().join(", ") }));
                             walked_props = better.clone();
                             cands.extend(better.into_iter().map(|(o, _)| o));
@@ -11888,6 +11889,25 @@ struct WalkSnap {
 /// Orders a background search walks, at most: its best-priced, and the one that ran.
 const WALK_ORDERS: usize = 16;
 
+thread_local! {
+    /// Mixed into the walks' seeds: 0 but while `RERAIL_WALK_REPEAT` measures their spread.
+    static WALK_SALT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The salt for a walk's `part` (`starts` for the lead's draw, `walker` for its steps); `RERAIL_WALK_SALT_ONLY`
+/// keeps the other part's seeds as they are, to measure each part's spread.
+fn walk_salt(part: &str) -> u64 {
+    let only = std::env::var("RERAIL_WALK_SALT_ONLY").ok();
+    if only.as_deref().is_some_and(|o| o != part) { return 0 }
+    WALK_SALT.with(|s| s.get()).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+/// `RERAIL_WALK_REPEAT`: a measurement aid. A background search walks each order this many times more, each under
+/// other seeds, and logs their mean and spread. The ranking keeps the first walk.
+fn walk_repeat() -> usize {
+    std::env::var("RERAIL_WALK_REPEAT").ok().and_then(|v| v.parse().ok()).unwrap_or(0)
+}
+
 impl WalkSnap {
     /// `None` where a positive atom's relation is not the engine's (the walk could not probe it).
     /// Read by the scope alone (`Db`): a stratum off the run's thread asks too, and reads no SQL (decision 0113).
@@ -12020,7 +12040,7 @@ impl WalkSnap {
             (rows, exact)
         } else {
             let rel = self.rels.get(a.rel.as_ref())?;
-            let mut seed = 0x0243_5eed_u64;
+            let mut seed = 0x0243_5eed_u64 ^ walk_salt("starts");
             let mut draw = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
             let batch = 16 * joins::walk_rows();
             let (mut est, mut read, mut kept, mut exact) = (0.0, 0u64, 0u64, false);
@@ -12063,7 +12083,7 @@ impl WalkSnap {
             let ordered: Vec<i64> = self.heavy[&(link.clone(), cv)].clone();
             let sizes: Vec<f64> = ordered.iter().map(|&h| { let mut n = 0.0; lrel.probe_each(&[cv], &[h], &mut |_| n += 1.0); n }).collect();
             let all: f64 = sizes.iter().sum();
-            let mut seed = 0x0245_5eed_u64;
+            let mut seed = 0x0245_5eed_u64 ^ walk_salt("starts");
             let mut draw = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
             // Per heavy value: its rows (with the lead's constants, where the lead holds the key), and the rows
             // drawn and passing over all rounds. Rounds go on until `walk_rows` pass, at most `64 * walk_rows`
@@ -12113,7 +12133,7 @@ impl WalkSnap {
             let drawn_pass = hot_rows.len();
             // The uniform draw's hot rows are a uniform sample of the same rows: walked with them.
             hot_rows.extend(hot_u.iter().cloned());
-            joins::log(|| format!("background walk split by {link}.{cv}: {} of {} lead rows past the checks hot by value; {} drawn by key, {} pass, estimated {hot_n:.0}", hot_u.len(), hot_u.len() + cold_u.len(), drawn, drawn_pass));
+            if WALK_SALT.with(|s| s.get()) == 0 { joins::log(|| format!("background walk split by {link}.{cv}: {} of {} lead rows past the checks hot by value; {} drawn by key, {} pass, estimated {hot_n:.0}", hot_u.len(), hot_u.len() + cold_u.len(), drawn, drawn_pass)); }
             st.rows = cold_u;
             st.cold = cold_share;
             st.hot = Some((hot_rows, hot_n));
@@ -12139,7 +12159,8 @@ impl WalkSnap {
         let mut walked = Vec::new();
         let mut ran_w = None;
         for (i, (o, price)) in priced.into_iter().enumerate() {
-            if i > 0 && over() { break }
+            // A measurement of the walks' spread (`walk_repeat`) walks every order.
+            if i > 0 && over() && walk_repeat() == 0 { break }
             let Some(lead) = o.first().map(|s| s.at) else { continue };
             let prefix: Vec<usize> = o.iter().take(1 + Self::checks(r, &o).len()).map(|s| s.at).collect();
             let st = starts.entry(prefix).or_insert_with(|| self.starts(r, &o, first)).as_ref();
@@ -12161,6 +12182,27 @@ impl WalkSnap {
                 Some(est)
             });
             if same_order(&o, ran) { ran_w = est; }
+            let reps = walk_repeat();
+            if reps > 0 && joins::logging() {
+                let mut got = Vec::new();
+                for k in 1..=reps as u64 {
+                    WALK_SALT.with(|s| s.set(k));
+                    let w2 = Walker::new(r, lead, joins::walk_width(), &|rel| self.rels.get(rel).cloned(), &|x| self.syms.get(x).copied());
+                    let e = self.starts(r, &o, first).and_then(|st| {
+                        let k = st.checks as f64;
+                        let part = |rows: &[Vec<i64>]| -> Option<f64> { if rows.is_empty() { return Some(0.0) } let per = w2.work(&o, rows); (!w2.emptied()).then(|| (per - k).max(0.0)) };
+                        let mut e = st.lead_rows * (st.checks_work + st.share * st.cold * part(&st.rows)?);
+                        if let Some((rows, n)) = &st.hot { e += n * part(rows)?; }
+                        Some(e)
+                    });
+                    got.extend(e);
+                }
+                WALK_SALT.with(|s| s.set(0));
+                let m = got.iter().sum::<f64>() / got.len().max(1) as f64;
+                let sd = (got.iter().map(|x| (x - m).powi(2)).sum::<f64>() / got.len().max(1) as f64).sqrt();
+                let (lo, hi) = got.iter().fold((f64::INFINITY, 0.0f64), |(a, b), &x| (a.min(x), b.max(x)));
+                joins::log(|| format!("walk spread {}: {} of {reps} measured, mean {m:.0}, sd {sd:.0} ({:.0}%), {lo:.0} to {hi:.0}", o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."), got.len(), 100.0 * sd / m.max(1.0)));
+            }
             walked.push((joins::steps(&o), est, price));
         }
         // Without the order that ran walked, the walks have nothing to be compared with: priced, as before.
@@ -12236,7 +12278,7 @@ impl<'a> Walker<'a> {
                 _ => None,
             }).collect());
         }
-        Walker { rule, lead, slots, rels, consts, width: width.max(1), probes: std::cell::Cell::new(0), seed: std::cell::Cell::new(0x0227_5eed), spent: Default::default(), emptied: std::cell::Cell::new(false) }
+        Walker { rule, lead, slots, rels, consts, width: width.max(1), probes: std::cell::Cell::new(0), seed: std::cell::Cell::new(0x0227_5eed ^ walk_salt("walker")), spent: Default::default(), emptied: std::cell::Cell::new(false) }
     }
 
     /// Whether the last walk's sample ran out of bindings before its last step: where it was a sample, its zero is
@@ -12265,25 +12307,32 @@ impl<'a> Walker<'a> {
     /// `work` carrying `width` bindings a step.
     pub(super) fn work_at(&self, o: &[Step], starts: &[Vec<i64>], width: usize) -> f64 {
         let Literal::Atom(la) = &self.rule.body[self.lead] else { return 1.0 };
+        if starts.is_empty() { return 0.0 }
         let n = self.slots.len();
         let mut bound = vec![false; n];
-        let mut sample: Vec<Vec<i64>> = Vec::with_capacity(starts.len());
+        // Decision 0246: each binding carries the share of a lead row's bindings it stands for; a step's work is
+        // their sum.
+        let w0 = 1.0 / starts.len() as f64;
+        let mut sample: Vec<(f64, Vec<i64>)> = Vec::with_capacity(starts.len());
         for row in starts {
             let mut b = vec![0i64; n];
             for (c, t) in la.args.iter().enumerate() {
                 if let Some(&i) = self.slots.get(t) { b[i] = row[c]; bound[i] = true; }
             }
-            sample.push(b);
+            sample.push((w0, b));
         }
-        let (mut mult, mut work) = (1.0f64, 0.0f64);
+        let mut work = 0.0f64;
+        // A text constant no symbol has: no row holds it, an exact zero (not a sample run out).
+        let mut none_hold = false;
         self.emptied.set(false);
         for (si, s) in o.iter().enumerate() {
             if s.at == self.lead { continue }
-            if sample.is_empty() || mult == 0.0 {
-                self.emptied.set(sample.is_empty() && mult > 0.0);
+            let total: f64 = sample.iter().map(|x| x.0).sum();
+            if sample.is_empty() || total == 0.0 {
+                self.emptied.set(!none_hold);
                 break
             }
-            work += mult;
+            work += total;
             let Literal::Atom(a) = &self.rule.body[s.at] else { continue };
             let Some(rel) = &self.rels[s.at] else {
                 for t in a.args.iter() { if let Some(&i) = self.slots.get(t) { bound[i] = true } }
@@ -12292,7 +12341,7 @@ impl<'a> Walker<'a> {
             let consts = &self.consts[s.at];
             if consts.iter().any(|c| c.1.is_none()) {
                 // A text constant no symbol has: no row holds it.
-                if !a.neg { mult = 0.0; }
+                if !a.neg { sample.clear(); none_hold = true; }
                 continue;
             }
             // The key: the constants and the bound variables; the free variables, first places and repeats.
@@ -12311,7 +12360,18 @@ impl<'a> Walker<'a> {
             // back to `width` before the next expansion.
             let expands = !a.neg && !free.is_empty();
             let reservoir = if expands {
-                if sample.len() > width { sample = self.thin(sample, width); }
+                // Decision 0246: thinned by the next step's size. At most `16 * width` by weight first, then `width`
+                // by weight times each binding's candidates here (`probe_size`): a uniform thinning of equal weights
+                // dropped a large function's rows as often as a small one's, and walks varied by 27% to 41%.
+                if sample.len() > 16 * width { sample = self.priority(sample, 16 * width); }
+                if sample.len() > width {
+                    let sizes: Vec<f64> = sample.iter().map(|(w, b)| {
+                        let key: Vec<i64> = kfrom.iter().map(|k| match *k { Ok(v) => v, Err(i) => b[i] }).collect();
+                        w * rel.probe_size(&kcols, &key)
+                    }).collect();
+                    self.probes.set(self.probes.get() + sample.len() as u64);
+                    sample = self.priority_sized(sample, &sizes, width);
+                }
                 let mut after = bound.clone();
                 for &(_, i) in &free { after[i] = true; }
                 let checked = o[si + 1..].iter().find(|x| x.at != self.lead).is_some_and(|x| match &self.rule.body[x.at] {
@@ -12320,14 +12380,19 @@ impl<'a> Walker<'a> {
                 });
                 if checked { 16 * width } else { width }
             } else { width };
-            let mut ext: Vec<Vec<i64>> = Vec::new();
-            let (mut matched, mut seen, mut kept) = (0f64, 0u64, Vec::new());
+            // Decision 0246: the matches carried on, each with the share it stands for: its binding's, times the
+            // probe's estimate over the rows it read (a probe reads at most `reservoir` of its candidates). They
+            // are thinned by priority sampling (`priority`). A uniform draw over the rows read gave a function of
+            // 20,000 nodes the weight of one of 1,024, and walked the data-layer line `1.0.2.3.4.5` at 0.39 of
+            // its work.
+            let mut next: Vec<(f64, Vec<i64>)> = Vec::new();
             let t_step = super::native::component::thread_cpu();
             let n_step = sample.len() as u64;
             let mut r_step = 0u64;
-            for b in &sample {
+            for (wb, b) in &sample {
                 let key: Vec<i64> = kfrom.iter().map(|k| match *k { Ok(v) => v, Err(i) => b[i] }).collect();
-                let (mut found, mut passed, mut read) = (false, 0u64, 0u64);
+                let (mut found, mut read) = (false, 0u64);
+                let mut mine: Vec<Vec<i64>> = Vec::new();
                 self.probes.set(self.probes.get() + 1);
                 // Decision 0236: a probe with more candidates than the reservoir reads that many of them, drawn by
                 // position, and its matches are estimated from their share (an order probing `kind` by its
@@ -12337,51 +12402,82 @@ impl<'a> Walker<'a> {
                     let ok = repeat.iter().all(|&(c, i)| free.iter().find(|f| f.1 == i).is_some_and(|f| row(f.0) == row(c)));
                     if !ok { return }
                     found = true;
-                    passed += 1;
-                    if !a.neg && !free.is_empty() {
-                        // A reservoir of `width` of the matches, uniform without replacement: the rest are counted,
-                        // not kept.
-                        seen += 1;
-                        let at = if ext.len() < reservoir { Some(ext.len()) } else {
-                            let j = (self.draw() % seen) as usize;
-                            (j < reservoir).then_some(j)
-                        };
-                        if let Some(at) = at {
-                            let mut e = b.clone();
-                            for &(c, i) in &free { e[i] = row(c); }
-                            if at == ext.len() { ext.push(e) } else { ext[at] = e }
-                        }
+                    if expands {
+                        let mut e = b.clone();
+                        for &(c, i) in &free { e[i] = row(c); }
+                        mine.push(e);
                     }
                 });
-                // The matches that pass the repeats: the probe's estimate times their share of the rows read.
                 r_step += read;
-                matched += if read > 0 { est * passed as f64 / read as f64 } else { 0.0 };
-                if a.neg != found && (a.neg || free.is_empty()) { kept.push(b.clone()); }
+                if expands {
+                    let w = if read > 0 { wb * est / read as f64 } else { 0.0 };
+                    next.extend(mine.into_iter().map(|e| (w, e)));
+                } else if a.neg != found {
+                    next.push((*wb, b.clone()));
+                }
             }
             { let mut sp = self.spent.borrow_mut(); let e = sp.entry(s.at).or_default(); e.0 += n_step; e.1 += r_step; e.2 += super::native::component::thread_cpu() - t_step; }
-            let len = sample.len() as f64;
-            if a.neg || free.is_empty() {
-                mult *= kept.len() as f64 / len;
-                sample = kept;
-            } else {
-                mult *= matched / len;
+            if expands {
                 for &(_, i) in &free { bound[i] = true; }
-                sample = ext;
+                // Carried at most `16 * width`: the next expansion thins them by its own size.
+                if next.len() > 16 * width { next = self.priority(next, 16 * width); }
             }
+            sample = next;
         }
         work
     }
 }
 
 impl Walker<'_> {
-    /// At most `width` of `rows`, drawn at random without replacement (a partial shuffle).
-    fn thin(&self, mut rows: Vec<Vec<i64>>, width: usize) -> Vec<Vec<i64>> {
-        for i in 0..width.min(rows.len()) {
-            let j = i + (self.draw() % (rows.len() - i) as u64) as usize;
-            rows.swap(i, j);
+    /// Decision 0246: priority sampling (Duffield, Lund and Thorup): `k` of `items`, each a weight and a binding,
+    /// whose weights estimate any subset's sum without bias. Each item's priority is its weight over a uniform
+    /// draw; the `k` highest are kept. An item heavier than the next priority is always among them, and keeps its
+    /// own weight: a large function's bindings are carried, not drawn. The others share what the items not that
+    /// heavy weighed, so a thinning keeps the total (with each at the next priority, as the estimator has it, the
+    /// total varied by an eighth at 64, and a walk that kept it to 1.04 of its work went to 1.22).
+    fn priority(&self, mut items: Vec<(f64, Vec<i64>)>, k: usize) -> Vec<(f64, Vec<i64>)> {
+        if items.len() <= k || k == 0 { return items }
+        let all: f64 = items.iter().map(|x| x.0).sum();
+        let mut keyed: Vec<(f64, usize)> = items.iter().enumerate().map(|(i, x)| {
+            let u = ((self.draw() >> 11) as f64 + 0.5) / (1u64 << 53) as f64;
+            (x.0 / u, i)
+        }).collect();
+        keyed.select_nth_unstable_by(k, |a, b| b.0.total_cmp(&a.0));
+        let tau = keyed[k].0;
+        let keep: Vec<usize> = keyed[..k].iter().map(|x| x.1).collect();
+        let heavy: f64 = keep.iter().map(|&i| items[i].0).filter(|&w| w > tau).sum();
+        let light = keep.iter().filter(|&&i| items[i].0 <= tau).count();
+        let share = if light > 0 { ((all - heavy) / light as f64).max(0.0) } else { 0.0 };
+        let mut out = Vec::with_capacity(k);
+        for i in keep {
+            let (w, b) = std::mem::take(&mut items[i]);
+            out.push((if w > tau { w } else { share }, b));
         }
-        rows.truncate(width);
-        rows
+        out
+    }
+
+    /// `priority` by a size: each item's priority is its size over a uniform draw, the `k` highest kept. An item
+    /// larger than the next priority keeps its weight; the others' sizes share what the items not that large
+    /// sized, and each weight is scaled by its share over its size. An item of no size is dropped (it reaches no
+    /// row). Unbiased for sums that grow with the size, and exact for those proportional to it.
+    fn priority_sized(&self, mut items: Vec<(f64, Vec<i64>)>, sizes: &[f64], k: usize) -> Vec<(f64, Vec<i64>)> {
+        let live: Vec<usize> = (0..items.len()).filter(|&i| sizes[i] > 0.0).collect();
+        if live.len() <= k { return live.into_iter().map(|i| std::mem::take(&mut items[i])).collect() }
+        let all: f64 = live.iter().map(|&i| sizes[i]).sum();
+        let mut keyed: Vec<(f64, usize)> = live.iter().map(|&i| {
+            let u = ((self.draw() >> 11) as f64 + 0.5) / (1u64 << 53) as f64;
+            (sizes[i] / u, i)
+        }).collect();
+        keyed.select_nth_unstable_by(k, |a, b| b.0.total_cmp(&a.0));
+        let tau = keyed[k].0;
+        let keep: Vec<usize> = keyed[..k].iter().map(|x| x.1).collect();
+        let big: f64 = keep.iter().map(|&i| sizes[i]).filter(|&z| z > tau).sum();
+        let small = keep.iter().filter(|&&i| sizes[i] <= tau).count();
+        let share = if small > 0 { ((all - big) / small as f64).max(0.0) } else { 0.0 };
+        keep.into_iter().map(|i| {
+            let (w, b) = std::mem::take(&mut items[i]);
+            (if sizes[i] > tau { w } else { w * share / sizes[i] }, b)
+        }).collect()
     }
 
     /// The sampler's next draw (xorshift): walks are unbiased, and repeatable from the seed.

@@ -4054,6 +4054,33 @@ impl InRel {
         }
     }
 
+    /// Decision 0246: how many candidates a probe by `key` at `cols` reads before testing them, without reading
+    /// them: at least its matches, and exact where the index holds the key's columns alone. A walk weighs a
+    /// binding's next step by it.
+    pub fn probe_size(&self, cols: &[usize], key: &[i64]) -> f64 {
+        let ix = self.index(cols);
+        let mut buf = [0i64; MAX_KEY];
+        for (j, c) in ix.cols.iter().enumerate() { buf[j] = key[cols.iter().position(|x| x == c).expect("a key column")]; }
+        let (icols, ikey) = (&ix.cols[..], &buf[..ix.cols.len()]);
+        if icols.is_empty() {
+            self.len() as f64
+        } else if let Some(index) = ix.runs(self) {
+            let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count();
+            let mut pbuf = [0i64; MAX_KEY];
+            let at = |c: usize| ikey[ix.cols.iter().position(|&x| x == c).expect("a key column")];
+            let mut hints = [0u32; runs::HINTS];
+            index.find_at(&self.rows, self.k, permuted(&index.cols[..m], at, &mut pbuf), None, &mut hints).len() as f64
+        } else if !ix.composite && ix.sorted && let Some(v) = &self.view {
+            v.src.sorted_rows(v.cols[ix.cols[ix.lead]], ikey[ix.lead]).map_or(0, |r| r.len()) as f64
+        } else if !ix.composite && !ix.source || self.view.is_none() {
+            ix.get(self, ikey).len() as f64
+        } else {
+            let mut m = 0.0;
+            self.probe_each(cols, key, &mut |_| m += 1.0);
+            m
+        }
+    }
+
     pub fn mark(&self) -> RelMark {
         RelMark { at: self as *const InRel as usize, n: self.n, k: self.k, dead: self.dead.clone() }
     }

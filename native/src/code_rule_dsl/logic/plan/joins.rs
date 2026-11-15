@@ -534,9 +534,13 @@ pub fn choose(round: &mut [Choice]) {
             let measured = |i: usize| n.tried(&steps(&c.candidates[i].order)).is_some();
             let ran = (0..c.candidates.len()).find(|&i| measured(i) && walked_of(i) == Some(n.walked));
             if let Some(ran) = ran {
+                // Decision 0246: a walk varies by 20% to 30% (sd, 8 seeds on the data-layer files), so a walked
+                // order is costed as if it walked `WALK_MARGIN` higher: it displaces a measured order only where
+                // it walks about two deviations below (a walk 0.61 of the one that ran took a line from 5.66 M to
+                // 6.89 M).
                 let unit = costs[ran] / n.walked;
                 for (i, cost) in costs.iter_mut().enumerate() {
-                    if !measured(i) && let Some(w) = walked_of(i) { *cost = w * unit; }
+                    if !measured(i) && let Some(w) = walked_of(i) { *cost = w * unit / WALK_MARGIN; }
                 }
             }
         }
@@ -769,6 +773,9 @@ pub(super) fn random_orders(vars: &[u128], start: Option<usize>, n: usize, rng: 
     }
     out
 }
+
+/// Decision 0246: how far below the order that ran a walked order must walk to be taken on its walk alone.
+pub(super) const WALK_MARGIN: f64 = 0.625;
 
 /// A wider search's result: its orders with their prices, or their walked work over the line, and the walked work of
 /// the order the line ran where it walked them (decision 0243).
