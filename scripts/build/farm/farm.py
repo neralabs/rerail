@@ -330,8 +330,9 @@ DOWN_SECONDS = (30, 1800)
 # A host that answers, but over another link than its own (it fell back to WiFi), is tried again
 # this often, not backed off: its own link may be back at any time (`recover`).
 OFF_LINK_SECONDS = 60
-# The throughput probe's size, and how often it is sent (it is the slowest part of the probe).
-PROBE_BYTES = 4 << 20
+# The throughput probe's size, and how often it is sent (it is the slowest part of the probe). The
+# round trip is taken off its time: at 4 MB a session's start alone halved the rate seen.
+PROBE_BYTES = 16 << 20
 PROBE_SECONDS = 600
 
 
@@ -442,7 +443,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
         started = time.time()
         try:
             subprocess.run(ssh(name, "cat >/dev/null", "health"), input=os.urandom(PROBE_BYTES), capture_output=True, timeout=10)
-            h["mbps"] = round(PROBE_BYTES / (1 << 20) / (time.time() - started), 1)
+            h["mbps"] = round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
         except subprocess.TimeoutExpired:
             h["mbps"] = 0
         h["mbps_at"] = time.time()
