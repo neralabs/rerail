@@ -612,6 +612,16 @@ fn cond(cc: IntCC, a: &str, b: &str, s: &str, u: &str) -> String {
     if sig { format!("(({a} as {s}) {op} ({b} as {s})) as u8") } else { format!("(({a} as {u}) {op} ({b} as {u})) as u8") }
 }
 
+/// Whether call `inst` is followed by a return of its results, in order, and nothing else:
+/// `return f(…)`.
+fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
+    let dfg = &f.dfg;
+    if dfg.insts[inst].opcode() != ir::Opcode::Call {
+        return false;
+    }
+    f.layout.next_inst(inst).is_some_and(|r| dfg.insts[r].opcode() == ir::Opcode::Return && dfg.inst_args(r) == dfg.inst_results(inst) && !dfg.inst_results(inst).is_empty())
+}
+
 fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
     let dfg = &f.dfg;
     let data = &dfg.insts[inst];
@@ -740,6 +750,11 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 n => return Err(format!("a call of {n:?}")),
             };
             let call = format!("unsafe {{ f{callee}(pin{}{}) }}", if args.is_empty() { "" } else { ", " }, args.join(", "));
+            // Its results returned as they are (`returned_call`): the call in the return, so
+            // rustc hands its caller's result on (a tail call, no copy through the stack).
+            if returned_call(f, inst) {
+                return Ok(format!("return {call};"));
+            }
             match results.len() {
                 0 => format!("{call};"),
                 1 => set(call),
@@ -752,6 +767,8 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 }
             }
         }
+        // Made by the call before it (`returned_call`).
+        Opcode::Return if f.layout.prev_inst(inst).is_some_and(|c| returned_call(f, c)) => String::new(),
         Opcode::Return => match args.len() {
             0 => "return;".to_string(),
             1 => format!("return {};", args[0]),

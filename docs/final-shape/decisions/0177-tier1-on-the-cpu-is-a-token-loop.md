@@ -1414,3 +1414,32 @@ Two things kept other calls in it:
 
 Other kinds did not change. `the_cpus_records_are_the_interpreters`
 has `\` runs right before a string's quote, at four offsets.
+
+## A returned call is the return
+
+**Intro.** A short function's long case returns its whole function's
+result as it is. The Rust the backend wrote took the call's four
+results apart and built them again for the return:
+
+```
+let t = unsafe { f36(pin, v0, v1, v2, v3, v4, v5) }; v112 = t.0; …
+return (v112, v113, v114, v115);
+```
+
+rustc returns four values through memory, the caller's slot. It
+gave the call a slot of its own and copied it over, so the short
+function kept a frame and a saved register for that slot's address.
+
+**The change.** Where a call's results are returned at once, in
+order (`clif_rust::returned_call`), the backend writes the call in
+the return: `return unsafe { f36(…) };`. rustc then hands the
+caller's slot on, and the call is a branch. The short functions have
+no prologue now. `a_returned_call_is_the_return` checks the source.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Strings | 306 | 298 | 241 |
+| Numbers | 176 | 168 | 107 |
+| Comments | 271 | 263 | 193 |
+
+Words, punctuation and mixed code did not change.

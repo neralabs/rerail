@@ -106,6 +106,16 @@ fn a_bitmask_is_pairwise_adds() {
     assert!(src.contains("vcombine_u8(d, d)"), "no bitmask reduced by halves");
 }
 
+/// A call whose results are returned as they are is the return's (`clif_rust::returned_call`):
+/// `return f(…)`, so rustc hands its caller's result on, a tail call, where a copy through a
+/// temporary kept a short function's frame.
+#[test]
+fn a_returned_call_is_the_return() {
+    let src = include_str!("tier1_aot.rs");
+    assert!(src.contains("return unsafe { f"), "no call returned as it is");
+    assert!(!src.contains("v0, v1, v2, v3, v4, v5) }; return ("), "a call's results copied into a return");
+}
+
 /// A short token's function (`native_cpu_block::RuleMode::Short`): a rule's function whose
 /// calls are all its whole function's, of its own signature (a number's run past 16 bytes, a
 /// comment or a string past its first 64 bytes, a string whose bytes its counts need), so its
