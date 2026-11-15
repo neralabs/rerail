@@ -1,6 +1,7 @@
 import { createPrivateKey, randomBytes, X509Certificate } from "node:crypto";
-import { createReadStream, existsSync, realpathSync } from "node:fs";
-import { readFile, stat, rm } from "node:fs/promises";
+import { once } from "node:events";
+import { constants, createReadStream, existsSync, realpathSync } from "node:fs";
+import { open, readFile, stat, rm, type FileHandle } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { createSecureContext } from "node:tls";
@@ -10,6 +11,7 @@ import { tmpdir, userInfo } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
+import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
@@ -774,9 +776,10 @@ export class TlsKeyExposedError extends Error {
  * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
  * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
  * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). Any other path that is no key
- * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one that holds
- * no key such as the certificate, one whose readers cannot be read), and a certificate that would not serve with the
- * key, is a mistake in the command and stops the start. `access` is for tests.
+ * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one another
+ * program holds with a lease or an oplock, one larger than any key, one that holds no key such as the certificate, one
+ * whose readers cannot be read), and a certificate that would not serve with the key, is a mistake in the command and
+ * stops the start within seconds. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -798,14 +801,14 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
 }
 
 /**
- * What `path` holds, read once, when it is a regular file this account reads that parses as a private key; undefined
- * otherwise. A folder or FIFO is never read (a FIFO's read waits for a writer); a certificate or any other file is no key.
+ * What `path` holds, read once (`readRefusedTlsFile`), when it is a regular file this account reads that parses as a
+ * private key; undefined otherwise. A folder, a FIFO, a file another program holds with a lease or an oplock, one
+ * larger than any key, a certificate or any other file is no key.
  */
 async function readPrivateKey(path: string): Promise<Buffer | undefined> {
   try {
-    if (!(await stat(path)).isFile()) return undefined;
-    const key = await readFile(path);
-    createPrivateKey(key);
+    const key = await readRefusedTlsFile(path);
+    if (key !== undefined) createPrivateKey(key);
     return key;
   } catch {
     return undefined;
@@ -816,16 +819,103 @@ async function readPrivateKey(path: string): Promise<Buffer | undefined> {
  * Whether the certificate at `certFile` would serve https with `key`, checked as an https start checks the two (the read
  * in `loadDaemonTls`, then `RerailDaemon.start`'s parse and the server's pairing), for a start whose key others can read,
  * which serves with neither. A certificate that cannot be read, holds no certificate or is not `key`'s throws what that
- * start throws for it beside a private key. A path that is no file or folder, a FIFO say, is never read (a FIFO's read
- * waits for a writer) and serves nothing.
+ * start throws for it beside a private key, naming a folder, whose read error names no file. A file
+ * `readRefusedTlsFile` does not read (a FIFO, one another program holds with a lease or an oplock, one larger than any
+ * certificate) serves nothing.
  */
 async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
-  const found = await stat(certFile).catch(() => undefined);
-  if (found !== undefined && !found.isFile() && !found.isDirectory()) return false;
-  const cert = await readFile(certFile, "utf8");
+  const cert = (await readRefusedTlsFile(certFile))?.toString("utf8");
+  if (cert === undefined) return false;
   certificateFingerprint(cert);
   createSecureContext({ cert, key });
   return true;
+}
+
+/**
+ * The most a refused start reads of its key or certificate. A PEM private key, or a certificate with its chain, takes a
+ * few kilobytes, so a larger file is no key or certificate a person serves with: it gets the key's refusal, unread past
+ * this bound, so a file of gigabytes is refused as fast as a missing one.
+ */
+const REFUSED_TLS_FILE_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Opens for reading without waiting (`O_NONBLOCK`). Where another program holds a lease on the file, as Samba's kernel
+ * oplocks and an NFS server's delegations do on Linux, an open that waited would wait for the lease to break, 45 s by
+ * default, past `rerail daemon start`'s 15 s wait; this one fails at once (`EAGAIN`). A FIFO opens without waiting for
+ * a writer. Windows has no `O_NONBLOCK`: undefined there, it adds nothing, and `openedInChild` waits in its place.
+ */
+const OPEN_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+
+/**
+ * What the file at `path` holds, for a start that refused its key (`readWithoutWaiting`). On Windows, only once a Node
+ * child has opened it (`openedInChild`); undefined when the child has not.
+ */
+async function readRefusedTlsFile(path: string): Promise<Buffer | undefined> {
+  if (process.platform === "win32" && !(await openedInChild(path))) return undefined;
+  return await readWithoutWaiting(path);
+}
+
+/** How long a refused start waits on Windows for a Node child to open its key or certificate (`openedInChild`). */
+const CHILD_OPEN_WAIT_MS = 2_000;
+
+/** The child's work: open the file named after its script to read it, then close it; the daemon reports errors. */
+const CHILD_OPEN = "try { require('node:fs').closeSync(require('node:fs').openSync(process.argv[1], 'r')); } catch {}";
+
+/**
+ * Windows: whether a Node child opened `path` to read it, or failed to, within `CHILD_OPEN_WAIT_MS`. Windows has no
+ * open that skips another program's oplock: one that caches writes, as Windows' SMB server holds for a client caching
+ * the file, holds every open that reads it until its holder acknowledges the break, and a holder that never does holds
+ * it until it closes the file. The child's open waits in the daemon's place. Past the bound the start leaves the child
+ * behind and refuses the key as main does: an open waiting in the daemon itself would keep its process from exiting
+ * until the holder lets go, long after `rerail daemon start` stopped waiting. Once the child's open is through, the
+ * break is acknowledged, and the daemon's own open does not wait.
+ */
+async function openedInChild(path: string): Promise<boolean> {
+  const child = spawn(process.execPath, ["-e", CHILD_OPEN, path], { stdio: "ignore" });
+  let timer: NodeJS.Timeout | undefined;
+  const waited = new Promise<false>(resolve => { timer = setTimeout(resolve, CHILD_OPEN_WAIT_MS, false); });
+  try {
+    const opened = await Promise.race([once(child, "exit").then(() => true, () => true), waited]);
+    if (!opened) child.kill();
+    return opened;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * What the file at `path` holds: opened once without waiting (`OPEN_WITHOUT_WAITING`), then checked and read through
+ * that handle, so the file checked is the file read. Undefined for a file another program holds under a lease, for a
+ * path that is no regular file or folder (a FIFO, a device), which is never read, and for a file larger than
+ * `REFUSED_TLS_FILE_MAX_BYTES`, of which no more than that is read. Throws what opening the path throws, and what
+ * reading it throws (a folder's `EISDIR`) with the path added, as an error of the open names it.
+ */
+async function readWithoutWaiting(path: string): Promise<Buffer | undefined> {
+  const handle = await open(path, OPEN_WITHOUT_WAITING).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "EAGAIN") return undefined;
+    throw error;
+  });
+  if (handle === undefined) return undefined;
+  try {
+    const found = await handle.stat();
+    return found.isFile() || found.isDirectory() ? await readAtMost(handle, REFUSED_TLS_FILE_MAX_BYTES) : undefined;
+  } catch (error) {
+    throw new Error(`${errorText(error)} '${path}'`, { cause: error });
+  } finally {
+    await handle.close();
+  }
+}
+
+/** What `handle` holds from its start, reading at most `limit` bytes and one: undefined past `limit`. */
+async function readAtMost(handle: FileHandle, limit: number): Promise<Buffer | undefined> {
+  const buffer = Buffer.alloc(limit + 1);
+  let filled = 0;
+  let bytesRead = -1;
+  while (bytesRead !== 0 && filled < buffer.length) {
+    ({ bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled));
+    filled += bytesRead;
+  }
+  return filled > limit ? undefined : buffer.subarray(0, filled);
 }
 
 /** The SHA-256 fingerprint of the first certificate in `pem`, the one a TLS server presents as its own. */
