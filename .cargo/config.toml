@@ -8,6 +8,10 @@ rustflags = ["-C", "target-feature=+crt-static"]
 # serializes the content store connections that evaluation workers read through. Nothing reads
 # them; SQLite recommends this setting.
 [env]
+# C built by build scripts is the same in every checkout and every build: a compiler cache shared by
+# the worktrees (scripts/build/farm) hashes each static library a crate bundles, and mimalloc writes
+# __DATE__ and __TIME__ into its version banner. Clang pins both to this time.
+SOURCE_DATE_EPOCH = "0"
 # The bundled ENABLE_MEMORY_MANAGEMENT option also forces every page cache into one
 # process-global LRU group. Incremental BLOB reads then contend on its mutex across workers.
 # Use SQLite's per-cache groups. Store eviction closes idle connections and releases their pages.

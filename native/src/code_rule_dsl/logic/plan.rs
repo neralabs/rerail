@@ -992,11 +992,15 @@ fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Quiet strata passed on unchanged in this process (decision 0101 §1), for tests.
-static QUIET_STRATA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-pub fn quiet_strata() -> usize {
-    QUIET_STRATA.load(std::sync::atomic::Ordering::Relaxed)
+/// A run's quiet strata (decision 0101 §1), counted across its strands (`Run::strand`) and reported in its
+/// `Outcome`: the strata passed on unchanged, and the relations held as kept with their rows' count alone, no
+/// column measured (`quiet_card`). Each column of those reads as one value, and every probe of one as all its rows.
+/// None should be (the guard in `a_session_passes_on_a_quiet_stratum`). Per run, not per process: a process-wide
+/// count let one test's runs move another's.
+#[derive(Debug, Default)]
+struct QuietTally {
+    strata: std::sync::atomic::AtomicUsize,
+    unmeasured: std::sync::atomic::AtomicUsize,
 }
 
 /// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite): the
@@ -1277,7 +1281,7 @@ type SharedPlans = Arc<parking_lot::RwLock<RunPlans>>;
 /// A run's plans: those it made or took (`kept`), and those the store kept from earlier processes (`stored`,
 /// decision 0116 step 2), taken into `kept` when a rule is first planned.
 #[derive(Default)]
-struct RunPlans {
+pub struct RunPlans {
     kept: rustc_hash::FxHashMap<PlanKey, Kept>,
     stored: Arc<StoredPlans>,
     /// The keys planned in this run (profiled), for the profile's account of the planning budget's misses: the run's,
@@ -1572,7 +1576,7 @@ pub fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
 /// A kept plan's last price: the corpus's nodes and the rows of each relation its body reads when priced, and the
 /// price. A price reads statistics only; while no size moved over `PRICE_DRIFT` times it is taken as it is, not
 /// worked out again (decision 0090 step 5: a session's run re-priced 7,400 kept plans, two thirds of its CPU).
-struct Priced {
+pub struct Priced {
     sizes: Vec<f64>,
     got: (Plan, Option<super::profile::RulePlan>),
 }
@@ -4233,6 +4237,9 @@ pub struct Outcome {
     /// `RERAIL_SPIKE_DELTA`: each maintained stratum reached, whether its own relations changed, and its changed
     /// reads with their deltas' rows (gone + new; `usize::MAX` where not held). Read by the session's report.
     pub spike_reached: Vec<(String, bool, Vec<(String, usize)>)>,
+    /// The strata passed on as quiet (decision 0101 §1), and the relations they held with no column measured
+    /// (`QuietTally`).
+    pub quiet: (usize, usize),
 }
 
 impl Outcome {
@@ -4402,7 +4409,7 @@ struct Driving {
     wholes: HashMap<usize, Vec<Step>>,
 }
 
-struct Run<'a, 'b> {
+pub struct Run<'a, 'b> {
     prog: &'a Program,
     /// The run's connection; only its scope in a stratum run off the run's thread (`strand`, decision 0113).
     db: crate::code_rule_dsl::facts::vtab::Db<'a>,
@@ -4449,6 +4456,8 @@ struct Run<'a, 'b> {
     /// relation (`answer_logs`): a native step's answers are among what its stratum read, kept with its frames.
     logging: Option<usize>,
     answer_logs: HashMap<usize, BTreeMap<String, BTreeSet<Vec<i64>>>>,
+    /// The run's quiet strata, shared with its strands (`QuietTally`).
+    quiet: Arc<QuietTally>,
 }
 
 /// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
@@ -5773,6 +5782,7 @@ impl<'a> Run<'a, '_> {
             answered: BTreeMap::new(),
             logging: None,
             answer_logs: HashMap::new(),
+            quiet: Arc::clone(&self.quiet),
         }, arena, (0, 0)))
     }
 
@@ -5809,6 +5819,7 @@ impl<'a> Run<'a, '_> {
             answered: BTreeMap::new(),
             logging: None,
             answer_logs: HashMap::new(),
+            quiet: Arc::clone(&self.quiet),
         }, arena, (0, 0)))
     }
 
@@ -6482,11 +6493,11 @@ impl<'a> Run<'a, '_> {
             if let Some(quiet) = quiet {
                 for (r, o) in quiet {
                     // Its readers are planned from its rows, as an opened stratum's would be (`prior_stats`).
-                    let card = quiet_card(&mut self.model, prog, r, &o);
+                    let card = quiet_card(&mut self.model, &self.quiet, prog, r, &o);
                     self.model.stats.card.insert(r.clone(), card);
                     super::native::component::hold_as(self.db, r, o);
                 }
-                QUIET_STRATA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.quiet.strata.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 super::profile::stratum(&stratum_key(scc), "native set engine", || "quiet: nothing deleted, nothing to derive; each relation is its kept one".to_owned());
                 self.native_rels.extend(scc.iter().cloned());
                 return Ok(Native::Ran);
@@ -8085,22 +8096,15 @@ pub trait Maintain {
     fn seeds(&mut self) -> Vec<String>;
 }
 
-/// Holds `rel`'s kept rows `o` as the run's relation, with its cardinality (a quiet stratum's, decision 0117 step 3).
-/// Quiet relations held with their rows' count alone, no column measured (`hold_quiet`): each column then reads as
-/// one value, and every probe of it as all its rows. None should be (the guard in `a_session_passes_on_a_quiet_stratum`).
-static UNMEASURED_QUIET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-pub fn unmeasured_quiet() -> u64 {
-    UNMEASURED_QUIET.load(std::sync::atomic::Ordering::Relaxed)
-}
 
 fn spike_delta() -> bool {
     static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SPIKE_DELTA").is_some());
     *ON
 }
 
+/// Holds `rel`'s kept rows `o` as the run's relation, with its cardinality (a quiet stratum's, decision 0117 step 3).
 fn hold_quiet(run: &mut Run, prog: &Program, db: &Connection, rel: &String, o: Arc<super::native::component::InRel>) {
-    let card = quiet_card(&mut run.model, prog, rel, &o);
+    let card = quiet_card(&mut run.model, &run.quiet, prog, rel, &o);
     run.model.stats.card.insert(rel.clone(), card);
     super::native::component::hold_as(db, rel, o);
     run.native_rels.insert(rel.clone());
@@ -8111,7 +8115,7 @@ fn hold_quiet(run: &mut Run, prog: &Program, db: &Connection, rel: &String, o: A
 /// (`InRel::kept_stats`), read when a plan first prices it (decision 0101 §4). Without them each column read as one
 /// value, and every probe of it as all its rows: `aknown__sup4__del` scanned `aleaf` (12,779 rows) before its 3-row
 /// delta (t39). Only where every column's were kept: the planner reads a relation's columns all or none.
-fn quiet_card(model: &mut Model, prog: &Program, rel: &str, o: &Arc<super::native::component::InRel>) -> f64 {
+fn quiet_card(model: &mut Model, tally: &QuietTally, prog: &Program, rel: &str, o: &Arc<super::native::component::InRel>) -> f64 {
     let seeded = (o.rows() as f64).max(1.0);
     if let Some(n) = prior_stats(model, prog, rel) {
         return n.max(seeded);
@@ -8126,7 +8130,7 @@ fn quiet_card(model: &mut Model, prog: &Program, rel: &str, o: &Arc<super::nativ
         }
     }
     if !model.stats.lazy.0.contains_key(rel) {
-        UNMEASURED_QUIET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tally.unmeasured.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     seeded
 }
@@ -9019,7 +9023,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let (mut issued_forms, mut issued_jobs, mut ran_by_jobs) = (0usize, 0usize, 0usize);
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
-    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(f0.inputs().collect()), versions: Arc::new(body::Versions::with(prog, placed)), version: 0, answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
+    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(f0.inputs().collect()), versions: Arc::new(body::Versions::with(prog, placed)), version: 0, answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(prog, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -10522,6 +10526,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     outcome.handed = handed;
     outcome.inlined = inlined_rels;
     outcome.again += again_chosen.iter().filter(|c| **c == Some(true)).count();
+    outcome.quiet = (run.quiet.strata.load(std::sync::atomic::Ordering::Relaxed), run.quiet.unmeasured.load(std::sync::atomic::Ordering::Relaxed));
     // The program's analysis is freed on the pool: on a pack's program, its free was 3% of the main thread.
     crate::threads::drop_behind(std::mem::take(&mut run.model.analysis));
     Ok(outcome)

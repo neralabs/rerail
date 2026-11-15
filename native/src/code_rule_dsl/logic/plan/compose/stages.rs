@@ -24,8 +24,10 @@ fn input(prog: &mut Program, rel: &str) {
 }
 
 /// Prove empty positive joins before planning. Negation and aggregates are never treated as
-/// empty merely because their input is empty. A quiet maintenance relation shares its old fact.
-fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: &mut BTreeSet<String>) -> Result<()> {
+/// empty merely because their input is empty. A quiet maintenance relation shares its old fact. Returns the quiet
+/// relations so shared (the run's `Outcome::quiet`).
+fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: &mut BTreeSet<String>) -> Result<usize> {
+    let mut shared = 0;
     let mut empty: BTreeSet<String> = prog.inputs.iter().filter(|r|vtab::bound_source(db,r).is_some_and(|s|s.len()==0)).cloned().collect();
     loop {
         let before = (empty.len(),prog.rules.len(),prog.inputs.len());
@@ -56,12 +58,12 @@ fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: 
             bind(prog,db,inputs,&rel,component::derived(db,&rel).unwrap())?;
             input(prog,&rel);
             resident.insert(rel.clone());
-            QUIET_STRATA.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+            shared += 1;
             super::super::super::profile::decision("composed quiet relation",||format!("{rel}: shares its retained rows; no deletions or insertions"));
         }
         if before==(empty.len(),prog.rules.len(),prog.inputs.len()) { break; }
     }
-    Ok(())
+    Ok(shared)
 }
 
 impl Compiled {
@@ -117,7 +119,7 @@ fn changes(prog: &Program, inputs: &Inputs) -> BTreeSet<String> {
 
 pub(super) fn run_with(prog: &Program, db: &Connection, mut inputs: Inputs, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>) -> Result<Outcome> {
     let mut remaining=prog.clone();
-    simplify(&mut remaining,db,&mut inputs,&mut resident)?;
+    let mut quiet=simplify(&mut remaining,db,&mut inputs,&mut resident)?;
     let changes=changes(&remaining,&inputs);
     let mut executions=0;
     if !changes.is_empty() {
@@ -125,7 +127,7 @@ pub(super) fn run_with(prog: &Program, db: &Connection, mut inputs: Inputs, lowe
         part.outputs=changes.iter().cloned().collect();
         let kept=std::mem::replace(&mut inputs.kept,changes.clone());
         super::super::super::profile::decision("composed change admission",||format!("{} retained change relations requested together",changes.len()));
-        let got=run_stages(&part,db,&mut inputs,None,&mut Hooks::default(),resident.clone(),&mut executions);
+        let got=run_stages(&part,db,&mut inputs,None,&mut Hooks::default(),resident.clone(),&mut executions,&mut quiet);
         inputs.kept=kept;
         got?;
         for rel in changes {
@@ -134,13 +136,17 @@ pub(super) fn run_with(prog: &Program, db: &Connection, mut inputs: Inputs, lowe
             resident.insert(rel);
         }
     }
-    run_stages(&remaining,db,&mut inputs,lowered,hooks,resident,&mut executions)
+    let mut out=run_stages(&remaining,db,&mut inputs,lowered,hooks,resident,&mut executions,&mut quiet)?;
+    out.quiet.0+=quiet;
+    Ok(out)
 }
 
-fn run_stages(prog: &Program, db: &Connection, inputs: &mut Inputs, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>, executions: &mut usize) -> Result<Outcome> {
+/// `quiet` counts the quiet relations shared (`simplify`); the caller adds them to the run's outcome.
+#[allow(clippy::too_many_arguments)]
+fn run_stages(prog: &Program, db: &Connection, inputs: &mut Inputs, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>, executions: &mut usize, quiet: &mut usize) -> Result<Outcome> {
     let mut remaining=prog.clone();
     while *executions<STAGES {
-        simplify(&mut remaining,db,inputs,&mut resident)?;
+        *quiet+=simplify(&mut remaining,db,inputs,&mut resident)?;
         let mut plan=planned(&remaining,db,inputs)?;
         plan.resident=resident.clone();
         let Some(boundary)=plan.boundary() else {

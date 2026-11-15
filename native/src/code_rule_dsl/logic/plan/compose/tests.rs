@@ -254,10 +254,9 @@ fn quiet_composed_maintenance_keeps_the_same_resident_fact() {
         stages::bind(&p,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();
     }
     let old=component::held(&db,"h__old").unwrap();
-    let before=quiet_strata();
     let out=stages::run(&p,&db,inputs,None,&mut Hooks::default()).unwrap();
     assert!(out.kept.contains("h"));
-    assert!(quiet_strata()>before);
+    assert!(out.quiet.0>0);
     assert!(Arc::ptr_eq(&old,&component::held(&db,"h").unwrap()),"quiet output must retain its indexes, not copy its rows at publication");
 }
 

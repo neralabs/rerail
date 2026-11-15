@@ -37,22 +37,16 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     c.copy(&["DEPTH"], &DEPTH);
 }
 
-/// This thread's depth in runs and in `set`, for a thread it starts and waits on (`within`).
-pub(in crate::code_rule_dsl) fn depth() -> usize {
-    DEPTH.with(Cell::get)
-}
-
-/// Runs `f` on this thread as if at `depth`: a thread its starter waits on (the test stores' template, filled while a
-/// test holds `set`) takes nothing its starter holds, else its runs wait for the starter, which waits for them.
-pub(in crate::code_rule_dsl) fn within<R>(depth: usize, f: impl FnOnce() -> R) -> R {
-    let was = DEPTH.with(|d| d.replace(depth));
-    let r = f();
-    DEPTH.with(|d| d.set(was));
-    r
-}
-
 fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// What a thread does before it takes the switches, holding nothing: in a test build, the tests' store template is made
+/// (`test_store::ready`). Made later, from inside a run, its runs would wait behind a test waiting to `set`, which
+/// waits for the runs that wait on the template: none would end.
+fn before_taking() {
+    #[cfg(any(test, feature = "test-hooks"))]
+    super::test_store::ready();
 }
 
 /// Held by a run while it reads the switches.
@@ -67,6 +61,7 @@ pub fn reading() -> Reading {
         d.get() == 1
     });
     if outermost {
+        before_taking();
         let mut s = state();
         while s.writer || s.waiting > 0 {
             s = CHANGED.wait(s).unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -99,11 +94,7 @@ pub fn set(vars: &[(&str, &str)]) -> Set {
         d.get() == 1
     });
     if outermost {
-        // The tests' store template is made first, under no test's switches: made under these, its fill (a run on a
-        // thread of its own) waited for them to drop, and the test that holds them waited for the fill (the session
-        // tests hung at no CPU), and every test's store would start from this one's modes.
-        #[cfg(any(test, feature = "test-hooks"))]
-        super::test_store::template();
+        before_taking();
         let mut s = state();
         s.waiting += 1;
         while s.writer || s.readers > 0 {

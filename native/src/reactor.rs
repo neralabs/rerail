@@ -43,7 +43,11 @@ pub unsafe extern "C" fn rerail_command(at: *const u8, len: usize) -> i32 {
         return 2;
     };
     let args: Vec<String> = line.split_terminator('\0').map(str::to_owned).collect();
-    let code = match crate::tools::cli(&args) {
+    // The session the instance keeps from command to command (`RERAIL_SESSION`): this instance's, as its memory is.
+    thread_local! {
+        static KEPT: std::cell::RefCell<crate::code_rule_dsl::logic::plan::corpus::session::Kept> = Default::default();
+    }
+    let code = match KEPT.with(|kept| crate::tools::cli_in(&args, &mut kept.borrow_mut())) {
         Ok(text) => {
             print!("{text}");
             0

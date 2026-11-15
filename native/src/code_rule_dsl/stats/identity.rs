@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 const IDENTITY_MAGIC: &[u8] = b"rerail.query-plan.identity\0";
 const IDENTITY_CONTRACT_VERSION: u16 = 1;
 
-pub(in crate::code_rule_dsl) trait IdentityDomain {
+pub trait IdentityDomain {
     const TAG: u8;
     const NAME: &'static str;
 }

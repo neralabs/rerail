@@ -283,7 +283,6 @@ mod fsevents {
     const NO_DEFER: u32 = 0x2;
     const FILE_EVENTS: u32 = 0x10;
     // Events that say the journal lost track: rescan, dropped, ids wrapped, the root moved, a volume came or went.
-    const MUST_SCAN: u32 = 0x1;
     const LOST: u32 = 0x2 | 0x4 | 0x8 | 0x20 | 0x40 | 0x80;
     const HISTORY_DONE: u32 = 0x10;
     /// How long a replay may wait for its cookie.
@@ -581,7 +580,6 @@ mod tests {
     use super::Since;
     use super::fsevents::next_epoch;
     use super::fsevents::since;
-    use std::path::PathBuf;
 
     /// The journal names a file written after the cursor; once every earlier event is in, a replay from a later
     /// cursor names nothing. A write just before a cursor may be named too (its event's id came after the cursor):

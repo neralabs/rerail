@@ -19,7 +19,7 @@ use std::{
 
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Owner {
+pub struct Owner {
     pub kind: String,
     #[serde(default)]
     pub outermost: bool,

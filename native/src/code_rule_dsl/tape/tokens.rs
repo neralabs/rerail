@@ -844,9 +844,10 @@ impl TokenGrammar {
 /// grammars, and byte-identical copies of the Rust and PHP crates' under `grammars/token-grammars`);
 /// `None` for a dialect whose tapes keep all their tokens.
 pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
+    // Relative to this file (`native/grammars`), so that no checkout's directory is part of the crate.
     macro_rules! grammar {
         ($path:literal) => {
-            include_str!(concat!(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."), "/grammars/", $path, "/grammar.json"))
+            include_str!(concat!("../../../grammars/", $path, "/grammar.json"))
         };
     }
     Some(match lang {

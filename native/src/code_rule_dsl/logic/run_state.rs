@@ -110,10 +110,15 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUNS_UNDER_WAY", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUN_TOKEN", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's runs, read by a test on the thread that ran them"),
+    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "TOGETHER", Thread, "counts of this thread's runs, read by a test on the thread that ran them"),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/session.rs", "FULL", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/switches.rs", "DEPTH", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "FILLING", Thread, "this thread fills the test store's template: its own runs take the switches without making it first"),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/demand.rs", "WHOLE", Carried, ""),
@@ -188,6 +193,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/content_store/connection.rs", "OPERATION_WAITED", Thread, "this thread's SQLite connections and their waits"),
     ("src/content_store/connection.rs", "THREAD_CONNECTIONS", Thread, "this thread's SQLite connections and their waits"),
     ("src/content_store/connection.rs", "WAIT_SPENT", Thread, "this thread's SQLite connections and their waits"),
+    ("src/reactor.rs", "KEPT", Thread, "the reactor instance's session, kept from command to command on its thread"),
 ];
 
 /// How many thread-locals are run context not carried yet ([`NotYet`]): lowered as each is carried, never raised.
@@ -272,6 +278,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::demand::carried,
     super::plan::placement::carried,
     super::plan::corpus::switches::carried,
+    super::plan::corpus::session::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,

@@ -114,7 +114,6 @@ pub fn ast_captures<'a>(
         | AstMatcher::Compare(_)
         | AstMatcher::Count(_)
         | AstMatcher::Never => {}
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for item in items {
@@ -341,7 +340,6 @@ fn node_regexes_in<'a>(
         AstMatcher::Semantic(semantic) => {
             semantic::node_regexes(semantic, utils, summaries, regexes)
         }
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }

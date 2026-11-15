@@ -380,7 +380,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
     ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
     ("code_rule_dsl/logic/plan/corpus/guests.rs", "KEPT", "3"),
-    ("code_rule_dsl/logic/plan/corpus/session.rs", "SESSION", "3"),
+    ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
     ("code_rule_dsl/logic/plan/corpus/recursive_spike.rs", "CARRY", "4"),
     ("code_rule_dsl/logic/plan.rs", "PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),

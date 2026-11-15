@@ -321,7 +321,6 @@ impl Emitter {
             AstMatcher::Compare(_) => return gap("compare"),
             AstMatcher::Count(_) => return gap("count"),
             AstMatcher::Never => self.never(n),
-            #[cfg(any(test, feature = "test-hooks"))]
             AstMatcher::TestUnknown(_) => return gap("three-valued"),
         })
     }

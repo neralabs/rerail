@@ -250,7 +250,7 @@ mod faults {
             // SAFETY: a handler of plain reads and writes; the old action is kept for it to restore.
             unsafe {
                 let mut action: libc::sigaction = std::mem::zeroed();
-                action.sa_sigaction = handler as usize;
+                action.sa_sigaction = handler as *const () as usize;
                 action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
                 libc::sigemptyset(&mut action.sa_mask);
                 libc::sigaction(sig, &action, (&raw mut OLD[i]).cast());

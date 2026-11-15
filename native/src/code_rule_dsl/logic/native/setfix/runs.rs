@@ -1573,7 +1573,7 @@ pub mod tests {
                 let k = 2;
                 let val = |id: u32, i: usize| rows[id as usize * k + cols[i]];
                 let cmp = |a: u32, b: u32| cmp_rows(&rows[..], k, &cols, a, b);
-                let mut cost = |packed: bool| {
+                let cost = |packed: bool| {
                     let (mut ins, mut cyc) = (u64::MAX, u64::MAX);
                     for _ in 0..5 {
                         let mut ids: Vec<u32> = (0..n).collect();
