@@ -244,8 +244,16 @@ checkpoints.
 ### 1.5 Escapes and side lists
 
 Every array but the checkpoints is cut, for its exceptions, into blocks of 256 nodes. A block's
-escapes, and its codes past the cutoff, are listed as (offset in the block, value), sorted, behind a
-start index of 4 bytes a block and array.
+escapes, and its codes past the cutoff, are listed as (offset in the block, value), sorted.
+
+The list is kept in parts, one for each fixed block of 1,024 nodes (2.1), so a fixed block and its
+part are stored, loaded and decoded together. A part holds, in order:
+- a 2-byte end for each of its four 256-node blocks;
+- the offsets;
+- the values: a code's low part, one or two bytes, or an escaped value at whole bytes.
+
+A part with no entries is empty. Where each part starts is in the block index (2.1), so a 256-node
+block's entries are found from that start and two of the ends (E26).
 
 - **The escape marks itself.** A value equal to all-ones, or a code byte at or past the cutoff, is
   the only kind of read that looks at the list. Every other read never touches it.
@@ -254,8 +262,9 @@ start index of 4 bytes a block and array.
 - **Measured shares** (E24, data-layer Python): 0.36% of codes past the cutoff, slots 1.8%, gaps
   0.05%, lengths 3.1%.
 
-The start index takes 0.016 B a node per array, and can shrink to a 2-byte count a block within a
-larger group. The rest of a list is each entry's offset byte and value.
+The ends take 0.008 B a node per array, half the 4-byte start index first measured. The rest of a
+list is each entry's offset byte and value. The lab's readers still use the 4-byte start index; the
+parts' reads differ by one load in the cold path.
 
 ### 1.6 Lines and text
 
@@ -293,7 +302,8 @@ faster.
 ### 1.8 What it costs, together (E24)
 
 Measured files only: the numbering, widths and dictionaries were learned on the other half
-(E24, `tape16 f16`). Bytes a node:
+(E24, `tape16 f16`). The in-memory totals are E25's, with each code table the grammar's (1.2): the
+two-byte low parts add 0.006–0.011 B a node. Bytes a node:
 
 | | data-layer Python | data-layer JSON | rerail Rust | rerail TypeScript | rerail `.rr` | rerail JSON |
 |---|---|---|---|---|---|---|
@@ -302,7 +312,7 @@ Measured files only: the numbering, widths and dictionaries were learned on the 
 | gaps | 1.04 | 1.02 | 1.03 | 1.04 | 1.05 | 1.02 |
 | lengths | 1.13 | 1.07 | 1.10 | 1.11 | 1.06 | 1.15 |
 | checkpoints | 0.30 | 0.35 | 0.29 | 0.27 | 0.28 | 0.36 |
-| **in memory** | **4.57** | **4.55** | **4.54** | **4.56** | **4.47** | **4.80** |
+| **in memory** | **4.58** | **4.55** | **4.55** | **4.57** | **4.47** | **4.80** |
 | format 15, in memory | 8.63 | 9.21 | 8.57 | 8.80 | 8.50 | 9.91 |
 | zstd 3 + dictionary, whole arrays | 1.90 | 0.95 | 2.07 | 2.08 | 1.44 | 0.92 |
 | format 15, zstd 3 + dictionary | 2.34 | 1.14 | 2.52 | 2.55 | 1.82 | 0.93 |
@@ -346,14 +356,40 @@ is stored:
   store shares (8 bytes). This pays only on JSON (2–15% of blocks); code repeats are found by
   matches into the dictionary instead.
 
-The side lists are one LZ4 block per file and array. A read decodes one block: 0.2–0.7 µs for 1,024
+Each block carries its nodes' part of the array's side list (1.5) after its fixed-width bytes, in the
+same LZ4 block, so one decode gives both. The index entry for a block also names where its side
+part goes, so it takes 8 bytes. Against E24's form, which kept each side list as one LZ4 block per
+file and array, this takes −2% to +5% at rest (E26). A read decodes one block: 0.2–0.7 µs for 1,024
 nodes on the M3. Against the same arrays compressed whole, random access costs 4–11% at N = 1,024
 and 1–5% at 4,096 on code (t39 step 11). A reference to one earlier block of the file takes back a
 quarter of that, for a second decode.
 
 LZ4 is the block format GPU decoders read, and a block's matches never leave it or the dictionary,
-so a threadgroup can decode one block with no other block's output (requirement 1). The device
-decode is not yet measured.
+so a threadgroup can decode one block with no other block's output (requirement 1).
+
+**On the device (E26, `tape16 f16-gpu`).** One SIMD group decodes one block, with every block of a
+capture in one dispatch. Its 32 lanes read each token together, copy literals and matches 32 bytes
+at a time into threadgroup memory (a match closer than 32 bytes in rounds of its distance), and write
+the block out to its array and its side part to the side list. One thread a block, as the reference
+library decodes, is 1.6–2.7× slower. Every byte was checked against the arrays. ns a node, warm,
+every language in one dispatch:
+
+```text
+                    data-layer                         rerail
+              GPU    CPU 1 thread  CPU every core   GPU    CPU 1 thread  CPU every core
+M5 Max        0.14   2.33          0.21 (18)        0.10   2.07          0.24 (18)
+M3 Max        0.16   2.41          0.39 (16)        0.18   2.37          0.48 (16)
+M1 Max        0.36   2.73          0.51 (10)        0.42   2.73          0.56 (10)
+```
+
+The GPU decodes 11–45 GB/s of arrays. That is 1.3–2.7× every CPU core and 6.5–21× one, and it
+leaves the CPU free. The M5 Max and the M3 were at load 17–40 from other work, and the M1 Max at
+3–4. A dispatch of one block costs 5–170 µs, so the device decodes in batches. A point read on the
+CPU decodes its one block.
+
+The side lists made the case. Kept as one LZ4 block per file, they put up to 6 KB of serial decode
+on one thread, which set the dispatch's time (3.2 ns a node). Cut per fixed block, every block
+decoded fits the threadgroup's 3 KiB.
 
 ### 2.2 Whole files, for cold storage
 
@@ -774,6 +810,10 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
   ns a node from 1.4–4× that disk.
 - E24 (2026-11-15, t39 step 16): the chosen form as one tape (1.8): 4.5–4.8 B a node in memory,
   0.9–2.1 on disk, every question in place and checked.
+- E25 (2026-11-15, t39 step 17): the code table from the grammar (1.2): 1,843–3,696 codes a
+  tree-sitter language, and no captured node outside it.
+- E26 (2026-11-15, t39 step 18): fixed LZ4 blocks decoded on Metal (2.1): 0.10–0.42 ns a node, 1.3–2.7×
+  every CPU core, with each block's side-list part inside it.
 - E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
   plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
   so both break the fixed requirement. What it shows is that span LZ under entropy coding is not

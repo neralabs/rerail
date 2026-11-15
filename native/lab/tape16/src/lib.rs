@@ -43,6 +43,8 @@ pub mod tree;
 pub mod v15;
 pub mod writer;
 #[cfg(target_os = "macos")]
+pub mod f16_gpu;
+#[cfg(target_os = "macos")]
 pub mod gpu;
 #[cfg(target_os = "macos")]
 pub mod inplace_gpu;

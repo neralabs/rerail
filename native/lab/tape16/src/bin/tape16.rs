@@ -1737,6 +1737,35 @@ fn cmd_gcodes(path: &str) {
     }
 }
 
+/// E26 (t39 step 18): format 16's fixed blocks decoded on Metal (`f16_gpu.rs`).
+#[cfg(target_os = "macos")]
+fn cmd_f16_gpu(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    println!("{path}\n");
+    rerail_tape_lab::f16_gpu::print_header();
+    let mut parts = Vec::new();
+    for (tag, fs) in &by_tag {
+        let a = rerail_tape_lab::f16::at_rest(fs);
+        match rerail_tape_lab::f16_gpu::run(&a) {
+            Ok(r) => rerail_tape_lab::f16_gpu::print(capture::language(*tag), &a, &r),
+            Err(e) => println!("| {} | {e} |", capture::language(*tag)),
+        }
+        parts.push(a);
+    }
+    // Every language's blocks in one dispatch, as a load of the whole capture would decode them.
+    let all = rerail_tape_lab::f16::AtRest::merge(&parts);
+    drop(parts);
+    match rerail_tape_lab::f16_gpu::run(&all) {
+        Ok(r) => rerail_tape_lab::f16_gpu::print("**all, one dispatch**", &all, &r),
+        Err(e) => println!("| all | {e} |"),
+    }
+}
+
 /// E22 (t39 step 14): the field taken out of the code (`nofield.rs`).
 fn cmd_nofield(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
@@ -1806,6 +1835,8 @@ fn main() {
         "code8" => cmd_code8(path),
         "nofield" => cmd_nofield(path),
         "f16" => cmd_f16(path),
+        #[cfg(target_os = "macos")]
+        "f16-gpu" => cmd_f16_gpu(path),
         #[cfg(feature = "grammar")]
         "gcodes" => cmd_gcodes(path),
         #[cfg(target_os = "macos")]

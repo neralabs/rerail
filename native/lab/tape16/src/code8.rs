@@ -818,6 +818,11 @@ impl Rank8 {
     pub fn tail_nodes(&self) -> usize {
         self.off.len()
     }
+    /// E26: the side list cut to fixed blocks of `part` nodes (a multiple of BLOCK), each block's part on its
+    /// own (`side_parts`): u16 ends, offsets, low parts.
+    pub fn side_parts(&self, part: usize) -> Vec<Vec<u8>> {
+        side_parts(&self.start, &self.off, |k, out| out.extend_from_slice(&self.low[k].to_le_bytes()[..self.low_w]), self.nodes, part)
+    }
     pub fn side_bytes(&self) -> usize {
         self.start.len() * 4 + self.off.len() + self.low.len() * self.low_w
     }
@@ -847,4 +852,32 @@ pub struct RankReport {
     pub ns: [[f64; 2]; 6],
     /// zstd 3 + dict / LZ4 HC + dict, B a node, cutoff 255.
     pub disk: [f64; 2],
+}
+
+/// A side list (`start` a BLOCK-node block, then `off`) cut to parts of `part` nodes: each part a u16 end a
+/// BLOCK-node block (its entries' end in the part), its offsets, then its values (`val(k, out)` writes entry
+/// k's). A part with no entries is empty. The part's place comes from the block index (0156 §2.1).
+pub fn side_parts(start: &[u32], off: &[u8], val: impl Fn(usize, &mut Vec<u8>), nodes: usize, part: usize) -> Vec<Vec<u8>> {
+    assert!(part % BLOCK == 0);
+    let per = part / BLOCK;
+    let blocks = nodes.div_ceil(BLOCK);
+    (0..nodes.div_ceil(part))
+        .map(|p| {
+            let (b0, b1) = (p * per, ((p + 1) * per).min(blocks));
+            let (e0, e1) = (start[b0] as usize, start[b1] as usize);
+            if e0 == e1 {
+                return Vec::new();
+            }
+            // Each BLOCK-node block's end in the part, as u16: block j's entries are ends[j-1]..ends[j].
+            let mut out = Vec::new();
+            for b in b0..b1 {
+                out.extend_from_slice(&((start[b + 1] - start[b0]) as u16).to_le_bytes());
+            }
+            out.extend_from_slice(&off[e0..e1]);
+            for k in e0..e1 {
+                val(k, &mut out);
+            }
+            out
+        })
+        .collect()
 }

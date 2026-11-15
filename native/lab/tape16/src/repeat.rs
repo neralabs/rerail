@@ -210,6 +210,11 @@ impl Esc {
         self.val.image(&mut side);
         (main, side)
     }
+    /// E26: the escapes cut to fixed blocks of `part` nodes (`code8::side_parts`), each value at whole bytes.
+    pub fn side_parts(&self, n: usize, part: usize) -> Vec<Vec<u8>> {
+        let vb = (self.val.w as usize).div_ceil(8).max(1);
+        crate::code8::side_parts(&self.start, &self.off, |k, out| out.extend_from_slice(&self.val.get(k).to_le_bytes()[..vb]), n, part)
+    }
     /// The values one word holds.
     pub fn per(&self) -> usize {
         self.per

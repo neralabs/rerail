@@ -1074,6 +1074,44 @@ one prefix (255) with a two-byte low part replaces the second prefix (`Rank8::of
 past the cutoff are the same (the rare codes either way); each costs one more byte in its side
 list, 0.004–0.011 B a node.
 
+### Step 18: the fixed blocks decoded on Metal (E26)
+
+`tape16 f16-gpu` (`f16_gpu.rs`) decodes E24's fixed blocks at rest on the device and checks every
+byte against the arrays. There are two kernels:
+- **one thread a block**, decoding as the reference library does, straight into the arrays;
+- **one SIMD group a block**. The 32 lanes read each token together (one broadcast load), copy a
+  literal run or a match 32 bytes at a time into threadgroup memory, and write the block out whole.
+  A match closer than 32 bytes copies in rounds of its distance.
+
+The first run put both behind one CPU thread: 3.0–3.4 ns a node on the small capture. E24 kept each
+side list as one LZ4 block a file, up to 6 KB, which one thread decodes serially, and that thread
+set the dispatch's time. Without the side lists the arrays took 0.25 ns a node. So the side lists
+are now cut per fixed block, and each part rides in its block's LZ4 input (`code8::side_parts`: a
+u16 end for each 256-node block, the offsets, the values). A random read at rest then needs only its
+own block as well. At rest this costs −2% to +5% against E24's form.
+
+Warm, the best of five dispatches, every language in one dispatch. ns a node:
+
+```text
+                       data-layer (4.5M nodes)            rerail (3.3M nodes)
+               simd   thread   CPU 1   CPU all     simd   thread   CPU 1   CPU all
+M5 Max         0.14   0.22     2.33    0.21 (18)   0.10   0.27     2.07    0.24 (18)
+M3 Max         0.16   0.30     2.41    0.39 (16)   0.18   0.40     2.37    0.48 (16)
+M1 Max         0.36   0.59     2.73    0.51 (10)   0.42   0.88     2.73    0.56 (10)
+```
+
+- The SIMD-group kernel decodes 11–45 GB/s. That is 1.3–2.7× every CPU core and 6.5–21× one.
+- Small languages alone (a few blocks) are all fixed cost, 5–170 µs a dispatch. So a load
+  dispatches every language's blocks together.
+- No block passed the threadgroup's 3 KiB room, so none fell back to the thread kernel.
+- Load: the M5 Max and the M3 were at 17–40 from other work, the M1 Max at 3–4.
+
+E24's memory, rerun on the M1 Max with E25's grammar tables: 4.58 B a node data-layer Python, 4.55
+rerail Rust, 4.57 TypeScript. That is the predicted +0.006–0.011 B a node; every read was right.
+
+One more lab note. The remote copies had been synced with rsync, which skipped changed files whose
+size and time matched; they are now copied whole with tar and compared by checksum.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1254,3 +1292,6 @@ In order. Each step is measured on all three corpora, every answer checked.
 17. **The code table from the grammar (E25).** Done: every code the grammar allows, 1,843–3,696 a
     tree-sitter language, no captured node outside it; one prefix with a two-byte low part. Next: own
     parsers (`.rr`, Blade) declare their node types.
+18. **Fixed blocks on Metal (E26).** Done: 0.10–0.42 ns a node in one dispatch, 1.3–2.7× every CPU
+    core, with each block's side-list part inside it. Next: the parts' reads in the lab's readers, the
+    writer (E6), and the tape's own kernels reading the decoded blocks in place.
