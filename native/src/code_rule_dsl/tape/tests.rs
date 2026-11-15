@@ -3,6 +3,9 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use ast_grep_core::AstGrep;
 use ast_grep_core::tree_sitter::StrDoc;
 
+/// The engine's own parsers against tree-sitter over repositories and suites (`lean_parsers_survey`).
+mod survey;
+
 #[test]
 fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let source = "value = left + right\n";
