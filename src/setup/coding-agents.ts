@@ -54,7 +54,7 @@ export interface DataAccessOptions {
   /** Claude Code's managed settings file (`claudeManagedSettingsPath`); null for none. */
   claudeManagedSettings?: string | null;
   /** Whether a file is at a path, as the registration that counts as connected reads it (`RegistrationOptions.fileExists`). */
-  fileExists?: (path: string) => boolean;
+  fileExists?: (path: string) => boolean | Promise<boolean>;
 }
 
 /**
@@ -80,7 +80,8 @@ type ConnectionFacts = Pick<RegistrationOptions, "platform" | "fileExists">;
 
 async function connection(root: string, home: string, id: Harness, facts: ConnectionFacts): Promise<Pick<CodingAgentState, "connected" | "problem">> {
   try {
-    // Either form a Claude Code hook entry on Windows can take counts as connected, whatever this process's PATH.
+    // Either form a Claude Code hook entry on Windows can take counts as connected, whatever this process's PATH, and
+    // the check reads no PATH: the daemon runs it on its event loop each time the dashboard's Settings opens.
     const plan = await registerHarnesses({ root, home, harnesses: [id], dryRun: true, keepHookCommand: true, ...facts });
     return { connected: plan.changes.every(change => change.harness !== id || change.action === "unchanged"), problem: null };
   } catch (error) {

@@ -6,8 +6,15 @@ import {
   codingAgentStates, connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents, type DataAccessOptions,
 } from "../../src/setup/coding-agents.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
-import { CODEX_HOOK_EVENTS, registerHarnesses, type Harness } from "../../src/setup/harness-registration.js";
+import { CODEX_HOOK_EVENTS, registerHarnesses, unregisterHarnesses, type Harness } from "../../src/setup/harness-registration.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+// Each look for a program on PATH, passed through and watched: it checks a file in each PATH entry.
+const looksOnPath = vi.hoisted(() => vi.fn<(name: string) => void>());
+vi.mock("../../src/engine/system-programs.js", async importOriginal => {
+  const actual = await importOriginal<{ programOnPath: (name: string, search?: object) => string | undefined }>();
+  return { ...actual, programOnPath: (name: string, search?: object) => (looksOnPath(name), actual.programOnPath(name, search)) };
+});
 
 /** `text` as it stands inside a JSON string: a Windows path's backslashes are written twice there. */
 const inJson = (text: string): string => JSON.stringify(text).slice(1, -1);
@@ -331,6 +338,35 @@ describe("whether a coding agent can read Rerail's data", () => {
     await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", fileExists });
     expect(await readFile(join(home, ".claude", "settings.json"), "utf8")).toContain(inJson(cmd));
     expect(await askedWith(recorded)).toEqual({ connected: true, access: "file-tools" });
+  });
+
+  it("reads Claude Code on Windows as connected and registered, and takes it out, without looking for node on PATH", async () => {
+    // The daemon reads whether Rerail is connected on its event loop each time the dashboard's Settings opens, and
+    // `rerail update` reads whether an agent is registered before it registers it again. A look for node on PATH checks
+    // a file in each PATH entry, which a share that does not answer holds for about 21 s: only set-up's write looks.
+    const { root, home } = await connected(["claude-code"], async () => {}, "win32");
+    const settings = join(home, ".claude", "settings.json");
+    const other = join(dirname(home), "other-node");
+    await mkdir(other);
+    await writeFile(join(other, "node.exe"), "");
+    vi.stubEnv("PATHEXT", ".exe");
+    vi.stubEnv("PATH", other);
+    const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
+    const fileExists = (path: string) => path === cmd;
+    const windows = { root, home, harnesses: ["claude-code"] as const, platform: "win32" as const, fileExists };
+    looksOnPath.mockClear();
+    await registerHarnesses(windows);
+    expect(await readFile(settings, "utf8")).toContain(inJson(cmd));
+    expect(looksOnPath).toHaveBeenCalledWith("node");
+    looksOnPath.mockClear();
+
+    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists })).toEqual({ connected: true, access: "file-tools" });
+    // The question `rerail update` and set-up ask of each coding agent (`isRegistered`): would a removal change anything.
+    const removal = await unregisterHarnesses({ ...windows, dryRun: true });
+    expect(removal.changes.some(change => change.harness === "claude-code" && change.action !== "unchanged" && change.action !== "skipped")).toBe(true);
+    await unregisterHarnesses(windows);
+    expect(await readFile(settings, "utf8")).not.toContain("hook-launcher");
+    expect(looksOnPath).not.toHaveBeenCalled();
   });
 });
 
