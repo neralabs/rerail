@@ -150,7 +150,10 @@ What an agent does wrong is printed in its own build output, not left for someon
 first compile of each cargo command the wrapper prints, as `warning: rerail-farm:` lines: a nice
 value under 19, a rustc other than the checkout pins, and the checkout's latest `diagnose --brief`
 findings (another toolchain or cargo configuration than the active worktrees, profile settings that
-differ, scripts that set the variables builds share), each with what to do. The hourly job writes
+differ, scripts that set the variables builds share), each with what to do. A cargo command that
+runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate
+profile) while a test host has 4 cores or more to spare is told the `test-remote` command that runs
+it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). The hourly job writes
 those findings after the cleaner (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
 its message. A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
