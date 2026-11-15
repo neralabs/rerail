@@ -1592,6 +1592,16 @@ async function heldWithoutSharing(): Promise<DatabaseHolder> {
 }
 
 /**
+ * `folder` made so that removing it fails until `end`: on Windows another program holds its first file open sharing only
+ * reads, as a virus scan can; elsewhere the folder loses its write permission, so its files cannot be deleted.
+ */
+async function heldFromRemoval(folder: string): Promise<DatabaseHolder> {
+  if (process.platform === "win32") return await heldByAnotherProgram(join(folder, readdirSync(folder)[0]!), "Read", "Read");
+  chmodSync(folder, 0o500);
+  return { end: () => Promise.resolve(chmodSync(folder, 0o700)) };
+}
+
+/**
  * Another program holding the file at `path` open for `access`, sharing only what `share` names (.NET's `FileShare`):
  * while it shares no deleting, Windows refuses to delete the file or to rename another over it.
  */
@@ -2059,6 +2069,31 @@ describe("the hook start check", () => {
     const host = await startCheckHost();
     await keptStopped(host, app);
     expect({ answers: readdirSync(answers), outside: readdirSync(outside) }).toEqual({ answers: [`${process.pid}-1`], outside: ["keep.txt"] });
+  });
+
+  it("keeps a new daemon's first answer where an earlier daemon's folder cannot be removed yet, and removes that folder at a later kept answer", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const answers = join(process.env.RERAIL_HOME!, "stopped-answers");
+    const earlier = join(answers, "7-1");
+    mkdirSync(earlier, { recursive: true });
+    writeFileSync(join(earlier, `${"0".repeat(32)}.json`), "{}");
+    const host = await startCheckHost();
+    const held = await heldFromRemoval(earlier);
+    try {
+      await keptStopped(host, app);
+      expect(readdirSync(answers).sort()).toEqual([`${process.pid}-1`, "7-1"].sort());
+    } finally {
+      await held.end();
+    }
+    keptAt(app, Date.now() - 2 * 60_000);
+    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+    } finally {
+      await prompt.close();
+    }
+    expect(readdirSync(answers)).toEqual([`${process.pid}-1`]);
   });
 
   it("keeps no answer that rests on a folder outside Git, which the daemon places again on every answer, and waits there", async () => {
