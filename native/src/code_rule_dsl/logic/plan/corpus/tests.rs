@@ -1050,3 +1050,56 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
     assert_eq!(std::fs::read_to_string(out.join("annotated.csv")).unwrap_or_default(), "typed.py\n");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A text test over `node_text` answered in the cross-file part (a cross-file relation asks for the text) is made
+/// natively from the run's vocabulary (`front::Native::TextTest`) and maintained as a filter: after each edit only
+/// the new strings are tested, its stratum is not derived again, and the outputs are a run's with an empty store.
+#[test]
+fn a_cross_file_text_test_is_maintained_as_a_filter() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("text-filter");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    return 1\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "def h():\n    pass\n");
+    let rule = dir.join("named.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl passes(f: node)
+passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
+.output passes
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        (report, std::fs::read_to_string(out.join("passes.csv")).unwrap())
+    };
+    run("kept.sqlite");
+    let edits = [
+        ("c.py", "from a import k\ndef h():\n    pass\n"),
+        ("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n"),
+        ("a.py", "def f():\n    return 2\ndef k():\n    pass\n"),
+        ("b.py", "def g():\n    pass\n"),
+    ];
+    let mut tested = false;
+    for (i, (file, body)) in edits.into_iter().enumerate() {
+        write(file, body);
+        let (report, rows) = run("kept.sqlite");
+        let (_, fresh) = run(&format!("fresh{i}.sqlite"));
+        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        // The program's one native is the text test.
+        assert!(!report.cross_again.contains_key("a relation made natively"), "edit {i}: the text test is maintained, not derived again: {:?}", report.cross_again);
+        tested |= report.text.0 > 0;
+    }
+    assert!(tested, "the program has a text test");
+    let _ = std::fs::remove_dir_all(&dir);
+}

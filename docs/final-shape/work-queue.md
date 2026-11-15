@@ -67,7 +67,36 @@ into notes once the queue is done).
     `NativeSpec` and its tests, the plan-choice and program digests, `native_relation`'s dispatch, the planner's
     estimate (`card`), the Metal path (no host work: the guard test's list), kept strata.
   - `vocabulary_columns` seeds every `TEXT_COLUMNS` relation again: the filter added in 36625e820 goes.
-- **Record**: —
+- **Record**: built, pending review. What changed from the design:
+  - *The native's shape.* `Native::TextTest { input, column, op, patterns }` is the rows of the atom that gives the
+    string whose string passes, keyed as that atom is (a set of strings, `rr_texttest_<k>_in(s)`, had no document
+    column and pulled `node_text` into the cross-file part). A holding test replaces its atom
+    (`node_text(q, t), contains("|", t)` → `rr_texttest_1_0(q, t)`); a failing one reads `!rr_texttest…` beside it.
+    Its one rule carries the test (`h(x…) :- input(x…), @op(x_c, {…}) = 1`), so an evaluator that does not make it
+    natively (a maintained form's pieces) derives the same rows.
+  - *Where it runs.* In the native engine over the held input (`plan::native_text_test`: no SQL inside the waves,
+    decision 0104, which the first, SQL-only version broke under strict); SQL only where symbols are text. It is
+    file-local where its input is (`typing::file_local` split), and a file-local native no longer stops its input's
+    export from being cut or factorized (`demand_exports`' `whole`, `factorize_exports`' `natives_read`: only
+    cross-file natives read exports).
+  - *Only over `TEXT_COLUMNS` relations themselves.* A test whose string only a copy of an answered column gives
+    (`executor_call(n, t)`) stays per row: a native reading the copy keeps the copy whole and its `node_text` reads in
+    the cross-file part (serverplan-dispatch-architecture: "no statistics for node_text.n"). See the question below.
+  - *Vocabulary.* The run's (`Hooks::texts`, every program `run_observed` runs, cone rounds, `maintained::run`):
+    each string tested once a run with every test, as the batches do; elsewhere the run makes its own from the
+    program's tests. `vocabulary_columns` seeds every `TEXT_COLUMNS` relation again (36625e820's filter gone) and
+    marks the answered columns.
+  - *Sessions.* A text-test stratum is maintained exactly (maintain.rs: `h__del` from `input__minus`, `h__ins` the
+    native over `input__plus`), in both maintained paths (the 0117 run sends it to its form rather than deriving it
+    again). Test `a_cross_file_text_test_is_maintained_as_a_filter` (profile: "stratum rr_texttest_0_0 maintained").
+  - `RERAIL_TEXT_TESTS=row` keeps answered tests per row, to compare.
+  - *Measured* (47 authored data-layer programs that test `node_text`, 50 data-layer files sampled across the
+    checkout, cold store each, strict): outputs identical on all 47; 44 run both ways, 3 fail both ways (Q12). Work
+    550.98 G instructions native vs 547.51 G per row (+0.6%, inside per-rule noise of about ±5%): at this size the
+    tests' cost is small beside the run's, so the change restores the shape (chunked matching, once a string)
+    without a measured saving. Atoms not measured. Every program here found 0 rows on the sample, so the identical
+    outputs are a weak check; base_tests (39), node_text (3), program_image (17), maintained (4) and file_local (2)
+    pass.
 
 ### Q3. No duplicate widened copies; the dropping test strict again
 
@@ -158,6 +187,32 @@ into notes once the queue is done).
 - **Done when**: each feeder's merge has a written review like 2026-11-15's, and passes the reviewer.
 - **Record**: —
 
+### Q12. A comparison with an outer variable inside an aggregate has no native step
+
+(Found measuring Q2.) `j = count : { fstring_piece(n, i2, "interpolation", _), i2 < i }`
+(data-layer-render-raw-strings, line 143) is lowered to `rr_agg6`, whose rule `$i2 < $i` the native engine
+declines; under `RERAIL_SQL_STRICT` the run stops ("SQL inside the waves"). The same in both text-test modes, so
+not Q2's. data-layer-legacy-execution-surfaces and data-layer-transaction-patterns stop the same way (rc 134), and
+data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
+
+- **Keep**: decision 0104 (no SQL inside the waves); the aggregate's meaning.
+- **Done when**: each of the four runs under strict on the 50-file sample, its cause fixed in the native engine.
+- **Record**: —
+
+### Q13. Build warnings
+
+(Found building Q2.) rerail-store: a deprecated `fetch_update`, two unused constants (`ATOM_COLUMNS`,
+`NOT_ATOMS`), three unused `Result`s; rerail-logic: six unused attributes (logic.rs, rr.rs), an unused variable
+(plan/lower.rs 92); and the other crates' warnings the profiling build lists.
+
+- **Done when**: the profiling build of the engine has no warnings, each fixed at its cause.
+- **Record**: —
+
 ## Questions for the user
 
-(none yet)
+1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
+   (`executor_call(n, t) :- …, node_text(f, t)`, then `contains("x", t)`) stays per row. Making it native too would
+   keep the copy whole (no factorized store, no export cut) and move its `node_text` reads to the cross-file part.
+   Measured on 47 data-layer programs, per row vs native costs the same (+0.6%). Options: (a) leave copies per row
+   (as built); (b) teach the factorized store and the export cut to see through a row-filter native, so copies can
+   be native too (more work, no measured gain at 50 files).

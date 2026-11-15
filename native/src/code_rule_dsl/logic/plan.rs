@@ -4361,6 +4361,8 @@ pub struct Run<'a, 'b> {
     /// Answers a request (decision 0065 §2a): the request relation and its new rows, to the produced relations'
     /// rows. A component with a request pauses for it (`setfix`'s `request`).
     answer: Option<Answer<'b>>,
+    /// The run's text tests (`Hooks::texts`), or its own, made from the program's tests when one first runs.
+    texts: Option<Arc<super::strings::Vocabulary>>,
     /// Posts requests and gives their answers as they arrive (decision 0114 §3): where the strata loop retires
     /// strata from a scoreboard, a component with a request suspends on it instead of waiting in `answer`.
     asking: Option<&'b mut dyn Asking>,
@@ -4745,6 +4747,10 @@ impl<'a> Run<'a, '_> {
                 let groups: Vec<String> = groups.iter().map(|&g| f.text(g).to_owned()).collect();
                 return self.match_all(rel, f.rel_name(*input), f.text(*pattern), &groups, *positions);
             }
+            NativeSpec::TextTest { input, column, op, patterns } => {
+                let patterns: Vec<String> = patterns.iter().map(|&p| f.text(p).to_owned()).collect();
+                return self.text_test(rel, f.rel_name(*input), *column, f.text(*op), &patterns);
+            }
             NativeSpec::Components { edge, own } => return self.components(rel, f.rel_name(*edge), f.rel_name(*own)),
             NativeSpec::Reach { .. } | NativeSpec::ReachThrough { .. } => return self.reach_rows(rel, &native.spec),
             NativeSpec::Python { kind, input, targets } => return self.python_relation(rel, f.text(*kind), f.rel_name(*input), targets.map(|t| f.rel_name(t))),
@@ -5109,6 +5115,108 @@ impl<'a> Run<'a, '_> {
         }).collect();
         let before = self.db.total_changes();
         insert_many(&self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows)?;
+        Ok((self.db.total_changes() - before) as usize)
+    }
+
+    /// The run's vocabulary and test `op` of `patterns`' place in it (`Hooks::texts`), or the run's own, made from
+    /// the program's text tests the first time one runs.
+    fn texts_for(&mut self, op: &str, patterns: &[String]) -> Result<(Arc<super::strings::Vocabulary>, usize)> {
+        let spec = (op.to_owned(), patterns.to_vec());
+        let given = self.texts.as_ref().and_then(|v| v.specs.iter().position(|s| *s == spec).map(|k| (Arc::clone(v), k)));
+        let (texts, k) = match given {
+            Some(found) => found,
+            None => {
+                // The program's tests, as `as_relations` numbered them: one vocabulary for the run's every test.
+                let f = self.fields();
+                let mut specs: Vec<(String, Vec<String>)> = f.natives().iter().filter_map(|n| match &n.spec {
+                    super::program_image::NativeSpec::TextTest { op, patterns, .. } => Some((f.text(*op).to_owned(), patterns.iter().map(|&p| f.text(p).to_owned()).collect())),
+                    _ => None,
+                }).collect();
+                specs.sort();
+                specs.dedup();
+                let names: Vec<String> = (0..specs.len()).map(|k| format!("{}{k}", super::strings::DURING)).collect();
+                let own = Arc::new(super::strings::Vocabulary::from_specs(&names, specs).map_err(Error::Plan)?);
+                let k = own.specs.iter().position(|s| *s == spec).expect("the test is the program's");
+                self.texts = Some(Arc::clone(&own));
+                (own, k)
+            }
+        };
+        Ok((texts, k))
+    }
+
+    /// A text test over strings the run answered (`front::Native::TextTest`) over a relation the engine holds: the
+    /// rows of `input` whose `column` passes `op` of `patterns`, its distinct strings tested by the run's vocabulary
+    /// with its other tests at once, each once a run; held as the engine's relation. `None`: the input is not held.
+    fn native_text_test(&mut self, rel: &str, input: &str, column: usize, op: &str, patterns: &[String]) -> Result<Option<usize>> {
+        use super::native::component;
+        if self.model.inputs.atoms.is_none() {
+            return Ok(None);
+        }
+        let held = if self.native_rels.contains(input) {
+            component::derived(self.db, input)
+        } else if self.fields().is_input(input) {
+            crate::code_rule_dsl::facts::vtab::bound_source(self.db, input)
+        } else {
+            None
+        };
+        let Some(source) = held else { return Ok(None) };
+        let (texts, k) = self.texts_for(op, patterns)?;
+        let width = self.fields().width(input);
+        let all: Vec<usize> = (0..width).collect();
+        let mut row = vec![0i64; width];
+        let rows: Vec<Vec<i64>> = (0..source.len()).map(|r| { source.row_at(r, &all, &mut row); row.clone() }).collect();
+        // Each distinct string once, by its atom.
+        let atoms: Vec<i64> = rows.iter().map(|r| r[column]).collect::<BTreeSet<_>>().into_iter().collect();
+        let strings = super::native::symbol_texts(&self.db, &atoms)?;
+        let symbols: Option<Vec<u32>> = atoms.iter().map(|&a| u32::try_from(a).ok()).collect();
+        let passed: HashSet<i64> = texts.passing(k, &strings, symbols.as_deref()).into_iter().map(|i| atoms[i]).collect();
+        let values: Vec<Vec<i64>> = rows.into_iter().filter(|r| passed.contains(&r[column])).collect();
+        component::retain(self.db, rel, values, vec![b'i'; width])?;
+        self.native_rels.insert(rel.to_owned());
+        let made = component::derived(self.db, rel).expect("just retained");
+        let stats = made.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: made.len() as i64,
+            delta: made.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+        });
+        Ok(Some(made.len()))
+    }
+
+    /// A text test over strings the run answered (`front::Native::TextTest`), in SQL: the rows of `input` whose
+    /// `column` passes `op` of `patterns`, its distinct strings tested by the run's vocabulary with its other
+    /// tests at once. Where the engine does not hold the input (`native_text_test`), or symbols are text.
+    fn text_test(&mut self, rel: &str, input: &str, column: usize, op: &str, patterns: &[String]) -> Result<usize> {
+        let (texts, k) = self.texts_for(op, patterns)?;
+        let atoms = self.model.inputs.atoms.is_some();
+        let width = self.fields().width(input);
+        let cols: Vec<String> = (0..width).map(|c| self.model.col(input, c)).collect();
+        let text = if atoms { format!("sym_text({})", cols[column]) } else { cols[column].clone() };
+        // Its rows and each one's string, read once; each distinct string tested once.
+        let rows: Vec<(Vec<SqlValue>, Option<String>)> = {
+            let mut st = self.db.prepare(&format!("SELECT DISTINCT {}, {text} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::ident(input)))?;
+            let rows = st.query_map([], |row| Ok(((0..width).map(|i| row.get::<_, SqlValue>(i)).collect::<rusqlite::Result<Vec<_>>>()?, row.get::<_, Option<String>>(width)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut at: HashMap<&str, usize> = HashMap::new();
+        let (mut strings, mut symbols, mut of_row) = (Vec::new(), Vec::new(), Vec::with_capacity(rows.len()));
+        for (row, t) in &rows {
+            of_row.push(t.as_deref().map(|t| *at.entry(t).or_insert_with(|| {
+                strings.push(t.to_owned());
+                symbols.push(match row[column] { SqlValue::Integer(i) => u32::try_from(i).ok(), _ => None });
+                strings.len() - 1
+            })));
+        }
+        let symbols: Option<Vec<u32>> = if atoms { symbols.into_iter().collect() } else { None };
+        let mut passes = vec![false; strings.len()];
+        for i in texts.passing(k, &strings, symbols.as_deref()) {
+            passes[i] = true;
+        }
+        let kept: Vec<Vec<SqlValue>> = rows.into_iter().zip(of_row).filter(|(_, i)| i.is_some_and(|i| passes[i])).map(|((row, _), _)| row).collect();
+        let before = self.db.total_changes();
+        insert_many(&self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), kept)?;
         Ok((self.db.total_changes() - before) as usize)
     }
 
@@ -5642,6 +5750,7 @@ impl<'a> Run<'a, '_> {
             versions: Arc::clone(&self.versions),
             version: self.version,
             answer: None,
+            texts: self.texts.clone(),
             asking: None,
             why_class: None,
             answered: BTreeMap::new(),
@@ -5678,6 +5787,7 @@ impl<'a> Run<'a, '_> {
             inputs: Arc::clone(&self.inputs),
             versions: Arc::clone(&self.versions),
             answer: None,
+            texts: self.texts.clone(),
             asking: None,
             why_class: None,
             answered: BTreeMap::new(),
@@ -7917,6 +8027,10 @@ pub struct Hooks<'a> {
     pub unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
     pub answer: Option<Answer<'a>>,
+    /// The run's text tests (`strings::as_relations`): a test over strings the run answers (`front::Native::TextTest`)
+    /// tests them with every other test at once, each string once a run, as the batches do. Without it the run
+    /// makes its own from the program's tests.
+    pub texts: Option<Arc<super::strings::Vocabulary>>,
     /// Posts the requests a component makes, their answers taken as they come (decision 0114 §3); used where the
     /// strata loop retires from a scoreboard, `answer` elsewhere.
     pub asking: Option<&'a mut dyn Asking>,
@@ -8400,12 +8514,13 @@ pub fn run_atoms_native_answering<'a>(
     answer: Answer<'a>,
     asking: Option<&'a mut dyn Asking>,
     strata: Option<&'a mut dyn KeptStrata>,
+    texts: Option<Arc<super::strings::Vocabulary>>,
 ) -> Result<Outcome> {
     let mut native = native_modes(modes);
     native.remove("nearest");
     native.remove("kseed");
     let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
-    run_native_inputs(lowered, db, inputs, Hooks { answer: Some(answer), asking, strata, ..Default::default() })
+    run_native_inputs(lowered, db, inputs, Hooks { answer: Some(answer), asking, strata, texts, ..Default::default() })
 }
 
 /// Readies the run's connection for native runs before its first wave (decision 0104): the engine's relations and
@@ -8887,7 +9002,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let (mut issued_forms, mut issued_jobs, mut ran_by_jobs) = (0usize, 0usize, 0usize);
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
-    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(f0.inputs().collect()), versions: Arc::new(body::Versions::with(prog, placed)), version: 0, answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
+    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(f0.inputs().collect()), versions: Arc::new(body::Versions::with(prog, placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(prog, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -9407,8 +9522,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         continue;
                     }
                     // A native operator's stratum (the reach index, decision 0119) has no maintained form: it is made again
-                    // from its reads as they are now, as the base program makes it, and its readers derive again.
-                    if scc.iter().any(|r| f0.native(r).is_some()) {
+                    // from its reads as they are now, as the base program makes it, and its readers derive again. A text
+                    // test's has (`maintain`: only the new strings tested).
+                    if scc.iter().any(|r| f0.native(r).is_some_and(|n| !matches!(n.spec, super::program_image::NativeSpec::TextTest { .. }))) {
                         need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
                         base_strata.push(j);
                         for r in scc {
@@ -9977,6 +10093,16 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             && let Some((n, why)) = run.native_reach(rel, native)?
         {
             super::profile::stratum(&skey, "reach index over held relations (decision 0119)", || why);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // A text test over strings the run answered, from the rows the engine holds: no table read or written.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(NativeSpec::TextTest { input, column, op, patterns }) = f0.native(rel).map(|n| &n.spec)
+            && let Some(n) = run.native_text_test(rel, f0.rel_name(*input), *column, f0.text(*op), &patterns.iter().map(|&p| f0.text(p).to_owned()).collect::<Vec<_>>())?
+        {
+            super::profile::stratum(&skey, "text test over a held relation (the run's vocabulary)", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
             continue;

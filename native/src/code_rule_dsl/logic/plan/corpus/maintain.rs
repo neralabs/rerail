@@ -47,9 +47,10 @@
 //! ```
 //!
 //! A head row that read an unchanged group read the same value before and after, so the other positions' rules cover
-//! it (with the aggregate over old rows in an overdelete). A stratum with a relation made natively, a lattice, an
-//! `ast` literal, or a changed read whose old rows were not kept, is derived again from its inputs: its rules
-//! unchanged.
+//! it (with the aggregate over old rows in an overdelete). A text test made natively is a filter of its input's
+//! strings: its rows of strings gone are deleted, and only the new strings are tested (`h__ins` over `i__plus`, made
+//! natively as the whole was). A stratum with another relation made natively, a lattice, an `ast` literal, or a
+//! changed read whose old rows were not kept, is derived again from its inputs: its rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
 use super::retain::{Cut, Retained};
@@ -278,6 +279,40 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         // `RERAIL_CROSS_MAINTAIN_ONLY`: maintain only the strata holding one of these relations (comma-separated; empty:
         // none), to find a stratum whose maintenance departs from deriving it again.
         let only = std::env::var("RERAIL_CROSS_MAINTAIN_ONLY").ok().map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_owned).collect::<BTreeSet<String>>());
+        // A text test made natively (`front::Native::TextTest`) is a filter of its input's strings: a row is there
+        // while its string is and passes. It is maintained exactly: the rows of strings gone are deleted, and only
+        // the new strings are tested, natively as the whole input was (`h__ins` over `i__plus`).
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(front::Native::TextTest { input, column, op, patterns }) = part.program.natives.get(rel.as_str()).cloned()
+            && changed.contains(&input)
+            && old(rel)
+            && old(&input)
+            && only.as_ref().is_none_or(|o| o.contains(*rel))
+        {
+            maintained += 1;
+            let start = rules.len();
+            let v = row(part.program.decls[rel.as_str()].len());
+            let head = |r: String| Atom { rel: r.into(), args: v.clone().into(), neg: false, gated: false };
+            rules.push(Rule { head: head(named(rel, "del")), body: [atom(named(rel, "old"), v.clone(), false), atom(named(&input, "minus"), v.clone(), false)].into() });
+            // The test in the rule too: a maintained form's pieces are rules (`plan`'s maintained run), which test
+            // the new strings row by row.
+            let test = crate::code_rule_dsl::logic::strings::test_literal(v[column].clone(), &op, &patterns);
+            rules.push(Rule { head: head(named(rel, "ins")), body: [atom(named(&input, "plus"), v.clone(), false), test].into() });
+            part.program.natives.insert(named(rel, "ins"), front::Native::TextTest { input: named(&input, "plus"), column, op, patterns });
+            rules.push(Rule { head: head((*rel).clone()), body: [atom(named(rel, "old"), v.clone(), false), atom(named(rel, "del"), v.clone(), true)].into() });
+            rules.push(Rule { head: head((*rel).clone()), body: [atom(named(rel, "ins"), v.clone(), false)].into() });
+            for piece in ["del", "ins"] {
+                fresh.push(((*rel).clone(), named(rel, piece)));
+            }
+            olds.insert((*rel).clone());
+            olds.insert(input.clone());
+            deltas.insert(input);
+            exact_rels.insert((*rel).clone());
+            maint.insert((*rel).clone());
+            changed.insert((*rel).clone());
+            groups.push((scc.clone(), start, rules.len(), given.iter().map(|r| (*r).clone()).collect()));
+            continue;
+        }
         let why = if only.as_ref().is_some_and(|o| !scc.iter().any(|r| o.contains(r))) { Some("not chosen") } else { unmaintainable(&part.program, scc, &mine, &changed, &old) };
         if std::env::var_os("O125_LIST").is_some() && why.is_none() {
             eprintln!("O125_LIST {}", scc.iter().next().unwrap());

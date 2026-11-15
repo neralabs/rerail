@@ -42,6 +42,7 @@ pub(in crate::code_rule_dsl) fn run(
     stats: &mut crate::code_rule_dsl::logic::plan::Stats,
     keep: &BTreeSet<String>,
     modes: &str,
+    texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 ) -> Result<Ran> {
     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("maintained/{name}"));
     let digests: HashMap<String, u64> = inputs.iter().map(|(rel, _, d, _)| (rel.clone(), *d)).collect();
@@ -116,7 +117,7 @@ pub(in crate::code_rule_dsl) fn run(
     wanted.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
     drop(s);
     let s = span("plan and evaluate");
-    let got = super::super::run_atoms_native_over(part, db, "main", stats.clone(), wanted, modes)?;
+    let got = super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, super::super::Hooks { texts: Some(Arc::clone(texts)), ..Default::default() })?;
     drop(s);
     let s = span("collect");
     let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();

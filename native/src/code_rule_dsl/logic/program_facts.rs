@@ -20,7 +20,7 @@
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
-//!   `native_group`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
+//!   `native_group`), `native_text_test` (with `native_text_pattern`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
 //!
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
@@ -100,6 +100,8 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("native_roots", &["p:sym", "rel:sym", "roots:sym"]),
         ("native_match", &["p:sym", "rel:sym", "input:sym", "pattern:sym", "positions:int"]),
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
+        ("native_text_test", &["p:sym", "rel:sym", "input:sym", "column:int", "op:sym"]),
+        ("native_text_pattern", &["p:sym", "rel:sym", "i:int", "pattern:sym"]),
         ("native_python_candidates", &["p:sym", "rel:sym", "input:sym", "targets:sym", "context:sym", "member:sym"]),
         ("native_python", &["p:sym", "rel:sym", "kind:sym", "input:sym", "targets:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
@@ -386,6 +388,12 @@ impl Writer<'_> {
                     self.row("native_match", vec![s(rel), s(input), s(pattern), n(*positions as i64)]);
                     for (i, group) in groups.iter().enumerate() {
                         self.row("native_group", vec![s(rel), n(i), s(group)]);
+                    }
+                }
+                Native::TextTest { input, column, op, patterns } => {
+                    self.row("native_text_test", vec![s(rel), s(input), n(*column), s(op)]);
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        self.row("native_text_pattern", vec![s(rel), n(i), s(pattern)]);
                     }
                 }
                 Native::PythonCandidates {input,targets,context,member} => self.row("native_python_candidates",vec![s(rel),s(input),s(targets),s(context),s(member)]),
@@ -773,6 +781,12 @@ impl<'a, C: Cell> Reader<'a, C> {
             let rel = text(&row[0])?;
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
+        }
+        let patterns = self.by_id_text("native_text_pattern")?;
+        for row in self.get("native_text_test") {
+            let rel = text(&row[0])?;
+            let patterns = ordered(patterns.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            prog.natives.insert(rel, Native::TextTest { input: text(&row[1])?, column: int(&row[2])? as usize, op: text(&row[3])?, patterns });
         }
         for row in self.get("native_python_candidates") {
             prog.natives.insert(text(&row[0])?,Native::PythonCandidates{input:text(&row[1])?,targets:text(&row[2])?,context:text(&row[3])?,member:text(&row[4])?});

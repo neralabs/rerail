@@ -256,6 +256,13 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
 }
 
 /// Decode a composed output through the shared atom arena, without a SQL query per row.
+/// The texts of `atoms`, read under one lock of `conn`'s symbols.
+pub fn symbol_texts(conn: &Connection, atoms: &[i64]) -> Result<Vec<String>> {
+    let symbols = symbols(conn)?;
+    let s = symbols.read().unwrap();
+    atoms.iter().map(|&a| if s.known(a)? { Ok(s.name(a).to_owned()) } else { Err(err(format!("no symbol {a}"))) }).collect()
+}
+
 pub fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
     let symbols=symbols(conn)?;
     let s=symbols.read().unwrap();

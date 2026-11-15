@@ -588,9 +588,11 @@ fn split_in(
     }
     let constants: BTreeSet<String> = (0..n).filter(|&r| constant[r]).map(|r| rels.names[r].to_owned()).collect();
     let filters: BTreeSet<String> = (0..n).filter(|&r| filtering[r]).map(|r| rels.names[r].to_owned()).collect();
-    // Python fact operators preserve each demanded node's document. Their proof rules must still
-    // pass the ordinary dependency/location checks below. Other native operators remain cross-file.
+    // Python fact operators preserve each demanded node's document, and a text test's rows are its input's rows.
+    // Their rules must still pass the ordinary dependency/location checks below. Other native operators remain
+    // cross-file.
     let cross_native = |r: &str| prog.natives.get(r).is_some_and(|n| match n {
+        crate::code_rule_dsl::logic::front::Native::TextTest { .. } => false,
         crate::code_rule_dsl::logic::front::Native::PythonCandidates { targets, .. } => !constants.contains(targets) && !(prog.facts.contains_key(targets) && !prog.inputs.contains(targets)),
         crate::code_rule_dsl::logic::front::Native::Python { targets, .. } => targets.as_ref().is_some_and(|t|
             !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),
@@ -892,7 +894,9 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let local = split(prog);
-    let natives_read: BTreeSet<&str> = prog.natives.values().flat_map(|n| n.reads()).collect();
+    // A cross-file native reads its inputs whole there; a file-local one reads them in the chunk, which the
+    // factorized store leaves as they are.
+    let natives_read: BTreeSet<&str> = prog.natives.iter().filter(|(rel, _)| !local.contains(rel.as_str())).flat_map(|(_, n)| n.reads()).collect();
     let keys = relation_keys(prog);
     // Each relation's reads, and the relations read in a way the parts cannot stand in for.
     let mut reads: BTreeMap<&str, Vec<(usize, usize)>> = BTreeMap::new();
