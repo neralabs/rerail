@@ -124,3 +124,9 @@ pair of the corpus's nodes: 53 M rows from 7,303 nodes, and over 2 GB on 95 file
 `match_all` and `match` are, and the context restricts the variables to the rule's own rows. RUF018 on the 95 files
 peaks at 294 MB, with the same findings on its probe. The Ruff comparison and no-shadow's findings over the 62 files
 are unchanged.
+
+Refined (2026-11-15): the context binds an attribute-bound shared variable only when two or more of them would
+otherwise range over the corpus's nodes (the pairs above). One alone is a row per node, which the body's other
+literals already allow; bound by the context instead, TRY004's `node(d, n, …), seen_import(s, …), node(d, s, …)` made
+a cover of every pair of a file's nodes (386 k rows on one file, 609 MB). With the refinement TRY004 peaks at 372 MB,
+and RUF018 keeps its context.

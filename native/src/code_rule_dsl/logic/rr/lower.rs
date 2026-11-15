@@ -3309,17 +3309,27 @@ impl Lowerer {
         let mut bodies = self.conjunction(body, outer)?;
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by
         // a context relation: the rule's other literals, projected on those variables.
-        let bound: BTreeSet<String> = body_vars(
-            // `match_all` over a text the rule binds reads it, as a test does: its spans or texts come from the context.
-            // Nor does a node's attribute (`node`, `line`, `end_line`): it holds of every node, so bound by it alone
-            // the helper was every pair of the corpus's nodes (RUF018's `count : { node(_, c, …), node(_, R, …),
-            // s >= e, … }`, 53 M rows of 7,303 nodes); the context restricts the variable to the rule's own rows.
-            &body
-                .iter()
-                .filter(|l| binds_columns(l) && !matches!(l, Lit::Atom { rel, .. } if matches!(rel.as_str(), "match_all" | "match" | "node" | "line" | "end_line")))
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
+        // `match_all` over a text the rule binds reads it, as a test does: its spans or texts come from the context.
+        let binders = |attributes: bool| -> BTreeSet<String> {
+            body_vars(
+                &body
+                    .iter()
+                    .filter(|l| binds_columns(l))
+                    .filter(|l| !matches!(l, Lit::Atom { rel, .. } if matches!(rel.as_str(), "match_all" | "match") || (!attributes && matches!(rel.as_str(), "node" | "line" | "end_line"))))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        };
+        // A node's attribute (`node`, `line`, `end_line`) holds of every node: a shared variable it alone binds ranges
+        // over the corpus's nodes in the helper. One such variable is a row per node, as the body's other literals
+        // allow; two or more are every pair of them (RUF018's `count : { node(_, c, …), node(_, R, …), s >= e, … }`, 53
+        // M rows of 7,303 nodes), so they are bound by the context instead. Bound by the context, one alone is no
+        // better and may be worse: a context tying it to another of the body's through a document (TRY004's
+        // `node(d, n, …), seen_import(s, …), node(d, s, …)`) is a cover of every pair of a file's nodes, 386 k rows on
+        // one file.
+        let (with_attributes, without) = (binders(true), binders(false));
+        let by_attributes = inner.iter().filter(|v| outer.contains(*v) && with_attributes.contains(*v) && !without.contains(*v)).count();
+        let bound = if by_attributes >= 2 { without } else { with_attributes };
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
         if !needed.is_empty() {
             // The context holds every variable the body shares with the rule, those the body binds too: projected on
