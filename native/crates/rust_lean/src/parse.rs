@@ -261,7 +261,8 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             lx: &lx,
             toks: Vec::with_capacity(src.len() / 4 + 4),
             i: 0,
-            next: 0,
+            // A byte-order mark: tree-sitter's lexer passes it.
+            next: if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 },
             extras: Vec::new(),
             e: 0,
             w: Writer::new(0, widths, src.len() / 3 + 16),
@@ -702,9 +703,13 @@ impl<'a> P<'a> {
     // ---- The file.
 
     fn source_file(&mut self) -> R<()> {
-        // tree-sitter's root starts at its first child: past the white space before it (a
-        // shebang is on the first line).
-        let start = if self.src.starts_with(b"#!") && self.src.get(2) != Some(&b'[') { 0 } else { self.lx.space_end(0) };
+        // tree-sitter's root starts at its first child: past a byte-order mark and the white
+        // space before it (a shebang is on the first line; after a mark, not read).
+        let bom = self.next;
+        if bom > 0 && self.src[bom..].starts_with(b"#!") && self.src.get(bom + 2) != Some(&b'[') {
+            return self.refuse_at(bom);
+        }
+        let start = if self.src.starts_with(b"#!") && self.src.get(2) != Some(&b'[') { 0 } else { self.lx.space_end(bom) };
         let root = self.w.push(key(K::SourceFile, f::NONE, C_NONE, false), start as u32);
         self.shebang()?;
         self.statements(Stmts::File)?;

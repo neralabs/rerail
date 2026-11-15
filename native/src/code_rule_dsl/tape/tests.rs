@@ -3197,6 +3197,9 @@ fn rust_tapes_from_the_lean_parser_are_tree_sitters() {
     use crate::code_rule_dsl::tape::rust_lean;
     let sources = [
         "",
+        // A byte-order mark: passed, the root starting after it and the white space.
+        "\u{feff}",
+        "\u{feff}  #![a]\nfn f() {}\n",
         "// only a comment\n//! inner doc\n/// outer doc\nfn f() {}\n",
         "use a::{b as c, d::*, self};\nuse ::e;\npub(crate) mod m { pub(super) struct S; }\n",
         "#[derive(Debug)]\npub struct P<'a, T: Clone + 'a, const N: usize> where T: Default { pub x: &'a [T; N], y: Option<Box<dyn Fn(u8) -> u8>> }\n",
