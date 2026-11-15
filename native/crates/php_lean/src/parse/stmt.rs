@@ -646,7 +646,8 @@ impl<'a> P<'a> {
             self.namespace_name(BARE)?;
             self.tk(K::NamespaceUseDeclaration, K::TBackslash)?;
             let g = self.open(K::NamespaceUseGroup, f::BODY, C_NONE)?;
-            self.list(K::NamespaceUseGroup, T::RBrace, false, true, |p| p.use_clause().map(|_| ()))?;
+            // No trailing `,` in a group (`use A\{B,};` reads with an error).
+            self.list(K::NamespaceUseGroup, T::RBrace, false, false, |p| p.use_clause().map(|_| ()))?;
             self.close(g);
         } else {
             loop {

@@ -3478,6 +3478,12 @@ fn php_tapes_from_the_lean_parser_are_tree_sitters() {
         "<?php\n#[Attr(1, name: 'x')]\nfunction f(#[SensitiveParameter] $p): never { throw new \\Exception(); }\n$r = f(...);\n$v = strlen(string: 'x');\n",
         "<html><?php echo $title; ?></html>\n",
         "<?php\necho 1 ?>\n",
+        // A bare heredoc word's start takes the blanks after `<<<`; a nowdoc's first string starts
+        // past the empty lines after its opening line.
+        "<?php\n$a = <<< E\na\nE;\n$b = <<<'E'\n\n\n    a\n\nb\nE;\n",
+        // An indented heredoc's comment that closes early, and a keyword as a method's or a
+        // named argument's name where it starts no expression.
+        "<?php\n$x = <<<EOF\n  q\n  /*\n  */\n  r\n  EOF;\nf(class: 1, echo: 2);\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Php).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3497,10 +3503,19 @@ fn php_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
     // one behavior: tree-sitter's tape, or a refusal.
-    for invalid in ["<?php\nfunction f( {\n", "<?php\n$a = [1,\n", "<?php\nclass A {\n", "<?php\n$a[$b->c\n\ncontinue;\n", "<?php\n$s = 'abc;\n", "<?php\nclass A { public const FALSE = 1; }\n"] {
+    for invalid in ["<?php\nfunction f( {\n", "<?php\n$a = [1,\n", "<?php\nclass A {\n", "<?php\n$a[$b->c\n\ncontinue;\n", "<?php\n$s = 'abc;\n", "<?php\nclass A { public const FALSE = 1; }\n",
+        // A keyword that starts an expression as a named argument's name; `const NAMESPACE`; a
+        // trailing `,` in a group `use`.
+        "<?php\nf(include: 1);\n", "<?php\nf(new: 1);\n", "<?php\nclass A { const NAMESPACE = 1; }\n", "<?php\nuse A\\{B,};\n",
+    ] {
         assert!(parse(&mut parser, invalid).root_node().has_error(), "{invalid:?} reads without an error");
         assert!(php_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
+    // An indented heredoc whose `/*` (past its first line) closes on its eleventh line: tree-sitter
+    // reads it with an error.
+    let long = format!("<?php\n$x = <<<EOF\n  q\n  /*\n{}  */\n  r\n  EOF;\n", "  \n".repeat(8));
+    assert!(parse(&mut parser, &long).root_node().has_error(), "{long:?} reads without an error");
+    assert!(php_lean::encode(&grammar, &long, &|| false).is_err(), "accepted {long:?}");
 }
 
 /// The product reads PHP with the lean parser: a file's image through the engine's parse

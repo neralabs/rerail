@@ -133,10 +133,13 @@ impl Survey {
         self.at(place);
         let Some(reader) = self.reader(label, dialect) else { return };
         let grammar = Arc::clone(&reader.grammar);
-        let Some(tree) = reader.parser.parse(source, None) else { return };
+        // tree-sitter reads what the product gives it (`parse_input`): a PHP file's view (its inline
+        // text blanked, `php_view`), not the file, whose inline text `php_only` reads as code.
+        let view = crate::code_rule_dsl::language::parse_input(dialect, source);
+        let Some(tree) = reader.parser.parse(view.as_ref(), None) else { return };
         let error = tree.root_node().has_error();
         let ours = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lean.parse(&grammar, source, &|| false)));
-        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false);
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, &view, &|| false);
         let (outcome, detail) = match ours {
             Err(panic) => {
                 let message = panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()));
