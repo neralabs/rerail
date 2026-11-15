@@ -153,6 +153,22 @@ function recordAsOlder(path: string, auditId: string, provenance: readonly Audit
   }
 }
 
+/**
+ * Upgrades a file of the build before with this build's open, which runs the step that keeps each provenance once, and
+ * records the step as run at `stepAt` (epoch ms), the time the move compares each audit's start with. A test then dates
+ * its audits from that number: the open stamps the step with the clock once its DDL ends, and on a fast file system,
+ * such as a temporary folder in memory, that is the millisecond the test dated its audits from.
+ */
+function upgradeAt(path: string, stepAt: number): void {
+  openRerailDatabase(path).$client.close();
+  const database = new Database(path);
+  try {
+    database.prepare("UPDATE schema_migrations SET applied_at = ? WHERE id = ?").run(stepAt, RULE_PROVENANCE_STEP);
+  } finally {
+    database.close();
+  }
+}
+
 /** When the file ran the step that keeps each provenance once (epoch ms). */
 function stepAppliedAt(path: string): number {
   const database = new Database(path, { readonly: true });
@@ -515,10 +531,11 @@ describe("audit rule provenance", () => {
     const app = provenanceOf("/home/dev/app", 200);
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => app));
     const recorded = written.map(({ auditId }) => auditId);
-    // This build upgrades the file; then an older Rerail sharing it records an audit, its provenance in its row.
-    openRerailDatabase(path).$client.close();
-    const at = recordAsOlder(path, "older-after", app);
+    // This build upgrades the file a day after those audits began; then an older Rerail sharing it records an audit, its
+    // provenance in its row. The clock is the test's own from here on.
     const day = 24 * 3_600_000;
+    upgradeAt(path, day);
+    const at = recordAsOlder(path, "older-after", app, day + 1);
 
     // Six days on, the move takes nothing: the older Rerail still reads each recorded audit's provenance in its row.
     expect(await move(path, { clock: () => at + 6 * day })).toBe(0);
@@ -629,10 +646,11 @@ describe("audit rule provenance", () => {
 
   it("says once in its log, naming the last audit recorded before the upgrade, why it waits and until when, then moves", async () => {
     const path = await fileOfTheBuildBefore();
-    const from = Date.now();
+    // The build before records 30 audits from 2 s ago, and this build upgrades the file a second after the first.
+    const from = Date.now() - 2_000;
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)), from);
     const last = from + written.length - 1;
-    openRerailDatabase(path).$client.close();
+    upgradeAt(path, from + 1_000);
     const stderr = spyOnStderr();
     let logged = "";
     try {
@@ -678,7 +696,8 @@ describe("audit rule provenance", () => {
     const path = await fileOfTheBuildBefore();
     const app = provenanceOf("/home/dev/app", 200);
     writeInlineAudits(path, Array.from({ length: 30 }, () => app));
-    openRerailDatabase(path).$client.close();
+    // This build upgraded the file a second ago; the older Rerail's audits begin after that.
+    upgradeAt(path, Date.now() - 1_000);
     recordAsOlder(path, "beside-1", app);
     const stderr = spyOnStderr();
     let second: number;
