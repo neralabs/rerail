@@ -2291,14 +2291,16 @@ fn run_observed(
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
             let renamed = package_root_modules(root, &files);
-            let stated: Vec<(String, String, String, String)> = files
-                .iter()
-                .filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
-                .map(|p| {
+            let of_label: Vec<&String> = files.iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label)).collect();
+            let digests = world::bytes_digests(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>());
+            let stated: Vec<(String, String, String, String)> = of_label
+                .into_iter()
+                .zip(digests)
+                .filter(|(_, c)| !c.is_empty())
+                .map(|(p, c)| {
                     let module = renamed.get(p).cloned().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::module(p));
-                    (p.clone(), module, label.to_owned(), world::bytes_digest(&root.join(p)))
+                    (p.clone(), module, label.to_owned(), c)
                 })
-                .filter(|(_, _, _, c)| !c.is_empty())
                 .collect();
             listing = Some((files, label));
             if stated.is_empty() {
@@ -2433,7 +2435,8 @@ fn run_observed(
     let mut consulted: Vec<(String, String, String)> =
         if t.is_none() {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "observe document digests".into());
-            docs.iter().map(|(_, p)| ("doc".to_owned(), p.clone(), world::bytes_digest(&root.join(p)))).collect()
+            let digests = world::bytes_digests(&docs.iter().map(|(_, p)| root.join(p)).collect::<Vec<_>>());
+            docs.iter().zip(digests).map(|((_, p), d)| ("doc".to_owned(), p.clone(), d)).collect()
         } else { Vec::new() };
     let mut paths: HashMap<i64, String> = docs.iter().cloned().collect();
     // The documents requests loaded (decision 0065 §2a), whose rows are not the run's findings: their keys.
@@ -5706,10 +5709,15 @@ fn run_observed(
             };
             let mut hold: Vec<Vec<i64>> = Vec::new();
             let mut now: Vec<Vec<i64>> = Vec::new();
+            // Each request's path, resolved once (`World::resolve`), by its path's atom.
+            let mut resolved: HashMap<i64, Option<std::path::PathBuf>> = HashMap::new();
             if levels && !in_rounds && !no_loads {
                 let mut quiet = false;
                 for row in rows {
-                    if !world.bounded(&text(row[0])?) {
+                    let at = world.resolve(&text(row[0])?);
+                    let bounded = world.bounded(at.as_deref());
+                    resolved.insert(row[0], at);
+                    if !bounded {
                         now.push(row.clone());
                     } else if held.remove(row) {
                         quiet = true;
@@ -5750,9 +5758,10 @@ fn run_observed(
                 world.unload(&text(file)?);
             }
             for (asked, module, grammar, row) in asked_rows {
+                let at = resolved.remove(&row[0]).unwrap_or_else(|| world.resolve(&asked));
                 // A load asked again (its stratum's requests answered again, t33 K3) is answered alike: the same
                 // document, its rows from the exports, not sent again. So is one taken back and asked again.
-                if let Some(doc) = world.loaded_as(&asked).or_else(|| world.reload(&asked)) {
+                if let Some(doc) = world.loaded_as(at.as_deref()).or_else(|| world.reload(at.as_deref())) {
                     if let Some((key, _)) = loaded_docs.iter().find(|(_, p)| *p == doc.path) {
                         let file = atoms(&[doc.path.as_str()])?[0];
                         loaded_rows.push(vec![file, row[1], row[2]]);
@@ -5761,7 +5770,7 @@ fn run_observed(
                     }
                     continue;
                 }
-                if let Some(doc) = world.load(&asked, &module, &grammar, label, &corpus) {
+                if let Some(doc) = world.load(&asked, at.as_deref(), &module, &grammar, label, &corpus) {
                     let file = atoms(&[doc.path.as_str()])?[0];
                     loaded_rows.push(vec![file, row[1], row[2]]);
                     fresh_files.push(file);
