@@ -1161,6 +1161,9 @@ thread_local! {
     /// kept here, read before the run's, and taken into the run's once, as the job ends; the run's are read under a
     /// shared lock, not taken per rule (four strands planning took turns at one lock: 2.9 s of an edit's 7 s on them).
     static OWN_PLANS: std::cell::RefCell<Option<rustc_hash::FxHashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    /// A job's keys planned (profiled, `RunPlans::planned_now`), kept as its plans are and taken into the run's as
+    /// it ends: written to the run's, every plan of every job took the run's lock exclusively.
+    static OWN_PLANNED: std::cell::RefCell<Option<rustc_hash::FxHashSet<PlanKey>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The plan kept for `key` (`RunPlans::find`), this thread's job's first: `None` outside a corpus run.
@@ -1288,7 +1291,26 @@ struct RunPlans {
 
 /// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
 fn planned_now(key: &PlanKey) -> bool {
-    PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.read().planned_now.contains(key)))
+    OWN_PLANNED.with(|o| o.borrow().as_ref().is_some_and(|o| o.contains(key)))
+        || PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.read().planned_now.contains(key)))
+}
+
+/// Notes `key` as planned in this run (`planned_now`): in this thread's job's set, else the run's.
+fn note_planned(key: PlanKey) {
+    let key = OWN_PLANNED.with(|o| match o.borrow_mut().as_mut() {
+        Some(o) => {
+            o.insert(key);
+            None
+        }
+        None => Some(key),
+    });
+    if let Some(key) = key {
+        PLANS.with(|p| {
+            if let Some(s) = p.borrow().as_ref() {
+                s.write().planned_now.insert(key);
+            }
+        });
+    }
 }
 
 impl std::ops::Deref for RunPlans {
@@ -1521,20 +1543,30 @@ pub fn share_plans() -> Option<SharedPlans> {
 /// While the guard lives, this thread plans with `plans` (another thread's, `share_plans`), into plans of its own
 /// (`OWN_PLANS`) taken into them as it ends.
 pub fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
-    struct Entered(Option<SharedPlans>, Option<rustc_hash::FxHashMap<PlanKey, Kept>>);
+    struct Entered(Option<SharedPlans>, Option<rustc_hash::FxHashMap<PlanKey, Kept>>, Option<rustc_hash::FxHashSet<PlanKey>>);
     impl Drop for Entered {
         fn drop(&mut self) {
             let own = OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take()));
+            let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.2.take()));
             let entered = PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), self.0.take()));
-            if let (Some(own), Some(shared)) = (own, entered)
-                && !own.is_empty()
+            let own = own.filter(|o| !o.is_empty());
+            let planned = planned.filter(|o| !o.is_empty());
+            if let Some(shared) = entered
+                && (own.is_some() || planned.is_some())
             {
-                shared.write().kept.extend(own);
+                let mut s = shared.write();
+                s.kept.extend(own.into_iter().flatten());
+                s.planned_now.extend(planned.into_iter().flatten());
             }
         }
     }
     let own = plans.is_some().then(rustc_hash::FxHashMap::default);
-    Entered(PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), plans)), OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)))
+    let planned = plans.is_some().then(rustc_hash::FxHashSet::default);
+    Entered(
+        PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), plans)),
+        OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)),
+        OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), planned)),
+    )
 }
 
 /// A kept plan's last price: the corpus's nodes and the rows of each relation its body reads when priced, and the
@@ -1639,7 +1671,7 @@ thread_local! {
 /// Carries the run's kept plans and the planner's settings to a job on another thread (`run_state`): the plans are
 /// shared (what the job plans is taken into them as it ends, `enter_plans`), the settings copied.
 pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
-    c.part(&["PLANS", "OWN_PLANS"], super::run_state::Shared(share_plans(), enter_plans));
+    c.part(&["PLANS", "OWN_PLANS", "OWN_PLANNED"], super::run_state::Shared(share_plans(), enter_plans));
     c.copy(&["PLAN_SITE"], &PLAN_SITE);
     c.copy(&["EXPLAIN_ALWAYS"], &EXPLAIN_ALWAYS);
     c.copy(&["NO_SHAPES"], &NO_SHAPES);
@@ -2020,11 +2052,7 @@ impl Model {
         let kept = if pending { None } else { kept };
         let sizes = self.live_sizes(b, first);
         if super::profile::on() {
-            PLANS.with(|p| {
-                if let Some(s) = p.borrow().as_ref() {
-                    s.write().planned_now.insert(key);
-                }
-            });
+            note_planned(key);
         }
         let remember = |key: &PlanKey, got: &(Plan, Option<super::profile::RulePlan>)| {
             plans_update(key, |k| k.4 = Some(Arc::new(Priced { sizes: sizes.clone(), got: got.clone() })));

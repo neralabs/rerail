@@ -305,6 +305,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
     ("code_rule_dsl/logic/profile.rs", "ON"),
+    ("code_rule_dsl/logic/profile.rs", "SHARD"),
+    // Each thread's profile records, merged into `STATE` as they are read: records, no reusable results.
+    ("code_rule_dsl/logic/profile.rs", "SHARDS"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "STATE"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
@@ -352,6 +355,7 @@ const STATE: &[(&str, &str)] = &[
     // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
     // state on the job's thread, gone with it.
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
+    ("code_rule_dsl/logic/plan.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
