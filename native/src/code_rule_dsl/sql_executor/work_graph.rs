@@ -38,7 +38,7 @@ fn allowance() -> usize {
 }
 static NEXT_GRAPH: AtomicU64 = AtomicU64::new(1);
 
-struct Shared {
+pub struct Shared {
     submitted: AtomicUsize,
     limit: usize,
     steps: AtomicU64,
@@ -209,7 +209,7 @@ pub fn execute_planned(
 }
 
 /// Worker completions release successors even while the controller helps a long SQL job.
-struct Scheduler {
+pub struct Scheduler {
     request: Request,
     plan: planner::Plan,
     graph: u64,

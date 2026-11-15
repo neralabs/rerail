@@ -26,7 +26,7 @@ use crate::code_rule_dsl::model::CompiledCodeRule;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::demand::driver::catalog::sql_backend::{
-    DocumentMapSpan, HardPartition, MatchRegistry, PackedDemand, PackedRow, ProducerKind,
+    DocumentMapSpan, MatchRegistry, PackedDemand, PackedRow, ProducerKind,
     register_module,
 };
 use rusqlite::{Connection, Row};
@@ -216,31 +216,6 @@ pub(super) struct QueryOutcome {
     pub(super) rows: Vec<PackedRow>,
     pub(super) violations: Vec<SqlViolationRow>,
     pub(super) failures: Vec<SqlFailureRow>,
-    pub(super) counters: QueryCounters,
-}
-
-/// Profile counters for one SQL-demanded workspace batch.
-pub(super) struct QueryCounters {
-    pub(super) statements: usize,
-    pub(super) rows: usize,
-    pub(super) scalar_callbacks: usize,
-    pub(super) node_rows: usize,
-    pub(super) environments: usize,
-    pub(super) fact_builds: usize,
-    pub(super) fact_hits: usize,
-    pub(super) terminal_executions: usize,
-    pub(super) virtual_table_filters: usize,
-    pub(super) registrations: usize,
-    pub(super) backend_invocations: usize,
-    pub(super) hard_partitions: usize,
-    pub(super) partitions: Vec<HardPartition>,
-    pub(super) demanded_producers: usize,
-    pub(super) terminal_tasks: usize,
-    pub(super) command_buffers: usize,
-    pub(super) packed_dispatches: usize,
-    pub(super) anchor_dispatches: usize,
-    pub(super) matcher_calls: usize,
-    pub(super) host_callbacks: usize,
 }
 
 /// The immutable SQL route for one catalog. Lowering failures are retained in source order and
@@ -740,34 +715,10 @@ impl QueryConnection {
                     );
                 }
             }
-            let row_count = rows.len() + violations.len() + failures.len();
-            let packed = self
-                .registry
+            self.registry
                 .query_execution_report(token)
                 .expect("the registered batch remains available until publication");
             Ok(QueryOutcome {
-                counters: QueryCounters {
-                    statements: statements.len(),
-                    rows: row_count,
-                    scalar_callbacks: 0,
-                    node_rows: 0,
-                    environments: 0,
-                    fact_builds: 0,
-                    fact_hits: 0,
-                    terminal_executions: packed.demand_executions,
-                    virtual_table_filters: packed.filters,
-                    registrations: packed.registrations,
-                    backend_invocations: packed.backend_invocations,
-                    hard_partitions: packed.hard_partitions,
-                    partitions: packed.partitions,
-                    demanded_producers: packed.demanded_producers,
-                    terminal_tasks: packed.terminal_tasks,
-                    command_buffers: packed.command_buffers,
-                    packed_dispatches: packed.packed_dispatches,
-                    anchor_dispatches: packed.anchor_dispatches,
-                    matcher_calls: packed.matcher_calls,
-                    host_callbacks: packed.host_callbacks,
-                },
                 rows,
                 violations,
                 failures,

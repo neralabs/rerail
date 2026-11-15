@@ -582,7 +582,7 @@ pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], Str
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
 /// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Content {
+pub(in crate::code_rule_dsl) enum Content {
     Stored(SourceId),
     Unstored([u8; 32]),
     Held([u8; 32]),

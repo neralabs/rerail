@@ -81,7 +81,7 @@ pub struct Parenthesis {
     pub child: NodeRef,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SequenceKind {
+pub enum SequenceKind {
     Tuple,
     List,
     Set,
@@ -101,7 +101,7 @@ pub struct SequenceChild {
     pub spread: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AssignmentKind {
+pub enum AssignmentKind {
     Assignment,
     Augmented,
     NamedExpression,

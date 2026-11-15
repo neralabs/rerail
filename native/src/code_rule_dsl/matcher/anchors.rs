@@ -18,7 +18,7 @@ use std::sync::Arc;
 // Keep the cursor at the current CST node. Neither Tree-sitter's Node::parent
 // (which searches down from the root) nor ast-grep's DFS (which eagerly
 // unwinds before yielding) is suitable for a bounded index build.
-pub(in crate::code_rule_dsl) trait AnchorCursor<'tree> {
+pub trait AnchorCursor<'tree> {
     type Node: Copy;
     fn current(&self) -> Self::Node;
     fn first_child(&mut self) -> bool;
