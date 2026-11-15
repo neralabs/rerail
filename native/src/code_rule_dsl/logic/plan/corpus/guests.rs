@@ -64,46 +64,36 @@ pub(super) enum Request {
 /// The requests of a slice run's outputs, in order. A library's embeds are made whatever a program shows: `.guests
 /// off` hides them from its rules (decision 0058 §1), and `guest` still reaches them.
 pub(super) fn requests(outputs: &BTreeMap<String, std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>>) -> Vec<Request> {
+    use crate::code_rule_dsl::logic::plan::output::Cell;
     let mut out = Vec::new();
-    let int = |s: &str| s.parse::<i64>().ok();
-    // The request relations alone, as their lines (decision 0239: the run hands rows).
-    let lines: BTreeMap<&str, Vec<String>> = outputs.iter().filter(|(r, _)| REQUESTS.contains(&r.as_str())).map(|(r, rows)| (r.as_str(), rows.lines())).collect();
-    let rows = |rel: &str, n: usize| lines.get(rel).into_iter().flatten().map(move |line| line.splitn(n, '\t').collect::<Vec<&str>>());
+    // Each request relation's rows of `n` values, as the run handed them (typed: nothing read from text).
+    let rows = |rel: &str, n: usize| {
+        outputs.get(rel).filter(|r| r.width() == n).into_iter().flat_map(move |r| (0..r.len()).map(move |i| (0..n).map(|c| r.cell(i, c)).collect::<Vec<Cell<'_>>>()))
+    };
     for c in rows("embed", 4) {
-        if let [_, at, g, r] = c.as_slice()
-            && let Some(at) = int(at)
-        {
-            out.push(Request::Guest { at, grammar: (*g).to_owned(), role: (*r).to_owned(), text: None });
+        if let [_, Cell::Int(at), Cell::Text(g), Cell::Text(r)] = c[..] {
+            out.push(Request::Guest { at, grammar: g.to_owned(), role: r.to_owned(), text: None });
         }
     }
     for c in rows("embed_value", 5) {
-        if let [_, at, g, r, t] = c.as_slice()
-            && let Some(at) = int(at)
-        {
-            out.push(Request::Guest { at, grammar: (*g).to_owned(), role: (*r).to_owned(), text: Some((*t).to_owned()) });
+        if let [_, Cell::Int(at), Cell::Text(g), Cell::Text(r), Cell::Text(t)] = c[..] {
+            out.push(Request::Guest { at, grammar: g.to_owned(), role: r.to_owned(), text: Some(t.to_owned()) });
         }
     }
     for c in rows(DEMAND, 2) {
-        if let [at, g] = c.as_slice()
-            && let Some(at) = int(at)
-        {
-            out.push(Request::Guest { at, grammar: (*g).to_owned(), role: "fragment".to_owned(), text: None });
+        if let [Cell::Int(at), Cell::Text(g)] = c[..] {
+            out.push(Request::Guest { at, grammar: g.to_owned(), role: "fragment".to_owned(), text: None });
         }
     }
-    // The text is last: it may hold a tab.
     // `at`, the location that asked, says whose the value is; equal texts are one value (`Guests::value`).
     for c in rows(PARSE, 3) {
-        if let [at, g, x] = c.as_slice()
-            && let Some(at) = int(at)
-        {
-            out.push(Request::Parse { at, grammar: (*g).to_owned(), text: (*x).to_owned() });
+        if let [Cell::Int(at), Cell::Text(g), Cell::Text(x)] = c[..] {
+            out.push(Request::Parse { at, grammar: g.to_owned(), text: x.to_owned() });
         }
     }
     for c in rows(SPLICE, 2) {
-        if let [n, t2] = c.as_slice()
-            && let Some(node) = int(n)
-        {
-            out.push(Request::Splice { node, with: (*t2).to_owned() });
+        if let [Cell::Int(node), Cell::Text(t2)] = c[..] {
+            out.push(Request::Splice { node, with: t2.to_owned() });
         }
     }
     out.sort();

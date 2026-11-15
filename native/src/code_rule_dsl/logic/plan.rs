@@ -4184,9 +4184,10 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    /// Each output's rows as text lines (`Rows::lines`): sorted, each once, a node as its number.
-    pub fn text(&self) -> BTreeMap<String, Vec<String>> {
-        self.outputs.iter().map(|(rel, rows)| (rel.clone(), rows.lines())).collect()
+    /// Each output's rows, each value as shown (`Rows::shown`): sorted, each once, a node as its number. For
+    /// comparing outcomes, never read back.
+    pub fn shown(&self) -> BTreeMap<String, Vec<Vec<String>>> {
+        self.outputs.iter().map(|(rel, rows)| (rel.clone(), rows.shown())).collect()
     }
 }
 
@@ -10732,15 +10733,39 @@ fn decoded_outputs(
                 _ => None,
             }
         };
-        // A value as the row holds it: an integer as it is; a kind or a field by its name; any other as its text.
-        let cell = |i: usize, v: SqlValue| -> Shown {
-            match v {
+        // A value as the row holds it: an integer as it is; a kind or a field by its name; NULL as none
+        // (`output::NULL`, shown `None`); a text as it is, in a text column. No integer column holds a text, a real
+        // or a blob: the engine has no such value there.
+        // Each column typed by its domain (a node; a text: a name, a kind, a field; else an integer), or where the run
+        // was not lowered, by its declared type. A table's rows are a set; a row seeded from SQL may also be one the
+        // engine derived: each row is once where it is read (the image).
+        let types: Vec<u8> = if findings_form {
+            vec![output::col::TEXT, output::col::TEXT, output::col::INT]
+        } else if lowered.is_some() {
+            domains
+                .iter()
+                .map(|d| match d {
+                    lower::Domain::Node => output::col::NODE,
+                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
+                    _ => output::col::INT,
+                })
+                .collect()
+        } else {
+            prog.decls
+                .get(rel.as_str())
+                .map(|cols| cols.iter().map(|(_, t)| match t.as_ref() { "node" => output::col::NODE, "number" | "int" | "unsigned" => output::col::INT, _ => output::col::TEXT }).collect())
+                .unwrap_or_default()
+        };
+        let text_domain = |i: usize| types.get(i).is_none_or(|&t| t == output::col::TEXT);
+        let cell = |i: usize, v: SqlValue| -> Result<Shown> {
+            Ok(match v {
                 SqlValue::Integer(v) => decode(i, v).map_or(Shown::Int(v), Shown::Text),
-                SqlValue::Real(f) => Shown::Text(format!("{f:?}")),
-                SqlValue::Text(s) => Shown::Text(s),
-                SqlValue::Null => Shown::Text("None".to_owned()),
-                SqlValue::Blob(b) => Shown::Text(format!("{b:?}")),
-            }
+                SqlValue::Null if text_domain(i) => Shown::Text("None".to_owned()),
+                SqlValue::Null => Shown::Int(output::NULL),
+                SqlValue::Text(s) if text_domain(i) => Shown::Text(s),
+                SqlValue::Real(f) if text_domain(i) => Shown::Text(format!("{f:?}")),
+                other => return Err(Error::Plan(format!("{rel}: {other:?} in integer column {i}"))),
+            })
         };
         let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
         let held = if native.contains(rel) && rel == "finding" {
@@ -10753,29 +10778,16 @@ fn decoded_outputs(
         } else {
             None
         };
-        // Each column typed by its domain: a node, a text (a name, a kind, a field), else an integer until a text
-        // arrives in it. A table's rows are a set; a row seeded from SQL may also be one the engine derived: each row
-        // is once where it is read (`Rows::lines`, the image).
-        let types: Vec<u8> = if findings_form {
-            vec![output::col::TEXT, output::col::TEXT, output::col::INT]
-        } else {
-            domains
-                .iter()
-                .map(|d| match d {
-                    lower::Domain::Node => output::col::NODE,
-                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
-                    _ => output::col::INT,
-                })
-                .collect()
-        };
-        let mut rows = output::Rows::new(types);
+        let mut rows = output::Rows::new(types.clone());
         let mut row: Vec<Shown> = Vec::new();
         let push = |rows: &mut output::Rows, row: &[Shown]| rows.push(&row.iter().map(Shown::cell).collect::<Vec<_>>());
         match held {
             Some(held) => {
                 for r in held {
                     row.clear();
-                    row.extend(r.into_iter().enumerate().map(|(i, v)| cell(i, v)));
+                    for (i, v) in r.into_iter().enumerate() {
+                        row.push(cell(i, v)?);
+                    }
                     push(&mut rows, &row);
                 }
             }
@@ -10786,7 +10798,7 @@ fn decoded_outputs(
                 while let Some(r) = q.next()? {
                     row.clear();
                     for i in 0..width {
-                        row.push(cell(i, r.get::<_, SqlValue>(i)?));
+                        row.push(cell(i, r.get::<_, SqlValue>(i)?)?);
                     }
                     push(&mut rows, &row);
                 }

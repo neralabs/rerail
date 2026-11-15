@@ -84,8 +84,9 @@ pub(super) fn to_store<'a>(entries: &[&'a Entry], syms: &Syms, store: &ContentSt
 }
 
 // An entry's frame (decision 0146): typed rows of integers, each row's first value its kind, its second the
-// relation or output it is of. A relation's rows are rows of it, a value to a column; text (names, lines) is packed
-// eight bytes to a value.
+// relation or output it is of. A relation's rows are rows of it, a value to a column; an output's are too, its
+// columns typed (`output::col`), a text column's value the index of one of its texts. Text (names, an output's
+// texts) is packed eight bytes to a value.
 const NODES: i64 = 0;
 const REL: i64 = 2;
 const REL_NAME: i64 = 3;
@@ -93,12 +94,14 @@ const REL_ROW: i64 = 4;
 const OUT: i64 = 5;
 const OUT_NAME: i64 = 6;
 const OUT_COLUMN: i64 = 7;
-const LINE: i64 = 8;
-const LINE_TEXT: i64 = 9;
+const OUT_TYPE: i64 = 10;
+const OUT_ROW: i64 = 11;
+const OUT_TEXT: i64 = 12;
+const OUT_TEXT_BYTES: i64 = 13;
 
 /// The entry's rows; the frame's width: two, and the widest relation's, at least eight.
 fn encode(entry: &Entry) -> crate::content_store::FrameRows {
-    let width = 2 + entry.rows.values().map(|(w, _)| *w).max().unwrap_or(0).max(8);
+    let width = 2 + entry.rows.values().map(|(w, _)| *w).chain(entry.outputs.values().map(|(_, r)| r.width())).max().unwrap_or(0).max(8);
     let mut rows: Vec<i64> = Vec::new();
     let mut n = 0;
     let mut row = |rows: &mut Vec<i64>, values: &[i64]| {
@@ -130,16 +133,25 @@ fn encode(entry: &Entry) -> crate::content_store::FrameRows {
             row(&mut rows, &values);
         }
     }
-    for (o, (name, (columns, lines))) in entry.lines.iter().enumerate() {
+    for (o, (name, (columns, out))) in entry.outputs.iter().enumerate() {
         let o = o as i64;
-        row(&mut rows, &[OUT, o, columns.len() as i64, lines.len() as i64, name.len() as i64]);
+        let texts = out.texts();
+        row(&mut rows, &[OUT, o, out.width() as i64, out.len() as i64, name.len() as i64, texts.len() as i64]);
         text(&mut rows, &mut row, OUT_NAME, o, 0, name);
         for c in columns {
             row(&mut rows, &[OUT_COLUMN, o, *c as i64]);
         }
-        for (i, line) in lines.iter().enumerate() {
-            row(&mut rows, &[LINE, o, i as i64, line.len() as i64]);
-            text(&mut rows, &mut row, LINE_TEXT, o, i as i64, line);
+        for &t in out.types() {
+            row(&mut rows, &[OUT_TYPE, o, i64::from(t)]);
+        }
+        for i in 0..out.len() {
+            let mut values = vec![OUT_ROW, o];
+            values.extend_from_slice(out.row(i));
+            row(&mut rows, &values);
+        }
+        for (i, t) in texts.iter().enumerate() {
+            row(&mut rows, &[OUT_TEXT, o, i as i64, t.len() as i64]);
+            text(&mut rows, &mut row, OUT_TEXT_BYTES, o, i as i64, t);
         }
     }
     crate::content_store::FrameRows { types: vec![b'i'; width], rows, n }
@@ -155,7 +167,20 @@ fn decode(frame: &crate::content_store::FrameRows, keep: &dyn Fn(&str) -> bool) 
     }
     let mut entry = Entry::default();
     let mut rels: Vec<(String, usize, usize, Vec<u8>, Vec<i64>)> = Vec::new();
-    let mut outs: Vec<(Vec<u8>, usize, Vec<usize>, Vec<(usize, Vec<u8>)>)> = Vec::new();
+    // Each output: its name and its length, its node columns, its width, rows and their values, its column types,
+    // and its texts (each its length and bytes).
+    #[derive(Default)]
+    struct Out {
+        name: Vec<u8>,
+        len: usize,
+        columns: Vec<usize>,
+        width: usize,
+        rows: usize,
+        vals: Vec<i64>,
+        types: Vec<u8>,
+        texts: Vec<(usize, Vec<u8>)>,
+    }
+    let mut outs: Vec<Out> = Vec::new();
     let bytes = |values: &[i64]| values.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
     for row in frame.rows.chunks_exact(width) {
         let owner = row[1] as usize;
@@ -177,14 +202,19 @@ fn decode(frame: &crate::content_store::FrameRows, keep: &dyn Fn(&str) -> bool) 
                 if owner != outs.len() {
                     return Err(bad("names an output out of order"));
                 }
-                outs.push((Vec::new(), row[4] as usize, Vec::new(), Vec::new()));
+                outs.push(Out { len: row[4] as usize, width: row[2] as usize, rows: row[3] as usize, ..Out::default() });
             }
-            OUT_NAME => outs.get_mut(owner).ok_or_else(|| bad("names no output"))?.0.extend(bytes(&row[3..])),
-            OUT_COLUMN => outs.get_mut(owner).ok_or_else(|| bad("has a column of no output"))?.2.push(row[2] as usize),
-            LINE => outs.get_mut(owner).ok_or_else(|| bad("has a line of no output"))?.3.push((row[3] as usize, Vec::new())),
-            LINE_TEXT => {
-                let o = outs.get_mut(owner).ok_or_else(|| bad("has a line of no output"))?;
-                o.3.last_mut().ok_or_else(|| bad("has text of no line"))?.1.extend(bytes(&row[3..]));
+            OUT_NAME => outs.get_mut(owner).ok_or_else(|| bad("names no output"))?.name.extend(bytes(&row[3..])),
+            OUT_COLUMN => outs.get_mut(owner).ok_or_else(|| bad("has a column of no output"))?.columns.push(row[2] as usize),
+            OUT_TYPE => outs.get_mut(owner).ok_or_else(|| bad("types no output"))?.types.push(u8::try_from(row[2]).map_err(|_| bad("has a column of no type"))?),
+            OUT_ROW => {
+                let o = outs.get_mut(owner).ok_or_else(|| bad("has a row of no output"))?;
+                o.vals.extend_from_slice(row.get(2..2 + o.width).ok_or_else(|| bad("has a row wider than itself"))?);
+            }
+            OUT_TEXT => outs.get_mut(owner).ok_or_else(|| bad("has a text of no output"))?.texts.push((row[3] as usize, Vec::new())),
+            OUT_TEXT_BYTES => {
+                let o = outs.get_mut(owner).ok_or_else(|| bad("has a text of no output"))?;
+                o.texts.last_mut().ok_or_else(|| bad("has bytes of no text"))?.1.extend(bytes(&row[3..]));
             }
             _ => return Err(bad("has a row of no kind")),
         }
@@ -202,9 +232,13 @@ fn decode(frame: &crate::content_store::FrameRows, keep: &dyn Fn(&str) -> bool) 
             entry.rows.insert(name, (w, values));
         }
     }
-    for (name, len, columns, lines) in outs {
-        let lines = lines.into_iter().map(|(n, b)| text(b, n)).collect::<StoreResult<Vec<_>>>()?;
-        entry.lines.insert(text(name, len)?, (columns, lines));
+    for o in outs {
+        let texts = o.texts.into_iter().map(|(n, b)| text(b, n)).collect::<StoreResult<Vec<_>>>()?;
+        if o.types.len() != o.width {
+            return Err(bad("has an output of columns not typed"));
+        }
+        let rows = crate::code_rule_dsl::logic::plan::output::Rows::of_parts(o.types, o.vals, texts, o.rows).map_err(|e| bad(&e))?;
+        entry.outputs.insert(text(o.name, o.len)?, (o.columns, rows));
     }
     Ok(entry)
 }

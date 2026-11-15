@@ -370,13 +370,6 @@ fn patched(old: &dyn crate::code_rule_dsl::facts::vtab::Source, plus: &dyn crate
     Arc::new(relation)
 }
 
-/// A phase's rows as text, as values of `decl`'s types.
-fn values_of(decl: &[(String, String)], rows: &[Vec<String>]) -> Vec<Vec<front::Value>> {
-    rows.iter()
-        .map(|r| r.iter().zip(decl).map(|(v, (_, t))| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| front::Value::Str(v.clone().into()), front::Value::Int) } else { front::Value::Str(v.clone().into()) }).collect())
-        .collect()
-}
-
 /// `Report::cone_inputs`: each document's rows of `per_file` (the exports held in memory, `exports`), by path. A value naming a node of the
 /// document is its rank among those its rows name; the rest (symbols, document keys, numbers) as they are.
 fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: &BTreeMap<String, Vec<usize>>, program: &front::Program, docs: impl Iterator<Item = &'a (i64, String)>) -> Result<BTreeMap<String, String>> {
@@ -3404,8 +3397,6 @@ fn run_observed(
     let mut memo_why: BTreeSet<String> = BTreeSet::new();
     // Each output's parts, as the runs handed them (decision 0239): rows, shared, never copied or printed.
     let mut outputs: BTreeMap<String, Vec<Arc<output::Rows>>> = BTreeMap::new();
-    // The memo hits' lines of each file-local output (a memo entry holds its output as text), made one part each.
-    let mut memo_lines: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut node_columns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let gather = |got: Outcome, outputs: &mut BTreeMap<String, Vec<Arc<output::Rows>>>, node_columns: &mut BTreeMap<String, Vec<usize>>, keep: &dyn Fn(&str) -> bool| {
         let _gather = crate::code_rule_dsl::logic::profile::span(|| "gather outputs".into());
@@ -4585,9 +4576,8 @@ fn run_observed(
                         }
                     }
                 }
-                for (rel, (columns, lines)) in entry.lines {
-                    outputs.entry(rel.clone()).or_default();
-                    memo_lines.entry(rel.clone()).or_default().extend(lines);
+                for (rel, (columns, rows)) in entry.outputs {
+                    outputs.entry(rel.clone()).or_default().push(Arc::new(rows));
                     node_columns.insert(rel, columns);
                 }
             }
@@ -4867,17 +4857,21 @@ fn run_observed(
         if memoised {
             for (rel, rows) in got.outputs.iter().filter(|(rel, _)| outputs_of(rel)) {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied());
-                // A memo entry holds a file's output as its lines.
-                for line in &rows.lines() {
-                    let files = at.and_then(|c| line.split('\t').nth(c)).and_then(|v| v.parse::<i64>().ok()).map(owners).unwrap_or_default();
+                // A memo entry holds a file's output as its rows, typed: each row in the entry of the document its
+                // location's node is of.
+                let mut cells: Vec<output::Cell<'_>> = Vec::with_capacity(rows.width());
+                for i in 0..rows.len() {
+                    let files = at.filter(|&c| c < rows.width()).and_then(|c| match rows.cell(i, c) { output::Cell::Int(v) => Some(v), output::Cell::Text(_) => None }).map(owners).unwrap_or_default();
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
                         memo_why.insert(format!("output {rel}: {}", if files.is_empty() { "no location" } else { "another chunk's document" }));
                         attributable = false;
                         continue;
                     }
+                    cells.clear();
+                    cells.extend((0..rows.width()).map(|c| rows.cell(i, c)));
                     for d in files {
                         let e = entries.get_mut(&d).expect("checked");
-                        e.lines.entry(rel.clone()).or_insert_with(|| (got.nodes[rel].clone(), Vec::new())).1.push(line.clone());
+                        e.outputs.entry(rel.clone()).or_insert_with(|| (got.nodes[rel].clone(), output::Rows::new(rows.types().to_vec()))).1.push(&cells);
                     }
                 }
             }
@@ -5228,11 +5222,11 @@ fn run_observed(
         let rounds_record = round.as_ref().map(|r| format!("cone-rounds:{}", crate::content_store::observe::hex(&rounds_space_of(&retain::key(&[0; 32], &r.program)))));
         let rounds_journal: Option<(Vec<(std::path::PathBuf, String)>, Vec<std::path::PathBuf>, u64)> = rounds_record.as_ref().and_then(|key| {
             observe(|o| {
-                let (read, _) = o.run_record(key)?;
-                let mut lines = read.lines();
-                let cursors: Vec<String> = lines.next()?.split('\t').map(str::to_owned).collect();
-                let roots: Vec<std::path::PathBuf> = lines.next()?.split('\t').map(std::path::PathBuf::from).collect();
-                let world: u64 = lines.next()?.parse().ok()?;
+                // The record: the cursors and the roots they are of (`reuse::encode_lists`), and the world's digest.
+                let (read, world) = o.run_record(key)?;
+                let [cursors, roots]: [Vec<String>; 2] = reuse::decode_lists(&read)?.try_into().ok()?;
+                let roots: Vec<std::path::PathBuf> = roots.into_iter().map(std::path::PathBuf::from).collect();
+                let world = u64::from_le_bytes(world.as_slice().try_into().ok()?);
                 let named = o.changed_since(&roots, &cursors)?;
                 Some((roots.into_iter().zip(cursors).collect(), named, world))
             })
@@ -5693,9 +5687,9 @@ fn run_observed(
                     }
                 }
                 if !at.is_empty() {
-                    let cursors: Vec<&str> = at.iter().map(|(_, c)| c.as_str()).collect();
+                    let cursors: Vec<String> = at.iter().map(|(_, c)| c.clone()).collect();
                     let roots: Vec<String> = at.iter().map(|(r, _)| r.to_string_lossy().into_owned()).collect();
-                    o.put_run_record(key, &format!("{}\n{}\n{world}", cursors.join("\t"), roots.join("\t")), &[]);
+                    o.put_run_record(key, &reuse::encode_lists(&[&cursors[..], &roots[..]]), &world.to_le_bytes());
                 }
             });
         }
@@ -7433,32 +7427,26 @@ fn run_observed(
         outputs.entry(rel.clone()).or_default();
         node_columns.entry(rel.clone()).or_default();
     }
-    // The memo hits' lines, one part per output (a memo entry holds a file's output as text).
-    for (rel, lines) in std::mem::take(&mut memo_lines) {
-        let part = output::Rows::from_lines(&lines, node_columns.get(&rel).map_or(&[][..], Vec::as_slice));
-        outputs.entry(rel).or_default().push(Arc::new(part));
-    }
-    // A node column's values, as integers: a node column held as text (one holding a value that is no integer)
-    // gives those of its texts that are.
+    // A node column's values (none where a part holds the column as text: rows a phase handed of its texts).
     let node_values = |part: &output::Rows, c: usize| -> Vec<i64> {
         (0..part.len())
             .filter_map(|i| match part.cell(i, c) {
-                output::Cell::Int(v) => Some(v),
-                output::Cell::Text(t) => t.parse::<i64>().ok(),
+                output::Cell::Int(v) if v != output::NULL => Some(v),
+                _ => None,
             })
             .collect()
     };
     // A node column's value that is no node: `unset` (-1) is written as it is, and a `@place` (`rr::lower`'s
     // `PLACE`, `-2 - (path << 32 | line)`) as `@place("path", line)`.
-    let mut places: HashMap<i64, String> = HashMap::new();
+    let mut places: HashMap<i64, (String, i64)> = HashMap::new();
     for (rel, parts) in &outputs {
-        for part in parts.iter().filter(|p| !p.ragged()) {
+        for part in parts {
             for &c in node_columns[rel].iter().filter(|&&c| c < part.width()) {
                 for v in node_values(part, c) {
                     if v < -1 && !places.contains_key(&v) {
                         let n = -2 - v;
                         let path: String = db.query_row("SELECT sym_text(?1)", [n >> 32], |r| r.get(0))?;
-                        places.insert(v, format!("@place({}, {})", crate::code_rule_dsl::logic::rr::quote(&path), n & 0xffff_ffff));
+                        places.insert(v, (path, n & 0xffff_ffff));
                     }
                 }
             }
@@ -7473,16 +7461,6 @@ fn run_observed(
         // The session's stack here as its last run left it, if it stands (a stat, not a read).
         let held: Option<session::Stack> = session.as_ref().and_then(|s| s.stacks.lock().expect("the session's stacks").get(out).filter(|k| k.stands(out)).cloned());
         let mut image = output::Builder::new(flags, false);
-        // A node column's value as the writer showed it, for a column the image holds as text (one holding a value
-        // that is no integer): by its document, or as it was.
-        let shown = |_: usize, v: &str| match v.parse::<i64>() {
-            Ok(v) if v < -1 => places.get(&v).cloned().unwrap_or_else(|| v.to_string()),
-            // A guest's node (decision 0055): its document is no file of the run.
-            Ok(v) if v >= 0 && !paths.contains_key(&(v >> 32)) && !first.contains_key(&(v >> 32)) => format!("guest{}:{}", v >> 32, v & 0xffff_ffff),
-            Ok(v) if (own || syntax::definition_ids()) && paths.contains_key(&(v >> 32)) => format!("{}:{}", paths[&(v >> 32)], syntax::shown_local(v & 0xffff_ffff)),
-            Ok(v) if !own && first.contains_key(&(v >> 32)) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
-            _ => v.to_owned(),
-        };
         let mut made: Vec<&str> = Vec::new();
         for (rel, parts) in &outputs {
             if let Some(n) = unchanged_outputs.get(rel) {
@@ -7499,15 +7477,11 @@ fn run_observed(
                     filtered = parts
                         .iter()
                         .map(|p| {
-                            if p.ragged() || c >= p.width() {
+                            if c >= p.width() || p.types()[c] == output::col::TEXT {
                                 return Arc::clone(p);
                             }
                             let mut kept = (**p).clone();
-                            if kept.types()[c] == output::col::TEXT {
-                                kept.retain(|i, _| !matches!(p.cell(i, c), output::Cell::Text(t) if t.parse::<i64>().is_ok_and(loaded)));
-                            } else {
-                                kept.retain(|_, row| !loaded(row[c]));
-                            }
+                            kept.retain(|_, row| !loaded(row[c]));
                             Arc::new(kept)
                         })
                         .collect();
@@ -7516,12 +7490,12 @@ fn run_observed(
                 _ => parts,
             };
             // The documents and places its node columns name.
-            for part in parts.iter().filter(|p| !p.ragged()) {
+            for part in parts {
                 for &c in node_columns.iter().filter(|&&c| c < part.width()) {
                     for v in node_values(part, c) {
                         if v < -1 {
-                            if let Some(p) = places.get(&v) {
-                                image.place(v, p);
+                            if let Some((path, line)) = places.get(&v) {
+                                image.place(v, path, *line);
                             }
                         } else if v >= 0 {
                             let d = v >> 32;
@@ -7533,7 +7507,7 @@ fn run_observed(
                 }
             }
             let parts: Vec<&output::Rows> = parts.iter().map(|p| &**p).collect();
-            image.put(rel, &parts, node_columns, &shown);
+            image.put(rel, &parts, node_columns);
             made.push(rel);
         }
         let bytes = image.finish();
@@ -7656,14 +7630,9 @@ fn run_observed(
     }
     if prog.decls.contains_key("declared_ret") {
         let fn_q = split.exports.iter().any(|e| e == "fn_q").then(|| exports.borrow_mut().source("fn_q", 2));
-        // `type_of`'s rows as lines, as typing reads them (stage 3 reads the rows).
-        let type_of: Option<Vec<String>> = outputs.get("type_of").map(|parts| {
-            let mut lines: Vec<String> = parts.iter().flat_map(|p| p.lines()).collect();
-            lines.sort_unstable();
-            lines.dedup();
-            lines
-        });
-        typing::outputs(typing, &db, &store, root, type_of.as_ref(), &returns, &declared, fn_q.as_deref(), &mut typed)?;
+        // `type_of`'s rows, its parts as the runs handed them.
+        let type_of: Option<&[Arc<output::Rows>]> = outputs.get("type_of").map(Vec::as_slice);
+        typing::outputs(typing, &db, &store, root, type_of, &returns, &declared, fn_q.as_deref(), &mut typed)?;
     }
     drop(writing);
     phase("write", statements.count());
@@ -8783,23 +8752,21 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     use std::path::PathBuf;
     let real = observe(|o| o.canonical(root))?;
     let key = format!("git-files:{}", real.display());
-    // What the record read: the journal's cursors before the status and the roots they are of (a line each, by tab),
-    // then a path a line.
+    // What the record read (`reuse::encode_lists`): the journal's cursors before the status, the roots they are of,
+    // and the paths read; and what it found: the overlays' count (eight bytes), then the files.
     let kept = observe(|o| {
         let (read, files) = o.run_record(&key)?;
-        let mut lines = read.lines();
-        let cursors: Vec<String> = lines.next()?.split('\t').map(str::to_owned).collect();
-        let watched: Vec<PathBuf> = lines.next()?.split('\t').map(PathBuf::from).collect();
-        let read: Vec<PathBuf> = lines.map(PathBuf::from).collect();
+        let [cursors, watched, read]: [Vec<String>; 3] = reuse::decode_lists(&read)?.try_into().ok()?;
+        let watched: Vec<PathBuf> = watched.into_iter().map(PathBuf::from).collect();
+        let read: Vec<PathBuf> = read.into_iter().map(PathBuf::from).collect();
         let named = o.changed_since(&watched, &cursors)?;
         // The repository's own directories, of which only what `read` names counts (not its objects).
         let git_dirs: Vec<PathBuf> = watched.iter().skip(2).cloned().collect();
-        Some((read, git_dirs, named, String::from_utf8(files).ok()?))
+        let overlays = u64::from_le_bytes(files.get(..8)?.try_into().ok()?) as usize;
+        let [under]: [Vec<String>; 1] = reuse::decode_lists(&files[8..])?.try_into().ok()?;
+        Some((read, git_dirs, named, overlays, under))
     });
-    if let Some((read, git_dirs, named, text)) = kept {
-        let mut lines = text.lines();
-        let overlays: usize = lines.next().and_then(|l| l.parse().ok()).unwrap_or(0);
-        let under: Vec<String> = lines.map(str::to_owned).collect();
+    if let Some((read, git_dirs, named, overlays, under)) = kept {
         // A change named in what Git reads besides the files (its index, refs, ignore files), or at a directory above
         // one, may change the list. A file named under the root leaves it as it was when it is still a file the list
         // holds, or still absent and not in the list; a directory named, or one the list has files under, may not.
@@ -8842,10 +8809,12 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
         let mut read: Vec<PathBuf> = vec![real.clone(), work.join(".git"), own.join("HEAD"), own.join("index")];
         read.extend(real.ancestors().filter(|d| d.starts_with(work) && *d != real.as_path()).map(|d| d.join(".gitignore")));
         read.extend(["HEAD", "refs", "packed-refs", "config", "info"].iter().map(|f| common.join(f)));
-        let watched = [&real, work, own, common].iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\t");
-        let read = [cursors.join("\t"), watched].into_iter().chain(read.iter().map(|p| p.to_string_lossy().into_owned())).collect::<Vec<_>>().join("\n");
-        let text = std::iter::once(overlays.to_string()).chain(under.iter().cloned()).collect::<Vec<_>>().join("\n");
-        observe(|o| o.put_run_record(&key, &read, text.as_bytes()));
+        let watched: Vec<String> = [&real, work, own, common].iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let read: Vec<String> = read.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let record = reuse::encode_lists(&[&cursors[..], &watched[..], &read[..]]);
+        let mut files = (*overlays as u64).to_le_bytes().to_vec();
+        files.extend(reuse::encode_lists(&[&under[..]]));
+        observe(|o| o.put_run_record(&key, &record, &files));
     }
     found
 }

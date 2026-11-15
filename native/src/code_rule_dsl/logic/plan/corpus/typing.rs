@@ -125,7 +125,7 @@ pub(crate) fn outputs(
     db: &Connection,
     store: &ContentStore,
     root: &Path,
-    type_of: Option<&Vec<String>>,
+    type_of: Option<&[std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>]>,
     returns: &[Vec<i64>],
     declared: &BTreeMap<String, BTreeSet<String>>,
     fn_q: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>,
@@ -133,13 +133,14 @@ pub(crate) fn outputs(
 ) -> Result<()> {
     let text = |a: i64| -> Result<String> { store.atom_value(a as u32).map_err(|e| Error::Plan(e.to_string()))?.ok_or_else(|| Error::Plan(format!("no atom {a}"))) };
     // Each node's names, one union term.
-    if let Some(rows) = type_of {
+    if let Some(parts) = type_of {
+        use crate::code_rule_dsl::logic::plan::output::Cell;
         let mut per: BTreeMap<i64, BTreeSet<String>> = BTreeMap::new();
-        for row in rows {
-            if let Some((n, t)) = row.split_once('\t')
-                && let Ok(n) = n.parse::<i64>()
-            {
-                per.entry(n).or_default().insert(t.to_owned());
+        for rows in parts.iter().filter(|r| r.width() == 2) {
+            for i in 0..rows.len() {
+                if let (Cell::Int(n), Cell::Text(t)) = (rows.cell(i, 0), rows.cell(i, 1)) {
+                    per.entry(n).or_default().insert(t.to_owned());
+                }
             }
         }
         let mut terms = Terms::default();

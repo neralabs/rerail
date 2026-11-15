@@ -35,11 +35,11 @@ const EXCEPTIONS: [(&str, &str, usize, &str); 5] = [
 /// Files that are test code as a whole (their parent declares them under `cfg(test)`).
 const TEST_FILES: [&str; 3] = ["metal_frontier_conformance.rs", "metal_register_conformance.rs", "parity.rs"];
 
-fn repo() -> PathBuf {
+pub(crate) fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-fn sources() -> Vec<PathBuf> {
+pub(crate) fn sources() -> Vec<PathBuf> {
     let root = repo();
     let mut walk: Vec<PathBuf> = vec![root.join("native/src"), root.join("accel/src"), root.join("forest/src")];
     if let Ok(crates) = std::fs::read_dir(root.join("native/crates")) {
@@ -65,7 +65,7 @@ fn sources() -> Vec<PathBuf> {
 }
 
 /// A file's lines outside its `#[cfg(test)]` modules (a module's lines end at its closing brace at its own indent).
-fn product_lines(text: &str) -> Vec<(usize, &str)> {
+pub(crate) fn product_lines(text: &str) -> Vec<(usize, &str)> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
     let mut i = 0;

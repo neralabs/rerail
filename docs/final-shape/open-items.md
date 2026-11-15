@@ -5153,6 +5153,13 @@ Heavy values are made by a full pass over a relation when a column is raised. Op
 - a line's raised columns kept with its note across processes;
 - the GPU batch (0209 §6, step 4).
 
+## O174. A memo-replay test loses a long text row when run beside others (2026-11-15)
+
+`findings::async_reference::rr_comparison::long_text_fallback_keeps_short_and_long_results_across_memo_replay`
+fails about one group run in five: after the memo replay, the long text row is missing. It passes alone and with
+`--test-threads=1`, and fails 3 of 20 group runs on the build before decision 0239's stage 5, so it predates it.
+Likely cause: tests beside it share a store and one's run evicts or replaces the entry it replays. Open.
+
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
 Status: superseded by decision 0225 (draft): the split's questions become rules over the image, after 0173 stage 2. the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). A body's numbering is kept with its digest for the run, and every fixpoint, `split_constants`'s included, runs on

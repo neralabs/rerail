@@ -124,34 +124,42 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // The program's language is its name's: `calls_rust` reads the `.rs` files, the others the `.py` files.
         let typing = Typing { rust: Some(name.ends_with("_rust")), ..typing.clone() };
         let report = super::run_typed(&[&format!("{src}\n{spans}")], root, None, &out, modes, binding, chunk_nodes, &typing)?;
-        let rows = |rel: &str| -> Result<Vec<Vec<String>>> {
-            crate::code_rule_dsl::logic::plan::output::rows(&out, rel).map_err(|e| Error::Plan(format!("{name}: {rel}: {e}")))
+        // The outputs' image, read where it is: a node by its document's path and value, nothing parsed.
+        use crate::code_rule_dsl::logic::plan::output;
+        let outputs = output::Outputs::open(&out).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        let rel = |r: &str| outputs.get(r).ok_or_else(|| Error::Plan(format!("{name}: {r}: not in its outputs")));
+        let node_key = |v: output::Value<'_>| match v {
+            output::Value::Node(output::Node::Of { path: Some(p), value, .. }) => Ok((value, p.to_owned())),
+            v => Err(Error::Plan(format!("{name}: node {v:?}: no document's path"))),
         };
-        let mut at: BTreeMap<String, [String; 4]> = BTreeMap::new();
-        for r in rows("typing_bridge_at")? {
-            let path = r[0].rsplit_once(':').map(|(p, _)| p.to_owned()).ok_or_else(|| Error::Plan(format!("{name}: node {}", r[0])))?;
-            at.insert(r[0].clone(), [path, r[1].clone(), r[2].clone(), r[3].clone()]);
+        let int = |v: output::Value<'_>, what: &str| v.int().map(Value::Int).ok_or_else(|| Error::Plan(format!("{name}: {what}: not a number: {v:?}")));
+        let text = |v: output::Value<'_>, what: &str| v.text().map(|t| Value::Str(t.to_owned().into())).ok_or_else(|| Error::Plan(format!("{name}: {what}: not a text: {v:?}")));
+        let mut at: BTreeMap<i64, [Value; 4]> = BTreeMap::new();
+        for r in rel("typing_bridge_at")?.rows() {
+            let (key, path) = node_key(r.get(0))?;
+            at.insert(key, [Value::Str(path.into()), text(r.get(1), "typing_bridge_at")?, int(r.get(2), "typing_bridge_at")?, int(r.get(3), "typing_bridge_at")?]);
         }
         for b in &bridged {
             let nodes = &columns[b.output.as_str()];
             let types: Vec<&str> = program.decls[b.output.as_str()].iter().map(|(_, ty)| ty.as_str()).collect();
-            let int = |v: &str| v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("{name}: {}: not a number: {v}", b.output)));
             let held = facts.entry(b.rel.clone()).or_default();
-            for r in rows(&b.output)? {
+            for r in rel(&b.output)?.rows() {
                 let mut args = Vec::new();
-                for ((v, &node), ty) in r.iter().zip(nodes).zip(&types) {
+                for ((v, &node), ty) in r.values().zip(nodes).zip(&types) {
                     if node {
-                        let [p, k, s, e] = at.get(v).ok_or_else(|| Error::Plan(format!("{name}: no span for {v}")))?;
-                        args.extend([Value::Str(p.clone().into()), Value::Str(k.clone().into()), int(s)?, int(e)?]);
+                        let (key, _) = node_key(v)?;
+                        let span = at.get(&key).ok_or_else(|| Error::Plan(format!("{name}: no span for {v:?}")))?;
+                        args.extend(span.iter().cloned());
                     } else if *ty == "sym" || *ty == "symbol" {
-                        args.push(Value::Str(v.clone().into()));
+                        args.push(text(v, &b.output)?);
                     } else {
-                        args.push(int(v)?);
+                        args.push(int(v, &b.output)?);
                     }
                 }
                 held.push(args);
             }
         }
+        drop(outputs);
         let _ = std::fs::remove_dir_all(&out);
         runs.push((name.to_owned(), report));
     }

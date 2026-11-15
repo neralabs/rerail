@@ -1143,8 +1143,10 @@ fn replay_run(k: usize, event: &Event, program: &Replayed, root: &Path) -> Outco
         Err(error) => return Outcome::Error { run: true, error },
     };
     for r in &show {
-        let rows = crate::code_rule_dsl::logic::plan::output::text(&dir.join(".out"), r).unwrap_or_else(|_| "(no relation)".to_owned());
-        eprintln!("{} {r}:\n{rows}", event.test);
+        match crate::code_rule_dsl::logic::plan::output::shown(&dir.join(".out"), r) {
+            Ok(rows) => eprintln!("{} {r}:\n{rows:?}", event.test),
+            Err(_) => eprintln!("{} {r}:\n(no relation)", event.test),
+        }
     }
     // Where the oracle records no code, (path, line) only.
     let codeless = want.iter().any(|(_, _, code)| code.is_none());
@@ -1418,14 +1420,14 @@ fn finding_keys(program: &str, dir: &Path) -> Result<Vec<(String, u64, String)>,
     let out = dir.join(".out");
     super::super::plan::corpus::run(program, dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map_err(|e| e.to_string())?;
     // Every output is in the image, empty or not: no `violation` is a program without violations.
-    let csv = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").map_err(|e| format!("violation: {e}"))?;
-    Ok(csv
-        .lines()
-        .map(|l| {
-            let f: Vec<&str> = l.split('\t').collect();
-            (f[3].to_owned(), f[4].parse().unwrap_or_default(), f[2].to_owned())
-        })
-        .collect())
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).map_err(|e| format!("violation: {e}"))?;
+    let violation = outputs.get("violation").ok_or("violation: no such relation")?;
+    let mut keys: Vec<(String, u64, String)> = violation
+        .rows()
+        .map(|r| (r.get(3).to_string(), r.get(4).int().and_then(|l| u64::try_from(l).ok()).unwrap_or_default(), r.get(2).to_string()))
+        .collect();
+    keys.sort();
+    Ok(keys)
 }
 
 /// `has` filters its ancestor, the node it is at, by that node's kinds, not the descendant's: the executor's typed
@@ -1983,12 +1985,14 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
     // Of two runs, each its own file (`<file>.converted`, `<file>.hand-written`).
     if let Some(keep) = std::env::var_os("RERAIL_MEASURE_KEEP") {
         let keep = if label == "all" { PathBuf::from(keep) } else { PathBuf::from(format!("{}.{label}", PathBuf::from(keep).display())) };
-        std::fs::write(keep, crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap()).unwrap();
+        // Shown for the script that compares them: each row's values, tab-separated (written, never read back here).
+        let shown: String = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().iter().map(|r| r.join("\t") + "\n").collect();
+        std::fs::write(keep, shown).unwrap();
     }
     // Violations per rule: the first column of `violation.csv` is the rule's id.
     let mut per: BTreeMap<String, usize> = BTreeMap::new();
-    for line in crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines() {
-        let id = line.split('\t').next().unwrap_or("").trim_matches('"').to_owned();
+    for row in crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default() {
+        let id = row[0].trim_matches('"').to_owned();
         *per.entry(id).or_default() += 1;
     }
     for (id, n) in &per {

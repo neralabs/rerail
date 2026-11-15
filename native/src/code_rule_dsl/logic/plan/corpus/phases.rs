@@ -59,7 +59,7 @@ pub(super) struct PhaseOne {
     /// The library documents the imports reached, `(canonical path, module, grammar, content)`.
     pub(super) libraries: Vec<(String, String, String, String)>,
     /// Its exports, as a reader of `sources__<export>` takes them.
-    rows: BTreeMap<String, Vec<Vec<String>>>,
+    rows: BTreeMap<String, Vec<Vec<Value>>>,
 }
 
 thread_local! {
@@ -505,14 +505,18 @@ pub(super) fn sources(
         super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, &options)?
     };
     let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
-    let made: std::collections::HashSet<&str> = rows.get("document").into_iter().flatten().filter_map(|r| r.first().map(String::as_str)).collect();
-    let documents: Vec<(String, String, String)> = files.iter().filter(|(p, _, _, _)| made.contains(p.as_str())).map(|(p, _, g, c)| (p.clone(), g.clone(), c.clone())).collect();
+    let text = |v: &Value| match v {
+        Value::Str(s) => Some(s.to_string()),
+        Value::Int(_) => None,
+    };
+    let made: std::collections::HashSet<String> = rows.get("document").into_iter().flatten().filter_map(|r| r.first().and_then(text)).collect();
+    let documents: Vec<(String, String, String)> = files.iter().filter(|(p, _, _, _)| made.contains(p)).map(|(p, _, g, c)| (p.clone(), g.clone(), c.clone())).collect();
     let mut libraries: Vec<(String, String, String, String)> = rows
         .get("library")
         .into_iter()
         .flatten()
         .filter_map(|r| match r.as_slice() {
-            [p, m, g, c] => Some((p.clone(), m.clone(), g.clone(), c.clone())),
+            [p, m, g, c] => Some((text(p)?, text(m)?, text(g)?, text(c)?)),
             _ => None,
         })
         .collect();
@@ -549,39 +553,42 @@ fn loads_documents(program: &Program, dir: Option<&Path>, seen: &mut BTreeSet<St
     Ok(false)
 }
 
-/// A phase's exports, as its run wrote them in `out` (which goes).
-fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<String>>>> {
-    let mut rows: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
+/// A phase's exports, as its run wrote them in `out` (which goes): each row's values as the export's columns are
+/// declared, read from the outputs' image (`output::Outputs`), nothing parsed.
+fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
+    use crate::code_rule_dsl::logic::plan::output;
+    let outputs = output::Outputs::open(out).map_err(|e| Error::Plan(format!("phase {name}: {}: {e}", out.display())))?;
+    let mut rows: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
     for export in &declared.exports {
-        let read = crate::code_rule_dsl::logic::plan::output::rows(out, export).map_err(|e| {
-            let held = crate::code_rule_dsl::logic::plan::output::names(out).unwrap_or_default();
-            Error::Plan(format!("phase {name}: {export}: {e} (in {}, which holds {held:?})", out.display()))
-        })?;
-        let width = program.decls[export.as_str()].len();
-        // Each value as it is, a newline or a tab in it too; a relation held by its lines (rows the run handed of
-        // differing widths) comes back a row of one value, and would be handed on as facts no rule made.
-        if let Some(bad) = read.iter().find(|r| r.len() != width) {
-            return Err(Error::Plan(format!("phase {name}: {export}: a row of {} values, not {width}: {:?}", bad.len(), bad.join("\t"))));
+        let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs (in {}, which holds {:?})", out.display(), outputs.names())))?;
+        let types: Vec<&str> = program.decls[export.as_str()].iter().map(|(_, t)| t.as_str()).collect();
+        if rel.width() != types.len() {
+            return Err(Error::Plan(format!("phase {name}: {export}: {} columns, not {}", rel.width(), types.len())));
+        }
+        let mut read = Vec::with_capacity(rel.len());
+        for row in rel.rows() {
+            let values = row
+                .values()
+                .zip(&types)
+                .map(|(v, t)| match (v, *t) {
+                    (output::Value::Text(s), _) => Ok(Value::Str(s.to_owned().into())),
+                    (v, "symbol" | "sym") => Err(Error::Plan(format!("phase {name}: {export}: a symbol column holds {v:?}"))),
+                    (v, _) => v.int().map(Value::Int).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not a number: {v:?}"))),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            read.push(values);
         }
         rows.insert(export.clone(), read);
     }
+    drop(outputs);
     let _ = std::fs::remove_dir_all(out);
     Ok(rows)
 }
 
 /// The rows of the exports `reads` names, as the reader's relations' values.
-fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTreeMap<String, Vec<Vec<String>>>, facts: &mut Facts) -> Result<()> {
+fn hand_on(_name: &str, _program: &Program, reads: &[(String, String)], rows: &BTreeMap<String, Vec<Vec<Value>>>, facts: &mut Facts) -> Result<()> {
     for (rel, export) in reads {
-        let types: Vec<&str> = program.decls[export.as_str()].iter().map(|(_, t)| t.as_str()).collect();
-        let held = facts.entry(rel.clone()).or_default();
-        for r in rows.get(export).into_iter().flatten() {
-            let row = r
-                .iter()
-                .zip(&types)
-                .map(|(v, t)| if *t == "symbol" || *t == "sym" { Ok(Value::Str(v.clone().into())) } else { v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("phase {name}: {export}: not a number: {v}"))) })
-                .collect::<Result<Vec<_>>>()?;
-            held.push(row);
-        }
+        facts.entry(rel.clone()).or_default().extend(rows.get(export).into_iter().flatten().cloned());
     }
     Ok(())
 }

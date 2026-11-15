@@ -3975,6 +3975,7 @@ dependencies = [
  "indexmap",
  "libc",
  "memchr",
+ "memmap2 0.9.12",
  "metal",
  "mimalloc",
  "model2vec-rs",

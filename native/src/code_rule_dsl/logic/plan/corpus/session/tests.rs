@@ -24,7 +24,7 @@ fn a_session_reruns_what_an_edit_changed() {
     let rule = packs().join("bandit-b301-pickle.rr");
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let findings = || crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap();
+    let findings = || crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap();
     let fresh = run();
     let expected = findings();
     let _ = fresh;
@@ -36,7 +36,7 @@ fn a_session_reruns_what_an_edit_changed() {
     std::fs::write(src.join("a.py"), "import pickle\nimport hashlib\nhashlib.md5(b'x')\npickle.loads(b'y')\n").unwrap();
     let third = run();
     assert_eq!(third.memo.0, 1, "only the edited file is evaluated");
-    assert!(findings().lines().count() == expected.lines().count() + 1, "the edit's finding: {}", findings());
+    assert!(findings().len() == expected.len() + 1, "the edit's finding: {:?}", findings());
     stop();
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -57,7 +57,7 @@ fn a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed() {
     let rule = packs().join("bandit-b301-pickle.rr");
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = |to: &std::path::Path| super::super::run(&program, &src, None, to, "program", Binding::Cpu, 1 << 18).unwrap();
-    let names = |dir: &std::path::Path| output::names(dir).unwrap();
+    let names = |dir: &std::path::Path| -> Vec<String> { output::Outputs::open(dir).unwrap().names().into_iter().map(str::to_owned).collect() };
     start(&base.join("session")).unwrap();
     run(&out);
     assert_eq!(output::read(&out).unwrap().len(), 1, "a session's first run writes a base");
@@ -80,7 +80,7 @@ fn a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed() {
         partly |= stack.iter().any(|i| i.entry("violation", output::kind::GONE).is_some());
         assert_eq!(names(&out), names(&fresh), "step {step}");
         for rel in names(&fresh) {
-            assert_eq!(output::text(&out, &rel).unwrap(), output::text(&fresh, &rel).unwrap(), "step {step}: {rel}");
+            assert_eq!(output::shown(&out, &rel).unwrap(), output::shown(&fresh, &rel).unwrap(), "step {step}: {rel}");
         }
     }
     assert!(partly, "an edit's overlay holds the rows it changed");
@@ -105,7 +105,7 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -183,7 +183,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -254,7 +254,7 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -317,7 +317,7 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -453,7 +453,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -571,7 +571,7 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -582,7 +582,7 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
     start(&base.join("session")).unwrap();
     run();
     assert_eq!(findings(), full());
-    assert!(findings().iter().any(|r| r.contains("HUB")) && findings().iter().any(|r| r.contains("LEAF")), "{:?}", findings());
+    assert!(findings().iter().any(|r| r.iter().any(|v| v.contains("HUB"))) && findings().iter().any(|r| r.iter().any(|v| v.contains("LEAF"))), "{:?}", findings());
     let edits: [(&str, &str); 4] = [
         ("b.py", "x = 2\n"),
         ("d.py", "from a import w\n"),
@@ -634,7 +634,7 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -753,7 +753,7 @@ fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() 
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };

@@ -108,7 +108,7 @@
             let counts = kept.strata.unwrap();
             let admitted: Vec<_> = kept.admitted.keys().cloned().collect();
             kept.finish();
-            (counts, admitted, outcome.text())
+            (counts, admitted, outcome.shown())
         };
         let first = run();
         assert!(first.0.0 > 0, "cold native evaluation must do work");

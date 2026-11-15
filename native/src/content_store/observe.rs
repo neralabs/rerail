@@ -810,12 +810,12 @@ impl Observer {
     }
 
     /// The record of the last run under `key`: what it consulted, and its outputs (`corpus::reuse`).
-    pub fn run_record(&self, key: &str) -> Option<(String, Vec<u8>)> {
+    pub fn run_record(&self, key: &str) -> Option<(Vec<u8>, Vec<u8>)> {
         self.db.as_ref()?.records.get(key).cloned()
     }
 
     /// Keeps a run's record under `key`, replacing the last: in memory now, in the store behind the run.
-    pub fn put_run_record(&mut self, key: &str, consulted: &str, outputs: &[u8]) {
+    pub fn put_run_record(&mut self, key: &str, consulted: &[u8], outputs: &[u8]) {
         if let Some(k) = self.db.as_mut() {
             k.records.insert(key.to_owned(), (consulted.to_owned(), outputs.to_owned()));
             let (key, consulted, outputs) = (key.to_owned(), consulted.to_owned(), outputs.to_owned());
@@ -935,14 +935,14 @@ impl Observer {
 /// What the store keeps of an observer beside its entries, aliases and canonical forms, as it opened: the run records
 /// and the observer's own settings (the epoch, each root's journal cursor); and the writer of what changes.
 struct Kept {
-    records: HashMap<String, (String, Vec<u8>)>,
+    records: HashMap<String, (Vec<u8>, Vec<u8>)>,
     meta: HashMap<String, rusqlite::types::Value>,
     writer: Writer,
 }
 
 /// Reads everything the store at `path` keeps, at once: its entries, aliases and canonical forms into the maps given,
 /// its run records and settings returned. A store not made yet holds nothing.
-type Records = HashMap<String, (String, Vec<u8>)>;
+type Records = HashMap<String, (Vec<u8>, Vec<u8>)>;
 type Meta = HashMap<String, rusqlite::types::Value>;
 fn read_all(path: &Path, entries: &mut BTreeMap<PathBuf, Entry>, aliases: &mut HashMap<Vec<u8>, [u8; 32]>, canon: &mut BTreeMap<PathBuf, PathBuf>) -> (Records, Meta) {
     let (mut records, mut meta) = (HashMap::new(), HashMap::new());
@@ -971,12 +971,19 @@ fn read_all(path: &Path, entries: &mut BTreeMap<PathBuf, Entry>, aliases: &mut H
         }
     }
     if let Ok(mut st) = db.prepare("SELECT key, consulted, outputs FROM run_record")
-        && let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Vec<u8>>(2)?)))
+        && let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, rusqlite::types::Value>(1)?, r.get::<_, Vec<u8>>(2)?)))
     {
+        // A canonical form's record holds its path, a text; a run's its consulted list, bytes.
         for (key, consulted, outputs) in rows.flatten() {
+            let consulted = match consulted {
+                rusqlite::types::Value::Text(t) => t.into_bytes(),
+                rusqlite::types::Value::Blob(b) => b,
+                _ => continue,
+            };
             match key.strip_prefix(CANONICAL) {
                 Some(p) => {
-                    canon.insert(PathBuf::from(p), PathBuf::from(consulted));
+                    let Ok(c) = String::from_utf8(consulted) else { continue };
+                    canon.insert(PathBuf::from(p), PathBuf::from(c));
                 }
                 None => {
                     records.insert(key, (consulted, outputs));

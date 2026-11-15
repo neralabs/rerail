@@ -75,23 +75,12 @@ open(p, s, e) :- reference_open(n), node(d, n, _, s, e), doc(d, p, _).
     );
     let out = dir.join(".out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
-    let num = |s: &str| s.parse::<u32>().unwrap();
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap();
+    let text = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| r.get(c).to_string();
+    let num = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| u32::try_from(r.get(c).int().expect("a number")).unwrap();
     Graph {
-        edges: read("edge")
-            .lines()
-            .map(|l| {
-                let f: Vec<&str> = l.split('\t').collect();
-                ((f[0].to_owned(), num(f[1]), num(f[2]), f[3].to_owned(), num(f[4]), num(f[5])), f[6].to_owned())
-            })
-            .collect(),
-        open: read("open")
-            .lines()
-            .map(|l| {
-                let f: Vec<&str> = l.split('\t').collect();
-                (f[0].to_owned(), num(f[1]), num(f[2]))
-            })
-            .collect(),
+        edges: outputs.rows("edge").iter().map(|r| ((text(r, 0), num(r, 1), num(r, 2), text(r, 3), num(r, 4), num(r, 5)), text(r, 6))).collect(),
+        open: outputs.rows("open").iter().map(|r| (text(r, 0), num(r, 1), num(r, 2))).collect(),
     }
 }
 

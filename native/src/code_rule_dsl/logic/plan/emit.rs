@@ -372,13 +372,13 @@ pub fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
     Ok(Emitted { value_types, analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs, constant_rows })
 }
 
-/// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.
+/// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own: each value as shown.
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(clippy::type_complexity)]
 pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
-) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
+) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vec<usize>>)> {
     let (outputs, nodes) = decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
-    Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.lines())).collect(), nodes))
+    Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.shown())).collect(), nodes))
 }

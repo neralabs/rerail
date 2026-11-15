@@ -263,10 +263,7 @@ pub fn run_rr(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::{
-        logic::{plan::corpus, rr},
-        typing::file_local::Binding,
-    };
+    use super::logic::rr;
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| name == "rr_diagnostic") {
         return Err(format!("{}: no .violation declarations", path.display()));
@@ -323,14 +320,11 @@ pub fn run_program(
             corpus::run_with_options(&[text.as_str()], root, None, dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options))
         }
         .map_err(|e| e.to_string())?;
-        match crate::code_rule_dsl::logic::plan::output::lines(dir, "rr_diagnostic") {
-            Ok(lines) => {
-                for line in &lines {
-                    rows.push(serde_json::from_str::<serde_json::Value>(line).map_err(|e| e.to_string())?);
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.to_string()),
+        // Each diagnostic: one JSON text the rules made (`rr::lower::findings`; step 5 makes them columns).
+        let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
+        for row in outputs.rows("rr_diagnostic") {
+            let json = row.get(0).text().ok_or("rr_diagnostic: not a text")?;
+            rows.push(serde_json::from_str::<serde_json::Value>(json).map_err(|e| e.to_string())?);
         }
         files_read += report.files;
         nodes += report.nodes;
@@ -471,25 +465,25 @@ fn run_pack(
         return Ok(None);
     };
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
-    let mut lines: Vec<Vec<String>> = group.members.iter().map(|_| Vec::new()).collect();
-    let text = match crate::code_rule_dsl::logic::plan::output::lines(&dir, "rr_diagnostic") {
-        Ok(lines) => lines,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e.to_string()),
-    };
-    for line in &text {
-        let finding: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&dir).map_err(|e| e.to_string())?;
+    let all = outputs.rows("rr_diagnostic");
+    let mut rows: Vec<Vec<crate::code_rule_dsl::logic::plan::output::Row<'_>>> = group.members.iter().map(|_| Vec::new()).collect();
+    for row in &all {
+        let json = row.get(0).text().ok_or("rr_diagnostic: not a text")?;
+        let finding: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
         let Some(at) = finding["policy"].as_str().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
         each[at].push(finding);
-        lines[at].push(line.clone());
+        rows[at].push(*row);
     }
+    let types = outputs.get("rr_diagnostic").map(|r| r.types().to_vec()).unwrap_or_else(|| vec![crate::code_rule_dsl::logic::plan::output::col::TEXT]);
     let mut done = Vec::with_capacity(group.members.len());
-    for (((&k, found), lines), metadata) in group.members.iter().zip(each).zip(lines).zip(&group.metadata) {
+    for (((&k, found), rows), metadata) in group.members.iter().zip(each).zip(rows).zip(&group.metadata) {
         let own = out.join(k.to_string());
         std::fs::create_dir_all(&own).map_err(|e| format!("{}: {e}", own.display()))?;
         // Its own outputs, a base of its findings alone (decision 0239).
-        let _ = std::fs::remove_file(own.join(crate::code_rule_dsl::logic::plan::output::FILE));
-        crate::code_rule_dsl::logic::plan::output::put_lines(&own, &[("rr_diagnostic", &lines)]).map_err(|e| format!("{}: {e}", own.display()))?;
+        let mut image = crate::code_rule_dsl::logic::plan::output::Builder::new(outputs.images().last().map_or(0, crate::code_rule_dsl::logic::plan::output::Image::flags), false);
+        image.rows_of("rr_diagnostic", &types, &rows);
+        crate::code_rule_dsl::logic::plan::output::write(&own, &image.finish()).map_err(|e| format!("{}: {e}", own.display()))?;
         let run = serde_json::json!({"path": paths[k].display().to_string(), "files": report.files, "metadata": metadata, "together": group.members.len()});
         done.push((found, run));
     }
@@ -640,13 +634,15 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
                 r.nodes += each.nodes;
                 r.chunks += each.chunks;
                 // Its findings joined to the first run's, over `out`'s outputs (decision 0239).
-                let found = crate::code_rule_dsl::logic::plan::output::lines(&dir, "violation").unwrap_or_default();
-                if !found.is_empty() {
-                    let mut all = crate::code_rule_dsl::logic::plan::output::lines(out, "violation").unwrap_or_default();
-                    all.extend(found);
-                    all.sort_unstable();
-                    all.dedup();
-                    crate::code_rule_dsl::logic::plan::output::put_lines(out, &[("violation", &all)]).map_err(|e| e.to_string())?;
+                let (theirs, ours) = (crate::code_rule_dsl::logic::plan::output::Outputs::open(&dir).map_err(|e| e.to_string())?, crate::code_rule_dsl::logic::plan::output::Outputs::open(out).map_err(|e| e.to_string())?);
+                if let Some(found) = theirs.get("violation").filter(|v| !v.is_empty()) {
+                    let mut image = crate::code_rule_dsl::logic::plan::output::Builder::new(ours.images().last().map_or(0, crate::code_rule_dsl::logic::plan::output::Image::flags), !ours.images().is_empty());
+                    let mine = ours.get("violation");
+                    let views: Vec<&crate::code_rule_dsl::logic::plan::output::View<'_>> = mine.iter().map(|r| r.view()).chain([found.view()]).collect();
+                    image.union("violation", &views);
+                    let bytes = image.finish();
+                    drop((mine, found));
+                    crate::code_rule_dsl::logic::plan::output::write(out, &bytes).map_err(|e| e.to_string())?;
                 }
             }
         }

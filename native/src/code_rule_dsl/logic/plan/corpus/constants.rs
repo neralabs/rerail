@@ -134,7 +134,7 @@ pub(super) fn fold(
     let was_kept = kept(&key, root, prog)?;
     let reused = was_kept.is_some();
     // The plans the constants' run used, for the outer run's record (`Report::plans`): none when they were kept.
-    let ((texts, consulted), plans) = match was_kept {
+    let ((image, consulted), plans) = match was_kept {
         Some(kept) => (kept, Vec::new()),
         None => {
             let (derived, plans) = derive(programs, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
@@ -142,16 +142,25 @@ pub(super) fn fold(
             (derived, plans)
         }
     };
+    // Each relation's rows from the image, typed as its columns are declared: nothing parsed.
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::of(&image).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
     for rel in &wanted {
-        let text = texts.get(rel).map_or("", String::as_str);
         let types: Vec<String> = prog.decls.get(rel.as_str()).map(|d| d.iter().map(|(_, t)| t.clone()).map(String::from).collect()).unwrap_or_default();
         let mut rows = Vec::new();
-        for line in text.lines() {
-            let vals: Vec<&str> = line.split('\t').collect();
-            if vals.len() != types.len() {
-                return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {line:?}", vals.len(), types.len())));
+        for row in outputs.rows(&copy(rel)) {
+            if row.len() != types.len() {
+                return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {row:?}", row.len(), types.len())));
             }
-            rows.push(vals.iter().zip(&types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned().into()), Value::Int) } else { Value::Str((*v).to_owned().into()) }).collect());
+            let values = row
+                .values()
+                .zip(&types)
+                .map(|(v, t)| match (v.text(), v.int()) {
+                    (Some(text), _) => Ok(Value::Str(text.to_owned().into())),
+                    (None, Some(n)) if t == "number" || t == "int" => Ok(Value::Int(n)),
+                    _ => Err(super::super::Error::Plan(format!("the run's constant {rel}: {v:?} in a column of type {t}"))),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            rows.push(values.into());
         }
         prog.facts.insert(rel.clone(), rows);
     }
@@ -162,7 +171,9 @@ pub(super) fn fold(
     Ok((consulted, plans))
 }
 
-type Derived = (std::collections::BTreeMap<String, String>, Vec<(String, String, String)>);
+/// The constants' outputs (one base image of the wanted relations' copies, `output::base_of`) and what their run
+/// consulted.
+type Derived = (Vec<u8>, Vec<(String, String, String)>);
 
 /// The constants' run: the same texts, its outputs the wanted relations, over no documents. Each relation's rows as
 /// the run wrote them, and what it consulted.
@@ -183,16 +194,18 @@ fn derive(
     own["inputFiles"] = serde_json::json!([]);
     let out = scratch.join("constants");
     let report: Report = super::run_with_options(programs, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
-    let texts = wanted.iter().map(|rel| (rel.clone(), crate::code_rule_dsl::logic::plan::output::text(&out, &copy(rel)).unwrap_or_default())).collect();
+    let copies: Vec<String> = wanted.iter().map(|rel| copy(rel)).collect();
+    let image = crate::code_rule_dsl::logic::plan::output::base_of(&out, copies.iter().map(String::as_str)).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
     let _ = std::fs::remove_dir_all(&out);
-    Ok(((texts, report.consulted), report.plans))
+    Ok(((image, report.consulted), report.plans))
 }
 
 /// What the constants are keyed by, beside what their run consulted.
 fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTreeSet<String>) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    h.update(b"rerail.constants/v1\0");
+    // v3: the record's consulted list is bytes (`reuse::encode_consulted`).
+    h.update(b"rerail.constants/v3\0");
     for p in programs {
         h.update(p.as_bytes());
         h.update([0]);
@@ -223,17 +236,15 @@ fn record_key(key: &str) -> String {
 /// The constants kept under `key`, when what their run consulted is as it was.
 fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
     let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
-    let consulted = super::reuse::decode_consulted(&consulted);
+    let Some(consulted) = super::reuse::decode_consulted(&consulted) else { return Ok(None) };
     if !super::world::World::new(root, prog).still(&consulted) {
         return Ok(None);
     }
-    let rows = serde_json::from_slice(&rows).map_err(|e| super::super::Error::Plan(e.to_string()))?;
     Ok(Some((rows, consulted)))
 }
 
-fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted: &[(String, String, String)]) -> Result<()> {
-    let rows = serde_json::to_vec(rows).unwrap_or_default();
+fn keep(key: &str, image: &[u8], consulted: &[(String, String, String)]) -> Result<()> {
     let consulted = super::reuse::encode_consulted(consulted);
-    super::observe(|o| o.put_run_record(&record_key(key), &consulted, &rows));
+    super::observe(|o| o.put_run_record(&record_key(key), &consulted, image));
     Ok(())
 }

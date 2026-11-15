@@ -57,8 +57,8 @@ pub struct Entry {
     pub nodes: u64,
     /// Per exported relation: its width and its rows, flat.
     pub rows: BTreeMap<String, (usize, Vec<i64>)>,
-    /// Per file-local output: its node columns and its lines.
-    pub lines: BTreeMap<String, (Vec<usize>, Vec<String>)>,
+    /// Per file-local output: its node columns and its rows, typed as the run handed them.
+    pub outputs: BTreeMap<String, (Vec<usize>, crate::code_rule_dsl::logic::plan::output::Rows)>,
 }
 
 /// Each path's document key: from its hash, in `1..2^30`, the next free one on a collision. A key is in each entry,
@@ -84,7 +84,8 @@ pub fn doc_keys(paths: &[String]) -> Vec<i64> {
 /// its atoms included).
 pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local/v3\0");
+    // v4: an entry holds its outputs' rows typed, not their lines.
+    hash.update(b"rerail.corpus-local/v4\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     // A memoised row's node ids are those of the scheme it was made under: preorder, or per definition.
@@ -411,7 +412,7 @@ fn outputs_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
 
 /// An entry's outputs (`outputs_rel`): its nodes, its tree counts and its lines.
 fn outputs_of(e: &Entry) -> Entry {
-    Entry { key: e.key, nodes: e.nodes, rows: e.rows.iter().filter(|(r, _)| r.starts_with("own:")).map(|(r, v)| (r.clone(), v.clone())).collect(), lines: e.lines.clone() }
+    Entry { key: e.key, nodes: e.nodes, rows: e.rows.iter().filter(|(r, _)| r.starts_with("own:")).map(|(r, v)| (r.clone(), v.clone())).collect(), outputs: e.outputs.clone() }
 }
 
 /// The part an entry of content `digest` at `path` is kept under (0103 §8's `local_key(d, h, p)`, its `p` the space).
@@ -546,7 +547,7 @@ impl Found {
         let entry = match self {
             Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
                 rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
-                lines: e.lines.clone() },
+                outputs: e.outputs.clone() },
             // Forked (decision 0170), an entry whose symbols cannot be mapped (its relation's columns not
             // registered) is a miss: its rows may name the other numbering's ids.
             Found::Frame(f) => match f.projected(keep) {
@@ -720,8 +721,8 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
                 at.0 += v.len() / (*w).max(1);
                 at.1 += v.len() * 8;
             }
-            for (r, (_, l)) in &e.lines {
-                by.entry(r.as_str()).or_default().1 += l.iter().map(|t| t.len() + 24).sum::<usize>();
+            for (r, (_, rows)) in &e.outputs {
+                by.entry(r.as_str()).or_default().1 += rows.bytes();
             }
         }
         let mut by: Vec<_> = by.into_iter().collect();
@@ -788,7 +789,7 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
 impl Entry {
     /// The bytes the entry holds (its rows and lines), about.
     fn bytes(&self) -> usize {
-        self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
+        self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.outputs.iter().map(|(r, (c, rows))| r.len() + c.len() * 8 + rows.bytes()).sum::<usize>()
     }
 }
 
@@ -1016,20 +1017,30 @@ pub(super) fn document_of(value: i64) -> i64 {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::code_rule_dsl::logic::plan::output::{Cell, col};
+
+    /// Rows of columns typed `types`, of `rows`.
+    fn rows_of(types: &[u8], rows: &[&[Cell<'_>]]) -> crate::code_rule_dsl::logic::plan::output::Rows {
+        let mut out = crate::code_rule_dsl::logic::plan::output::Rows::new(types.to_vec());
+        for r in rows {
+            out.push(r);
+        }
+        out
+    }
 
     #[test]
     fn projection_preserves_outputs_and_validates_skipped_payloads() {
         let mut entry = Entry { key: 5, nodes: 100, ..Entry::default() };
         entry.rows.insert("wanted".into(), (2, vec![5,9]));
         entry.rows.insert("unused".into(), (2, vec![1;2000]));
-        entry.lines.insert("diagnostic".into(), (vec![0], vec!["5\tbad".into()]));
+        entry.outputs.insert("diagnostic".into(), (vec![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
         let keep = |r: &str| r == "wanted";
         let rows = Stored::unmapped(entry.clone()).encode();
         let entry_copy = entry.clone();
         let projected = Entry { key: 5, ..Stored::decoded(&rows, &keep).unwrap().into_unmapped() };
         assert_eq!(projected.rows.len(),1);
         assert_eq!(projected.rows["wanted"],entry.rows["wanted"]);
-        assert_eq!(projected.lines,entry.lines);
+        assert_eq!(projected.outputs,entry.outputs);
         assert_eq!(projected.nodes,100);
         let held = Found::Held(std::sync::Arc::new(entry));
         assert_eq!(held.projected(5,&keep).unwrap(),Some(projected));
@@ -1084,10 +1095,11 @@ pub mod tests {
     fn an_entry_round_trips_and_keys_are_stable() {
         let mut entry = Entry { key: 5, nodes: 7, ..Entry::default() };
         entry.rows.insert("fl1_violation_at".into(), (3, vec![5, 1, 2, 5, 3, 4]));
-        entry.lines.insert("violation".into(), (vec![1], vec!["r\t21474836480\tx".into()]));
+        entry.outputs.insert("violation".into(), (vec![1], rows_of(&[col::TEXT, col::NODE, col::TEXT], &[&[Cell::Text("r"), Cell::Int(21474836480), Cell::Text("x")]])));
         entry.rows.insert("wide".into(), (11, (0..22).collect()));
         entry.rows.insert("empty".into(), (2, Vec::new()));
-        entry.lines.insert("a name longer than one row of text holds, which is fifty-six bytes".into(), (vec![], vec![String::new(), "ünïcode".into()]));
+        entry.outputs.insert("a name longer than one row of text holds, which is fifty-six bytes".into(), (vec![], rows_of(&[col::TEXT, col::INT], &[&[Cell::Text(""), Cell::Int(-3)], &[Cell::Text("ünïcode"), Cell::Int(i64::MAX)]])));
+        entry.outputs.insert("bare".into(), (vec![], rows_of(&[], &[&[], &[]])));
         let all = |_: &str| true;
         assert_eq!(Stored::decoded(&Stored::unmapped(entry.clone()).encode(), &all).map(|e| Entry { key: 5, ..e.into_unmapped() }).unwrap(), entry);
         let mut cut = Stored::unmapped(entry.clone()).encode();

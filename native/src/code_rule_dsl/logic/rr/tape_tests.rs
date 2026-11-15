@@ -257,25 +257,21 @@ errors(l, m) :- syntax_error(_, l, m).
     let program = print(&parse_file(&path).unwrap()).unwrap();
     let out = root.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let rows = |rel: &str| {
-        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default().lines().map(str::to_owned).collect();
-        rows.sort();
-        rows
-    };
+    let rows = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
     let (names, strs, values, ops, comments, errors) = (rows("names"), rows("strs"), rows("values"), rows("ops"), rows("comments"), rows("errors"));
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&path);
     // `bad.rr` is withheld: a file that does not parse gives its `syntax_error` row only.
     for name in ["r", "x", "number", "n", "s"] {
-        assert!(names.iter().any(|row| row == name), "name {name} in {names:?}");
+        assert!(names.iter().any(|row| row == &[name]), "name {name} in {names:?}");
     }
-    assert!(strs.iter().any(|row| row == "string\ta\\nb" || row == "string\t\"a\\nb\"" || row.starts_with("string\ta")), "{strs:?}");
-    assert!(strs.iter().any(|row| row == "code_literal\tf($X)"), "{strs:?}");
-    assert!(values.iter().any(|row| row == "number\t-2") && values.iter().any(|row| row == "float\t0.5"), "{values:?}");
-    assert_eq!(ops, ["comparison\t<="]);
-    assert_eq!(comments, ["note"]);
+    assert!(strs.iter().any(|row| row[0] == "string" && (row[1] == "a\\nb" || row[1] == "\"a\\nb\"" || row[1].starts_with('a'))), "{strs:?}");
+    assert!(strs.iter().any(|row| row == &["code_literal", "f($X)"]), "{strs:?}");
+    assert!(values.iter().any(|row| row == &["number", "-2"]) && values.iter().any(|row| row == &["float", "0.5"]), "{values:?}");
+    assert_eq!(ops, [["comparison", "<="]]);
+    assert_eq!(comments, [["note"]]);
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].starts_with("2\t"), "{errors:?}");
+    assert_eq!(errors[0][0], "2", "{errors:?}");
 }
 
 /// O105: a Python policy and an `rr` policy over one repository (`tools::run_policies`). Each reads its own
@@ -344,7 +340,8 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
         .map(|(k, p)| crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(p), &root, &root.join(format!("alone{k}")), &serde_json::Value::Null).unwrap())
         .collect();
     let alone: Vec<Vec<String>> = reports.iter().map(codes).collect();
-    let written = |k: usize| crate::code_rule_dsl::logic::plan::output::text(&root.join("out").join(k.to_string()), "rr_diagnostic").unwrap_or_default();
+    // Each finding written: its one JSON text (`rr::lower::findings`).
+    let written = |k: usize| -> Vec<String> { crate::code_rule_dsl::logic::plan::output::shown(&root.join("out").join(k.to_string()), "rr_diagnostic").unwrap_or_default().into_iter().map(|r| r[0].clone()).collect() };
     let (w0, w1, w2) = (written(0), written(1), written(2));
     let _ = std::fs::remove_dir_all(&root);
     for p in [&a, &b, &c] {
@@ -372,9 +369,10 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
         assert_eq!(own(&batch["runs"][k]["metadata"]), own(&report["runs"][0]["metadata"]), "policy {k}");
     }
     // Each policy's findings in its own directory.
-    assert!(w0.contains("\"ev\"") && !w0.contains("\"ex\""), "{w0}");
-    assert!(w2.contains("\"ex\"") && !w2.contains("\"ev\""), "{w2}");
-    assert!(w1.contains("rules/a.rr"), "{w1}");
+    let any = |w: &[String], s: &str| w.iter().any(|j| j.contains(s));
+    assert!(any(&w0, "\"ev\"") && !any(&w0, "\"ex\""), "{w0:?}");
+    assert!(any(&w2, "\"ex\"") && !any(&w2, "\"ev\""), "{w2:?}");
+    assert!(any(&w1, "rules/a.rr"), "{w1:?}");
 }
 
 /// O-pha000-kept-part: a reader whose body is only a negation of a demanded relation (`PHA000 :- !allow_status(

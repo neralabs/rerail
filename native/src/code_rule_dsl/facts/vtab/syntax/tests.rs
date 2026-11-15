@@ -455,11 +455,11 @@ said(s) :- comment(_, s).
     let out = dir.join("out");
     let options = serde_json::json!({"name": "ÀB", "list": ["x", "y"]});
     corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
-    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
-    assert_eq!(read("dotted"), "a.b\nb\n");
-    assert_eq!(read("low"), "àb\n");
-    assert_eq!(read("item"), "0\tx\n1\ty\n");
-    assert_eq!(read("said"), "hello\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("dotted"), [["a.b"], ["b"]]);
+    assert_eq!(read("low"), [["àb"]]);
+    assert_eq!(read("item"), [["0", "x"], ["1", "y"]]);
+    assert_eq!(read("said"), [["hello"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

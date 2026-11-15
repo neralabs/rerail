@@ -10,7 +10,7 @@
 //! bytes    the strings' bytes
 //! ends     each string's end in `bytes`
 //! docs     per document a node names: its key, its path (a string, or none), its first node (or none); by key
-//! places   per `@place` value a node column holds: the value, and how it is shown (a string); by value
+//! places   per `@place` value a node column holds: the value, its path (a string) and its line; by value
 //! ```
 //!
 //! A text column holds strings' indexes, a node column `doc << 32 | local`, an int column the integer. A string is
@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub const MAGIC: [u8; 8] = *b"RROUT\x00\x00\x01";
-pub const FORMAT: u32 = 2;
+pub const FORMAT: u32 = 3;
 /// The file a run's outputs are written to, in its output directory.
 pub const FILE: &str = "outputs.rro";
 /// The most images a stack holds before it is folded into one.
@@ -44,6 +44,9 @@ pub mod col {
     /// An integer, shown as it is.
     pub const INT: u8 = 2;
 }
+
+/// A node or int column's value that is none (SQL's NULL), shown `None`: a value no node or place takes.
+pub const NULL: i64 = i64::MIN;
 
 /// A relation entry's kind.
 pub mod kind {
@@ -86,7 +89,7 @@ enum R {
     Places,
 }
 const REGIONS: usize = 8;
-const WIDTH: [u32; REGIONS] = [8, 48, 1, 8, 1, 4, 24, 16];
+const WIDTH: [u32; REGIONS] = [8, 48, 1, 8, 1, 4, 24, 24];
 /// The words of a relation entry.
 const REL_WORDS: usize = 6;
 const HEADER: usize = 16 + 24 * REGIONS;
@@ -114,7 +117,7 @@ pub struct Builder {
     ids: HashMap<String, u32>,
     rels: Vec<(u32, Vec<u8>, usize, Vec<i64>, u64)>,
     docs: std::collections::BTreeMap<i64, (u64, u64)>,
-    places: std::collections::BTreeMap<i64, u64>,
+    places: std::collections::BTreeMap<i64, (u64, i64)>,
 }
 
 impl Builder {
@@ -138,10 +141,10 @@ impl Builder {
         let path = doc.path.as_deref().map_or(NONE, |p| u64::from(self.text(p)));
         self.docs.insert(key, (path, doc.first.map_or(NONE, |f| f as u64)));
     }
-    /// A `@place` value a node column holds, and how it is shown.
-    pub fn place(&mut self, value: i64, shown: &str) {
-        let s = u64::from(self.text(shown));
-        self.places.insert(value, s);
+    /// A `@place` value a node column holds: its path and line.
+    pub fn place(&mut self, value: i64, path: &str, line: i64) {
+        let s = u64::from(self.text(path));
+        self.places.insert(value, (s, line));
     }
     /// A relation of `types` from its rows, flat (text columns as string indexes): sorted, each row once.
     pub fn rows(&mut self, name: &str, types: &[u8], rows: Vec<i64>) {
@@ -169,55 +172,12 @@ impl Builder {
             self.rels.push((name, Vec::new(), usize::from(!rows.is_empty()), Vec::new(), kind));
         }
     }
-    /// A relation from the lines a run gathered for it (tab-separated, as `decoded_outputs` makes them): a column is
-    /// a node column where `nodes` says and every value is an integer, an int column where `ints` says and every value
-    /// is one as it is written, otherwise text. A node column holding any other value is held as the text the writer
-    /// showed (`shown`), so the image shows every line as it was.
-    pub fn lines(&mut self, name: &str, nodes: &[usize], ints: &[usize], lines: &[String], shown: &dyn Fn(usize, &str) -> String) {
-        let width = lines.first().map_or(0, |l| l.split('\t').count());
-        if lines.iter().any(|l| l.split('\t').count() != width) {
-            // Rows of differing widths (a value holding a tab): each line one text value.
-            let rows: Vec<i64> = lines.iter().map(|l| i64::from(self.text(&l.split('\t').enumerate().map(|(i, v)| shown(i, v)).collect::<Vec<_>>().join("\t")))).collect();
-            self.rows(name, &[col::TEXT], rows);
-            return;
-        }
-        let cells: Vec<Vec<&str>> = lines.iter().map(|l| l.split('\t').collect()).collect();
-        let types: Vec<u8> = (0..width)
-            .map(|c| {
-                let all = |f: &dyn Fn(&str) -> bool| cells.iter().all(|r| f(r[c]));
-                if nodes.contains(&c) && all(&|v| v.parse::<i64>().is_ok_and(|n| n.to_string() == v)) {
-                    col::NODE
-                } else if ints.contains(&c) && !nodes.contains(&c) && all(&|v| v.parse::<i64>().is_ok_and(|n| n.to_string() == v)) {
-                    col::INT
-                } else {
-                    col::TEXT
-                }
-            })
-            .collect();
-        let mut rows = Vec::with_capacity(cells.len() * width);
-        for r in &cells {
-            for (c, v) in r.iter().enumerate() {
-                rows.push(match types[c] {
-                    col::TEXT if nodes.contains(&c) => i64::from(self.text(&shown(c, v))),
-                    col::TEXT => i64::from(self.text(v)),
-                    _ => v.parse::<i64>().expect("checked"),
-                });
-            }
-        }
-        self.rows(name, &types, rows);
-    }
     /// A relation from the parts a run handed of it (`Rows`), their values as they are: a column is text where any
-    /// part holds it as text. A node column (`nodes`) held as text is held as the writer showed each value (`shown`),
-    /// as `lines` holds one; parts of differing widths are put by their lines.
-    pub fn put(&mut self, name: &str, parts: &[&Rows], nodes: &[usize], shown: &dyn Fn(usize, &str) -> String) {
+    /// part holds it as text (another part's integers there held as they are shown), a node column where `nodes`
+    /// says or a part holds it as one. Every part is of one width.
+    pub fn put(&mut self, name: &str, parts: &[&Rows], nodes: &[usize]) {
         let width = parts.iter().find(|p| !p.is_empty()).map_or_else(|| parts.first().map_or(0, |p| p.width()), |p| p.width());
-        if parts.iter().any(|p| p.ragged() || (!p.is_empty() && p.width() != width)) {
-            let mut lines: Vec<String> = parts.iter().flat_map(|p| p.lines()).collect();
-            lines.sort_unstable();
-            lines.dedup();
-            self.lines(name, nodes, &[], &lines, shown);
-            return;
-        }
+        assert!(parts.iter().all(|p| p.is_empty() || p.width() == width), "{name}: parts of differing widths");
         let types: Vec<u8> = (0..width)
             .map(|c| {
                 let of = |t: u8| parts.iter().filter(|p| !p.is_empty()).any(|p| p.types()[c] == t);
@@ -242,9 +202,8 @@ impl Builder {
             for i in 0..p.len() {
                 for (c, &v) in p.row(i).iter().enumerate() {
                     rows.push(match (p.types()[c], types[c]) {
-                        (col::TEXT, _) if nodes.contains(&c) => i64::from(self.text(&shown(c, p.text(v)))),
                         (col::TEXT, _) => *here[v as usize].get_or_insert_with(|| i64::from(self.text(p.text(v)))),
-                        (_, col::TEXT) if nodes.contains(&c) => i64::from(self.text(&shown(c, &v.to_string()))),
+                        (_, col::TEXT) if v == NULL => i64::from(self.text("None")),
                         (_, col::TEXT) => i64::from(self.text(&v.to_string())),
                         _ => v,
                     });
@@ -258,6 +217,18 @@ impl Builder {
     pub fn take(&mut self, name: &str, view: &View<'_>) {
         let rows = self.copied(view.parts.iter().map(|(r, kept)| (*r, kept.as_deref())));
         self.entry(name, view.types(), rows, kind::WHOLE);
+    }
+    /// Relations as views read them, copied whole into one relation `name` (their union; each row once).
+    pub fn union(&mut self, name: &str, views: &[&View<'_>]) {
+        let types = views.iter().map(|v| v.types()).find(|t| !t.is_empty()).unwrap_or(&[]).to_vec();
+        let rows = self.copied(views.iter().flat_map(|v| v.parts.iter().map(|(r, kept)| (*r, kept.as_deref()))));
+        self.entry(name, &types, rows, kind::WHOLE);
+    }
+    /// Rows of another stack's relations, copied whole into relation `name` (all of one type).
+    pub fn rows_of(&mut self, name: &str, types: &[u8], rows: &[Row<'_>]) {
+        let kept: Vec<(Rel<'_>, [usize; 1])> = rows.iter().map(|r| (r.rel, [r.i])).collect();
+        let rows = self.copied(kept.iter().map(|(r, i)| (*r, Some(&i[..]))));
+        self.entry(name, types, rows, kind::WHOLE);
     }
     /// Rows `kept` of `rel` (another image's), added to relation `name` as the images before this read it.
     pub fn added(&mut self, name: &str, rel: Rel<'_>, kept: &[usize]) {
@@ -293,9 +264,9 @@ impl Builder {
                     rows.push(match t {
                         col::TEXT => i64::from(self.text(rel.image.string(v as u32))),
                         col::NODE => {
-                            if let Some(shown) = rel.image.place_shown(v) {
-                                let shown = shown.to_owned();
-                                self.place(v, &shown);
+                            if let Some((path, line)) = rel.image.place(v) {
+                                let path = path.to_owned();
+                                self.place(v, &path, line);
                             } else if v >= 0 && let Some(doc) = rel.image.doc(v >> 32) {
                                 self.doc(v >> 32, &doc);
                             }
@@ -339,9 +310,10 @@ impl Builder {
                 put(&mut w, R::Docs, v);
             }
         }
-        for (value, s) in &self.places {
+        for (value, (path, line)) in &self.places {
             put(&mut w, R::Places, *value as u64);
-            put(&mut w, R::Places, *s);
+            put(&mut w, R::Places, *path);
+            put(&mut w, R::Places, *line as u64);
         }
         let mut out = vec![0u8; HEADER];
         out[..8].copy_from_slice(&MAGIC);
@@ -384,12 +356,10 @@ pub struct Rows {
     ids: HashMap<Box<str>, u32>,
     /// Rows of no columns.
     bare: usize,
-    /// Rows of differing widths: one text column, each row its line.
-    ragged: bool,
 }
 
 impl Rows {
-    /// No rows, of columns typed `types` (a text arriving in an int or node column makes it a text column).
+    /// No rows, of columns typed `types`.
     pub fn new(types: Vec<u8>) -> Self {
         Rows { types, ..Default::default() }
     }
@@ -409,10 +379,6 @@ impl Rows {
     /// The bytes it holds, about: its values and its texts.
     pub fn bytes(&self) -> usize {
         self.vals.len() * 8 + self.texts.iter().map(|t| t.len() * 2 + 32).sum::<usize>()
-    }
-    /// Whether its rows were of differing widths, held as their lines (`lines` gives them; `put` does not take it).
-    pub fn ragged(&self) -> bool {
-        self.ragged
     }
     fn text_id(&mut self, s: &str) -> i64 {
         if let Some(&id) = self.ids.get(s) {
@@ -437,36 +403,28 @@ impl Rows {
     pub fn text(&self, v: i64) -> &str {
         &self.texts[v as usize]
     }
-    /// Column `c` held as text from now on: its integers as they are shown.
-    fn to_text(&mut self, c: usize) {
-        let k = self.types.len();
-        self.types[c] = col::TEXT;
-        for i in 0..self.len() {
-            let v = self.vals[i * k + c];
-            self.vals[i * k + c] = self.text_id(&v.to_string());
-        }
+    /// Its texts, by index (a text column's values index them).
+    pub fn texts(&self) -> &[Box<str>] {
+        &self.texts
     }
-    /// Every row held as its line, in one text column: a row of another width arrived.
-    fn to_ragged(&mut self) {
-        let lines: Vec<String> = (0..self.len()).map(|i| self.line(i)).collect();
-        let bare = if self.types.is_empty() { self.bare } else { 0 };
-        *self = Rows { types: vec![col::TEXT], ragged: true, ..Default::default() };
-        for l in lines.into_iter().chain(std::iter::repeat_n(String::new(), bare)) {
-            let v = self.text_id(&l);
-            self.vals.push(v);
+    /// The rows of their parts as `texts` and `row` give them (a memo entry's): columns typed `types`, `count` rows
+    /// of values flat, a text column's each an index of `texts`.
+    pub fn of_parts(types: Vec<u8>, vals: Vec<i64>, texts: Vec<String>, count: usize) -> Result<Rows, String> {
+        let k = types.len();
+        if (k == 0 && !vals.is_empty()) || (k > 0 && vals.len() != k * count) {
+            return Err(format!("{} values, not {count} rows of {k}", vals.len()));
         }
+        if let Some(c) = (0..k).find(|&c| types[c] == col::TEXT && (0..count).any(|i| !(0..texts.len() as i64).contains(&vals[i * k + c]))) {
+            return Err(format!("a text of column {c} out of its texts"));
+        }
+        let texts: Vec<Box<str>> = texts.into_iter().map(String::into_boxed_str).collect();
+        let ids = texts.iter().enumerate().map(|(i, t)| (t.clone(), i as u32)).collect();
+        Ok(Rows { types, vals, texts, ids, bare: if k == 0 { count } else { 0 } })
     }
-    /// A row appended.
+    /// A row appended: of its columns' width and types (a text column may take an integer, held as it is shown; an
+    /// integer column no text: that is a fault of the run that made the row).
     pub fn push(&mut self, row: &[Cell<'_>]) {
-        if self.ragged || (row.len() != self.types.len() && !self.is_empty_shape()) {
-            if !self.ragged {
-                self.to_ragged();
-            }
-            let line = row.iter().map(|c| match c { Cell::Int(v) => v.to_string(), Cell::Text(s) => (*s).to_owned() }).collect::<Vec<_>>().join("\t");
-            let v = self.text_id(&line);
-            self.vals.push(v);
-            return;
-        }
+        assert!(row.len() == self.types.len() || self.is_empty_shape(), "a row of {} values in rows of {}", row.len(), self.types.len());
         if self.types.len() != row.len() {
             // The first row of a relation typed with no columns: its columns are this row's, ints until a text.
             self.types = row.iter().map(|c| if matches!(c, Cell::Int(_)) { col::INT } else { col::TEXT }).collect();
@@ -476,13 +434,10 @@ impl Rows {
             return;
         }
         for (c, cell) in row.iter().enumerate() {
-            if matches!(cell, Cell::Text(_)) && self.types[c] != col::TEXT {
-                self.to_text(c);
-            }
-        }
-        for (c, cell) in row.iter().enumerate() {
             let v = match (*cell, self.types[c]) {
-                (Cell::Text(s), _) => self.text_id(s),
+                (Cell::Text(s), col::TEXT) => self.text_id(s),
+                (Cell::Text(s), _) => panic!("a text ({s:?}) in integer column {c}"),
+                (Cell::Int(NULL), col::TEXT) => self.text_id("None"),
                 (Cell::Int(v), col::TEXT) => self.text_id(&v.to_string()),
                 (Cell::Int(v), _) => v,
             };
@@ -492,20 +447,6 @@ impl Rows {
     /// Whether no row has fixed its width yet (a relation typed with no columns, no rows).
     fn is_empty_shape(&self) -> bool {
         self.types.is_empty() && self.bare == 0
-    }
-    /// The rows of `lines` (tab-separated, as a run's text outputs were): a node column (`nodes`) or any other whose
-    /// every value is an integer as written is held as integers, the others as text.
-    pub fn from_lines(lines: &[String], nodes: &[usize]) -> Rows {
-        let width = lines.first().map_or(0, |l| l.split('\t').count());
-        let int = |v: &str| v.parse::<i64>().ok().filter(|n| n.to_string() == v);
-        let mut rows = Rows::new((0..width).map(|c| if nodes.contains(&c) { col::NODE } else { col::INT }).collect());
-        let mut cells: Vec<Cell<'_>> = Vec::with_capacity(width);
-        for l in lines {
-            cells.clear();
-            cells.extend(l.split('\t').map(|v| int(v).map_or(Cell::Text(v), Cell::Int)));
-            rows.push(&cells);
-        }
-        rows
     }
     /// The rows of `other` appended.
     pub fn append(&mut self, other: &Rows) {
@@ -534,13 +475,6 @@ impl Rows {
     /// Its rows without their first column (a sentinel's).
     pub fn without_first(&self) -> Rows {
         let mut out = Rows::new(self.types.get(1..).unwrap_or_default().to_vec());
-        if self.ragged {
-            for i in 0..self.len() {
-                let line = self.line(i);
-                out.push(&line.split_once('\t').map_or("", |(_, rest)| rest).split('\t').map(Cell::Text).collect::<Vec<_>>());
-            }
-            return out;
-        }
         let mut cells = Vec::new();
         for i in 0..self.len() {
             cells.clear();
@@ -549,25 +483,27 @@ impl Rows {
         }
         out
     }
-    /// Row `i` as a line: tab-separated, each value as it is (a node as its number).
-    fn line(&self, i: usize) -> String {
-        if self.types.is_empty() {
-            return String::new();
-        }
-        (0..self.width()).map(|c| match self.cell(i, c) { Cell::Int(v) => v.to_string(), Cell::Text(s) => s.to_owned() }).collect::<Vec<_>>().join("\t")
-    }
-    /// Its rows as the run's text outputs were: each a line, sorted, each once.
-    pub fn lines(&self) -> Vec<String> {
-        let mut lines: Vec<String> = (0..self.len()).map(|i| self.line(i)).collect();
-        lines.sort_unstable();
-        lines.dedup();
-        lines
+    /// Its rows, each value as shown (a node as its number): sorted, each once. For comparing rows, never read back.
+    pub fn shown(&self) -> Vec<Vec<String>> {
+        let mut rows: Vec<Vec<String>> = (0..self.len()).map(|i| (0..self.width()).map(|c| match self.cell(i, c) { Cell::Int(NULL) => "None".to_owned(), Cell::Int(v) => v.to_string(), Cell::Text(s) => s.to_owned() }).collect()).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        rows
     }
 }
 
+/// Rows are equal where their columns' types are and their rows are, value for value, in order.
+impl PartialEq for Rows {
+    fn eq(&self, other: &Rows) -> bool {
+        self.types == other.types && self.len() == other.len() && (0..self.len()).all(|i| (0..self.width()).all(|c| self.cell(i, c) == other.cell(i, c)))
+    }
+}
+
+impl Eq for Rows {}
+
 /// One image of a stack, viewed in place: its bytes at 16-byte alignment and its region table.
 pub struct Image {
-    buf: std::sync::Arc<Vec<u128>>,
+    buf: std::sync::Arc<Backing>,
     /// Where this image starts in `buf`, in bytes, and its length.
     at: usize,
     len: usize,
@@ -598,14 +534,19 @@ impl<'a> Rel<'a> {
     pub fn row(&self, i: usize) -> Vec<i64> {
         (0..self.width).map(|c| self.col(c)[i]).collect()
     }
-    /// Row `i`'s value in column `c` as the `.csv` file showed it.
-    pub fn shown(&self, i: usize, c: usize) -> String {
+    /// Row `i`'s value in column `c`.
+    pub fn value(&self, i: usize, c: usize) -> Value<'a> {
         let v = self.col(c)[i];
         match self.types()[c] {
-            col::TEXT => self.image.string(v as u32).to_owned(),
-            col::NODE => self.image.node(v),
-            _ => v.to_string(),
+            col::TEXT => Value::Text(self.image.string(v as u32)),
+            _ if v == NULL => Value::Null,
+            col::NODE => Value::Node(self.image.node(v)),
+            _ => Value::Int(v),
         }
+    }
+    /// Row `i`'s value in column `c` as the `.csv` file showed it (a renderer).
+    pub fn shown(&self, i: usize, c: usize) -> String {
+        self.value(i, c).to_string()
     }
     /// Row `i`'s hash, by what it shows: a text by its bytes, an int by its value, a node by its document's path and
     /// first node and its local part (a `@place` by how it is shown, a guest's by its value), each with its type. The
@@ -640,8 +581,11 @@ impl<'a> Rel<'a> {
         h.word(u64::from(t));
         match t {
             col::TEXT => h.word(seen.text(self.image, v as u32)),
-            col::NODE if v < -1 => match self.image.u64s(R::Places).chunks_exact(2).position(|p| p[0] as i64 == v) {
-                Some(at) => h.word(seen.text(self.image, self.image.u64s(R::Places)[at * 2 + 1] as u32)),
+            col::NODE if v < -1 => match self.image.u64s(R::Places).chunks_exact(3).find(|p| p[0] as i64 == v) {
+                Some(p) => {
+                    h.word(seen.text(self.image, p[1] as u32));
+                    h.word(p[2]);
+                }
                 None => h.word(v as u64),
             },
             col::NODE if v >= 0 => {
@@ -665,29 +609,53 @@ impl<'a> Rel<'a> {
         h.dedup();
         h
     }
-    /// Its rows as the `.csv` file's lines: each tab-separated, sorted.
-    pub fn lines(&self) -> Vec<String> {
-        if self.width == 0 {
-            return vec![String::new(); self.rows];
+}
+
+/// The bytes an image is read from: its file, mapped, or a copy in memory (an image a run just made; a file where
+/// mapping is not had, as on WASI). Either starts 16-byte aligned (a map at a page).
+enum Backing {
+    Mapped(memmap2::Mmap),
+    Owned(Vec<u128>, usize),
+}
+
+impl Backing {
+    fn copied(bytes: &[u8]) -> Backing {
+        let mut words = vec![0u128; bytes.len().div_ceil(16)];
+        // SAFETY: `words` holds at least `bytes.len()` bytes.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr().cast::<u8>(), bytes.len()) };
+        Backing::Owned(words, bytes.len())
+    }
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Backing::Mapped(m) => m,
+            // SAFETY: the words hold `len` bytes.
+            Backing::Owned(words, len) => unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), *len) },
         }
-        let mut lines: Vec<String> = (0..self.rows).map(|i| (0..self.width).map(|c| self.shown(i, c)).collect::<Vec<_>>().join("\t")).collect();
-        lines.sort_unstable();
-        lines.dedup();
-        lines
     }
 }
 
 impl Image {
     /// The images of `bytes`, a stack: each checked, the last first in its reading.
     pub fn stack(bytes: &[u8]) -> Result<Vec<Image>, String> {
-        let mut words = vec![0u128; bytes.len().div_ceil(16)];
-        // SAFETY: `words` holds at least `bytes.len()` bytes.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr().cast::<u8>(), bytes.len()) };
-        let buf = std::sync::Arc::new(words);
+        Image::stack_of(std::sync::Arc::new(Backing::copied(bytes)))
+    }
+    /// The stack in `file`, mapped: read where its bytes are. The file is never written in place (`write` puts a
+    /// whole new file in its place), so a map stays as it was while the stack is read.
+    pub fn mapped(file: &Path) -> std::io::Result<Vec<Image>> {
+        let f = std::fs::File::open(file)?;
+        // SAFETY: no writer changes the file in place: each write renames a new file over it (`write`).
+        let backing = match unsafe { memmap2::Mmap::map(&f) } {
+            Ok(m) => Backing::Mapped(m),
+            Err(_) => Backing::copied(&std::fs::read(file)?),
+        };
+        Image::stack_of(std::sync::Arc::new(backing)).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", file.display())))
+    }
+    fn stack_of(buf: std::sync::Arc<Backing>) -> Result<Vec<Image>, String> {
+        let total = buf.bytes().len();
         let mut out = Vec::new();
         let mut at = 0;
-        while at < bytes.len() {
-            let image = Image::at(&buf, at, bytes.len())?;
+        while at < total {
+            let image = Image::at(&buf, at, total)?;
             if out.is_empty() == image.is_overlay() {
                 return Err(bad(if out.is_empty() { "a stack starts with an overlay" } else { "a base inside a stack" }));
             }
@@ -698,14 +666,13 @@ impl Image {
     }
     /// One image, base or overlay, read alone (the image a run just made).
     pub fn one(bytes: &[u8]) -> Result<Image, String> {
-        let mut words = vec![0u128; bytes.len().div_ceil(16)];
-        // SAFETY: `words` holds at least `bytes.len()` bytes.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr().cast::<u8>(), bytes.len()) };
-        Image::at(&std::sync::Arc::new(words), 0, bytes.len())
+        Image::at(&std::sync::Arc::new(Backing::copied(bytes)), 0, bytes.len())
     }
-    fn at(buf: &std::sync::Arc<Vec<u128>>, at: usize, total: usize) -> Result<Image, String> {
-        // SAFETY: `buf` holds at least `total` bytes.
-        let all = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), total) };
+    fn at(buf: &std::sync::Arc<Backing>, at: usize, total: usize) -> Result<Image, String> {
+        let all = &buf.bytes()[..total];
+        if all.as_ptr() as usize % 16 != 0 {
+            return Err(bad("an image not 16-byte aligned"));
+        }
         let b = &all[at..];
         if b.len() < HEADER || b[..8] != MAGIC {
             return Err(bad("no image"));
@@ -771,7 +738,7 @@ impl Image {
                 return Err(bad("a document's path"));
             }
         }
-        if self.u64s(R::Places).chunks_exact(2).any(|p| p[1] >= strings) {
+        if self.u64s(R::Places).chunks_exact(3).any(|p| p[1] >= strings) {
             return Err(bad("a place"));
         }
         Ok(())
@@ -779,7 +746,7 @@ impl Image {
     fn bytes_of(&self, r: R) -> (*const u8, usize) {
         let (offset, count) = self.regions[r as usize];
         // SAFETY: `at` checked the region lies in the buffer.
-        (unsafe { self.buf.as_ptr().cast::<u8>().add(offset) }, count)
+        (unsafe { self.buf.bytes().as_ptr().add(offset) }, count)
     }
     fn slice<T>(&self, r: R) -> &[T] {
         let (p, count) = self.bytes_of(r);
@@ -810,7 +777,7 @@ impl Image {
     /// The image's bytes.
     pub fn bytes(&self) -> &[u8] {
         // SAFETY: the image lies in the buffer.
-        unsafe { std::slice::from_raw_parts(self.buf.as_ptr().cast::<u8>().add(self.at), self.len) }
+        &self.buf.bytes()[self.at..self.at + self.len]
     }
     /// String `i`.
     pub fn string(&self, i: u32) -> &str {
@@ -836,10 +803,16 @@ impl Image {
     pub fn entry(&self, name: &str, k: u64) -> Option<Rel<'_>> {
         (0..self.u64s(R::Rels).len() / REL_WORDS).map(|i| self.rel_at(i)).zip(self.names()).find(|(r, n)| r.kind == k && *n == name).map(|(r, _)| r)
     }
-    /// How the `@place` value `v` is shown, if the image holds it.
-    pub fn place_shown(&self, v: i64) -> Option<&str> {
+    /// The `@place` value `v`'s path and line, if the image holds it (`places` is sorted by value).
+    pub fn place(&self, v: i64) -> Option<(&str, i64)> {
         let places = self.u64s(R::Places);
-        places.chunks_exact(2).position(|p| p[0] as i64 == v).map(|i| self.string(places[i * 2 + 1] as u32))
+        let n = places.len() / 3;
+        let (mut lo, mut hi) = (0, n);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if (places[mid * 3] as i64) < v { lo = mid + 1 } else { hi = mid }
+        }
+        (lo < n && places[lo * 3] as i64 == v).then(|| (self.string(places[lo * 3 + 1] as u32), places[lo * 3 + 2] as i64))
     }
     /// Document `key`'s path and first node, as raw words (`NONE` where it has none); both `NONE` where the image
     /// holds no such document.
@@ -857,26 +830,138 @@ impl Image {
         let (path, first) = self.doc_words(key);
         (path != NONE || first != NONE).then(|| Doc { path: (path != NONE).then(|| self.string(path as u32).to_owned()), first: (first != NONE).then_some(first as i64) })
     }
-    /// How a node column's value is shown, as the `.csv` writer showed it.
-    pub fn node(&self, v: i64) -> String {
+    /// A node column's value `v`, as a reader sees it.
+    pub fn node(&self, v: i64) -> Node<'_> {
         if v < -1 {
-            return self.place_shown(v).map_or_else(|| v.to_string(), str::to_owned);
+            return match self.place(v) {
+                Some((path, line)) => Node::Place { path, line },
+                None => Node::Other(v),
+            };
         }
         if v < 0 {
-            return v.to_string();
+            return Node::Other(v);
         }
         let (doc, local) = (v >> 32, v & 0xffff_ffff);
         let (path, first) = self.doc_words(doc);
-        let flags = self.flags();
-        let own = flags & flags::OWN != 0;
         if path == NONE && first == NONE {
-            format!("guest{doc}:{local}")
-        } else if path != NONE && (own || flags & flags::DEFINITION_IDS != 0) {
-            format!("{}:{}", self.string(path as u32), shown_local(local, flags & flags::DEFINITION_IDS != 0))
-        } else if !own && first != NONE {
-            (first as i64 + local).to_string()
-        } else {
-            v.to_string()
+            return Node::Guest { doc, local };
+        }
+        let flags = self.flags();
+        Node::Of {
+            path: (path != NONE).then(|| self.string(path as u32)),
+            first: (first != NONE).then_some(first as i64),
+            local,
+            value: v,
+            own: flags & flags::OWN != 0,
+            by_definition: flags & flags::DEFINITION_IDS != 0,
+        }
+    }
+}
+
+/// A value of a relation's row, as a reader sees it: typed, nothing to parse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Value<'a> {
+    Text(&'a str),
+    Int(i64),
+    Node(Node<'a>),
+    /// None (SQL's NULL), in a node or int column.
+    Null,
+}
+
+/// A node column's value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Node<'a> {
+    /// A node of a document the run read: its path (a file of the run's), its first node in T's numbering, its local
+    /// part (preorder index, or `slot << INDEX_BITS | index` by definition), its value (`doc << 32 | local`), and
+    /// how the run shows it.
+    Of { path: Option<&'a str>, first: Option<i64>, local: i64, value: i64, own: bool, by_definition: bool },
+    /// A guest's node (decision 0055): its document is no file of the run.
+    Guest { doc: i64, local: i64 },
+    /// A `@place`: a path and a line.
+    Place { path: &'a str, line: i64 },
+    /// No node: `unset` (-1), or a value the image does not name.
+    Other(i64),
+}
+
+impl<'a> Node<'a> {
+    /// The node as a number, where the run numbers it: T's (its first node plus its local part) for a run of T's
+    /// documents, else its value. None for a node shown by its path, a guest's or a place.
+    pub fn number(&self) -> Option<i64> {
+        match *self {
+            Node::Of { path, first, local, value, own, by_definition } => {
+                if path.is_some() && (own || by_definition) {
+                    None
+                } else if !own && let Some(f) = first {
+                    Some(f + local)
+                } else {
+                    Some(value)
+                }
+            }
+            Node::Other(v) => Some(v),
+            Node::Guest { .. } | Node::Place { .. } => None,
+        }
+    }
+    /// Its document's path and its local part, for a node shown by them.
+    pub fn at(&self) -> Option<(&'a str, i64)> {
+        match *self {
+            Node::Of { path: Some(p), local, .. } => Some((p, local)),
+            _ => None,
+        }
+    }
+}
+
+impl<'a> Value<'a> {
+    /// An int, or a node shown as a number (`Node::number`).
+    pub fn int(&self) -> Option<i64> {
+        match self {
+            Value::Int(v) => Some(*v),
+            Value::Node(n) => n.number(),
+            Value::Text(_) | Value::Null => None,
+        }
+    }
+    /// A text, held as long as the image is.
+    pub fn text(self) -> Option<&'a str> {
+        match self {
+            Value::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+    /// A node's document's path, or a place's.
+    pub fn path(self) -> Option<&'a str> {
+        match self {
+            Value::Node(Node::Of { path, .. }) => path,
+            Value::Node(Node::Place { path, .. }) => Some(path),
+            _ => None,
+        }
+    }
+    /// A node.
+    pub fn node(self) -> Option<Node<'a>> {
+        match self {
+            Value::Node(n) => Some(n),
+            _ => None,
+        }
+    }
+}
+
+/// How a value is shown (what the `.csv` files held; `rerail-engine csv`): a renderer, never read back.
+impl std::fmt::Display for Value<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Text(t) => f.write_str(t),
+            Value::Int(v) => write!(f, "{v}"),
+            Value::Node(n) => write!(f, "{n}"),
+            Value::Null => f.write_str("None"),
+        }
+    }
+}
+
+impl std::fmt::Display for Node<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Node::Of { path: Some(p), local, own, by_definition, .. } if own || by_definition => write!(f, "{p}:{}", shown_local(local, by_definition)),
+            Node::Guest { doc, local } => write!(f, "guest{doc}:{local}"),
+            Node::Place { path, line } => write!(f, "@place({}, {line})", crate::code_rule_dsl::logic::rr::quote(path)),
+            n => write!(f, "{}", n.number().expect("a node shown as a number")),
         }
     }
 }
@@ -887,20 +972,132 @@ fn shown_local(low: i64, by_definition: bool) -> String {
     if by_definition { format!("{}.{}", low >> INDEX_BITS, low & ((1 << INDEX_BITS) - 1)) } else { low.to_string() }
 }
 
+/// A run's outputs as a reader reads them: the stack in its directory, mapped. Every reader reads through it.
+pub struct Outputs {
+    stack: Vec<Image>,
+}
+
+impl Outputs {
+    /// The outputs in `dir` (none where it holds no output file).
+    pub fn open(dir: &Path) -> std::io::Result<Outputs> {
+        match Image::mapped(&dir.join(FILE)) {
+            Ok(stack) => Ok(Outputs { stack }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Outputs { stack: Vec::new() }),
+            Err(e) => Err(e),
+        }
+    }
+    /// The outputs of a stack's bytes (an image made in memory, a record's copy).
+    pub fn of(bytes: &[u8]) -> Result<Outputs, String> {
+        Image::stack(bytes).map(|stack| Outputs { stack })
+    }
+    /// The relations it holds, by name, each once.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.stack.iter().flat_map(Image::names).collect();
+        names.sort_unstable();
+        names.dedup();
+        names.retain(|n| find(&self.stack, n).is_some());
+        names
+    }
+    /// Relation `name`, if it holds it.
+    pub fn get(&self, name: &str) -> Option<Relation<'_>> {
+        find(&self.stack, name).map(|view| Relation { view })
+    }
+    /// Relation `name`'s rows, none where it holds no such relation.
+    pub fn rows(&self, name: &str) -> Vec<Row<'_>> {
+        self.get(name).map(|r| r.rows().collect()).unwrap_or_default()
+    }
+    /// The stack's images.
+    pub fn images(&self) -> &[Image] {
+        &self.stack
+    }
+}
+
+/// A relation of a run's outputs.
+pub struct Relation<'a> {
+    view: View<'a>,
+}
+
+impl<'a> Relation<'a> {
+    pub fn types(&self) -> &[u8] {
+        self.view.types()
+    }
+    pub fn width(&self) -> usize {
+        self.view.types().len()
+    }
+    /// Its rows' count (a relation of no columns: one where it holds, none where not).
+    pub fn len(&self) -> usize {
+        if self.width() == 0 { self.view.len().min(1) } else { self.view.len() }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Its rows: each once, in no order a reader may count on.
+    pub fn rows(&self) -> impl Iterator<Item = Row<'a>> + '_ {
+        let bare = self.width() == 0;
+        self.view.each().take(if bare { 1 } else { usize::MAX }).map(|(rel, i)| Row { rel, i })
+    }
+    /// The view it reads (for copying it into another image).
+    pub fn view(&self) -> &View<'a> {
+        &self.view
+    }
+    /// Its rows, each value as shown (`Value`'s Display): sorted, each once. For comparing and showing rows, never
+    /// for reading a value back.
+    pub fn shown(&self) -> Vec<Vec<String>> {
+        let mut rows: Vec<Vec<String>> = self.rows().map(|r| r.values().map(|v| v.to_string()).collect()).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        rows
+    }
+}
+
+/// A row of a relation.
+#[derive(Clone, Copy)]
+pub struct Row<'a> {
+    rel: Rel<'a>,
+    i: usize,
+}
+
+impl<'a> Row<'a> {
+    pub fn len(&self) -> usize {
+        self.rel.width
+    }
+    pub fn is_empty(&self) -> bool {
+        self.rel.width == 0
+    }
+    /// Its value in column `c`.
+    pub fn get(&self, c: usize) -> Value<'a> {
+        self.rel.value(self.i, c)
+    }
+    /// Its values.
+    pub fn values(&self) -> impl Iterator<Item = Value<'a>> + '_ {
+        (0..self.rel.width).map(|c| self.get(c))
+    }
+    /// Its hash (`Rel::hash`).
+    pub fn hash(&self) -> u128 {
+        self.rel.hash(self.i)
+    }
+}
+
+impl std::fmt::Debug for Row<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.values()).finish()
+    }
+}
+
 /// A relation as a stack reads it: from the last image that holds it whole, through each later image's rows gone and
 /// added. Its parts are entries of the images, each with the rows of it that stand (all, where none went).
 pub struct View<'a> {
     pub parts: Vec<(Rel<'a>, Option<Vec<usize>>)>,
 }
 
-impl View<'_> {
+impl<'a> View<'a> {
     /// Its columns' types: its whole entry's.
     pub fn types(&self) -> &[u8] {
         self.parts[0].0.types()
     }
     /// Its rows' parts and indexes.
-    pub fn each(&self) -> impl Iterator<Item = (Rel<'_>, usize)> + '_ {
-        self.parts.iter().flat_map(|(r, kept)| -> Box<dyn Iterator<Item = (Rel<'_>, usize)>> {
+    pub fn each(&self) -> impl Iterator<Item = (Rel<'a>, usize)> + '_ {
+        self.parts.iter().flat_map(|(r, kept)| -> Box<dyn Iterator<Item = (Rel<'a>, usize)> + '_> {
             match kept {
                 Some(k) => Box::new(k.iter().map(move |&i| (*r, i))),
                 None => Box::new((0..r.rows).map(move |i| (*r, i))),
@@ -930,26 +1127,6 @@ impl View<'_> {
         h.sort_unstable();
         h.dedup();
         h
-    }
-    /// Its rows as the `.csv` file's lines: each tab-separated, sorted, each once.
-    pub fn lines(&self) -> Vec<String> {
-        if self.parts.len() == 1 && self.parts[0].1.is_none() {
-            return self.parts[0].0.lines();
-        }
-        if self.types().is_empty() {
-            return vec![String::new(); self.len().min(1)];
-        }
-        let mut lines: Vec<String> = self.each().map(|(r, i)| (0..r.width).map(|c| r.shown(i, c)).collect::<Vec<_>>().join("\t")).collect();
-        lines.sort_unstable();
-        lines.dedup();
-        lines
-    }
-    /// Its rows as their values, each as shown: sorted, each once.
-    pub fn shown(&self) -> Vec<Vec<String>> {
-        let mut rows: Vec<Vec<String>> = self.each().map(|(r, i)| (0..r.width).map(|c| r.shown(i, c)).collect()).collect();
-        rows.sort_unstable();
-        rows.dedup();
-        rows
     }
 }
 
@@ -1043,82 +1220,58 @@ impl Hash {
     }
 }
 
-/// The stack in `dir`'s output file, or none.
+/// The stack in `dir`'s output file, mapped, or none.
 pub fn read(dir: &Path) -> Result<Vec<Image>, String> {
-    match std::fs::read(dir.join(FILE)) {
-        Ok(bytes) => Image::stack(&bytes),
+    match Image::mapped(&dir.join(FILE)) {
+        Ok(stack) => Ok(stack),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(bad(e)),
     }
 }
 
-/// `image` written to `dir`'s output file: as its whole stack when a base, or appended when an overlay (a stack
-/// already `depth` images deep is folded by its caller instead).
+/// `image` written to `dir`'s output file, whole or not at all: a base as the file, an overlay as the stack there
+/// and it. The new file is written beside it and renamed over it, so a reader sees the old file or the new one, and
+/// a map of the old one stays valid.
 pub fn write(dir: &Path, image: &[u8]) -> std::io::Result<()> {
-    let path = dir.join(FILE);
     // Its kind is its meta region's first word (`meta::KIND`); the meta region's offset is the header's first entry.
     let word = |at: usize| image.get(at..at + 8).map(|b| u64::from_le_bytes(b.try_into().expect("eight bytes")));
     let overlay = image.starts_with(&MAGIC) && word(16 + 16).and_then(|off| word(off as usize)) == Some(meta::OVERLAY);
-    if overlay {
-        use std::io::Write;
-        std::fs::OpenOptions::new().append(true).open(path)?.write_all(image)
-    } else {
-        std::fs::write(path, image)
+    let below = if overlay { read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))? } else { Vec::new() };
+    if overlay && below.is_empty() {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: an overlay over no stack", dir.display())));
     }
+    let mut bytes: Vec<&[u8]> = below.first().map(|b| &b.buf.bytes()[..]).into_iter().collect();
+    bytes.push(image);
+    replace(dir, &bytes)
+}
+
+/// `dir`'s output file made of `parts`, whole or not at all (a file beside it renamed over it).
+pub fn replace(dir: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
+    use std::io::Write;
+    static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let new = dir.join(format!(".{FILE}.{}.{n}", std::process::id()));
+    let written = (|| {
+        let mut f = std::fs::File::create(&new)?;
+        for p in parts {
+            f.write_all(p)?;
+        }
+        drop(f);
+        std::fs::rename(&new, dir.join(FILE))
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&new);
+    }
+    written
 }
 
 /// Relation `rel` of the stack in `dir`, read where it is: absent (`NotFound`) where `dir` holds no stack or the stack
 /// no such relation.
-fn with<T>(dir: &Path, rel: &str, f: impl FnOnce(View<'_>) -> T) -> std::io::Result<T> {
-    let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
-    find(&stack, rel).map(f).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no relation {rel}", dir.display())))
-}
-
-/// Relation `rel` of the stack in `dir` as the lines its `.csv` file held: each tab-separated, sorted, each once.
-pub fn lines(dir: &Path, rel: &str) -> std::io::Result<Vec<String>> {
-    with(dir, rel, |r| r.lines())
-}
-
-/// Relation `rel` of the stack in `dir` as its `.csv` file's text: its lines, each ended by a newline.
-pub fn text(dir: &Path, rel: &str) -> std::io::Result<String> {
-    lines(dir, rel).map(|lines| lines.iter().map(|l| format!("{l}\n")).collect())
-}
-
-/// Relation `rel` of the stack in `dir` as rows of its values, each as the `.csv` file showed it (a value may hold a
-/// tab or a newline): sorted, each once.
-pub fn rows(dir: &Path, rel: &str) -> std::io::Result<Vec<Vec<String>>> {
-    with(dir, rel, |r| r.shown())
-}
-
-/// The names of the relations the stack in `dir` holds, each once.
-pub fn names(dir: &Path) -> std::io::Result<Vec<String>> {
-    let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
-    let mut names: Vec<String> = stack.iter().flat_map(|i| i.names().map(str::to_owned)).collect();
-    names.sort_unstable();
-    names.dedup();
-    Ok(names)
-}
-
-/// Relations given as lines (each tab-separated, a value as shown) written over the stack in `dir`, each whole: an
-/// overlay where a stack stands below its depth, a base folding it where it is that deep, else a base of them alone.
-pub fn put_lines(dir: &Path, rels: &[(&str, &[String])]) -> std::io::Result<()> {
-    let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
-    let flags = stack.last().map_or(0, Image::flags);
-    let overlay = !stack.is_empty() && stack.len() < MAX_DEPTH;
-    let mut image = Builder::new(flags, overlay);
-    if !stack.is_empty() && !overlay {
-        let names: std::collections::BTreeSet<&str> = stack.iter().flat_map(Image::names).filter(|n| rels.iter().all(|(r, _)| r != n)).collect();
-        for name in names {
-            if let Some(view) = find(&stack, name) {
-                image.take(name, &view);
-            }
-        }
-    }
-    for (rel, lines) in rels {
-        image.lines(rel, &[], &[], lines, &|_, v| v.to_owned());
-    }
-    std::fs::create_dir_all(dir)?;
-    write(dir, &image.finish())
+/// Relation `rel` of the outputs in `dir`, each value as shown (`Relation::shown`); NotFound where it holds no such
+/// relation.
+pub fn shown(dir: &Path, rel: &str) -> std::io::Result<Vec<Vec<String>>> {
+    let outputs = Outputs::open(dir)?;
+    outputs.get(rel).map(|r| r.shown()).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no relation {rel}", dir.display())))
 }
 
 /// A base of the stack in `dir`'s relations `names` (those it holds), each as the stack reads it.
@@ -1136,9 +1289,12 @@ pub fn base_of<'a>(dir: &Path, names: impl Iterator<Item = &'a str>) -> std::io:
 /// The stack in `dir` written out as `.csv` files in `to`, one per relation (for scripts that read them).
 pub fn to_csv(dir: &Path, to: &Path) -> std::io::Result<usize> {
     std::fs::create_dir_all(to)?;
-    let names = names(dir)?;
-    for name in &names {
-        std::fs::write(to.join(format!("{name}.csv")), text(dir, name)?)?;
+    let outputs = Outputs::open(dir)?;
+    let names = outputs.names();
+    for &name in &names {
+        let rel = outputs.get(name).expect("named");
+        let text: String = if rel.width() == 0 { "\n".repeat(rel.len()) } else { rel.shown().iter().map(|r| r.join("\t") + "\n").collect() };
+        std::fs::write(to.join(format!("{name}.csv")), text)?;
     }
     Ok(names.len())
 }

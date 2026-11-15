@@ -39,7 +39,8 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
 
 fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
-    h.update(b"rerail.run-reuse/v2\0");
+    // v3: a record's consulted list is bytes (`encode_consulted`), not lines.
+    h.update(b"rerail.run-reuse/v3\0");
     for p in programs {
         h.update((p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
@@ -104,17 +105,60 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
     Ok(out)
 }
 
-pub fn encode_consulted(consulted: &[(String, String, String)]) -> String {
-    consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n")
+/// Lists of texts as bytes, for a record the store keeps (a run's consulted list, the cone's rounds, the Git files):
+/// the lists' count, then each list's count and each text's length and bytes (little-endian `u32`s). Read back by
+/// `decode_lists`, never as text.
+pub fn encode_lists<S: AsRef<str>>(lists: &[&[S]]) -> Vec<u8> {
+    let mut out = (lists.len() as u32).to_le_bytes().to_vec();
+    for list in lists {
+        out.extend((list.len() as u32).to_le_bytes());
+        for t in *list {
+            let t = t.as_ref();
+            out.extend((t.len() as u32).to_le_bytes());
+            out.extend(t.as_bytes());
+        }
+    }
+    out
 }
 
-pub fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
-    text.lines()
-        .filter_map(|l| {
-            let mut f = l.splitn(3, '\t');
-            Some((f.next()?.to_owned(), f.next()?.to_owned(), f.next()?.to_owned()))
-        })
-        .collect()
+/// The lists `encode_lists` made, or none where the bytes are not some (a record of another form, or cut).
+pub fn decode_lists(bytes: &[u8]) -> Option<Vec<Vec<String>>> {
+    // The `u32` at `*at`, past it.
+    fn word(bytes: &[u8], at: &mut usize) -> Option<usize> {
+        let w = u32::from_le_bytes(bytes.get(*at..*at + 4)?.try_into().ok()?) as usize;
+        *at += 4;
+        Some(w)
+    }
+    let mut at = 0;
+    let n = word(bytes, &mut at)?;
+    let mut lists = Vec::with_capacity(n.min(64));
+    for _ in 0..n {
+        let k = word(bytes, &mut at)?;
+        let mut list = Vec::with_capacity(k.min(1 << 16));
+        for _ in 0..k {
+            let len = word(bytes, &mut at)?;
+            list.push(std::str::from_utf8(bytes.get(at..at + len)?).ok()?.to_owned());
+            at += len;
+        }
+        lists.push(list);
+    }
+    (at == bytes.len()).then_some(lists)
+}
+
+/// A record's consulted list as bytes (`encode_lists`): each entry its kind, its path and its digest.
+pub fn encode_consulted(consulted: &[(String, String, String)]) -> Vec<u8> {
+    let flat: Vec<&str> = consulted.iter().flat_map(|(w, p, d)| [w.as_str(), p, d]).collect();
+    encode_lists(&[&flat[..]])
+}
+
+/// The list `encode_consulted` made, or none where the bytes are not one.
+pub fn decode_consulted(bytes: &[u8]) -> Option<Vec<(String, String, String)>> {
+    let [flat]: [Vec<String>; 1] = decode_lists(bytes)?.try_into().ok()?;
+    if flat.len() % 3 != 0 {
+        return None;
+    }
+    let mut it = flat.into_iter();
+    Some(std::iter::from_fn(|| Some((it.next()?, it.next()?, it.next()?))).collect())
 }
 
 /// The outputs a run wrote, as one file: a base of the relations `names` of the stack in `out` (decision 0239).
@@ -157,7 +201,10 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss(&format!("no record under the run's key {} (programs {})", &key[..12], texts.len()));
         return Ok(None);
     };
-    let consulted = decode_consulted(&consulted);
+    let Some(consulted) = decode_consulted(&consulted) else {
+        miss("the record's consulted list does not decode");
+        return Ok(None);
+    };
     let Some(outputs) = decode_outputs(&outputs) else {
         miss("the record's outputs do not decode");
         return Ok(None);
@@ -183,7 +230,10 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?;
     let mut report = Report::default();
     for (name, bytes) in &outputs {
-        std::fs::write(out.join(name), bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        if name != crate::code_rule_dsl::logic::plan::output::FILE {
+            return Err(Error::Plan(format!("{name}: no output file of this run's")));
+        }
+        crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
         let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
         for rel in image.names() {
             report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
