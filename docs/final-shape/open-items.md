@@ -4718,7 +4718,7 @@ long rules' orders and searches short ones it could keep.
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
 
 
-## O-phase0-kept-flake. Phase 0's kept graph of a text once differed from a fresh derive
+## O-phase0-kept-flake. Phase 0's kept graph of a text once differed from a fresh derive (closed)
 
 **Seen (2026-11-12, once in about ten runs of `logic::rr::` with `phase0::`, at four threads, under load).**
 `phase0::tests::bootstrap_resolves_as_the_builtin_reader_does` failed its third part: for `python/conditions.rr`,
@@ -4735,6 +4735,11 @@ whole log.
 
 **Closure:** the field that differs is known from a failure's message, and the cause is fixed; or it does not
 recur in ten runs of the chunk.
+
+**Closed (2026-11-15): did not recur.** The test ran 20 times beside the rest of its chunk (`logic::rr::` with
+`phase0::`, in three parts that fit the two-minute cap, four threads, load 37 to 39) and passed each time. The
+observer's roots changed since the last sighting (decision 0250: a root takes in the roots inside it, collection
+keeps young unheld answers), one of the suspects. A failure's message still prints each graph's module digests.
 
 ## O-kept-strata-flake. A second run over unchanged files sometimes plans twice the cross part's strata
 
