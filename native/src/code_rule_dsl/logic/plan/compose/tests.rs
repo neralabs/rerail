@@ -40,8 +40,8 @@ fn constants_fanout_and_fanin_execute_one_query() {
         let db = Connection::open_in_memory().unwrap();
         let statements = super::super::corpus::Statements::on(&db);
         let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
-        assert_eq!(out.outputs["result"], ["1", "2"]);
-        assert_eq!(out.outputs["b"], ["2"]);
+        assert_eq!(out.text()["result"], ["1", "2"]);
+        assert_eq!(out.text()["b"], ["2"]);
         assert_eq!(
             statements.count(),
             1,
@@ -59,8 +59,8 @@ fn demanded_aggregates_and_negation_preserve_empty_groups_and_set_semantics() {
     );
     let db = Connection::open_in_memory().unwrap();
     let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
-    assert_eq!(out.outputs["totals"], ["1\t2", "2\t1", "3\t0"]);
-    assert_eq!(out.outputs["absent"], ["3"]);
+    assert_eq!(out.text()["totals"], ["1\t2", "2\t1", "3\t0"]);
+    assert_eq!(out.text()["absent"], ["3"]);
 }
 
 #[test]
@@ -69,10 +69,10 @@ fn relation_names_are_case_sensitive_through_joins_aggregates_and_negation() {
     let db=Connection::open_in_memory().unwrap();
     let stmts=super::super::corpus::Statements::on(&db);
     let out=q.execute(&db,&p,None,&mut Hooks::default()).unwrap();
-    assert_eq!(out.outputs["leaf"],["1","2"]);
-    assert_eq!(out.outputs["LEAF"],["2"]);
-    assert_eq!(out.outputs["missing"],["1"]);
-    assert_eq!(out.outputs["counts"],["1"]);
+    assert_eq!(out.text()["leaf"],["1","2"]);
+    assert_eq!(out.text()["LEAF"],["2"]);
+    assert_eq!(out.text()["missing"],["1"]);
+    assert_eq!(out.text()["counts"],["1"]);
     assert_eq!(stmts.count(),1,"physical naming must not split the query");
 }
 
@@ -92,7 +92,7 @@ fn closure_uses_a_recursive_cte_and_terminates_on_cycles() {
     let db = Connection::open_in_memory().unwrap();
     let statements = super::super::corpus::Statements::on(&db);
     let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
-    assert_eq!(out.outputs["reach"], ["1", "2", "3"]);
+    assert_eq!(out.text()["reach"], ["1", "2", "3"]);
     assert_eq!(statements.count(), 1);
 }
 
@@ -129,7 +129,7 @@ fn composed_queries_read_adopted_inputs_and_replace_their_versions() {
         stats.measured("supplied", [("c0".into(), [1, 1, 1, 1])], []);
         let out = run_atoms_native_over(&lowered, &db, "main", stats, BTreeSet::new(), "program")
             .unwrap();
-        assert_eq!(out.outputs["result"], [n.to_string()]);
+        assert_eq!(out.text()["result"], [n.to_string()]);
         if enabled() {
             assert!(out.kept.contains("result"), "decoded output must also remain a resident fact");
             assert_eq!(native::component::derived(&db,"result").unwrap().value(0,0),n);
@@ -156,9 +156,9 @@ groups(n) :- n=count : { converted(_) }.
     let db = Connection::open_in_memory().unwrap();
     super::super::super::strings::register(&db).unwrap();
     let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
-    assert_eq!(out.outputs["converted"], ["12"]);
-    assert_eq!(out.outputs["discarded"], ["12"]);
-    assert_eq!(out.outputs["groups"], ["1"]);
+    assert_eq!(out.text()["converted"], ["12"]);
+    assert_eq!(out.text()["discarded"], ["12"]);
+    assert_eq!(out.text()["groups"], ["1"]);
 }
 
 #[test]
@@ -178,8 +178,8 @@ admitted(g) :- owner(g), n=max x : {item(g,x)}.
     );
     let db = Connection::open_in_memory().unwrap();
     let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
-    assert_eq!(out.outputs["minima"], ["1\t7"]);
-    assert_eq!(out.outputs["admitted"], ["1"]);
+    assert_eq!(out.text()["minima"], ["1\t7"]);
+    assert_eq!(out.text()["admitted"], ["1"]);
 }
 
 #[test]
@@ -212,8 +212,8 @@ result(x) :- names(q), split_dot(q, "{prefix}", x).
         let rows = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
         // `split_dot` splits at the last dot, its x dot-free (core.rr): "{prefix}.path.waitpid" is
         // ("{prefix}.path", "waitpid"), not of the prefix.
-        assert_eq!(rows.outputs["result"], ["waitpid"]);
-        assert_eq!(rows.outputs["bound"], ["waitpid"]);
+        assert_eq!(rows.text()["result"], ["waitpid"]);
+        assert_eq!(rows.text()["bound"], ["waitpid"]);
     }
 }
 
@@ -239,7 +239,7 @@ fn exponentially_shared_ctes_use_bounded_bulk_stages() {
     assert!(!unbounded.prepares(&db).unwrap(),"SQLite must reject the unbounded graph before staging repairs it");
     let statements=super::super::corpus::Statements::on(&db);
     let out=stages::run(&p,&db,inputs,None,&mut Hooks::default()).unwrap();
-    assert_eq!(out.outputs[&prev],["1","2"]);
+    assert_eq!(out.text()[&prev],["1","2"]);
     assert!((2..=6).contains(&statements.count()),"24 dependent joins need a few bulk stages, not 24 executions: {}",statements.count());
 }
 
@@ -273,6 +273,6 @@ fn restored_case_distinct_inputs_keep_their_own_bindings() {
             stages::bind(&p,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();
         }
         let out=stages::run(&p,&db,inputs,None,&mut Hooks::default()).unwrap();
-        assert_eq!(out.outputs["missing"],[(3-value).to_string()]);
+        assert_eq!(out.text()["missing"],[(3-value).to_string()]);
     }
 }

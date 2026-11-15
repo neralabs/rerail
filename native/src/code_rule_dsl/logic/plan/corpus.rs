@@ -16,7 +16,7 @@
 //! included (per kind its nodes and sizes, per parent kind its children, the postings of the program's constants:
 //! `Own`). The cross-file part plans with the chunks' sums. Nodes are written as `path:index`.
 
-use super::{Error, Outcome, Result, lower};
+use super::{Error, Outcome, Result, lower, output};
 
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
@@ -3243,8 +3243,6 @@ fn run_observed(
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
     // The guest relations' postings per mix, measured after the guest rounds (`guests::READS`).
     let mut guest_postings_once: HashMap<String, (usize, BTreeMap<(String, String, i64), i64>)> = HashMap::new();
-    // The stored tree counts this run read or wrote, for its manifest.
-    let own_sources: Vec<crate::content_store::SourceId> = Vec::new();
     let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
@@ -3461,13 +3459,16 @@ fn run_observed(
     let (mut memo_hits, mut memo_unattributed) = (0usize, 0usize);
     // Why a chunk's rows were not memoised: the relation, and what its row named.
     let mut memo_why: BTreeSet<String> = BTreeSet::new();
-    let mut outputs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Each output's parts, as the runs handed them (decision 0239): rows, shared, never copied or printed.
+    let mut outputs: BTreeMap<String, Vec<Arc<output::Rows>>> = BTreeMap::new();
+    // The memo hits' lines of each file-local output (a memo entry holds its output as text), made one part each.
+    let mut memo_lines: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut node_columns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    let gather = |got: Outcome, outputs: &mut BTreeMap<String, Vec<String>>, node_columns: &mut BTreeMap<String, Vec<usize>>, keep: &dyn Fn(&str) -> bool| {
+    let gather = |got: Outcome, outputs: &mut BTreeMap<String, Vec<Arc<output::Rows>>>, node_columns: &mut BTreeMap<String, Vec<usize>>, keep: &dyn Fn(&str) -> bool| {
         let _gather = crate::code_rule_dsl::logic::profile::span(|| "gather outputs".into());
-        for (rel, lines) in got.outputs {
+        for (rel, rows) in got.outputs {
             if keep(&rel) {
-                outputs.entry(rel.clone()).or_default().extend(lines);
+                outputs.entry(rel.clone()).or_default().push(rows);
                 node_columns.insert(rel.clone(), got.nodes[&rel].clone());
             }
         }
@@ -4643,7 +4644,8 @@ fn run_observed(
                     }
                 }
                 for (rel, (columns, lines)) in entry.lines {
-                    outputs.entry(rel.clone()).or_default().extend(lines);
+                    outputs.entry(rel.clone()).or_default();
+                    memo_lines.entry(rel.clone()).or_default().extend(lines);
                     node_columns.insert(rel, columns);
                 }
             }
@@ -4921,9 +4923,10 @@ fn run_observed(
             }
         }
         if memoised {
-            for (rel, lines) in got.outputs.iter().filter(|(rel, _)| outputs_of(rel)) {
+            for (rel, rows) in got.outputs.iter().filter(|(rel, _)| outputs_of(rel)) {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied());
-                for line in lines {
+                // A memo entry holds a file's output as its lines.
+                for line in &rows.lines() {
                     let files = at.and_then(|c| line.split('\t').nth(c)).and_then(|v| v.parse::<i64>().ok()).map(owners).unwrap_or_default();
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
                         memo_why.insert(format!("output {rel}: {}", if files.is_empty() { "no location" } else { "another chunk's document" }));
@@ -5810,7 +5813,6 @@ fn run_observed(
     docs.extend(loaded_docs.iter().cloned());
     // The run's manifest, then collection in the background while the cross-file part runs (decision 0053).
     let mut run_sources = worker_cpu.2.clone();
-    run_sources.extend(own_sources.iter().copied());
     run_sources.extend(program_sources.iter().copied());
     // A run that read no file anew (every one known by its stat) has no stat to record.
     if recording && !worker_cpu.3.is_empty() {
@@ -6955,6 +6957,29 @@ fn run_observed(
                         for (_, l) in lines.iter().take(25) {
                             eprintln!("O125 {l}");
                         }
+                        let reached = std::mem::take(&mut got.spike_reached);
+                        let mut by_read: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+                        let mut quiet_in = 0usize;
+                        for (_, changed, ins) in &reached {
+                            if ins.iter().all(|(_, n)| *n == 0) {
+                                quiet_in += 1;
+                            }
+                            for (r, n) in ins {
+                                let e = by_read.entry(r.clone()).or_default();
+                                e.0 += 1;
+                                if !changed { e.1 += 1; }
+                                if *n == usize::MAX { e.2 += 1; }
+                            }
+                        }
+                        let mut top: Vec<_> = by_read.into_iter().collect();
+                        top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+                        eprintln!("O125 reached: {} strata, {} changed nothing, {quiet_in} with every changed read's delta empty", reached.len(), reached.iter().filter(|r| !r.1).count());
+                        for (r, (n, quiet, unheld)) in top.iter().take(15) {
+                            eprintln!("O125 reached by {r}: {n} strata, {quiet} of them changed nothing, {unheld} with its delta not held");
+                        }
+                        for (k, _, ins) in reached.iter().filter(|r| !r.1).take(12) {
+                            eprintln!("O125 changed nothing: {} <- {ins:?}", if k.len() > 60 { &k[..60] } else { k });
+                        }
                         eprintln!("O125 cutoff: {} relations maintained, {unchanged} changed nothing (no row gone, none new)", forms.len());
                         eprintln!("O125 total: overdeleted {}, gone {}, put back {}, inserted {}, new {}; strata {} of {} run, {} maintained ({} recursive), {} derived again", t[1], t[3], t[1].saturating_sub(t[3]), t[2], t[4], cut.strata.0, cut.strata.1, maintained.maintained, maintained.recursive, maintained.derived_again);
                     }
@@ -7065,7 +7090,7 @@ fn run_observed(
                     } else {
                         HashMap::new()
                     };
-                    let derived_outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
+                    let derived_outputs: BTreeMap<String, (Arc<output::Rows>, Vec<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (Arc::clone(rows), got.nodes[rel].clone()))).collect();
                     // An output whose file stands is not read back (`unchanged_outputs`).
                     let read_back: Vec<String> = cross.program.outputs.iter().filter(|o| !unchanged_outputs.contains_key(*o)).cloned().collect();
                     for rel in unchanged_outputs.keys() {
@@ -7080,17 +7105,17 @@ fn run_observed(
                             .filter_map(|o| kept.kept(o).map(|(h, _)| (o.clone(), h)))
                             .collect();
                         if !rows.is_empty() {
-                            let (lines, nodes) = super::decode_kept(&db, &cross, rows)?;
-                            clean_outputs.extend(lines.into_iter().map(|(rel, l)| {
+                            let (decoded, nodes) = super::decode_kept(&db, &cross, rows)?;
+                            clean_outputs.extend(decoded.into_iter().map(|(rel, r)| {
                                 let n = nodes.get(&rel).cloned().unwrap_or_default();
-                                (rel, l, n)
+                                (rel, r, n)
                             }));
                         }
                     }
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
-                    for (rel, lines, nodes) in clean_outputs {
+                    for (rel, rows, nodes) in clean_outputs {
                         if outputs_of(&rel) {
-                            outputs.entry(rel.clone()).or_default().extend(lines);
+                            outputs.entry(rel.clone()).or_default().push(rows);
                             node_columns.insert(rel, nodes);
                         }
                     }
@@ -7472,57 +7497,134 @@ fn run_observed(
         outputs.entry(rel.clone()).or_default();
         node_columns.entry(rel.clone()).or_default();
     }
+    // The memo hits' lines, one part per output (a memo entry holds a file's output as text).
+    for (rel, lines) in std::mem::take(&mut memo_lines) {
+        let part = output::Rows::from_lines(&lines, node_columns.get(&rel).map_or(&[][..], Vec::as_slice));
+        outputs.entry(rel).or_default().push(Arc::new(part));
+    }
+    // A node column's values, as integers: a node column held as text (one holding a value that is no integer)
+    // gives those of its texts that are.
+    let node_values = |part: &output::Rows, c: usize| -> Vec<i64> {
+        (0..part.len())
+            .filter_map(|i| match part.cell(i, c) {
+                output::Cell::Int(v) => Some(v),
+                output::Cell::Text(t) => t.parse::<i64>().ok(),
+            })
+            .collect()
+    };
     // A node column's value that is no node: `unset` (-1) is written as it is, and a `@place` (`rr::lower`'s
     // `PLACE`, `-2 - (path << 32 | line)`) as `@place("path", line)`.
     let mut places: HashMap<i64, String> = HashMap::new();
-    for (rel, lines) in &outputs {
-        for (i, v) in lines.iter().flat_map(|row| row.split('\t').enumerate()) {
-            if let Ok(v) = v.parse::<i64>()
-                && v < -1
-                && node_columns[rel].contains(&i)
-                && !places.contains_key(&v)
-            {
-                let n = -2 - v;
-                let path: String = db.query_row("SELECT sym_text(?1)", [n >> 32], |r| r.get(0))?;
-                places.insert(v, format!("@place({}, {})", crate::code_rule_dsl::logic::rr::quote(&path), n & 0xffff_ffff));
+    for (rel, parts) in &outputs {
+        for part in parts.iter().filter(|p| !p.ragged()) {
+            for &c in node_columns[rel].iter().filter(|&&c| c < part.width()) {
+                for v in node_values(part, c) {
+                    if v < -1 && !places.contains_key(&v) {
+                        let n = -2 - v;
+                        let path: String = db.query_row("SELECT sym_text(?1)", [n >> 32], |r| r.get(0))?;
+                        places.insert(v, format!("@place({}, {})", crate::code_rule_dsl::logic::rr::quote(&path), n & 0xffff_ffff));
+                    }
+                }
             }
         }
     }
-    for (rel, lines) in &outputs {
-        if let Some(n) = unchanged_outputs.get(rel) {
-            rows.insert(rel.clone(), *n);
-            continue;
+    // The outputs as one flat image (decision 0239): over the session's last image, an overlay of the outputs this
+    // run made again; otherwise a base of them all. The image is made from the runs' rows as they are (stage 2);
+    // each `.csv` file is then its relation's lines as the image shows them (every reader still reads the files).
+    {
+        let flags = if own { output::flags::OWN } else { 0 } | if syntax::definition_ids() { output::flags::DEFINITION_IDS } else { 0 };
+        // An unchanged output is read from the stack its file was written with; a stack past its depth is folded.
+        let old = if unchanged_outputs.is_empty() { Vec::new() } else { output::read(&out).unwrap_or_default() };
+        let inherit = !old.is_empty() && unchanged_outputs.keys().all(|r| output::find(&old, r).is_some());
+        let overlay = inherit && old.len() < output::MAX_DEPTH;
+        let mut image = output::Builder::new(flags, overlay);
+        if inherit && !overlay {
+            for rel in unchanged_outputs.keys() {
+                image.take(rel, output::find(&old, rel).expect("checked"));
+            }
+        } else if !inherit {
+            // No stack to read them from: the files that stand, read as text.
+            for rel in unchanged_outputs.keys() {
+                let text = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+                let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+                image.lines(rel, &[], &[], &lines, &|_, v| v.to_owned());
+            }
         }
-        let node_columns = &node_columns[rel];
-        let mut decoded: Vec<String> = lines
-            .iter()
+        // A node column's value as the writer showed it, for a column the image holds as text (one holding a value
+        // that is no integer): by its document, or as it was.
+        let shown = |_: usize, v: &str| match v.parse::<i64>() {
+            Ok(v) if v < -1 => places.get(&v).cloned().unwrap_or_else(|| v.to_string()),
+            // A guest's node (decision 0055): its document is no file of the run.
+            Ok(v) if v >= 0 && !paths.contains_key(&(v >> 32)) && !first.contains_key(&(v >> 32)) => format!("guest{}:{}", v >> 32, v & 0xffff_ffff),
+            Ok(v) if (own || syntax::definition_ids()) && paths.contains_key(&(v >> 32)) => format!("{}:{}", paths[&(v >> 32)], syntax::shown_local(v & 0xffff_ffff)),
+            Ok(v) if !own && first.contains_key(&(v >> 32)) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
+            _ => v.to_owned(),
+        };
+        let mut made: Vec<&str> = Vec::new();
+        for (rel, parts) in &outputs {
+            if let Some(n) = unchanged_outputs.get(rel) {
+                rows.insert(rel.clone(), *n);
+                continue;
+            }
+            let node_columns = &node_columns[rel];
             // A row about a loaded document (its first node is one) is not the corpus's; a corpus row may name a
             // loaded document's node (a call's target in a stub).
-            .filter(|row| loaded_keys.is_empty() || node_columns.first().is_none_or(|c| !row.split('\t').nth(*c).and_then(|v| v.parse::<i64>().ok()).is_some_and(|v| loaded_keys.contains(&(v >> 32)))))
-            .map(|row| {
-                row.split('\t')
-                    .enumerate()
-                    // A node column holding no document's node (`unset`'s -1) is written as it is.
-                    .map(|(i, v)| match v.parse::<i64>() {
-                        Ok(v) if node_columns.contains(&i) && v < -1 => places[&v].clone(),
-                        // A guest's node (decision 0055): its document is no file of the run.
-                        Ok(v) if node_columns.contains(&i) && v >= 0 && !paths.contains_key(&(v >> 32)) && !first.contains_key(&(v >> 32)) => format!("guest{}:{}", v >> 32, v & 0xffff_ffff),
-                        Ok(v) if node_columns.contains(&i) && (own || syntax::definition_ids()) && paths.contains_key(&(v >> 32)) => format!("{}:{}", paths[&(v >> 32)], syntax::shown_local(v & 0xffff_ffff)),
-                        Ok(v) if node_columns.contains(&i) && !own && first.contains_key(&(v >> 32)) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
-                        _ => v.to_owned(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\t")
-            })
-            .collect();
-        decoded.sort();
-        decoded.dedup();
-        let mut text = decoded.join("\n");
-        if !decoded.is_empty() {
-            text.push('\n');
+            let filtered: Vec<Arc<output::Rows>>;
+            let parts: &[Arc<output::Rows>] = match node_columns.first() {
+                Some(&c) if !loaded_keys.is_empty() => {
+                    let loaded = |v: i64| v >= 0 && loaded_keys.contains(&(v >> 32));
+                    filtered = parts
+                        .iter()
+                        .map(|p| {
+                            if p.ragged() || c >= p.width() {
+                                return Arc::clone(p);
+                            }
+                            let mut kept = (**p).clone();
+                            if kept.types()[c] == output::col::TEXT {
+                                kept.retain(|i, _| !matches!(p.cell(i, c), output::Cell::Text(t) if t.parse::<i64>().is_ok_and(loaded)));
+                            } else {
+                                kept.retain(|_, row| !loaded(row[c]));
+                            }
+                            Arc::new(kept)
+                        })
+                        .collect();
+                    &filtered
+                }
+                _ => parts,
+            };
+            // The documents and places its node columns name.
+            for part in parts.iter().filter(|p| !p.ragged()) {
+                for &c in node_columns.iter().filter(|&&c| c < part.width()) {
+                    for v in node_values(part, c) {
+                        if v < -1 {
+                            if let Some(p) = places.get(&v) {
+                                image.place(v, p);
+                            }
+                        } else if v >= 0 {
+                            let d = v >> 32;
+                            if paths.contains_key(&d) || first.contains_key(&d) {
+                                image.doc(d, &output::Doc { path: paths.get(&d).cloned(), first: first.get(&d).copied() });
+                            }
+                        }
+                    }
+                }
+            }
+            let parts: Vec<&output::Rows> = parts.iter().map(|p| &**p).collect();
+            image.put(rel, &parts, node_columns, &shown);
+            made.push(rel);
         }
-        std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;
-        rows.insert(rel.clone(), decoded.len());
+        let bytes = image.finish();
+        output::write(&out, &bytes).map_err(|e| Error::Plan(e.to_string()))?;
+        let made_image = output::Image::one(&bytes).map_err(Error::Plan)?;
+        for rel in made {
+            let lines = made_image.rel(rel).expect("made").lines();
+            let mut text = lines.join("\n");
+            if !lines.is_empty() {
+                text.push('\n');
+            }
+            std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;
+            rows.insert(rel.to_owned(), lines.len());
+        }
     }
     // What a session's run of this program wrote, for its next (`unchanged_outputs`); any other run's writes forget it.
     if let Some(s) = session.as_ref() {
@@ -7537,7 +7639,14 @@ fn run_observed(
     }
     if prog.decls.contains_key("declared_ret") {
         let fn_q = split.exports.iter().any(|e| e == "fn_q").then(|| exports.borrow_mut().source("fn_q", 2));
-        typing::outputs(typing, &db, &store, root, outputs.get("type_of"), &returns, &declared, fn_q.as_deref(), &mut typed)?;
+        // `type_of`'s rows as lines, as typing reads them (stage 3 reads the rows).
+        let type_of: Option<Vec<String>> = outputs.get("type_of").map(|parts| {
+            let mut lines: Vec<String> = parts.iter().flat_map(|p| p.lines()).collect();
+            lines.sort_unstable();
+            lines.dedup();
+            lines
+        });
+        typing::outputs(typing, &db, &store, root, type_of.as_ref(), &returns, &declared, fn_q.as_deref(), &mut typed)?;
     }
     drop(writing);
     phase("write", statements.count());
@@ -7883,7 +7992,7 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             if patched.is_none() && b.lazy_kept
                 && let Some(h) = &held
             {
-                let maintains = rel.strip_suffix("__old").is_some() && maintains;
+                let maintains = rel.ends_with("__old") && maintains;
                 let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
                 let wanted = tested_of(&b.constants, &rel).cloned();
                 let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {

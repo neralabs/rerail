@@ -199,6 +199,36 @@ fn lookups_agree_with_scans() {
     }
 }
 
+/// A view's filter scan, document by document, holds the rows a per-row read finds: over several documents, for
+/// filters on each column of `node`, `child`, `field` and `tape`, and on two at once. It is the view's own scan (a
+/// merge had left it outside the `Source` impl, where the trait's per-row scan shadowed it).
+#[test]
+fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("filter-eq")).unwrap();
+    let python: GrammarDialect = dialect_by_label("python").unwrap();
+    let call = core::kind_atom(tape_tag(python).unwrap(), python.kinds().kind_id("call"));
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        if !["node", "child", "field", "tape"].iter().any(|&v| name == v) {
+            continue;
+        }
+        let width = source.columns().len();
+        let n = source.len();
+        assert!(n > 0, "{name}: no rows");
+        for (c, eqs) in (0..width).flat_map(|c| {
+            let (a, b) = (source.value(n / 3, c), source.value(n - 1, c));
+            let pair = if width > 1 { vec![(c, a), ((c + 1) % width, source.value(n / 3, (c + 1) % width))] } else { vec![(c, a)] };
+            [(c, vec![(c, a)]), (c, vec![(c, b)]), (c, pair)]
+        }).chain([(2, vec![(2, i64::from(call))])].into_iter().filter(|_| name == "node")) {
+            let per_row: Vec<u32> = (0..n).filter(|&r| eqs.iter().all(|&(c, v)| source.value(r, c) == v)).map(|r| r as u32).collect();
+            assert!(!per_row.is_empty(), "{name} column {c}: a value read from a row matches it");
+            assert_eq!(source.filter_eq(&eqs), per_row, "{name} {eqs:?}");
+            tried += 1;
+        }
+    }
+    assert!(tried >= 4 * 3, "the four views were tried");
+}
+
 /// Two cursors on one table, joined on a column the inner one does not index, pair children by position.
 #[test]
 fn self_joins_pair_children_by_position() {

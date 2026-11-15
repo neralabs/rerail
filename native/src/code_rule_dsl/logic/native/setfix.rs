@@ -2181,7 +2181,7 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
     let store = comp.store.read().unwrap();
     let syms = store.syms.read().unwrap();
     Ok(store.rels.iter().map(|r| {
-        probed::note(&format!("{} [stats]", r.table), std::iter::empty());
+        if probed::on() { probed::note(&format!("{} [stats]", r.table), std::iter::empty()); }
         let cols = &r.sketches;
         let mut line = std::iter::once(r.n).chain(cols.iter().map(Sketch::ndv))
             .chain(cols.iter().map(|sk| sk.sq() as usize))
@@ -2540,19 +2540,37 @@ pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
-    Ok(store.rels.iter().map(|r| {
-        probed::note(&format!("{} [stats]", r.table), std::iter::empty());
-        let cols = &r.sketches;
-        let freq = cols.iter().enumerate().filter_map(|(c, sk)| sk.exact_counts().map(|s| (c, s.iter().map(|&(v, n)| (v, i64::from(n))).collect())))
-            .collect();
-        Live {
-            n: r.n as i64,
-            delta: (r.hi - r.lo) as i64,
-            ndv: cols.iter().map(|sk| sk.ndv() as i64).collect(),
-            sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
-            freq,
-        }
+    Ok(store.rels.iter().map(live_of).collect())
+}
+
+/// `live`, of only the relations whose rows moved since the caller last read them (`seen`, its last reading of
+/// each: rows, delta's start and end); `None` for the others. A relation's statistics are its rows' count, its delta
+/// and its sketches, and the sketches change only as rows are pushed: equal readings, equal statistics. A wave of a
+/// component of 220 relations moves a few of them.
+pub fn live_changed(conn: impl Scoped, name: &str, seen: &mut Vec<[usize; 3]>) -> Result<Vec<Option<Live>>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let store = comp.store.read().unwrap();
+    seen.resize(store.rels.len(), [usize::MAX; 3]);
+    Ok(store.rels.iter().zip(seen.iter_mut()).map(|(r, last)| {
+        let now = [r.n, r.lo, r.hi];
+        (*last != now).then(|| { *last = now; live_of(r) })
     }).collect())
+}
+
+fn live_of(r: &Rel) -> Live {
+    if probed::on() { probed::note(&format!("{} [stats]", r.table), std::iter::empty()); }
+    let cols = &r.sketches;
+    let freq = cols.iter().enumerate().filter_map(|(c, sk)| sk.exact_counts().map(|s| (c, s.iter().map(|&(v, n)| (v, i64::from(n))).collect())))
+        .collect();
+    Live {
+        n: r.n as i64,
+        delta: (r.hi - r.lo) as i64,
+        ndv: cols.iter().map(|sk| sk.ndv() as i64).collect(),
+        sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
+        freq,
+    }
 }
 
 /// Per probe, the rows its factored steps passed over since it was last asked (`JoinRule::passed_over`).
@@ -4008,7 +4026,7 @@ impl InRel {
         if self.view.is_some() || c >= self.k {
             return false;
         }
-        probed::note(&format!("{} [postings]", self.name.get().map_or("?", String::as_str)), std::iter::once(c));
+        if probed::on() { probed::note(&format!("{} [postings]", self.name.get().map_or("?", String::as_str)), std::iter::once(c)); }
         let Some(ix) = self.chains.iter().find(|ix| ix.cols.first() == Some(&c)).filter(|ix| ix.rows() >= self.n) else { return false };
         let (k, data) = (self.k, &self.rows);
         let mut firsts: Vec<i64> = Vec::new();
@@ -4965,21 +4983,13 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
 }
 
 impl Step {
-    /// Whether the step reads slot `x`.
+    /// Whether the step reads slot `x`: what it observes (`observes`, a step that tests its result against a bound
+    /// slot reading that slot), or a `Let`'s source. One definition for every reader of the question (the probes,
+    /// the factoring, the device). A second copy here missed a `@cat`'s and a function's tested result: a split's
+    /// part only a later `$r = @substr(…)` tested was taken as read by nothing and held 0, so the test failed on
+    /// every row (`hexpr`'s dotted annotations, once a plan split `res`'s names).
     pub fn mentions(&self, x: usize) -> bool {
-        let k = |key: &Key| matches!(key, Key::Slot(s) if *s == x);
-        match self {
-            Step::Unused { .. } => false,
-            Step::Atom { keys, .. } | Step::Scalar { keys, .. } | Step::StrJoin { keys, .. } => keys.iter().any(|(_, key)| k(key)),
-            Step::Cat { a, b, .. } => k(a) || k(b),
-            Step::Split { whole, ka, kb, .. } => k(whole) || k(ka) || k(kb),
-            Step::Eq { a, b } | Step::Ne { a, b } | Step::Lt { a, b, .. } | Step::Doc { a, b, .. } => k(a) || k(b),
-            Step::Let { b, .. } => k(b),
-            Step::Func { args, .. } => args.iter().any(k),
-            Step::DocOf { out, n, bind } => k(n) || (!*bind && *out == x),
-            Step::Test { s, p, .. } => k(s) || k(p),
-            Step::In { a, .. } => k(a),
-        }
+        self.observes(x) || matches!(self, Step::Let { b: Key::Slot(s), .. } if *s == x)
     }
 }
 
@@ -5355,6 +5365,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      collect: Option<&'c mut Vec<i64>>,
                      /// The row the first step is at (a count table's counts per row are by it).
                      at0: u32,
+                     /// Whether the first step has reached a row (`at0` is one): a cut before it left every row.
+                     seen0: bool,
                      /// Per atom step, the slots it binds that the steps before `upto` read, and `upto` (`factored`):
                      /// a row whose rest of the body fails before reaching `upto` fails by those values alone.
                      factor: Vec<Option<Factor>>,
@@ -5599,15 +5611,18 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         let words = f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }).to_vec();
                         cx.work += added.get();
                         if cx.work > cx.budget { cx.stop = true; }
-                        for (w, &word) in words.iter().enumerate() {
+                        // A cut (decision 0206) stops the chunk at its row: `at0` stays the row it stopped at, so the
+                        // rows after it are left, not counted as read.
+                        'chunk: for (w, &word) in words.iter().enumerate() {
                             let mut m = word;
                             while m != 0 {
+                                if cx.stop { break 'chunk; }
                                 let r = 64 * w + m.trailing_zeros() as usize;
                                 m &= m - 1;
                                 for &(slot, b) in &f.binds {
                                     slots[slot] = match b { rowcode::Bind::Column(k) => s.columns[k][r], rowcode::Bind::Param(k) => s.params[k] };
                                 }
-                                if i == 0 { cx.at0 = s.ids[r]; }
+                                if i == 0 { cx.at0 = s.ids[r]; cx.seen0 = true; }
                                 go(cx, i + 1 + f.steps, slots);
                             }
                         }
@@ -5649,7 +5664,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                     if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
-                    if i == 0 { cx.at0 = id; }
+                    if i == 0 { cx.at0 = id; cx.seen0 = true; }
                     if let Some(Factor { read, n, upto }) = factor {
                         let mut key = [0i64; FACTOR_MAX];
                         for (x, &s) in read[..n].iter().enumerate() { key[x] = slots[s]; }
@@ -5868,7 +5883,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()],
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()],
                        factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
@@ -5900,6 +5915,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let row = rows0.row(id0);
                     for &(c, s) in b0 { slots[s] = row.at(c); }
                     cx.at0 = id0;
+                    cx.seen0 = true;
                     c0[1].set(c0[1].get() + 1);
                     let c1 = &j.counts[1][0];
                     c1.set(c1.get() + 1);
@@ -5924,7 +5940,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let total = cx.list0.as_ref().map_or(0, |l| l.1.len() as u64);
         // Cut: the first step's rows from the one it stopped at; with no rows known, all (`None`).
         let left = cx.stop.then(|| cx.list0.as_ref().map(|(of, list)| {
-            let at = list.iter().rposition(|&x| x == cx.at0).unwrap_or(0);
+            let at = if cx.seen0 { list.iter().rposition(|&x| x == cx.at0).unwrap_or(0) } else { 0 };
             Rows0::of(*of, &list[at..])
         }));
         let done = match &left { Some(Some(l)) => total - l.n.min(total), Some(None) => 0, None => total };
@@ -5974,7 +5990,7 @@ fn factored(j: &JoinRule) -> Vec<Option<Factor>> {
     j.steps.iter().enumerate().map(|(i, st)| {
         let Step::Atom { neg: false, binds, .. } = st else { return None };
         if i == 0 || binds.is_empty() || j.fused.get(i).is_some_and(Option::is_some) { return None; }
-        let reads = |t: &Step, s: usize| t.observes(s) || matches!(t, Step::Let { b: Key::Slot(x), .. } if *x == s);
+        let reads = |t: &Step, s: usize| t.mentions(s);
         let mut bound: Vec<usize> = binds.iter().map(|&(_, s)| s).collect();
         bound.sort_unstable();
         bound.dedup();
@@ -6360,6 +6376,32 @@ pub mod posted_tests {
             InRel { k: self.k, n: self.n, rows: self.rows.clone(), view: None, base: false, types: self.types.clone(), stored: self.stored, idx: Mutex::new(HashMap::default()), chains: self.chains.clone(), sorted: self.sorted.clone(),
                     sketches: self.sketches.clone(), serves: self.serves.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: self.level.clone(), stats: self.stats.clone() }
         }
+    }
+}
+
+#[cfg(test)]
+pub mod probe_tests {
+    use super::*;
+    use crate::code_rule_dsl::logic::strings::functions::Kind;
+
+    /// A slot a later step tests its result against (`bind: false`) is read by that step: a split's part so tested
+    /// is no unread part (held as 0, the test would fail on every row), nor only a probe's key. `types.rr`'s `hexpr`,
+    /// planned from `res($t, $d)`: `$t = @cat($d0, $r)` split `"pkg.m.B"`, then `$r = @substr($h, …)` tested the
+    /// part, and the dotted annotation resolved to nothing.
+    #[test]
+    fn a_tested_result_reads_its_slot() {
+        // Slots: 0 the whole, 1 and 2 its parts, 3 the text the function reads.
+        let split = Step::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2) };
+        let tested = |out| Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false };
+        let made = Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out: 2, bind: true };
+        assert!(tested(2).mentions(2) && !made.mentions(2));
+        let cat = |bind| Step::Cat { out: 2, a: Key::Slot(3), b: Key::Slot(3), bind };
+        assert!(cat(false).mentions(2) && !cat(true).mentions(2));
+        let p = probes(&[split.clone(), tested(2)], &[]);
+        assert_eq!(p[0] & (UNREAD_B | PROBE_B), 0, "the part a function tests is held as its text's atom");
+        assert_eq!(p[0] & UNREAD_A, UNREAD_A, "the part nothing reads is unread");
+        let p = probes(&[split, cat(false)], &[]);
+        assert_eq!(p[0] & (UNREAD_B | PROBE_B), 0, "the part a `@cat` tests");
     }
 }
 

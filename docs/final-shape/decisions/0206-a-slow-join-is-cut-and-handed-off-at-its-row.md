@@ -118,6 +118,28 @@ measured gain, not by a fixed factor, is the job of the trials of decision 0207 
 The 6% more work where nothing was replaced is the cut rows read twice, and checks at each doubling past 20,000
 rows. At the default 100,000 there are fewer.
 
+## Fixed: a cut inside a fused chunk lost rows (2026-11-14)
+
+A first step fused with the filters after it (`rowcode`) reads its rows a chunk at a time. The chunk's work is
+counted before its rows go on, so a budget can run out before the first row of a chunk, or partway through one.
+The joins below then return at once. But the chunk's loop went on naming each row it passed over as the row
+reached (`at0`). So the cut took the chunk's last row as its place, and the rows between were counted as read.
+They were never read again, and what they derive was lost.
+
+```text
+a delta of 600 rows, one chunk; budget 300 steps, spent by the chunk's filters
+before: cut at row 599 -> done 599, left 1      (599 rows never joined)
+after:  cut before any row -> done 0, left 600
+```
+
+On the O125 replay (step 14, one file), cuts in the cold run of `tbv`, `ownq`, `fl350_walk` and others made
+`type_of` differ from the full run: 13 rows extra, 5 missing. With cuts off (`RERAIL_JOINS=off`, or
+`RERAIL_JOIN_SLOW_ROWS` out of reach), it matched.
+
+Now the chunk stops at the row the cut stopped at. A cut before any first-step row leaves every row
+(`seen0`). Test: `a_fused_first_step_cut_leaves_the_rows_after_its_row` (`setfix::cut_tests`). It fails without the
+fix (left 1, done 599).
+
 ## Whole plans (O168, closed 2026-11-14)
 
 A probe whose delta is all of its relation (a component's first wave) runs its whole plan, which reads the
