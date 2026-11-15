@@ -367,6 +367,29 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     expect(readHookFailures(rerailHome, Date.now() - 60_000).failures.map(entry => entry.event)).toContain("HeldUp");
   });
 
+  // A file system that keeps no change time, as FAT does not, here gives every log a hook took a change time of 0. The
+  // move then reads the write time: a log a running hook wrote into a minute ago is kept, and one last written over a day
+  // ago is removed. Read by its change time alone, the first would go too, with what the running hook still writes.
+  it("keeps a log a hook wrote into within the day where the file system keeps no change time, and removes an older one", async () => {
+    const rerailHome = await home();
+    // This test's own process stands for the running hook.
+    const [recent, old] = [takenName(rerailHome, process.pid), takenName(rerailHome, 2 ** 31 - 1)];
+    writeFileSync(old, `${fullLine}\n`);
+    const dayAgo = (Date.now() - 25 * 60 * 60 * 1_000) / 1_000;
+    utimesSync(old, dayAgo, dayAgo);
+    writeFileSync(recent, `${fullLine}\n`);
+    utimesSync(recent, (Date.now() - 60_000) / 1_000, (Date.now() - 60_000) / 1_000);
+    // Both stat calls, so the test holds whichever one the move reads.
+    const noChangeTime = (call: string): string => `${call} => (path, ...rest) => {
+      const stats = ${call}(path, ...rest);
+      if (String(path).endsWith(".old") && rest[0]?.bigint !== true) stats.ctimeMs = 0;
+      return stats;
+    }`;
+    writeFullLog(rerailHome);
+    await recordWithWrapped(rerailHome, Date.now(), { statSync: noChangeTime("stat"), lstatSync: noChangeTime("lstat") });
+    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`, basename(recent)].sort());
+  });
+
   it("says since when it counts from the log moved aside, not from an older log a hook was stopped holding", async () => {
     const rerailHome = await home();
     writeFullLog(rerailHome);
