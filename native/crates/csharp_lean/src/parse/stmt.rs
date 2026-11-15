@@ -329,6 +329,10 @@ impl<'a> P<'a> {
         if self.peek() == T::LParen {
             self.tuple_pattern(f::NONE)?;
         } else {
+            // `T with = …`: tree-sitter's lexer takes `with` after a type as its keyword, an error.
+            if self.is_word(w::WITH) {
+                return self.refuse();
+            }
             self.ident(slot(f::NAME, Ctx::Bare))?;
         }
         if self.peek() == T::LBracket {

@@ -3494,6 +3494,11 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         // constant's. A pointer indirection takes no postfix operator (`*p[0]` is `(*p)[0]`); a
         // creation's later rank with sizes is an element access; `..` is right-associative.
         "unsafe class A { void F() { a = y is null as O; b = y is A as O; c = y is 1 as O ?? q; d = p && y is not null as O; e = *p[0].q; *p[0] = 1; f = **p[0]; g = new int[4][2][3]; h = new int[4][]; i = 1..3..5; j = a[..3..]; } }\n",
+        // A bare `this` before `with` or `switch` stores the gap's `{`; `orderby`'s `,` after a
+        // direction is stored; `ref readonly` and `scoped ref` in a lambda's parameter are
+        // modifiers; an `#if` in a top-level `#if` is a statement.
+        "class A { void F() { a = this with { P = 1 }; b = this switch { { } => 1 }; c = y with { }; d = from b in c orderby b.P descending, b.D select b; e = (ref readonly int p) => 0; f = (scoped ref int q) => 0; } }\n",
+        "#if A\n#if B\nusing X;\nclass C { }\n#endif\n#endif\n",
         // A text of a BOM or blanks alone: the root starts at its end.
         "\u{feff}",
         "  \n",
@@ -3516,7 +3521,19 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
     // one behavior: tree-sitter's tape, or a refusal.
-    for invalid in ["class A { void F( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void F() { G(a,); } }\n", "class A { char c = 'ab; }\n", "class A { void F() { x = 1 } }\n"] {
+    for invalid in ["class A { void F( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void F() { G(a,); } }\n", "class A { char c = 'ab; }\n", "class A { void F() { x = 1 } }\n",
+        // tree-sitter-c-sharp's own failures on valid C#: `$""`, `with` and attribute targets
+        // lexed as keywords, `from _`, a pragma's trailing `,`, a region's text of `#region`, a
+        // lambda parameter's name alone after modifiers.
+        "class A { string s = $\"\"; }\n",
+        "class A { void F() { T with = new T(); } }\n",
+        "class A { object o = new D { [type] = 0 }; }\n",
+        "class A { object o = s?[field]; }\n",
+        "class A { object o = from _ in a select 1; }\n",
+        "#pragma warning restore CS0618,\nclass A { }\n",
+        "#region #region\n#endregion\n",
+        "class A { object o = (ref readonly p) => 0; }\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(csharp_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
@@ -3544,6 +3561,11 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A { void F() { foreach (L<V<T>> b in c) { } } }\n",
         "class A { bool b = a && y is not null && // c\n 1; }\n",
         "class A { bool b = y is 4 && b is S.O; }\n",
+        // `x is 1 + 2 as O` (`as` after a tighter operator), `x is A.B as O` (a member access
+        // over the `is`), `(r = new X<A, B>(c))` (a tuple of comparisons).
+        "class A { object o = y is 1 + 2 as O; }\n",
+        "class A { object o = y is A.B as O; }\n",
+        "class A { object o = (r = new X<A, B>(c)); }\n",
     ] {
         assert!(!parser.parse(odd, None).unwrap().root_node().has_error(), "{odd:?} reads with an error");
         assert!(csharp_lean::encode(&grammar, odd, &|| false).is_err(), "read {odd:?}");

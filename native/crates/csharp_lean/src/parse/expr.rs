@@ -166,14 +166,18 @@ impl<'a> P<'a> {
                     self.close(left);
                 }
                 T::Name if t.word == w::SWITCH && min <= P_SWITCH && self.kind_at(1) == T::LBrace => {
+                    let bare = self.is_bare_token(left);
                     left = self.wrap(left, K::SwitchExpression, s, EXPR);
                     self.tk(K::SwitchExpression, K::TSwitch)?;
+                    self.store_gap_after(bare);
                     self.switch_expression_body()?;
                     self.close(left);
                 }
                 T::Name if t.word == w::WITH && min <= P_WITH && self.kind_at(1) == T::LBrace => {
+                    let bare = self.is_bare_token(left);
                     left = self.wrap(left, K::WithExpression, s, EXPR);
                     self.tk(K::WithExpression, K::TWith)?;
+                    self.store_gap_after(bare);
                     self.list(K::WithExpression, T::RBrace, true, true, |p| {
                         let n = p.open(K::WithInitializer, f::NONE, C_NONE)?;
                         p.ident(BARE)?;
@@ -221,6 +225,9 @@ impl<'a> P<'a> {
             self.simple_name(slot(f::NAME, Ctx::Bare), true)?;
             self.close(b);
         } else {
+            if self.attribute_target_next() {
+                return self.refuse();
+            }
             self.bracketed_arguments(K::ElementBindingExpression, f::NONE, C_NONE)?;
         }
         self.close(n);
@@ -312,6 +319,25 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
+    /// Whether `(` … `)` (closing `close` tokens ahead) holds only `a = new X<A, B>(c)`: a
+    /// generic creation with two type arguments or more and arguments, assigned. Tree-sitter
+    /// reads it as a tuple of comparisons (`(a = new X < A, B > (c))`); not read.
+    fn assigned_generic_creation_fills(&mut self, close: usize) -> bool {
+        if !(self.is_ident_at(1) && self.kind_at(2) == T::Eq && self.is_word_at(3, w::NEW)) {
+            return false;
+        }
+        let mut k = 4;
+        while self.is_ident_at(k) && self.kind_at(k + 1) == T::Dot {
+            k += 2;
+        }
+        if !self.is_ident_at(k) || self.kind_at(k + 1) != T::Lt {
+            return false;
+        }
+        let Some(e) = self.scan_type_args(k + 1) else { return false };
+        let commas = (k + 2..e).any(|j| self.kind_at(j) == T::Comma);
+        commas && self.kind_at(e) == T::LParen && self.kind_at(e + 1) != T::RParen && self.matching(e).is_some_and(|m| m + 1 == close || (self.kind_at(m + 1) == T::LBrace && self.matching(m + 1).is_some_and(|b| b + 1 == close)))
+    }
+
     /// Whether `(` … `)` (closing `close` tokens ahead) is a cast to an array type with sizes
     /// (`(a[0])`, `(a.b[i][j])`): a dotted name, `[…]`s (one at least with a size), then an operand
     /// or a `[`.
@@ -376,6 +402,9 @@ impl<'a> P<'a> {
         let close = self.matching(0).ok_or_else(|| Refusal::Parse(self.tok().start))?;
         if self.kind_at(close + 1) == T::FatArrow && self.i + close + 1 != self.arm_arrow {
             return self.lambda(s);
+        }
+        if self.assigned_generic_creation_fills(close) {
+            return self.refuse();
         }
         if self.sized_cast_ahead(close) {
             // `(a[0])[1]`, `(a[i]) - b`: a cast to an array type with sizes, to tree-sitter.
@@ -774,6 +803,13 @@ impl<'a> P<'a> {
     }
 
     /// `bracketed_argument_list` (as `kind`: an element binding's too): `[` arguments `]`.
+    /// Whether an attribute target's word (`field`, `type`…) follows the `[` here. Where an
+    /// element binding's `[` may also open an attribute list (`?[`, an initializer's `[k] =`),
+    /// tree-sitter's lexer takes the word as its keyword: an error.
+    fn attribute_target_next(&mut self) -> bool {
+        self.kind_at(1) == T::Name && matches!(self.word_at(1), w::FIELD | w::METHOD | w::PARAM | w::PROPERTY | w::TYPE | w::TYPEVAR)
+    }
+
     pub(super) fn bracketed_arguments(&mut self, kind: K, field: u8, class: u8) -> R<N> {
         let n = self.open(kind, field, class)?;
         self.list(kind, T::RBracket, true, true, |p| p.argument())?;
@@ -1059,6 +1095,9 @@ impl<'a> P<'a> {
                 return p.refuse();
             }
             if p.peek() == T::LBracket && p.element_binding_ahead() {
+                if p.attribute_target_next() {
+                    return p.refuse();
+                }
                 // `[k] = v`: an element binding as an assignment's left.
                 let b = p.bracketed_arguments(K::ElementBindingExpression, f::NONE, C_NONE)?;
                 let Some(op) = assignment(p.peek()) else { return p.refuse() };
@@ -1287,6 +1326,10 @@ impl<'a> P<'a> {
         let src = self.src;
         let (start, end) = (t.start as usize, t.end as usize);
         let Some((dollars, verbatim, quotes, content)) = self.lx.interpolation_start(start) else { return self.refuse() };
+        // `$""`: tree-sitter-c-sharp's scanner reads no content and fails there, an error.
+        if !verbatim && quotes == 1 && content + 1 == end {
+            return self.refuse();
+        }
         let n = self.open_in(K::InterpolatedStringExpression, s)?;
         self.bump()?;
         let open_quote = content - quotes;
@@ -1476,14 +1519,16 @@ impl<'a> P<'a> {
                     self.leaf(K::TOrderby, f::NONE, C_NONE)?;
                     loop {
                         self.query_expr()?;
-                        if self.is_word(w::ASCENDING) || self.is_word(w::DESCENDING) {
+                        // A direction is a token in the gap: the `,` after it is stored.
+                        let direction = self.is_word(w::ASCENDING) || self.is_word(w::DESCENDING);
+                        if direction {
                             let k = keyword(self.tok().word).expect("a keyword");
                             self.leaf(k, f::NONE, C_NONE)?;
                         }
                         if self.peek() != T::Comma {
                             break;
                         }
-                        self.tk(K::OrderByClause, K::TComma)?;
+                        self.gap_tk(K::OrderByClause, K::TComma, direction)?;
                     }
                     self.close(c);
                 }
@@ -1552,6 +1597,10 @@ impl<'a> P<'a> {
     fn from_clause(&mut self) -> R<()> {
         let c = self.open(K::FromClause, f::NONE, C_NONE)?;
         self.tk(K::FromClause, K::TFrom)?;
+        // `from _ in`: tree-sitter takes `_` as no name, an error.
+        if self.is_word(w::UNDERSCORE) {
+            return self.refuse();
+        }
         if !(self.is_ident_at(0) && self.is_word_at(1, w::IN)) {
             self.ty(slot(f::TYPE, Ctx::Type))?;
         }

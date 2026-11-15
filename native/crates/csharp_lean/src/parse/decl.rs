@@ -91,7 +91,9 @@ impl<'a> P<'a> {
         let t = self.tok();
         match t.kind {
             T::PpIf if self.pp_attributes_end(0).is_none() => {
-                self.preproc_if(BARE, Items::TopLevel)?;
+                // In an `#if`, a nested `#if` is a `statement`'s to tree-sitter.
+                let s = if in_if { slot(f::NONE, Ctx::Stmt) } else { BARE };
+                self.preproc_if(s, Items::TopLevel)?;
                 return Ok(());
             }
             T::LBracket if (self.is_word_at(1, w::ASSEMBLY) || self.is_word_at(1, w::MODULE)) && self.kind_at(2) == T::Colon => {
@@ -1057,18 +1059,20 @@ impl<'a> P<'a> {
         self.attribute_lists()?;
         // The first parameter alone (`(ref` reads as an expression's start too).
         let bare_lambda = std::mem::take(&mut self.bare_lambda);
+        let mut modifiers = 0;
         loop {
             let word = self.word_at(0);
             if !matches!(word, w::THIS | w::SCOPED | w::REF | w::OUT | w::IN | w::READONLY) {
                 break;
             }
             // `scoped` as a name; `scoped` before a name type (a `scoped_type`); `ref` first in a
-            // bare lambda's parameter (a `ref_type`), as tree-sitter reads them.
+            // bare lambda's parameter (a `ref_type`), but before `readonly` (two modifiers), as
+            // tree-sitter reads them.
             let next = self.peek_at(1);
             if word == w::SCOPED && (matches!(next.kind, T::Comma | T::RParen | T::Eq) || (next.kind == T::Name && !w::is_reserved(next.word) && !matches!(self.kind_at(2), T::Comma | T::RParen | T::Eq))) {
                 break;
             }
-            if word == w::REF && bare_lambda {
+            if word == w::REF && bare_lambda && modifiers == 0 && !self.is_word_at(1, w::READONLY) {
                 break;
             }
             // `(in T x, …) =>` and `(out T x, …) =>`: tree-sitter reads a tuple and fails.
@@ -1076,8 +1080,14 @@ impl<'a> P<'a> {
                 return self.refuse();
             }
             self.leaf(K::Modifier, f::NONE, C_NONE)?;
+            modifiers += 1;
         }
         let typed = !(self.is_ident() && matches!(self.kind_at(1), T::Comma | T::RParen | T::RBracket | T::Eq));
+        // A name alone after modifiers (`(ref readonly p) =>`): tree-sitter takes it as the type
+        // and inserts the name, an error.
+        if modifiers > 0 && !typed {
+            return self.refuse();
+        }
         if typed {
             self.ty(slot(f::TYPE, Ctx::Type))?;
         }
