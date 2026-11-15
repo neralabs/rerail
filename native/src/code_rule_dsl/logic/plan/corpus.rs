@@ -5313,7 +5313,9 @@ fn run_observed(
         let rounds_space_of = move |key: &[u8; 32]| kept_strata::part_space(&rounds_root, &format!("{rounds_phase}/{}", crate::content_store::observe::hex(key)));
         // What the journal names as changed since the last run kept its rounds (decision 0105): the roots and cursors
         // recorded with them, the paths named since, and the digest of the file system's answers kept with them.
-        let rounds_record = round.as_ref().map(|r| format!("cone-rounds:{}", crate::content_store::observe::hex(&rounds_space_of(&retain::key(&[0; 32], &r.program)))));
+        // The part key the rounds' frames are kept under (`part_keys`), which their record names for collection.
+        let rounds_part = round.as_ref().map(|r| retain::key(&[0; 32], &r.program));
+        let rounds_record = rounds_part.as_ref().map(|k| format!("cone-rounds:{}", crate::content_store::observe::hex(&rounds_space_of(k))));
         let rounds_journal: Option<(Vec<(std::path::PathBuf, String)>, Vec<std::path::PathBuf>, u64)> = rounds_record.as_ref().and_then(|key| {
             observe(|o| {
                 let (read, _) = o.run_record(key)?;
@@ -5783,7 +5785,10 @@ fn run_observed(
                 if !at.is_empty() {
                     let cursors: Vec<&str> = at.iter().map(|(_, c)| c.as_str()).collect();
                     let roots: Vec<String> = at.iter().map(|(r, _)| r.to_string_lossy().into_owned()).collect();
-                    o.put_run_record(key, &format!("{}\n{}\n{world}", cursors.join("\t"), roots.join("\t")), &[]);
+                    // With the part key its frames are kept under, which the run's manifest names: collection drops
+                    // the record once no kept manifest does (`observe::collect`).
+                    let plan = rounds_part.as_ref().map(|k| format!("\nplan\t\t{}", crate::content_store::observe::hex(k))).unwrap_or_default();
+                    o.put_run_record(key, &format!("{}\n{}\n{world}{plan}", cursors.join("\t"), roots.join("\t")), &[]);
                 }
             });
         }

@@ -1522,7 +1522,9 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 if let Some(path) = key.strip_prefix("git-files:") {
                     return !held(Path::new(path));
                 }
-                if key.starts_with(CUTOFF) {
+                // A record of what a run kept goes with its plans: a whole-run cutoff's, the constants' and the cone's
+                // rounds' name theirs (`plan` lines); one that names none is from before they did.
+                if key.starts_with(CUTOFF) || PLANNED.iter().any(|p| key.starts_with(p)) {
                     return !consulted.lines().filter_map(|l| l.strip_prefix("plan\t\t")).filter_map(unhex).any(|plan| live(&plan));
                 }
                 // A cutoff's record from before they were prefixed: its key alone, a digest.
@@ -1557,6 +1559,10 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
 
 /// The prefix of a whole-run cutoff's record (`reuse::CUTOFF`, in the engine).
 const CUTOFF: &str = "cutoff:";
+
+/// The prefixes of the other records that name the plans they are kept for (`plan\t\t<hex>` lines): the run's
+/// constants (`corpus::constants`) and the cone's rounds (`corpus`, decision 0145).
+const PLANNED: &[&str] = &["constants:", "cone-rounds:"];
 
 /// `cursor_key`, of a volume given as its hex.
 fn cursor_key_text(volume: &str, root: &Path) -> String {
@@ -2286,7 +2292,12 @@ mod tests {
         record("cutoff:kept", &format!("rule\tx.rr\tab\nplan\t\t{}\nplan\t\t{}", hex(&dead), hex(&live)));
         record("cutoff:dead", &format!("plan\t\t{}", hex(&dead)));
         record(&"ab".repeat(32), "rule\tx.rr\tab");
+        // The constants' and the cone's rounds' records go with their plans too; one naming none is from before.
         record("constants:k", "");
+        record("constants:live", &format!("doc\ta.py\tab\nplan\t\t{}", hex(&live)));
+        record("constants:dead", &format!("doc\ta.py\tab\nplan\t\t{}", hex(&dead)));
+        record("cone-rounds:live", &format!("1\t2\n/r\t/s\n7\nplan\t\t{}", hex(&live)));
+        record("cone-rounds:dead", &format!("1\t2\n/r\t/s\n7\nplan\t\t{}", hex(&dead)));
         // An output directory still there is kept; one removed goes (decision 0246).
         db.execute("INSERT INTO observer_meta VALUES (?1, 1)", [format!("{OWN_OUTPUT}{}", s(&inner))]).unwrap();
         db.execute("INSERT INTO observer_meta VALUES (?1, 1)", [format!("{OWN_OUTPUT}{}", s(&gone))]).unwrap();
@@ -2300,10 +2311,10 @@ mod tests {
         assert_eq!(answers, [s(&fresh.join("d.py")), s(&root.join("a.py"))]);
         let mut records = keys("SELECT key FROM run_record");
         records.sort();
-        assert_eq!(records, [format!("{CANONICAL}{}", s(&fresh)), format!("{CANONICAL}{}", s(&root.join("a.py"))), "constants:k".to_owned(), "cutoff:kept".to_owned()]);
+        assert_eq!(records, [format!("{CANONICAL}{}", s(&fresh)), format!("{CANONICAL}{}", s(&root.join("a.py"))), "cone-rounds:live".to_owned(), "constants:live".to_owned(), "cutoff:kept".to_owned()]);
         let n = usize::from(alias.is_some());
         assert_eq!(keys(&format!("SELECT key FROM observer_meta WHERE key LIKE '{OWN_OUTPUT}%'")), [format!("{OWN_OUTPUT}{}", s(&inner))]);
-        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 3, outputs: 1 });
+        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 6, outputs: 1 });
         assert_eq!(std::fs::metadata(real.join("store.files-wal")).map_or(0, |m| m.len()), 0, "the WAL folded in");
         drop(db);
         let _ = std::fs::remove_dir_all(&given);

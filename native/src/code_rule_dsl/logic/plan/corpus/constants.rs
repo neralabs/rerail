@@ -193,7 +193,7 @@ fn derive(
 fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTreeSet<String>) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    h.update(b"rerail.constants/v2\0");
+    h.update(b"rerail.constants/v3\0");
     for p in programs {
         h.update(p.as_bytes());
         h.update([0]);
@@ -221,27 +221,24 @@ fn record_key(key: &str) -> String {
     format!("constants:{key}")
 }
 
-/// What the constants of a key are kept as: each relation's rows, and the plans the run that derived them used.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Kept {
-    rows: std::collections::BTreeMap<String, String>,
-    plans: Vec<[u8; 32]>,
-}
-
-/// The constants kept under `key`, when what their run consulted is as it was, with the plans their run used.
+/// The constants kept under `key`, when what their run consulted is as it was, with the plans their run used: the
+/// record's `plan` lines, for collection (`observe::collect` drops the record once none is live) and for the outer
+/// run's manifest.
 fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<(Derived, Vec<[u8; 32]>)>> {
-    let Some((consulted, record)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
-    let consulted = super::reuse::decode_consulted(&consulted);
+    let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
+    let (plans, consulted): (Vec<_>, Vec<_>) = super::reuse::decode_consulted(&consulted).into_iter().partition(|c| c.0 == "plan");
+    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
     if !super::world::World::new(root, prog).still(&consulted) {
         return Ok(None);
     }
-    let kept: Kept = serde_json::from_slice(&record).map_err(|e| super::super::Error::Plan(e.to_string()))?;
-    Ok(Some(((kept.rows, consulted), kept.plans)))
+    let rows = serde_json::from_slice(&rows).map_err(|e| super::super::Error::Plan(e.to_string()))?;
+    Ok(Some(((rows, consulted), plans)))
 }
 
 fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted: &[(String, String, String)], plans: &[[u8; 32]]) -> Result<()> {
-    let record = serde_json::to_vec(&Kept { rows: rows.clone(), plans: plans.to_vec() }).unwrap_or_default();
-    let consulted = super::reuse::encode_consulted(consulted);
-    super::observe(|o| o.put_run_record(&record_key(key), &consulted, &record));
+    let rows = serde_json::to_vec(rows).unwrap_or_default();
+    let mut record = consulted.to_vec();
+    record.extend(plans.iter().map(|p| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(p))));
+    super::observe(|o| o.put_run_record(&record_key(key), &super::reuse::encode_consulted(&record), &rows));
     Ok(())
 }
