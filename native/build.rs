@@ -36,7 +36,7 @@ fn main() {
 /// goes through the farm's wrapper, the one compiler cache every worktree shares: another wrapper,
 /// or none, would compile again what the other worktrees compiled. The farm's `setup` makes it
 /// the machine's (`~/.cargo/config.toml`); this stops a build that overrode it (`RUSTC_WRAPPER`
-/// exported). Relax (`RELAX_STD` set) builds without one or with itself as the wrapper, and `RERAIL_FARM_ANY_ENV=1` allows any
+/// exported). Relax (`RELAX_STD` set) builds with its own (itself, or none), and `RERAIL_FARM_ANY_ENV=1` allows any
 /// (a measurement of the compiler itself). Elsewhere (CI, a machine without the farm) it does nothing.
 fn check_compiler_cache() {
     for name in ["RUSTC_WRAPPER", "RERAIL_FARM_ANY_ENV", "RELAX_STD"] {

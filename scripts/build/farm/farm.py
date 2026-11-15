@@ -20,7 +20,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 6
+VERSION = 7
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -343,6 +343,50 @@ def findings_path(checkout):
 ADVICE_SECONDS = 3 * 3600
 
 
+# Options of `cargo test` and `cargo nextest run` that take a value (so the value is no test filter).
+VALUED = {"-p", "--package", "--profile", "--features", "-F", "-j", "--jobs", "--target", "--target-dir",
+          "--manifest-path", "--bin", "--test", "--example", "--bench", "--color", "--config", "-Z",
+          "--message-format", "--partition", "--test-threads", "--retries", "--archive-file", "--cargo-profile"}
+
+
+def whole_tier(pid):
+    """The command line of cargo process `pid` when it runs a whole test tier here (`cargo test` or
+    `cargo nextest run` with no filter, or nextest's gate profile), else None."""
+    def ps(pid):
+        try:
+            out = subprocess.run(["ps", "-o", "ppid=,args=", "-p", str(pid)], capture_output=True, text=True,
+                                 timeout=5).stdout.split()
+        except (OSError, subprocess.TimeoutExpired):
+            return None, []
+        return (out[0], out[1:]) if out else (None, [])
+    parent, words = ps(pid)
+    # nextest builds through `cargo test --no-run`: its own command line, above, has the filter
+    if "--no-run" in words and parent:
+        _, words = ps(parent)
+        if "nextest" not in words:
+            return None
+    for i, w in enumerate(words):
+        if w == "test" or (w == "run" and "nextest" in words[:i]):
+            rest = words[i + 1:]
+            break
+    else:
+        return None
+    if "nextest" in words and any(r == "gate" or r == "--profile=gate" for r in rest):
+        return " ".join(words)
+    j = 0
+    while j < len(rest):
+        r = rest[j]
+        if r == "--" or r in ("-E", "--filterset", "--filter-expr") or r.startswith(("-E=", "--filterset=")):
+            return None  # a filter (after `--`, or an expression)
+        if r in VALUED:
+            j += 2
+            continue
+        if not r.startswith("-"):
+            return None  # a test name filter
+        j += 1
+    return " ".join(words)
+
+
 def advise(checkout, rustc):
     """At the first compile of each cargo command (once per cargo process): what this build does
     that it should not, on stderr, where the agent running it reads it. Its own nice value, a rustc
@@ -382,6 +426,13 @@ def advise(checkout, rustc):
         lines.append(f"this build runs rustc {m.group(1)}, but the checkout pins {pinned.group(1)}: its crates are cached "
                      "apart from every other worktree's. Use rustup's cargo (`which cargo` is ~/.cargo/bin/cargo), "
                      "without `cargo +VERSION` or RUSTUP_TOOLCHAIN")
+    tier = whole_tier(cargo)
+    if tier and not os.environ.get("RERAIL_FARM_TESTS_HERE"):
+        free = [h for h in usable("tests") if spare(h) >= 4]
+        if free:
+            lines.append(f"this command runs a whole test tier here while {free[0]['name']} has "
+                         f"{spare(free[0]):.0f} cores to spare: `scripts/dev/test-remote -- {tier.split(' ', 1)[-1]}` "
+                         "runs it there (RERAIL_FARM_TESTS_HERE=1 says it must run here)")
     try:
         f = findings_path(checkout)
         if time.time() - os.stat(f).st_mtime < 2 * TIDY_SECONDS:
@@ -583,12 +634,12 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
     script = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1;'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
-              " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
+              " sysctl -n vm.loadavg; mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
     try:
         out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
         out = None
-    if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 4:
+    if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 5:
         if route(name) and not fell_back:
             # The address that reached it over its link is gone (it was renumbered, or the link
             # is down): back to what its name resolves to.
@@ -605,7 +656,11 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = "its answer could not be read"
         return h
     arrival = h["arrival"] = lines[3].strip()
-    h["mounts"] = [m for m in lines[4:] if m]
+    try:
+        h["load"] = float(lines[4].strip("{} ").split()[0])
+    except (ValueError, IndexError):
+        h["load"] = None
+    h["mounts"] = [m for m in lines[5:] if m]
     started = time.time()
     try:
         subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
@@ -672,16 +727,24 @@ def health(host, fresh=False):
         lock.release()
 
 
+def spare(host):
+    """The cores `host` has to spare now: its capacity (`capacity`) less its load average when last
+    probed. Only an order between hosts (a test command goes to the one with most to spare), never
+    a refusal: macOS's background work raises the load of an idle machine too."""
+    return capacity(host) - (health(host).get("load") or 0)
+
+
 def usable(kind=None):
-    """The enabled hosts that are usable now, most cores first; `kind` ("mirror", "tests") keeps those
-    the configuration names for it."""
+    """The enabled hosts that are usable now, the most cores to spare first (`spare`: a host busy
+    with its own work comes after an idle one with fewer cores); `kind` ("mirror", "tests") keeps
+    those the configuration names for it."""
     out = []
     for host in hosts():
         if not host.get("enabled", True) or (kind and not host.get(kind, True)):
             continue
         if health(host).get("ok"):
             out.append(host)
-    return sorted(out, key=lambda h: -h.get("cores", 0))
+    return sorted(out, key=lambda h: -spare(h))
 
 
 def capacity(host):

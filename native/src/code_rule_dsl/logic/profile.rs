@@ -1353,12 +1353,10 @@ pub fn decisions() -> BTreeMap<(String, String), u64> {
     state().decisions.clone()
 }
 
-/// The decisions made since `before` (`decisions`), with how often: what a step decided, for a run that reuses the
-/// step's result to state again (`add_decisions`).
+/// The decisions made since `before` (`decisions`), with how often: what a step decided.
 pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
     decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
 }
-
 
 /// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
 /// refused, by reason (no stratum is moved from the device to the CPU without a line here).
@@ -1427,6 +1425,12 @@ pub fn fallback(key: &str, class: String) {
         return;
     }
     state().fallbacks.insert(key.to_owned(), class);
+}
+
+/// The strata that fell back to SQLite so far, by key: the kind of literal declined (a test's check that a form runs
+/// natively).
+pub fn declined() -> BTreeMap<String, String> {
+    state().fallbacks.clone()
 }
 
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's

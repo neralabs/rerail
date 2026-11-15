@@ -309,7 +309,121 @@ kernel void b_efef(ARGS) {
     }
     out[t] = v;
 }
+// ---- F16 (E29): format 16 read in place, as stored (0156 §1–2) ----
+inline ulong rd_v64(thread Rd& r) { ulong lo = r.val(); return lo | (ulong(r.val()) << 32); }
+
+// A side list in parts of 1024 nodes (4 blocks of 256): each part the blocks' u16 ends, the offsets, the values.
+struct PartsC {
+    uint vw, blocks; device const uint* base; device const uchar* b;
+    ulong get(uint i) const { uint vb; uint k = find(i, vb); return value(vb, k); }
+    // Entry k's value, its block's values starting at byte vb.
+    ulong value(uint vb, uint k) const { return extract((device const ulong*)b, ulong(vb + k * vw) * 8, vw * 8); }
+    // The entry of node i (listed) or of the first listed node after it in its block; vb: the block's values.
+    uint find(uint i, thread uint& vb) const {
+        uint blk = i >> 8, p = blk >> 2, j = blk & 3;
+        uint at = base[p];
+        uint nsub = min(4u, blocks - p * 4);
+        device const ulong* w = (device const ulong*)b;
+        uint s = j == 0 ? 0 : uint(extract(w, ulong(at + 2 * (j - 1)) * 8, 16));
+        uint e = uint(extract(w, ulong(at + 2 * j) * 8, 16));
+        uint total = uint(extract(w, ulong(at + 2 * (nsub - 1)) * 8, 16));
+        uint offs = at + 2 * nsub;
+        uint key = i & 255;
+        while (s < e) { uint m = (s + e) >> 1; if (uint(b[offs + m]) < key) s = m + 1; else e = m; }
+        vb = offs + total;
+        return s;
+    }
+};
+inline PartsC rd_parts(thread Rd& r) { PartsC x; x.vw = r.val(); x.blocks = r.val(); x.base = r.arr<uint>(); x.b = r.arr<uchar>(); return x; }
+
+// Codes: a byte below the cutoff is the number; past it, the prefix and the side list's low part.
+struct R8 {
+    uint cut, per; device const uchar* b; PartsC parts;
+    uint get(uint i) const { uint v = b[i]; return v < cut ? v : cut + (v - cut) * per + uint(parts.get(i)); }
+};
+inline R8 rd_r8(thread Rd& r) { R8 x; x.cut = r.val(); x.per = r.val(); x.b = r.arr<uchar>(); x.parts = rd_parts(r); return x; }
+
+// A whole-byte-width array; a value too wide is all ones, listed in its block's side list.
+struct EscC {
+    uint w; device const ulong* words; uint nf; uint fw[3]; ulong fm[3]; ulong low; PartsC parts;
+    ulong field(uint i) const {
+        switch (w) {
+            case 8: return ((device const uchar*)words)[i];
+            case 16: return ((device const ushort*)words)[i];
+            case 32: return ((device const uint*)words)[i];
+            default: return extract(words, ulong(i) * w, w);
+        }
+    }
+    ulong get(uint i) const { ulong v = field(i); return v != mask(w) ? v : parts.get(i); }
+    // The sum of from..to (one block, under K values): each word's fields folded into their sum, then each
+    // escape's value in place of its all-ones field.
+    ulong sum(uint from, uint to) const {
+        uint left = to > from ? to - from : 0, per = 64 / w, f = from;
+        ulong s = 0, any = 0;
+        while (left > 0) {
+            uint t = min(left, per), tw = t * w;
+            ulong v = extract(words, ulong(f) * w, tw);
+            ulong fmk = mask(tw), c = ~v & fmk;
+            any |= ~(((c & low) + low) | c | low) & fmk;
+            for (uint k = 0; k < nf; k++) v = (v & fm[k]) + ((v >> fw[k]) & fm[k]);
+            s += v; f += t; left -= t;
+        }
+        if (any != 0) {
+            ulong esc = mask(w);
+            for (uint j = from; j < to; j++) if (field(j) == esc) s += parts.get(j) - esc;
+        }
+        return s;
+    }
+};
+inline EscC rd_esc(thread Rd& r) {
+    EscC x; x.w = r.val(); x.words = r.arr<ulong>(); x.nf = r.val();
+    for (uint k = 0; k < 3; k++) { x.fw[k] = r.val(); x.fm[k] = rd_v64(r); }
+    x.low = rd_v64(r); x.parts = rd_parts(r);
+    return x;
+}
+
+struct F16C {
+    uint n; R8 code; EscC slot, gap, len; Packed ck;
+    // Subtree end: an inner node's slot is its size << 1; a leaf's is odd.
+    uint end(uint i) const { ulong v = slot.get(i); return (v & 1) == 0 ? i + uint(v >> 1) : i + 1; }
+    // Parent + 1 (0: none): the node before is the parent (tag 0), or a leaf naming the parent distance
+    // (tag 3) or its previous sibling (tag 1); at most K − 1 sibling steps.
+    ulong parent1(uint i) const {
+        if (i == 0) return 0;
+        uint j = i;
+        for (;;) {
+            ulong v = slot.get(j - 1);
+            if ((v & 1) == 0) return j;
+            if ((v & 2) != 0) return j - uint(v >> 2) + 1;
+            j -= uint(v >> 2);
+        }
+    }
+    // A checkpoint every 8 nodes, the gaps after it.
+    ulong start(uint i) const { uint c = i >> 3; return ck.get(c) + gap.sum((c << 3) + 1, i + 1); }
+};
+inline F16C rd_f16(thread Rd& r) {
+    F16C x; x.n = r.val(); x.code = rd_r8(r); x.slot = rd_esc(r); x.gap = rd_esc(r); x.len = rd_esc(r); x.ck = rd_packed(r);
+    return x;
+}
+
+kernel void f16_q(ARGS) {
+    if (t >= nq) return;
+    Rd r = { buf, P, 0 };
+    F16C x = rd_f16(r);
+    uint i = ids[t];
+    ulong v = 0;
+    switch (q) {
+        case 0: case 1: v = x.code.get(i); break;
+        case 2: v = x.start(i); break;
+        case 3: v = x.start(i) + x.len.get(i); break;
+        case 4: v = x.end(i); break;
+        case 5: v = x.parent1(i); break;
+        case 6: { uint pe = x.end(i); uint c = i + 1; uint k = 0; while (c < pe) { k++; c = x.end(c); } v = k; break; }
+    }
+    out[t] = v;
+}
 "#;
+
 
 pub const QUESTIONS: [&str; 7] = ["code, in order (a sweep)", "code at random", "start at random", "end at random", "subtree end at random", "parent at random", "children of a node, at random"];
 
@@ -408,6 +522,23 @@ pub fn all(tree: &crate::tree::Tree, codes: &crate::inplace::Codes, order: &[usi
     let be = B::<EfEf>::new(tree, codes);
     let xf = XF::<ForLen>::new(tree, codes);
     let mf = XF::<PredGap>::new(tree, codes);
+    // Format 16 (E29) on the same forest, its choices learned on it as one language; the kernel answers a
+    // code with its number (a rule tests numbers), so the check maps the reader's codes to numbers.
+    let cols = crate::inplace::Cols::of_tree(tree, codes);
+    let lang = crate::f16::F16Lang::learn(codes, codes.table.len(), std::iter::once(&cols)).marked(0);
+    let f = crate::f16::F16::new(&cols, &lang);
+    drop(cols);
+    eprintln!("F16 on the forest: widths (slot, gap, length, checkpoint) {:?} bits, cutoff {}, past the cutoff / escaped (codes, slots, gaps, lengths) {:?}", f.widths(), lang.cut, f.escapes());
+    let f16 = {
+        let ids: Vec<usize> = (0..n).collect();
+        let mut want = answers(&f, &ids, order);
+        for q in 0..2 {
+            for v in want[q].iter_mut() {
+                *v = u64::from(lang.num[*v as usize]);
+            }
+        }
+        ("F16", run("f16_q", &f.gpu_image(), &ids, order, &want)?)
+    };
     Ok(vec![
         one("X", "x_forlen", &x, x.gpu_image(), order, n)?,
         one("M", "x_predgap", &m, m.gpu_image(), order, n)?,
@@ -415,6 +546,7 @@ pub fn all(tree: &crate::tree::Tree, codes: &crate::inplace::Codes, order: &[usi
         one("BE", "b_efef", &be, be.gpu_image(), order, n)?,
         one("XF", "xf_forlen", &xf, xf.gpu_image(), order, n)?,
         one("MF", "xf_predgap", &mf, mf.gpu_image(), order, n)?,
+        f16,
     ])
 }
 

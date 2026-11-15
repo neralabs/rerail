@@ -1318,7 +1318,10 @@ fn relation(px: &Patterns, prog: &mut Program, k: &str, sub_: &Obj, v: &str, vs:
     let only_regex = keys == vec!["regex"] || (keys.len() == 2 && keys.contains(&"regex") && keys.contains(&"not") && not_kind_of_no_token());
     // A field's token (`for_in_statement`'s `operator`, `in` or `of`) has no node, and `op` rows name no field: its
     // token rules read any of n's tokens the regex matches. The stored-child rule keeps the field.
-    let token_field = f_truthy && k == "has" && is("neighbor");
+    // Only for a regex that names whole tokens (`^of$`): an open one (`.`, a return type is there) would hold of any
+    // token of n, `def` or `:`, so it reads the field's stored child alone.
+    let whole_token = sub_.get("regex").and_then(Value::as_str).is_some_and(|r| r.starts_with('^') && r.ends_with('$'));
+    let token_field = f_truthy && k == "has" && is("neighbor") && whole_token;
     // A sibling search that stops at the first sibling not a comment (`stopBy: {not: {kind: comment}}`) is the
     // neighbor test past comments: main's `precedes: {stopBy: {not: {kind: comment}}, regex: "^\\)$"}`, an object
     // that is a call's last argument. Its token is read as the neighbor's; the stored-sibling rule keeps the stop.

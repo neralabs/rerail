@@ -150,7 +150,10 @@ What an agent does wrong is printed in its own build output, not left for someon
 first compile of each cargo command the wrapper prints, as `warning: rerail-farm:` lines: a nice
 value under 19, a rustc other than the checkout pins, and the checkout's latest `diagnose --brief`
 findings (another toolchain or cargo configuration than the active worktrees, profile settings that
-differ, scripts that set the variables builds share), each with what to do. The hourly job writes
+differ, scripts that set the variables builds share), each with what to do. A cargo command that
+runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate
+profile) while a test host has 4 cores or more to spare is told the `test-remote` command that runs
+it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). The hourly job writes
 those findings after the cleaner (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
 its message. A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
@@ -171,7 +174,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | free disk a host needs (default 40) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
-| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported |
+| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh, so they fall when either Mac is busy (an ssh round trip of 34 ms and 2 MB/s on a link that pings at 0.3 ms): a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and

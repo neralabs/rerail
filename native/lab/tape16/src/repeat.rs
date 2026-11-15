@@ -48,27 +48,82 @@ pub struct Esc {
     folds: Vec<(u32, u64)>,
     /// Each field's low w − 1 bits, over a word's `per` fields (for the exact all-ones test).
     low: u64,
+    /// E27: the escapes in parts, read in place (`use_parts`); start/off/val are then empty.
+    parts: Option<crate::code8::Parts>,
+    count: usize,
 }
 
 impl Image for Esc {
     fn image(&self, out: &mut Vec<u8>) {
         out.push(self.w as u8);
         raw(out, &self.words);
+        if let Some(p) = &self.parts {
+            raw(out, &p.base);
+            out.extend_from_slice(p.stored());
+            return;
+        }
         raw(out, &self.start);
         raw(out, &self.off);
         self.val.image(out);
     }
 }
 
+/// The first `len` bytes of packed words, little-endian.
+pub fn le_bytes(words: &[u64], len: usize) -> Vec<u8> {
+    let mut out: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    out.truncate(len);
+    out
+}
+
 /// The width costing least (every slot at `w` bits, plus each escape's offset byte and value) among those
 /// escaping at most `share` of the values.
 pub fn esc_width(vals: impl Iterator<Item = u64>, share: f64) -> u32 {
-    let mut hist = [0u64; 66];
-    let mut n = 0u64;
-    for v in vals {
-        hist[bits_for(v) as usize] += 1;
-        n += 1;
+    let mut hist = Hist::default();
+    hist.add(vals);
+    hist.width(share)
+}
+
+/// The values' bit lengths, gathered over many files (`esc_width` without holding the values).
+#[derive(Clone, Copy)]
+pub struct Hist {
+    hist: [u64; 66],
+    n: u64,
+}
+
+impl Default for Hist {
+    fn default() -> Self {
+        Hist { hist: [0; 66], n: 0 }
     }
+}
+
+impl Hist {
+    pub fn add(&mut self, vals: impl Iterator<Item = u64>) {
+        for v in vals {
+            self.hist[bits_for(v) as usize] += 1;
+            self.n += 1;
+        }
+    }
+    /// `esc_width`'s choice over the values added.
+    pub fn width(&self, share: f64) -> u32 {
+        width_of(&self.hist, self.n, share)
+    }
+    /// The same choice among whole bytes (8, 16, 24, … bits): the width costing least, escapes included.
+    pub fn width_bytes(&self) -> u32 {
+        let top = (0..=64).rev().find(|&b| self.hist[b] > 0).unwrap_or(0) as u32;
+        let mut best = (u64::MAX, top.max(1).next_multiple_of(8));
+        for w in (8..=top.max(8).next_multiple_of(8)).step_by(8) {
+            // A value longer than w bits escapes (as `width_of` counts it).
+            let above: u64 = self.hist[(w as usize + 1).min(65)..].iter().sum();
+            let cost = self.n * u64::from(w) + above * (8 + u64::from(top));
+            if cost < best.0 {
+                best = (cost, w);
+            }
+        }
+        best.1
+    }
+}
+
+fn width_of(hist: &[u64; 66], n: u64, share: f64) -> u32 {
     let top = (0..=64).rev().find(|&b| hist[b] > 0).unwrap_or(0) as u32;
     // A value of exactly 2^w − 1 escapes too; counted as above w here, a small overestimate.
     let (mut best, mut above) = ((u64::MAX, top.max(1)), 0u64);
@@ -118,18 +173,60 @@ impl Esc {
         for f in 0..per {
             low |= ((1u64 << (w - 1)) - 1) << (f * w as usize);
         }
-        Esc { w, words, start, off, val: Packed::new(&val), per, folds, low }
+        let count = off.len();
+        Esc { w, words, start, off, val: Packed::new(&val), per, folds, low, parts: None, count }
     }
     #[inline(always)]
     pub fn get(&self, i: usize) -> u64 {
-        let v = extract(&self.words, i * self.w as usize, self.w);
+        // At a whole-byte width a field is one load (little-endian words: field i is byte or half-word i), as
+        // code generated for the width reads it.
+        let v = match self.w {
+            // SAFETY: the words hold every field, and one word of padding.
+            8 => u64::from(unsafe { *self.words.as_ptr().cast::<u8>().add(i) }),
+            16 => u64::from(unsafe { std::ptr::read_unaligned(self.words.as_ptr().cast::<u16>().add(i)) }),
+            _ => extract(&self.words, i * self.w as usize, self.w),
+        };
         if v != (1u64 << self.w) - 1 {
             return v;
         }
         self.escaped(i)
     }
+    /// E27: keep the escapes in parts of `code8::PART` nodes, as stored (values at whole bytes), and read them
+    /// there.
+    pub fn use_parts(mut self, n: usize) -> Esc {
+        let vb = (self.val.w as usize).div_ceil(8).max(1);
+        let p = crate::code8::Parts::new(&self.start, &self.off, |k| self.val.get(k), vb, n);
+        self.start = Vec::new();
+        self.off = Vec::new();
+        self.val = Packed::new(&[]);
+        self.parts = Some(p);
+        self
+    }
+    /// Block b's escape offsets, and entry k's value.
+    #[inline(always)]
+    fn list(&self, b: usize) -> (&[u8], usize) {
+        match &self.parts {
+            Some(p) => p.block(b),
+            None => {
+                let (s, e) = (self.start[b] as usize, self.start[b + 1] as usize);
+                (&self.off[s..e], s)
+            }
+        }
+    }
+    #[inline(always)]
+    fn list_val(&self, at: usize, k: usize) -> u64 {
+        match &self.parts {
+            Some(p) => p.value(at + k * p.vw),
+            None => self.val.get(at + k),
+        }
+    }
     #[cold]
     fn escaped(&self, i: usize) -> u64 {
+        if self.parts.is_some() {
+            let (offs, at) = self.list(i / BLOCK);
+            let k = offs.binary_search(&((i % BLOCK) as u8)).expect("an escape is listed");
+            return self.list_val(at, k);
+        }
         let b = i / BLOCK;
         let (s, e) = (self.start[b] as usize, self.start[b + 1] as usize);
         let j = (i % BLOCK) as u8;
@@ -141,10 +238,36 @@ impl Esc {
         (self.w, v, (v == (1u64 << self.w) - 1).then(|| self.escaped(i)))
     }
     pub fn bytes(&self) -> usize {
-        1 + self.words.len() * 8 + self.start.len() * 4 + self.off.len() + self.val.bytes()
+        let side = match &self.parts {
+            Some(p) => p.bytes(),
+            None => self.start.len() * 4 + self.off.len() + self.val.bytes(),
+        };
+        1 + self.words.len() * 8 + side
     }
     pub fn escapes(&self) -> usize {
-        self.off.len()
+        self.count
+    }
+    /// The fixed-width array of `n` values as little-endian bytes (escapes as all-ones), and apart from it
+    /// the escapes' lists (E19 blocks the first and keeps the second whole).
+    pub fn split(&self, n: usize) -> (Vec<u8>, Vec<u8>) {
+        let main = le_bytes(&self.words, (n * self.w as usize).div_ceil(8));
+        if let Some(p) = &self.parts {
+            return (main, p.stored().to_vec());
+        }
+        let mut side = Vec::new();
+        raw(&mut side, &self.start);
+        raw(&mut side, &self.off);
+        self.val.image(&mut side);
+        (main, side)
+    }
+    /// E26: the escapes cut to fixed blocks of `part` nodes (`code8::side_parts`), each value at whole bytes.
+    pub fn side_parts(&self, n: usize, part: usize) -> Vec<Vec<u8>> {
+        if let Some(p) = &self.parts {
+            assert_eq!(part, crate::code8::PART);
+            return (0..p.count()).map(|k| p.part(k).to_vec()).collect();
+        }
+        let vb = (self.val.w as usize).div_ceil(8).max(1);
+        crate::code8::side_parts(&self.start, &self.off, |k, out| out.extend_from_slice(&self.val.get(k).to_le_bytes()[..vb]), n, part)
     }
     /// The values one word holds.
     pub fn per(&self) -> usize {
@@ -213,13 +336,11 @@ impl Esc {
     /// What the escapes in `from..to` (one block) add over their all-ones slots.
     #[cold]
     fn escaped_in(&self, from: usize, to: usize) -> u64 {
-        let b = from / BLOCK;
-        let (bs, be) = (self.start[b] as usize, self.start[b + 1] as usize);
-        let list = &self.off[bs..be];
+        let (list, at) = self.list(from / BLOCK);
         let (lo, hi) = ((from % BLOCK) as u8, ((to - 1) % BLOCK) as u8);
         let (a, z) = (list.partition_point(|&o| o < lo), list.partition_point(|&o| o <= hi));
         let esc = (1u64 << self.w) - 1;
-        (a..z).map(|k| self.val.get(bs + k) - esc).sum()
+        (a..z).map(|k| self.list_val(at, k) - esc).sum()
     }
     fn sum_any(&self, from: usize, to: usize, chunks: usize) -> u64 {
         // Wrapping arithmetic throughout: the lab's profile checks overflow, generated code would not.
@@ -246,16 +367,13 @@ impl Esc {
             s = s.wrapping_add(v);
         }
         if esc > 0 {
-            let b = from / BLOCK;
-            let bs = self.start[b] as usize;
-            let be = self.start[b + 1] as usize;
-            let list = &self.off[bs..be];
+            let (list, at) = self.list(from / BLOCK);
             let (lo, hi) = ((from % BLOCK) as u8, ((to - 1) % BLOCK) as u8);
             let a = list.partition_point(|&o| o < lo);
             let z = list.partition_point(|&o| o <= hi);
             let esc = (1u64 << self.w) - 1;
             for k in a..z {
-                s += self.val.get(bs + k) - esc;
+                s += self.list_val(at, k) - esc;
             }
         }
         s
@@ -598,4 +716,26 @@ pub fn occurrences(cols: &[Cols]) -> Vec<Occ> {
         }
     }
     out
+}
+
+/// E29: the width, the fixed-width words, the fold masks and the exact all-ones test's mask (constants of the
+/// width, as generated code would hold them), and the escapes' parts.
+impl crate::inplace::Gpu for Esc {
+    fn gpu(&self, g: &mut crate::inplace::GpuImage) {
+        g.val(self.w);
+        g.arr(&self.words);
+        let v64 = |g: &mut crate::inplace::GpuImage, v: u64| {
+            g.val(v as u32);
+            g.val((v >> 32) as u32);
+        };
+        assert!(self.folds.len() <= 3, "a whole-byte width folds at most 3 times");
+        g.val(self.folds.len() as u32);
+        for k in 0..3 {
+            let (fw, m) = self.folds.get(k).copied().unwrap_or((0, 0));
+            g.val(fw);
+            v64(g, m);
+        }
+        v64(g, self.low);
+        self.parts.as_ref().expect("format 16 reads its escapes in parts").gpu(g);
+    }
 }

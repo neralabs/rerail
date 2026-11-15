@@ -114,7 +114,7 @@ pub(in crate::code_rule_dsl) fn identities(
     use crate::code_rule_dsl::logic::front;
     let (sccs, _) = front::strata(local).map_err(|e| e.to_string())?;
     let by_stratum = front::rules_by_stratum(local, &sccs);
-    let ids = crate::code_rule_dsl::logic::plan::identities(local, &sccs, &by_stratum);
+    let ids = crate::code_rule_dsl::logic::plan::identities_of(local, &sccs, &by_stratum).map_err(|e| e.to_string())?;
     // The value inputs each stratum reaches, in the strata's order.
     let mut reach: HashMap<&str, BTreeSet<&str>> = HashMap::new();
     for (scc, rules) in sccs.iter().zip(&by_stratum) {

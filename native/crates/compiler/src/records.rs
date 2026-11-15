@@ -151,6 +151,30 @@ pub struct TokenCheck {
     pub then: CheckThen,
 }
 
+impl TokenCheck {
+    /// A count of at least none: it holds at every token its rule reads (the lowering proves
+    /// a count of one so, `bitlex_masks`), so nothing reads its mask. A reader's rule reads a
+    /// token where an arm's opener holds at its first byte; at another, its other rule's
+    /// (`Reader::other`), the test does not hold (`test_holds`).
+    pub fn always(&self) -> bool {
+        self.count && self.least == 0
+    }
+}
+
+/// Whether test `c` holds at token `s..=l` of its rule (`check_holds`), a test that always
+/// holds only at a token the rule reads (`TokenCheck::always`).
+pub fn test_holds(records: &Records, c: &TokenCheck, s: usize, l: usize, outputs: &[Vec<u64>]) -> bool {
+    if !c.always() {
+        return check_holds(c, s, l, outputs);
+    }
+    match records.rules.get(usize::from(c.rule)) {
+        Some(&EndRule::Read(i)) => records.readers[usize::from(i)].arms.iter().any(|a| {
+            outputs.get(usize::from(a.opener)).and_then(|w| w.get(s / 64)).is_some_and(|w| w >> (s % 64) & 1 == 1)
+        }),
+        _ => true,
+    }
+}
+
 /// What a token that passes a test (`TokenCheck`) does: refuses the file (`escape … at KIND`),
 /// or is a bit of gap mark `k` at its first byte (`At`) or at the byte after its last (`After`):
 /// the mark of the grammar token at or after that byte (`mark … , at KIND when …`).
@@ -167,7 +191,7 @@ pub const AFTER_SHIFT: u32 = 16;
 
 /// The marks' tests' hits at token `s..=l` of rule `rule` (`AFTER_SHIFT`).
 pub fn check_hits(records: &Records, rule: u8, s: usize, l: usize, outputs: &[Vec<u64>]) -> u32 {
-    records.checks.iter().filter(|c| c.rule == rule && check_holds(c, s, l, outputs)).fold(0, |a, c| match c.then {
+    records.checks.iter().filter(|c| c.rule == rule && test_holds(records, c, s, l, outputs)).fold(0, |a, c| match c.then {
         CheckThen::Escape => a,
         CheckThen::At(k) => a | 1 << k,
         CheckThen::After(k) => a | 1 << (AFTER_SHIFT + u32::from(k)),
@@ -402,12 +426,12 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                         s
                     }
                 };
-                checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && check_holds(c, s, l, outputs));
+                checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && test_holds(records, c, s, l, outputs));
                 l
             }
             Some(&rule) => {
                 let l = last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s).max(s);
-                checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && check_holds(c, s, l, outputs));
+                checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && test_holds(records, c, s, l, outputs));
                 l
             }
             None => {
@@ -572,12 +596,15 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         after = l as u64 + 1;
         let len = (l + 1).saturating_sub(s);
         let mut kind = u32::from(records.kinds[usize::from(bytes.get(s).copied().unwrap_or(0))]);
-        let word = table.word(bytes, s, len);
+        let mut word = table.word(bytes, s, len);
         let mut marks = 0u32;
         let bit_of = |o: u16| outputs.get(usize::from(o)).and_then(|v| v.get(s / 64)).is_some_and(|x| x >> (s % 64) & 1 == 1);
+        // A token a reader reads and says (a comment) is no word, as a lexer looks no
+        // comment up (`Reader::retag`).
         for t in records.retags.iter().filter(|t| bit_of(t.o)) {
             kind = u32::from(t.kind);
             marks |= t.marks;
+            word = 0;
         }
         let retagged: u32 = records.retags.iter().fold(0, |a, t| a | t.marks);
         for (k, &(o, w)) in records.marks.iter().enumerate().filter(|&(k, _)| retagged >> k & 1 == 0) {

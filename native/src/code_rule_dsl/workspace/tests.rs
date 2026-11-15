@@ -25,7 +25,7 @@ pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 /// Build a Git fixture repository. Tests only: production discovery reads Git through gix.
 pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
-    let status = std::process::Command::new("git")
+    let status = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
         .arg("-C")
         .arg(root)
         .args(arguments)
