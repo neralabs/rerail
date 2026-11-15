@@ -45,7 +45,6 @@ spt_type_kind("type").
 .decl rr_agg4(j: number, q: number)
 .decl rr_agg7(j: number, p: number)
 .decl rr_agg9(j: number, p: number)
-.decl rr_cover15(v: number)
 .decl rr_ctx13(p: number)
 .decl rr_ctx15(v: number)
 .decl rr_ctx3(p: number)
