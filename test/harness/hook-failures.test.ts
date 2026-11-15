@@ -6,7 +6,7 @@ import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi, type TestContext } from "vitest";
 
@@ -217,6 +217,13 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     .flatMap(name => readFileSync(join(rerailHome, name), "utf8").split("\n"))
     .filter(line => line.includes('"event":')).length;
 
+  // The two kinds of link a name of the log can be, each made at `path` to `target`. On Windows the link to a folder is
+  // a junction.
+  const LINKS = [
+    { link: "a symbolic link to a file", make: symlinkOrSkip },
+    { link: "a link to a folder", make: (_context: TestContext, target: string, path: string) => linkFolder(target, path) },
+  ];
+
   // A busy daemon fails every hook at once, 25 to 37 at a time on a loaded Windows machine. Each round, every process
   // records one failure into a log already past its size, so each finds it full and moves it aside.
   it("keeps every failure when twenty hooks running at once each find the log full", async () => {
@@ -311,6 +318,31 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     expect({ withinTheDay: moveAt(changed + day - 60_000), past: moveAt(changed + day + 60_000) }).toEqual({
       withinTheDay: [...parts, ...left].sort(),
       past: parts,
+    });
+  });
+
+  // A link under a stopped hook's own name, its target gone, as a person's link at the live name that a hook took and was
+  // stopped holding. The move reads the link's own change time, never what it leads to: `fs.statSync` on it would follow
+  // it, and on Windows a link to a network share that does not answer makes that wait about 21 s at every move.
+  it.for(LINKS)("removes $link under a stopped hook's own name a day after it last changed, never reading through it", async ({ make }, context) => {
+    const rerailHome = await home();
+    const day = 24 * 60 * 60 * 1_000;
+    const link = takenName(rerailHome, 2 ** 31 - 1);
+    make(context, join(rerailHome, "gone", "log"), link);
+    const changed = Date.now();
+    const followedAt = `stat => (path, ...rest) => {
+      if (String(path) === ${JSON.stringify(link)}) fs.writeSync(1, "followed ");
+      return stat(path, ...rest);
+    }`;
+    const moveAt = async (at: number): Promise<{ followed: string; files: string[] }> => {
+      writeFullLog(rerailHome);
+      const followed = await recordWithWrapped(rerailHome, at, { statSync: followedAt });
+      return { followed, files: logFiles(rerailHome) };
+    };
+    const parts = [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`];
+    expect({ withinTheDay: await moveAt(changed + day - 60_000), past: await moveAt(changed + day + 60_000) }).toEqual({
+      withinTheDay: { followed: "", files: [...parts, basename(link)].sort() },
+      past: { followed: "", files: parts },
     });
   });
 
@@ -558,8 +590,8 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     renameSync(join(rerailHome, HOOK_FAILURES_FILE), first);
     appendFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${JSON.stringify(failure(2))}\n`);
     const { said } = await statusWith(rerailHome, {
-      statSync: `stat => (path, ...rest) => {
-        const stats = stat(path, ...rest);
+      lstatSync: `lstat => (path, ...rest) => {
+        const stats = lstat(path, ...rest);
         if (String(path) === ${JSON.stringify(first)} && !globalThis.moved) {
           globalThis.moved = true;
           fs.renameSync(${JSON.stringify(first)}, ${JSON.stringify(second)});
@@ -664,16 +696,37 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     expect({ count: countOf(said), listings }).toEqual({ count: 3, listings: 1 });
   });
 
-  // `.1` left as a link whose target is gone, as a link to a drive no longer there. It holds no part of the log. On
-  // Windows the link to a folder is a junction, which needs no rights to make and which no hook can move a log over.
-  it.for([
-    { link: "a symbolic link to a file", make: symlinkOrSkip },
-    { link: "a link to a folder", make: (_context: TestContext, target: string, path: string) => linkFolder(target, path) },
-  ])("reads the log at once when .1 is $link whose target is gone", async ({ make }, context) => {
+  // A name of the log left as a link whose target is gone, as a link to a drive no longer there, at `.1` or under the
+  // name of a hook that still runs (this test's own process stands for it). It holds no part of the log, and status reads
+  // it from the name itself: `fs.statSync` on it would follow it, and on Windows a link to a network share that does not
+  // answer makes that wait about 21 s. On Windows the link to a folder is a junction, which needs no rights to make and
+  // which no hook can move a log over.
+  it.for(LINKS.flatMap(link => [
+    { ...link, where: ".1", name: (rerailHome: string) => join(rerailHome, `${HOOK_FAILURES_FILE}.1`) },
+    { ...link, where: "a running hook's own name", name: (rerailHome: string) => takenName(rerailHome, process.pid) },
+  ]))("reads the log at once, never through the link, when $where is $link whose target is gone", async ({ make, name }, context) => {
     const rerailHome = await home();
     writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000, 9_500));
-    make(context, join(rerailHome, "gone", "log"), join(rerailHome, `${HOOK_FAILURES_FILE}.1`));
-    const { said, listings } = await statusWith(rerailHome, {});
+    const link = name(rerailHome);
+    make(context, join(rerailHome, "gone", "log"), link);
+    const { said, listings, followed } = await statusWith(rerailHome, { statSync: `stat => (path, ...rest) => {
+      if (String(path) === ${JSON.stringify(link)}) globalThis.followed = (globalThis.followed ?? 0) + 1;
+      return stat(path, ...rest);
+    }` });
+    expect({ count: countOf(said), listings, followed }).toEqual({ count: 2, listings: 1, followed: 0 });
+  });
+
+  // A hook that took a log and finds it small gives it back: it makes the live name a second name of the file, a hard
+  // link, then removes its own. Status finds no live log, then lists the home between those two steps, so it meets the
+  // log only under those two names, each a file of its own and no link.
+  it("counts the log a hook gives back as status lists the home, while the live name and the hook's own name are one file", async () => {
+    const rerailHome = await home();
+    const [live, taken] = [join(rerailHome, HOOK_FAILURES_FILE), takenName(rerailHome, process.pid)];
+    writeFileSync(taken, partText(9_000, 9_000, 9_500));
+    const { said, listings } = await statusWith(rerailHome, { readdirSync: `readdir => (...args) => {
+      if (String(args[0]) === HOME && !fs.existsSync(${JSON.stringify(live)})) fs.linkSync(${JSON.stringify(taken)}, ${JSON.stringify(live)});
+      return readdir(...args);
+    }` });
     expect({ count: countOf(said), listings }).toEqual({ count: 2, listings: 1 });
   });
 
@@ -835,7 +888,7 @@ async function recordWithRename(rerailHome: string, at: number | undefined, wrap
 }
 
 /** The `node:fs` functions a test can wrap in a process of its own, each by the source of a function of the real one. */
-type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync" | "statSync" | "fstatSync", string>>;
+type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync" | "statSync" | "lstatSync" | "fstatSync", string>>;
 
 /**
  * {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it, and
@@ -847,19 +900,20 @@ async function recordWithWrapped(rerailHome: string, at: number | undefined, wra
 }
 
 /**
- * What `rerail status` says of the hook failures in `rerailHome` (an event recorded after all of them), and how many
- * times it listed the Rerail home, when a process of its own reads them with each `node:fs` function `wraps` names made
- * by the function source given for it: a hook moving the log, or another program holding a file, as status reads it.
- * `HOME` in those sources is the Rerail home. `Date.now` is fixed at `clock` when given.
+ * What `rerail status` says of the hook failures in `rerailHome` (an event recorded after all of them), how many times it
+ * listed the Rerail home, and the count a wrap kept in `globalThis.followed` (0 when none did), when a process of its own
+ * reads them with each `node:fs` function `wraps` names made by the function source given for it: a hook moving the log,
+ * or another program holding a file, as status reads it. `HOME` in those sources is the Rerail home. `Date.now` is fixed
+ * at `clock` when given.
  */
-async function statusWith(rerailHome: string, wraps: Wraps, clock?: number): Promise<{ said: string; listings: number }> {
+async function statusWith(rerailHome: string, wraps: Wraps, clock?: number): Promise<{ said: string; listings: number; followed: number }> {
   const say = `const list = fs.readdirSync;
 let listings = 0;
 fs.readdirSync = (...args) => { if (String(args[0]) === HOME) listings += 1; return list(...args); };
 syncBuiltinESMExports();
 const said = hookFailures.hookFailureLines(hookFailures.readHookFailures(HOME, 0), Number.MAX_SAFE_INTEGER).join("");
-fs.writeSync(1, JSON.stringify({ said, listings }));`;
-  return JSON.parse(await outputOf(rerailHome, say, wraps, clock)) as { said: string; listings: number };
+fs.writeSync(1, JSON.stringify({ said, listings, followed: globalThis.followed ?? 0 }));`;
+  return JSON.parse(await outputOf(rerailHome, say, wraps, clock)) as { said: string; listings: number; followed: number };
 }
 
 /** What {@link statusWith} says when `fs.readdirSync` is the function `wrapListing` makes of the real one. */

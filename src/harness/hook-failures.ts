@@ -299,8 +299,10 @@ function fileId({ dev, ino }: BigIntStats, name: string): string {
  * on, a give-back and a write each set the file's change time, and no hook runs for a day, so the hook that took such a
  * log has ended, whatever process has its pid now. A hook held up since it opened the log to append opened it by the
  * live name, which the file lost at a change, and read its clock before that: a failure it writes into the file after the
- * removal is older than the period status counts, as is every failure the file holds. A hook that moves the log aside
- * calls this, once per 256 KB of failures.
+ * removal is older than the period status counts, as is every failure the file holds. A link under a hook's name, as a
+ * person's link at the live name that a hook took and was stopped holding, goes the same way a day after the link itself
+ * last changed: the link is removed, and what it leads to is never read. A hook that moves the log aside calls this,
+ * once per 256 KB of failures.
  */
 function removeStrandedLogs(home: string, now: number): void {
   for (const name of takenLogs(home)) {
@@ -314,11 +316,13 @@ function removeStrandedLogs(home: string, now: number): void {
 }
 
 /**
- * When the file at `path` last changed, epoch ms: the later of its change time and its write time, so that a file system
- * that keeps no change time still gives the last write.
+ * When the name `path` last changed, epoch ms: the later of its change time and its write time, so that a file system
+ * that keeps no change time, as FAT does not, still gives the last write. Read from the name itself, never through a
+ * link: following one to a network share that does not answer waits about 21 s on Windows. For a file that is no link
+ * `lstat` gives what `stat` gives.
  */
 function lastChangeAt(path: string): number {
-  const { ctimeMs, mtimeMs } = statSync(path);
+  const { ctimeMs, mtimeMs } = lstatSync(path);
   return Math.max(ctimeMs, mtimeMs);
 }
 
@@ -465,9 +469,11 @@ type LogNames = Map<string, string | null>;
 
 /**
  * The files of the log in `home`, in the order a hook moves a log through them: the live log, the logs hooks took, `.1`.
- * A name that is a link whose target is gone, as a link to a drive no longer there, holds no file of the log and is left
- * out: taken for a name gone before it was looked at, it would make every status read wait out all its pauses, for as
- * long as the link stays, and on Windows a hook cannot move a log over a junction, so it stays.
+ * A name that is a link (a junction, on Windows) is left out, never followed: Rerail makes none, as the second name a
+ * give-back gives a file is a hard link, which is no link. Following one to a network share that does not answer waits
+ * about 21 s on Windows, and a link whose target is gone, taken for a name gone before it was looked at, would make every
+ * status read wait out all its pauses for as long as the link stays. A status read opens the live log before it lists,
+ * so a link at the live name is still read through.
  */
 function listLog(home: string): LogNames {
   let listed: string[];
@@ -486,20 +492,18 @@ function listLog(home: string): LogNames {
 }
 
 /**
- * The {@link fileId} of the file a listing found at `path`: null when the name was gone before it was looked at, and
- * undefined when the name is a link whose target is gone.
+ * The {@link fileId} of the file a listing found at `path`, read from the name itself: null when the name was gone before
+ * it was looked at, and undefined when the name is a link, which is not followed. For a file that is no link `lstat`
+ * gives what `stat` gives, in the one call.
  */
 function listedId(path: string): string | null | undefined {
-  return fileIdAt(path) ?? (isLink(path) ? undefined : null);
-}
-
-/** Whether the name `path` is a link (a junction, on Windows), not the file it leads to; false when it is gone. */
-function isLink(path: string): boolean {
+  let stats: BigIntStats;
   try {
-    return lstatSync(path).isSymbolicLink();
+    stats = lstatSync(path, { bigint: true });
   } catch {
-    return false;
+    return null;
   }
+  return stats.isSymbolicLink() ? undefined : fileId(stats, path);
 }
 
 /** Reads each file `names` holds that `parts` has not met, and says whether one of them is still unmet or a name was gone. */
