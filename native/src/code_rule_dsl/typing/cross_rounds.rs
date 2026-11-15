@@ -139,7 +139,7 @@ pub(crate) fn same_document(body: &[Literal], same_doc: &BTreeMap<String, Vec<us
 /// The cross-file part `prog` with its hops reading the previous round. `same_doc` holds the same-document columns of
 /// the relations `prog` reads that cross no file (`file_local::Programs::same_doc`).
 pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> Result<Bounded, front::Error> {
-    let (sccs, _) = front::strata(prog)?;
+    let sccs = front::components_of(prog)?;
     let comp: BTreeMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, s)| s.iter().map(move |r| (r.as_str(), i))).collect();
     let mut out = prog.clone();
     out.rules.clear();

@@ -208,6 +208,48 @@ is `frames <store>` (decision 0227), the frames a keep decision left unreachable
 Test: `jobs_step_to_the_end_within_the_cpu_share` (utility work runs on a busy machine, `finish_soon` finishes it
 and leaves background work alone); the store's `a_keep_decision_leaves_its_sweep_to_the_frames_job`.
 
+### 8. Upkeep yields to a run (amendment, 2026-11-14)
+
+The user asked that background and utility work stop when a new run comes in (2026-11-14). A run is a corpus run
+of the CLI (`run_handed`), or a workspace apply or index batch of the daemon. While one is under way, upkeep yields
+to it:
+
+- **No step starts.** The scheduler skips a job whose runs are active, and ends its pass after a step once a run
+  has begun.
+- **A step in progress stops at its next check**, and leaves its work as it was, still due for after the run.
+- **`finish_soon` does nothing while a run is under way.** A run's utility work is finished by the run that ends
+  last, after its guard is dropped.
+
+How a step learns of a run:
+
+| Run | Seen by |
+|---|---|
+| In this process | `upkeep::run_begins(files)`, a guard held for the run's length: a process-wide count |
+| In another process, over the same file | the guard's shared `flock` on `<file>.runs.lock`; a job's `Job::file()` names the file it works on, and `runs_active(file)` probes the lock (`LOCK_EX \| LOCK_NB`, cached for 25 ms) |
+
+The CLI's run takes the lock on its store and on the cost model's file. The daemon's runs take only the count: its
+upkeep is in its own process.
+
+Where each job stops:
+
+| Job | Its stopping points |
+|---|---|
+| `collect <store>` | between passes (`Slice::over`) |
+| `search index` | between batches of tapes |
+| `sqlite <file>` (incremental vacuum, `VACUUM`, checkpoint, `ANALYZE`) | inside the statement: a progress handler interrupts SQLite, and the statement is rolled back |
+| `frames <store>` | before it opens the store, and inside its transaction by the same interrupt, rolled back whole |
+| `retrain costs` | after the comparison of the stored model, and after training; the samples' mark and the training time are left as they were |
+
+`Slice::stopper()` is the check a step hands to work it does not run itself: a progress handler, or the training.
+It is the stop flag or a run, without the slice's time bound.
+
+**What this gives up.** On a machine that always has a run under way, upkeep over a shared file (the cost model
+is shared by every worktree) waits until one is not. Each job's `starve` bound no longer forces it through a run.
+That is the user's choice: a run is never slowed by upkeep.
+
+Tests: `a_run_in_another_process_is_seen_through_its_lock` (accel; `finish_soon` does nothing under a guard), the
+store's `a_sweep_yields_to_a_run_over_its_store`.
+
 ## Measured (2026-11-13, debug build, load 45–50 on 18 cores)
 
 **`rerail-engine upkeep`, on copies of the live `costs.sqlite` (176 MB) and a 186 MB content store:**

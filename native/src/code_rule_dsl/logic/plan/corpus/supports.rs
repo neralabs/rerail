@@ -36,7 +36,7 @@ pub(in crate::code_rule_dsl) fn is_support(rel: &str) -> bool {
 pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowered, usize, usize) {
     let mut out = cross.clone();
     let prog = &cross.program;
-    let Ok((sccs, _)) = front::strata(prog) else { return (out, 0, 0) };
+    let Ok(sccs) = front::components_of(prog) else { return (out, 0, 0) };
     let gated: BTreeSet<&str> = prog.gates.iter().map(|(g, _)| g.as_str()).collect();
     let mut rules: Vec<Rule> = Vec::new();
     let (mut through, mut kept) = (0, 0);

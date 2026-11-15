@@ -228,6 +228,10 @@ impl StatIndex {
     pub fn source(&self, path: &str, now: FileStat) -> Option<SourceId> {
         self.entries.get(path).filter(|(stat, _)| *stat == now).map(|(_, id)| *id)
     }
+    /// The source last read at `path`, whatever the file's stat is now.
+    pub fn recorded(&self, path: &str) -> Option<SourceId> {
+        self.entries.get(path).map(|(_, id)| *id)
+    }
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -346,6 +350,21 @@ impl ContentStore {
             .query_map([&plan[..]], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Some((plan, decode_ids(&sources)?, relations)))
+    }
+
+    /// The sources the newest run of lane `lane` over `root` read (`record_corpus_run_lane`), whichever build ran it:
+    /// empty if the lane has no run. A run reads before its first wave the tapes of those its waves will load
+    /// (decision 0104), as it reads its own files' before.
+    pub fn lane_sources(&self, root: &str, lane: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let sources: Option<Vec<u8>> = connection
+            .prepare_cached(
+                "SELECT m.sources FROM corpus_manifests m JOIN corpus_roots r USING (root_id) \
+                 WHERE r.path = ?1 AND m.lane = ?2 ORDER BY m.last_run DESC LIMIT 1",
+            )?
+            .query_row(params![root, &lane[..]], |r| r.get(0))
+            .optional()?;
+        Ok(sources.map(|s| decode_ids(&s)).transpose()?.unwrap_or_default().into_iter().map(SourceId).collect())
     }
 
     /// Records a run of the corpus at `root` that read `sources` (tapes of `grammar_version` and `tape_format`) under
@@ -680,17 +699,23 @@ impl ContentStore {
     }
 
     /// Collects the frames the last keep decision left unreachable (decision 0227), and records that decision as
-    /// swept: one write transaction. What it collected, and the seconds it took.
-    pub fn sweep_frames(&self) -> StoreResult<(super::frames::Unreachable, f64)> {
+    /// swept: one write transaction. What it collected, and the seconds it took; `None` when `stop` interrupted it
+    /// (a run began: a progress handler's `SQLITE_INTERRUPT`, the transaction rolled back, the sweep still due).
+    pub fn sweep_frames(&self, stop: impl Fn() -> bool + Send + Sync + 'static) -> StoreResult<Option<(super::frames::Unreachable, f64)>> {
+        let stop: std::sync::Arc<dyn Fn() -> bool + Send + Sync> = std::sync::Arc::new(stop);
         // Its writes delete rows and set a mark, naming no atom: a forked process sweeps too (decision 0170).
         super::atoms::mapped(|| {
             let started = std::time::Instant::now();
-            let out = self.immediate_transaction(|tx| {
+            let out = self.immediate_transaction_until(std::sync::Arc::clone(&stop), |tx| {
                 let out = super::frames::collect_unreachable_frames(tx)?;
                 tx.execute("UPDATE corpus_decided SET swept=run WHERE singleton=1", [])?;
                 Ok(out)
-            })?;
-            Ok((out, started.elapsed().as_secs_f64()))
+            });
+            match out {
+                Ok(out) => Ok(Some((out, started.elapsed().as_secs_f64()))),
+                Err(StoreError::Database(e)) if super::upkeep::interrupted(&e) => Ok(None),
+                Err(e) => Err(e),
+            }
         })
     }
 

@@ -604,7 +604,7 @@ fn compare(prog: &mut Program, c: &Obj, vs: &mut Vars) -> Vec<String> {
             "ident_pg"
         }
         // ESLint's static property name and the quote-stripped text, which a key or identifier has with no value
-        // (decision 0235): a library's, for the ECMAScript languages.
+        // (decision 0222): a library's, for the ECMAScript languages.
         Some(mode @ ("key" | "unquoted")) if matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue") => {
             prog.use_("compare");
             if mode == "key" { "cmp_key" } else { "cmp_unquoted" }
@@ -1616,7 +1616,7 @@ pub fn transform_lits(prog: &mut Program, tr: &Value, vs: &mut Vars, defined: &B
         let (op, a) = single.0[0].clone();
         let ao = a.as_obj();
         let src = ao.map(|ao| mv_v(ao.get("source").unwrap_or(&Value::Str(String::new())))).unwrap_or_default();
-        // A value, else the name an ECMAScript node has (`cmp_value`, decision 0235): main's `value: true`.
+        // A value, else the name an ECMAScript node has (`cmp_value`, decision 0222): main's `value: true`.
         let ecma = matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue");
         if ecma && truthy(a.get("value")) {
             prog.use_("compare");

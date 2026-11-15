@@ -281,7 +281,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
 
     let mut body: Vec<Item> = Vec::new();
     let mut seen_rel = Set::new();
-    // The embedding the policy's clauses read (decision 0235): a shared util's `host` is a program node's.
+    // The embedding the policy's clauses read (decision 0222): a shared util's `host` is a program node's.
     let reads_program = super::embedded::reads_program(&lang, clauses);
     for c in clauses {
         let cid = c.get("id").map_or("clause".to_owned(), py_str);
@@ -676,7 +676,7 @@ struct Emit<'a> {
 }
 
 /// The metavariables the utils `lits` call outside a negation or an aggregate bind, through the utils they call so
-/// (decision 0235): before the shared columns are added, a call is `item_p(n)`, and the rule's K is the util's. The
+/// (decision 0222): before the shared columns are added, a call is `item_p(n)`, and the rule's K is the util's. The
 /// utils are the program's and the clause's own (`local`, rendered but not yet added).
 fn util_binds(px: &Patterns, prog: &Program, local: &[(String, Vec<String>)], lits: &[String]) -> Set {
     let called = |text: &str| -> Vec<String> {

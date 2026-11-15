@@ -2321,6 +2321,65 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     assert!(counted.iter().all(|c| c == "0"), "{counted:?}");
 }
 
+/// An HTML file's `<script>` and `<style>` are guests (`html/embeds.rr`, decision 0238): a script's text is
+/// JavaScript, or JSON by its type, and none for a type no grammar reads; a style's text is CSS. Each stands at its
+/// `raw_text`, so its nodes have the file's lines.
+#[test]
+fn html_scripts_and_styles_are_javascript_json_and_css_guests() {
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"text/template\"><b>x</b></script>\n<script type=\"module\">g(2)</script>\n<script type=\"application/ld+json\">{\"a\": 1}</script>\n<style>\np { color: red; }\n</style>\n";
+    let rule = r#"
+.language html
+#include "html/embeds.rr"
+.decl calls(x: symbol, l: number)
+calls(x, l) :- guest(g, _, _, "javascript"), node(g, c, "call_expression", _, _), text(c, x), line(c, l).
+.decl decls(x: symbol, l: number)
+decls(x, l) :- guest(g, _, _, "css"), node(g, n, "declaration", _, _), text(n, x), line(n, l).
+.decl pairs(x: symbol, l: number)
+pairs(x, l) :- guest(g, _, _, "json"), node(g, n, "pair", _, _), text(n, x), line(n, l).
+.decl guests(g: symbol, r: symbol)
+guests(g, r) :- guest(d, _, _, g), doc_role(d, r).
+.output calls, decls, pairs, guests
+"#;
+    let [calls, decls, pairs, guests] = <[Vec<String>; 4]>::try_from(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests"])).unwrap();
+    assert_eq!(calls, ["f(1)\t3", "g(2)\t6"]);
+    assert_eq!(decls, ["color: red;\t9"]);
+    assert_eq!(pairs, ["\"a\": 1\t7"]);
+    assert_eq!(guests, ["css\tprogram", "javascript\tprogram", "json\tprogram"], "the template script has no guest");
+}
+
+/// A Markdown file's inline content is guests of tree-sitter-md's inline grammar (`markdown/embeds.rr`, decision
+/// 0238): each `inline` and `pipe_table_cell` node, its text less the block continuations inside it (a quote's
+/// `> `), so its nodes stand at the file's lines and columns, past the continuations too.
+#[test]
+fn markdown_inline_content_is_a_guest_at_its_host_places() {
+    let md = "# A *b*\n\n> Some *text* and a [link](u)\n> on `two` lines.\n\n| a | **b** |\n|---|---|\n| `c` | d |\n";
+    let rule = r#"
+.language markdown
+#include "markdown/embeds.rr"
+.decl at(k: symbol, x: symbol, l: number, c: number)
+at("emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "emphasis", _, _), text(n, x), line(n, l), col(n, c).
+at("strong_emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "strong_emphasis", _, _), text(n, x), line(n, l), col(n, c).
+at("code_span", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "code_span", _, _), text(n, x), line(n, l), col(n, c).
+at("link_destination", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "link_destination", _, _), text(n, x), line(n, l), col(n, c).
+.decl roles(r: symbol)
+roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
+.output at, roles
+"#;
+    let [at, roles] = <[Vec<String>; 2]>::try_from(guests_run("mdinline", &[("a.md", md)], rule, &["at", "roles"])).unwrap();
+    assert_eq!(
+        at,
+        [
+            "code_span\t`c`\t8\t2",
+            "code_span\t`two`\t4\t5",
+            "emphasis\t*b*\t1\t4",
+            "emphasis\t*text*\t3\t7",
+            "link_destination\tu\t3\t27",
+            "strong_emphasis\t**b**\t6\t6",
+        ]
+    );
+    assert_eq!(roles, ["fragment"]);
+}
+
 /// Tape operations (decision 0058 §4): `@parse(g, x)` makes a value document from a text (here a string's
 /// normalized text, `str`), with its own lines; `@unparse(t)` gives a tape's text back; `@splice(t, n, t2)` is t with
 /// node n's text replaced by t2's, parsed again. A value document is hidden from rules that do not reach it.

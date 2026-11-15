@@ -152,6 +152,37 @@ pub const GRAMMARS: &[VendoredGrammar] = &[
         ],
         committed_parser: false,
     },
+    // tree-sitter-md 0.5.4's block grammar (grammars/tree-sitter-markdown/LICENSE), unpatched.
+    VendoredGrammar {
+        name: "markdown",
+        source: "grammars/tree-sitter-markdown/markdown/src",
+        headers: "grammars/tree-sitter-markdown/markdown/src",
+        version: (0, 5, 4),
+        inputs: &[
+            "grammars/tree-sitter-markdown/markdown/src/grammar.json",
+            "grammars/tree-sitter-markdown/markdown/src/scanner.c",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/array.h",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/parser.h",
+        ],
+        committed_parser: false,
+    },
+    // tree-sitter-md 0.5.4's inline grammar, unpatched: the content of the block grammar's `inline` and
+    // `pipe_table_cell` nodes, read as guests (decision 0238).
+    VendoredGrammar {
+        name: "markdown-inline",
+        source: "grammars/tree-sitter-markdown/markdown-inline/src",
+        headers: "grammars/tree-sitter-markdown/markdown-inline/src",
+        version: (0, 5, 4),
+        inputs: &[
+            "grammars/tree-sitter-markdown/markdown-inline/src/grammar.json",
+            "grammars/tree-sitter-markdown/markdown-inline/src/scanner.c",
+            "grammars/tree-sitter-markdown/markdown-inline/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-markdown/markdown-inline/src/tree_sitter/array.h",
+            "grammars/tree-sitter-markdown/markdown-inline/src/tree_sitter/parser.h",
+        ],
+        committed_parser: false,
+    },
 ];
 
 /// The committed generated parser of a `committed_parser` grammar, in its source directory: gzip
@@ -185,7 +216,8 @@ fn generate_parser(grammar: &VendoredGrammar, json: &str) -> String {
         &mut Vec::new(),
     )
     .unwrap_or_else(|error| panic!("{name} parser does not generate: {error}"));
-    assert_eq!(generated, name);
+    // A grammar's own name has `_` where its vendored name has `-` (`markdown_inline`).
+    assert_eq!(generated, name.replace('-', "_"));
     parser
 }
 

@@ -59,10 +59,12 @@ fn make(path: &Path) {
     std::fs::create_dir_all(&staging).expect("the template's staging directory");
     let store = staging.join("store.sqlite");
     let filling = store.clone();
+    // Joined at once: under a test's `switches::set` its runs read the switches the test holds.
+    let depth = super::switches::depth();
     let filled = std::thread::Builder::new()
         .name("store template".into())
         // Test plumbing, not a run's SQL: the strict mode (`RERAIL_SQL_STRICT`) leaves it alone.
-        .spawn(move || crate::code_rule_dsl::logic::profile::behind(|| fill(&filling)))
+        .spawn(move || super::switches::within(depth, || crate::code_rule_dsl::logic::profile::behind(|| fill(&filling))))
         .expect("the template's thread")
         .join()
         .unwrap_or_else(|panic| Err(panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()));

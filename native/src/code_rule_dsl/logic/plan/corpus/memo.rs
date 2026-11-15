@@ -207,17 +207,17 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
 
 /// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
 /// on the store's writer, behind the run (decision 0104): the source the store holds then, pinned, or, where `store`,
-/// one it stores. Queued after a write that stores it (FIFO), it finds that one.
-/// `by`: the queued write that would store it, when `store` is not set: not held and none queued, nothing is.
-pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, by: Option<crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
-    // Held already (a warm run's every source): read here, before the first wave, and only its pin queued, as
-    // `stored_source` does; the writer's job, which reads and stores, is for a source not held yet.
-    if let Ok(Some(id)) = cache.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).map(|mut f| f.pop().flatten()) {
+/// one it stores. Queued after a write that stores it (FIFO), it finds that one. `stored_by`: what that write is
+/// queued under (`write_back::Key`), where only it stores the text.
+pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: Option<&crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    // Stored already (decision 0223): named now, and only its pin queued (a lock, as `stored_source` takes it). The
+    // writer is for what a queued write stores: the lookup there was a write a warm run made.
+    if let Some(id) = stored_source(cache, &text).ok().flatten() {
         late.lock().expect("the late sources").push(id);
-        cache.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
         return;
     }
-    if !store && by.is_some_and(|k| !cache.queued(&k)) {
+    // Not stored, and nothing queued stores it: the writer would find nothing either.
+    if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
         return;
     }
     let late = std::sync::Arc::clone(late);
@@ -266,6 +266,13 @@ impl Syms {
     /// atom, whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for
     /// a constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one,
     /// the posting's column was looked up by number, found none, and a forked run refused every entry holding one.
+    /// `columns`, for statistics kept at the columns `names` (a base relation's: some of its columns, by name).
+    pub(super) fn columns_named(&self, key: &str, names: &[String]) -> Option<Vec<bool>> {
+        let Some(rel) = key.strip_prefix("base:") else { return self.columns(key, names.len()) };
+        let (all, syms) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel)?, self.0.get(rel)?);
+        names.iter().map(|n| all.iter().position(|c| c == n).and_then(|i| syms.get(i).copied())).collect()
+    }
+
     pub(super) fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
         if let Some(rel) = key.strip_prefix("base:") {
             return self.0.get(rel).cloned();

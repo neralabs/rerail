@@ -1,4 +1,4 @@
-// vue/view: a component's view as a guest document (decision 0235).
+// vue/view: a component's view as a guest document (decision 0222).
 //
 // The view is the one ECMAScript program main reads a `.vue` file as (`embedded: script-block`): its `<script>` and
 // `<script setup>` blocks, then its template's expressions in the scopes compiler-dom gives them. Main's view

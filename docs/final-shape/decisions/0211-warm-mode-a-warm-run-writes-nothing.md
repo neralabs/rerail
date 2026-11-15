@@ -35,8 +35,9 @@ The mode is `profile::warm_mode()`, beside `strict()`. `RERAIL_WARM` is one of `
 a run is checked, not what it outputs. If it were in the run's key, no checked run would ever find the record of
 the run that warmed the store.
 
-`list` prints each kind's first fault with its stack and each distinct fault once. When the process exits it
-prints the counts and exits with status 3.
+`list` prints each fault as a line as it happens, the first 60 with their stacks (`sort | uniq -c` groups them). When
+the process exits it prints the count and exits with status 3. (A map of distinct faults held by the process was
+refused by the no-new-caches check, decision 0104: the lines are the report.)
 
 ## What only the check reads
 

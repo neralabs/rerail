@@ -51,10 +51,10 @@ by its own reader, its checks made at it. The CPU's tier 1 is generated to that 
 |---|---|---|---|
 | A block's masks | space, word, rare, pair | `skip`, the runs, the pair (1, 1 and 9, 31 operations) | yes (2c) |
 | The token loop | in the block loop | in the block loop, after each block, over the blocks whose outputs are final; its state the loop's values | yes |
-| A token's start | the first non-space after the one before | `skip`'s words after the token before (`records::walk`) | yes (2a) |
+| A token's start | the first non-space after the one before | the block's starts in a register, the first left (`records::walk`) | yes (2a, then registers) |
 | A token's end | its run, its pair | its first byte's rule (`run`, `pair`, `last`) | yes (1) |
-| A rare token | its reader, which moves the cursor | its region's last byte, by the walk's masks | masks for now |
-| The checks | at the token | the fallback and the marks, masks at every byte | no |
+| A rare token | its reader, which moves the cursor | its reader, its closer found in the bytes from its opener | yes |
+| The checks | at the token | at the token, from its bytes | yes |
 | What tier 2 reads | the tokens | the records; the marks as bits at a token's start | marks as masks |
 
 What is left is the last three rows: the marks and checks made at the token (a byte no token
@@ -334,6 +334,452 @@ to the next block. Its four state words are the block loop's values, passed roun
 carries are. Only the file's end (its counts, the marks of any word) is still a call, once a
 file. Tier 1's Rust is three functions, from four.
 
-Next: the loop reads the masks from the block's rows in memory. A mask with no delay is in a
-register at the loop; a delayed one is the word before and this one, joined.
+## A loop over a block's starts
 
+The lean lexer takes a block's starts as one mask and each token as its first bit left
+(`trailing_zeros`); a token's run is the word mask's ones in a register. The token loop
+searched the skip mask from the token before, a load a token, and each run rule loaded its
+word. Now the loop's head holds, in registers, as the lean lexer's window does:
+
+```text
+cand   the block's starts left: not skip, from the cursor
+runs   each run rule's word of the block (the word's, the number's)
+```
+
+A token is `base + ctz(cand)`; after it, `cand` keeps its bits past the token's end while
+the end is in the block, and is zero when it is not. With `cand` zero the loop loads the
+cursor's block once (its skip word and run words), a word at a time past a block with no
+start, as far as the blocks whose outputs are final. A run rule reads its word from the
+register, but for a token at the block's last byte, whose run starts in the next block (a
+cold block, as the lean lexer's word on past the block).
+
+## A token's test at its bytes
+
+The lean lexer tests a `-` or a leading `0` by the bytes at the token: `d == b'-'`, the next
+byte a digit or not. The token loop loaded the test's mask word, and the block made the mask
+at every byte. Now a run test of a few bytes (eight at most) whose mask is byte tests alone
+(`local_ops`: classes, `next`, `prev`) is the CPU's at the token's bytes:
+
+```text
+# the records' row: the test's output, its delay, its byte tests (a LocalCheck's ops)
+block 0 reclocal m30 d1 b...  p0.1 ...
+```
+
+The CPU reads each byte once at the token (`local_at`, straight-line, 0 outside the file),
+and its form makes no mask of the test where nothing else of the records reads it
+(`read_at_tokens`; guard `the_cpu_reads_local_tests_at_the_token`). Metal and the interpreter
+read the mask, which means the same. The punctuation's and the number's tests: 51 operations,
+from 57; tier 1's Rust 247 KB, from 254.
+
+Left as masks: a test that counts over the token (a float's `.`, a string's bad bytes), and
+the readers' openers (a string's `"` is `quote & ~escaped`, a carried value).
+
+## Masks from the bytes, where the loop reads them
+
+The lean lexer makes four masks a window, in registers, and stores none; it reads a string
+from its opener to its closer, and a test from the token's bytes. The CPU's block body made
+every mask the token loop reads (31 outputs, 51 operations) and stored them all, a row a
+block, for the loop to load again.
+
+Now the compiler finds, from the program alone, which outputs are made from the bytes near
+each byte (`native_cpu_bytes`): a byte-local value (`native_cpu_lanes`: tests, classes,
+`prev`, `within`), their logic and `prev`s, and `escaped(a)` of one. The token loop makes each
+where it reads it:
+
+```text
+the block's starts and runs   a window at the block, on the byte vectors, in the loop
+a reader's closer, a count    the window's function (`bytes_fn`), a call a word read
+a test at the token           its bytes, scalar loads
+escaped(a)                    simdjson's formula; its carry in, the byte before tested,
+                              and only in a run of `a` a cold loop back to its start
+```
+
+The windows are the block body's own lowering (`Lanes::window`), at any position. The CPU's
+form makes none of these outputs (`read_at_tokens`) and stores no row of what it does not make
+(`Loop::stored`). A read from the bytes waits on no block, so the loop's bounds are only those
+of the rows it still reads. Metal and the interpreter make the masks, which mean the same.
+No grammar hint: the `.rr` grammar is unchanged.
+
+The CPU's form: 8 operations, from 51; what is left is the marks' (the newlines' and the
+directives'), next. The guard `the_cpu_reads_local_tests_at_the_token`; the edges (runs of
+backslashes across windows, strings and comments over blocks) in
+`the_cpus_records_are_the_interpreters`.
+
+## The marks in the token loop
+
+The lean lexer sets a newline mark where it passes the newline, between two tokens. The CPU's
+end pass found each mark bit after the loop, a binary search over the tokens a bit.
+
+Now the token loop sets the marks whose masks are made from the bytes (`loop_marks`). Its
+state carries two more words: the byte from which the gap is not yet counted, and the word of
+the grammar token before (for `unless after ","`):
+
+```text
+a gap mark (newline, line)   its bits between the grammar token before and this one,
+                             from the block's words in registers; a cold loop of
+                             windows when the gap crosses blocks
+a mark at the token          the bit at its first byte, from the register word
+a mark never placed          refused at the file's end, as the interpreter
+```
+
+The end pass sets only the others (a reader's, a word's, of tests alone). The CPU's form makes
+none of the loop's marks: 6 operations, from 8. Same tests as above, and the AOT tapes.
+
+A token whose first byte starts no word looks up none: the record tables carry a flag a byte
+(`RecordTables::wordy`), made from the grammar's words, and the loop branches past the hash,
+as the lean lexer's `words != 0`. Punctuation, numbers and strings take no hash.
+
+`escaped(a)`'s carry past a window's first byte (a run of backslashes before it) is a
+function of its own a run (`carry_fn`); the loops that read it call it from a cold block, and
+keep only the test of the byte before inline.
+
+## Tier 2's checks read the bytes
+
+The last mask the CPU's body made was `uesc`, an escaped `u`, for the two `\u` checks tier 2
+runs at a string (decision 0133: the digits' tests at the token, none of them tier 1's). It
+was 4 operations a block, and a row stored for tier 2 to load.
+
+Tier 2 on the CPU now reads a check's mask from the bytes where they make it: the check's
+function calls the mask's window (`Bytewise::word`), at each token of its kind. The
+ahead-of-time tier 2 (`rust_stream`) does the same: the window's Cranelift function goes
+through `clif_rust`, a module of the source (`window_N::mask`). 0133 holds: the digits are
+tested at the token, never in a block. Metal and the interpreter make `uesc` a mask, as
+before; the meaning is one.
+
+```text
+records' check_masks   the masks tier 2's checks alone read (text row `recchecked`)
+the CPU's form         makes none of them: nothing left but constants
+```
+
+A window or carry function no code calls is not built (it was: 10 of tier 1's 26 functions
+in the Rust). Tier 1's Rust: 17 functions, 276 KB, from 423 KB. The guard
+`the_cpu_reads_local_tests_at_the_token` holds the body empty; `rr_checks_its_unicode_escapes_at_the_string`
+the checks' cases, on the JIT and (`aot_tapes_are_the_jits`) ahead of time.
+
+## No block loop
+
+With the body empty, the token loop never waits on a block: each of its reads is from the
+bytes. The pass then has no block loop (`bodiless_body`): a file goes from its row to its
+end at once, which runs the token loop over it whole, then the end's function. The block
+loop's blocks are unreachable and cut (Cranelift's `eliminate_unreachable_code`), and the
+general body, which nothing calls, is not built. Tier 1 on the CPU is one loop over a file's
+windows and tokens, as the lean lexer is.
+
+Tier 1's Rust: 16 functions, 255 KB. Its main function is the token loop: the refill's
+window inline (its 125 vector operations), each token's rule, reader, word and marks; the
+rest are calls (windows, readers, the carry, the end).
+
+## A token's one load
+
+The lean lexer reads a token's kind and length with one load (`TOKEN`, by its first byte).
+The loop read three tables by the first byte: the end rule, the kind, the word flag; a pair
+also loaded its next byte and its row. Now each first byte has one entry, four bytes
+(`RecordTables::token`):
+
+```text
+kind | rule << 8 | a word starts with it << 16 | its pair row << 24
+```
+
+A token loads its first eight bytes and its entry. The rule's jump, the kind, whether to
+look a word up and a pair's row are fields of the entry; a pair's next byte is the second
+of the eight. A pair loads its set's word, one load more.
+
+## Where the loop's instructions go (profiled 2026-11-14)
+
+Tier 1 ahead of time against the lean lexer, over every corpus file (2.25M tokens): 608M
+instructions, about 268 a token, against the lean lexer's 86. Measured by leaving one part of
+the loop out of a scratch compile at a time (its output wrong, its cost the difference), and
+by xctrace's CPU Profiler on the main function's machine code (`aot_profile_loop`).
+
+```text
+part left out          instructions   a token
+none                   608M           268
+the marks              475M           -59
+the token tests        504M           -46
+the word lookup        539M           -30
+all three, and stores  218M            96   (the core: refills, starts, end rules)
+```
+
+The core is about the lean lexer's whole. The gap is three things the lean lexer does not do
+a token, and the registers:
+
+- **The marks.** The loop sets the line marks at every grammar token: the mark words in the
+  refill's registers, the gap's bits, `unless after`. The lean lexer sets none: its parser
+  asks whether a token is on a line only in the statements that ask it, by the bytes since
+  it last asked (`on_line`).
+- **The token tests.** A count test, or a run test past eight bytes, calls its mask's window
+  function for each word of the token: a full 64-byte classification a test a word. A rule's
+  tests each classify again. The lean lexer tests a number's digits as it reads them.
+- **The word lookup.** A slot's key and its meta are two tables, two loads and a branch for
+  a long word. The lean lexer's slot is one 16-byte entry (key, length, code).
+- **The registers.** The main function's frame is 592 bytes; 192 of its 1,660 instructions
+  touch the stack, and 28% of its samples land on them (the lean lexer: 18.6%). The loop's
+  state, its column pointers and table bases are live across the calls in its body, more
+  than the callee-saved registers hold. The end rules' `match` is a chain of compares.
+
+
+## The line marks, where tier 2 asks
+
+The lean parser does not mark lines as it lexes. A statement that ends at a line break asks
+whether the next token is on a new line, and only then (`on_line`). The `.rr` grammar's
+`line` and `newline` marks are asked the same way: only in a directive's or a declaration's
+tail.
+
+So the compiler finds the gap marks tier 2 can test itself (`lazy_marks`). A mark qualifies
+when it is:
+
+- a gap mark, its mask made from the bytes;
+- no check's `at` or `after` target, and not of tests alone;
+- placed, and not the extras' own.
+
+For `.rr` these are `line` and `newline`. On the CPU, tier 1 sets neither: they are out of
+the token loop, its registers and the end pass. Tier 2 tests one where a state asks:
+
+```text
+MARK line       at the stream's end: the end's, as before
+                else lazy_mark: the record before, past the extras (comments);
+                its word an `unless after` one: none;
+                else any bit of the mask from the byte after its first to this
+                token's first, a window function a 64-byte word
+```
+
+That is `records::gap_marks`'s meaning, read at one token, not computed at all of them.
+The Cranelift tier 2 calls an outlined function (`WordFn::LazyMark`). The ahead-of-time Rust
+has a method per mark (`lazy_k`), its window through `clif_rust`.
+
+Metal and the interpreter still set the bits in the codes; the CPU's codes are theirs
+without them. Tests: the CPU's records, the marks' tests and Metal against Cranelift compare
+the codes with those bits masked out. The corpus tapes, the lean tapes and the AOT tapes are
+unchanged.
+
+Measured (`jit_against_aot`, load average 120): tier 1 ahead of time 298 instructions and
+65 cycles a node, from 305 and 73; tier 1 + 2, 540 and 106, from 542 and 123. Most of the
+marks' 59 a token stays: it is not the line marks' gap. It is the checks' marks (`json_bad`'s
+`after string when …`, `float_after`): their hits at a token, the bits a token leaves the
+next, the extras' select. Those go with the token tests, next.
+
+## The token tests, by what they need of the bytes
+
+The lean lexer tests a `-` only at a `-`, and counts a number's dots as it reads the digits.
+The loop tested every punctuation token for `-` (56% of `.rr`'s tokens). Each count test
+called its mask's window function, a full 64-byte classification, once per test per word.
+
+The compiler now asks what each test's mask needs of the bytes (`native_cpu_bytes::needs`).
+That is an over-approximation from the instructions: a bit at `p` only where a byte from
+`p + lo` to `p + hi` is in a set.
+
+```text
+byte test, class, pair      its bytes, at 0 (a pair: the cheaper of its two)
+a & b                       the cheaper of the two (either is sound)
+a & ~b                      a's
+a | b                       the union, the offsets' span
+prev(a, k), escaped(a)      a's, k (or 1) bytes back
+not, carried, position      none: anything
+```
+
+Three tricks follow from it:
+
+- **A first-byte filter.** A run test whose mask needs only the token's first byte gets a
+  bit in that byte's entry (`TOKEN_TESTS`, bits 17 to 23), set for the bytes it can hold at.
+  The loop skips the test on one bit of the load it already has. For `.rr`: the `-` not
+  before a digit, the leading `0`. A filter that every first byte of its rule passes (a
+  number's digits) decides nothing, and is dropped.
+- **A length bound.** A count of `n` needs `n` bytes: a token shorter skips it (a second `.`
+  in a one-digit number).
+- **Fusion.** A rule's count tests are one function (`tests_fn`, called from the loop): one
+  loop over the token's words, each word's masks from one window (`Bytewise::words`, its
+  vectors and its `escaped` shared), a popcount per test. A string's two tests classify its
+  bytes once.
+
+Guard: `a_tests_first_byte_filters_it` names the filtered tests (`-`, `0`).
+
+Measured (`jit_against_aot`, load average 119): tier 1 ahead of time 279 instructions a
+node, from 298; the JIT 362, from 409; tier 1 + 2 ahead of time 521, from 540.
+
+## A word's slot is one entry
+
+The lean lexer's word table is one array of 16-byte entries: the key, the length, the code.
+The loop had two tables, keys and metas, so two bases and two dependent loads after the
+hash, each from its own register.
+
+Now a slot is the key and its meta side by side (`RecordTables::slots`). The lookup is the
+lean lexer's:
+
+```text
+mul   x12, x12, x14          the hash
+lsr   x12, x12, #55          its slot
+add   x12, x13, x12, lsl #4  16 bytes a slot
+ldp   x13, x12, [x12]        key and meta, one load
+cmp / ccmp                   length, then key
+```
+
+The main function: 1,493 instructions, from 1,580; 173 stack accesses, from 224 (one base
+less live across the loop). Metal reads the word table itself and is unchanged.
+
+## A refusal is a branch
+
+The loop carried its refusal as a value: each token's order differences and its tests'
+refusal ORed in, the sign bit read at the file's end. That is a register live across the
+whole loop, for an event most files never have. The lean lexer returns its error at once.
+
+Now a refusal is a branch to a cold block that sets the file's flag in memory (the count
+after the extracts', which the file's end ORs into); the loop carries nothing for it. The
+main function: 159 stack accesses, from 173. Measured with the slots (`jit_against_aot`,
+load average 88): tier 1 ahead of time 274 instructions a node, from 279; tier 1 + 2, 516.
+
+## A short token's tests by one vector compare
+
+A string's two tests (a bad byte, a bad `\u`) need a control byte or a backslash: the union
+of what their masks need (`Needs::union`) is `0x00..=0x1f` and `\`, from the byte before the
+token (an `escaped`'s run) to its last. Most strings have neither.
+
+So where a rule's count tests need a set of at most four runs of bytes, within eight bytes
+of the token, the loop first tests them on the token's bytes by one 16-byte vector: a
+compare a run (`v - a < b - a + 1`), the lanes of the span kept, both halves ORed. None set:
+no test can hold, and the fused call is skipped. A token too long for one vector calls as
+before. The bytes read stay in the buffer: 16 zero bytes before each file (`FRONT`), its
+last block padded, 64 after the last file; a zero past the file is a control byte, so at
+worst the call is made.
+
+Guard: `a_strings_tests_need_a_control_byte_or_a_backslash`. Measured (`jit_against_aot`,
+load average 53): tier 1 ahead of time 263 instructions a node, from 274; tier 1 + 2, 505
+from 516. The JIT's is unchanged (362): Cranelift's vector code for the compare costs about
+the call it saves.
+
+## The two common rules, if-converted
+
+Most tokens are of two rules (`.rr`, by the census over the corpus: a pair's, punctuation,
+55.5%; a run's, words, 35.3%; strings 7.5%, the rest under 2%). Tokens of the two alternate,
+so a branch between them is mispredicted often.
+
+The compiler if-converts them. It takes the pair rule and the run rule (one whose word is in
+a register) that the most first bytes take, where their tests are all first-byte bits. Those
+bits are now set on their rule's bytes alone, so a test can run on a path two rules share.
+Then:
+
+```text
+either = rule == pair || rule == run      one branch, mostly taken
+l_pair = s + the pair's next-byte bit      straight-line (`next_last`)
+l_run  = s + ctz(~(word >> (s + 1)))       the run in the block's word
+slow   = rule == run && the run leaves the word     to the run's own block
+l      = select(rule == pair, l_pair, l_run)
+the two rules' tests, by their bits
+```
+
+Every other rule goes through the jump table as before.
+
+Measured (`jit_against_aot`, load average 59): the JIT's tier 1, 86 cycles a node from 146
+(394 instructions from 362, the mispredicted dispatch gone); its tier 1 + 2, 144 cycles from
+204. Ahead of time, flat: 77 cycles, 274 instructions from 263 (rustc had made the dispatch
+a chain of compares, as cheap as the straight-line work it replaces).
+
+## The generated loop against the lean lexer, side by side
+
+Read side by side, the generated Rust and the lean lexer differed most in four places:
+
+- **The refill classified the block four times.** Each output the loop keeps in a register
+  (the starts, each run, a mark) made its own window: 16 vector loads, the class lookups
+  again, four bitmask reductions. The lean lexer's `Window::at` loads once and makes its
+  masks from that. Now the refill makes them all from one window (`Reads::words_inline`,
+  `Bytewise::words`): four loads a block.
+- **A rare token's run was in every refill.** A number's run (`num_run`, which reads ahead
+  a byte, so a window of its own) was made for every block, for 0.5% of the tokens. The lean
+  lexer reads a number at its start. Now one run word is in a register, the run rule's that
+  the most first bytes take (a word's); a rarer run reads its word at its token, by a call.
+- **The gap marks ran at every token.** A form feed's mark (`json_bad`) is a gap mark with
+  token tests, so not lazy; its range and `unless after` ran at every token. Now a block
+  whose mark words are zero (nearly all) takes one branch past them, and `unless after` is
+  only of the marks the loop sets.
+- **Every token checked its order.** With the loop's starts no rule's last is before its
+  start, and no start is inside the token before (the starts below it are cleared): only a
+  rule's own refusal is left.
+
+Measured (`jit_against_aot`, load average 141): tier 1 ahead of time 232 instructions and 67
+cycles a node, from 274 and 77; the JIT 331 and 80; tier 1 + 2 ahead of time 474 and 116.
+
+## The common tokens' tail apart
+
+The lean lexer's run loop writes a word or a punctuation token and nothing else; strings and
+comments are read apart. The generated loop sent every token through one tail: a reader's
+retag selects, an extra's selects (the gap state kept, the marks left to the next token),
+for tokens that can be neither.
+
+Now the fused rules (`rule_last`'s pair and run) leave by an exit of their own, and the loop's
+tail is made again for it, knowing a token there is no reader's and no extra: none of those
+selects. Every other rule keeps the general tail. Sound only where the extra's mark needs a
+first byte neither fused rule has (a comment's `/` is its reader's).
+
+Measured (`jit_against_aot`): tier 1 ahead of time 212 instructions and 66 cycles a node,
+from 232; the JIT 285 and 75, from 331; tier 1 + 2 ahead of time 454.
+
+## A long word's compare is a call
+
+A word past eight bytes needs its other words compared with its table row. The loop did it
+inline: seven loads and compares, unrolled, in the loop's function, though almost no token
+takes it. The lean lexer keeps such work out of its loop.
+
+Now the compare is a function of its own (`tail_fn`), called where a hit's long flag is set.
+The loop's function holds only the call. Tier 1's Rust also checks, at compile time, that
+each of its functions is structured control, not the fallback loop over a `match`.
+
+Measured (`jit_against_aot`): tier 1 ahead of time 213 instructions a node, unchanged (the
+path is cold). The JIT went from 285 to 306: Cranelift's register allocator weighs a call in
+a cold block as one in the loop. That is open.
+
+## A pair's second byte from the block's word
+
+The lean lexer finds the two-byte punctuation once a block. Its window looks up each byte's
+first-byte bits and the next byte's second-byte bits, `and`s them, and keeps one `pair` word.
+A token then tests one bit. The generated loop loaded the pair table's row for the next byte
+at every token: a shift, an add, a load and a test, on the token's own chain.
+
+Now the compiler makes the lean lexer's tables from the pair table (`pair_nibbles`). Each
+first byte with a pair gets its own bit, eight at most, so the first byte's lookup is exact.
+The second byte's bits are the first bytes it ends a pair after. The tables are checked
+against the table for every first byte and every next byte; a table they do not match, or one
+with a pair ending in a zero byte (the padding), keeps the per-token load. The refill makes
+the word with the block's other words (`PAIR_WORD`, in the registers), and the fused pair
+rule's last is the token's first byte plus its bit.
+
+The fused run rule's last is read the same way: the run after the first byte by two shifts of
+the block's word, one bound on where it ends. No check is left for a token at the block's
+last byte.
+
+For `.rr` the six first bytes (`:` `=` `!` `<` `>` `-`) are six bits
+(`the_pairs_are_a_blocks_word`).
+
+Measured (`jit_against_aot`): tier 1 ahead of time 222 instructions and 65 cycles a node,
+from 213 and 73. The word costs its block more than the loads cost its tokens, but no token
+waits on a load for its end. The JIT 292 and 67, from 306 and 79.
+
+## The gap marks fold at the refill
+
+A gap mark (`.rr`'s form feed between tokens) marks the next grammar token where its bit is
+anywhere from the byte after the grammar token before's first to the token's own. The loop
+tested that range at each token, from the block's registers when the range began in the
+token's block. At a block's first token it began in an earlier block, so the loop called the
+mark's window function once a block, from there to the token, the token's own block
+included: bytes the refill had just classified.
+
+The lean lexer keeps its masks in its window and asks nothing of a block it has left.
+
+Now the refill folds. Each block it passes with no start gives its bits from `from` to the
+bits so far (`pending`). Bits before the cursor's block (a token across blocks, a comment the
+next grammar token is after) are read once by the bytes, cold. Then `from` moves to the new
+block. Every token's range starts in its own block, so its test is the registers alone: no
+bounds compare, no call. `unless after` is applied to the bits so far as before, so folding
+changes no code. The fold needs words that wait on no block (made from the bytes); a loop
+that waits keeps the per-token test.
+
+`the_marks_tests_are_the_masks` has form feeds in gaps across blocks: after spaces past a
+block, in a backtick literal, in a comment. A fold left out fails it.
+
+Measured (`jit_against_aot`): tier 1 ahead of time 193 instructions and 55 cycles a node,
+from 222 and 65; the JIT 269 and 61, from 292 and 67.
+
+## The records' layout (2026-11-14)
+
+The token loop held three column bases for its records, and they were among
+the values it spilled each token. The records' layout is now the compiler's
+choice (decision 0231): rows on the CPU for rr, so the loop's stores share
+one base, as the lean lexer's `Tok`; columns on Metal.

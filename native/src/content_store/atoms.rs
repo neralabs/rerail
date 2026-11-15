@@ -96,6 +96,15 @@ impl Interner {
         (i < held.ends.len()).then(|| held.str(i))
     }
 
+    /// The hash of `s`'s string (`hash_str`), if this process holds it: kept with each atom, so no string is read.
+    fn hash_of(&self, s: Sym) -> Option<u64> {
+        if s >= self.base {
+            return self.hashes.get((s - self.base) as usize).copied();
+        }
+        let (first, held) = self.held.range(..=s).next_back()?;
+        held.hashes.get((s - first) as usize).copied()
+    }
+
     /// A hash's tag, and the table's hash of a tag: the table places entries by what it holds, so it rehashes
     /// without reading an atom.
     fn tag(h: u64) -> u32 {
@@ -765,6 +774,49 @@ impl Atoms {
     /// 0111 §2): it no longer means "not interned".
     pub fn get(&self, value: &str) -> Option<Sym> {
         self.lookup(value).ok().flatten()
+    }
+
+    /// The atom `intern` would give `value` without making one: in memory, or found where interning finds a stored
+    /// atom (outside a run's provisional ids, decision 0160, and before a fork, 0170). Inside a run, or forked,
+    /// interning reads nothing and a string not held gets a new id, which no row holds: so `None` there, and no read.
+    pub fn existing(&self, value: &str) -> Option<Sym> {
+        if let Some(atom) = self.state.read().atoms.get(value) {
+            return Some(atom);
+        }
+        if self.provisional() || self.forked() {
+            return None;
+        }
+        self.lookup(value).ok().flatten()
+    }
+
+    /// Each of `ids` (atoms) replaced by its content key: its string's hash (`hash_str`), the same in every process
+    /// whichever id it gave the string (decision 0212). A digest of rows that hold atoms reads them so: by id, a
+    /// process that numbered a string otherwise (a fork, decision 0170) digested the same rows otherwise, and every
+    /// frame it kept was stale to the next. Under one read of the atoms; an atom not held (none, where every row a run
+    /// holds names held atoms) is read with its segment. A value that is no atom here (an in-memory store's test
+    /// rows) keys as itself.
+    pub fn content_keys(&self, ids: &mut [i64]) {
+        let mut missed: Vec<usize> = Vec::new();
+        {
+            let state = self.state.read();
+            for (i, v) in ids.iter_mut().enumerate() {
+                match u32::try_from(*v).ok().and_then(|s| state.atoms.hash_of(s)) {
+                    Some(h) => *v = h as i64,
+                    None => missed.push(i),
+                }
+            }
+        }
+        if missed.is_empty() {
+            return;
+        }
+        let wanted: Vec<Sym> = missed.iter().filter_map(|&i| u32::try_from(ids[i]).ok()).collect();
+        let _ = self.read_atoms(&wanted);
+        let state = self.state.read();
+        for i in missed {
+            if let Some(h) = u32::try_from(ids[i]).ok().and_then(|s| state.atoms.hash_of(s)) {
+                ids[i] = h as i64;
+            }
+        }
     }
 
     /// `f` of atom `atom`'s string, if the database or this process holds it: a stored atom not held yet is read

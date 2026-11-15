@@ -2,7 +2,7 @@
 
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -394,10 +394,8 @@ INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1
 -- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
 -- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
 -- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
--- Additive: an older binary ignores it.
--- `swept`: the keep decision whose unreachable frames were last collected (decision 0227); the `frames` upkeep job
--- is due while `run` is past it. Added to a store made before it on open (`add_columns`); an older binary names
--- the columns it writes, so it leaves it be.
+-- Additive: an older binary ignores it. `swept`: the decision whose unreachable frames were last collected (decision
+-- 0227); the `frames` upkeep job is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
 CREATE TABLE IF NOT EXISTS corpus_decided (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
@@ -736,7 +734,7 @@ impl ContentStore {
     /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
     pub(super) fn initialize(connection: &mut Connection) -> StoreResult<i64> {
         configure_connection(connection)?;
-        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? || !holds_added_columns(connection)? {
+        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? {
             // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
             // before anything reads it.
             rerail_accel::exec::scoped(|scope| {
@@ -746,8 +744,10 @@ impl ContentStore {
                         let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
                         // Another open may have created the store since the read above.
                         let version = compatible_version(&transaction)?;
+                        for (table, column, declaration) in missing_columns(&transaction)? {
+                            transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
+                        }
                         transaction.execute_batch(SCHEMA)?;
-                        add_columns(&transaction)?;
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                         }
@@ -806,34 +806,6 @@ fn compatible_version(connection: &Connection) -> StoreResult<i64> {
 }
 
 /// Whether the store holds every table, index, trigger and virtual table SCHEMA creates.
-/// Columns SCHEMA has that a store made before them lacks, as (table, column, its declaration): additive, an older
-/// binary ignores them, so they raise no floor. `CREATE … IF NOT EXISTS` leaves an existing table as it is, so they
-/// are added on open.
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0")];
-
-fn has_column(connection: &Connection, table: &str, column: &str) -> StoreResult<bool> {
-    let n: i64 = connection.query_row("SELECT count(*) FROM pragma_table_info(?1) WHERE name = ?2", [table, column], |r| r.get(0))?;
-    Ok(n > 0)
-}
-
-fn holds_added_columns(connection: &Connection) -> StoreResult<bool> {
-    for (table, column, _) in ADDED_COLUMNS {
-        if !has_column(connection, table, column)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn add_columns(connection: &Connection) -> StoreResult<()> {
-    for (table, column, decl) in ADDED_COLUMNS {
-        if !has_column(connection, table, column)? {
-            connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
-        }
-    }
-    Ok(())
-}
-
 fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
     let present = schema_object_names(connection)?
         .into_iter()
@@ -841,7 +813,29 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
     let expected = SCHEMA_OBJECTS
         .as_ref()
         .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
-    Ok(expected.iter().all(|object| present.contains(object)))
+    Ok(expected.iter().all(|object| present.contains(object)) && missing_columns(connection)?.is_empty())
+}
+
+/// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
+/// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
+/// Each has a default, so an older binary's inserts, which do not name it, still apply.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0")];
+
+/// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
+fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
+    let mut missing = Vec::new();
+    for added in ADDED_COLUMNS {
+        let (table, column, _) = added;
+        let (tables, columns): (i64, i64) = connection.query_row(
+            "SELECT (SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1), (SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2)",
+            params![table, column],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if tables > 0 && columns == 0 {
+            missing.push(added);
+        }
+    }
+    Ok(missing)
 }
 
 /// Every object SCHEMA creates, as `(type, name)`, read from its `CREATE … IF NOT EXISTS` statements. Its text is
@@ -896,32 +890,35 @@ fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, Stri
 mod schema_object_tests {
     use super::*;
 
-    /// The objects read from SCHEMA's text are those SCHEMA creates, less what SQLite makes along with them.
+    /// A store made before a column of `ADDED_COLUMNS` (here `corpus_decided.swept`, decision 0227) gains it when
+    /// opened, its rows keeping their values.
     #[test]
-    fn an_older_store_gains_the_added_columns_on_open() {
-        // A store made before `corpus_decided.swept` (decision 0227): its table has three columns and a decision.
+    fn an_older_store_gains_the_added_columns() {
         let dir = std::env::temp_dir().join(format!("rerail-added-columns-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("store.sqlite");
+        let _ = std::fs::remove_file(&path);
         drop(ContentStore::open(&path).unwrap());
         {
             let c = Connection::open(&path).unwrap();
+            // The table as an older binary made it.
             c.execute_batch(
-                "DROP TABLE corpus_decided; CREATE TABLE corpus_decided (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), \
-                 run INTEGER NOT NULL, time INTEGER NOT NULL) STRICT; INSERT INTO corpus_decided VALUES (1, 7, 0);",
+                "DROP TABLE corpus_decided; \
+                 CREATE TABLE corpus_decided (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), run INTEGER NOT NULL, time INTEGER NOT NULL) STRICT; \
+                 INSERT INTO corpus_decided VALUES (1, 7, 0)",
             )
             .unwrap();
-            assert!(!holds_added_columns(&c).unwrap());
+            assert_eq!(missing_columns(&c).unwrap().len(), 1);
         }
         drop(ContentStore::open(&path).unwrap());
         let c = Connection::open(&path).unwrap();
-        assert!(holds_added_columns(&c).unwrap());
-        // The decision is kept and not yet swept: the `frames` job is due.
+        assert!(missing_columns(&c).unwrap().is_empty());
         assert_eq!(c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap(), (7, 0));
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The objects read from SCHEMA's text are those SCHEMA creates, less what SQLite makes along with them.
     #[test]
     fn schema_objects_are_what_schema_creates() {
         let connection = Connection::open_in_memory().unwrap();

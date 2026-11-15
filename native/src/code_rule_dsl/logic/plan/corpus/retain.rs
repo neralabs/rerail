@@ -25,6 +25,7 @@
 //! is kept as its source.
 
 use super::{Error, Result, lower};
+use crate::code_rule_dsl::logic::plan::Cells;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::front;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -139,20 +140,44 @@ pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: &front::Program)
     hash.finalize().into()
 }
 
-/// An order-independent digest of `source`'s rows (a set: rows are distinct), with its row count.
-pub(in crate::code_rule_dsl) fn digest(source: &dyn Source) -> u64 {
-    let width = source.columns().len();
-    let n = source.len();
+/// An order-independent digest of `source`'s rows (a set: rows are distinct), with its row count, of their content
+/// (`Cells`, decision 0212): the same in every process, whichever ids it gave their atoms.
+pub(in crate::code_rule_dsl) fn digest(source: &dyn Source, cells: &Cells) -> u64 {
     let mut sum: u64 = 0;
-    for i in 0..n {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for c in 0..width {
-            h = (h ^ source.value(i, c) as u64).wrapping_mul(0x0000_0100_0000_01b3);
-            h ^= h >> 29;
-        }
-        sum = sum.wrapping_add(h.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    each_row(source, cells, |_, h| sum = sum.wrapping_add(h));
+    sum ^ (source.len() as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
+}
+
+/// Each of `source`'s rows as it holds it, with its digest of its content (`Cells::row`), read and keyed a chunk at
+/// a time: one read of the atoms a chunk.
+pub(in crate::code_rule_dsl) fn each_row(source: &dyn Source, cells: &Cells, mut f: impl FnMut(&[i64], u64)) {
+    let width = source.columns().len();
+    if width == 0 {
+        return;
     }
-    sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
+    const CHUNK: usize = 4096;
+    let all: Vec<usize> = (0..width).collect();
+    let (mut raw, mut keyed) = (vec![0i64; width * CHUNK], Vec::with_capacity(width * CHUNK));
+    let n = source.len();
+    for start in (0..n).step_by(CHUNK) {
+        let m = (n - start).min(CHUNK);
+        for r in 0..m {
+            source.row_at(start + r, &all, &mut raw[r * width..(r + 1) * width]);
+        }
+        keyed.clear();
+        keyed.extend_from_slice(&raw[..m * width]);
+        cells.key(&mut keyed);
+        for r in 0..m {
+            f(&raw[r * width..(r + 1) * width], crate::code_rule_dsl::logic::plan::row_digest(&keyed[r * width..(r + 1) * width]));
+        }
+    }
+}
+
+/// The cells of relation `rel`'s rows as the program types its columns (`types_of`), when they are `width` wide
+/// (else none is an atom: rows of another shape are no frame's).
+pub(in crate::code_rule_dsl) fn cells_of<'a>(atoms: &'a crate::content_store::atoms::Atoms, prog: &front::Program, domains: &lower::Domains, rel: &str, width: usize) -> Cells<'a> {
+    let types = types_of(prog, domains, rel);
+    if types.len() == width { Cells::new(atoms, &types) } else { Cells::plain(width) }
 }
 
 /// An input's rows new and its rows gone between its last run's source `old` and this run's `new`, as
@@ -162,7 +187,7 @@ pub(in crate::code_rule_dsl) fn digest(source: &dyn Source) -> u64 {
 /// one (`r__plus :- r, !r__old`), which read each base relation whole every run however few files changed. Exact
 /// whatever the documents are: one whose rows all moved is a document that differs. `None` when the two hold other
 /// columns. Each is named as the planner reads its statistics (`sql_col` of `rel__plus`, `rel__minus`).
-pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was: Option<&DocDigests>, new: &dyn Source, g: usize) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
+pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was: Option<&DocDigests>, new: &dyn Source, g: usize, cells: &Cells) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
     use rustc_hash::FxHashSet;
     let width = new.columns().len();
     // By position: both are the relation's rows in its declared order, whatever their sources name the columns
@@ -175,22 +200,13 @@ pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was:
     }
     let all: Vec<usize> = (0..width).collect();
     let mut row = vec![0i64; width];
-    let hash = |row: &[i64]| {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for &v in row {
-            h = (h ^ v as u64).wrapping_mul(0x0000_0100_0000_01b3);
-            h ^= h >> 29;
-        }
-        h.wrapping_mul(0x9e37_79b9_7f4a_7c15)
-    };
     // A document's rows are mostly one run of rows: its sum is kept while the run lasts, not looked up per row.
-    let by_doc = |s: &dyn Source, row: &mut [i64]| {
+    // Each row's hash is of its content (`each_row`), as the frames keep a document's digest.
+    let by_doc = |s: &dyn Source, _: &mut [i64]| {
         let mut by = DocDigests::default();
         let mut at: Option<(i64, u64, u64)> = None;
-        for r in 0..s.len() {
-            s.row_at(r, &all, row);
+        each_row(s, cells, |row, h| {
             let d = owner_of(row, g);
-            let h = hash(row);
             match &mut at {
                 Some((doc, sum, n)) if *doc == d => {
                     *sum = sum.wrapping_add(h);
@@ -204,7 +220,7 @@ pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was:
                     }
                 }
             }
-        }
+        });
         if let Some((doc, sum, n)) = at {
             let e = by.entry(doc).or_default();
             e.0 = e.0.wrapping_add(sum);
@@ -463,10 +479,11 @@ pub(in crate::code_rule_dsl) fn kept_source(
     parts: Option<&HashMap<[u8; 32], Retained>>,
     rel: &str,
     source: Arc<dyn Source>,
+    cells: &Cells,
     digests: &mut HashMap<String, u64>,
 ) -> Arc<dyn Source> {
     let Some(parts) = parts else { return source };
-    let d = digest(source.as_ref());
+    let d = digest(source.as_ref(), cells);
     digests.insert(rel.to_owned(), d);
     let columns = source.columns();
     if let Some(same) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned()) {
@@ -1107,11 +1124,11 @@ pub mod tests {
         let old = source(&[[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(2, 1), 21], [node(3, 0), 30]]);
         let new = source(&[[node(2, 0), 20], [node(2, 1), 22], [node(1, 1), 11], [node(1, 0), 10], [node(4, 0), 40]]);
         let rows = |s: &Arc<dyn Source>| (0..s.len()).map(|r| vec![s.value(r, 0), s.value(r, 1)]).collect::<BTreeSet<_>>();
-        let ((plus, minus), docs) = document_delta("r", old.as_ref(), None, new.as_ref(), 0).unwrap();
+        let ((plus, minus), docs) = document_delta("r", old.as_ref(), None, new.as_ref(), 0, &crate::code_rule_dsl::logic::plan::Cells::plain(2)).unwrap();
         assert_eq!(rows(&plus), BTreeSet::from([vec![node(2, 1), 22], vec![node(4, 0), 40]]));
         assert_eq!(rows(&minus), BTreeSet::from([vec![node(2, 1), 21], vec![node(3, 0), 30]]));
         // The next run: `new` is old, its hashes kept; nothing changed.
-        let ((plus, minus), _) = document_delta("r", new.as_ref(), Some(&docs), source(&[[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(2, 1), 22], [node(4, 0), 40]]).as_ref(), 0).unwrap();
+        let ((plus, minus), _) = document_delta("r", new.as_ref(), Some(&docs), source(&[[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(2, 1), 22], [node(4, 0), 40]]).as_ref(), 0, &crate::code_rule_dsl::logic::plan::Cells::plain(2)).unwrap();
         assert_eq!((plus.len(), minus.len()), (0, 0));
     }
 
@@ -1187,6 +1204,9 @@ pub(in crate::code_rule_dsl) struct InFrames {
     derived: HashMap<String, FrameStored>,
     /// Each input as stored: its digest, and its rows' digest by document.
     inputs: HashMap<String, (u64, Arc<DocDigests>)>,
+    /// The inputs whose owners are atoms (`atom_owners`, as their documents' table types them): their granules are
+    /// by content (`granule`).
+    atom_owned: std::collections::HashSet<String>,
     /// The relations admitted with their statistics part at their rows' digest (decision 0120 §3): written again
     /// only if their rows change.
     stats_kept: std::collections::HashSet<String>,
@@ -1292,26 +1312,14 @@ pub(in crate::code_rule_dsl) fn digest_of_docs(docs: &DocDigests) -> u64 {
     sum ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)
 }
 
-/// A source's rows' digest by owner (`group_col` `g`), as `document_delta` takes it.
-pub(in crate::code_rule_dsl) fn docs_of(source: &dyn Source, g: usize) -> DocDigests {
-    let width = source.columns().len();
+/// A source's rows' digest by owner (`group_col` `g`), as `document_delta` takes it: of their content (`Cells`).
+pub(in crate::code_rule_dsl) fn docs_of(source: &dyn Source, g: usize, cells: &Cells) -> DocDigests {
     let mut by = DocDigests::default();
-    if width == 0 {
-        return by;
-    }
-    let all: Vec<usize> = (0..width).collect();
-    let mut row = vec![0i64; width];
-    for r in 0..source.len() {
-        source.row_at(r, &all, &mut row);
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for &v in &row {
-            h = (h ^ v as u64).wrapping_mul(0x0000_0100_0000_01b3);
-            h ^= h >> 29;
-        }
-        let e = by.entry(owner_of(&row, g)).or_default();
-        e.0 = e.0.wrapping_add(h.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    each_row(source, cells, |row, h| {
+        let e = by.entry(owner_of(row, g)).or_default();
+        e.0 = e.0.wrapping_add(h);
         e.1 += 1;
-    }
+    });
     by
 }
 
@@ -1352,7 +1360,8 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         return Ok(Err(format!("{}: no frame of its documents ({} of {} inputs have one)", f.name, stored.len(), all.len())));
     }
     let admitted = store.admit_frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
-    let mut docs_of_rel: HashMap<String, (Arc<DocDigests>, u64)> = HashMap::new();
+    let atoms = store.atoms_handle();
+    let mut docs_of_rel: HashMap<String, (Arc<DocDigests>, u64, bool)> = HashMap::new();
     for (rel, frame) in &names {
         let Some(got) = admitted.get(frame).and_then(|a| a.rows().ok()) else { return Ok(Err(format!("{rel}: its documents' frame does not decode"))) };
         if got.types.len() != 3 || got.rows.len() != got.n * 3 {
@@ -1363,11 +1372,15 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         if docs.len() != got.n || digest_of_docs(&docs) != at.digest {
             return Ok(Err(format!("{rel}: its documents' frame does not match its digest")));
         }
-        docs_of_rel.insert(rel.clone(), (Arc::new(docs), at.digest));
+        docs_of_rel.insert(rel.clone(), (Arc::new(docs), at.digest, got.types.first() == Some(&b's')));
     }
     let keys: Vec<(FrameRel, i64)> = names
         .iter()
-        .flat_map(|(rel, frame)| docs_of_rel[rel].0.keys().map(|d| granule(*d)).collect::<BTreeSet<_>>().into_iter().map(move |g| (frame.clone(), g)))
+        .flat_map(|(rel, frame)| {
+            let (docs, _, atom_owned) = &docs_of_rel[rel];
+            let owners = atom_owned.then_some(&*atoms);
+            docs.keys().map(|d| granule(*d, owners)).collect::<BTreeSet<_>>().into_iter().map(move |g| (frame.clone(), g))
+        })
         .collect();
     let parts = store.admit_frame_parts(&space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
     let mut out = HashMap::new();
@@ -1376,11 +1389,11 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         let width = decl.len();
         let g = group_col(prog, locations, rel).min(width.max(1) - 1);
         let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
-        let (docs, digest) = &docs_of_rel[rel];
+        let (docs, digest, atom_owned) = &docs_of_rel[rel];
         // A granule's rows are its owners', each owner's together, owners ascending (`write_frames`): each owner's
         // range follows from the owners' row counts. Checked at each range's ends; an owner's rows are hashed
         // again only when an edit changes them.
-        let mut owners: Vec<(i64, i64, u64)> = docs.iter().map(|(d, (_, n))| (granule(*d), *d, *n)).collect();
+        let mut owners: Vec<(i64, i64, u64)> = docs.iter().map(|(d, (_, n))| (granule(*d, atom_owned.then_some(&*atoms)), *d, *n)).collect();
         owners.sort_unstable();
         let mut ranges = Ranges::default();
         let mut at = 0usize;
@@ -1416,18 +1429,30 @@ pub(in crate::code_rule_dsl) fn renamed(source: Arc<dyn Source>, names: Vec<Stri
     Arc::new(Renamed(source, names))
 }
 
-/// A row's hash, as `digest` and `document_delta` take it.
-pub(in crate::code_rule_dsl) fn row_hash(row: &[i64]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &v in row {
-        h = (h ^ v as u64).wrapping_mul(0x0000_0100_0000_01b3);
-        h ^= h >> 29;
-    }
-    h.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+/// The frame part that holds owner `doc`'s rows (decision 0212): by the owner's content key where owners are atoms
+/// (`atoms`, `Owners`), so every process parts an input's rows alike; a document (a node's owner) by its number, the
+/// store's own.
+fn granule(doc: i64, atoms: Option<&crate::content_store::atoms::Atoms>) -> i64 {
+    let key = match atoms {
+        Some(atoms) => {
+            let mut k = [doc];
+            atoms.content_keys(&mut k);
+            k[0]
+        }
+        None => doc,
+    };
+    1 + key.rem_euclid(GRANULES)
 }
 
-fn granule(doc: i64) -> i64 {
-    1 + doc.rem_euclid(GRANULES)
+/// Whether relation `rel`'s owners are atoms (its group column `g` is one, `types`): its documents' table types its
+/// owner column `s`, which the store maps to its own ids and back (decision 0170), and its granules are by content.
+fn atom_owners(types: &[u8], g: usize) -> bool {
+    types.get(g) == Some(&b's')
+}
+
+/// A documents' table's column types: its owners atoms or numbers (`atom_owners`), then each owner's sum and count.
+fn docs_types(atom_owner: bool) -> Vec<u8> {
+    vec![if atom_owner { b's' } else { b'i' }, b'i', b'i']
 }
 
 impl Retained {
@@ -1482,6 +1507,9 @@ impl Retained {
             let counted = prog.decls.get(frame.name.as_str()).is_some_and(|c| c.is_empty()) && rows.n == 1;
             if docs.len() != rows.n || (!counted && digest_of_docs(&docs) != at.digest) { return Ok(Self::empty_frames(key, frames)); }
             let docs = Arc::new(docs);
+            if rows.types.first() == Some(&b's') {
+                frames.atom_owned.insert(frame.name.clone());
+            }
             inputs.insert(frame.name.clone(), at.digest);
             input_docs.insert(frame.name.clone(), Arc::clone(&docs));
             frames.inputs.insert(frame.name.clone(), (at.digest, docs));
@@ -1558,8 +1586,10 @@ impl Retained {
         let wanted: Vec<String> = wanted.into_iter().filter(|r| frames.derived.contains_key(r) && !self.rels.contains_key(r)).collect();
         let inputs: Vec<String> = cut.changed.iter().filter(|r| frames.inputs.contains_key(*r) && !self.input_srcs.contains_key(*r)).cloned().collect();
         let derived_keys: Vec<_> = wanted.iter().map(|r| (frames.names[r].clone(), DOCS_PART)).collect();
+        let atoms = store.atoms_handle();
         let input_parts: Vec<_> = inputs.iter().map(|r| {
-            let granules: BTreeSet<_> = frames.inputs[r].1.keys().map(|d| granule(*d)).collect();
+            let owners = frames.atom_owned.contains(r).then_some(&*atoms);
+            let granules: BTreeSet<_> = frames.inputs[r].1.keys().map(|d| granule(*d, owners)).collect();
             (r, granules.into_iter().map(|g| (frames.names[r].clone(), g)).collect::<Vec<_>>())
         }).collect();
         let mut keys = derived_keys.clone();
@@ -1591,9 +1621,11 @@ impl Retained {
             for (rel, keys) in &input_parts {
                 let width = prog.decls.get(rel.as_str())?.len();
                 let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
+                let mut types: Option<Vec<u8>> = None;
                 for key in keys {
                     let got = admitted.get(key)?.rows().ok()?;
                     if got.types.len() != width || got.rows.len() != got.n * width { return None; }
+                    types.get_or_insert_with(|| got.types.clone());
                     for row in got.rows.chunks_exact(width.max(1)).take(got.n) {
                         for (c, v) in row.iter().enumerate() { columns[c].push(*v); }
                     }
@@ -1605,7 +1637,8 @@ impl Retained {
                 let source = crate::code_rule_dsl::logic::native::component::columns_source(names, columns.into_iter().map(Some).collect());
                 // Granule headers carry no digest. Their rows must match the admitted per-document digests,
                 // including documents removed or replaced between the header and payload reads.
-                if docs_of(source.as_ref(), group_col(prog, locations, rel)) != *frames.inputs[*rel].1 { return None; }
+                let cells = types.as_deref().map_or(Cells::plain(width), |t| Cells::new(&atoms, t));
+                if docs_of(source.as_ref(), group_col(prog, locations, rel), &cells) != *frames.inputs[*rel].1 { return None; }
                 rows += source.len();
                 sources.push(((*rel).clone(), source));
             }
@@ -1729,7 +1762,9 @@ impl Retained {
         if width == 0 {
             return Ok(Ok(Some(vec![Vec::new(); by_doc.values().map(|(_, n)| *n as usize).sum()])));
         }
-        let granules: BTreeSet<i64> = by_doc.keys().filter(|d| docs.is_none_or(|f| f(**d))).map(|d| granule(*d)).collect();
+        let atoms = store.atoms_handle();
+        let owners = frames.atom_owned.contains(rel).then_some(&*atoms);
+        let granules: BTreeSet<i64> = by_doc.keys().filter(|d| docs.is_none_or(|f| f(**d))).map(|d| granule(*d, owners)).collect();
         let _span = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}: {} granules, from the frames", granules.len()));
         let mut out = Vec::new();
         for g in granules {
@@ -1776,11 +1811,15 @@ impl Retained {
         let mut puts: Vec<EncodedFrame> = Vec::new();
         let mut now: HashMap<String, u64> = HashMap::new();
         let mut written = 0;
+        // Digests of content and granules by content (decision 0212): what every process reads back alike.
+        let atoms = store.atoms_handle();
         // Inputs first: their digests are what the relations derived from them record.
         for (rel, source) in inputs {
             let Some(name) = was.names.get(rel) else { continue };
             let width = source.columns().len();
-            let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref()));
+            let types = types_of(prog, domains, rel);
+            let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
+            let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
             now.insert(rel.clone(), digest);
             if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
                 continue;
@@ -1793,7 +1832,10 @@ impl Retained {
                 continue;
             }
             let g = group_col(prog, locations, rel).min(width - 1);
-            let docs = self.input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g)));
+            let atom_owner = types.len() == width && atom_owners(&types, g);
+            let owners = atom_owner.then_some(&*atoms);
+            let granule = |d: i64| granule(d, owners);
+            let docs = self.input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
             let old = was.inputs.get(rel).map(|(_, d)| Arc::clone(d));
             // The granules whose documents differ, or that hold a document come or gone.
             let differ = |doc: &i64| old.as_ref().is_none_or(|o| o.get(doc) != docs.get(doc));
@@ -1812,7 +1854,6 @@ impl Retained {
                 let hit = self.input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
                 eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, super::phases::current(), source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
             }
-            let types = types_of(prog, domains, rel);
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
             // rows as one range). A maintained input (`Layered`) gives each owner's rows from its ranges; another
             // is read through once.
@@ -1845,7 +1886,7 @@ impl Retained {
             let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
             table.sort_unstable();
             let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
-            puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: table.len(), rows } }.encoded());
+            puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } }.encoded());
         }
         // Every input the run bound, framed or not (an option's `env`, an earlier phase's export): its digest is
         // what a relation derived from it records.
@@ -1898,7 +1939,8 @@ impl Retained {
                     let (chain, chain_rows) = store.frame_chain(&was.space, name);
                     if chain < max_deltas() && (chain_rows + ng + na) * 4 <= n_now.max(4096) {
                         let n_was = (n_now + ng).saturating_sub(na);
-                        let d = crate::code_rule_dsl::logic::plan::rows_digest_patched(stored.digest, k.width, n_was, gone, added);
+                        let cells = Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types()));
+                        let d = crate::code_rule_dsl::logic::plan::rows_digest_patched(&cells, stored.digest, n_was, gone, added);
                         now.insert(rel.clone(), d);
                         written += ng + na;
                         delta_rows += ng + na;
@@ -1916,7 +1958,7 @@ impl Retained {
                 };
                 let (k, rows) = rows;
                 let n = k.rel.rows();
-                let d = crate::code_rule_dsl::logic::plan::rows_digest(k.width, &rows, n);
+                let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types())), &rows, n);
                 now.insert(rel.clone(), d);
                 let Some(read_digests) = read_digests else { continue };
                 if was.derived.get(rel).is_some_and(|s| s.digest == d && s.reads == read_digests) {
@@ -1926,6 +1968,15 @@ impl Retained {
                     let i = usize::from(was.derived.get(rel).is_some_and(|s| s.digest == d));
                     tally[i].0 += 1;
                     tally[i].1 += n;
+                    // Which relation, and its least rows: two runs' lines show the column whose values moved.
+                    let mut least: Vec<&[i64]> = rows.chunks(k.width.max(1)).take(n).collect();
+                    least.sort_unstable();
+                    least.truncate(3);
+                    eprintln!(
+                        "rerail: derived frame written ({}): {rel}, {n} rows, types {}, least rows {least:?}",
+                        if i == 0 { "rows changed" } else { "reads changed" },
+                        String::from_utf8_lossy(&frame_types(prog, domains, rel, k.rel.types()))
+                    );
                 }
                 written += n;
                 if let Some(level) = k.rel.live_levels() {
@@ -1942,12 +1993,15 @@ impl Retained {
         }
         // Behind the run (decision 0104): the part's fixpoint is reached, and these are its results for the next run;
         // a wait for the writer's room here holds no wave. Each frame was encoded as it was made (`FramePut::encoded`).
-        // Keyed by owner: a document a text owns is that symbol's atom, and its granule a part by it (decision 0170).
         // Nothing changed: nothing written (decision 0227; the program's relations are kept by reachability).
         if puts.is_empty() && retags.is_empty() && delta_out.is_empty() {
             return Ok(written);
         }
-        crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_keyed_by_symbols(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key))));
+        // Mapped (decision 0212): every atom a frame holds is in an `s` column (a text-owned input's owners too, in its
+        // documents' table), its digests and granules are of content, so a forked process's frames are written as the
+        // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped
+        // after a fork, and every next run derived the cross part again.
+        crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key))));
         Ok(written)
     }
 }

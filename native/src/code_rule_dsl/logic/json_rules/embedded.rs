@@ -1,4 +1,4 @@
-//! Main's terms over an embedded program (decision 0235): a clause's `ast.embedded`, the `embedded` term, and `host`
+//! Main's terms over an embedded program (decision 0222): a clause's `ast.embedded`, the `embedded` term, and `host`
 //! read over a program's node.
 //!
 //! A file that embeds a program (a Vue component's view: its scripts and template expressions as one ECMAScript

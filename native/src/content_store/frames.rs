@@ -644,26 +644,28 @@ impl ContentStore {
     /// plan's, `local_space`), each path's newest but those of `looked_up` (paths looked up before the first wave,
     /// from the store), held with the snapshot. Once a process for each space.
     /// `read`: what reads an entry's symbols (`memo::Syms`), held as the entries are admitted.
-    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>, read: SymbolReader<'_>) -> StoreResult<(usize, usize)> {
-        let Some(snapshot) = self.snapshot() else { return Ok((0, 0)) };
+    /// Also the paths whose entries it admitted: `None` when this process admitted the space's already (or holds no
+    /// snapshot), and which it is not known.
+    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>, read: SymbolReader<'_>) -> StoreResult<(usize, usize, Option<HashSet<String>>)> {
+        let Some(snapshot) = self.snapshot() else { return Ok((0, 0, None)) };
         let trace = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some();
         if !snapshot.lock().expect("the frames' snapshot").admitted.insert(*space) {
             if trace {
                 eprintln!("rerail: memo entries of space {:02x}{:02x}: admitted already in this process", space[0], space[1]);
             }
-            return Ok((0, 0));
+            return Ok((0, 0, None));
         }
         let keys = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             newest_by_path(&connection, space, MEMO_RELS[0])?
         };
         let newest = keys.len();
-        let keys: Vec<(Rel, i64)> = keys.into_iter().filter(|(_, path, _)| !looked_up.contains(path.as_str())).map(|(rel, _, part)| (rel, part)).collect();
+        let (keys, paths): (Vec<(Rel, i64)>, HashSet<String>) = keys.into_iter().filter(|(_, path, _)| !looked_up.contains(path.as_str())).map(|(rel, path, part)| ((rel, part), path)).unzip();
         if trace {
             eprintln!("rerail: memo entries of space {:02x}{:02x}: {newest} paths' newest, {} not looked up already ({} looked up)", space[0], space[1], keys.len(), looked_up.len());
         }
         if keys.is_empty() {
-            return Ok((0, 0));
+            return Ok((0, 0, Some(paths)));
         }
         let got = self.read_frame_parts_from(space, &keys, true, false)?;
         hold_symbols(&self.atoms, got.values(), Some(read))?;
@@ -674,7 +676,7 @@ impl ContentStore {
         for (k, f) in got {
             held.entry(k).or_insert(f);
         }
-        Ok((n, bytes))
+        Ok((n, bytes, Some(paths)))
     }
 
     /// Holds the stored atoms `frames` name (`hold_symbols`), the columns their types do not mark read by `read`: a
@@ -853,6 +855,10 @@ impl ContentStore {
         }
         let mut gone = gone;
         gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
+        // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0197).
+        if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
+            return;
+        }
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = frames
             .iter()
             .map(|f| (frame_key(&space, &f.rel, f.part), Some(Arc::new(Some(Arc::clone(&f.frame))) as Arc<dyn std::any::Any + Send + Sync>)))
