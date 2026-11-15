@@ -234,6 +234,33 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     clear();
 }
 
+/// A trial cut at its budget measured only part of its order's work: the cut work over the order's price is no
+/// ratio, and kept as one it made a cross product look cheap. On PostHog's `posthog/`, `attr_of`'s order that scans
+/// `text` before the `field` that binds its key was priced 27 M rows of work, cut at a few thousand in a trial, and
+/// then chosen as "corrected by what its orders measured": 1.17 B rows and 56 s, against 0.1 s.
+#[test]
+fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
+    let _serial = SERIAL.lock();
+    clear();
+    let good = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }, Step { at: 2, mode: None }];
+    let cross = vec![Step { at: 0, mode: None }, Step { at: 2, mode: None }, Step { at: 1, mode: None }];
+    // Over a sample: the good order priced 100, measured 300, ran to its end; the cross product priced 1e6, cut at
+    // twice the good order's work.
+    put_trial(300, 1, &good, 300.0, 100.0, false);
+    put_trial(300, 1, &cross, 600.0, 1e6, true);
+    let mut round = vec![Choice { key: 300, candidates: vec![Candidate { order: good.clone(), est: 16_000.0 }, Candidate { order: cross.clone(), est: 2.7e7 }], chosen: 0, why: "" }];
+    choose(&mut round);
+    assert_eq!(round[0].chosen, 0, "the order that ran to its end, measured 3x its price, over one cut short: {}", round[0].why);
+    let n = note(&300).unwrap();
+    let ratio = |o: &[Step]| n.tried.iter().find(|t| t.order == steps(o)).map(|t| t.ratio);
+    assert_eq!(ratio(&good), Some(3.0));
+    assert!(ratio(&cross).is_none_or(|r| r >= 1.0), "a cut trial is at least its price: {:?}", ratio(&cross));
+    // A cut trial that measured more than its price already says so: kept, as a floor.
+    put_trial(301, 1, &cross, 5e6, 1e6, true);
+    assert_eq!(note(&301).unwrap().tried[0].ratio, 5.0);
+    clear();
+}
+
 /// Decision 0208: the path as the strata ran. s1 does the most work but ran as a job beside s2, which took longer:
 /// the measured path is s0, s2, s3 (s3 waited on s2, ending last), not the predicted s0, s1, s3; the loop's thread
 /// ran s0 then s2, so s2 also waited on s0 there. Its line is noted by its share of the path's seconds.
