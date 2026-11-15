@@ -40,6 +40,32 @@ Two avoidable costs show up in every test rebuild:
 
 The test binary is 613 MB.
 
+### With the farm (2026-11-15)
+
+The same body edit in `logic` (`session.rs`, `start`), rebuilt with the global sccache every
+worktree uses and with the farm (§4), each on a warm target:
+
+| Rebuild after the edit | default: wall, CPU | farm: wall, CPU |
+|---|---|---|
+| the CLI, load 5–17 | 6.4–7.2 s, 17–18 s | 6.6–6.8 s, 19 s |
+| the library's tests, interleaved, load 65–115 | 18.8, 22.2, 61.7 s; 41–48 s | 23.9, 24.6, 40.2 s; 43–46 s |
+| the CLI, the first edit of a crate that was a cache hit | — | 32.7 s, 78 s |
+
+In steady state the farm costs what the default does: a workspace crate being edited compiles
+here, incrementally, either way. The farm's gain is the first build of a worktree (§4, 28 s from
+a filled cache). Its one cost is the first edit of each crate that came from the cache: no
+incremental state came with it, so that edit compiles the crate and those above it whole, once.
+Before 33033b578 that first edit went to another Mac as a whole compile (20.5 s for `logic`), and
+the next one compiled whole again here.
+
+The farm's keys hold the target directory's path within the checkout: a worktree building into
+`target/` shares with every other one; a `CARGO_TARGET_DIR` elsewhere shares only with the same.
+
+Found on the way: since 197f2de81 (the self dev-dependency's removal), only `--lib` test builds
+compiled. `--lib --tests` and `cargo test --workspace` (CI) also build the plain engine library,
+where feature unification turned the variant `AstMatcher::TestUnknown` on and its match arms off.
+The variant is now always there (e26cc1d5b).
+
 ## 2. The test suite is the slow part
 
 One run of the engine's library tests took 762 s wall and 2,682 s CPU (45 CPU-minutes):
