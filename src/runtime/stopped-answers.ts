@@ -29,14 +29,15 @@ import { DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-h
 export const STOPPED_ANSWERS_DIR = "stopped-answers";
 
 /**
- * How long a kept answer may be repeated. Every repeat checks all the hook can check; this bounds what it cannot see
- * (`docs/reference.md` names it) to 5 minutes, and costs a session's hooks in one folder one wait for a busy daemon in
- * each 5 minutes.
+ * How long a kept answer may be repeated. Every repeat checks all the hook can check, so this bounds only what it cannot
+ * see (`docs/reference.md` names it) to 30 minutes. It is long because only a daemon answer in time renews it, and a
+ * daemon overloaded with other checkouts stayed so for over two hours on a laptop with 17 repositories: a shorter bound
+ * would send the hooks back to waiting for it within minutes.
  */
-const KEPT_FOR_MS = 5 * 60_000;
+const KEPT_FOR_MS = 30 * 60_000;
 
 /** A hook whose daemon answered in time writes the answer again only once the kept one is this old, so most such hooks write nothing. */
-const REWRITE_AFTER_MS = KEPT_FOR_MS / 2;
+const REWRITE_AFTER_MS = 60_000;
 
 /** The daemon's answer to a hook's start check, with what it rests on (`readStartAnswer`). */
 export interface StartAnswer {
