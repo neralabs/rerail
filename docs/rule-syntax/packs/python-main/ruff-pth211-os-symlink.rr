@@ -16,7 +16,7 @@
     suppress noqa "PTH211"
 PTH211(F, n) :- kind(n, "call"), field(n, "function", c1), pth211_callee(c1, F),
     ( kind(n, "call"), pth211_arg_no_dir_fd_1(n), unset(D)
-    ; kind(n, "call"), pth211_arg_dir_fd_1(n, a1_2), D = a1_2
+    ; kind(n, "call"), pth211_arg_dir_fd_1(n, a1_2), D = a1_2, count : { kind(n, "call"),pth211_arg_no_dir_fd_1(n) } = 0
     ),
     pth211_none_literal(D).
 

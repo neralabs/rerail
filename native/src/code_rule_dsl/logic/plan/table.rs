@@ -235,8 +235,9 @@ impl<T: Clone> ColMap<T> {
             cols.iter().enumerate().filter_map(move |(c, v)| Some(((Arc::clone(&name), c), v.as_ref()?)))
         })
     }
-    /// Relation `rel`'s columns with a value.
-    pub fn of_rel(&self, rel: &str) -> impl Iterator<Item = (usize, &T)> {
+    /// Relation `rel`'s columns with a value. The iterator borrows `self` only, not `rel` (`use<'a, T>`; Relax's
+    /// checker refused the capture of `rel`'s lifetime that edition 2024 implies, E0310).
+    pub fn of_rel<'a>(&'a self, rel: &str) -> impl Iterator<Item = (usize, &'a T)> + use<'a, T> {
         let cols = find(rel).and_then(|r| self.rels.get(r as usize)).and_then(Option::as_ref);
         cols.into_iter().flat_map(|cols| cols.iter().enumerate().filter_map(|(c, v)| Some((c, v.as_ref()?))))
     }

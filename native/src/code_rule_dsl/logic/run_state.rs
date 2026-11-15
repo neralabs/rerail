@@ -99,6 +99,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan.rs", "EXPLAIN_ALWAYS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "NO_SHAPES", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANS", Carried, ""),
+    ("src/code_rule_dsl/logic/plan.rs", "QUIET_COUNTS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "PLANS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "PLAN_SITE", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "SEED", Call, "the last priced body's cheapest start, read by the same pricing"),

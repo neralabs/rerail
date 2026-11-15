@@ -2,13 +2,14 @@
 """Runs a test command on another Mac of the build farm, in this checkout's copy there; here when none
 is usable (docs/final-shape/notes/t37, §2; scripts/build/farm/README.md).
 
-    scripts/dev/test-remote [--host NAME] [--dir native] [--remote-only] -- COMMAND...
+    scripts/dev/test-remote [--host NAME] [--dir native] [--remote-only] [--tree DIR]... -- COMMAND...
 
 e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the full suite, or
 `scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`.
 
 The host is a usable one (`scripts/build/farm/status`: reachable, on its link, with disk to spare)
-with a free test slot, most cores first; with none free, the first usable one, once its run ends.
+with a free test slot, the most cores to spare first (its cores less its load: a host busy with its
+own work comes after an idle one with fewer); with none free, the first usable one, once its run ends.
 What changed of this checkout is sent through the farm's mirror into the host's farm root, after
 the host is asked again what it holds (it may have been cleaned). COMMAND runs there at `nice -n
 10`, from the checkout's `native/` (or `--dir`), with this machine's open-file limit, and builds in
@@ -19,6 +20,10 @@ here.
 With no usable host, or when the host is lost during the run (asleep, off the network: ssh exits
 255), COMMAND runs here instead, at `nice -n 19`; `--remote-only` exits 69 instead. The exit
 status is COMMAND's. Ctrl-C, a kill or a closed terminal stops it on the host too.
+
+`--tree DIR` also sends DIR whole (untracked files too, at the same path under the host's farm
+root): a run's inputs and a program built here, e.g. `--tree tmp/bench --tree tmp/engines` for a
+benchmark run on the host.
 
 It runs the installed farm (`~/.local/share/rerail-farm`, `scripts/build/farm/setup`), the one every
 worktree's compiles use, whatever version this checkout has.
@@ -94,7 +99,7 @@ def usage(why):
 def parse(argv):
     """The options and COMMAND, checked before anything is sent: an unknown option or a missing
     COMMAND is refused here, never run on a host."""
-    named, directory, remote_only = None, "native", False
+    named, directory, remote_only, trees = None, "native", False, []
     while argv and argv[0] != "--":
         a = argv[0]
         if a in ("-h", "--help"):
@@ -102,6 +107,11 @@ def parse(argv):
             sys.exit(0)
         if a == "--remote-only":
             remote_only, argv = True, argv[1:]
+        elif a == "--tree":
+            if len(argv) < 2 or not os.path.isdir(argv[1]):
+                usage("--tree needs a directory")
+            trees.append(os.path.realpath(argv[1]))
+            argv = argv[2:]
         elif a in ("--host", "--dir"):
             if len(argv) < 2 or argv[1].startswith("-"):
                 usage(f"{a} needs a value")
@@ -119,11 +129,11 @@ def parse(argv):
         usage("no COMMAND")
     if not os.path.isdir(os.path.join(CHECKOUT, directory)):
         usage(f"--dir {directory}: no such directory in {CHECKOUT}")
-    return named, directory, remote_only, argv
+    return named, directory, remote_only, trees, argv
 
 
 def main(argv):
-    named, directory, remote_only, argv = parse(argv)
+    named, directory, remote_only, trees, argv = parse(argv)
     stop_on_signals()
     if not os.path.exists(os.path.join(SHARE, "farm.py")):
         here(argv, directory, "the farm is not installed (scripts/build/farm/setup)", remote_only)
@@ -144,7 +154,7 @@ def main(argv):
     if host is None:
         here(argv, directory, why, remote_only)
     name = host["name"]
-    reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]], "files": [], "verify": True,
+    reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees], "files": [], "verify": True,
                             "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
     if reply is None or reply.get("code") != 0:
         slot.release()
@@ -154,7 +164,7 @@ def main(argv):
 
     # The farm's wrapper is this machine's; the host's cargo builds as it would alone, in a target
     # directory of its own (farm-agent's `exec`).
-    job = {"cwd": os.path.join(CHECKOUT, directory), "argv": argv, "map": [CHECKOUT],
+    job = {"cwd": os.path.join(CHECKOUT, directory), "argv": argv, "map": [CHECKOUT] + [t for t in trees if not t.startswith(CHECKOUT + os.sep)],
            "env": {"RUSTC_WRAPPER": ""}, "target": farm.key(CHECKOUT), "nice": 10,
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0],
            "min_free_gb": farm.config().get("min_free_gb", 40)}

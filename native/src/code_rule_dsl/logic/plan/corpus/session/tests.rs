@@ -214,11 +214,12 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
     assert_eq!(findings(), full());
     assert_eq!(findings().len(), 1, "a.py's import of h: {:?}", findings());
     std::fs::write(src.join("a.py"), "from h import x\nfrom d import y\n").unwrap();
-    let quiet = crate::code_rule_dsl::logic::plan::quiet_strata();
-    let unmeasured = crate::code_rule_dsl::logic::plan::unmeasured_quiet();
+    // This test's runs' counts: other tests' sessions run beside it (decision 0204).
+    let (counts, counting) = crate::code_rule_dsl::logic::plan::counting_quiet();
     let report = run();
-    let quiet = crate::code_rule_dsl::logic::plan::quiet_strata() - quiet;
-    let unmeasured = crate::code_rule_dsl::logic::plan::unmeasured_quiet() - unmeasured;
+    drop(counting);
+    let quiet = counts.strata.load(std::sync::atomic::Ordering::Relaxed);
+    let unmeasured = counts.unmeasured.load(std::sync::atomic::Ordering::Relaxed);
     let got = findings();
     eprintln!("{:?} strata run, {:?} maintained; {quiet} quiet; {} findings", report.cross_strata, report.cross_maintained, got.len());
     assert_eq!(got, full(), "the session's findings are a full run's");

@@ -57,6 +57,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
         .map(String::as_str)
         .collect();
     let mut n: BTreeMap<String, usize> = BTreeMap::new();
+    let cols = lower::columns_of(&cross.domains);
     for rule in &prog.rules {
         let h = &rule.head.rel;
         let eligible = !recursive.contains(h.as_str()) && !gated.contains(h.as_str()) && !prog.natives.contains_key(h.as_str()) && !prog.lattice.contains_key(h.as_str()) && !prog.nullary.contains(h.as_str());
@@ -67,7 +68,10 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
                 let mut args = rule.head.args.clone();
                 args.extend((0..width).map(|_| Term::Wild));
                 out.program.decls.insert(name.clone().into(), decl.iter().map(|(c, t)| (c.into(), t.into())).collect());
-                if let Some(d) = cross.domains.get(h.as_str()).cloned() {
+                // Every column's domain: the head's, then each bound variable's in `made` (a kind's is no atom).
+                let types: Vec<&str> = decl.iter().map(|(_, t)| t.as_str()).collect();
+                let known = cross.domains.get(h.as_str()).map_or(&[][..], Vec::as_slice);
+                if let Ok(d) = lower::rule_head_domains(&made, &types, known, &cols) {
                     out.domains.entry(name.clone()).or_insert(d);
                 }
                 rules.push(made);
@@ -138,4 +142,41 @@ fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<
     }
     let name = format!("{h}__sup{i}");
     Some((name.clone(), decl.to_vec(), Rule { head: Atom { rel: name.into(), args, neg: false, gated: false }, body: body.into() }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A support relation's columns past its head's take their domains from its rule: a kind bound in the body is
+    /// a kind id, not an atom (`lower::atom_columns`, decision 0170). Given the head's domains alone, every symbol
+    /// column after them was taken for an atom; its frame named kind ids as atoms, and the next run on the store read
+    /// SQL inside its waves to place them (no such atom), or a forked process mapped them.
+    #[test]
+    fn a_support_relation_keeps_its_kind_columns_out_of_its_atoms() {
+        let prog = front::parse(
+            r#"
+            .decl node(d: int, n: node, kind: sym, start: int, end: int)
+            .decl text(n: node, s: sym)
+            .decl child(p: node, n: node)
+            .input node
+            .input text
+            .input child
+            .decl h(n: node)
+            .output h
+            h($n) :- child($p, $n), node(_, $p, $k, _, _), text($p, $s).
+            "#,
+        )
+        .unwrap();
+        let domains = lower::domains(&prog).unwrap();
+        let cross = lower::Lowered { program: prog, version: None, domains, ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
+        let (out, through, _) = supports(&cross);
+        assert_eq!(through, 1);
+        let sup = out.program.decls.keys().find(|r| is_support(r)).expect("a support relation").to_string();
+        let decl = &out.program.decls[sup.as_str()];
+        let atoms = lower::atom_columns(&out.program, &out.domains, &sup);
+        let col = |name: &str| decl.iter().position(|(c, _)| c.as_str().trim_start_matches('$') == name).unwrap_or_else(|| panic!("{name} in {decl:?}"));
+        assert!(!atoms[col("k")], "a kind is no atom: {decl:?} {atoms:?}");
+        assert!(atoms[col("s")], "a text is: {decl:?} {atoms:?}");
+    }
 }

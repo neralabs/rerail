@@ -104,14 +104,14 @@ pub fn axis_groups<R: Reader>(r: &R, set: &[bool], outer: bool, out: &mut Vec<u3
         let end = r.subtree_end(id);
         stack.push((s as u32, if R::PREORDER_IDS { end } else { r.rank(end) }));
     };
-    match r.packed_codes() {
-        Some(p) => p.match_groups(n, set, |base, mut m| {
-            while m != 0 {
-                on(base + m.trailing_zeros() as usize);
-                m &= m - 1;
-            }
-        }),
-        None => (0..n).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on),
+    let grouped = r.match_groups(set, |base, mut m| {
+        while m != 0 {
+            on(base + m.trailing_zeros() as usize);
+            m &= m - 1;
+        }
+    });
+    if !grouped {
+        (0..n).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on);
     }
     fill(out, &mut stack, n);
 }
@@ -308,14 +308,14 @@ pub fn has_groups<R: Reader>(r: &R, set: &[bool], out: &mut Vec<bool>) {
         }
         prev = s;
     };
-    match r.packed_codes() {
-        Some(p) => p.match_groups(n, set, |base, mut m| {
-            while m != 0 {
-                on(base + m.trailing_zeros() as usize);
-                m &= m - 1;
-            }
-        }),
-        None => (0..n).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on),
+    let grouped = r.match_groups(set, |base, mut m| {
+        while m != 0 {
+            on(base + m.trailing_zeros() as usize);
+            m &= m - 1;
+        }
+    });
+    if !grouped {
+        (0..n).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on);
     }
 }
 
@@ -326,14 +326,14 @@ pub fn spans_groups<R: Reader>(r: &R, set: &[bool], out: &mut Vec<(u64, u64)>) {
         let id = r.id_of(k);
         out.push((r.start(id), r.end(id)));
     };
-    match r.packed_codes() {
-        Some(p) => p.match_groups(r.len(), set, |base, mut m| {
-            while m != 0 {
-                on(base + m.trailing_zeros() as usize);
-                m &= m - 1;
-            }
-        }),
-        None => (0..r.len()).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on),
+    let grouped = r.match_groups(set, |base, mut m| {
+        while m != 0 {
+            on(base + m.trailing_zeros() as usize);
+            m &= m - 1;
+        }
+    });
+    if !grouped {
+        (0..r.len()).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on);
     }
 }
 
@@ -341,8 +341,10 @@ pub fn spans_groups<R: Reader>(r: &R, set: &[bool], out: &mut Vec<(u64, u64)>) {
 pub fn spans_all<R: Reader>(r: &R, out: &mut Vec<(u64, u64)>) {
     out.clear();
     let mut id = r.id_of(0);
+    let mut s = 0u64;
     loop {
-        out.push((r.start(id), r.end(id)));
+        s = r.start_next(id, s);
+        out.push((s, r.end_with_start(id, s)));
         match r.next(id) {
             Some(n) => id = n,
             None => break,
@@ -620,8 +622,9 @@ pub fn lines_all<R: Reader>(r: &R, lines: &Lines, out: &mut Vec<u32>) {
     };
     let mut nl = if lines.m > 0 { next(&mut p, 0) } else { u64::MAX };
     let mut id = r.id_of(0);
+    let mut s = 0u64;
     loop {
-        let s = r.start(id);
+        s = r.start_next(id, s);
         while nl < s {
             i += 1;
             p += 1;
@@ -682,16 +685,16 @@ pub fn every_sweep<R: Reader>(r: &R, set: &[bool], out: &mut Vec<u32>) {
 /// Every node of the set, 64 codes at a time: a match mask a group, its bits taken out by trailing zeros.
 /// A candidate without one packed code array falls back to the plain sweep.
 pub fn every_groups<R: Reader>(r: &R, set: &[bool], out: &mut Vec<u32>) {
-    let Some(p) = r.packed_codes() else {
-        return every_sweep(r, set, out);
-    };
     out.clear();
-    p.match_groups(r.len(), set, |base, mut m| {
+    let grouped = r.match_groups(set, |base, mut m| {
         while m != 0 {
             out.push((base + m.trailing_zeros() as usize) as u32);
             m &= m - 1;
         }
     });
+    if !grouped {
+        every_sweep(r, set, out);
+    }
 }
 
 /// The same from the position lists: each list read in order, merged.

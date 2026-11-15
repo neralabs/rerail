@@ -192,25 +192,6 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     Ok(Maintained { program: lower::Lowered { program, version: None, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
 }
 
-thread_local! {
-    /// The recursive strata this thread's runs maintained by levels (decision 0090), and the sets of pieces they ran
-    /// as one component (`together`). Counted by thread, not by process: a test reads its own runs' counts while
-    /// other tests run beside it (decision 0204).
-    static BY_LEVELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static TOGETHER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// The recursive strata maintained by levels so far in this process (decision 0090), not by delete-and-rederive.
-pub fn strata_by_levels() -> usize {
-    BY_LEVELS.with(std::cell::Cell::get)
-}
-
-
-/// The sets of pieces run as one component so far in this process (`together`).
-pub fn pieces_together() -> usize {
-    TOGETHER.with(std::cell::Cell::get)
-}
-
 // -- The rewrite over a version (decision 0241) --
 
 use crate::code_rule_dsl::logic::plan::body::{Group, Maint, Placed};
@@ -1026,6 +1007,24 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         .collect();
     let views = views.into_keys().collect();
     Ok(Over { b, inputs, domains, groups, together, heads, sources, maintained, derived_again, recursive, again, views })
+}
+
+thread_local! {
+    /// The recursive strata this thread's runs maintained by levels (decision 0090), and the sets of pieces they ran
+    /// as one component (`together`). Counted by thread, not by process: a test reads its own runs' counts while
+    /// other tests run beside it.
+    static BY_LEVELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TOGETHER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The recursive strata maintained by levels so far by this thread's runs (decision 0090), not by delete-and-rederive.
+pub fn strata_by_levels() -> usize {
+    BY_LEVELS.with(std::cell::Cell::get)
+}
+
+/// The sets of pieces run as one component so far by this thread's runs (`together`).
+pub fn pieces_together() -> usize {
+    TOGETHER.with(std::cell::Cell::get)
 }
 
 /// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per

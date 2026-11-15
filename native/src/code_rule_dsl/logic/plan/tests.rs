@@ -1200,6 +1200,82 @@ pre(m) :- pre(q), q = @dot(m, x), x != "".
     assert_eq!(got["pre"], "\n.y\na\na.b\na.b.c\nx\n");
 }
 
+/// `dfs_first`, `dfs_first_memo` and `match_all` over relations a native stratum made (held, not tables), on
+/// both paths: the native engine makes their rows from the held relations, the SQL path from tables.
+#[test]
+fn native_operators_over_held_relations_match_the_sql_path() {
+    let program = r#"
+.decl e0(a: number, b: number, o: number)
+e0(10, 20, 1). e0(20, 30, 5). e0(10, 40, 0). e0(40, 10, 2). e0(50, 60, 0).
+.decl e(a: number, b: number, o: number)
+e(a, b, o) :- e0(a, b, o), a > 0.
+.decl t(x: number)
+t(x) :- e0(_, x, _), x = 30.
+.decl roots(r: number, k: symbol)
+roots(r, k) :- e0(r, _, _), (r = 40, k = "a" ; r = 10, k = "b" ; r = 50, k = "c").
+.decl hit(r: number, h: number, f: number)
+hit(r, h, f) :- dfs_first(r, h, f, e, t).
+.decl hm(r: number, h: number, f: number)
+hm(r, h, f) :- dfs_first_memo(r, h, f, e, t, roots).
+.decl s0(s: symbol)
+s0("é xx xx"). s0("x"). s0("none").
+.decl s(s: symbol)
+s(x) :- s0(x), x != "".
+.decl found(s: symbol, i: number, a: number, b: number, c: symbol)
+found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
+.output hit, hm, found
+"#;
+    let (got, native) = run_both("held_operators", program, &["hit", "hm", "found"]);
+    assert!(native > 0, "the native set engine solved a component");
+    // And natively: no stratum of theirs fell back to SQL (strict runs refuse one inside the waves).
+    let declined = {
+        use crate::code_rule_dsl::logic::profile;
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held_operators_native");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+        let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
+        // The run holds the profile (`one_run`) and resets it as it starts.
+        profile::set(true);
+        let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let declined = profile::declined();
+        profile::set(false);
+        let _ = std::fs::remove_dir_all(&dir);
+        ran.unwrap();
+        declined
+    };
+    assert!(!declined.keys().any(|k| ["rr_dfs", "rr_mall", "hit", "hm", "found"].iter().any(|r| k.contains(r))), "{declined:?}");
+    assert_eq!(got["hit"], "10\t30\t1\n20\t30\t5\n40\t30\t2\n");
+    assert_eq!(got["hm"], "10\t30\t1\n40\t30\t2\n");
+    assert!(got["found"].contains("é xx xx\t1\t5\t7\txx\n") && got["found"].contains("x\t0\t0\t1\tx\n"), "{}", got["found"]);
+}
+
+/// A head's `@dot` with a computed part (`walk_qualname(f, @dot(p, @nfkc(x)))`, data-layer `purity-ast.rr`), and an
+/// ordered comparison with an extremum's value (`k < v`, `v = min l : {…}`, `post-op-side-effects.rr`), on both
+/// paths. The native engine declined both: the head's part was not a slot, and `v` had no type.
+#[test]
+fn a_heads_computed_part_and_an_extremums_comparison_run_natively() {
+    let program = r#"
+.decl nm(f: number, p: symbol, x: symbol)
+nm(1, "a", "ﬁ"). nm(2, "", "b").
+.decl q(f: number, s: symbol)
+q(f, @dot(p, @nfkc(x))) :- nm(f, p, x).
+.decl l(f: number, x: number)
+l(1, 5). l(1, 3). l(2, 7).
+.decl r(f: number, k: number)
+r(1, 2). r(1, 4). r(2, 9). r(2, 1).
+.decl early(f: number, k: number)
+early(f, k) :- r(f, k), v = min x : { l(f, x) }, k < v.
+.decl late(f: number, k: number)
+late(f, k) :- r(f, k), v = max x : { l(f, x) }, k >= v.
+.output q, early, late
+"#;
+    let (got, native) = run_both("head_part", program, &["q", "early", "late"]);
+    assert!(native > 0, "the native set engine solved a component");
+    assert_eq!(got["q"], "1\ta.fi\n2\tb\n");
+    assert_eq!(got["early"], "1\t2\n2\t1\n");
+    assert_eq!(got["late"], "2\t9\n");
+}
+
 // ---- violations ----
 
 /// A `.violation` at a `loc` (`core.rr`): a node's finding is at its document's path and line; a `@place(path,

@@ -147,6 +147,30 @@ into notes once the queue is done).
     fails on a switch the lowering and preparation sources read that is neither preparing nor listed as changing
     nothing. Open: (4) and the maintained text-test path stay untested until question 2.
 
+  - *Review 4* (a4e4173b4): (1) the switch guard scanned neither `plan/corpus.rs` nor `plan/keeps.rs` and matched
+    only literal `var("…")`; (2) `RERAIL_LIBRARIES` and `RERAIL_REQUESTS` change the combined program but keyed
+    nothing (its key, `texts_digest`, held only the scope guards), so `=copied` reused the default program. Fixed:
+    `COMBINING` (scope guards, libraries, requests) is hashed into `texts_digest` when set (an unset switch keeps
+    the key); the guard matches every `"RERAIL_…"` literal and scans `run_observed` up to the prepared program and
+    `combine_read` (against `COMBINING`); `RERAIL_SOURCES_PHASE` is keyed through the facts it adds,
+    `RERAIL_DUMP_PROGRAMS` and `RERAIL_TIMELINE` change nothing. `keeps.rs` is the plan's, not preparation's (Q14).
+    `native_stratum_`: nothing found.
+  - *Review 5* (0442f34dd; by me, the user stopped subagents): (1) `RERAIL_SHOWN_COPIES` changes the rules
+    (`hiding::fold_own`, corpus.rs 2630, before the prepared key) and keyed nothing; (2) the `.rr` lowering
+    `combine_read`'s `rr::parse` runs reads `RERAIL_NODE_SOURCES` (`sources_on_request`), `RERAIL_ORDER_RAW` and,
+    through `syntax::definition_ids`, `RERAIL_NODE_IDS` (`front::finish`'s `order_nodes`), and `combine_read`
+    itself `RERAIL_SAME` (`same_relations`): all change the combined program, kept in memory and in the store
+    without them; (3) `RERAIL_INLINE` and `RERAIL_INLINE_ONLY` were in `PREPARING` though only `keeps.rs` reads
+    them (plan time, keyed by `choices::key`): a session went cold for nothing; (4) the guard saw neither callees
+    nor helpers. Fixed: `COMBINING` holds the five switches that change combining (libraries, requests, scope
+    guards, node sources, raw order, node ids, same); the store's combined plan (`combined.rs`) reads it too;
+    `PREPARING` gains `RERAIL_SHOWN_COPIES` and loses the two plan-time switches. The guard checks combining code
+    (`logic/rr`, `front`, `scoping.rs`, `combine_read`) against `COMBINING` and preparing code (the passes,
+    `run_observed`'s region and the modules it calls: hiding, memo, prepared, session, profile, costs) against
+    both; a short function of the tree that names a switch (unique name) counts as read where it is called; and a
+    listed switch must be read in combining, preparing or what hangs off the prepared key (`run_observed`,
+    `facts/vtab/syntax.rs`). Verified live under Relax (9/9) and under cargo.
+
 ### Q3. No duplicate widened copies; the dropping test strict again
 
 - **Keep**: 0174's widened copies where they serve a reader; the user's "Prune knows requests" (gated prune);
@@ -198,6 +222,29 @@ into notes once the queue is done).
     member, renamed, and also those of the member it was named after where that was another (two copies of each
     rule; possible before too, when a class's first member was an output). A class now keeps its namesake's rules,
     or its first member's where its name is new.
+  - *After review 3, verified* (a31db6c55): two more. (1) Keeping every unread relation out of `congruence` left a
+    copy unmerged where all its source's readers read the copy; letting any unread relation join broke 6 dropping
+    tests instead (an unreached library relation, `function_kind`, read by name through `nearest`, named the class
+    of the reached `cc_boundary`). Now an unread relation joins only a class with its own widened copy
+    (`rr_wide_<attr>_<r>`) and names it; any other stays apart. (2) The assertion mapped every copy to its source
+    unconditionally, so `rr_wide_node_text_same_some`, which reads a copy that really differs (the cross-file
+    `node_text` read of `rr_wide_node_text_cmp_same_ask`), looked equal to `same_some`. It is now a greatest
+    fixpoint: copies equal to their sources with only equal copies read as sources. dropping_unreached 8/8,
+    `every_switch_lowering_reads_is_classified`, the simplify test pass (cargo). Pending review 4.
+  - *Review 4* (a31db6c55): (3) the assertion compared raw rule text, and `simplify` renames inlined variables
+    apart with one counter (`_f<k>`, `_t<k>`), so an equal copy could drop out of `same` unchecked; (4) `congruence`
+    took any read relation ending in `_<u>` as `u`'s copy (`rr_wide_node_text_cmp_same_ask` against `same_ask`), so
+    an unreached `same_ask` could name the reached class. Suggestions: no direct test of the unread path; a shared
+    namespace class named after an unread member; a copy whose source prune emptied. Fixed: the assertion compares
+    rules up to variable names (first appearance); a copy is exactly `rr_wide_<attr>_<u>` for an `ON_REQUEST`
+    attribute; test `an_unread_relation_names_its_own_copys_class_only` (with the near name `same_q`). Not changed:
+    a copy's name has no program prefix, so a class holding one never takes the shared-namespace arm; a copy whose
+    source has no rules is not "left with its relation's own rules" (Done-when).
+  - *Review 5* (0442f34dd; by me): the comparison renamed only `Var("…")` and an aggregate's `var`, not `over`,
+    `Join`'s `by`, `nearest` or AST matches, so an equal copy differing there still dropped out unchecked. It now
+    compares as `congruence` does, `simplify::canonical_rule` (the engine's own canonical form). The exact copy
+    name and the new test hold: under the suffix rule `same_q` would name the class and `out` read it, which the
+    test refuses. Verified live under Relax (9/9) and under cargo.
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
@@ -257,7 +304,11 @@ into notes once the queue is done).
   tree, or is agreed with the farm's owner; my `CARGO_TARGET_DIR` change in test-remote is gone; the EMFILE has a
   cause (descriptors per test counted) rather than only a higher limit; the host's
   `~/Library/Caches/rerail-test-remote` is removed.
-- **Record**: —
+- **Record**: merged build-and-test-loop-time (32ddcae93). Its test-remote sends the job to farm-agent `exec`, which
+  builds in a per-checkout target under the farm root (farm-agent 301–307) and sets this machine's open-file limit
+  (308–311); my `CARGO_TARGET_DIR` and `ulimit` lines are gone. The E0463 cause (two writers in one dependency
+  directory) is in t37 §4 "What broke", by the farm's owner. Open: the host's `~/Library/Caches/rerail-test-remote`
+  to remove; the EMFILE's descriptors per test not counted.
 
 ### Q9. The failing and unverified tests
 
@@ -313,6 +364,61 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     descriptors). The farm already strips those variables (farm.py 968–970, installed 14:19). These are cargo's
     replays of compiles made before that, and they go when the crates compile again: to confirm on the next
     rebuild of those crates.
+  - After the merge (a31db6c55): the five code warnings are gone. The three jobserver lines still replay (those
+    crates did not recompile). The farm's new check also flags `native/lab/tape16/scripts/bench-pack.sh:48`, which
+    sets `RUSTFLAGS` and `CARGO_TARGET_DIR` on purpose to compare flags (lab code, not mine to change; for the
+    tape16 owner). Relax builds stop on macOS refusing to exec (AppleSystemPolicy "Security policy would not allow
+    process", the Relax binary and native build scripts, 15:29–15:42), intermittent: the user decides the route.
+  - At the rr-align roll-up (2026-11-15): a plain `cargo build -p rerail-engine --lib` (not the test profile) shows
+    "unused attribute" warnings in rerail-logic (logic.rs:28, 43, 65, 109; rr.rs:15, 97), rerail-lang-python
+    (lib.rs:329), rerail-w (lib.rs:27, 237) and rerail-device-metal (lib.rs:720), and two unfulfilled lint
+    expectations in blade/forte/ast.rs (52, 100). None is from the roll-up's merges. tape16's bench-pack.sh now
+    exempts only its native build (rr-align's form).
+
+### Q14. Plan-time switches and the plan cache
+
+(Found in Q2's review 4.) `keeps::choose` (what each derived relation keeps, stored or inlined) runs in
+`plan::run` and its choices are kept in the plan cache (`PlanKey`, a program digest; a session's plans across
+runs, `SESSION_PLANS`). `RERAIL_INLINE`, `RERAIL_INLINE_ONLY` and `RERAIL_OBSERVED_STEPS` change those choices
+and are not in that key; `RERAIL_INLINE` and `RERAIL_INLINE_ONLY` are in `PREPARING`, which keys the prepared
+program, not the plans.
+
+- **Done when**: each switch the plan reads is either in the plan cache's key or shown not to change a kept plan
+  (a session that turns one on mid-run gets the plans it asks for), with a guard like Q2's over `plan.rs` and
+  `plan/`.
+- **Record**: closed, no defect. `keeps::choose`'s choices are reused through `choices::key` (plan.rs 8867,
+  `choices::lookup`), which hashes `RERAIL_INLINE`, `RERAIL_INLINE_ONLY` and `RERAIL_OBSERVED_STEPS`
+  (choices.rs 70). `PlanKey` keys join plans, not what a relation keeps. The cost model (`RERAIL_COSTS`) steers
+  choices that keep the program's meaning (plan.rs 8865): a stale one costs time, not results.
+
+### Q15. Relax runs killed by macOS on a warm `target/relax`
+
+(Found running Relax, 2026-11-15.) A warm `relax test` stops at a native build script or at `relax` itself,
+SIGKILLed: `syspolicyd` logs "Unable (errno: 2) to read file … for pid N" then "Terminating process due to
+Malware rejection" (kernel: "ASP: Security policy would not allow process"). Relax hard-links its own binary for
+every program it starts, build scripts included (`selfexe.rs` 198, `link_loader`): the installed `bin/relax` had
+209 links, every `cargo-target*/release/build/*/build_script_build-*` among them. When cargo replaces a build
+script it deletes one of those links; the exec scan of the shared file can then resolve it by the deleted name,
+fail to read it, and kill the process. Not load: 200 concurrent starts of `bin/relax` and of a link pass. A cold
+run has no stale link to delete, which is why `relax clean` (AGENTS.md) and the farm's cold check (419610c9a)
+pass.
+
+- **Done when**: Relax's links to its loader are APFS clones (`clonefile`: their own file, the loader's blocks)
+  where they would be hard links on macOS, or the farm's owner chooses another fix; a warm run after a build
+  script change passes. This is the pinned Relax's code (`scripts/dev/relax`), the farm branch's.
+- **Record**: fixed by the farm branch (24955f4e8, merged in the roll-up of 2026-11-15): a stubbed build script is
+  a shell script, not a hard link of Relax's binary (`scripts/dev/relax/rerail.patch`), on upstream 5b2d68c2.
+
+### Q16. A constant world request in the kept cross part
+
+(Numbered Q15 when written, on final-rerail-shape-rr-align; renumbered at the roll-up, the hub's Q15 being the Relax kills.)
+
+- **Found**: `dir_entry("sub", n, 0)` lowers to the request fact `rr_dir_req("sub")` (`rr::lower`'s `world_demand`).
+  `world::wanted` and `world::answers` counted only request rules, so such a run failed ("no columns for
+  dir_entry"); they now count request facts (`world::asks`). The run after the one that kept the cross part then
+  fails: "rr_dir_req: kept as clean, but its rows are not kept".
+- **Done when**: `an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part` (partial_tests.rs,
+  ignored) passes, unignored.
 
 ## Questions for the user
 

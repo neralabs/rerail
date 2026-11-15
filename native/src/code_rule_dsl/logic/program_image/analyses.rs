@@ -158,6 +158,7 @@ fn first_unstratified(v: &Version, sccs: &[Vec<RelId>], edges: &Edges, aggs: &[(
                 }
                 let names = |s: &[RelId]| s.iter().map(|&r| v.rel_name(r).to_owned()).collect::<BTreeSet<_>>();
                 let (head, dep) = (v.rel_name(h).to_owned(), v.rel_name(w).to_owned());
+                crate::code_rule_dsl::logic::front::unstratified_trace(&head, &dep, &names(scc));
                 out.push(if aggs.binary_search(&(h, w)).is_ok() {
                     Error::AggregationInRecursion { head, aggregated: dep, component: names(scc) }
                 } else {

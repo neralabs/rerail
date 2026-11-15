@@ -16,15 +16,15 @@
     suppress noqa "PTH123"
 PTH123(F, n) :- kind(n, "call"), field(n, "function", c1), pth123_callee(c1, F),
     ( kind(n, "call"), pth123_arg_no_file_1(n), unset(FI)
-    ; kind(n, "call"), pth123_arg_file_1(n, a1_2), FI = a1_2
+    ; kind(n, "call"), pth123_arg_file_1(n, a1_2), FI = a1_2, count : { kind(n, "call"),pth123_arg_no_file_1(n) } = 0
     ),
 
     ( kind(n, "call"), pth123_arg_no_closefd_2(n), unset(CF)
-    ; kind(n, "call"), pth123_arg_closefd_2(n, a1_4), CF = a1_4
+    ; kind(n, "call"), pth123_arg_closefd_2(n, a1_4), CF = a1_4, count : { kind(n, "call"),pth123_arg_no_closefd_2(n) } = 0
     ),
 
     ( kind(n, "call"), pth123_arg_no_opener_3(n), unset(OP)
-    ; kind(n, "call"), pth123_arg_opener_3(n, a1_6), OP = a1_6
+    ; kind(n, "call"), pth123_arg_opener_3(n, a1_6), OP = a1_6, count : { kind(n, "call"),pth123_arg_no_opener_3(n) } = 0
     ),
     !pth123_file_descriptor(FI), pth123_none_literal_family(CF, "true_literal"),
     pth123_none_literal_family(OP, "none_literal").

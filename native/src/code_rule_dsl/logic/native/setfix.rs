@@ -414,7 +414,7 @@ fn find_row<D: RowData + ?Sized>(orders: &[Index], data: &D, k: usize, row: &[i6
 }
 
 /// The widest key an order is probed with inline; a relation of more columns is not indexed (`Rel::new`).
-const MAX_KEY: usize = 32;
+const MAX_KEY: usize = 64;
 
 /// The values of `cols`, in order, from `value` (by column), into `out`.
 #[inline]

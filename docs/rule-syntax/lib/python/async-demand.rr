@@ -15,8 +15,8 @@ async_site(c,f,r) :- async_candidates(c,f,r,_).
 async_reference(n) :- async_site(_,_,n), n >= 0.
 .decl async_qualified(n: node,q: symbol)
 async_qualified(n,q) :- python_qualified(n,q,async_reference,async_api_target).
-.decl async_blocking(c: node,f: node,q: symbol)
-async_blocking(c,f,q) :- async_site(c,f,r), async_qualified(r,q).
+.decl async_blocking_demand(c: node,f: node,q: symbol)
+async_blocking_demand(c,f,q) :- async_site(c,f,r), async_qualified(r,q).
 
 // Receiver demands follow the structural .open test, before binding resolution.
 .decl async_open_receiver(f: node,o: node)
