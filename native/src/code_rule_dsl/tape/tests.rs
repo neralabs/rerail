@@ -2162,7 +2162,6 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
     let (mut equal, mut refused, mut corrected, mut bytes) = (0, 0, 0, 0);
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
-    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     for path in &files {
         let Ok(source) = std::fs::read_to_string(path) else { continue };
         match simdjson_tapes(&source) {
@@ -2749,6 +2748,34 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "x = a + b * c - d.e.f(g)[h] + i - j ** k ** l + (m + n) * o.p\n",
         "x = a or b and c or not d and e.f(g or h)[i and j] or k\n",
         "x = a.b(c + d.e(f * g + h)[i - j].k + l).m\n",
+        // A with item's parentheses around one `as` and a `,`: a tuple.
+        "with (a as b,):\n    pass\n",
+        // A walrus's value is no conditional: the conditional wraps the named expression.
+        "if (y := f(x)) if c else d:\n    pass\n",
+        "x = [y := a or b, z := lambda: 1]\n",
+        // `type` subscripted is a name; `type X = …` an alias.
+        "type[1] = 2\n",
+        "type X = int\ntype Y[T] = list[T]\n",
+        // A splat's form by its place: a statement's primary, a pattern's, an expression's.
+        "*a.b.c\n",
+        "*a, = b\n",
+        "x = a, *b.c\n",
+        "f(*a.b, *c)\n",
+        "[*a for x in y]\n",
+        // `_` in a union and a splat is stored; alone, it is not.
+        "match p:\n    case A(x) | _:\n        pass\n    case [*_, _]:\n        pass\n    case {\"k\": _}:\n        pass\n",
+        "match p:\n    case _ | _:\n        pass\n",
+        "match p:\n    case 1 | -2 | x:\n        pass\n",
+        "for x in lambda: y:\n    pass\n",
+        "def f(*async): pass\n",
+        // A line below the block inside brackets: no DEDENT where a closer may follow, a string
+        // starts the line, or an f-string's interpolation is open (the scanner's
+        // `inside_interpolated_string`, set as the f-string starts).
+        "def f():\n    x = (a +\n'b')\n",
+        "def f():\n    x = f\"\"\"{(a +\nb)}\"\"\"\n",
+        "def f():\n    x = f\"\"\"{(f\"a\" +\n'b')}\"\"\"\n",
+        "def f():\n    x = f\"\"\"{(f\"a\" + f\"{c +\nd}\")}\"\"\"\n",
+        "def f():\n    x = f\"{g(a,\nb)}\"\n",
     ] {
         let ours = python_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
         let tree = parser.parse(source, None).unwrap();
@@ -2790,6 +2817,19 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "@p.\ndef f():\n    pass\n",
         // After a bare name, tree-sitter's lexer reads `:=` in an interpolation: a walrus.
         "f\"{x:=}\"\n",
+        // `async` and `await` are keywords as a definition's or a parameter's name.
+        "def await(): pass\n",
+        "class async: pass\n",
+        "def f(async=1): pass\n",
+        "lambda await: 1\n",
+        // A line below the block where no closer may follow inside brackets: the scanner's DEDENT,
+        // in an interpolation too once a nested string has ended (its end clears the flag).
+        "def f():\n    (bar.\nbaz)\n",
+        "def f():\n    (a +\nbaz)\n",
+        "def f():\n    x = (a +\nf'b')\n",
+        "def f():\n    x = f\"\"\"{(f\"a\" +\nb)}\"\"\"\n",
+        "def f():\n    x = f\"\"\"{('a' + f\"{c}\" + (d +\ne))}\"\"\"\n",
+        "def f():\n    x = f\"\"\"{f\"a\" +\nb}\"\"\"\n",
     ] {
         let tree = parser.parse(invalid, None).unwrap();
         assert!(tree.root_node().has_error(), "{invalid:?} reads without an error");
