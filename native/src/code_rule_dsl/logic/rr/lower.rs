@@ -179,7 +179,7 @@ fn place_relation(v: &str) -> String {
     format!("rr_place_{v}")
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Lowerer {
     prog: Program,
     /// `.lattice` declarations: name → (base type, its `Lub` functor).
@@ -324,6 +324,7 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
 /// A rule file lowered alone (decision 0246 §1): each clause rewritten to the core rules it lowers to, its
 /// declarations, facts and settings, and what lowering's whole-program half reads of them (its `.violation`s, its
 /// `must, may` relations and heads, its kind sets). What needs the whole program is `link`'s.
+#[derive(Clone)]
 pub struct Module {
     l: Lowerer,
     /// Its relations' column types as written (`tape_type`), for the modules that include it.
@@ -862,6 +863,34 @@ pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
     for m in modules {
         l.append(m);
     }
+    whole(l)
+}
+
+/// A program's own module, linked in the scope of the library modules it includes (decision 0246 §2): the
+/// whole-program half runs over the module with its scope's names seeded, not over the library again, and the result
+/// holds the module's own part, as `own_part` leaves a program read with its libraries' declarations. `core.rr`'s
+/// names and the kind sets stay, as there: the run's merge names each program's kind sets, and reads core's
+/// declarations from any part. Only for a module whose clauses add to no relation of its scope (it asks nothing of
+/// the library, decision 0089 §3): the scope's `.violation`s are the library's, and their findings are its rules.
+pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<Program, Error> {
+    let mut l = Lowerer::default();
+    let seeded = l.seed(scope);
+    l.violations.clear();
+    l.append(m);
+    let mut program = whole(l)?;
+    crate::code_rule_dsl::logic::front::declared(&program)?;
+    let gone = |r: &str| !core.contains(r);
+    program.decls.retain(|r, _| !(seeded.decls.contains(r.as_str()) && gone(r)));
+    program.inputs.retain(|r| !(seeded.inputs.contains(r) && gone(r)));
+    program.natives.retain(|r, _| !(seeded.natives.contains(r) && gone(r)));
+    program.lattice.retain(|r, _| !(seeded.lattice.contains(r) && gone(r)));
+    program.tapes.retain(|r, _| !(seeded.tapes.contains(r) && gone(r)));
+    program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
+    Ok(program)
+}
+
+/// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
+fn whole(mut l: Lowerer) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;

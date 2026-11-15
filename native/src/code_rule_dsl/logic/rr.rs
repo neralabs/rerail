@@ -199,6 +199,41 @@ impl Text {
         }
     }
 
+    /// The text's own program, lowered as a module against the library's modules its includes reach and linked in
+    /// their scope (`lower::link_in`, decision 0246 §2): what `lower(false)` gives less what `own_part` takes out,
+    /// without lowering the library's declarations again. For a text that asks nothing of the library (its own
+    /// clauses add to none of its relations); `None` for a text that includes nothing. `store` holds it as a program
+    /// image (decision 0246 §6) under its text `src` and its scope's keys: a store that holds it reads it, and the
+    /// text is not lowered.
+    pub fn lower_in(self, src: &str, library: &Library, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
+        let Read::Modular { files, own } = self.0 else { return Ok(None) };
+        let paths: Vec<PathBuf> = files.iter().map(|(p, _, _)| p.clone()).collect();
+        let (scope, keys) = library.scope(&paths);
+        let key = program_key(src, &keys);
+        if let Some(store) = store
+            && let Ok(Some(id)) = store.source_by_alias(key)
+            && let Ok(bytes) = store.get_source(id)
+            && let Ok(program) = super::program_image::Version::open(&bytes).and_then(|v| v.program(&Default::default()))
+        {
+            renew_image(store, id);
+            crate::code_rule_dsl::prof::count("rr.program_image_read", 1);
+            return Ok(Some(program));
+        }
+        let checked: Vec<syntax::Statement> = own.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { body, .. } if body.is_empty())).cloned().collect();
+        let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
+        check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
+        let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
+        let m = lower::lower_module_in(own, &scope)?;
+        let program = lower::link_in(m, &scope, core_names())?;
+        if let Some(store) = store
+            && let Ok(bytes) = encode_program(&program)
+            && keep_image(store, "a program image", key, bytes)
+        {
+            crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
+        }
+        Ok(Some(program))
+    }
+
     /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
     pub fn lower(self, clauses: bool) -> Result<Program, Error> {
         let (files, own) = match self.0 {
@@ -251,12 +286,31 @@ pub fn modules(src: &str) -> Result<Option<Modules>, Error> {
     Ok(read_text(src)?.modules())
 }
 
+/// A run's library (decision 0089): its modules, each with its files (canonical paths), and the program linked from
+/// them. A program that asks nothing of the library is lowered against the modules its includes reach
+/// (`Text::lower_in`), and the run holds the linked program once.
+pub struct Library {
+    pub modules: Vec<lower::Module>,
+    pub files: Vec<Vec<PathBuf>>,
+    /// Each module's key in the store (`module_key`).
+    pub keys: Vec<crate::content_store::HashKey>,
+    pub program: Program,
+}
+
+impl Library {
+    /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
+    /// with their keys.
+    pub fn scope(&self, files: &[PathBuf]) -> (Vec<&lower::Module>, Vec<crate::content_store::HashKey>) {
+        self.modules.iter().zip(&self.files).zip(&self.keys).filter(|((_, fs), _)| fs.iter().all(|f| files.contains(f))).map(|((m, _), k)| (m, *k)).unzip()
+    }
+}
+
 /// The library files `paths` (canonical, includes first, as `Modules::files` lists them) as one program, lowered
 /// once for every program of a run that includes them (decision 0089). Kept for the process by the files' digests.
-pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Program, Error> {
+pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<std::sync::Arc<Library>, Error> {
     use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static LIBRARIES: OnceLock<Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Program>>> = OnceLock::new();
+    use std::sync::{Arc, Mutex, OnceLock};
+    static LIBRARIES: OnceLock<Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Arc<Library>>>> = OnceLock::new();
     let mut files = Vec::new();
     let mut key = Vec::new();
     for path in paths {
@@ -265,18 +319,48 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Progr
         files.push((path.clone(), statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect()));
     }
     let cache = LIBRARIES.get_or_init(Default::default);
-    if let Some(program) = cache.lock().expect("the lowered libraries").get(&key) {
+    if let Some(library) = cache.lock().expect("the lowered libraries").get(&key) {
         crate::code_rule_dsl::prof::count("rr.library_reused", 1);
-        return Ok(program.clone());
+        return Ok(Arc::clone(library));
     }
     check_names(&files, false)?;
-    let program = if std::env::var("RERAIL_LIBRARY_LOWERING").is_ok_and(|v| v == "whole") { lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())? } else { lower_modules(paths, files)? };
+    let library = if std::env::var("RERAIL_LIBRARY_LOWERING").is_ok_and(|v| v == "whole") {
+        Library { modules: Vec::new(), files: Vec::new(), keys: Vec::new(), program: lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())? }
+    } else {
+        let (modules, members, keys) = library_modules_with_files(paths, files)?;
+        // The linked library is an image too (decision 0246 §2, §6), under its modules' keys: a store that holds it
+        // reads it, and the whole-program half does not run again.
+        let store = if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { super::plan::corpus::phases::reading_store() } else { None };
+        let key = linked_key(&keys);
+        let stored = store.as_ref().and_then(|store| {
+            let id = store.source_by_alias(key).ok()??;
+            let program = store.get_source(id).ok().and_then(|bytes| super::program_image::Version::open(&bytes).and_then(|v| v.program(&Default::default())).ok())?;
+            renew_image(store, id);
+            crate::code_rule_dsl::prof::count("rr.linked_library_read", 1);
+            Some(program)
+        });
+        let program = match stored {
+            Some(program) => program,
+            None => {
+                let program = lower::link(modules.iter().map(lower::Module::clone).collect())?;
+                if let Some(store) = &store
+                    && let Ok(bytes) = encode_program(&program)
+                    && keep_image(store, "a linked library's image", key, bytes)
+                {
+                    crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
+                }
+                program
+            }
+        };
+        Library { modules, files: members, keys, program }
+    };
+    let library = Arc::new(library);
     let mut kept = cache.lock().expect("the lowered libraries");
     if kept.len() >= 8 {
         kept.clear();
     }
-    kept.insert(key, program.clone());
-    Ok(program)
+    kept.insert(key, Arc::clone(&library));
+    Ok(library)
 }
 
 /// Library files (canonical paths, includes first, with their statements less their includes) lowered one module
@@ -290,6 +374,12 @@ pub fn lower_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Stateme
 
 /// The library files' modules (`lower_modules`), includes first, each lowered against the modules it reaches.
 pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<Vec<lower::Module>, Error> {
+    Ok(library_modules_with_files(paths, files)?.0)
+}
+
+/// `library_modules`, with each module's files and its key.
+#[allow(clippy::type_complexity)]
+fn library_modules_with_files(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<(Vec<lower::Module>, Vec<Vec<PathBuf>>, Vec<crate::content_store::HashKey>), Error> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("lower the library one module at a time ({} files)", paths.len()));
     let core = library().join("core.rr").canonicalize().ok();
     let at = |p: &Path| paths.iter().position(|q| q == p);
@@ -364,7 +454,7 @@ pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::State
             && let Ok(bytes) = store.get_source(id)
             && let Ok(m) = module_image::decode(&bytes)
         {
-            let _ = store.pin_held_sources(&[id]);
+            renew_image(store, id);
             crate::code_rule_dsl::prof::count("rr.module_image_read", 1);
             modules.push(m);
             continue;
@@ -379,20 +469,71 @@ pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::State
         // a tape is: the next run lowers the module again.
         if let Some(store) = &store
             && let Ok(bytes) = module_image::encode(&m)
+            && keep_image(store, "a module image", key, bytes)
         {
-            use crate::content_store::write_back::{Key, Syms};
-            let n = bytes.len();
-            let queued = store.write_back_unless_full(Syms::None, "a module image", n, vec![(Key::of(&[b"module_image", &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
-                let id = store.put_source(&bytes, &[key])?;
-                store.pin_held_sources(&[id])
-            }));
-            if queued {
-                crate::code_rule_dsl::prof::count("rr.module_image_written", 1);
-            }
+            crate::code_rule_dsl::prof::count("rr.module_image_written", 1);
         }
         modules.push(m);
     }
-    Ok(modules)
+    Ok((modules, units.iter().map(|members| members.iter().map(|&i| paths[i].clone()).collect()).collect(), keys))
+}
+
+/// How long a module's or program's image stays in the store after the last run that read or wrote it
+/// (`keep_image`): collection keeps a source while a pin's lease runs, as it keeps the combined program's entry before
+/// a run names it (`combined::remember`). Naming the images in the run's record is decision 0246 §6's.
+const IMAGE_LEASE_SECS: i64 = 7 * 24 * 3600;
+
+/// The owner of the images' pins.
+const IMAGE_OWNER: &str = "rr images (decision 0246)";
+
+fn image_lease() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) + IMAGE_LEASE_SECS
+}
+
+/// Keeps `bytes`, an image, in `store` under alias `key`, pinned for its lease: written by the store's writer, behind
+/// the run (decisions 0104, 0240 §1), and dropped where its queue is full, as a tape is (the next run lowers it
+/// again). Whether it was queued.
+fn keep_image(store: &crate::content_store::ContentStore, what: &'static str, key: crate::content_store::HashKey, bytes: Vec<u8>) -> bool {
+    use crate::content_store::write_back::{Key, Syms};
+    let n = bytes.len();
+    store.write_back_unless_full(Syms::None, what, n, vec![(Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
+        let id = store.put_source(&bytes, &[key])?;
+        store.pin_source(id, IMAGE_OWNER, image_lease())
+    }))
+}
+
+/// The lease of image `id`, read by this run, renewed (`keep_image`).
+fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
+    use crate::content_store::write_back::Syms;
+    store.write_back_unless_full(Syms::None, "an image's lease", 0, Vec::new(), Box::new(move |store| store.pin_source(id, IMAGE_OWNER, image_lease())));
+}
+
+/// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
+fn encode_program(program: &Program) -> Result<Vec<u8>, String> {
+    let mut b = super::program_image::Builder::of_program_less_maintenance(program)?;
+    b.set_about(&super::program_image::about_of(program));
+    b.finish_bytes()
+}
+
+/// The alias the library linked from modules `keys` is kept under.
+fn linked_key(keys: &[crate::content_store::HashKey]) -> crate::content_store::HashKey {
+    let mut bytes = format!("rerail linked library {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    for k in keys {
+        bytes.extend_from_slice(&k.sha256_bytes().unwrap_or_default());
+    }
+    crate::content_store::HashKey::sha256(&bytes)
+}
+
+/// The alias a program's image is kept under (`Text::lower_in`): its text and the keys of the modules in its scope.
+fn program_key(src: &str, scope: &[crate::content_store::HashKey]) -> crate::content_store::HashKey {
+    let digest = crate::content_store::HashKey::sha256(src.as_bytes()).sha256_bytes().unwrap_or_default();
+    let mut bytes = format!("rerail program image {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    bytes.extend_from_slice(&digest);
+    bytes.push(0);
+    for k in scope {
+        bytes.extend_from_slice(&k.sha256_bytes().unwrap_or_default());
+    }
+    crate::content_store::HashKey::sha256(&bytes)
 }
 
 /// The alias a module's image is kept under (`library_modules`).

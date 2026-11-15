@@ -913,6 +913,31 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     };
     let own_only: Vec<bool> = modular.iter().map(|m| !copied && m.as_ref().is_some_and(|m| !asks(m))).collect();
     drop(reading);
+    // The run's library files, each once, includes first, and the library lowered from them, before the programs: a
+    // program that asks nothing of it is lowered against its modules (decision 0246 §2), not with its declarations.
+    let mut library_files: Vec<std::path::PathBuf> = Vec::new();
+    let mut lowered_library: Option<std::sync::Arc<crate::code_rule_dsl::logic::rr::Library>> = None;
+    if !copied && modular.iter().flatten().count() > 1 {
+        let _library = crate::code_rule_dsl::logic::profile::span(|| "the libraries, once (decision 0089)".into());
+        let mut declared_in: BTreeMap<&str, &std::path::Path> = BTreeMap::new();
+        for modules in modular.iter().flatten() {
+            for (path, _, names) in &modules.files {
+                if library_files.contains(path) {
+                    continue;
+                }
+                for name in names.iter().filter(|n| !core.contains(*n)) {
+                    if let Some(other) = declared_in.insert(name, path) {
+                        return Err(Error::Plan(format!("{name} is declared by two library files of the run, {} and {}", other.display(), path.display())));
+                    }
+                }
+                library_files.push(path.clone());
+            }
+        }
+        lowered_library = Some(crate::code_rule_dsl::logic::rr::lower_library(&library_files)?);
+    }
+    let in_scope = lowered_library.as_deref().filter(|l| !l.modules.is_empty());
+    // Each program lowered in scope is kept in the store as its image (decision 0246 §6).
+    let images = if in_scope.is_some() && cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { phases::reading_store() } else { None };
     let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower each program".to_owned());
     let each: Vec<_> = programs
         .par_iter()
@@ -924,6 +949,11 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
                 return Ok(read.clone());
             }
             if let Some(read) = slot.take() {
+                if own_only && let Some(library) = in_scope {
+                    let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
+                    let prog = read.lower_in(text, library, images.as_deref())?.expect("a modular text");
+                    return Ok(prog);
+                }
                 let prog = read.lower(!own_only)?;
                 front::declared(&prog)?;
                 return Ok(prog);
@@ -986,22 +1016,6 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     // A program's request (§3): its key's number and the relations it holds, named `q<k>_` for every asker.
     let mut requests: Vec<Option<(usize, BTreeSet<String>)>> = vec![None; parsed.len()];
     if shared {
-        let _library = crate::code_rule_dsl::logic::profile::span(|| "the libraries, once (decision 0089)".into());
-        let mut paths: Vec<std::path::PathBuf> = Vec::new();
-        let mut declared_in: BTreeMap<&str, &std::path::Path> = BTreeMap::new();
-        for modules in modular.iter().flatten() {
-            for (path, _, names) in &modules.files {
-                if paths.contains(path) {
-                    continue;
-                }
-                for name in names.iter().filter(|n| !core.contains(*n)) {
-                    if let Some(other) = declared_in.insert(name, path) {
-                        return Err(Error::Plan(format!("{name} is declared by two library files of the run, {} and {}", other.display(), path.display())));
-                    }
-                }
-                paths.push(path.clone());
-            }
-        }
         for (i, modules) in modular.iter().enumerate() {
             let Some(modules) = modules else { continue };
             for name in &modules.declared {
@@ -1010,7 +1024,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
                 }
             }
         }
-        library = Some(crate::code_rule_dsl::logic::rr::lower_library(&paths)?);
+        library = Some(lowered_library.as_ref().expect("made with the programs' modules").program.clone());
         let mut cones = 0;
         let mut kept = 0;
         // Each program's request (§3): the cone's library relations and the program's own relations they read, held
