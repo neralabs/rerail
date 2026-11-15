@@ -1076,6 +1076,32 @@ function watchKeptAnswers(): KeptAnswerTraffic {
 }
 
 /**
+ * Each path under a Rerail home's `stopped-answers` folder that the hook host the test loads next (`startCheckHost`)
+ * removes, through `node:fs` and `node:fs/promises`.
+ */
+function watchRemovals(): string[] {
+  const removed: string[] = [];
+  const answers = (path: unknown): boolean => typeof path === "string" && path.includes(`${sep}stopped-answers${sep}`);
+  vi.doMock("node:fs", async () => {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const rmSync = (...args: Parameters<typeof actual.rmSync>): void => {
+      if (answers(args[0])) removed.push(String(args[0]));
+      actual.rmSync(...args);
+    };
+    return { ...actual, default: { ...actual, rmSync }, rmSync };
+  });
+  vi.doMock("node:fs/promises", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const rm = async (...args: Parameters<typeof actual.rm>): Promise<void> => {
+      if (answers(args[0])) removed.push(String(args[0]));
+      await actual.rm(...args);
+    };
+    return { ...actual, default: { ...actual, rm }, rm };
+  });
+  return removed;
+}
+
+/**
  * A stand-in daemon's timing for `hooksAtOnce`: it answers each Codex hook's start check at once, and that hook writes the
  * answer again over one kept over a minute ago; it holds each Claude Code hook's, as a busy daemon does, and that hook
  * repeats the answer kept.
@@ -2189,6 +2215,21 @@ describe("the hook start check", () => {
     }
     expect({ copy: readFileSync(copy, "utf8"), link: lstatSync(file).isSymbolicLink(), whole: wholeKeptAnswer(readFileSync(file, "utf8")) })
       .toEqual({ copy: before, link: false, whole: true });
+  });
+
+  it("keeps a new daemon's first answer and removes nothing of the folders the daemons before it kept, which the daemon removes once it runs", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const answers = join(process.env.RERAIL_HOME!, "stopped-answers");
+    for (const earlier of ["7-1", "8-1"]) {
+      mkdirSync(join(answers, earlier), { recursive: true });
+      writeFileSync(join(answers, earlier, `${"0".repeat(32)}.json`), "{}");
+    }
+    const removed = watchRemovals();
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    expect({ removed: removed.filter(path => !path.includes(`${sep}${process.pid}-1`)), answers: readdirSync(answers).sort() })
+      .toEqual({ removed: [], answers: [`${process.pid}-1`, "7-1", "8-1"].sort() });
   });
 
   it("removes the folders of the daemons before it at a new daemon's first kept answer, following no link in them", async () => {

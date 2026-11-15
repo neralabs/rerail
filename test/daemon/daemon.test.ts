@@ -3,6 +3,7 @@ import { createServer, request as httpRequest, type IncomingMessage } from "node
 import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +18,7 @@ import {
 } from "../../src/daemon/daemon.js";
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import {
+  DAEMON_STATE_FILE,
   type DaemonHealth,
   type DaemonState,
   ingestEngineEvent,
@@ -828,6 +830,23 @@ describe("Rerail daemon", () => {
       await new Promise<void>((resolveClosed) => squatter.close(() => resolveClosed()));
       process.chdir(previousFolder);
     }
+  });
+
+  it("removes the answers of stopped the daemons before it kept for hooks once it has written its state file, removing a link as a link", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const home = join(root, "home");
+    const answers = join(home, "stopped-answers");
+    const outside = join(root, "outside");
+    await mkdir(join(answers, "7-1"), { recursive: true });
+    await writeFile(join(answers, "7-1", `${"0".repeat(32)}.json`), "{}");
+    await mkdir(outside);
+    await writeFile(join(outside, "keep.txt"), "kept");
+    linkFolder(outside, join(answers, "7-1", "linked"));
+    linkFolder(outside, join(answers, "8-1"));
+    await start({ stateFile: join(home, DAEMON_STATE_FILE) });
+    // It removes them off its start, so no hook that finds it pays for the removal.
+    for (let waited = 0; waited < 10_000 && (await readdir(answers)).length > 0; waited += 50) await delay(50);
+    expect({ answers: await readdir(answers), outside: await readdir(outside) }).toEqual({ answers: [], outside: ["keep.txt"] });
   });
 
   // Review of #49 (N1): a resource that fails to close does not keep the next one open.
