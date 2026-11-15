@@ -41,13 +41,12 @@ const SCHEMA: u32 = crate::content_store::live_fact_schema(106);
 /// A run takes choices made at a scale at least its own over this.
 pub(super) const GROWTH: f64 = 2.0;
 
-/// The choices for one program: the program as the rewrites left it (`None`: as it was), what each named, and the
-/// scale they were made at.
+/// The choices for one program: the program's version as the rewrites left it (`None`: as it was), what each named,
+/// and the scale they were made at.
 #[derive(Clone)]
 pub(super) struct Chosen {
-    pub(super) program: Option<Arc<Program>>,
-    /// The rewritten program's version (t36 item 6, step 4), which the run reads its rules from: the passes' overlay
-    /// of the program's, or the stored image. `None` where the program was not rewritten, or is kept as text alone.
+    /// The rewritten program's version (t36 items 6 and 7), which the run reads: the passes' overlay of the program's,
+    /// or the stored image (or the image of the stored text). `None` where the program was not rewritten.
     pub(super) version: Option<super::body::Placed>,
     /// The relations inlined (`keeps::choose`) and demanded (`demand::split_negations`), for the profile.
     pub(super) inlined: Vec<String>,
@@ -375,20 +374,21 @@ fn decode_chosen(texts: &HashMap<[u8; 32], program_text::Stored>, entry: &[u8], 
         rows.sort();
         rows.into_iter().map(|(_, s)| s).collect()
     };
-    let (program, version) = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
+    let version = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
             let stored = texts.get(&unhex(&digest)?)?;
             // A program kept as its image is read as it is: the image is the program's version, its rules in order.
-            let version = match stored {
-                program_text::Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::Version::open(bytes).ok().map(super::body::Placed::whole),
-                program_text::Stored::Text(_) => None,
+            // One kept as its text alone is read, and its image made: a program with no image is not taken.
+            let placed = match stored {
+                program_text::Stored::Image(bytes) => super::body::Placed::whole(crate::code_rule_dsl::logic::program_image::Version::open(bytes).ok()?),
+                program_text::Stored::Text(_) => super::body::Placed::of_program(&program_text::read_stored(stored, lists).ok()?).ok().filter(|p| p.whole)?,
             };
-            (Some(Arc::new(program_text::read_stored(stored, lists).ok()?)), version)
+            Some(placed)
         }
         Some(_) => return None,
-        None => (None, None),
+        None => None,
     };
-    Some(Chosen { program, version, inlined: names(INLINED), demanded: names(DEMANDED), nodes })
+    Some(Chosen { version, inlined: names(INLINED), demanded: names(DEMANDED), nodes })
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -404,10 +404,11 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 
 fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Chosen, late: &Mutex<Vec<crate::content_store::SourceId>>) -> StoreResult<bool> {
     let mut facts = Facts::new();
-    if let Some(program) = &chosen.program {
-        // Kept as its text (decision 0155). A program that does not read back the same is not kept: the next run
-        // chooses again.
-        let Some((digest, sources)) = program_text::store(store, program)? else { return Ok(false) };
+    if let Some(version) = &chosen.version {
+        // Kept as its text (decision 0155), decoded from the version here, on the store's writer. A program that does
+        // not read back the same is not kept: the next run chooses again.
+        let Ok(program) = version.program(&Default::default()) else { return Ok(false) };
+        let Some((digest, sources)) = program_text::store(store, &program)? else { return Ok(false) };
         late.lock().expect("the late sources").extend(sources);
         facts.insert(REWRITTEN.to_owned(), vec![[Value::Str(hex(&digest).into())].into()]);
     }

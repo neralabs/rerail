@@ -521,6 +521,21 @@ impl ConversationEngine {
 
 pub(crate) use code_rule_dsl::prof::lower_hex;
 
+#[cfg(test)]
+mod executor_tests {
+    /// The run's executors are installed as the library loads (`install_store_functions`), and the facts' lookup of a
+    /// binding's executor is the run's (2026-11-15). Its fallback, an executor of every lane, was made on every
+    /// lookup (`map_or`'s default is evaluated first): every CPU run compiled the GPU's kernels, prewarmed its sorts
+    /// and built the Neural Engine's lane.
+    #[test]
+    fn the_facts_executor_of_the_cpu_binding_is_the_runs_and_asks_for_no_device_lane() {
+        let before = rerail_accel::lanes::device_lanes_asked();
+        let ex = rerail_facts::code_rule_dsl::facts::core::executor_for(false);
+        assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the lookup asked for a device lane");
+        assert!(std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
+    }
+}
+
 #[cfg(all(test, not(windows)))]
 mod tests {
     use tikv_jemalloc_ctl::{epoch, raw};

@@ -780,12 +780,15 @@ pub fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
 /// The program's components, dependencies first (`strata` without its edges): an error if a negation or a
 /// non-monotone aggregate closes a cycle. What most callers of `strata` read, made without the edges by name.
 pub fn components_of(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
-    let g = Graph::of(prog);
-    let sccs = g.together(&prog.together);
-    match g.first_unstratified(&sccs, true).into_iter().next() {
-        Some(e) => Err(e),
-        None => Ok(g.named(&sccs)),
-    }
+    Graph::of(prog).components(&prog.together)
+}
+
+/// `components_of` of a dependency graph read from a version (`program_image::analyses::components_by_name`): the
+/// derived relations' names, sorted; each one's dependencies by their places among them, with whether negative, sorted
+/// and each once; the non-monotone aggregation edges; and the sets run as one component. The components, their order
+/// and the error are the tree's.
+pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
+    Graph { names, succ, aggs }.components(together)
 }
 
 /// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
@@ -883,6 +886,16 @@ impl<'p> Graph<'p> {
         }
     }
 
+    /// The components, dependencies first, `together`'s sets each one (`together`): an error if a negation or a
+    /// non-monotone aggregate closes a cycle.
+    fn components(&self, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
+        let sccs = self.together(together);
+        match self.first_unstratified(&sccs, true).into_iter().next() {
+            Some(e) => Err(e),
+            None => Ok(self.named(&sccs)),
+        }
+    }
+
     fn named(&self, sccs: &[Vec<u32>]) -> Vec<BTreeSet<String>> {
         sccs.iter().map(|scc| scc.iter().map(|&r| self.names[r as usize].to_owned()).collect()).collect()
     }
@@ -907,6 +920,7 @@ impl<'p> Graph<'p> {
                     }
                     let component: BTreeSet<String> = scc.iter().map(|&r| self.names[r as usize].to_owned()).collect();
                     let (vn, wn) = (self.names[v as usize].to_owned(), self.names[w as usize].to_owned());
+                    unstratified_trace(&vn, &wn, &component);
                     out.push(if self.aggs.contains(&(v, w)) {
                         Error::AggregationInRecursion { head: vn, aggregated: wn, component }
                     } else {
@@ -920,6 +934,13 @@ impl<'p> Graph<'p> {
             }
         }
         out
+    }
+}
+
+/// `RERAIL_STRATA_COUNTS` (a diagnostic): a refused component's members, which the error's message leaves out.
+pub fn unstratified_trace(head: &str, dep: &str, component: &BTreeSet<String>) {
+    if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
+        eprintln!("RERAIL_STRATA_COUNTS unstratified (magic sets may recover): {head} -> {dep} in a component of {}: {}", component.len(), component.iter().cloned().collect::<Vec<_>>().join(" "));
     }
 }
 
@@ -964,6 +985,14 @@ pub fn apart(prog: &Program) -> Vec<usize> {
         let t = &prog.together[i];
         !sccs.iter().any(|s| s == t)
     }).collect()
+}
+
+/// `apart` over a graph given by its names (sorted) and each name's reads (sorted, each with whether negative): for
+/// a program held as a version, whose rules are not trees.
+pub fn apart_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, together: &[BTreeSet<String>]) -> Vec<usize> {
+    let g = Graph { names, succ, aggs: rustc_hash::FxHashSet::default() };
+    let sccs = g.named(&g.together(together));
+    (0..together.len()).filter(|&i| !sccs.iter().any(|s| *s == together[i])).collect()
 }
 
 /// Strongly connected components on numbers (`tarjan`), dependencies first; each component's members in the order

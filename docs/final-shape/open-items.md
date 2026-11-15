@@ -5166,3 +5166,38 @@ variables as small integers, made once per rule body and kept with the body's di
 remove the allocations and the string comparisons. `_platform_memcmp`, 14.6% of the main thread, is spread over
 string-keyed BTree lookups like these across many passes (tarjan, components, `fork_with`, `keeps::choose`,
 `text_kind_demand`). `Board::finish`, 15%, is the main thread waiting on the pool: it is not work to cut.
+
+## O-cross-file-answers. Node attributes asked across files find no text (2026-11-15, decision 0174 §6)
+
+Status: open. Found by E32 (t39 step 24): bugbear B010 with C414 over ten files of corpus0 gives 2 findings
+with the eager oracle (`RERAIL_NODE_SOURCES=eager`) and none on request, the default. In a combined run the
+answer rule for `value` runs in the cross-file part: its request `rr_value_req` has 592 rows and
+`$x1 = @rr_node_value($x0)` gives none, because `node_value_any` and `held_text` read the batch's texts, and a
+chunk's batch is gone by then. The same holds before and after 6cd50a2b4 (the requests made over the combined
+program). Ways out: answer a cross-file request from the documents loaded for it (0145's load), keep the
+batches the cross-file part asks of, or keep answers file-local. Until then E32 runs with the eager oracle.
+
+Checked after the hub merge (d3489cf07, 2026-11-15): still so, with the merged library too (B010 2 findings eager,
+0 on request). The hub has the same defect as work-queue question 2 (Q2/Q5, a cross-file `node_text` reader), with
+three options; its recommended (a), widening a request the cross-file part would derive to its file-local literals,
+covers this case: `rr_value_req` is cross-file only because C414's asker reads `builtin_at`, while a node's value
+depends on its own document alone.
+
+## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
+
+Status: open. Found by E32 (t39 step 24): the data-layer candidates over 50 files take 100 s of CPU cold
+against 8.6 s over 10 (15.6× the lines), and the run's last part is a single `run_seed` →
+`run_join_in_each` on one stream worker while the others wait. Warm, the same evaluation's joins are 5.8 s
+in all. Next: one cold run with `RERAIL_STRATA_TRACE` to name the stratum, then its plan cold against warm
+(a plan made without the kept statistics is the likely cause).
+
+Checked after the hub merge (2026-11-15): still so, and the 50 files are not needed to show it. Cold, strict, eager:
+25 of the 50 files (every other one) take 15.7 s of CPU, the other 25 take 16.1 s, and 35 of them pass the 120 s cap.
+No stratum of either half takes over 0.5 s. So the cost is not one file's but the files together: a cliff between
+25 and 35 files. Sampled at 42 s into the 35-file run: one worker in `setfix::run_join_in_each` (its `candidates`
+probe), the 16 others waiting. The joins log's last entries before the stall are `PSE_AUDIT_010`'s file-local
+parts (`fz…_fl…_p47_PSE_AUDIT_010`, the clause `if_test(i, w, t), within(r, t), ref_site(r, s), eager_site(s, w)`):
+seed joins cut at 100k–200k rows of work, trials whose orders cost 5× their price (8,466 against 1,687), exact pair
+statistics with a 449,720-row side, heavy-value splits (`xd_`, `xk_`) over 85–120k first-atom rows. A handoff whose
+replacement is cut too goes on unbounded ("the replacement goes on", `p68_rr_agg20`). The strata trace is written
+when the loop ends, so a killed run names no stratum.

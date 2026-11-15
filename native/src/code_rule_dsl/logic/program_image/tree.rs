@@ -118,12 +118,15 @@ impl<'v> Tree<'v> {
     }
 
     /// The whole program.
-    pub fn program(mut self) -> Result<Program, String> {
+    pub fn program(self) -> Result<Program, String> {
         let v = self.v;
-        let mut rules = Vec::with_capacity(v.size());
-        for r in v.rules() {
-            rules.push(self.rule(r));
-        }
+        self.program_of(v.rules())
+    }
+
+    /// The program, its rules `rules` (the version's, in a program's order: a pass's overlay keeps its own).
+    pub fn program_of<'r>(mut self, rules: impl Iterator<Item = RuleRef<'r>>) -> Result<Program, String> {
+        let v = self.v;
+        let rules: Vec<Rule> = rules.map(|r| self.rule(r)).collect();
         let mut decls = BTreeMap::new();
         for d in v.decls() {
             let cols: Vec<(Name, Name)> = d.cols().map(|(n, t)| (self.name(n), self.name(t))).collect();

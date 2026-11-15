@@ -12,6 +12,11 @@
 //! tape16 base  <cap> [--dump <dir>]                   E9: base relations as rows against the tape
 //! tape16 textrel <cap>                                  E9: text and token as rows with atoms, against the tape
 //! tape16 inplace <cap>                                E10: in-memory tapes read in place, every question costed
+//! tape16 disk  <cap>                                   E18: the forms on disk, zstd and LZ4: bytes, decode, matches
+//! tape16 ralz  <cap>                                   E19: LZ4 in fixed blocks, stored as repeats, raw or LZ4
+//! tape16 code8 <cap>                                   E20: codes in 8 bits, overloaded by the adjacent code; E21: numbered by frequency, one cutoff
+//! tape16 f16     <cap>                                 E24: format 16's tape as one form: memory, disk, load
+//! tape16 nofield <cap>                                 E22: the field taken out of the code
 //! tape16 gpu   <cap> [--dict KB] [--k K] [--cut N]      E3: the LZ codecs decoded on Metal
 //! ```
 
@@ -1101,8 +1106,18 @@ fn cmd_inplace(path: &str, f11: bool) {
     const Q: [&str; 8] = ["sweep: code in a set", "code at random", "start at random", "subtree end at random", "children of every node", "parent at random (1 node in 16)", "check (every answer)", "end at random"];
     // `--f11`: a capture with every token (`capture-tapes --all-tokens`) read as format 11: format 15's columns
     // over every node, plus the 32-byte source digest format 11 stored (format 12 dropped it).
-    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF", "XR"];
-    const C: usize = 11;
+    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF", "XR", "F16"];
+    const C: usize = 12;
+    // F16 (E24): each language's numbering and widths, over every file (as XF's widths are).
+    let f16langs: BTreeMap<u8, rerail_tape_lab::f16::F16Lang> = {
+        let mut learn: BTreeMap<u8, rerail_tape_lab::f16::Learner> = BTreeMap::new();
+        capture::stream(cap, |f| {
+            let tree = rerail_tape_lab::v15::read(&f.image)?;
+            learn.entry(f.tag).or_default().add(&Cols::of_tree(&tree, &codes[&f.tag]));
+            Ok(())
+        }).unwrap_or_else(|e| die(&e));
+        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t], rerail_tape_lab::f16::grammar_codes(t)).marked(t))).collect()
+    };
     let mut costs = vec![[Cost::default(); 8]; C];
     let mut counts = [[0u64; 8]; C];
     let mut bytes = [0usize; C];
@@ -1142,7 +1157,8 @@ fn cmd_inplace(path: &str, f11: bool) {
         let xf = XF::<ForLen>::new(&tree, lang);
         let mf = XF::<PredGap>::new(&tree, lang);
         let xr = XR::new(&tree, lang);
-        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts(), xf.parts(), mf.parts(), xr.parts()].iter().enumerate() {
+        let f16 = rerail_tape_lab::f16::F16::new(&Cols::of_tree(&tree, lang), &f16langs[&f.tag]);
+        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts(), xf.parts(), mf.parts(), xr.parts(), f16.parts()].iter().enumerate() {
             for k in 0..4 {
                 parts[c + 1][k] += p[k];
             }
@@ -1180,7 +1196,9 @@ fn cmd_inplace(path: &str, f11: bool) {
             cols
         };
         // Shape 1: each candidate's bytes zstd'd, and decompressed; and each candidate's build from the tree.
-        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image(), xf.image(), mf.image(), xr.image()];
+        // F16's image: its arrays' bytes as stored, side lists after each.
+        let f16_image: Vec<u8> = f16.streams().iter().flat_map(|(a, b)| a.iter().chain(b.iter()).copied()).collect();
+        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image(), xf.image(), mf.image(), xr.image(), f16_image];
         for (c, im) in images.iter().enumerate() {
             let z = zstd::bulk::compress(im, 3).unwrap();
             disk1[c] += z.len();
@@ -1200,6 +1218,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             { let (v, k) = best3(|| XF::<ForLen>::of(&cols)); (v.image(), k) },
             { let (v, k) = best3(|| XF::<PredGap>::of(&cols)); (v.image(), k) },
             { let (v, k) = best3(|| XR::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| rerail_tape_lab::f16::F16::new(&cols, &f16langs[&f.tag])); (v.streams().iter().flat_map(|(a, b)| a.iter().chain(b.iter()).copied()).collect(), k) },
         ];
         for (c, (im, k)) in built.iter().enumerate() {
             if im != &images[c + 1] {
@@ -1218,6 +1237,7 @@ fn cmd_inplace(path: &str, f11: bool) {
         bench(&xf, &tree, &want, &order, set, &mut costs[8], &mut counts[8], &mut wrong[8], &mut bytes[8]);
         bench(&mf, &tree, &want, &order, set, &mut costs[9], &mut counts[9], &mut wrong[9], &mut bytes[9]);
         bench(&xr, &tree, &want, &order, set, &mut costs[10], &mut counts[10], &mut wrong[10], &mut bytes[10]);
+        bench(&f16, &tree, &want, &order, set, &mut costs[11], &mut counts[11], &mut wrong[11], &mut bytes[11]);
         nodes += n;
         files += 1;
         if f11 {
@@ -1301,16 +1321,58 @@ fn cmd_prim_gpu(path: &str) {
     let n = tree.len();
     println!("{}\n", rerail_tape_lab::measure::machine());
     println!("{path}: language {tag}, {nfiles} files as one forest, {n} nodes; GPU: one thread a group of 64 nodes, best of 8 warm dispatches; CPU: one thread, from the S-nodes, best of 3\n");
-    println!("| ns a node | set | share | wrong | GPU match | GPU nearest (with match) | GPU outermost | GPU has, climbing | GPU has, from counts | GPU span | BE nearest, carry by climbing | CPU nearest | CPU outermost | CPU has |");
-    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("| ns a node | set | share | wrong | GPU match | GPU nearest (with match) | GPU outermost | GPU has, climbing | GPU has, from counts | GPU span | BE nearest, carry by climbing | GPU nearest, bounded climb | GPU nearest, back over the S-nodes | GPU outermost, prefix max | CPU nearest | CPU outermost | CPU has |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     for (s, kinds) in SETS {
         let set = names.set(tag, &codes, kinds);
         let share = tree.nodes.iter().filter(|x| set[codes.ids[&(x.kind, x.field, x.flags, x.classes.clone())] as usize]).count() as f64 / n as f64;
-        let rows = rerail_tape_lab::prim_gpu::all(&tree, &codes, &set).unwrap_or_else(|e| die(&e));
+        let rows = rerail_tape_lab::prim_gpu::all(&tree, &codes, &set, rerail_tape_lab::f16::grammar_codes(tag)).unwrap_or_else(|e| die(&e));
         for (name, r, c) in rows {
-            println!("| {name} | {s} | {:.2}% | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {:.2} | {:.2} | {:.2} |", 100.0 * share, r.wrong, r.ns[0], r.ns[1], r.ns[2], r.ns[3], r.has_counts, r.span,
-                r.no_carry.map_or(String::new(), |v| format!("{v:.3}")), c[0], c[1], c[2]);
+            let (n2, o2) = r.scan.map_or((String::new(), String::new()), |(a, b)| (format!("{a:.3}"), format!("{b:.3}")));
+            println!("| {name} | {s} | {:.2}% | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {n2} | {} | {o2} | {:.2} | {:.2} | {:.2} |", 100.0 * share, r.wrong, r.ns[0], r.ns[1], r.ns[2], r.ns[3], r.has_counts, r.span,
+                r.no_carry.map_or(String::new(), |v| format!("{v:.3}")), r.back.map_or(String::new(), |v| format!("{v:.3}")), c[0], c[1], c[2]);
         }
+    }
+}
+
+/// t39 step 23: parent reads and climbs under each leaf-slot rule, and the slots' memory.
+fn cmd_climb(path: &str) {
+    use rerail_tape_lab::climb::{RULES, climbs, memory};
+    use rerail_tape_lab::inplace::{Codes, Cols, forest};
+    use rerail_tape_lab::prim::{Names, SETS};
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let trees: Vec<_> = files.iter().map(|f| (f.tag, rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e)))).collect();
+    let mut by_tag: BTreeMap<u8, Vec<&rerail_tape_lab::tree::Tree>> = BTreeMap::new();
+    for (tag, t) in &trees {
+        by_tag.entry(*tag).or_default().push(t);
+    }
+    println!("{path}: slots by rule, per language (in memory B a node, escaped %, slots a point parent reads: mean / most, zstd 3 B a node a file at a time)\n");
+    println!("| language | nodes | {} |", RULES.iter().map(|r| r.0).collect::<Vec<_>>().join(" | "));
+    println!("|---|---|{}", "---|".repeat(RULES.len()));
+    for (tag, ts) in &by_tag {
+        let mut codes = Codes::default();
+        for t in ts {
+            codes.learn(t);
+        }
+        let cols: Vec<Cols> = ts.iter().map(|t| Cols::of_tree(t, &codes)).collect();
+        let m = memory(&cols);
+        println!("| {tag} | {} | {} |", m.nodes, m.rows.iter().map(|r| format!("{:.3} B, {:.2}%, {:.2} / {}, {:.3}", r.0, r.1, r.2, r.3, r.4)).collect::<Vec<_>>().join(" | "));
+    }
+    // The climbs, on prim-gpu's forest: the largest language with functions.
+    let names = Names::load();
+    let tag = *by_tag.iter().filter(|e| !names.kind_ids(*e.0, SETS[0].1).is_empty()).max_by_key(|e| e.1.iter().map(|t| t.len()).sum::<usize>()).unwrap().0;
+    let mine: Vec<_> = trees.into_iter().filter(|e| e.0 == tag).map(|e| e.1).collect();
+    let tree = forest(&mine);
+    drop(mine);
+    let mut codes = Codes::default();
+    codes.learn(&tree);
+    println!("\nlanguage {tag} as one forest, {} nodes: slot reads a node for each 64-node group's carry climb, full (to the root) / bounded; XF reads one slot a parent\n", tree.len());
+    println!("| set | parents a node, full / bounded | {} |", RULES.iter().map(|r| r.0).collect::<Vec<_>>().join(" | "));
+    println!("|---|---|{}", "---|".repeat(RULES.len()));
+    for (s, kinds) in SETS {
+        let set = names.set(tag, &codes, kinds);
+        let c = climbs(&tree, &codes, &set);
+        println!("| {s} | {:.3} / {:.3} | {} |", c.steps.0, c.steps.1, c.full.iter().zip(&c.bounded).map(|(f, b)| format!("{f:.3} / {b:.3}")).collect::<Vec<_>>().join(" | "));
     }
 }
 
@@ -1366,7 +1428,16 @@ fn cmd_prim(path: &str) {
         field_of: c.table.iter().map(|t| t.1).collect(),
         fields: [names.field(tag, "name").unwrap_or(255), names.field(tag, "body").unwrap_or(255)],
     })).collect();
-    const C: [&str; 5] = ["F15", "XF", "MF", "BE", "XR"];
+    const C: [&str; 6] = ["F15", "XF", "MF", "BE", "XR", "F16"];
+    let f16langs: BTreeMap<u8, rerail_tape_lab::f16::F16Lang> = {
+        let mut learn: BTreeMap<u8, rerail_tape_lab::f16::Learner> = BTreeMap::new();
+        capture::stream(cap, |f| {
+            let tree = rerail_tape_lab::v15::read(&f.image)?;
+            learn.entry(f.tag).or_default().add(&rerail_tape_lab::inplace::Cols::of_tree(&tree, &codes[&f.tag]));
+            Ok(())
+        }).unwrap_or_else(|e| die(&e));
+        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t], rerail_tape_lab::f16::grammar_codes(t)).marked(t))).collect()
+    };
     // Rows: (primitive, set) → per candidate cost and count.
     let mut rows: Vec<String> = Vec::new();
     for (s, _) in SETS {
@@ -1589,6 +1660,7 @@ fn cmd_prim(path: &str) {
         one(&XF::<PredGap>::new(&tree, lang), 2, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&B::<EfEf>::new(&tree, lang), 3, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&XR::new(&tree, lang), 4, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
+        one(&rerail_tape_lab::f16::F16::new(&rerail_tape_lab::inplace::Cols::of_tree(&tree, lang), &f16langs[&f.tag]), 5, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         nodes += n;
         files += 1;
         Ok(())
@@ -1630,6 +1702,138 @@ fn cmd_relative(path: &str) {
         let r = rerail_tape_lab::relative::run(trees, &codes);
         rerail_tape_lab::relative::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
         println!();
+    }
+}
+
+/// E18 (t39 step 10): the forms on disk under zstd and LZ4: bytes, decode time, match coverage (`disk.rs`).
+fn cmd_disk(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::disk::run(fs);
+        rerail_tape_lab::disk::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+    }
+}
+
+/// E19 (t39 step 11): LZ4 with random access, fixed blocks stored as repeats, raw or LZ4 (`ralz.rs`).
+fn cmd_ralz(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::ralz::run(fs);
+        rerail_tape_lab::ralz::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+    }
+}
+
+/// E20 (t39 step 12): codes in 8 bits, overloaded by the adjacent code (`code8.rs`).
+fn cmd_code8(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::code8::run(fs);
+        rerail_tape_lab::code8::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+    }
+}
+
+/// E24 (t39 step 16): format 16's tape as one form, at rest (`f16.rs`); its questions are in `inplace` and `prim`.
+fn cmd_f16(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::f16::run(fs);
+        rerail_tape_lab::f16::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+    }
+}
+
+/// E25 (t39 step 17): every code the grammar allows, checked against every node of the capture (`gcodes.rs`).
+#[cfg(feature = "grammar")]
+fn cmd_gcodes(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    let scratch = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tmp/e25");
+    for (tag, fs) in &by_tag {
+        let title = format!("{path}, {} ({tag})", capture::language(*tag));
+        match rerail_tape_lab::gcodes::run(*tag, fs, &scratch) {
+            Ok(r) => rerail_tape_lab::gcodes::print(&title, &r),
+            Err(e) => println!("### {title}\n\n{e}\n"),
+        }
+    }
+}
+
+/// E26 (t39 step 18): format 16's fixed blocks decoded on Metal (`f16_gpu.rs`).
+#[cfg(target_os = "macos")]
+fn cmd_f16_gpu(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    println!("{path}\n");
+    rerail_tape_lab::f16_gpu::print_header();
+    let mut parts = Vec::new();
+    for (tag, fs) in &by_tag {
+        let a = rerail_tape_lab::f16::at_rest(fs);
+        match rerail_tape_lab::f16_gpu::run(&a) {
+            Ok(r) => rerail_tape_lab::f16_gpu::print(capture::language(*tag), &a, &r),
+            Err(e) => println!("| {} | {e} |", capture::language(*tag)),
+        }
+        parts.push(a);
+    }
+    // Every language's blocks in one dispatch, as a load of the whole capture would decode them.
+    let all = rerail_tape_lab::f16::AtRest::merge(&parts);
+    drop(parts);
+    match rerail_tape_lab::f16_gpu::run(&all) {
+        Ok(r) => rerail_tape_lab::f16_gpu::print("**all, one dispatch**", &all, &r),
+        Err(e) => println!("| all | {e} |"),
+    }
+}
+
+/// E28 (t39 step 20): format 16's writer against format 15's (`f16w.rs`).
+fn cmd_f16w(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n\n{path}\n", rerail_tape_lab::measure::machine());
+    rerail_tape_lab::f16w::print_header();
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::f16w::run(fs);
+        rerail_tape_lab::f16w::print(capture::language(*tag), &r);
+    }
+}
+
+/// E22 (t39 step 14): the field taken out of the code (`nofield.rs`).
+fn cmd_nofield(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::nofield::run(fs);
+        rerail_tape_lab::nofield::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
     }
 }
 
@@ -1680,9 +1884,20 @@ fn main() {
         "scan" => cmd_scan(path),
         "textrel" => cmd_textrel(path),
         "inplace" => cmd_inplace(path, flag("--f11")),
+        "climb" => cmd_climb(path),
         "prim" => cmd_prim(path),
         "repeat" => cmd_repeat(path),
         "relative" => cmd_relative(path),
+        "disk" => cmd_disk(path),
+        "ralz" => cmd_ralz(path),
+        "code8" => cmd_code8(path),
+        "nofield" => cmd_nofield(path),
+        "f16" => cmd_f16(path),
+        "f16w" => cmd_f16w(path),
+        #[cfg(target_os = "macos")]
+        "f16-gpu" => cmd_f16_gpu(path),
+        #[cfg(feature = "grammar")]
+        "gcodes" => cmd_gcodes(path),
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         #[cfg(target_os = "macos")]

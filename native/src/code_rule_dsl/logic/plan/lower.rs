@@ -312,17 +312,66 @@ pub fn domains(prog: &Program) -> Result<Domains> {
 }
 
 /// Each relation's columns as `rule_vars` reads them, from the domains: by name, one lookup per atom.
-fn columns_of(domains: &Domains) -> HashMap<&str, Vec<Option<Domain>>> {
+pub(in crate::code_rule_dsl) fn columns_of(domains: &Domains) -> HashMap<&str, Vec<Option<Domain>>> {
     domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect())).collect()
+}
+
+/// The domains of a new relation's columns past `known` (those it shares with a relation `domains` covers), from
+/// `rule`, its one rule: each column's declared type (`types`), else its head variable's domain in the rule's body
+/// (`cols`, `columns_of`), else a name, as `domains` finds them. A support relation (`supports`, `h__supN`) holds its
+/// head's columns, then the variables its body binds: a kind there (`kind(p, k)`) is a kind id, no atom (decision
+/// 0170), and given the head's domains alone it was taken for one.
+pub(in crate::code_rule_dsl) fn rule_head_domains(rule: &super::super::front::Rule, types: &[&str], known: &[Domain], cols: &HashMap<&str, Vec<Option<Domain>>>) -> Result<Vec<Domain>> {
+    let vars = rule_vars(rule, &mut |a: &Atom| cols.get(a.rel.as_str()).map(Vec::as_slice))?;
+    Ok(types
+        .iter()
+        .enumerate()
+        .map(|(c, t)| match *t {
+            _ if c < known.len() => known[c],
+            "int" | "flat" | "min" | "max" => Domain::Int,
+            "node" => Domain::Node,
+            _ => match rule.head.args.get(c) {
+                Some(Term::Var(v)) => vars.get(v.as_str()).copied().unwrap_or(Domain::Name),
+                _ => Domain::Name,
+            },
+        })
+        .collect())
 }
 
 /// A program lowered for one dialect.
 #[derive(Clone)]
 pub struct Lowered {
     pub program: Program,
+    /// `program`'s version, where the caller made it from another's (a split's part, decision 0244): `plan::run`
+    /// reads it in place of an image made of `program`. `None` once `program` is edited, and for a program made here.
+    pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     pub domains: Domains,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
+    pub dialect: GrammarDialect,
+}
+
+impl Lowered {
+    /// What the program's run reads beside its version (`plan::run`).
+    pub fn lowering(&self) -> Lowering<'_> {
+        Lowering { domains: &self.domains, dialect: self.dialect }
+    }
+    /// The version `plan::run` reads: `version`, else an image made of `program` (`Placed::of_program`).
+    pub fn placed(&self) -> super::Result<super::body::Placed> {
+        match &self.version {
+            Some(v) if self.program.again.is_empty() && self.program.together.is_empty() => {
+                Ok(super::body::Placed::whole(v.clone()))
+            }
+            _ => super::body::Placed::of_program(&self.program),
+        }
+    }
+}
+
+/// What a lowered program's run reads beside its version (`plan::run`, t36 item 7 step 8): each relation's column
+/// domains, and the dialect its kinds are of.
+#[derive(Clone, Copy)]
+pub struct Lowering<'l> {
+    pub(in crate::code_rule_dsl) domains: &'l Domains,
     pub dialect: GrammarDialect,
 }
 
@@ -501,7 +550,7 @@ pub fn lower(
         }
     }
     let ops = [names["+"], names["-"], names["*"]];
-    Ok(Lowered { program: out, domains, ops, dialect })
+    Ok(Lowered { program: out, version: None, domains, ops, dialect })
 }
 
 impl Lowered {

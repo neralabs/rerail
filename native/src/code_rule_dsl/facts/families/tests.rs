@@ -194,7 +194,7 @@ fn a_clean_checkouts_snapshot_is_its_head_tree() {
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     std::fs::write(dir.join("pkg/b.py"), "def f():\n    return 2\n").unwrap();
     let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
+        let status = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
             .args(["-c", "user.name=rerail", "-c", "user.email=rerail@example.invalid", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&dir)

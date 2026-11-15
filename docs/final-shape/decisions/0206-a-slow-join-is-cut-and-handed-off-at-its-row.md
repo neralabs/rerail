@@ -139,3 +139,19 @@ A line's recorded work held its last order's work only, not the orders it handed
 (`RERAIL_JOIN_SLOW=0.5`) is understated by the replaced order's work. With every order counted, the default run of
 decision 0207 did 0.70 M rows (not 0.37 M), still 2.5× under the 1.73 M of no cuts. With decision 0216's price of a
 kind check, the line starts in its best order and does 0.39 M.
+
+## A cut inside a fused chunk (2026-11-14)
+
+A first step fused with the tests after it (`rowcode`) runs a chunk of rows at a time. Two faults lost or stalled
+rows at a cut there:
+
+- After the cut, the chunk's loop went on, so the row it stopped at (`at0`) moved to the chunk's last row. The rows
+  between were reported done but never run. The fixpoint was short of rows. With joins on, typescript-eslint's
+  no-shadow flagged six or seven valid fixtures (018, 028–033), varying from run to run, because its
+  `count : { … } = 0` missed rows. The loop now stops at the cut. The paired-batch and per-value loops stop there
+  too.
+- The chunk's filter work was charged before its rows ran. A chunk whose filters alone spent the budget was cut
+  before its first row on every run, so no run made progress. The work is now charged after the rows run, so each
+  run makes progress.
+
+Test: `a_cut_inside_a_fused_chunk_leaves_the_rows_it_did_not_run` (cut_tests.rs). It fails without the stop.

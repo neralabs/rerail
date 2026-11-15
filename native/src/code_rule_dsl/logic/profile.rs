@@ -1429,6 +1429,12 @@ pub fn fallback(key: &str, class: String) {
     state().fallbacks.insert(key.to_owned(), class);
 }
 
+/// The strata that fell back to SQLite so far, by key: the kind of literal declined (a test's check that a form runs
+/// natively).
+pub fn declined() -> BTreeMap<String, String> {
+    state().fallbacks.clone()
+}
+
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
 /// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
 pub fn fallbacks(r: &mut String, state: &State) {

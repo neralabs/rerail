@@ -5,6 +5,30 @@
 use crate::tree::{Node, Tree};
 use rerail_tape_format::{CHECKPOINT_STRIDE, HEADER_BYTES, TAIL_FROM_START, header, padded};
 
+/// The image's contextual alias names (format 15's alias table), by the index a code's `0x8000 | alias` kind
+/// names: each (name, named).
+pub fn aliases(bytes: &[u8]) -> Vec<(String, bool)> {
+    let u64_at = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap()) as usize;
+    let w = [bytes[header::WIDTHS] as usize, bytes[header::WIDTHS + 1] as usize, (bytes[header::WIDTHS + 2] & !TAIL_FROM_START) as usize];
+    let (n, codes) = (u64_at(header::NODES), u64_at(header::CODES));
+    let mut at = HEADER_BYTES;
+    for (width, count) in [(2, n), (w[0], n), (4, n.div_ceil(CHECKPOINT_STRIDE)), (w[1], n), (w[2], n)] {
+        at = padded(at + width * count);
+    }
+    for _ in 0..codes {
+        at += 6 + 2 * bytes[at + 5] as usize;
+    }
+    (0..u64_at(header::ALIASES))
+        .map(|_| {
+            let named = bytes[at] != 0;
+            let len = u32::from_le_bytes(bytes[at + 1..at + 5].try_into().unwrap()) as usize;
+            let name = String::from_utf8_lossy(&bytes[at + 5..at + 5 + len]).into_owned();
+            at += 5 + len;
+            (name, named)
+        })
+        .collect()
+}
+
 pub fn read(bytes: &[u8]) -> Result<Tree, String> {
     let u64_at = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap()) as usize;
     if bytes.len() < HEADER_BYTES || &bytes[..8] != rerail_tape_format::MAGIC {

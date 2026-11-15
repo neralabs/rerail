@@ -16,14 +16,14 @@
 .violation ASYNC221(at: node) code "ASYNC221"
     "Async functions should not run processes with blocking methods"
     suppress ruff "ASYNC221"
-ASYNC221(f) :- async_blocking(_, f, q), async_runs(q).
-ASYNC221(f) :- async_blocking(c, f, q), async_spawn(q), !async_mode_arg(c, _).
-ASYNC221(f) :- async_blocking(c, f, q), async_spawn(q), async_mode_arg(c, a), async_p_wait(a).
+ASYNC221(f) :- async_blocking_demand(_, f, q), async_runs(q).
+ASYNC221(f) :- async_blocking_demand(c, f, q), async_spawn(q), !async_mode_arg(c, _).
+ASYNC221(f) :- async_blocking_demand(c, f, q), async_spawn(q), async_mode_arg(c, a), async_p_wait(a).
 // Argument extraction starts only after the API qualifies as a spawn call.
 async_api_target(q) :- async_runs(q).
 async_api_target(q) :- async_spawn(q).
 .decl async_argument_demand(c: node)
-async_argument_demand(c) :- async_blocking(c,_,q), async_spawn(q).
+async_argument_demand(c) :- async_blocking_demand(c,_,q), async_spawn(q).
 .decl async_argument(c: node,i: number,k: symbol,spread: symbol,v: node)
 async_argument(c,i,k,s,v) :- python_arguments(c,i,k,s,v,async_argument_demand).
 .decl async_mode_arg(c: node,a: node)

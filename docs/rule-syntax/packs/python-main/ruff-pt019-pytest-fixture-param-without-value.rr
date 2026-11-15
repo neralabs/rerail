@@ -13,8 +13,9 @@
 .violation PT019(at: node, n_mv: loc) "If the test never reads `{n_mv}`, remove the parameter and add `@pytest.mark.usefixtures(\"{n_mv}\")` to the test; if it reads the value, leave it as is."
     suppress noqa "PT019"
 PT019(n, N) :- pt019_alt_1(n, N), pt019_alt_2(n), child(p16, n, _), kind(p16, "parameters"),
-    child(p17, p16, _), kind(p17, "function_definition"), pt019_tok_has_3(p17),
-    count : { child(p26, p17, _), kind(p26, "decorated_definition"), child(p26, c27, _), kind(c27, "decorator"), pt019_stop_3_within(c28, c27), (kind(c28, "call"), pt019_pm_call(c28, A), field(c28, "arguments", c1_13), kind(c1_13, "argument_list"), pt019_stop_10_within(c2_13, c1_13), (pt019_name_expr(c2_13) ; pt019_seq_expr(c2_13), child(c2_13, c3_13, _), pt019_name_expr(c3_13)), node(_, c2_13, _, _, _), B = c2_13, value(B, t4_13), value(A, t4_13) ; kind(c28, "call"), pt019_pm_call(c28, A), field(c28, "arguments", c6_14), kind(c6_14, "argument_list"), pt019_stop_10_within(c7_14, c6_14), pt019_str_lit(c7_14), (text(N, T1) ; text(N, T2) ; text(N, T3) ; text(N, T4) ; text(N, T5) ; text(N, T6) ; text(N, T7) ; text(N, T8) ; text(N, T9) ; text(N, T10) ; text(N, T11) ; text(N, T12)), value(S, t32_14), value(A, t32_14), node(_, c7_14, _, _, _), S = c7_14 ; kind(c28, "call"), pt019_pm_call(c28, A), field(c28, "arguments", c34_15), kind(c34_15, "argument_list"), pt019_stop_10_within(c35_15, c34_15), (kind(c35_15, "list") ; kind(c35_15, "tuple")), child(c35_15, c36_15, _), pt019_str_lit(c36_15), node(_, c36_15, _, _, _), E = c36_15, text(N, TE), node(_, c35_15, _, _, _), L = c35_15, value(L, t39_15), value(A, t39_15)) } = 0.
+    child(p17, p16, _), kind(p17, "function_definition"), field(p17, "name", c18),
+    prefix("test_", c18),
+    count : { child(p19, p17, _), kind(p19, "decorated_definition"), child(p19, c20, _), kind(c20, "decorator"), pt019_stop_3_within(c21, c20), (kind(c21, "call"), pt019_pm_call(c21, A), field(c21, "arguments", c1_13), kind(c1_13, "argument_list"), pt019_stop_10_within(c2_13, c1_13), (pt019_name_expr(c2_13) ; pt019_seq_expr(c2_13), child(c2_13, c3_13, _), pt019_name_expr(c3_13)), node(_, c2_13, _, _, _), B = c2_13, value(B, t4_13), value(A, t4_13) ; kind(c21, "call"), pt019_pm_call(c21, A), field(c21, "arguments", c6_14), kind(c6_14, "argument_list"), pt019_stop_10_within(c7_14, c6_14), pt019_str_lit(c7_14), (text(N, T1) ; text(N, T2) ; text(N, T3) ; text(N, T4) ; text(N, T5) ; text(N, T6) ; text(N, T7) ; text(N, T8) ; text(N, T9) ; text(N, T10) ; text(N, T11) ; text(N, T12)), value(S, t32_14), value(A, t32_14), node(_, c7_14, _, _, _), S = c7_14 ; kind(c21, "call"), pt019_pm_call(c21, A), field(c21, "arguments", c34_15), kind(c34_15, "argument_list"), pt019_stop_10_within(c35_15, c34_15), (kind(c35_15, "list") ; kind(c35_15, "tuple")), child(c35_15, c36_15, _), pt019_str_lit(c36_15), node(_, c36_15, _, _, _), E = c36_15, text(N, TE), node(_, c35_15, _, _, _), L = c35_15, value(L, t39_15), value(A, t39_15)) } = 0.
 
 // pytest_name(n): the JSON util `pytest-name`, used where the JSON says `matches: "pytest-name"`
 .decl pt019_pytest_name(n: node)
@@ -146,18 +147,6 @@ pt019_arg_argnames_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
 .decl pt019_arg_no_argnames_1(n: node)
 pt019_arg_no_argnames_1(n) :- kind(n, "call"), field(n, "arguments", l),
     !pt019_args_kwp(l, "argnames", _), !pt019_args_pos(l, _, 0), !kind(l, "generator_expression").
-
-// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^test_": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pt019_tok_has_3(n: node)
-.stored pt019_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pt019_tok_has_3(n) :- field(n, "name", c18), prefix("test_", c18).
-pt019_tok_has_3(n) :- op(n, t19), match("test_.*", t19).
-pt019_tok_has_3(n) :- child(n, c25, _), structural_before(c25, g20),
-    match("(?s)^(?:.*\\S*?(?:^test_)\\S*.*)$", g20).
-pt019_tok_has_3(n) :- child(n, c25, _), structural_after(c25, g20),
-    match("(?s)^(?:.*\\S*?(?:^test_)\\S*.*)$", g20).
-pt019_tok_has_3(n) :- node_text(n, g20), !child(n, _, _),
-    match("(?s)^(?:.*\\S*?(?:^test_)\\S*.*)$", g20).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule

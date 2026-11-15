@@ -626,6 +626,887 @@ through a point API instead of a cursor.
   pack run (`run-policies`) fails under strict mode on its first stratum ("a native fact operator
   over input relations"), so each rule ran alone.
 
+### Step 10: what the same bits buy on disk, under zstd and LZ4 (E18)
+
+Same bits only help a compressor that finds them. zstd and LZ4 both replace a byte run seen
+before by a copy of it, so a repeated subtree must also be the same *bytes*. A field of w bits
+starts at bit `i * w`; at a width that is not a multiple of 8, two copies of a run line up as bytes
+only when they start at the same bit phase. `tape16 disk <capture>` (`src/disk.rs`) prices that.
+Four forms, each kept as the arrays it reads in place, one stream an array:
+
+- **F15**: format 15's image (explicit columns at byte widths, its own code table).
+- **XF**: codes at the file's width, slots in per-block PFOR, starts by FOR, lengths.
+- **new, bit-packed**: codes and sibling slots (K = 8) at one width a language, starts by gap with
+  a start every 8, lengths; escapes that name nothing (step 8's form).
+- **new, byte-aligned**: the same, every width rounded up to a multiple of 8.
+
+Each stream is compressed alone, file by file, with zstd level 3 and with LZ4 (the reference
+library, the block format GPU decoders read) fast and HC level 9. Each is run with and without a
+64 KiB dictionary, trained per stream on the even files and measured on the odd ones. A second run
+compresses the measured files end to end: zstd with a 128 MiB window and long-distance matching,
+and LZ4 HC, whose window is 64 KiB. Every stream is decoded and checked equal (none wrong).
+Match coverage is the share of input bytes the compressor's matches produce (zstd's sequences,
+LZ4's parsed off its blocks).
+
+Bytes a node (measured files):
+
+| | memory | zstd 3 | zstd 3, dict | zstd long, end to end | lz4 | lz4 HC, dict |
+|---|---|---|---|---|---|---|
+| **data-layer Python** (656 files, 1.32M nodes) | | | | | | |
+| F15 | 8.63 | 2.48 | 2.34 | 2.23 | 3.76 | 2.58 |
+| XF | 4.59 | 3.70 | 3.37 | 3.17 | 3.98 | 3.24 |
+| new, bit-packed | 4.18 | 3.04 | 2.68 | 2.48 | 3.39 | 2.71 |
+| new, byte-aligned | 5.55 | 2.15 | 1.94 | 1.82 | 2.85 | 2.05 |
+| **data-layer JSON** (730 files, 3.15M nodes) | | | | | | |
+| F15 | 9.21 | 1.26 | 1.23 | 0.99 | 1.86 | 1.36 |
+| XF | 4.00 | 2.52 | 2.24 | 2.07 | 2.80 | 2.24 |
+| new, bit-packed | 3.76 | 1.45 | 1.21 | 1.09 | 1.71 | 1.20 |
+| new, byte-aligned | 4.54 | 1.06 | 0.94 | 0.83 | 1.40 | 0.98 |
+| **rerail Rust** (193 files, 0.71M nodes) | | | | | | |
+| F15 | 8.57 | 2.60 | 2.52 | 2.44 | 3.96 | 2.80 |
+| XF | 4.53 | 3.76 | 3.44 | 3.27 | 4.07 | 3.32 |
+| new, bit-packed | 4.11 | 3.11 | 2.81 | 2.66 | 3.52 | 2.82 |
+| new, byte-aligned | 5.50 | 2.28 | 2.09 | 2.00 | 3.11 | 2.23 |
+| **rerail `.rr`** (198 files, 0.25M nodes) | | | | | | |
+| F15 | 8.50 | 2.10 | 1.82 | 1.66 | 3.19 | 1.96 |
+| XF | 4.20 | 3.31 | 2.93 | 2.65 | 3.57 | 2.76 |
+| new, bit-packed | 3.75 | 2.43 | 1.96 | 1.76 | 2.78 | 1.88 |
+| new, byte-aligned | 4.46 | 1.67 | 1.43 | 1.27 | 2.26 | 1.44 |
+
+Rerail TypeScript and JSON follow the same pattern (`tape16 disk` prints every language, LZ4 HC
+without a dictionary, and the sizes per stream).
+
+Bytes the matches cover, zstd 3 with a dictionary: XF 34–53%, new bit-packed 41–78%, new
+byte-aligned 75–86%, F15 90–95%. F15's share is high because most of its bytes are the zero high
+bytes of wide fields, which match trivially; it still ends larger.
+
+- **Same bits alone take a fifth off the disk on code, and nearly half on JSON.** New
+  bit-packed against XF, zstd with a dictionary: 3.37 → 2.68 B a node on data-layer Python (−20%),
+  3.44 → 2.81 on Rust (−18%), 2.24 → 1.21 on data-layer JSON (−46%). LZ4 HC with a dictionary gains
+  about as much (−15 to −46%). Matches cover 7–25 points more of the bytes.
+- **Byte alignment buys as much again.** At byte widths the same runs line up as bytes, and
+  matches cover 75–86% of them. Python 2.68 → 1.94 (−28%), Rust 2.81 → 2.09, `.rr` 1.96 → 1.43,
+  JSON 1.21 → 0.94. The new form byte-aligned is the smallest form measured, 17% under F15 on
+  Python and 24% under it on JSON. The price is memory: 4.18 → 5.55 B a node on Python, most of it
+  codes at 16 bits instead of 9.
+- **A mixed form keeps most of both.** Each stream is compressed alone, so the per-stream sizes
+  add: codes bit-packed, slots, gaps and lengths at byte widths. That costs 4.63 B a node in memory
+  on Python (+0.45 over bit-packed), 2.04 on disk (+0.10 over byte-aligned); Rust 4.59 and 2.24;
+  JSON 4.11 and 0.92. Codes compress well at either width (0.43 against 0.30 B a node); the narrow
+  fields gain most from alignment (slots 0.57 → 0.35, gaps 0.53 → 0.38, lengths 0.89 → 0.62).
+- **The checkpoints do not compress.** They are absolute starts: 0.25–0.32 B a node on disk at
+  K = 8, an eighth of the mixed form's total. K = 16 halves them.
+- **A 64 KiB dictionary takes most of what crosses files.** Compressing every measured file end to
+  end, with a 128 MiB window, saves only 3–12% more than a dictionary does (Python 1.94 → 1.82).
+  For LZ4, whose window is 64 KiB, end to end and dictionary are the same within 5%.
+- **LZ4 HC with a dictionary is within 1–7% of zstd on the aligned form on code** (13% on
+  rerail's JSON), and plain LZ4 is 36–58% larger. LZ4 decodes at 0.2–0.9 ns a node without a
+  dictionary and 0.5–3 with one; zstd at 1.3–6 ns. These timings are from the M5 Max at load 38–50, so they are rough. The sizes are exact.
+- **So the case for the new form on disk:** against XF, same bits and alignment together take
+  35–59% off (Python 3.37 → 2.04 mixed). Against format 15 the mixed form is 11–25% smaller on
+  disk (equal on rerail's JSON) and about half the memory.
+
+### Step 11: LZ4 with random access, in fixed blocks (E19)
+
+Whole-array compression (step 10) gives no random access at rest. `tape16 ralz <capture>`
+(`src/ralz.rs`) cuts each in-place array of a file into fixed blocks of N nodes, so node i's
+block is `i / N` at a fixed offset. A 4-byte index entry per block names how it is stored:
+
+- **repeat**: a pointer to an identical block stored earlier, in this file or (8 bytes) in a pool
+  the store shares, stored once;
+- **raw**: the bytes as they are, read in place;
+- **LZ4**: one block in LZ4's format (HC level 9, the reference library), whose matches reach
+  only the language's 64 KiB dictionary (trained per array on the other half of the files) and
+  the block itself.
+
+A read decodes at most one block. A second variant lets an LZ4 block also match into one earlier
+block of its file that has no reference itself (2 more index bytes). A read then decodes at most
+two: the reader keeps a buffer `[dictionary tail][reference][output]`, so no dictionary is
+copied. Arrays: E18's mixed form (codes bit-packed, the rest at byte widths) and the
+byte-aligned one. The escapes' lists stay whole, one LZ4 block a file and array. Every block is
+decoded and checked (none wrong). Sizes are exact; times are from the quiet M3 Max (load 4–6).
+
+Bytes a node, mixed form, against the same arrays compressed whole with the same dictionary:
+
+| | whole, no random access | N = 256 | 1,024 | 4,096 | 256, with a reference | 1,024, with | 4,096, with |
+|---|---|---|---|---|---|---|---|
+| data-layer Python | 2.19 | 2.70 | 2.44 | 2.29 | 2.62 | 2.38 | 2.27 |
+| data-layer JSON | 0.99 | 1.42 | 1.20 | 1.08 | 1.36 | 1.14 | 1.05 |
+| rerail Rust | 2.38 | 2.78 | 2.57 | 2.46 | 2.73 | 2.52 | 2.44 |
+| rerail TypeScript | 2.28 | 2.61 | 2.41 | 2.32 | 2.56 | 2.38 | 2.32 |
+| rerail `.rr` | 1.54 | 1.79 | 1.60 | 1.54 | 1.76 | 1.58 | 1.54 |
+| rerail JSON | 1.08 | 2.10 | 1.54 | 1.29 | 1.91 | 1.41 | 1.22 |
+
+One LZ4 block read at random (decoded whole), ns, M3 Max, mixed form: 110–240 at N = 256 (0.45–0.9
+ns a node), 210–700 at 1,024, 340–1,800 at 4,096. A reference adds 0–50% on average (it is a
+second decode for the 2–59% of blocks that take one).
+
+- **Random access at rest costs 1–5% at N = 4,096 on code, 4–11% at 1,024, 14–23% at 256.**
+  JSON pays more (9–19% at 4,096, up to 95% at 256 on rerail's small JSON files): a block alone
+  sees less of the file than the whole array does.
+- **A reference block takes back a quarter of that** (Python at 1,024: 2.44 → 2.38 against
+  2.19 whole), for a second decode on a quarter of the blocks. On rerail's JSON it takes back a
+  fifth to a third.
+- **Fixed blocks do not repeat on code.** 0% of code blocks are an earlier block, in the file or in
+  the pool; on JSON 2–15% are (more at small N). A repeated subtree lines up with a fixed block
+  boundary only by chance, so the repeats are found by matches into the dictionary instead.
+  Whole repeated blocks need content-defined cuts (the older `blocks.rs` form), which give up the
+  fixed offset.
+- **Only the checkpoints are read in place.** They are absolute starts, so LZ4 cannot shrink them
+  and they are stored raw (0.30 B a node, a fifth of every array's blocks). Every other block
+  decodes.
+- **The index is small:** 0.08 B a node at 256, 0.02 at 1,024, 0.01 at 4,096. The escapes'
+  lists are 0.14–0.25 B a node, more than the index at 1,024; most of it is each list's start
+  array (4 bytes a 256 nodes, per array), which can shrink.
+
+### Step 12: codes in 8 bits, overloaded by the adjacent code (E20)
+
+Python, Rust and TypeScript have 360–500 codes, so 9 bits. Removing redundancy from the code's
+tuple alone does not reach 8: the kinds fit (153–230), and so do kind, flags and supertypes
+(183–268), but the field multiplies them (331–457 kind + field). The field depends on context.
+`tape16 code8 <capture>` (`src/code8.rs`) uses that context:
+
+- Each code gets one byte `f(code)` in 0..=254, the same in every context, so a repeated
+  subtree is still the same bytes. Two codes may share a byte.
+- The reader tells them apart by the byte before it in the same array (the previous node in
+  preorder), through a language table `T[previous byte][byte]` of 256 × 256 u16 (128 KiB).
+- Where two codes sharing a byte follow the same previous byte, the rarer one there is stored as
+  the escape 255, with its code in the block's list (as `Esc`'s escapes). A context the table has
+  not seen, and the one after an escape, reads each byte as its most frequent code. So no read
+  needs more than two bytes.
+- The shared bytes are chosen greedily (fewest escapes, then rarest codes together, so frequent
+  codes keep a byte of their own), and improved in three passes, on the even files. Escapes are
+  counted on the odd ones.
+
+| | data-layer Python | rerail Python | rerail Rust | rerail TypeScript |
+|---|---|---|---|---|
+| codes (bits today) | 440 (9) | 391 (9) | 494 (9) | 469 (9) |
+| nodes escaped, files the table was not chosen on | 0.04% | 0.31% | 0.09% | 0.21% |
+| the same, with the parent's byte as context | 0.02% | 0.31% | 0.04% | 0.13% |
+| nodes whose byte another code shares (a code-set sweep checks them in the table) | 1.1% | 1.8% | 3.2% | 2.0% |
+| memory, B a node: 8 bits and escapes / 9 bits | 1.020 / 1.125 | 1.031 / 1.125 | 1.020 / 1.125 | 1.025 / 1.125 |
+| repeated subtrees' nodes stored as the same bytes (root excluded) | 100% | 100% | 100% | 100% |
+| read at random, ns (M3): the byte / the code / 9-bit | 0.32 / 0.60 / 0.71 | 0.32 / 0.59 / 0.76 | 0.32 / 0.65 / 0.71 | 0.29 / 0.58 / 0.72 |
+| read in order, ns (M3): the byte / the code / 9-bit | 0.02 / 0.48 / 0.85 | 0.02 / 0.47 / 0.84 | 0.02 / 0.50 / 0.84 | 0.02 / 0.49 / 0.84 |
+| on disk, zstd + dictionary, B a node: 8-bit / 9-bit / 16-bit | 0.24 / 0.43 / 0.30 | 0.36 / 0.62 / 0.41 | 0.31 / 0.54 / 0.37 | 0.28 / 0.45 / 0.34 |
+
+Every node decodes right, on every corpus.
+
+- **8 bits fit, with almost no escapes**: 0.04–0.31% of nodes on files the table never saw, none
+  on the files it was chosen on. Memory falls 9% (1.125 → 1.02–1.03 B a node).
+- **The previous byte is as good a context as the parent's**, and a read already has it: it is
+  the byte before, in the same cache line. The parent's byte would cost a parent read.
+- **Reads are faster than at 9 bits.** The byte alone, which a sweep or a kind test compares,
+  reads in 0.29–0.32 ns at random against 0.71–0.76 for 9 bits, and in order it vectorises
+  (0.02 ns a node against 0.85). The code itself takes a 256-entry table (512 B) for a byte one
+  code alone stands for, and the 2-D table only for the shared ones: 0.58–0.65 ns at random
+  (15–20% under 9 bits), 0.47–0.50 in order (40% under).
+- **The first measurement of this step was wrong twice.** It sent every read through the 2-D
+  table (a dependent load into 256 KiB, as it was then held at u32: 0.77–0.84 ns at random, slower
+  than 9 bits). And its printed columns (8-bit at random / in order, then 9-bit) were read as
+  8-bit / 9-bit pairs, so it was reported as 0.15–0.35 ns slower than 9 bits, where it was level.
+  The reads above are all timed in one run (load 4–6), each inlined into its own loop.
+- **Numbering codes so an unshared byte is its own code** (a 256-bit set marks the shared bytes)
+  is no faster than the 256-entry table (0.65–0.72 ns at random, in a run at load 21).
+- **On disk 8-bit codes are the smallest form measured:** 38–44% under 9 bits bit-packed, and
+  12–19% under 16 bits, because every code is one whole byte and the bytes repeat.
+- **The cost to rules:** a sweep for a set of codes compares bytes, and for the 1–3% of nodes
+  whose byte is shared it confirms the code in the table.
+- **Languages already at 8 bits or fewer** (JSON 5, `.rr` 7, small TypeScript 8) need none of
+  this. At one byte they cost more memory (JSON 0.63 → 1.02) and a little less disk.
+- **With 8-bit codes the byte-aligned form wins on both axes.** On data-layer Python, step 10's
+  byte-aligned form with 8-bit codes in place of 16 takes about 4.57 B a node in memory (mixed:
+  4.63) and 1.88 on disk with zstd and a dictionary (mixed: 2.04).
+
+### Step 13: codes numbered by frequency, one cutoff a language (E21)
+
+Step 12 still reads through a table: a 512-byte one for every node, and the 128 KiB 2-D one for the
+1–3% whose byte is shared. Even a table of the shared bytes' columns alone would take 24–36 KiB of
+a 128 KiB L1. E21 (`Rank8` in `src/code8.rs`, printed by `tape16 code8`) takes the table away.
+
+- Each language numbers its codes by frequency, most frequent first (chosen on the even files,
+  measured on the odd). The numbering is the code: a rule's kind test names numbers.
+- A code numbered below the language's cutoff (255) is stored as its own number. The read is
+  `if byte < cut { byte }`: one compare, no load past the byte.
+- A code past the cutoff is stored as a prefix byte (255), and its low byte goes to the block's
+  side list (offset in the block, low byte; a start a 256-node block). Several prefixes (cutoff
+  252, 240, 224) would each cover fewer codes, but put more nodes in the list: the share only grows.
+- Languages with 256 codes or fewer (JSON, `.rr`, SQL, small TypeScript) have no cutoff at all.
+
+```text
+byte:   0 .. 254          255
+        the code itself   prefix: code = 255 + low, low from the block's side list
+```
+
+| | data-layer Python | rerail Python | rerail Rust | rerail TypeScript | rerail JavaScript |
+|---|---|---|---|---|---|
+| nodes past the cutoff, files the numbering was not chosen on | 0.36% | 0.73% | 1.10% | 1.12% | 0.43% |
+| the same, on the files it was chosen on | 0.27% | 0.39% | 0.94% | 0.51% | 0.11% |
+| step 12, for comparison: nodes on a shared byte + escaped | 1.06% + 0.04% | 1.78% + 0.31% | 3.21% + 0.09% | 2.04% + 0.21% | 0.90% + 0.33% |
+| nodes past cutoffs 252 / 240 / 224 (4, 16, 32 prefixes) | 0.39 / 0.53 / 0.77% | 0.84 / 1.02 / 1.36% | 1.13 / 1.39 / 1.79% | 1.15 / 1.27 / 1.50% | 0.45 / 0.64 / 0.90% |
+| memory, B a node: E21 / step 12 | 1.026 / 1.020 | 1.036 / 1.031 | 1.039 / 1.020 | 1.041 / 1.025 | 1.031 / — |
+| read at random, ns (M3): the byte / E21's code / step 12's code / 9-bit | 0.34 / 0.57 / 0.61 / 0.72 | 0.35 / 0.56 / 0.61 / 0.77 | 0.35 / 0.63 / 0.64 / 0.74 | 0.33 / 0.57 / 0.59 / 0.76 | 0.31 / 0.51 / 0.52 / 0.79 |
+| read in order, ns (M3): the byte / E21's code / step 12's code | 0.02 / 0.49 / 0.50 | 0.02 / 0.49 / 0.49 | 0.02 / 0.52 / 0.52 | 0.02 / 0.48 / 0.51 | 0.03 / 0.46 / 0.47 |
+| on disk, zstd + dictionary, B a node: E21 / step 12 | 0.243 / 0.238 | 0.364 / 0.360 | 0.323 / 0.305 | 0.293 / 0.280 | 0.320 / 0.345 |
+
+Every node decodes right, on every corpus and cutoff. Timings from one run on the M3 (load 6).
+
+- **No table, and fewer nodes off the fast path.** Frequency puts 99% of nodes or more below the
+  cutoff: 0.36–1.12% past it on files the numbering never saw, against 1.1–3.5% that step 12 sends
+  to its 128 KiB table or the escape list. Nothing is held in L1 for the read but the bytes.
+- **Reads as fast as step 12's, or slightly faster** (0.51–0.63 ns at random, 0.46–0.52 in order),
+  so the 512-byte table was not what step 12 paid for either. What is left over the byte alone
+  (about 0.25 ns at random) is the compare and branch in the loop. In order, the byte alone
+  vectorises (0.02 ns) and the branching read does not.
+- **Sweeps compare bytes and never confirm** for a code below the cutoff. A code past it is the
+  byte 255 and a side-list check, for 0.4–1.1% of nodes. A test for a set of codes (a kind under
+  several fields) is a 256-bit set (32 B) a rule, or a few compares; frequency order does not keep
+  a kind's codes adjacent, so ranges are not available.
+- **One prefix is best.** More prefixes (smaller cutoff) push more nodes into the list (Python
+  0.36 → 0.77% at 32 prefixes) to make the low byte smaller, which saves nothing at a byte.
+- **Memory and disk are within a few percent of step 12.** The side list is larger (2 B a node past
+  the cutoff, against 3 B an escape on fewer nodes), so memory is 0.5–2% higher; disk is level to
+  6% higher (Rust), and lower on JavaScript.
+- **The numbering is fixed a language and format version.** On the files it was chosen on, 0.11–
+  0.94% of nodes are past the cutoff, and a code no corpus showed lands there. The
+  numbering should be chosen once, on a large corpus, and kept stable.
+- **Small samples mislead.** Data-layer JavaScript (5 files, 302 measured nodes) shows 4.6% past
+  the cutoff; it is left out of the table.
+- **Removing the field from the code would end the tail.** Kind, flags and supertypes take 183–268
+  values (step 12), so all but Rust would fit below 255 with no side list. That needs the field
+  stored or derived elsewhere; not measured.
+
+### Step 14: the field taken out of the code (E22)
+
+Step 13 left a tail because the field multiplies the codes (391–494 with it). Without the field, a
+node's base (kind, flags, supertypes) takes 183–268 values. E22 (`tape16 nofield`,
+`src/nofield.rs`) stores the base as step 13 stores the code, numbered by frequency with the
+cutoff 255. It then predicts the field from a context, and lists each node the prediction gets
+wrong in its block's side list (offset, field).
+
+- The contexts, each with the node's own base: none; the previous byte (free to read); the
+  parent's base; the parent's and the previous sibling's bases; the parent's base and the child's
+  index; and the parent's base and the index without the node's own base (a direct 4 KiB table).
+- Each prediction is the most frequent field its context had on the even files. Misses are counted
+  on the odd ones.
+
+| | data-layer Python | rerail Python | rerail Rust | rerail TypeScript |
+|---|---|---|---|---|
+| bases (codes) | 199 (440) | 183 (391) | 268 (494) | 254 (469) |
+| nodes with a field; nodes on a base seen with two fields or more | 45%; 66% | 43%; 61% | 54%; 62% | 44%; 51% |
+| nodes past the cutoff: bases / codes (step 13) | 0.00% / 0.36% | 0.00% / 0.73% | 0.00% / 1.10% | 0.00% / 1.12% |
+| field missed, by the base alone | 27.3% | 21.9% | 23.7% | 16.0% |
+| by the previous byte | 2.76% | 3.19% | 2.21% | 1.72% |
+| by the parent's base | 1.11% | 1.71% | 2.39% | 0.60% |
+| by the parent's and previous sibling's bases | 0.05% | 0.72% | 0.09% | 0.22% |
+| by the parent's base and the child's index | 0.03% | 0.41% | 0.09% | 0.10% |
+| by the parent's base and the index alone (4 KiB direct) | 1.29% | 0.76% | 2.68% | 1.68% |
+| (parent, index, base) table, KiB (hash, at most half full) | 10.2 | 5.2 | 20.3 | 5.2 |
+| memory, B a node: parent and index / step 13 | 1.038 / 1.026 | 1.051 / 1.036 | 1.036 / 1.039 | 1.040 / 1.041 |
+| on disk, zstd + dictionary: parent and sibling / step 13 | 0.226 / 0.243 | 0.330 / 0.364 | 0.285 / 0.323 | 0.263 / 0.293 |
+| read at random, ns (M3): the base / step 13's code | 0.49 / 0.59 | 0.50 / 0.57 | 0.50 / 0.61 | 0.49 / 0.58 |
+| a child's field from its parent, at random, ns (M3): step 13 / hash table / direct | 1.45 / 4.5 / 8.7 | (noisy) | 1.59 / 6.7 / 8.7 | 1.61 / 4.6 / 5.7 |
+
+Every node decodes right. The M3 ran at load 28 (another session's engine run); the rerail Python
+reads were too noisy to use, and the field timings vary by ±30%.
+
+- **The base fits in 8 bits for every language, with no tail**, and reads 12–18% faster than step
+  13's code (one compare that never fails).
+- **The field needs the parent.** The base alone misses 16–27% of fields: half or more of the
+  nodes sit on a base seen with several fields. The previous byte, which is free, still misses
+  1.7–3.2%. The parent's base and the child's index miss 0.03–0.41%, but a read must have both.
+  Going down from a parent it has them. Going up (a node's own field) it pays a parent read
+  (4–13 ns, step 9) and a sibling count.
+- **The field then costs 3–6× step 13's**, even going down: 4–9 ns at random against 1.5. Step
+  13 reads the field from the code by a 512-byte table.
+  - **The hash table:** 5–20 KiB, the L1 footprint step 13 removed, plus collisions the first probe
+    cannot decide without a branch.
+  - **The direct [parent][index] table:** 4 KiB, but it misses 0.8–2.7%.
+- **Unmarked misses tax every read.** Step 13's tail is marked by its prefix byte, so no other read
+  looks at the side list. A field miss is not marked. Once a context misses more than about one
+  node in 256, most blocks list one, and every read in them pays the search: the check alone takes
+  1.4–6.7 ns at 0.8–2.7% misses.
+- **Disk is 7–12% smaller and memory level.** The misses of the parent-and-sibling context
+  compress better than the field held in every code.
+- **A rule's (kind, field) test** is one byte compare in step 13. Here it compares the base, then
+  derives the field for every candidate.
+- **The field stays in the code.** Taking it out ends a 0.4–1.1% tail that step 13 already reads
+  without a table. In exchange the field needs the parent, a table in L1, and a search the tail
+  never paid. Only disk gains.
+
+### Step 15: what step 13's branch costs, and what to do about it (E23)
+
+Step 13's read is `if byte < 255 { byte } else { side list }`. E23 (in `tape16 code8`, `Rank8`)
+times its parts apart:
+
+- **The compare alone:** a select against the cutoff, with no branch.
+- **The branch alone:** the same branch, to a cold call that reads nothing.
+- **Past the cutoff by rank:** the low byte found by counting the 255s before the node, instead
+  of searching the block's offsets. It reads the block's start, a count per 64-node group, and 8
+  words of the group; the offsets array goes.
+- **A block decoded whole:** the bytes widened in a vectorised loop, then the block's side-list
+  entries patched in by offset. There is no branch per node.
+
+| ns a read (M3, load 5) | dl Python | dl Rust | rerail Python | rerail Rust | rerail TS | JSON (no tail) |
+|---|---|---|---|---|---|---|
+| nodes past the cutoff | 0.36% | 1.37% | 0.73% | 1.10% | 1.12% | 0% |
+| at random: the byte | 0.33 | 0.33 | 0.35 | 0.33 | 0.33 | 0.60–0.63 |
+| at random: the compare alone (select) | 0.41 | 0.42 | 0.44 | 0.41 | 0.41 | 0.65–0.67 |
+| at random: the branch alone | 0.52 | 0.53 | 0.54 | 0.54 | 0.51 | 0.71–0.73 |
+| at random: step 13's read (branch and search) | 0.56 | 0.57 | 0.57 | 0.60 | 0.55 | 0.70–0.73 |
+| at random: past the cutoff by rank | 0.59 | 0.60 | 0.60 | 0.63 | 0.58 | 0.72–0.73 |
+| in order: the compare alone | 0.07 | 0.07 | 0.07 | 0.07 | 0.06 | 0.07 |
+| in order: step 13's read | 0.47 | 0.48 | 0.49 | 0.50 | 0.47 | 0.42 |
+| in order: a block decoded whole | 0.09 | 0.09 | 0.09 | 0.09 | 0.09 | 0.09 |
+
+Every read agrees with step 13's, on every corpus.
+
+- **The mispredicts are small.** Only the 0.4–1.4% of nodes past the cutoff take the branch the
+  other way. The branch costs about the same where it is never taken (data-layer TypeScript and
+  JSON: +0.06–0.07 over the select) as where it is (+0.10–0.11), so the mispredicts come to 0.05 ns
+  a read or less.
+- **The branch costs by its shape, not its misses.** A loop holding a branch to a call is not
+  unrolled or vectorised as the select is: about +0.1 ns a read at random, and in order 0.47
+  against 0.07 (7×).
+- **In order, decode a block at a time:** 0.09 ns a node on every corpus, 5× under step 13's read,
+  with the tail handled by the side list's own offsets. Sweeps, scans and the GPU read this way:
+  bytes compared or widened in bulk, the list patched in, no branch per node.
+- **At random, keep the branch.** It is right 99% of the time and costs about 0.2 ns over the
+  byte. Making it branch-free would compute the tail on every read, which costs more than the miss.
+- **A test against a code below the cutoff needs no read at all:** it compares the byte, which is
+  the select's cost or less.
+- **Rank instead of search: same speed** (0.58–0.63 against 0.55–0.60), but no offsets array: 1 B
+  less a node past the cutoff (0.004–0.014 B a node). Worth it only for memory.
+- **E22's branches** (a hash probe that collides on a third of reads, and misses with no mark) go
+  with E22. A static table per language could use a perfect hash (one probe, a select), but the
+  field stays in the code.
+
+### Step 16: format 16's tape as one form (E24)
+
+Steps 7–15 chose each part alone. E24 (`src/f16.rs`) builds them as one tape, F16, and runs it
+through every question and primitive the lab has, beside the earlier forms:
+- **`tape16 inplace`**: the E10 questions and the E7 rule mixes.
+- **`tape16 prim`**: the bulk and point primitives.
+- **`tape16 f16`**: memory by array, disk, load.
+
+The parts:
+- codes in one byte, numbered by frequency (step 13);
+- sibling slots and gap positions at K = 8 (step 8);
+- every array at a whole-byte width fixed a language (8 bits everywhere measured), with escapes;
+- checkpoints at the file's width in whole bytes;
+- at rest, fixed blocks of 1,024 nodes under LZ4 HC with a 64 KiB dictionary per array (step 11),
+  or zstd over whole arrays.
+
+For `tape16 f16` the numbering, widths and dictionaries are learned on the even files and measured
+on the odd ones. In `inplace` and `prim` they are learned over the capture, as XF's widths are.
+
+The results are written into 0156 (1.7, 1.8). In short, on the M1 Max at load 3–4, every answer
+right on all three captures:
+
+- **Memory: 4.5–4.8 B a node, about half of format 15's** (8.5–9.9). XF takes 4.15–4.59 on the same
+  captures, MF 3.37–3.97, BE 2.43–2.86.
+- **Disk: 0.9–2.1 B a node under zstd**, 17–21% under format 15 on code. In fixed blocks it is 6–12%
+  over LZ4 on whole arrays on code.
+- **Questions:**
+  - Code reads and children walks are as fast as format 15's (1.0 and 3.7–4.6 ns), and children
+    walks are twice as fast as XF's.
+  - Spans in order run at 2.5 ns a node against XF's 4.4, and field lookups at 9–10 ns against
+    13–15.
+  - Point parents (5.9–11.7 ns) and point starts (4.9–5.0) cost 1.5–2.6× XF's.
+  - The rule mixes are under XF's at the median, over all 121 rules and at the heaviest rule.
+    Only the tree walk, which climbs 5 parents a node, costs more (83–113 against 73–80).
+
+Four fixes to the lab came out of the first run. Each is what generated code does:
+
+- **Whole-byte fields as one load.** `Esc::get` read every field through the generic bit
+  extractor: two word loads and shifts, with an index multiply. At 8 and 16 bits it is now one
+  load. Slot reads went from 4.1 to 3.7 ns and children walks from 6.3 to 4.6 on the small capture.
+- **A cursor step in preorder** (`Reader::start_next`, `end_with_start`). `lines_all` and
+  `spans_all` read every start at random, which for gap positions is a fold of up to 7 gaps a
+  node. A start in order is the previous one plus a gap. Every span in order went from 10.4 to
+  2.5 ns a node. Every other form keeps its direct read.
+- **The 64-at-a-time sweep, unrolled** (`Reader::match_groups`, which the primitives now call in
+  place of `packed_codes`). The byte loop had stayed a loop. Unrolled, as XF's `match_w` is, and
+  testing the prefix bytes eight at a time, it went from 0.6 to 0.4–0.5 ns a node (XF 0.3).
+- **A set compiled once.** The table of a set's codes by number was rebuilt on every call; it is
+  now kept with the set, as a rule compiles its set once per language.
+
+What is left over XF is the relative forms' price, and it falls on point reads: a parent's sibling
+steps, a start's fold. Rules that read in order through cursors (E17) do not pay it.
+
+### Step 17: the code table from the grammar (E25)
+
+A code table built from a corpus can meet a file with a code the corpus never showed. So the table
+is now every code the grammar allows (0156 §1.2), and a corpus only orders it.
+
+`tape16 gcodes` (`gcodes.rs`, feature `grammar`) reads each language's `node-types.json`. The
+vendored grammars' are generated by tree-sitter-generate 0.27.1, the build's generator. The
+registry's are as shipped. A code is allowed under a field or among the unfielded children, at the
+root, as an extra, as an ERROR, under an ERROR, or as a missing leaf. The list is then checked
+against every node of the two full captures.
+
+The first pass left holes: 15 TypeScript codes (15,061 nodes), 11 JavaScript (5,196), 3 PHP (43),
+an ERROR flagged extra in Rust and SQL. All but the ERROR were one pattern: `identifier` under
+`object` in `primary_expression` alone. `node-types.json` names only the outermost supertype a
+place allows (`expression`), though the grammar names the inner one there too. Allowing every
+inner part of a membership path, and an ERROR the parser skipped as an extra, closed every hole:
+
+```text
+language     allowed   seen (rerail, data-layer)   holes
+python        2,045     420, 471                     0
+typescript    3,647     499, 177                     0
+tsx           3,696      49                          0
+javascript    2,419     351, 339                     0
+php           2,761     365                          0
+rust          1,843     512, 389                     0
+sql           1,937     155, 57                      0
+json             70      26, 26                      0
+vue              76      28                          0
+.rr          14,896      107  (bound)                0
+blade         2,035       37  (bound)                0
+```
+
+`.rr` and Blade come from Rerail's own parsers, which declare no node types. Their bound is every
+kind under every field, so it is large but still under 2^16.
+
+What it changes in the format: every tree-sitter grammar but JSON's and Vue's passes 511 codes. So
+one prefix (255) with a two-byte low part replaces the second prefix (`Rank8::of_table`). The nodes
+past the cutoff are the same (the rare codes either way); each costs one more byte in its side
+list, 0.004–0.011 B a node.
+
+### Step 18: the fixed blocks decoded on Metal (E26)
+
+`tape16 f16-gpu` (`f16_gpu.rs`) decodes E24's fixed blocks at rest on the device and checks every
+byte against the arrays. There are two kernels:
+- **one thread a block**, decoding as the reference library does, straight into the arrays;
+- **one SIMD group a block**. The 32 lanes read each token together (one broadcast load), copy a
+  literal run or a match 32 bytes at a time into threadgroup memory, and write the block out whole.
+  A match closer than 32 bytes copies in rounds of its distance.
+
+The first run put both behind one CPU thread: 3.0–3.4 ns a node on the small capture. E24 kept each
+side list as one LZ4 block a file, up to 6 KB, which one thread decodes serially, and that thread
+set the dispatch's time. Without the side lists the arrays took 0.25 ns a node. So the side lists
+are now cut per fixed block, and each part rides in its block's LZ4 input (`code8::side_parts`: a
+u16 end for each 256-node block, the offsets, the values). A random read at rest then needs only its
+own block as well. At rest this costs −2% to +5% against E24's form.
+
+Warm, the best of five dispatches, every language in one dispatch. ns a node:
+
+```text
+                       data-layer (4.5M nodes)            rerail (3.3M nodes)
+               simd   thread   CPU 1   CPU all     simd   thread   CPU 1   CPU all
+M5 Max         0.14   0.22     2.33    0.21 (18)   0.10   0.27     2.07    0.24 (18)
+M3 Max         0.16   0.30     2.41    0.39 (16)   0.18   0.40     2.37    0.48 (16)
+M1 Max         0.36   0.59     2.73    0.51 (10)   0.42   0.88     2.73    0.56 (10)
+```
+
+- The SIMD-group kernel decodes 11–45 GB/s. That is 1.3–2.7× every CPU core and 6.5–21× one.
+- Small languages alone (a few blocks) are all fixed cost, 5–170 µs a dispatch. So a load
+  dispatches every language's blocks together.
+- No block passed the threadgroup's 3 KiB room, so none fell back to the thread kernel.
+- Load: the M5 Max and the M3 were at 17–40 from other work, the M1 Max at 3–4.
+
+E24's memory, rerun on the M1 Max with E25's grammar tables: 4.58 B a node data-layer Python, 4.55
+rerail Rust, 4.57 TypeScript. That is the predicted +0.006–0.011 B a node; every read was right.
+
+One more lab note. The remote copies had been synced with rsync, which skipped changed files whose
+size and time matched; they are now copied whole with tar and compared by checksum.
+
+### Step 19: the side lists read where they are stored; the version mark (E27)
+
+**Side lists.** Step 18 cut the side lists into parts of 1,024 nodes for storage, but the readers
+still kept the old form (a 4-byte start for each 256-node block). Now `code8::Parts` holds the parts
+exactly as a block decodes them, and `Rank8` and `Esc` read them there (`use_parts`). A part holds:
+- a u16 end for each of its 256-node blocks;
+- the offsets;
+- the values at whole bytes.
+
+A part's start is the block index's entry. A read past the cutoff, or of an escape, finds its
+256-node block's entries from that start and two ends. The rank read counts within its block as
+before. The start index goes from 0.016 to 0.012 B a node per array. Every question, primitive and
+decode checks right on the small capture. The older experiments keep the old form.
+
+**Version mark.** Byte 0 of every tape is the language's tape revision (0156 §1.0). It covers every
+choice a reader shares with the writer: layout, code table, widths, K, N, dictionaries. 1–254 are
+revisions, 0 is never written, and 255 continues in two more bytes. `f16::revision` gives 1 for
+every language today. `F16::readable` checks it before every load, and `f16_gpu` checks every
+file's mark before its blocks are queued.
+
+`tape16 f16`'s fixed blocks now carry their side parts too (step 18's form), with an 8-byte index
+entry a block and the mark byte a file: 0.048 B a node of index on the small capture.
+
+### Step 20: format 16's writer (E28)
+
+`f16w.rs` is 0156 §7's writer: `open(number, start)`, `close(end)`, `finish()`.
+- **`open`** writes the code byte (or the prefix, and a side entry), the gap, every 8th
+  checkpoint, and the slot of the leaf before it.
+- **`close`** writes the length and an inner node's slot.
+- **`finish`** writes the last node's slot and lays each array's side list in parts.
+
+`tape16 f16w` drives it from each captured tree as a parser makes the nodes (its own stack of open
+ends). It checks the output against `F16::new` byte for byte on every file, and times it against
+format 15's `preorder_image` over the same nodes, the best of three.
+
+The first version took 487 instructions a node, 2.5× format 15's. Three changes brought it to
+180–200, each what generated code would do:
+- the cells written at the language's width as constants (`Writer<W>`), not through a runtime-width
+  copy;
+- the arrays grown by doubling and written by index, not appended a node at a time;
+- wrapping arithmetic in the hot path, as elsewhere in the lab, whose profile checks overflow.
+
+One format change came with it: the checkpoints' width is now the source length's, which a writer
+knows before the first node, not the largest checkpoint's.
+
+M1 Max at load 3–6, instructions / ns a node:
+
+```text
+                     format 15      format 16 (of which finish)
+data-layer Python    227 / 12.2     190 / 12.2   (27 / 1.6)
+data-layer JSON      198 /  9.0     177 /  8.8   (19 / 1.1)
+rerail Rust          194 / 11.6     185 / 13.1   (25 / 1.6)
+rerail TypeScript    200 / 10.9     194 / 12.0   (29 / 1.7)
+rerail .rr           200 /  9.4     180 /  9.1   (17 / 0.8)
+rerail SQL           186 /  8.9     193 / 11.1   (36 / 2.3)
+```
+
+Fewer instructions on every large set. The time is level on Python, JSON and `.rr`, and 10–25%
+more on Rust, TypeScript and SQL. With the lean `.rr` parser (M5 Max, `--features lean`), parse
+and write take 454 instructions a node with format 15's writer, and 437 with format 16's.
+
+### Step 21: format 16's questions on Metal (E29)
+
+`tape16 inplace-gpu` (t38 E10 §5) now has a kernel for format 16, `f16_q`, beside X, M, B, BE, XF
+and MF. It reads the tape's arrays as they are stored, with nothing built beside them:
+- **code**: the byte below the cutoff, else the prefix and its 256-node block's entry in the side
+  list's part (two u16 ends, a binary search of the offsets);
+- **subtree end**: the slot, one byte load;
+- **parent**: at most 7 sibling steps over the slots;
+- **start**: the checkpoint, then the 7 or fewer gaps after it folded a word at a time, escapes
+  added from the part;
+- **end**: the start and the length.
+
+As in t38, each candidate is built over the corpus as one forest, one thread a question, the best
+of four warm dispatches, every answer checked against the CPU reader's. The forest is one language
+to format 16, so its single code table puts more nodes past the cutoff (0.6% data-layer, 5.3%
+rerail, against 0.36–1.1% a language in 0156 §1.8). Slots, gaps and lengths are each 8 bits; 2–4%
+of slots and lengths are escaped.
+
+M1 Max at load 4, ns a question:
+
+```text
+                      data-layer (9.5M nodes)          rerail (5.5M nodes)
+                      F16    XF     MF     BE          F16    XF     MF     BE
+image bytes a node    4.75   4.81   4.02   3.11        5.04   4.91   4.20   3.12
+code, in order        0.07   0.05   0.07   0.10        0.10   0.06   0.07   0.10
+code at random        0.18   0.23   0.17   0.26        0.31   0.26   0.26   0.39
+start at random       0.26   0.18   0.28   0.52        0.16   0.18   0.23   0.43
+end at random         0.37   0.34   0.57   0.88        0.25   0.31   0.49   0.77
+subtree end           0.09   0.15   0.14   0.46        0.09   0.13   0.13   0.39
+parent at random      0.22   0.14   0.14   1.19        0.30   0.13   0.13   1.76
+children of a node    1.24   1.12   1.12   2.77        11.3   9.0    9.0    10.1
+```
+
+- **Every question runs in place on the device at 0.07–0.37 ns,** within 1.5× XF's, except the
+  parent. The M3 (load 6–7) and the M5 Max (load 44–90) give the same order, and every answer was
+  right on all three.
+- **The parent costs 1.6–2.3× XF's** (0.22–0.30 against 0.13–0.14). XF stores the distance in the
+  slot before; format 16 walks up to 7 siblings, each a dependent load, and a SIMD group waits for
+  its longest walk. On the CPU the same walk costs 1.5–2.6× (0156 §1.7), so the device adds
+  nothing of its own.
+- **The subtree end is faster than XF's** (0.09 against 0.13–0.15): one byte load against a
+  bit-packed field. The escapes split a group onto the binary search, but at 2–4% that stays cheap.
+- **Children on rerail** are set by the forest's root (1,698 children), as in t38; it is the same
+  for every candidate.
+
+### Step 22: format 16's bulk primitives on Metal (E30)
+
+`tape16 prim-gpu` (step 5) now runs format 16 beside XF, MF and BE: one thread a group of 64
+nodes, each primitive on the tape as stored (`f16_match`, `f16_nearest`, `f16_has`, `f16_hasc`,
+`f16_span` in `prim_gpu.rs`, reading through E29's `F16C`). As before, it uses one language's files
+as one forest, five sets, every answer checked against the tree. Format 16's choices are learned on
+that forest, with the grammar's code table.
+
+Three changes, each what the CPU reader already does, brought the match level with the others:
+- **the group's 64 code bytes read as 8 words**, not a byte at a time: 0.23 → 0.11 ns a node
+  (M1 Max, data-layer);
+- **the set compiled as the CPU's `NumSet`**: 256 byte entries, the prefix's entry saying whether
+  the set holds any code past the cutoff, then the set by number. A set with none decodes nothing:
+  0.17 → 0.013 (M3, rerail);
+- **a group's nodes past the cutoff read in order**: one search finds the group's first entry in its
+  block's list, and the rest are the next entries. Rerail's class, block and string sets hold rare
+  field and flag tuples past the cutoff, so every prefix is decoded: 0.17 → 0.09.
+
+M3 Max at load 5–8, ns a node, the range over the five sets (fn, class, block, call, string):
+
+```text
+                         data-layer Python (2.5M nodes)          rerail Rust (1.4M nodes)
+                       F16        XF         MF         BE          F16        XF         MF         BE
+match                  0.01-0.04  0.02-0.06  0.06       0.06        0.02-0.09  0.02-0.06  0.06       0.06
+nearest (with match)   0.12-0.13  0.05-0.09  0.05-0.08  0.16-0.26   0.20-0.23  0.11-0.33  0.07-0.23  0.20-0.34
+outermost              0.12-0.13  0.05-0.08  0.05-0.07  0.18-0.29   0.20-0.23  0.06-0.12  0.06-0.08  0.21-0.39
+has, climbing          0.04-0.26  0.04-0.17  0.04-0.16  0.32-0.85   0.10-0.39  0.06-0.21  0.10-0.22  0.21-0.61
+has, from counts       0.06       0.07-0.12  0.07-0.09  0.24        0.08-0.09  0.09       0.09       0.28-0.29
+span                   0.07       0.08-0.12  0.16       0.32-0.34   0.07       0.07       0.13       0.38
+```
+
+On the M1 Max (load 3–4), format 16 takes 0.06–0.07 to match on the data-layer (XF 0.13–0.25), 0.18–0.24 for has
+from counts (XF 0.24–0.33) and 0.21–0.22 for spans (XF 0.24–0.28), but 0.39–0.47 for nearest on
+rerail (XF 0.19–0.24). The M1 Max's match for XF and MF jumps between 0.08 and 0.27 from set to set
+on the same data, so its small numbers are the GPU's clock states more than the forms. The M5 Max
+(load 31–44) gives the same order. Every answer was right on all three.
+
+- **Spans and has from counts are format 16's best.** Spans are level with XF and half MF's: a
+  group of 64 starts on a checkpoint, so its spans are a running sum of byte loads.
+- **The match is level with XF's or faster,** once it reads as the CPU does.
+- **Nearest and outermost cost 1.5–2.5× XF's.** Each group's carry climbs from its first node to
+  the root, and on format 16 each parent is the sibling walk (E29: the point parent costs 1.6–2.3×).
+  This is the parent's tradeoff of 0156 §1.3 again, not a new cost. A carry that climbs only as far
+  as the sweep needs it is the lever, if the mix calls for it.
+- **On the CPU (one thread, M3), format 16's nearest is level with XF's on dense sets and up to
+  1.5× on sparse ones** (0.39–1.79 against 0.32–1.77). Has, from the S-nodes, costs 1.2–1.9× XF's
+  (0.42–2.37 against 0.29–2.04), the most on the sparsest sets, where the climb is all of the work.
+
+### Step 23: the climbs and the parent, 80/20 (E31)
+
+Step 22 left nearest and outermost at 1.5–2.5× XF's on format 16: each group's carry climbed from
+its first node to the root, each parent a sibling walk. Two places can pay for the parent: the bulk
+primitives that climb, and the slot itself. Both were measured, on the M1 Max in high-power mode
+(load 3–6) and the M3, every answer checked.
+
+**The primitives, with no format change.**
+- **Outermost by a prefix max, no climb.** Among the S-nodes before k, the one whose subtree ends
+  last (the earlier one on a tie) is k's outermost S-ancestor when that end is past k; otherwise k
+  has none. A key `end << 32 | ~index` a group, its max scanned up and down the same 64-ary levels
+  as has from counts, then one sweep a group (`*_okey`, `o_up`, `o_down`, `*_outer2`).
+- **Nearest by a bounded climb.** The same scan says whether a group's first node has an
+  S-ancestor at all. Without one there is no climb. With one, the climb stops at the first
+  S-ancestor that encloses the whole group, or at the outermost (`*_near2`).
+- **Nearest back over the S-nodes, no parent read** (`*_near3`). Going back over the masks, the
+  first S-node whose subtree ends past k0 is its nearest S-ancestor, and each later one that does
+  is the next one out. It ties the bounded climb on dense sets and loses on sparse ones (groups
+  deep in a large S-node pass many closed ones, and fall back past 64 words), so it is not used.
+
+M1 Max, ns a node, the range over the five sets (fn, class, block, call, string):
+
+```text
+                          data-layer Python (2.5M nodes)     rerail Rust (1.4M nodes)
+                          F16          XF                    F16          XF
+nearest, climbing         0.24-0.27    0.17-0.33             0.38-0.47    0.17-0.41
+nearest, bounded climb    0.14-0.21    0.19-0.30             0.17-0.36    0.20-0.47
+outermost, climbing       0.23-0.27    0.17-0.28             0.38-0.47    0.17-0.41
+outermost, prefix max     0.10-0.11    0.17-0.23             0.12-0.16    0.16-0.31
+has, from counts          0.18-0.20    0.25-0.33             0.21-0.23    0.24-0.47
+```
+
+On the M3 (load 5–8), format 16's bounded nearest takes 0.05–0.10 ns on the data-layer and
+0.07–0.21 on rerail, and its prefix-max outermost 0.03–0.07, against XF's climbs at 0.05–0.21. So
+with these forms, **format 16's bulk work is level with XF's or faster**. Outermost no longer reads
+a parent at all, and nearest reads few.
+
+**The slot: a leaf names the parent where its distance is short.** Today a leaf's slot names the
+parent only on every 8th sibling. It could name it whenever the distance is at most a limit, and
+the sibling otherwise (`relative::sib_slots_fit`, `f16::FIT`). The readers already accept either
+tag anywhere, so only the writer changes. A distance inside a repeated subtree is the same in every
+copy, so repeats keep their bits. And since a sibling distance only escapes when the parent
+distance does too, no more values escape: memory is unchanged in every language.
+
+`tape16 climb <capture>` (`src/climb.rs`) counts the slots a point parent reads under each rule,
+the slots each carry climb reads, and the slots' bytes in memory and under zstd 3 (a file at a time,
+no dictionary). Point parent, slots read on average / zstd bytes a node of the slots:
+
+```text
+                   data-layer Python   rerail Rust      rerail TypeScript   rerail JSON
+K = 8 (E16)        1.92 / 0.416        1.98 / 0.481     1.89 / 0.523        2.77 / 0.154
+K = 4              1.70 / 0.444        1.69 / 0.508     1.71 / 0.546        1.88 / 0.188
+fit to 7           1.36 / 0.431        1.40 / 0.498     1.38 / 0.542        2.46 / 0.155
+fit to 15          1.23 / 0.444        1.26 / 0.508     1.24 / 0.551        2.31 / 0.157
+fit to the width   1.10 / 0.465        1.12 / 0.527     1.10 / 0.567        1.98 / 0.161
+```
+
+XF reads one slot. Fit to 15 removes 73–75% of the extra reads on code for 57–59% of fitting to
+the width's disk. K = 4 is worse on both counts. JSON's flat arrays keep most of their steps under
+any limit, since the distances there are long.
+
+Fit to 15 through the whole format (reader, writer byte for byte, at rest, every answer checked),
+M1 Max:
+- **Disk:** whole-tape zstd with the dictionary +0.1–1.6% on every language with more than 100,000
+  measured nodes (Python 1.874 → 1.888 B a node, Rust 2.215 → 2.242, JSON 0.932 → 0.933); the
+  small sets scatter (PHP −0.9%, Blade's 418 nodes +2.9%). Fitting to the width costs +0.3–2.8%.
+- **The point parent on the CPU:** 7.9 → 6.7 ns on the data-layer (1.9× → 1.6× XF's), and 11.4 →
+  10.0 on rerail (2.8× → 2.3×; half its sample is JSON).
+- **On the GPU, A/B on one machine, two runs each:** the point parent 0.22–0.27 → 0.19–0.22 ns on
+  the data-layer, 0.39–0.41 → 0.30–0.39 on rerail. The primitives do not change. A SIMD group
+  waits for its slowest lane, and the climbs pass through high ancestors, whose parents are far
+  past any limit.
+
+**The choice.** The 80/20 is in the primitives. They cost no bytes, and they take the bulk work level
+with XF's. What the slot rule buys is the point parent, 10–20% faster. The point parent is 0.4–1.7%
+of a rule's CPU (step 9), so that is 0.06–0.34%, against up to 1.6% more disk. So `FIT` stays 0,
+the E16 rule, with the curve above on record if point parents ever weigh more.
+
+### Step 24: what real rule packs evaluate (E32)
+
+The costs so far were per primitive. Which primitives a rule mix actually calls, how often and over
+how many rows, decides which costs matter. E32 runs two real packs over small real samples, most
+in a few seconds and the largest in under two minutes, and records what the engine evaluated: the pack's static composition, each join's
+literals and rows, the tape relations read, the text functions, the phases and the placement.
+
+**The runs.** Strict SQL (decision 0104) on every run. Node attributes are made eagerly
+(`RERAIL_NODE_SOURCES=eager`, 0174's oracle): on request, the default, loses findings when the
+asker is cross-file (O-cross-file-answers). Each run is cold (a new store, profiled, or not where the
+profile would pass the time cap), warm (the same store, profiled) and timed (the same store, no
+profile: the profile's own writing costs about 25 s of CPU after a cold run). The scripts are in
+`native/lab/tape16/scripts/e32` (`run.sh`, `static.py`, `analyze.py`).
+
+- **python:** rerail's python pack, 317 rules (`docs/rule-syntax/packs/python`), over 1, 10 and 50
+  files of the bench corpus0 (61, 2,218 and 13,734 lines).
+- **data-layer:** the gate's data-layer candidates, 75 rules (`gate/data-layer/packs/data-layer/candidates/rr`),
+  over every k-th `impl/*.py` of the data-layer repository: 10 files (1,508 lines) and 50 (23,491).
+
+```text
+run                 CPU s cold   CPU s warm   peak MB   findings
+                    (no profile) (no profile) (cold)
+python, 1 file          -            1.6         440         0
+python, 10 files         -           1.7         568         7
+python, 50 files       18.0          0.7         902        63
+data-layer, 10 files    8.6          2.9         458        36
+data-layer, 50 files  100.4          1.0         927        75
+```
+
+The python cold runs over 1 and 10 files were profiled only, so they have no cold figure here.
+"Warm" is the same inputs again, so a warm run without a profile mostly finds its outputs kept. The
+data-layer pack's cold cost is 4–6 ms of CPU a line, the python pack's 1.3. At 50 files the last
+part of the cold run is one seed join on one worker while the others wait (`sample`; the stack
+does not name the stratum), and no join stands out at 10 files: a stratum that grows faster than
+linearly cold, likely planned without the statistics a warm run has (O-cold-seed-join).
+
+**Static composition** (`static.py`: per rule, with the library files it includes).
+
+```text
+                                  python (317)          data-layer (75)
+library files a rule pulls in     median 8              median 5, max 10
+clauses with the library          median 613            median 435, p90 580, max 829
+body literals with the library    median 1,951          median 1,357, max 2,693
+the rule's own clauses            median 2, p90 8       median 21, p90 85, max 239
+the pack as one program           1,019 own clauses,    2,823 own clauses,
+                                  43 library files,     17 library files,
+                                  1,522 library clauses 1,046 library clauses
+```
+
+A python rule is a few clauses over a large shared library. A data-layer rule is a program of its
+own (61 of 75 have recursion, 68 negation, 61 aggregates) over a smaller one.
+
+**What was evaluated (cold, 10 files).** Rows of work are the bindings reaching each step.
+
+```text
+                                  python, 10 files      data-layer, 10 files
+native joins                      6,087 in 3,533 strata 6,776 in 3,836 strata
+rows of work                      10.8 M                4.8 M
+CPU in the joins                  0.66 s of 11.2 s      0.37 s of 8.0 s
+file-local share of the work      93%                   93%
+owner: library / rule / cones     62% / 36% / 2%        34% / 60% / 6%
+literals a join                   median 3, p90 10      median 3, p90 8
+rules' work (own strata)          median 104, max 600k  median 7,267, max 413k
+```
+
+Rows in by literal class:
+
+```text
+                  python    data-layer
+bound              23%        27%       a binding of the bound program (0058)
+scope              19%        24%       the run's scoping
+cmp                18%        10%
+base (tape)        16%        18%
+derived            11%        10%
+neg                11%         8%
+fn                  2%         2%
+agg                 0%         0%
+```
+
+The tape relations, by rows in (base reads, positive and negated):
+
+```text
+python, 10 files                      data-layer, 10 files
+kind          1,189,012  (2,823 steps)  kind        295,445  (2,001 steps)
+node_order      147,519                 text        147,460
+child           131,054                 child        58,651
+text            126,802                 src_line     51,416
+field            71,821                 within       48,883
+within           59,366                 field        42,099
+nearest(set)     45,002                 docof        30,592
+line             25,844                 node_order   27,806
+docof            13,733                 nearest(set) 26,203
+                                        long text    23,017
+```
+
+At 50 files (data-layer, the warm run profiled, which evaluates again): 74.8 M rows of work in
+4,970 joins over 2,643 strata, 5.8 s of CPU in the joins out of 15.7 s for the process. The shares
+hold: bound 28%, scope 21%, base 18%, cmp 14%; `kind` 4.0 M rows in, `text` 1.8 M, `src_line`
+1.6 M, `within` 0.9 M, `docof` 0.8 M, `child` 0.8 M; the median rule 155k rows. The GPU was rated
+cheaper for 490 strata there (447 lacking no form); the run was the CPU's (below).
+
+Text functions by rows in: python's are `@equals` (37k), `@cat`, `@contains`, `@suffix`, `@prefix`;
+data-layer's `@glob` (16k), `@rr_node_text`, `@rx` (14k), `@contains`, `@equals`, `@replace_all`.
+
+**Where the time goes.** In the joins: 0.4–0.7 s of 8–11 s of cold CPU. The rest is making the
+program: combining the rule files (0.9–1.5 s), preparing it (prune, simplify, demand; pushing the
+file-local joins into the chunks: 0.9–1.2 s), lowering the rules, bounding the combined program
+(0.2–0.7 s), and the store writer's frames and programs. Warm, with the program and frames kept,
+the same runs take 1.6–2.9 s of CPU.
+
+**Placement.** The runs above are the CPU's: `logic` puts strata on the device only with `--metal`
+(`RERAIL_DEVICE` is read by other commands), and the profile names "the run's binding is the CPU"
+for nearly every stratum. Run again with `--metal` (`ARGS=--metal run.sh`, same findings), 92 of
+3,486 python strata and 89 of 2,351 data-layer strata ran on the GPU, out of 110 and 131 the cost
+model rated cheaper there. Of the cheaper ones, 18 and 42 stay on the CPU because the device lacks
+a form: a computed term (`@rr_node_text` in a comparison above all, then `@concat`, `@cat` or
+`@nfkc` in a head, `@rx_group`) or a string join. On these samples those strata cost under 0.1 s of
+CPU in all; the rest are cheaper on the CPU by price.
+
+**What this says for costing the tape.**
+- The tape's reads are `kind` first, by far: 11% of every row a python join reads, 6% of the
+  data-layer's, with 2,000–2,800 steps. The point questions that follow are structure (`child`,
+  `field`, `node_order`), text and the bulk primitives (`within`, `nearest` over a kind set).
+  `inside` and `has` (74 and 70 uses in the library and the rules) mostly name a kind set, and
+  then they are tape reads already: `rr_inside_<set>` and `rr_has_<set>` (`front::AXIS`,
+  `DESCENDANTS`), made by `Within` as `nearest` is. Only over a set of nodes (a derived relation,
+  such as `loop_stop`) are they climbs (`lower.rs`, `node_axis`: `rr_up<k>` over the parent
+  column). Measured in the same runs, both are small:
+
+  ```text
+                               python, 10    data-layer, 10   data-layer, 50 (warm)
+  inside, kind set: steps        25              11               11
+                    rows in      1,935           246              4,030
+  has, kind set:    rows in      474             265              5,720
+  climbs (rr_up):   strata       14              15               0
+                    work         125k (1.2%)     1.6k             0
+  ```
+
+  The python climbs are two library rules, `in_loop_body` (`nearest(s, b, loop_stop)`) and
+  `run_scope`'s nearest region root, each seeded from every node of the shown documents (12.9k)
+  and stopping at the first stop. No rule asks for the outermost. So bulk `inside` and `has` cost
+  little on these mixes; the replacement for the node-set climbs is §4's rework item 2, the
+  derived set sorted into preorder driving the same sweep as a kind set, with rows out the
+  answer's and no seed per node. It is worth building with item 1 (the bulk axes on one code),
+  not ahead of it.
+- At 10 files, joins are 5–7% of a cold run's CPU; at 50 data-layer files, 37% of a run that
+  evaluates again. A primitive twice as fast moves a small cold run by under 3% and a larger
+  evaluation by up to a fifth: the share grows with the corpus, while making the program does not.
+- The python mix is wide and shallow: 253 rules with strata of their own, the median at 104 rows.
+  The data-layer mix is narrow and deep: 68 rules, the median at 7,267 rows. A mix for costing
+  should keep both shapes.
+- What keeps work off the GPU is mostly price (small strata), then the computed term and the
+  string join; not the tape.
+
+**Engine fixes the runs needed.** The packs as they stand did not run strict on this branch:
+- the module images of 0246 stage 2 were written on the run's thread (833b39446);
+- node attributes on request were made per part, not over the combined program, and PYI062 with
+  PYI059 was not stratifiable (6cd50a2b4);
+- two library names clashed between data-layer and python files (2fa7e21df);
+- three strata the native engine declined: a head `@dot` with a computed part, `dfs_first_memo`
+  and `match_all` over held relations (they read and wrote tables), and an ordered comparison
+  with an extremum's value (89c0c7c1c).
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -780,3 +1661,52 @@ In order. Each step is measured on all three corpora, every answer checked.
    0.4–1.7% of a rule's CPU at K = 8, if the engine reads in order through cursors. Chosen: sibling
    slots and gap positions at K = 8. The repeated parent reads were one call site, fixed. Open: on a
    cold store, phase 1 and the outer run each build every document.
+10. **What the same bits buy on disk (E18).** Done: same bits take 18–46% off XF's zstd size, and
+    byte widths as much again; a mixed form (codes bit-packed, the rest at byte widths) costs 4.3–4.6
+    B a node in memory and 1.5–2.2 on disk on code. Next: write the widths into 0156.
+11. **LZ4 with random access in fixed blocks (E19).** Done: 1–5% over whole arrays at 4,096 nodes
+    a block, 4–11% at 1,024, 14–23% at 256 on code; a reference block takes back a quarter. Fixed
+    blocks do not repeat on code; only the checkpoints are read in place.
+12. **Codes in 8 bits (E20).** Done: overloaded by the previous byte, 0.04–0.31% escapes, 9% less
+    memory, 38–44% less disk; the byte reads 2.3× faster than 9 bits at random, the code
+    15–20% faster. With them the byte-aligned form is the
+    smallest in memory and on disk.
+13. **Codes numbered by frequency (E21).** Done: one cutoff a language (255), the byte is the code
+    below it, a prefix and the block's side list past it; 0.36–1.12% of nodes past it, no table,
+    reads level with step 12 or faster, memory and disk within a few percent. Replaces step 12's
+    tables in 0156.
+14. **The field out of the code (E22).** Done: the base fits in 8 bits with no tail, but the field then
+    needs the parent's base and the child's index (0.03–0.41% misses), a 5–20 KiB table, and 3–6×
+    step 13's read; disk 7–12% smaller. The field stays in the code.
+15. **Step 13's branch (E23).** Done: mispredicts cost 0.05 ns a read or less. The branch's shape
+    costs about 0.1 at random and blocks vectorising in order (0.47 against 0.07). Reads in order
+    decode a block whole (0.09 ns a node); reads at random keep the branch.
+16. **The tape as one form (E24).** Done: 4.5–4.8 B a node in memory, 0.9–2.1 on disk, every
+    question and primitive in place and checked; written into 0156 sections 1–4. Next: the device
+    decode of a fixed LZ4 block, the code table's unseen tuples (E2), and the writer (E6).
+17. **The code table from the grammar (E25).** Done: every code the grammar allows, 1,843–3,696 a
+    tree-sitter language, no captured node outside it; one prefix with a two-byte low part. Next: own
+    parsers (`.rr`, Blade) declare their node types.
+18. **Fixed blocks on Metal (E26).** Done: 0.10–0.42 ns a node in one dispatch, 1.3–2.7× every CPU
+    core, with each block's side-list part inside it. Next: the parts' reads in the lab's readers, the
+    writer (E6), and the tape's own kernels reading the decoded blocks in place.
+19. **Side lists read in place; the version mark (E27).** Done: the parts as stored are what the
+    readers read; byte 0 of every tape is its language's revision, checked before every load.
+20. **The writer (E28).** Done: format 15's cost a node (3–16% fewer instructions, time level to +25%),
+    every tape equal to the reader's. Next: the tape's own kernels on the decoded blocks.
+21. **The questions on Metal (E29).** Done: every question in place on the device, 0.07–0.37 ns,
+    within 1.5× XF's except the parent (1.6–2.3×, the sibling walk), every answer checked. Next:
+    the primitives (match, nearest, outermost, has, spans) as format 16 kernels.
+22. **The primitives on Metal (E30).** Done: match, has from counts and spans level with XF's or
+    faster, nearest and outermost 1.5–2.5× (the carry's parent walk), every answer checked. Next, if
+    the mix calls for it: a carry that climbs only as far as the sweep needs.
+23. **The climbs and the parent, 80/20 (E31).** Done: outermost by a prefix max (no climb) and nearest
+    by a bounded climb take format 16's bulk work level with XF's or faster, at no bytes. A leaf slot
+    naming short parent distances (fit to 15) makes the point parent 10–20% faster for up to 1.6%
+    more disk; measured and not taken (`FIT` = 0).
+24. **Real rule mixes (E32).** Done: the python pack (317 rules) and the data-layer candidates (75)
+    over small real samples, strict, with what each evaluated. Joins are 5–7% of a small cold run's
+    CPU and 37% of a 50-file evaluation;
+    the tape's reads are `kind` first, then structure, text, `within` and `nearest`. `inside` and
+    `has` over kind sets are tape reads already, and the climbs over node sets are 1.2% of python's
+    work and less of data-layer's: §4's rework item 2 replaces them, with item 1.

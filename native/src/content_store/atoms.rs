@@ -293,7 +293,7 @@ const LEASE_WAIT: Duration = Duration::from_secs(60);
 /// How often a holder looks for a process waiting for its lease.
 const WANT_CHECK: Duration = Duration::from_millis(50);
 
-struct State {
+pub(super) struct State {
     /// The atoms held: what this process read of the database's, and its pending ones (`Interner::base` on).
     atoms: Interner,
     /// When the first pending atom was given out.

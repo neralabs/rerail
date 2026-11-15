@@ -23,6 +23,7 @@ pub mod aggregate_demand {
     use std::collections::{BTreeMap, BTreeSet};
 }
 pub mod from_tape;
+pub mod module_image;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 /// The text tests `.rr` names, and the engine's test each lowers to (the coverage gate probes each).
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
@@ -82,8 +83,8 @@ pub fn library() -> PathBuf {
     // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
     std::env::var_os("RERAIL_RR_LIB")
         .map(PathBuf::from)
-        // Below the checkout's root, with no `..` in it: a path the engine reads is named one way, so the file observer
-        // keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
+        // From the checkout's root, with no `..` in the path: a path the engine reads is named one way, so the file
+        // observer keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
         .unwrap_or_else(|| rerail_store::source_tree::root().map_or_else(|| PathBuf::from("docs/rule-syntax/lib"), |root| root.join("docs/rule-syntax/lib")))
 }
 
@@ -269,13 +270,147 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Progr
         return Ok(program.clone());
     }
     check_names(&files, false)?;
-    let program = lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?;
+    let program = if std::env::var("RERAIL_LIBRARY_LOWERING").is_ok_and(|v| v == "whole") { lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())? } else { lower_modules(paths, files)? };
     let mut kept = cache.lock().expect("the lowered libraries");
     if kept.len() >= 8 {
         kept.clear();
     }
     kept.insert(key, program.clone());
     Ok(program)
+}
+
+/// Library files (canonical paths, includes first, with their statements less their includes) lowered one module
+/// at a time, each against the modules it reaches (decision 0246 §1), and linked. A module is a file, or files that
+/// include each other (`python/names.rr` and `python/imports.rr`: one unit, read together). `core.rr` is in every
+/// other file's scope, as `parse` reads a file with it first. `RERAIL_LIBRARY_LOWERING=whole` lowers them as one, as
+/// before, to compare.
+pub fn lower_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<Program, Error> {
+    lower::link(library_modules(paths, files)?)
+}
+
+/// The library files' modules (`lower_modules`), includes first, each lowered against the modules it reaches.
+pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<Vec<lower::Module>, Error> {
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("lower the library one module at a time ({} files)", paths.len()));
+    let core = library().join("core.rr").canonicalize().ok();
+    let at = |p: &Path| paths.iter().position(|q| q == p);
+    let n = paths.len();
+    // Each file's direct includes, by position: the library's file, else the one beside it (`#include`).
+    let mut direct: Vec<BTreeSet<usize>> = Vec::with_capacity(n);
+    let mut digests: Vec<[u8; 32]> = Vec::with_capacity(n);
+    for (i, path) in paths.iter().enumerate() {
+        let (statements, file) = read_shared(path)?;
+        digests.push(file.sha256.unwrap_or_default());
+        let mut mine: BTreeSet<usize> = BTreeSet::new();
+        if let Some(c) = core.as_deref().and_then(at).filter(|&c| c != i) {
+            mine.insert(c);
+        }
+        for (item, line) in statements.iter() {
+            let syntax::Item::Include(name) = item else { continue };
+            let found = [library().join(name), path.parent().map_or_else(|| PathBuf::from(name), |d| d.join(name))].into_iter().find_map(|p| p.canonicalize().ok());
+            let Some(j) = found.as_deref().and_then(at) else {
+                return Err(Error::Syntax(format!("{}:{line}: #include {name:?} is not among the run's library files", path.display())));
+            };
+            mine.insert(j);
+        }
+        mine.remove(&i);
+        direct.push(mine);
+    }
+    // What each file reaches, itself not counted unless through a cycle.
+    let mut reach: Vec<BTreeSet<usize>> = direct.clone();
+    loop {
+        let mut grew = false;
+        for i in 0..n {
+            let more: BTreeSet<usize> = reach[i].iter().flat_map(|&j| reach[j].iter().copied()).collect();
+            let before = reach[i].len();
+            reach[i].extend(more);
+            grew |= reach[i].len() != before;
+        }
+        if !grew {
+            break;
+        }
+    }
+    // The modules: files that reach each other are one, in the order of their first file; their files in the list's
+    // order, so the module's statements are as one lowering of the list reads them.
+    let mut unit_of: Vec<usize> = vec![usize::MAX; n];
+    let mut units: Vec<Vec<usize>> = Vec::new();
+    for i in 0..n {
+        if unit_of[i] != usize::MAX {
+            continue;
+        }
+        let members: Vec<usize> = (i..n).filter(|&j| j == i || (reach[i].contains(&j) && reach[j].contains(&i))).collect();
+        for &j in &members {
+            unit_of[j] = units.len();
+        }
+        units.push(members);
+    }
+    let scopes: Vec<BTreeSet<usize>> = units.iter().enumerate().map(|(u, members)| members.iter().flat_map(|&i| reach[i].iter().map(|&j| unit_of[j])).filter(|&v| v != u).collect()).collect();
+    for (u, scope) in scopes.iter().enumerate() {
+        if let Some(&v) = scope.iter().find(|&&v| v > u) {
+            return Err(Error::Syntax(format!("{} includes {}, listed after it", paths[units[u][0]].display(), paths[units[v][0]].display())));
+        }
+    }
+    // Each module is kept in the store as its image (decision 0246 §6), by its key: the image's format, the engine's
+    // build, its files' bytes and the keys of the modules in its scope. A module whose image the store holds is read
+    // from it, not lowered.
+    let store = if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { super::plan::corpus::phases::reading_store() } else { None };
+    let mut statements: Vec<Option<Vec<syntax::Statement>>> = files.into_iter().map(|(_, s)| Some(s)).collect();
+    let mut modules: Vec<lower::Module> = Vec::with_capacity(units.len());
+    let mut keys: Vec<crate::content_store::HashKey> = Vec::with_capacity(units.len());
+    for (u, members) in units.iter().enumerate() {
+        let key = module_key(members.iter().map(|&i| &digests[i]), scopes[u].iter().map(|&v| &keys[v]));
+        keys.push(key);
+        if let Some(store) = &store
+            && let Ok(Some(id)) = store.source_by_alias(key)
+            && let Ok(bytes) = store.get_source(id)
+            && let Ok(m) = module_image::decode(&bytes)
+        {
+            // The pin is a write: behind the run, on the store's writer (decision 0104).
+            store.write_back("a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
+            crate::code_rule_dsl::prof::count("rr.module_image_read", 1);
+            modules.push(m);
+            continue;
+        }
+        let own: Vec<syntax::Statement> = members.iter().flat_map(|&i| statements[i].take().unwrap_or_default()).collect();
+        let scope: Vec<&lower::Module> = scopes[u].iter().map(|&v| &modules[v]).collect();
+        let m = lower::lower_module_in(own, &scope).map_err(|e| match e {
+            Error::Syntax(m) => Error::Syntax(format!("{}: {m}", paths[members[0]].display())),
+            e => e,
+        })?;
+        // Written behind the run, on the store's writer (decision 0104: no write outside the waves). A cache's write:
+        // where the writer's queue is full it is dropped, and the next run lowers the module again.
+        if let Some(store) = &store
+            && let Ok(bytes) = module_image::encode(&m)
+        {
+            let queued = store.write_back_unless_full(
+                crate::content_store::write_back::Syms::None,
+                "a module's image",
+                bytes.len(),
+                Vec::new(),
+                Box::new(move |s| {
+                    let id = s.put_source(&bytes, &[key])?;
+                    s.pin_held_sources(&[id])
+                }),
+            );
+            if queued {
+                crate::code_rule_dsl::prof::count("rr.module_image_written", 1);
+            }
+        }
+        modules.push(m);
+    }
+    Ok(modules)
+}
+
+/// The alias a module's image is kept under (`library_modules`).
+fn module_key<'k>(files: impl Iterator<Item = &'k [u8; 32]>, scope: impl Iterator<Item = &'k crate::content_store::HashKey>) -> crate::content_store::HashKey {
+    let mut bytes = format!("rerail module image {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    for d in files {
+        bytes.extend_from_slice(d);
+    }
+    bytes.push(0);
+    for k in scope {
+        bytes.extend_from_slice(&k.sha256_bytes().unwrap_or_default());
+    }
+    crate::content_store::HashKey::sha256(&bytes)
 }
 
 /// A program text read once for what a run needs of it besides its rules (`plan::corpus::run_with_options`): its

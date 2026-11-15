@@ -127,9 +127,10 @@ impl Packed {
 }
 
 /// `$body` once for each j in 0..64, with j a constant in each copy.
+#[macro_export]
 macro_rules! unroll64 {
     ($j:ident, $body:block) => {
-        unroll64!(@ $j, $body, 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+        $crate::unroll64!(@ $j, $body, 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
             32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63)
     };
     (@ $j:ident, $body:block, $($n:literal)*) => {
@@ -384,6 +385,28 @@ pub trait Reader {
     /// time).
     fn packed_codes(&self) -> Option<&Packed> {
         None
+    }
+    /// The codes by rank, 64 at a time: `f(base, m)` with bit j of m set when rank base + j's code is in `set`.
+    /// False if the candidate has no such reader (the caller then tests each code).
+    fn match_groups(&self, set: &[bool], f: impl FnMut(usize, u64)) -> bool {
+        match self.packed_codes() {
+            Some(p) => {
+                p.match_groups(self.len(), set, f);
+                true
+            }
+            None => false,
+        }
+    }
+    /// A cursor's step in preorder: the start of `id`, given the start of the node before it (`prev_start`,
+    /// unused for the first). A form that stores starts relatively answers with one gap; others read it.
+    #[inline(always)]
+    fn start_next(&self, id: usize, _prev_start: u64) -> u64 {
+        self.start(id)
+    }
+    /// The end of `id`, its start already in hand.
+    #[inline(always)]
+    fn end_with_start(&self, id: usize, _start: u64) -> u64 {
+        self.end(id)
     }
     /// See `Pos::end_from_next_start`.
     fn end_from_next_start(&self, _id: usize, _next_start: u64) -> Option<u64> {
@@ -1997,7 +2020,7 @@ pub struct GpuImage {
 }
 
 impl GpuImage {
-    fn arr<T: Copy>(&mut self, v: &[T]) {
+    pub(crate) fn arr<T: Copy>(&mut self, v: &[T]) {
         while self.bytes.len() % 8 != 0 {
             self.bytes.push(0);
         }
@@ -2006,7 +2029,7 @@ impl GpuImage {
         // Padding, so a two-word read past the end stays in the buffer.
         self.bytes.extend_from_slice(&[0u8; 16]);
     }
-    fn val(&mut self, v: u32) {
+    pub(crate) fn val(&mut self, v: u32) {
         self.params.push(v);
     }
 }
