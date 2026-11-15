@@ -16,6 +16,8 @@
 //!   host, so its nodes have the file's lines and columns; an escaped one, or a concatenation of strings, is its
 //!   decoded value, and every node stands at the string. A bytes literal or an f-string gives no guest, as Ruff
 //!   parses neither as a type;
+//! - a Markdown `inline` or `pipe_table_cell` node: its text without its `block_continuation`s, as tree-sitter-md
+//!   gives its inline grammar (decision 0238); each piece is a copied stretch, so its nodes have the file's places;
 //! - any other node: its text, copied;
 //! - `embed_value`'s text, standing at `at`.
 //!
@@ -186,6 +188,9 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
     if is_string(kind) {
         return string_text(label, kind, f.text(id), start, node);
     }
+    if label == "markdown" && matches!(kind, "inline" | "pipe_table_cell") {
+        return Some(markdown_inline_text(f, id));
+    }
     if kind == "concatenated_string" {
         let mut value = String::new();
         let mut pieces = Vec::new();
@@ -214,6 +219,36 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
         return Some((value, Placement::Mapped { pieces: pieces.into(), within: node }));
     }
     Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node }))
+}
+
+/// The text of a Markdown `inline` or `pipe_table_cell` node, as tree-sitter-md's `MarkdownParser` gives its inline
+/// parser: the node's bytes without its named children after the first (its `block_continuation`s, a container's
+/// `> ` or indent on a continued line). The pieces are copied stretches of the host, so its nodes have the file's
+/// lines and columns.
+pub fn markdown_inline_text(f: &core::Facts, id: u32) -> (String, Placement) {
+    let (start, end) = (f.start[id as usize], f.end[id as usize]);
+    let src = f.source.as_bytes();
+    let mut text = Vec::new();
+    let mut pieces = Vec::new();
+    let mut from = start;
+    // tree-sitter-md leaves the first child in (its loop starts at the second), as here.
+    for &c in f.children(id).iter().skip(1) {
+        if syntax::kind_name(f, c) != "block_continuation" {
+            continue;
+        }
+        let (a, b) = (f.start[c as usize], f.end[c as usize]);
+        pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(from), escape: false });
+        text.extend_from_slice(&src[from as usize..a as usize]);
+        from = b;
+    }
+    pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(from), escape: false });
+    text.extend_from_slice(&src[from as usize..end as usize]);
+    pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(end), escape: false });
+    let text = String::from_utf8(text).expect("cut at node bounds, which are characters'");
+    if pieces.len() == 2 {
+        return (text, Placement::Copied { delta: i64::from(start), within: [start, end] });
+    }
+    (text, Placement::Mapped { pieces: pieces.into(), within: [start, end] })
 }
 
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
@@ -357,20 +392,18 @@ impl Guests {
 
     /// The program host file `host` embeds through `via` (decision 0222): the embedder main registered for it
     /// (`embed::Embedder`; a Vue component's view, `vue::view`) writes its text and its segments from the host's
-    /// tree, and the text is parsed in the dialect the embedder chose (a `<script lang="ts">`'s TypeScript). The
+    /// tape, read in place, and the text is parsed in the dialect the embedder chose (a `<script lang="ts">`'s TypeScript). The
     /// guest's grammar is that dialect's label, as `guest` names what a document is parsed as; its nodes are placed
     /// through the segments (`Placement::Segments`). `None` where the host embeds no program (no script, `lang="coffee"`).
     fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
-        use ast_grep_language::LanguageExt;
         let host_key = (at >> 32) as u32;
         let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { return Ok(None) };
         let source = host.facts.source.as_str();
-        let mut parser = tree_sitter::Parser::new();
-        if parser.set_language(&dialect.get_ts_language()).is_err() {
-            return Ok(None);
-        }
-        let Some(tree) = parser.parse(source, None) else { return Ok(None) };
-        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(tree.root_node(), source) else { return Ok(None) };
+        // The host's tape, read in place by the embedder (whichever parser wrote it, the same tape).
+        let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Ok(None) };
+        let Some(Ok(image)) = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
+        let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root() else { return Ok(None) };
+        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) else { return Ok(None) };
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
         let place = Placement::Segments(Arc::new(program.segments));
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, cache)? else { return Ok(None) };

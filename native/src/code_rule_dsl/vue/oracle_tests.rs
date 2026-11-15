@@ -16,15 +16,11 @@ fn root() -> PathBuf {
     PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("vue/language/view")
 }
 
-/// The oracle fixture `path` and its tree-sitter-vue tree.
-fn parse(path: &str) -> (String, tree_sitter::Tree) {
+/// The oracle fixture `path` and its tape (`embed::host`).
+fn parse(path: &str) -> (String, crate::code_rule_dsl::embed::host::Tape) {
     let source = std::fs::read_to_string(root().join("fixtures").join(path)).expect("fixture");
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&GrammarDialect::Vue.get_ts_language())
-        .expect("grammar");
-    let tree = parser.parse(&source, None).expect("tree");
-    (source, tree)
+    let host = crate::code_rule_dsl::embed::host::Tape::of(GrammarDialect::Vue, &source);
+    (source, host)
 }
 
 /// The oracle's name for how Vue parses a region.
@@ -69,8 +65,8 @@ fn vue_view_oracle() {
     let mut quirks = 0;
     for file in expected["files"].as_array().expect("files") {
         let path = file["path"].as_str().expect("path");
-        let (source, tree) = parse(path);
-        let blocks = sfc::blocks(tree.root_node(), &source);
+        let (source, host) = parse(path);
+        let blocks = sfc::blocks(host.root(), &source);
         let got: Vec<Value> = blocks
             .iter()
             .map(|block| {
@@ -190,8 +186,8 @@ fn vue_view_scope_oracle() {
     let mut declarations = 0;
     for file in expected["files"].as_array().expect("files") {
         let path = file["path"].as_str().expect("path");
-        let (source, tree) = parse(path);
-        let blocks = sfc::blocks(tree.root_node(), &source);
+        let (source, host) = parse(path);
+        let blocks = sfc::blocks(host.root(), &source);
         let Some(template) = blocks
             .iter()
             .find(|block| block.name == "template" && block.lang.is_none_or(|lang| lang == "html"))
@@ -206,7 +202,7 @@ fn vue_view_scope_oracle() {
             .filter(|block| block.name == "script")
             .map(|block| block.content.clone())
             .collect();
-        let Some(view) = View::build(tree.root_node(), &source) else {
+        let Some(view) = View::build(host.root(), &source) else {
             errors.push(format!("{path}: no program"));
             continue;
         };

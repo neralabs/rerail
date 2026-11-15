@@ -5,6 +5,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 #[cfg(any(test, feature = "test-hooks"))]
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
+use crate::code_rule_dsl::embed::host::HostNode;
 use tree_sitter::{Node, Parser};
 
 #[derive(Clone)]
@@ -15,12 +16,12 @@ pub enum Arg {
 }
 /// A normalized Vue directive.
 pub struct Directive<'t> {
-    pub node: Node<'t>,
+    pub node: HostNode<'t>,
     pub name: &'t str,
     pub(crate) arg: Arg,
     pub value: Option<Range<usize>>,
 }
-fn text<'t>(n: Node<'t>, s: &'t str) -> &'t str {
+fn text<'t>(n: HostNode<'t>, s: &'t str) -> &'t str {
     &s[n.byte_range()]
 }
 /// `r` without its matching ASCII quotes, compared as bytes: an unquoted value may start or end
@@ -43,7 +44,7 @@ fn unquote(r: Range<usize>, s: &str) -> Range<usize> {
 /// to it: HTML's tokenizer, and vue-eslint-parser's, read a tag name up to whitespace, `/` or
 /// `>`, but tree-sitter-vue ends `tag_name` at a `.` and reads the rest as `.` shorthand
 /// attributes (`<ElTable.TableColumn>` as `ElTable` and `.TableColumn`).
-fn in_tag_name(node: Node<'_>) -> bool {
+fn in_tag_name(node: HostNode<'_>) -> bool {
     let mut current = node;
     while let Some(previous) = current.prev_named_sibling() {
         if previous.end_byte() != current.start_byte() {
@@ -59,7 +60,7 @@ fn in_tag_name(node: Node<'_>) -> bool {
 
 /// The bytes of the tag name `tag_name` starts, as vue-eslint-parser reads it: with the start
 /// tag children that belong to it (`in_tag_name`), `ElTable.TableColumn`.
-pub(crate) fn tag_name(tag_name: Node<'_>) -> Range<usize> {
+pub(crate) fn tag_name(tag_name: HostNode<'_>) -> Range<usize> {
     let mut end = tag_name;
     while let Some(next) = end.next_named_sibling()
         && next.start_byte() == end.end_byte()
@@ -73,7 +74,7 @@ impl<'t> Directive<'t> {
     /// Reads a grammar directive attribute, including Vue 2 scope aliases: `slot-scope` on any
     /// element, `scope` on a `<template>` only (vue-eslint-parser's reading; `<th scope="col">`
     /// is HTML's attribute). An attribute that belongs to the tag name (`in_tag_name`) is none.
-    pub fn read(node: Node<'t>, source: &'t str) -> Option<Self> {
+    pub fn read(node: HostNode<'t>, source: &'t str) -> Option<Self> {
         if in_tag_name(node) {
             return None;
         }
@@ -83,9 +84,8 @@ impl<'t> Directive<'t> {
             let name = text(n, source);
             let on_template = || {
                 let start = node.parent()?;
-                let mut cursor = start.walk();
                 let tag = start
-                    .named_children(&mut cursor)
+                    .named_children()
                     .find(|child| child.kind() == "tag_name")?;
                 Some(text(tag, source) == "template")
             };
@@ -103,8 +103,7 @@ impl<'t> Directive<'t> {
         if kind != "directive_attribute" {
             return None;
         }
-        let mut c = node.walk();
-        let children: Vec<_> = node.named_children(&mut c).collect();
+        let children: Vec<_> = node.named_children().collect();
         let dn = children
             .iter()
             .find(|n| n.kind() == "directive_name")
@@ -318,7 +317,7 @@ pub struct Region {
 }
 /// The template's expressions as the view oracle lists them, sorted.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> Vec<Region> {
+pub fn regions(root: HostNode<'_>, source: &str, dialect: GrammarDialect) -> Vec<Region> {
     let mut out = Vec::new();
     fn trim(r: Range<usize>, s: &str) -> Option<Range<usize>> {
         let t = s[r.clone()].trim();
@@ -329,7 +328,7 @@ pub fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> Vec<Reg
             Some(r.start + a..r.start + a + t.len())
         }
     }
-    fn walk(n: Node<'_>, s: &str, d: GrammarDialect, o: &mut Vec<Region>) {
+    fn walk(n: HostNode<'_>, s: &str, d: GrammarDialect, o: &mut Vec<Region>) {
         if n.kind() == "interpolation"
             && let Some(x) = n.named_child(0)
             && let Some(r) = trim(x.byte_range(), s)
@@ -387,8 +386,7 @@ pub fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> Vec<Reg
                 }
             }
         }
-        let mut c = n.walk();
-        for x in n.named_children(&mut c) {
+        for x in n.named_children() {
             walk(x, s, d, o);
         }
     }

@@ -278,56 +278,32 @@ const WORD_LIST: [(&[u8], T, u8); 41] = [
     (b"_", T::Name, soft::WILD),
 ];
 
-/// A word of at most 8 bytes as one integer, little-endian, zeros past its end.
-const fn word_key(w: &[u8]) -> u64 {
-    let mut k = 0u64;
-    let mut i = 0;
-    while i < w.len() {
-        k |= (w[i] as u64) << (8 * i);
-        i += 1;
-    }
-    k
-}
-
-/// A word's slot in `WORDS`, by its key and length: a multiplier under which the 41 words take 41
-/// slots of 128 (a perfect hash; `WORDS` is refused at compile time where two share one).
-#[inline(always)]
-const fn word_slot(key: u64, len: usize) -> usize {
-    ((key ^ len as u64).wrapping_mul(0x8f58_640b_360e_7c81) >> 57) as usize
-}
-
-/// Each slot's word: its key, its length (0: none), its kind and soft keyword.
-static WORDS: [(u64, u8, T, u8); 128] = {
-    let mut t = [(0u64, 0u8, T::Name, 0u8); 128];
+/// `WORD_LIST`'s words, the code of each its index plus one (0: none).
+const WORD_TEXT: [&[u8]; WORD_LIST.len() + 1] = {
+    let mut t: [&[u8]; WORD_LIST.len() + 1] = [b""; WORD_LIST.len() + 1];
     let mut i = 0;
     while i < WORD_LIST.len() {
-        let (w, kind, soft) = WORD_LIST[i];
-        assert!(w.len() <= 8);
-        let k = word_key(w);
-        let slot = word_slot(k, w.len());
-        assert!(t[slot].1 == 0, "two words in a slot");
-        t[slot] = (k, w.len() as u8, kind, soft);
+        t[i + 1] = WORD_LIST[i].0;
         i += 1;
     }
     t
 };
 
-/// The word `src[i..end]`'s kind and soft keyword: its first 8 bytes loaded as one integer, masked
-/// to its length, hashed to its one slot and compared once (simdjson's check of `true`, `false`
-/// and `null`, as one masked compare).
+rerail_simd8::keyword_switch!(
+    /// The keyword switch (`rerail_simd8::words`) over `WORD_TEXT`.
+    static WORDS = &WORD_TEXT, fold: false
+);
+
+/// The word `src[i..end]`'s kind and soft keyword: one probe of the keyword switch.
 #[inline(always)]
 fn keyword(src: &[u8], i: usize, end: usize) -> (T, u8) {
-    let len = end - i;
-    if len.wrapping_sub(1) >= 8 {
-        return (T::Name, 0);
+    match WORDS.find(src, i, end) as usize {
+        0 => (T::Name, 0),
+        code => {
+            let (_, kind, soft) = WORD_LIST[code - 1];
+            (kind, soft)
+        }
     }
-    let raw = match src.get(i..i + 8) {
-        Some(b) => u64::from_le_bytes(b.try_into().expect("8 bytes")),
-        None => word_key(&src[i..]),
-    };
-    let w = raw & (u64::MAX >> (64 - 8 * len));
-    let (k, l, kind, soft) = WORDS[word_slot(w, len)];
-    if k == w && usize::from(l) == len { (kind, soft) } else { (T::Name, 0) }
 }
 
 impl<'s> Lexer<'s> {

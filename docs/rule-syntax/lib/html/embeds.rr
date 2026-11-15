@@ -1,0 +1,41 @@
+// The code an HTML file holds, as guests (decision 0055's `embed`, decision 0238): a `<script>`'s text as
+// JavaScript or JSON, by its `type`, and a `<style>`'s text as CSS. Each is a whole program ("program"), at the
+// element's `raw_text`, so its nodes have the file's lines and columns.
+//
+//   <script>let a = f(1);</script>               JavaScript: no type
+//   <script type="module">…</script>             JavaScript: a JavaScript type, or "module"
+//   <script type="application/ld+json">…</script> JSON: a JSON type, or "importmap"
+//   <script type="text/template">…</script>      no guest: a type the registry parses no grammar for
+//   <style>p { color: red; }</style>             CSS
+
+// script_type(e, t): element e's `type` attribute is t (quoted or not).
+.decl script_type(e: node, t: symbol)
+script_type(e, t) :- kind(e, "script_element"), child(e, s, 0), kind(s, "start_tag"), child(s, a, _),
+    kind(a, "attribute"), child(a, n, 0), kind(n, "attribute_name"), text(n, "type"), child(a, v, 1),
+    kind(v, "attribute_value"), text(v, t).
+script_type(e, t) :- kind(e, "script_element"), child(e, s, 0), kind(s, "start_tag"), child(s, a, _),
+    kind(a, "attribute"), child(a, n, 0), kind(n, "attribute_name"), text(n, "type"), child(a, q, 1),
+    kind(q, "quoted_attribute_value"), child(q, v, 0), kind(v, "attribute_value"), text(v, t).
+// An empty value (`type=""`) has no attribute_value: it is JavaScript's, as no type is.
+.decl script_typed(e: node)
+script_typed(e) :- script_type(e, _).
+
+// The script types each grammar reads (the HTML standard's JavaScript MIME types, and the JSON ones a page holds).
+.decl script_grammar(t: symbol, g: symbol)
+script_grammar("module", "javascript").
+script_grammar("text/javascript", "javascript").
+script_grammar("application/javascript", "javascript").
+script_grammar("text/ecmascript", "javascript").
+script_grammar("application/ecmascript", "javascript").
+script_grammar("text/jsx", "javascript").
+script_grammar("text/babel", "javascript").
+script_grammar("application/json", "json").
+script_grammar("application/ld+json", "json").
+script_grammar("importmap", "json").
+script_grammar("speculationrules", "json").
+
+embed(d, r, "javascript", "program") :- node(d, e, "script_element", _, _), child(e, r, _), kind(r, "raw_text"),
+    !script_typed(e).
+embed(d, r, g, "program") :- node(d, e, "script_element", _, _), child(e, r, _), kind(r, "raw_text"),
+    script_type(e, t), script_grammar(t, g).
+embed(d, r, "css", "program") :- node(d, e, "style_element", _, _), child(e, r, _), kind(r, "raw_text").
