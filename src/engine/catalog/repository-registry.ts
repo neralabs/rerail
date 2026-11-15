@@ -460,11 +460,26 @@ export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "che
 }
 
 /**
+ * Whether the checkout recorded at `checkoutPath` is still one of `repositoryKey` and Rerail is stopped there, as
+ * {@link checkoutStatus} reads it. False where no checkout is recorded at that path: a checkout only its clone id or its
+ * remote names is placed there only with Git's help.
+ */
+export function recordedCheckoutStopped(db: Reader, checkoutPath: string, repositoryKey: RepositoryKey): boolean {
+  const recorded = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
+  return recorded?.key === repositoryKey && !statusAt(db, { checkoutPath, repositoryKey }).started;
+}
+
+/**
  * Whether Rerail runs in `checkout`: its own on/off, else the nearest containing checkout of its repository that
  * has one, else the repository's.
  */
 export function checkoutStatus(db: Reader, checkout: CheckoutContext | undefined): RepositoryStatus {
   if (checkout === undefined) return { started: false, setUp: false, startedBy: "repository" };
+  return statusAt(db, checkout);
+}
+
+/** {@link checkoutStatus} of the checkout at `checkout.checkoutPath`, a checkout of `checkout.repositoryKey`. */
+function statusAt(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): RepositoryStatus {
   const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
     .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
   const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started ?? null;

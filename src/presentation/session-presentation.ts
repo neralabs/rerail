@@ -16,6 +16,7 @@ import {
   DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, type DaemonState,
 } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
+import type { StartAnswer } from "../runtime/stopped-answers.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
 import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { conflictUrl } from "../engine/merge-assist/conflict-note.js";
@@ -434,12 +435,23 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * Whether Rerail is started in `cwd`'s repository, from the live host daemon, or null when none
  * answers. One request: the recorded pid must be alive and the reply must parse as a presentation.
  * Passive, and free of SQLite, so hooks and hosts that cannot load the binding (OMP runs on Bun)
- * ask this first. `stop` ends the request, as null, for a caller that no longer needs the answer: a one-shot hook that
- * found out by itself that the daemon would say stopped (`hookRerailStarted`).
+ * ask this first.
  */
-export async function readRepositoryState(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<RepositoryStartState | null> {
-  const state = await daemonRepositoryState(cwd, host, stop);
+export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
+  const state = await daemonRepositoryState(cwd, host);
   return state === "not-answering" ? null : state;
+}
+
+/**
+ * The live daemon's answer to a start check in `cwd` (`readRepositoryState`) with what it rests on: the folder as the
+ * daemon was asked about it (`workspace`, its real path), the checkout the daemon placed it in (`scope`, null where it
+ * placed it in none it knows), and the daemon that answered. Null where none answered. `stop` ends the request, as null,
+ * for a caller that no longer needs the answer: a one-shot hook that repeats the daemon's last answer
+ * (`hookRerailStarted`).
+ */
+export async function readStartAnswer(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<StartAnswer | null> {
+  const answer = await daemonStartAnswer(cwd, host, stop);
+  return answer === "not-answering" ? null : answer;
 }
 
 /**
@@ -448,16 +460,19 @@ export async function readRepositoryState(cwd: string, host: RerailHost, stop?: 
  */
 export type SummaryState = RepositoryStartState | "not-answering" | null;
 
-/**
- * Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`).
- * `stop` ends the request, as null.
- */
-async function daemonRepositoryState(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<SummaryState> {
+/** Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`). */
+async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<SummaryState> {
+  const answer = await daemonStartAnswer(cwd, host);
+  return answer === null || answer === "not-answering" ? answer : answer.state;
+}
+
+/** {@link readStartAnswer}, or `not-answering` when the live daemon gave no answer in time. `stop` ends the request, as null. */
+async function daemonStartAnswer(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<StartAnswer | "not-answering" | null> {
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string" || !(await readableDaemon(daemon.state, stop))) return null;
     const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema, stop);
-    return response.repositoryState;
+    return { state: response.repositoryState, workspace: daemon.workspace, scope: response.scope ?? null, daemon: daemon.state };
   } catch (error) {
     return error instanceof NotAnswering ? "not-answering" : null;
   }
