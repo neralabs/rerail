@@ -966,6 +966,85 @@ describe("CodeRuleBridge", () => {
         stderr.mockRestore();
       }
     });
+
+    it("tells an unlisted file too large to read at the next checkpoint when the record could not take it, though the text says it once", async () => {
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      const root = await workspace();
+      const locked = join(root, "src", "locked");
+      await mkdir(locked);
+      const denial = denyFolder(locked);
+      await writeFile(join(root, "big.raw"), "x\n".repeat(500_001));
+      let refuse = true;
+      const told: unknown[] = [];
+      const onDiscoveryGaps = vi.fn((gaps: readonly unknown[]) => {
+        if (refuse) throw new Error("database is locked");
+        told.push(...gaps);
+      });
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      try {
+        await bridge.openWorkspace("session-1");
+        await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`big.raw: ${OVERSIZE}; src/locked: ${denial}`));
+        refuse = false;
+        await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${denial}`));
+        expect(told).toEqual([toldGap("big.raw", OVERSIZE, OVERSIZE), toldGap("src/locked", denial, "EACCES")]);
+        await bridge.checkpoint("turn");
+        expect(onDiscoveryGaps).toHaveBeenCalledTimes(2);
+      } finally {
+        stderr.mockRestore();
+      }
+    });
+
+    it(`tells at the next checkpoint the places past the first ${MAX_TOLD_AT_ONCE}, an unlisted file too large to read among them`, async () => {
+      const root = await workspace();
+      const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 3 }, (_, index) => join(root, "src", `a${String(index).padStart(3, "0")}`));
+      for (const folder of folders) {
+        await mkdir(folder);
+        denyFolder(folder);
+      }
+      // After every folder in path order.
+      await writeFile(join(root, "zz.raw"), "x\n".repeat(500_001));
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+
+      for (let turn = 0; turn < 3; turn += 1) await bridge.checkpoint("turn");
+      const told = onDiscoveryGaps.mock.calls.map(([gaps]) => (gaps as Array<{ path?: string }>).map(gap => gap.path));
+      expect(told.map(paths => paths.length)).toEqual([MAX_TOLD_AT_ONCE, 4]);
+      expect(told[1]).toEqual([...folders.slice(MAX_TOLD_AT_ONCE).map(folder => `src/${basename(folder)}`), "zz.raw"]);
+    });
+
+    it("tells nothing the session's record held as the workspace opened, on whatever bridge, nor past the record's bound", async () => {
+      const root = await workspace();
+      const locked = join(root, "src", "locked");
+      await mkdir(locked);
+      const denial = denyFolder(locked);
+      const untold = `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`;
+      const records = new Map<string, Array<{ path?: string; reason: string }>>([
+        // The same place, though the walk was told it in other words (another call), as after a restart.
+        ["session-1", [{ path: "src/locked", reason: `EACCES: permission denied, open '${locked}'` }]],
+        ["session-2", []],
+        ["session-3", [...Array.from({ length: MAX_TOLD_GAPS }, (_, index) => ({ path: `src/x${index}`, reason: "EACCES: permission denied" })), { reason: untold }]],
+      ]);
+      const onDiscoveryGaps = vi.fn();
+      const recordedDiscoveryGaps = vi.fn((sessionId: string, limit: number) => records.get(sessionId)?.slice(0, limit) ?? []);
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+        onDiscoveryGaps, recordedDiscoveryGaps,
+      });
+
+      await bridge.openWorkspace("session-1");
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${denial}`));
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
+      expect(recordedDiscoveryGaps).toHaveBeenCalledWith("session-1", MAX_TOLD_GAPS + 1);
+      // Another session on the same bridge goes on from its own record.
+      await bridge.openWorkspace("session-2");
+      await bridge.checkpoint("turn");
+      expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/locked", denial, "EACCES")]]]);
+      // A record that holds all it will takes no more.
+      await bridge.openWorkspace("session-3");
+      await bridge.checkpoint("turn");
+      expect(onDiscoveryGaps).toHaveBeenCalledTimes(1);
+    });
+
   });
 
   it("discovers a command's shell write that races the startup snapshot read", async () => {

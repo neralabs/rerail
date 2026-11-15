@@ -204,6 +204,21 @@ function listWorkLinks(database: RerailDatabase, sessionId: string): WorkLinkRec
   return database.select().from(workLinks).where(eq(workLinks.sessionId, sessionId)).orderBy(asc(workLinks.linkId)).all();
 }
 
+/** The first `limit` places the session's walks could not check, in the order the session met them. Indexed by session and kind. */
+function listDiscoveryGaps(database: RerailDatabase, sessionId: string, limit: number): DiscoveryGapRecord[] {
+  return database
+    .select({ observedAt: events.observedAt, payloadJson: events.payloadJson })
+    .from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "source-discovery-gap")))
+    .orderBy(asc(events.sequence))
+    .limit(limit)
+    .all()
+    .flatMap(({ observedAt, payloadJson }) => {
+      const payload = discoveryGapPayloadSchema.safeParse(JSON.parse(payloadJson));
+      return payload.success ? [{ ...payload.data, observedAt }] : [];
+    });
+}
+
 /**
  * The HUD's Merge Assist segment for the session, absent when it has none: from the checkout it started in, as its
  * coverage names it (`owners`), else the deepest recorded checkout holding its working folder read through symlinks,
@@ -435,6 +450,11 @@ export class SqliteSessionStore {
     return listWorkLinks(this.#database, sessionId);
   }
 
+  /** The first `limit` places the record holds that the session's walks could not check (`recordDiscoveryGap`), in the order met. */
+  discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
+    return listDiscoveryGaps(this.#database, sessionId, limit);
+  }
+
   close(): void {
     this.#database.$client.close();
   }
@@ -556,18 +576,7 @@ export class SqliteSessionReader {
   /** The first `limit` places the session's walks could not check, in the order the session met them. Indexed by session and kind. */
   discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
     const database = this.#database.open();
-    if (database === undefined) return [];
-    return database
-      .select({ observedAt: events.observedAt, payloadJson: events.payloadJson })
-      .from(events)
-      .where(and(eq(events.sessionId, sessionId), eq(events.kind, "source-discovery-gap")))
-      .orderBy(asc(events.sequence))
-      .limit(limit)
-      .all()
-      .flatMap(({ observedAt, payloadJson }) => {
-        const payload = discoveryGapPayloadSchema.safeParse(JSON.parse(payloadJson));
-        return payload.success ? [{ ...payload.data, observedAt }] : [];
-      });
+    return database === undefined ? [] : listDiscoveryGaps(database, sessionId, limit);
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {

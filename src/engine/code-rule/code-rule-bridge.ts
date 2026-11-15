@@ -635,17 +635,34 @@ function newlyUnread(discovery: SourceDiscovery, unread: SourceDiscovery["unread
   }
   return gaps;
 }
+/** Each of `unread` as a gap. */
+function unreadGaps(unread: SourceDiscovery["unread"]): WalkGap[] {
+  return [...unread].map(([path, { readError }]) => ({ path, reason: readError }));
+}
 /**
- * What the last walks of the session folder and of the other worktrees could not check, with each unlisted file too large
- * to read that this session has not yet reported at its stamp, in path order: walks list their gaps in the order their
- * reads finish, which differs from walk to walk. Gaps of one path keep the order they were found in.
+ * `gaps` in path order: walks list their gaps in the order their reads finish, which differs from walk to walk. Gaps of one
+ * path keep the order they were found in.
  */
-function walkGaps(discovery: SourceDiscovery): WalkGap[] {
-  const gaps = [...discovery.gaps, ...discovery.worktrees.gaps];
-  for (const unread of [discovery.unread, discovery.worktrees.unread]) gaps.push(...newlyUnread(discovery, unread));
+function byPath(gaps: WalkGap[]): WalkGap[] {
   return gaps.sort((left, right) => compareDeterministicStrings(left.path ?? "", right.path ?? ""));
 }
-/** A checkpoint's `source-incomplete` text: `gaps` (`walkGaps`) joined, else whether the session folder's walk is still to finish. */
+/**
+ * Every place the last walks of the session folder and of the other worktrees could not check, each unlisted file too
+ * large to read among them, in path order: what the record takes (`#tellGaps`), at every checkpoint until it holds it.
+ */
+function walkGaps(discovery: SourceDiscovery): WalkGap[] {
+  return byPath([...discovery.gaps, ...discovery.worktrees.gaps, ...unreadGaps(discovery.unread), ...unreadGaps(discovery.worktrees.unread)]);
+}
+/**
+ * What a checkpoint says the walks could not check (`discoveryGap`): `walkGaps`, but each unlisted file too large to read
+ * only at the first checkpoint that meets it at its stamp (`newlyUnread`).
+ */
+function saidGaps(discovery: SourceDiscovery): WalkGap[] {
+  const gaps = [...discovery.gaps, ...discovery.worktrees.gaps];
+  for (const unread of [discovery.unread, discovery.worktrees.unread]) gaps.push(...newlyUnread(discovery, unread));
+  return byPath(gaps);
+}
+/** A checkpoint's `source-incomplete` text: `gaps` (`saidGaps`) joined, else whether the session folder's walk is still to finish. */
 function discoveryGap(discovery: SourceDiscovery, gaps: readonly WalkGap[]): string | undefined {
   if (gaps.length > 0) return gaps.map(gap => (gap.path === undefined ? gap.reason : `${gap.path}: ${gap.reason}`)).join("; ");
   if (!discovery.baselineComplete) return "Initial source discovery is still pending";
@@ -663,15 +680,24 @@ export const MAX_TOLD_GAPS = 1_000;
 export const MAX_TOLD_AT_ONCE = 100;
 const UNTOLD_GAPS = `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`;
 /**
- * `gap` as the bridge tells it, keyed by its path and its reason's kind: the error code that opens a filesystem error's
- * text (`EACCES: permission denied, opendir '…'`), else the reason whole, as for a file too large to read.
+ * What tells one gap from another (`DiscoveryGap.key`): its path (`""` for a walk that failed whole) and its reason's
+ * kind, the error code that opens a filesystem error's text (`EACCES: permission denied, opendir '…'`), else the reason
+ * whole, as for a file too large to read.
  */
-function toldGap(boundary: DiscoveryGap["boundary"], gap: WalkGap): DiscoveryGap {
-  const kind = /^([A-Z][A-Z0-9_]*): /u.exec(gap.reason)?.[1] ?? gap.reason;
-  return { boundary, ...gap, key: JSON.stringify([gap.path ?? "", kind]) };
+function gapKey(path: string | undefined, kind: string): string {
+  return JSON.stringify([path ?? "", kind]);
+}
+function reasonKind(reason: string): string {
+  return /^([A-Z][A-Z0-9_]*): /u.exec(reason)?.[1] ?? reason;
+}
+/** The key of the gap past `MAX_TOLD_GAPS` (`UNTOLD_GAPS`): once the record holds it, it holds all it will. */
+const UNTOLD_KEY = gapKey(undefined, UNTOLD_GAPS);
+/** `gap` as the bridge tells it (`gapKey`). */
+function toldGap(boundary: DiscoveryGap["boundary"], { path, reason }: WalkGap): DiscoveryGap {
+  return { boundary, ...(path === undefined ? {} : { path }), reason, key: gapKey(path, reasonKind(reason)) };
 }
 function untoldGaps(boundary: DiscoveryGap["boundary"]): DiscoveryGap {
-  return { boundary, reason: UNTOLD_GAPS, key: JSON.stringify(["", UNTOLD_GAPS]) };
+  return { boundary, reason: UNTOLD_GAPS, key: UNTOLD_KEY };
 }
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
@@ -907,6 +933,12 @@ export interface DiscoveryGap {
   readonly key: string;
 }
 
+/** A place the session's record holds (`recordedDiscoveryGaps`): its path and why, as `onDiscoveryGaps` was told them. */
+export interface RecordedDiscoveryGap {
+  readonly path?: string | undefined;
+  readonly reason: string;
+}
+
 /**
  * A finished tool edit of a file no rule checked because Git ignores it (`CodeRuleAuditor.ignoredEdit`): the file as
  * the session folder names it, and the pattern that ignores it, with its file (as `shownIgnoreFile` names one) and line.
@@ -944,7 +976,11 @@ export class CodeRuleBridge {
   readonly #discoveryWaitMs: number;
   readonly #onDiscoveryPending: ((boundary: DiscoveryPendingBoundary) => void) | undefined;
   readonly #onDiscoveryGaps: ((gaps: readonly DiscoveryGap[]) => void) | undefined;
-  /** The key of each gap told to `onDiscoveryGaps` (`#untold`), since the workspace opened. */
+  readonly #recordedDiscoveryGaps: ((sessionId: string, limit: number) => Iterable<RecordedDiscoveryGap>) | undefined;
+  /**
+   * The key of each gap the session's record holds: those it held as the workspace opened (`recordedDiscoveryGaps`), and
+   * each told to `onDiscoveryGaps` since, once the call returned (`#tellGaps`).
+   */
   readonly #toldGaps = new Set<string>();
   readonly #onIgnoredEdit: ((edit: IgnoredEdit) => void) | undefined;
   readonly #onIgnoreRulesChanged: ((change: IgnoreRulesChange) => void) | undefined;
@@ -971,11 +1007,18 @@ export class CodeRuleBridge {
       /** Told when a boundary answers, or the bridge closes, while a source walk is still running. */
       onDiscoveryPending?(boundary: DiscoveryPendingBoundary): void;
       /**
-       * Told of the gaps of the walks (`DiscoveryGap`) a checkpoint answers with that it has not told before, each once per
-       * key while the bridge lives, at most `MAX_TOLD_GAPS` of them and `MAX_TOLD_AT_ONCE` a checkpoint, in one call, so
-       * they can be written together; a walk still to finish is `onDiscoveryPending`'s.
+       * Told of the gaps of the walks (`DiscoveryGap`) a checkpoint answers with that the session's record does not hold,
+       * each once per key, at most `MAX_TOLD_GAPS` of them in the session and `MAX_TOLD_AT_ONCE` a checkpoint, in one
+       * call, so they can be written together; a call that throws is made again at the next checkpoint. A walk still to
+       * finish is `onDiscoveryPending`'s.
        */
       onDiscoveryGaps?(gaps: readonly DiscoveryGap[]): void;
+      /**
+       * The first `limit` gaps the record of `sessionId` holds, as `onDiscoveryGaps` was told them, read as the workspace
+       * opens: the session's bound and its once per place hold across a reopened session and a daemon restart. Without
+       * it, they hold while the bridge serves the session.
+       */
+      recordedDiscoveryGaps?(sessionId: string, limit: number): Iterable<RecordedDiscoveryGap>;
       /** Told of each file a finished tool edit wrote that no rule checked because Git ignores it. */
       onIgnoredEdit?(edit: IgnoredEdit): void;
       /** Told when the session changes Git's ignore rules; without it they are not watched. */
@@ -993,6 +1036,7 @@ export class CodeRuleBridge {
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
     this.#onDiscoveryPending = options.onDiscoveryPending;
     this.#onDiscoveryGaps = options.onDiscoveryGaps;
+    this.#recordedDiscoveryGaps = options.recordedDiscoveryGaps;
     this.#onIgnoredEdit = options.onIgnoredEdit;
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs ?? WORKTREE_WALK_GAP_MS;
@@ -1026,7 +1070,7 @@ export class CodeRuleBridge {
       this.#sessionId = sessionId;
       this.#revision = 0;
       this.#lastResponse = emptyResponse(0);
-      this.#toldGaps.clear();
+      this.#readToldGaps(sessionId);
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), gaps: [], unread: new Map(), reported: new Map(), pendingReported: false,
@@ -1504,13 +1548,16 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Tells `onDiscoveryGaps` the first `MAX_TOLD_AT_ONCE` gaps of `gaps` not yet told (`#untold`), in one call,
-   * best-effort too: it never fails the checkpoint. They are told once the call returned; when it throws, the next
-   * checkpoint tells them again, so a database that refuses writes costs one failed write and one log line a boundary.
+   * Tells `onDiscoveryGaps` the first `MAX_TOLD_AT_ONCE` of the walks' gaps (`walkGaps`) the record does not hold
+   * (`#untold`), in one call, best-effort too: it never fails the checkpoint. A gap is held once the call returned; when
+   * it throws, the next checkpoint tells the same gaps again, so a database that refuses writes costs one failed write
+   * and one log line a boundary, and loses nothing. Nothing is done once the record holds all it will (`UNTOLD_KEY`).
    */
-  #tellGaps(boundary: DiscoveryGap["boundary"], gaps: readonly WalkGap[]): void {
-    const untold = this.#untoldOf(boundary, gaps);
-    if (untold.size === 0 || !reportBestEffort(() => this.#onDiscoveryGaps?.([...untold.values()]))) return;
+  #tellGaps(boundary: DiscoveryGap["boundary"], discovery: SourceDiscovery): void {
+    const record = this.#onDiscoveryGaps;
+    if (record === undefined || this.#toldGaps.has(UNTOLD_KEY)) return;
+    const untold = this.#untoldOf(boundary, walkGaps(discovery));
+    if (untold.size === 0 || !reportBestEffort(() => record([...untold.values()]))) return;
     for (const key of untold.keys()) this.#toldGaps.add(key);
   }
 
@@ -1523,6 +1570,19 @@ export class CodeRuleBridge {
       if (told !== undefined) untold.set(told.key, told);
     }
     return untold;
+  }
+
+  /**
+   * Starts what the record of `sessionId` holds over (`recordedDiscoveryGaps`): the record's bound and its once per place
+   * are the session's, whatever bridge or daemon serves it. A record that cannot be read starts empty, as a new one does.
+   */
+  #readToldGaps(sessionId: string): void {
+    this.#toldGaps.clear();
+    try {
+      for (const gap of this.#recordedDiscoveryGaps?.(sessionId, MAX_TOLD_GAPS + 1) ?? []) this.#toldGaps.add(gapKey(gap.path, reasonKind(gap.reason)));
+    } catch (error) {
+      process.stderr.write(`rerail: reading the places a session's record holds failed: ${errorMessage(error)}\n`);
+    }
   }
 
   /**
@@ -2489,15 +2549,14 @@ export class CodeRuleBridge {
   }
 
   /**
-   * The walks' gaps as a `source-incomplete` failure on the last response; the last response alone when there are none.
-   * Each gap the walks found is told to `onDiscoveryGaps` too, as its own gap, the first time it is met (`#untold`); a
-   * walk still to finish is none.
+   * The walks' gaps as a `source-incomplete` failure on the last response (`saidGaps`); the last response alone when there
+   * are none. Each gap the walks found is told to `onDiscoveryGaps` too, as its own gap, until the record holds it
+   * (`#tellGaps`), whether or not the text says it again; a walk still to finish is none.
    */
   #discoveryResponse(discovery: SourceDiscovery, boundary: DiscoveryGap["boundary"]): CodeRuleResponse {
-    const gaps = walkGaps(discovery);
-    const message = discoveryGap(discovery, gaps);
+    this.#tellGaps(boundary, discovery);
+    const message = discoveryGap(discovery, saidGaps(discovery));
     if (message === undefined) return this.#lastResponse;
-    this.#tellGaps(boundary, gaps);
     return {
       ...this.#lastResponse,
       failures: [...this.#lastResponse.failures, {
@@ -2507,7 +2566,7 @@ export class CodeRuleBridge {
   }
 
   /**
-   * `gap` when no gap of its key was told since the workspace opened, nor is about to be (`telling`); past
+   * `gap` when the session's record holds no gap of its key (`#toldGaps`), nor is about to (`telling`); past
    * `MAX_TOLD_GAPS` gaps, the one that says the rest go untold (`untoldGaps`), until it is told. A gap that heals and
    * comes back is not told again.
    */

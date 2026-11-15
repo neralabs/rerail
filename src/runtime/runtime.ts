@@ -1639,6 +1639,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         session.sessionId,
         (store, descriptor, attribution) => store.recordDiscoveryGaps(descriptor, gaps, attribution),
       ),
+      // Read as the workspace opens, so a reopened session or a restarted daemon goes on from what the record holds.
+      recordedDiscoveryGaps: (sessionId, limit) => this.#sessionStore.discoveryGaps(sessionId, limit),
       // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
       onIgnoredEdit: edit => this.#recordSessionFact(
         session.sessionId,
