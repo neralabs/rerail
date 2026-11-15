@@ -1,19 +1,19 @@
 # Hooks: a session's start says nothing is recorded when `RERAIL_AUTOSTART` is off
 
-For [pull request #673](https://github.com/neralabs/rerail/pull/673), head e5656482d. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #673](https://github.com/neralabs/rerail/pull/673), head a4843928b. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
-**Does each host's session start say that nothing is recorded, exactly when nothing will be recorded?**
+**Does each host's session start say what its daemon lookup found, that no daemon runs and nothing is recorded until one does?**
 
 1. Cursor's hook asks the agent to begin its first reply with the `rerail status` line. **Changes the intent.**
 2. Claude Code and Codex show that line as the session starts. **Changes the intent.**
 
-**We recommend:** approve it once a maintainer answers in #660: 6 of 6 starts with no daemon now say it, and "What is not covered" names the one case left as on `main`.
+**We recommend:** approve it once a maintainer answers in #660 and CI passes at a4843928b: 6 of 6 starts with no daemon say it, and "What is not covered" names the states left as on `main`.
 
 | Size | Lane | Waits on | Not verified |
 |---|---|---|---|
-| 232 lines in 13 files: 90 ship, 142 are tests and text | Careful. A maintainer approves: it changes what a session is told. | #660, a review. No maintainer answer; only the automated reviewer approved. | 3 |
+| 278 lines in 13 files: 101 ship, 177 are tests and text | Careful. A maintainer approves: it changes what a session is told. | #660, a review, CI. No maintainer answer; a Windows CI job fails. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -37,29 +37,28 @@ Reported in #660 on 13 November 2026, from hooks started directly on Linux x64.
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Session start says it, medium risk, 70 lines; B, Error text names the setting, low risk, 20 lines. Read first: hook-host.ts, cursor-hook-adapter.ts, daemon-control.ts. To skim: 132 lines of tests and 10 lines of two docs pages and a release note.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Session start says it, medium risk, 73 lines; B, Error text names the setting, low risk, 28 lines. Read first: hook-host.ts, cursor-hook-adapter.ts, daemon-control.ts. To skim: 167 lines of tests and 10 lines of two docs pages and a release note.">
 
 1. **Read first**, 4 min: `hook-host.ts`: `answerAutostartOff`. Can any other hook or failure get the line?
 2. **Read first**, 2 min: `cursor-hook-adapter.ts`: `cursorRelayedLine`. Is this all the agent is told?
-3. **Read first**, 3 min: `daemon-control.ts`: `daemonEngineEndpoint`, `otherPackageDaemon`. Can either error name a value nobody set?
+3. **Read first**, 3 min: `daemon-control.ts`: `daemonNotRunningMessage`, `daemonEngineEndpoint`, `otherPackageDaemon`. Can either error name a value nobody set?
 4. 4 min: A: `claude-hook.ts`, `codex-hook.ts`, `cursor-hook.ts`.
 
-**Then skim**, 4 min: Two assertions of `main` change, in `resident-engine.test.ts` and `claude-hook.test.ts`.
+**Then skim**, 4 min: Three assertions of `main` change, in `resident-engine.test.ts`, `claude-hook.test.ts` and `daemon-control.test.ts`.
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, Start says it, medium risk: independent review holds with a limit, users lose nothing holds with a limit. B, Error text, low risk: independent review holds with a limit. CI at this head holds with a limit for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, Start says it, medium risk: independent review holds with a limit. B, Error text, low risk: independent review holds with a limit. CI at this head does not hold yet for every change.">
 
-Half marks: no person's review, the six starts measured five commits back, CI passed on a rerun.
+Half marks: no person's review. CI: one Windows job fails at a4843928b.
 
-<details><summary>Each half mark's limit</summary>
+<details><summary>Each limit, and each check that does not hold yet</summary>
 
-| Change | Check | It holds with this limit |
+| Change | Check | Its limit, or why it does not hold yet |
 |---|---|---|
-| A. Start says it | independent review | A second run from a separate clone repeated the measurement at 28c23949f and removed each fix line in turn. The automated reviewer found that a later hook could get the session-start line in a race; 9d532d70f fixes it, and it approved that commit with no finding. The limit: no person on the team has reviewed it. |
-| A. Start says it | users lose nothing | Hooks started directly at `main` and at 28c23949f, on Linux and Windows 11: a later hook answers `{}`, no daemon starts and no hook failure is logged, as at `main`. Hook times stayed within the runs' spread. The limit: the six starts were not measured again at 9d532d70f, where six test cases check the same answers. |
+| A. Start says it | independent review | A second run from a separate clone repeated the measurement at 28c23949f, and one through a real daemon repeated it at a4843928b; each took the fix lines out in turn. The automated reviewer approved 9d532d70f with no finding. The limit: no person on the team has reviewed it, and the reviewer has not reviewed the three commits since. |
 | B. Error text | independent review | A second run from a separate clone found that 89513b9f0 printed `RERAIL_AUTOSTART=undefined` or `=1` with autostart on. The automated review found the same. fea0d916d fixes it, and the reviewer approved 9d532d70f with no finding. The limit: no person on the team has reviewed it. |
-| A and B | CI at this head | Run 43544083164 at e5656482d, read on 14 November 2026: of the 22 checks on the pull request, 19 pass, 3 are skipped and none fails. The limit: `Unit tests (Windows, 2/2)` failed in the first attempt on two tests, in `claude-status.test.ts` and `merge-assist/runtime-notes.test.ts`; this branch changes neither file. The job was rerun once and passed. |
+| A and B | CI at this head | Run 43717912325 at a4843928b, read on 15 November 2026: of the 22 checks, 17 pass, 3 are skipped and 2 fail. `Unit tests (Windows, 2/2)` failed in each of three attempts, on tests in files this branch does not change: `claude-status.test.ts` and `merge-assist/runtime-notes.test.ts` in the first, `runtime-notes.test.ts` alone in the next two. `CI result` fails with it. |
 
 </details>
 
@@ -67,18 +66,18 @@ Half marks: no person's review, the six starts measured five commits back, CI pa
 
 **A. Session start says it**, medium risk. Starts that say nothing is recorded: 0 of 6 at `main`, 6 of 6 here.
 
-- **Problem:** A person who turned autostart off starts a session while no daemon runs. Rerail records and checks nothing in it. Claude Code's and Cursor's start hooks answer `{}`. Claude Code's footer and Codex's start line say `not running`, with no cause.
+- **Problem:** A person who turned autostart off starts a session while no daemon runs. Rerail records and checks nothing meanwhile. Claude Code's and Cursor's start hooks answer `{}`. Claude Code's footer and Codex's start line say `not running`, with no cause.
 - **Who meets it:** Every session start under `RERAIL_AUTOSTART=0` or `false` with no daemon. Since #503, on `main` and in no published version, `false` keeps hooks from starting one too. How many people set the variable is not known. Source: #660.
-- **What it does:** `answerAutostartOff` turns the failure of a session's start into an answer with the line `rerail status` prints, only when autostart is off and no daemon runs. Any other hook or failure is rethrown. `runClaudeHook` and `runCodexHook` return the line as `systemMessage`. `runCursorHook` returns `cursorRelayedLine`'s request to the agent. Two docs pages and the unreleased release note say so.
+- **What it does:** `answerAutostartOff` turns the failure of a session's start into an answer with the line `rerail status` prints, only when autostart is off and no daemon runs. Any other hook or failure is rethrown. `runClaudeHook` and `runCodexHook` return the line as `systemMessage`. `runCursorHook` returns `cursorRelayedLine`'s request to the agent. The line ends "until it runs"; docs and release note say so.
 - **Risk:** Medium. It changes what a session is told, and in Cursor what the agent is asked to say. A wrong guard would answer a real failure as if it were the person's choice.
 - **Check:** Does `answerAutostartOff` rethrow everything but a session start's `AutostartOffError`? In `runCodexHook` the new catch sits inside the old one: a daemon gone for any other reason must still give `Rerail ✕ not running`. `runHostHook` still logs no failure for an off autostart. Claude Code sends a session start on a resume, `/clear` and a compaction too, so the line shows again there.
 - **Picture:** Session starts that say nothing is recorded, with autostart off and no daemon running: 0 of 6 at main, 6 of 6 with this change. The six starts are three coding agents under two settings.
-- **Method:** after `npm run build:js`, each agent's registered hook file was started with `node`, the event on stdin and no daemon running, under `false` and under `0`, 10 starts per case, at `main` (f277c6e29) and at 28c23949f on Linux. A second run from a separate clone repeated it on Linux and Windows 11 with the same outputs.
+- **Method:** after `npm run build:js`, each agent's registered hook file was started with `node`, no daemon running, under `false` and under `0`, 10 starts per case, at `main` (f277c6e29) and at 28c23949f on Linux. A second run repeated it on Linux and Windows 11 with the same outputs. Through a real daemon at a4843928b: 6 of 6 on both.
 
 **B. Error text names the setting**, low risk. Off-autostart error under `false`: names `RERAIL_AUTOSTART=0` at `main`, `RERAIL_AUTOSTART=false` here.
 
 - **Problem:** The error a hook gets when autostart keeps it from a daemon names `RERAIL_AUTOSTART=0` whatever the person set. With autostart on, the error for a late-answering daemon of another package names it too.
-- **Who meets it:** A person who reads the hook failure log, a hook's stderr or `rerail events`: under `false`, or with autostart on while another package's busy daemon answers late. With change A, none of #660's six starts prints either error.
+- **Who meets it:** A person who reads a later hook's stderr or `rerail events` under `false`, or the hook failure log and `rerail status` while another package's busy daemon answers late. With change A, none of #660's six starts prints either error.
 - **What it does:** `daemonEngineEndpoint` writes the setting as set into the no-daemon error. `otherPackageDaemon` writes it into the other-package error only when autostart is off. With autostart on that error reads "the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start".
 - **Risk:** Low. Error text only: when each error is thrown does not change, and the hooks decide as before.
 - **Check:** Can either error print `undefined`? The no-daemon error is thrown only after the lookup an off autostart makes, so the setting is `0` or `false` there. `otherPackageDaemon` names the setting only under `autostartOff`. This change is three commits (bcb467316, 89513b9f0, fea0d916d) and four test cases. Tell us, and it leaves as its own pull request.
@@ -100,7 +99,7 @@ Half marks: no person's review, the six starts measured five commits back, CI pa
 
 Before: At main, with autostart off and no daemon, Cursor's start hook throws, its entry answers {} and exits 0, and Cursor shows the person nothing. After: With this change, runCursorHook catches the failure of a session's start and returns additional_context, which asks Cursor's agent to begin its first reply with the line rerail status prints. Whether the agent follows the request was not run.
 
-**Evidence.** The hook returns `additional_context`: "Rerail checks nothing in this session, and Cursor shows the user nothing from Rerail. Begin your first reply with this line, exactly as written:" and the line. Two hook-host cases check it, and both fail with `runCursorHook`'s catch removed. `relayedSteer` in the same file asks Cursor's agent the same way for a steer. The automated review of 28c23949f passed the question to three maintainers. #660 asks it, and nobody has answered there.
+**Evidence.** The hook returns `additional_context`: "Rerail checks nothing until its daemon runs, and Cursor shows the user nothing from Rerail. Begin your first reply with this line, exactly as written:" and the line. Two hook-host cases check it, and both fail with `runCursorHook`'s catch removed. `relayedSteer` in the same file asks Cursor's agent the same way for a steer. The automated review of 28c23949f passed the question to three maintainers. #660 asks it, and nobody has answered there.
 
 **Where is the person told that nothing is recorded?**
 
@@ -115,13 +114,13 @@ Before: At main, with autostart off and no daemon, Cursor's start hook throws, i
 
 Before: At main, a session's start with autostart off finds no daemon, throws, logs no failure and starts no daemon. Claude Code and Cursor get {}, and Codex shows not running with no cause. After: With this change the host asks whether the failed hook is a session's start that autostart kept from a daemon. If so it answers with the line rerail status prints. Any other hook or failure is rethrown, as on main.
 
-**Evidence.** 0 of 6 starts say it at `main`, 6 of 6 at 28c23949f, each with exactly the line `rerail status` prints (`daemonNotRunningMessage`), on Linux and on Windows 11. Later hooks answer `{}`, no daemon starts and no failure is logged, as on `main`. Pi and OMP sessions start their daemon whatever the setting says, so they record and need no line.
+**Evidence.** 0 of 6 starts say it at `main`, 6 of 6 at 28c23949f, each with exactly the line `rerail status` prints (`daemonNotRunningMessage`), on Linux and Windows 11. Later hooks answer `{}`, no daemon starts and no failure is logged, as on `main`. Through a real daemon at a4843928b: 6 of 6 on both. OMP sessions, and Pi sessions of a managed install, start their daemon whatever the setting says (read in the code, not run), so they need no line.
 
 </details>
 
 <details><summary><b>7. How it fits</b></summary>
 
-It stands on `main` alone and merges clean at c89f068ed. Drafts #674 and #657 conflict in one test file each. B is here because its errors are the same setting's messages, each wrong on `main`. Tell us, and it leaves.
+It stands on `main` alone and merges clean at c89f068ed. #674 and #657 conflict in one test file each. B's errors are the same setting's messages, each wrong on `main`. Tell us, and it leaves.
 
 Pull request #673 is based on main at f277c6e29 and merges clean with main at c89f068ed. Nothing waits on it. In trial merges the drafts #674 and #657 each conflict in one test file, the release #631 deletes the release note this edits, and #672 and nine more open pull requests that share a file merge clean.
 
@@ -129,30 +128,32 @@ Pull request #673 is based on main at f277c6e29 and merges clean with main at c8
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 3 not verified, 6 smaller gaps, 7 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 4 not verified, 6 smaller gaps, 8 limits that stay</summary>
 
-1. **Another package's daemon runs, autostart off:** nothing is recorded and the start does not say so, as on `main`. Outside #660.
-2. **No real session** ran with autostart off and no daemon, so Cursor's relay is not shown.
-3. **macOS:** none of our runs.
+1. **Another package's daemon runs, autostart off:** nothing is recorded and the start stays silent, as on `main`. Outside #660.
+2. **Also silent, as on `main`:** a locked or unreadable database, a daemon that does not answer, an unreadable `daemon.json`.
+3. **No real session** ran with autostart off and no daemon: Cursor's relay is not shown.
+4. **macOS:** none of our runs.
 
 **Smaller gaps**
 
-- **CI's real-session job.** `Real Claude Code, Codex, and Cursor sessions` passed at e5656482d, on macOS. Its sessions name an engine socket (`scripts/host/host-smoke.ts` line 416 at `main`), and a hook with a named socket never reaches the new answer.
+- **CI's real-session job.** `Real Claude Code, Codex, and Cursor sessions` passed at a4843928b, on macOS. Its sessions name an engine socket (`scripts/host/host-smoke.ts` line 416 at `main`), and a hook with a named socket never reaches the new answer.
 - **A 16-thread Linux machine under a load test.** `event-adapter-parity` timed out at 5 s twice at 9d532d70f (6.1 s and 6.9 s), and the same way at 28c23949f (8.5 s). It takes 0.36 to 0.57 s on a quiet machine and runs nothing this branch changes.
-- **Hook times at the head.** Timed at 28c23949f only. The next four commits add one boolean test in the catch of a failed hook and a helper on an error path. The head, e5656482d, takes "once" out of two docs sentences and changes no code.
-- **The merge with today's `main`.** No test ran on it, beyond the trial merge.
+- **Hook times at the head.** Session starts with no daemon were timed at a4843928b: within `main`'s spread. Starts with a daemon and prompt hooks: at 28c23949f only. Later commits add a boolean test in a failed hook's catch, an error-path helper and new words in two strings.
+- **The OMP and Pi clause in `docs/reference.md`.** It says OMP sessions, and Pi sessions of a managed install, start their own daemon under an off autostart. Read in `createNativeSession`, not run.
 - **A test commit that fails on purpose.** ffbcc345d holds the cases for the automated review's two follow-ups before their fixes: 5 failed and 90 passed there on Linux. fea0d916d and 9d532d70f make them pass.
-- **The automated review of 28c23949f.** Two follow-ups and one nit. fea0d916d answers the first, 9d532d70f the second, and 352668892 the nit: off Windows the squatted-socket case now asks for the daemon error by name. Its review of 9d532d70f, its latest, has 0 blockers, 0 follow-ups and 0 nits.
+- **The automated review of 28c23949f.** Two follow-ups and one nit. fea0d916d answers the first, 9d532d70f the second, and 352668892 the nit. Its review of 9d532d70f, its latest, has 0 blockers, 0 follow-ups and 0 nits. It has not reviewed the three commits since.
 
 **Limits that stay**
 
-- Later hooks, the hook failure log, `rerail status`, when a daemon starts, and Codex's `not running` line for any other cause stay as on `main`.
+- Later hooks, the hook failure log, when a daemon starts, and Codex's `not running` line for any other cause stay as on `main`. `rerail status`'s line under an off autostart gains "until it runs".
 - The line shows at every session start while the daemon stays down. Nothing remembers that it was said.
 - Whether a person in Cursor reads the line depends on the agent following the request.
 - With autostart off and no daemon, a session's start no longer writes its error to stderr: the line replaces it. `RERAIL_ENGINE_SOCKET`, which that error named, stays in `docs/reference.md`.
 - On Windows, with autostart off, a start whose recorded engine pipe another program holds now answers with the line, where `main` rejected. `claude-hook.test.ts` pins it. Off Windows that start still fails for the daemon that does not answer.
-- Pi and OMP sessions start their daemon whatever the setting says, so they record and get no line.
+- OMP sessions, and Pi sessions of a managed install, start their daemon whatever the setting says, so they record and get no line. Read in the code, not run.
 - A script that matches the old error text meets new words. No rule file, API, pack or stored data changes.
+- The lookup is `main`'s. Where it wrongly finds no daemon (a `daemon.json` cut short by an outside edit; on Windows 11, a suspended daemon), the start now says the line, as `rerail status` already does on `main`.
 
 </details>
 
@@ -169,24 +170,24 @@ The description on GitHub is the record: "How you tested it" holds the measureme
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | Run 43544083164 at e5656482d, merged by GitHub into `main` at 4cea86aaa, read on 14 November 2026 | Of the 22 checks on the pull request, 19 pass, 3 are skipped and none fails, on the run's second attempt. In the first, `Unit tests (Windows, 2/2)` failed on two tests: one in `test/hosts/claude/claude-status.test.ts`, and one in `test/runtime/merge-assist/runtime-notes.test.ts`, which `main` holds and this branch does not. This branch changes neither file. The job was rerun once and passed. At 9d532d70f, run 43514746410 passed on its second attempt too. |
-| Linux, 32 threads | The 21 test files that import a changed module, at 9d532d70f | 20 files pass and 1 skips (`windows-daemon-launch`, Windows only): 398 passed, 2 skipped, 0 failed. |
-| Windows 11 | The same 21 files at 9d532d70f | 21 files pass: 353 passed, 47 skipped, 0 failed. |
-| Linux, 32 threads | `integration/resident-engine`, `event-adapter-parity` and `hook-bundle-cost` at 9d532d70f | 18 passed. On a 16-thread machine under a load test, 17 passed and 1 failed, twice: `event-adapter-parity` timed out at 5 s, as it did there at 28c23949f. |
+| CI on GitHub | Run 43717912325 at a4843928b, merged by GitHub into `main` at c89f068ed, read on 15 November 2026 | Of the 22 checks on the pull request, 17 pass, 3 are skipped and 2 fail. `Unit tests (Windows, 2/2)` failed in each of three attempts, on tests in files this branch does not change: `test/hosts/claude/claude-status.test.ts` (#681) and `test/runtime/merge-assist/runtime-notes.test.ts` (#683) in the first, `runtime-notes.test.ts` alone in the second and third. `CI result` fails with it. Both failed in the first attempt at e5656482d (run 43544083164); its rerun passed. |
+| Linux x64, Windows 11 | The 21 test files that import a changed module, at a4843928b | Linux: 401 passed, 2 skipped, 0 failed. Windows 11: 21 files pass: 356 passed, 47 skipped, 0 failed. |
+| Linux x64, Windows 11 | A real daemon and each agent's registered session-start hook, at `main` (c89f068ed) and at a4843928b: no daemon; a start while `rerail daemon start` is in flight; on Linux, the daemon's restart at its heap ceiling | No daemon: 0 of 6 starts say it at `main`, 6 of 6 at a4843928b. A start while a daemon comes up gets the line that ends "until it runs", and the session's later events are recorded (7 events), as at `main`. In the restart's gap of 340 to 535 ms, 12 starts got the new words. No start waits longer than at `main` beyond the spread. |
+| Linux x64 | `integration/resident-engine`, `event-adapter-parity` and `hook-bundle-cost` at a4843928b | 18 passed. At 9d532d70f on a 16-thread machine under a load test, 17 passed and 1 failed, twice: `event-adapter-parity` timed out at 5 s, as it did there at 28c23949f. |
 | Linux and Windows 11 | Each agent's registered hook started with `node`, no daemon running, under `false` and under `0`, 10 starts per case, at `main` (f277c6e29) and at 28c23949f; then a later hook and `rerail status`. Repeated from a separate clone | 0 of 6 starts say nothing is recorded at `main`, 6 of 6 at 28c23949f, with the same outputs on both platforms. A later hook answers `{}`, no daemon starts and no hook failure is logged, at both. |
-| Linux | The branch's tests over `main`'s source, at 28c23949f and at 9d532d70f. The tests at ffbcc345d | At 28c23949f: 8 of 100 unit cases fail, and the Codex integration case. At 9d532d70f the three later-hook cases pass over `main`'s source and both late-answering cases fail. At ffbcc345d: 5 failed, 90 passed. |
-| Linux, a separate clone | Each fix line removed or changed in turn, at 28c23949f and at 9d532d70f | One host's catch removed fails 2 hook-host cases; the guard in `answerAutostartOff`, 6. fea0d916d's source change reverted fails both late-answering cases. `!startsSession \|\|` removed fails the three later-hook cases. A `TypeError` thrown in place of `LiveDaemonError` fails the squatter check. |
-| Linux | The rules scan as the automated reviewer runs it (Rerail 0.1.1, complexity pack 0.1.7), at 9d532d70f against f277c6e29 | 0 findings. No function in the six source files counts over 6. |
+| Linux | The branch's tests over `main`'s source, at 28c23949f and at 9d532d70f. The tests at ffbcc345d. 308053e47's tests over e5656482d's source | At 28c23949f: 8 of 100 unit cases fail, and the Codex integration case. At 9d532d70f the three later-hook cases pass over `main`'s source and both late-answering cases fail. At ffbcc345d: 5 failed, 90 passed. Over e5656482d's source: 12 of 76 fail, ten on the old words and two on a 5 s timeout under load, and the Codex integration case. |
+| Linux, a separate clone | Each fix line removed or changed in turn, at 28c23949f, at 9d532d70f and at a4843928b | One host's catch removed fails 2 hook-host cases; the guard in `answerAutostartOff`, 6. fea0d916d's source change reverted fails both late-answering cases. `!startsSession \|\|` removed fails the three later-hook cases. At a4843928b, "until it runs" taken out fails all ten cases that read the line, and `cursorRelayedLine` set back fails 3. |
+| Linux | The rules scan as the automated reviewer runs it, at 9d532d70f and at a4843928b, each against f277c6e29 | 0 findings at 9d532d70f, 0 new findings at a4843928b. No function in the six source files counts over 6. |
 
 **What this report adds to the description**
 
 - **The intent at `main`, quoted.** The description quotes no intent. At `main` the docs say a hook that finds no daemon "logs nothing, since that is what you asked for", and a code comment limits what Cursor's agent relays to steers. The pull request rewrites both docs passages. Part 2 gives the quotes, and its folds their lines.
 - **A held engine pipe on Windows now gets the line.** The description says the squatted-socket case reaches its check on Windows. A read of the test adds what a person gets: with autostart off, a start whose recorded engine pipe another program holds answers with the line, where `main` rejected. Off Windows the start still fails for the daemon that does not answer.
-- **CI's real-session job does not reach the new answer.** The description says no real session was run. CI's job `Real Claude Code, Codex, and Cursor sessions` passed at e5656482d on macOS, but its sessions name an engine socket, read in `scripts/host/host-smoke.ts` at `main`. A real session with autostart off and no daemon stays not run.
+- **CI's real-session job does not reach the new answer.** The description says no real session was run. CI's job `Real Claude Code, Codex, and Cursor sessions` passed at a4843928b on macOS, but its sessions name an engine socket, read in `scripts/host/host-smoke.ts` at `main`. A real session with autostart off and no daemon stays not run.
 - **Our answers to the three read-first questions.** A read of the diff. The line goes only to a session's start whose lookup, under an off autostart, found no daemon running, busy or refusing; a named engine socket, a busy daemon and another package's daemon are rethrown. `cursorRelayedLine` adds two fixed sentences and the line, whose only variable part is `0` or `false`. Neither error can print `undefined`.
 - **Claude Code's footer reads `not running` at `main`.** #660 says a person in Claude Code sees nothing. At `main`, `docs/in-session-surfaces.md` line 266 says "the footer says \`not running\`" when the daemon is down, and `withoutDaemon` in `session-presentation.ts` returns it for a started checkout, with no cause. Read, not run. Line 273 there gives Codex's `not running` line for a start with no daemon, and this pull request does not edit it.
 - **At `main` the six starts wrote the no-daemon error.** The description says that with this change none of #660's six starts prints either error. At `main` each start wrote the no-daemon error to stderr, with `=0` under `false`: the description's own table shows it for Claude Code. Read in `serveHook` (`hook-adapter.ts`) and `runCodexHook`.
 
-**Sources.** Pull request #673, its diff, CI and reviews, and issue #660, read on GitHub on 14 November 2026. Rerail at `main` (4cea86aaa) for each quoted intent and its line. The description for the runs and the timings, each at the commit it names. Each open pull request's files and head for the shared files and trial merges.
+**Sources.** Pull request #673, its diff, CI and reviews, and issue #660, read on GitHub on 15 November 2026. Rerail at `main` (4cea86aaa) for each quoted intent and its line. The description for the runs and the timings, each at the commit it names. Each open pull request's files and head for the shared files and trial merges.
 
 </details>
