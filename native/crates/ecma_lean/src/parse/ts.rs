@@ -494,6 +494,14 @@ impl<'a> P<'a> {
                     }
                     w::UNIQUE | w::IMPORT | w::INFER | w::READONLY | w::ASSERTS if next == T::Name || next == T::LParen => self.refuse(),
                     _ if reserved(t.word) => self.refuse(),
+                    // `type.a<T>`: an error to tree-sitter.
+                    w::TYPE if next == T::Dot && {
+                        let k = self.dotted_names();
+                        self.peek_at(2 * k + 1).kind == T::Lt
+                    } =>
+                    {
+                        self.refuse()
+                    }
                     _ => self.type_reference(s),
                 }
             }
@@ -510,11 +518,7 @@ impl<'a> P<'a> {
 
     /// The number of `. name` after the next name.
     pub(super) fn dotted_names(&mut self) -> usize {
-        let mut k = 0;
-        while self.peek_at(2 * k + 1).kind == T::Dot && self.peek_at(2 * k + 2).kind == T::Name {
-            k += 1;
-        }
-        k
+        self.dotted_names_at(0)
     }
 
     /// A type reference over the next name and `k` dotted names after it.
@@ -573,13 +577,28 @@ impl<'a> P<'a> {
         while matches!(self.peek_at(2 * k + 1).kind, T::Dot) && matches!(self.peek_at(2 * k + 2).kind, T::Name | T::Private) {
             k += 1;
         }
-        if self.peek_at(2 * k + 1).kind == T::Lt {
-            return self.refuse();
-        }
         if !matches!(self.peek(), T::Name) || matches!(self.peek_at(2 * k + 1).kind, T::LParen | T::QDot) {
             return self.refuse();
         }
-        if self.peek_at(2 * k + 1).kind == T::LBracket && self.peek_at(2 * k + 2).kind != T::RBracket {
+        // `typeof f<T>`: the query of an instantiation expression; a call or a member after it
+        // not read.
+        if self.peek_at(2 * k + 1).kind == T::Lt {
+            let i = self.open(K::InstantiationExpression, f::NONE, C_NONE);
+            self.type_query_operand(k, f::FUNCTION)?;
+            self.type_arguments(f::TYPE_ARGUMENTS)?;
+            self.close(i);
+            if matches!(self.peek(), T::LParen | T::Dot | T::QDot) {
+                return self.refuse();
+            }
+            self.close(n);
+            return Ok(n);
+        }
+        // `typeof a[k]`: a lookup type over the query (its caller's postfix); but `typeof a[k].c`,
+        // the query of a subscript and member, is not read.
+        if self.peek_at(2 * k + 1).kind == T::LBracket
+            && self.peek_at(2 * k + 2).kind != T::RBracket
+            && self.matching_at(2 * k + 1).is_none_or(|e| matches!(self.peek_at(e + 1).kind, T::Dot | T::QDot | T::LParen))
+        {
             return self.refuse();
         }
         self.type_query_operand(k, f::NONE)?;
@@ -816,8 +835,19 @@ impl<'a> P<'a> {
         // (`method_signature`'s, with `get` or `set` last).
         loop {
             let t = self.tok();
-            if t.kind != T::Name || !self.member_modifier() || self.peek_at(1).nl {
+            if t.kind != T::Name || !self.member_modifier() {
                 break;
+            }
+            // Before a line break, a modifier names the member; but `get` or `set` before a
+            // method's name and `(` is its accessor (`get\n foo(): T`), and before another name,
+            // an error to tree-sitter.
+            if self.peek_at(1).nl {
+                if !(matches!(t.word, w::GET | w::SET) && self.peek_at(1).kind == T::Name) {
+                    break;
+                }
+                if !matches!(self.peek_at(2).kind, T::LParen | T::Lt) {
+                    return self.refuse();
+                }
             }
             let code = match t.word {
                 w::READONLY => M_READONLY,
@@ -1208,16 +1238,19 @@ impl<'a> P<'a> {
         let n1 = self.peek_at(1);
         let same_line = !n1.nl;
         Some(match t.word {
-            w::INTERFACE if n1.kind == T::Name && same_line => self.interface_declaration(s),
+            // `interface` takes its name across a line break.
+            w::INTERFACE if n1.kind == T::Name => self.interface_declaration(s),
             w::TYPE if n1.kind == T::Name && same_line && matches!(self.peek_at(2).kind, T::Eq | T::Lt) => self.type_alias(s),
             w::ENUM if n1.kind == T::Name => self.enum_declaration(s),
             w::CONST if n1.kind == T::Name && n1.word == w::ENUM => self.enum_declaration(s),
             w::ABSTRACT if n1.kind == T::Name && n1.word == w::CLASS && same_line => self.class_declaration(s),
             w::DECLARE if same_line && self.declares_at(1) => self.ambient(s),
+            // `namespace as {}`: an `as` expression of a name `namespace` to tree-sitter; not read.
+            w::NAMESPACE | w::MODULE if same_line && n1.kind == T::Name && matches!(n1.word, w::AS | w::SATISFIES) => self.refuse(),
             w::NAMESPACE if same_line && n1.kind == T::Name => {
                 // At a statement's place, `namespace N {}` is an expression statement.
                 let e = self.open_in(K::ExpressionStatement, s);
-                let r = self.internal_module(EXPR);
+                let r = self.internal_module(EXPR, true);
                 if let Err(r) = r {
                     return Some(Err(r));
                 }
@@ -1253,7 +1286,7 @@ impl<'a> P<'a> {
             w::CONST if n1.word == w::ENUM && n1.kind == T::Name => self.enum_declaration(d),
             w::ABSTRACT if n1.word == w::CLASS => self.class_declaration(d),
             w::DECLARE if self.declares_at(1) => self.ambient(d),
-            w::NAMESPACE if n1.kind == T::Name => self.internal_module(d).map(|_| ()),
+            w::NAMESPACE if n1.kind == T::Name => self.internal_module(d, false).map(|_| ()),
             w::MODULE if matches!(n1.kind, T::Name | T::Str) => self.module(d),
             _ => return None,
         })
@@ -1406,10 +1439,12 @@ impl<'a> P<'a> {
     }
 
     /// `namespace N {}`, `namespace A.B {}`.
-    fn internal_module(&mut self, s: Slot) -> R<N> {
+    /// `namespace N { … }`; at a statement's place (`statement`), an expression whose body a line
+    /// break before its `{` leaves out (the statement ends there, the block another).
+    fn internal_module(&mut self, s: Slot, statement: bool) -> R<N> {
         let n = self.open_in(K::InternalModule, s);
         self.tk(K::InternalModule, K::TNamespace, f::NONE)?;
-        self.module_rest()?;
+        self.module_rest(statement)?;
         self.close(n);
         Ok(n)
     }
@@ -1417,13 +1452,13 @@ impl<'a> P<'a> {
     fn module(&mut self, s: Slot) -> R<()> {
         let n = self.open_in(K::Module, s);
         self.tk(K::Module, K::TModule, f::NONE)?;
-        self.module_rest()?;
+        self.module_rest(false)?;
         self.close(n);
         Ok(())
     }
 
-    /// A module's name and its body (optional).
-    fn module_rest(&mut self) -> R<()> {
+    /// A module's name and its body; where `bodiless`, none after a line break.
+    fn module_rest(&mut self, bodiless: bool) -> R<()> {
         match self.peek() {
             T::Str => self.string(slot(f::NAME, Ctx::Bare))?,
             T::Name => {
@@ -1435,10 +1470,12 @@ impl<'a> P<'a> {
             }
             _ => return self.refuse(),
         }
-        if self.peek() == T::LBrace {
-            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
-        } else {
+        let t = self.tok();
+        if t.kind != T::LBrace {
             return self.refuse();
+        }
+        if !(bodiless && t.nl) {
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
         }
         self.after = V_EXPR;
         Ok(())

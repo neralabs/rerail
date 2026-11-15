@@ -3004,6 +3004,14 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "interface I {\n  a\n  (): T\n  b?\n  <U>(): U\n}\n",
         // A reserved identifier before `in` is a computed name's expression, not a mapped type's.
         "type M = { [type in K]: B; [string in K]?: C };\nlet b: bigint.A;\nfunction f(a?: number = 1) {}\n",
+        // `as A.B.C` splits its last name off before `[k]`, `|`, `&` and after `keyof`, not
+        // before type arguments or `[]`; `typeof a[k]` is a lookup over the query, `typeof f<T>`
+        // an instantiation's query; `new a!.B()`.
+        "x = a as A.B.C['l'];\ny = a as keyof A.B.C;\nz = a as A.B.C | undefined;\nw = a as A.B.C[];\nv = a as A.B.C<T>;\nlet t: typeof a[0];\nlet u: typeof p<'a'>;\nq = g<typeof a[0]>(b);\nr = new m!.A();\n",
+        // `f<T>` then a line break and an operand: comparisons; `interface` takes its name across
+        // a line break; `namespace N` before a line break and `{` has no body; an accessor's
+        // `get` across a line break; a class body's `}` after a `,`.
+        "let x = f<true>\ny\ninterface\nF {}\nnamespace M\n{}\ninterface I {\n  get\n  foo(): string;\n}\ndeclare class C {\n  m(): T,\n}\n",
     ];
     let tsx = [
         "const C = <T,>(p: T) => <Table<T> rows={p} />;\n",
@@ -3099,6 +3107,11 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
                 "function f(a? = 1) {}\n",
                 "class A { m(...a = 0) {} }\n",
                 "export import a = require('a');\n",
+                // `using` as a parameter's name, `type.a<T>`, `get` then a property's name on
+                // the next line.
+                "f = (a, using?: string) => 1;\n",
+                "let t: [type.cast<unknown>, '?'];\n",
+                "interface I {\n  get\n  foo: string;\n}\n",
             ]);
         }
         for invalid in invalid {
@@ -3109,6 +3122,22 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         // JavaScript's `await [a]` and a postfix, and `for await (let [x] of …)`, as subscripts of
         // names: refused, not read as what they are.
         let mut odd = vec!["export\nconst a = 1;\n", "async function f() { for await (let [x] of y) {} }\n"];
+        if dialect != Dialect::JavaScript {
+            // Readings tree-sitter-typescript decides past these rules: `as A.B.C | D.E`, a
+            // trailing dotted name in an `as` type, `f<() => { a: T }>(c)` (comparisons), type
+            // arguments with a type not read, `<T, U>(a) => {}` then `<`, `namespace as {}`,
+            // `new` before a line break, `/ /* c */a /`.
+            odd.extend([
+                "x = a as A.B.C | D.E.F;\n",
+                "x = a as () => A.B.C;\n",
+                "x = f<() => { a: T }>(c);\n",
+                "x = f<typeof a['k'].c>(b);\n",
+                "<T, U>(a: T) => {}\n<V>(b: V) => {}\n",
+                "namespace as {}\n",
+                "const u = new\n  URL(a);\n",
+                "var r = / /**/a /;\n",
+            ]);
+        }
         if dialect == Dialect::JavaScript {
             odd.extend(["async function f() { x = await [1].y; }\n", "f(await [1]?.[0]);\n"]);
         }

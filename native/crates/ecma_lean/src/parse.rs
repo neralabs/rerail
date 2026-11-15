@@ -1690,11 +1690,12 @@ impl<'a> P<'a> {
     /// tape holds the `yield` token.
     fn parameter_target(&mut self, s: Slot) -> R<K> {
         // tree-sitter-typescript reads a word that may start an expression as that expression's,
-        // not a parameter's name (JavaScript's are its reserved words, `reserves`).
+        // and `using` as a declaration's keyword, not a parameter's name (JavaScript's are its
+        // reserved words, `reserves`).
         let t = self.tok();
         if self.ts
             && t.kind == T::Name
-            && matches!(t.word, w::FALSE | w::TRUE | w::NULL | w::SUPER | w::CLASS | w::FUNCTION | w::TYPEOF | w::IMPORT | w::VOID | w::DELETE | w::AWAIT)
+            && matches!(t.word, w::FALSE | w::TRUE | w::NULL | w::SUPER | w::CLASS | w::FUNCTION | w::TYPEOF | w::IMPORT | w::VOID | w::DELETE | w::AWAIT | w::USING)
         {
             return self.refuse();
         }
@@ -1991,9 +1992,9 @@ impl<'a> P<'a> {
                 _ => self.class_member()?,
             }
         }
-        // The `}` is stored after a `;` (the body's last child).
+        // The `}` is stored after a `;` or TypeScript's `,` (the body's last child).
         let last = self.last_child(b.at);
-        if last > b.at && kind_of(unkey(self.w.key(last)).0) == K::TSemi {
+        if last > b.at && matches!(kind_of(unkey(self.w.key(last)).0), K::TSemi | K::TComma) {
             self.leaf(K::TRBrace, f::NONE, C_NONE)?;
         } else {
             self.bump()?;
@@ -2551,6 +2552,11 @@ impl<'a> P<'a> {
         if (t.kind == T::LParen || generic) && !self.no_arrow.contains(&t.start) {
             let m = self.mark();
             if let Ok(n) = self.arrow(s, false) {
+                // `<T, U>(a) => {}` then `<` (`\n<V>(b) => {}`): tree-sitter reads a type
+                // assertion of the arrow and comparisons on; not read.
+                if generic && self.peek() == T::Lt {
+                    return self.refuse();
+                }
                 return Ok(n);
             }
             self.no_arrow.insert(t.start);
@@ -2750,19 +2756,40 @@ impl<'a> P<'a> {
         let n = self.wrap(N { at: start, kind: left.kind }, kind, s, EXPR);
         self.tk(kind, tok, f::NONE)?;
         let mut members = 0;
+        // `keyof` before the dotted names.
+        let keyof = usize::from(self.is_word(w::KEYOF) && self.peek_at(1).kind == T::Name);
         if is_as && self.is_word(w::CONST) {
             self.tk(kind, K::TConst, f::NONE)?;
-        } else if self.peek() == T::Name && self.peek_at(1).kind == T::Dot && {
-            members = self.dotted_names();
-            members >= 2 && self.w.start(start) != self.cover && !matches!(self.peek_at(2 * members + 1).kind, T::Lt | T::LBracket | T::Pipe | T::Amp)
+        } else if self.peek_at(keyof).kind == T::Name && self.peek_at(keyof + 1).kind == T::Dot && {
+            members = self.dotted_names_at(keyof);
+            let after = keyof + 2 * members + 1;
+            // `x as A.B.C | D.E`: where tree-sitter splits depends on the names after the
+            // operator, and on whether the `as` starts a parenthesized expression: not read.
+            if members >= 2
+                && matches!(self.peek_at(after).kind, T::Pipe | T::Amp)
+                && (self.w.start(start) == self.cover || self.peek_at(after + 2).kind == T::Dot)
+            {
+                return self.refuse();
+            }
+            members >= 2 && self.w.start(start) != self.cover && self.dotted_type_splits(after)
         } {
-            // `x as A.B.C`: tree-sitter reads `(x as A.B).C`.
-            self.type_reference_k(slot(f::NONE, Ctx::Type), members - 1)?;
+            // `x as A.B.C`, `x as keyof A.B.C`: tree-sitter reads `(x as A.B).C`, the member
+            // taking the postfixes and operators after it (`[k]`, `| U`).
+            if keyof == 1 {
+                let q = self.open_in(K::IndexTypeQuery, slot(f::NONE, Ctx::Type));
+                self.tk(K::IndexTypeQuery, K::TKeyof, f::NONE)?;
+                self.type_reference_k(slot(f::NONE, Ctx::PrimaryType), members - 1)?;
+                self.close(q);
+            } else {
+                self.type_reference_k(slot(f::NONE, Ctx::Type), members - 1)?;
+            }
         } else {
             members = 0;
+            let ty_start = self.i;
             self.ty(slot(f::NONE, Ctx::Type))?;
-            // `x as A | B.C.D`: tree-sitter reads `(x as A | B.C).D`, which this type's reading
-            // does not split.
+            // `x as A | B.C.D`, `x as () => A.B.C`: tree-sitter reads `(x as A | B.C).D`, the
+            // type's last dotted names split, which this type's reading does not (but a
+            // `typeof`'s).
             let mut j = self.i;
             let mut names = 0;
             while j > 0 && self.toks[j - 1].kind == T::Name {
@@ -2773,7 +2800,7 @@ impl<'a> P<'a> {
                 }
                 j -= 2;
             }
-            if names >= 3 && j > 0 && matches!(self.toks[j - 1].kind, T::Pipe | T::Amp) {
+            if names >= 3 && j > ty_start && !(self.toks[j - 1].kind == T::Name && self.toks[j - 1].word == w::TYPEOF) {
                 return self.refuse();
             }
         }
@@ -2784,10 +2811,77 @@ impl<'a> P<'a> {
             self.tk(K::MemberExpression, K::TDot, f::NONE)?;
             self.leaf(K::PropertyIdentifier, f::PROPERTY, C_NONE)?;
             self.close(m);
-            e = m;
+            e = self.postfix_chain(start, m, s)?;
         }
         self.after = V_EXPR;
         Ok(e)
+    }
+
+    /// From the `<` here, the angle brackets' span where every token in it is one a type may
+    /// hold: the index of the token closing it, and whether `=> {` stands in it. `None` at a
+    /// token no type holds (`&&`, `+`, `=`…) or the text's end.
+    fn angle_span(&mut self) -> Option<(usize, bool)> {
+        let (mut angles, mut nest, mut arrow_brace) = (0i32, 0u32, false);
+        let mut j = 0;
+        loop {
+            let t = self.peek_at(j);
+            match t.kind {
+                T::Lt => angles += 1,
+                T::Gt => angles -= 1,
+                T::GtGt => angles -= 2,
+                T::GtGtGt => angles -= 3,
+                T::LParen | T::LBracket | T::LBrace => nest += 1,
+                T::RParen | T::RBracket | T::RBrace if nest > 0 => nest -= 1,
+                T::Arrow => arrow_brace |= self.peek_at(j + 1).kind == T::LBrace,
+                // A `;` only in an object type's braces.
+                T::Semi if nest > 0 => {}
+                T::Name | T::Number | T::Str | T::Backtick | T::Dot | T::Comma | T::Colon | T::Question | T::Ellipsis | T::Pipe | T::Amp | T::Minus | T::Plus => {}
+                _ => return None,
+            }
+            if angles <= 0 {
+                return (nest == 0).then_some((j, arrow_brace));
+            }
+            j += 1;
+        }
+    }
+
+    /// The token closing the bracket `k` tokens ahead (`(`, `[` or `{`), if the text has one.
+    fn matching_at(&mut self, k: usize) -> Option<usize> {
+        let mut depth = 0u32;
+        let mut j = k;
+        loop {
+            match self.peek_at(j).kind {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(j);
+                    }
+                }
+                T::Eof => return None,
+                _ => {}
+            }
+            j += 1;
+        }
+    }
+
+    /// `dotted_names` from `k` tokens ahead.
+    fn dotted_names_at(&mut self, k: usize) -> usize {
+        let mut n = 0;
+        while self.peek_at(k + 2 * n + 1).kind == T::Dot && self.peek_at(k + 2 * n + 2).kind == T::Name {
+            n += 1;
+        }
+        n
+    }
+
+    /// Whether the token `k` ahead, after an `as` type's dotted names, lets tree-sitter split
+    /// the last name off as a member: not type arguments (`A.B.C<T>`) or an array type's `[]`.
+    fn dotted_type_splits(&mut self, k: usize) -> bool {
+        match self.peek_at(k).kind {
+            T::Lt => false,
+            T::LBracket => self.peek_at(k + 1).kind != T::RBracket,
+            _ => true,
+        }
     }
 
     /// Unary operators, `await`, prefix `++`/`--`, then a postfix expression. With `no_in`, a
@@ -3022,10 +3116,21 @@ impl<'a> P<'a> {
                         break;
                     }
                     // `f<T>(…)`, `f<T>`: type arguments if they read as such and a call or an
-                    // instantiation's end follows; else `<` is an operator.
+                    // instantiation's end follows; else `<` is an operator. Where they do not
+                    // read but every token to the closing `>` is a type's, the failure may be a
+                    // type this parser does not read (not proof of the comparisons): refused.
+                    // `f<() => { a: T }>(c)` is comparisons to tree-sitter (an arrow function's
+                    // body): refused too.
+                    let span = self.angle_span();
+                    if span.is_some_and(|(_, arrow_brace)| arrow_brace) {
+                        return self.refuse();
+                    }
                     let m = self.mark();
                     if self.type_arguments(f::TYPE_ARGUMENTS).is_err() {
                         self.restore(m);
+                        if span.is_some() {
+                            return self.refuse();
+                        }
                         break;
                     }
                     let next = self.tok();
@@ -3048,7 +3153,9 @@ impl<'a> P<'a> {
                             self.close(n);
                             e = n;
                         }
-                        _ if next.nl && self.stops() => {
+                        // Before a line break and an operand (`f<T>\ny`), tree-sitter reads the
+                        // comparisons `f < T > y`.
+                        _ if next.nl && self.stops() && !can_start_expression(next.kind) => {
                             let n = self.wrap(N { at: start, kind: e.kind }, K::InstantiationExpression, s, slot(f::NONE, Ctx::Primary));
                             self.close(n);
                             e = n;
@@ -3124,6 +3231,11 @@ impl<'a> P<'a> {
 
     /// `new constructor arguments?`.
     fn new_expression(&mut self, s: Slot) -> R<N> {
+        // TypeScript's `new` before a line break: tree-sitter-typescript reads a name `new` and
+        // ends the statement there; not read.
+        if self.ts && self.peek_at(1).nl {
+            return self.refuse();
+        }
         self.deeper()?;
         if self.peek_at(1).kind == T::Dot {
             // `new.target`.
@@ -3191,6 +3303,13 @@ impl<'a> P<'a> {
                     self.expressions(slot(f::INDEX, Ctx::Expr))?;
                     self.asi = saved;
                     self.expect(T::RBracket)?;
+                    self.close(m);
+                    e = m;
+                }
+                // `new a!.B()`: a non-null expression in the constructor.
+                T::Bang if self.ts && !t.nl => {
+                    let m = self.wrap(N { at: start, kind: e.kind }, K::NonNullExpression, slot(f::CONSTRUCTOR, Ctx::Primary), slot(f::NONE, Ctx::Primary));
+                    self.tk(K::NonNullExpression, K::TBang, f::NONE)?;
                     self.close(m);
                     e = m;
                 }
@@ -3376,6 +3495,13 @@ impl<'a> P<'a> {
     fn regex(&mut self, s: Slot) -> R<N> {
         let t = self.tok();
         let (pattern_end, end) = self.lx.regex(t.start as usize)?;
+        // `/ /* c */a /`: tree-sitter reads the blanks and the comment as extras before the
+        // pattern; not read.
+        let after = &self.src[t.start as usize + 1..];
+        let blanks = after.iter().take_while(|&&c| c == b' ' || c == b'\t').count();
+        if blanks > 0 && after[blanks..].starts_with(b"/*") {
+            return self.refuse();
+        }
         self.flush(t.start);
         let n = self.open_in(K::Regex, s);
         let p = self.w.push(key(K::RegexPattern, f::PATTERN, C_NONE, false), t.start + 1);
