@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, open, readFile, rm, truncate, writeFile, type FileHandle } from "node:fs/promises";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir, userInfo } from "node:os";
@@ -204,6 +204,26 @@ Start-Sleep 60`;
     const started = performance.now();
     const error = await loadDaemonTls(files, access).then(() => undefined, (thrown: unknown) => thrown);
     return { error, ms: performance.now() - started };
+  }
+
+  /**
+   * Counts the bytes read through any file handle of this process until `stop`: what a start read, which a time bound
+   * would mix up with how long a Node process took to start.
+   */
+  async function countReads(file: string): Promise<{ readonly bytes: number; stop: () => void }> {
+    type Read = (this: FileHandle, ...args: unknown[]) => Promise<{ bytesRead: number }>;
+    const handle = await open(file);
+    // Node keeps the FileHandle class to itself; an open handle's prototype is where `read` lives.
+    const prototype = Object.getPrototypeOf(handle) as { read: Read };
+    await handle.close();
+    const read = prototype.read;
+    let bytes = 0;
+    prototype.read = async function (this: FileHandle, ...args: unknown[]) {
+      const result = await read.apply(this, args);
+      bytes += result.bytesRead;
+      return result;
+    };
+    return { get bytes() { return bytes; }, stop: () => { prototype.read = read; } };
   }
 
   it.skipIf(process.platform === "win32")("refuses a private key other users may read, and reads one only its owner can", async () => {
@@ -433,11 +453,17 @@ Start-Sleep 60`;
       await writeFile(huge, pem);
       await truncate(huge, 1024 ** 3);
       const files = name === "key-huge.pem" ? { certFile, keyFile: huge } : { certFile: huge, keyFile };
-      const started = performance.now();
+      const reads = await countReads(keyFile);
       const refused = loadDaemonTls(files, shared);
-      await expect(refused).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
-      await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
-      expect(performance.now() - started).toBeLessThan(1_000);
+      try {
+        await expect(refused).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
+        await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+      } finally {
+        reads.stop();
+      }
+      // One byte past a mebibyte of the huge file, and for the huge certificate the key before it: never the gigabyte.
+      expect(reads.bytes).toBeGreaterThan(1024 ** 2);
+      expect(reads.bytes).toBeLessThanOrEqual(1024 ** 2 + 1 + Buffer.byteLength(key));
       await rm(huge);
     }
   }, 30_000);
