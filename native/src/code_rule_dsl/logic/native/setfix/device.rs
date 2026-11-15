@@ -787,7 +787,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
             }
-            Step::Func { name, kinds, args, out, bind } => {
+            Step::Func { name, kinds, args, out, bind, .. } => {
                 // Integer arithmetic: a filter of its own whose bind computes the value (`mj::BIND_ARITH`); a row
                 // where it has none is dropped, as on the CPU.
                 let op = arith_op(name).filter(|_| kinds.iter().all(|k| *k == crate::code_rule_dsl::logic::strings::functions::Kind::Number) && args.len() == 2);
