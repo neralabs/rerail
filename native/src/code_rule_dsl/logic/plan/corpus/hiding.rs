@@ -133,8 +133,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     let mut split: BTreeSet<usize> = BTreeSet::new();
     let mut reaches;
     loop {
+        let _round = crate::code_rule_dsl::logic::profile::span(|| "hiding: a round".to_owned());
+        let reach_span = crate::code_rule_dsl::logic::profile::span(|| "hiding: the rules reaching a guest".to_owned());
         reaches = reaching(prog, &seeds);
+        drop(reach_span);
+        let carry_span = crate::code_rule_dsl::logic::profile::span(|| "hiding: what the columns carry".to_owned());
         carried = carry(prog, &base_locations, &seeds, &view, &reaches);
+        drop(carry_span);
         // The round reads the rules as they were when it began, and records its edits, applied after it: a copy is
         // made from its original as it was (no snapshot of every rule each round, which was a fifth of hiding a pack).
         let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
@@ -364,6 +369,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             break;
         }
     }
+    let bounding = crate::code_rule_dsl::logic::profile::span(|| "hiding: each rule bounded".to_owned());
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
     let reaches = reaching(prog, &seeds);
     // What `parsed` asks for (`rr_embed_req`, and the contexts `rr_ctx<k>` only it reads) is not bounded: asking is
@@ -425,6 +431,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             rule.body.push(Literal::Cmp { l: Term::Var(v.into()), op: "<", r: Term::Int(bound_of(doc_column)) });
         }
     });
+    drop(bounding);
     // An aggregate's atom is its own scope: one over a base atom reads it through a bounded helper,
     // `rr_shown_agg<k>(vars) :- atom, bounds`.
     let mut helpers: Vec<(Atom, Vec<(String, String)>, Vec<Literal>)> = Vec::new();
