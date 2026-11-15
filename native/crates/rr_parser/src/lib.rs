@@ -1681,6 +1681,21 @@ pub mod tests {
         codes.iter().map(|c| c & !lazy).collect()
     }
 
+    /// A string's, a comment's and a backtick's tokens end plainly (`plain_end`): no start is
+    /// put back after them, as the lean lexer's arms for them put none back. A number's can end
+    /// before a word's byte (`12abc`), and `#include`'s inside a run: theirs are put back.
+    #[test]
+    fn a_strings_end_puts_no_start_back() {
+        let c = crate::compiled().expect("compiles");
+        let t = c.parser.tier1.records.as_ref().expect("the record pass");
+        for b in [b'"', b'`', b'/'] {
+            assert!(t.plain_end_at(b), "{:?} ends plainly", b as char);
+        }
+        for b in [b'0', b'7', b'#', b'a', b'('] {
+            assert!(!t.plain_end_at(b), "{:?} does not", b as char);
+        }
+    }
+
     /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
     /// codes and totals, over the samples, a corpus sample and files cut at the blocks' edges.
     #[test]

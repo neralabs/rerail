@@ -757,6 +757,56 @@ fn exact_at(native: &BlockNative, x: usize) -> Option<Needs> {
     }
 }
 
+/// The bytes the byte at `p + off` can be where output `o`'s bit at `p` is set: a set every
+/// such byte is in (a test at that offset; an `And`'s both, an `Or`'s either, a `Prev` or an
+/// `escaped` shifted). None where its instructions do not say (any byte).
+pub fn output_byte_at(native: &BlockNative, o: u16, off: i32) -> Option<[u64; 4]> {
+    let x = usize::from(*native.outputs.get(usize::from(o))?);
+    let d = i32::from(native.output_delays[usize::from(o)]);
+    // The output at `p` is its instruction at `p + d` (`needs`).
+    inst_byte_at(native, x, off - d, 0)
+}
+
+fn inst_byte_at(native: &BlockNative, x: usize, off: i32, depth: u32) -> Option<[u64; 4]> {
+    if depth > 64 {
+        return None;
+    }
+    let and = |p: [u64; 4], q: [u64; 4]| std::array::from_fn(|k| p[k] & q[k]);
+    match native.insts[x] {
+        // Both of a pair's bytes: the byte at `p` in its table's set, the one before in its
+        // before's (`needs` keeps the narrower alone).
+        BlockInst::Pair { before, table, bits } => {
+            let set = |table: u16| {
+                let c = native.tables[usize::from(table)];
+                Needs::bytes(|b| c.member(b, bits), 0).set
+            };
+            match off {
+                0 => Some(set(table)),
+                -1 => Some(set(before)),
+                _ => None,
+            }
+        }
+        BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => {
+            let n = needs_at(native, x, &mut HashMap::new())?;
+            (n.lo == off && n.hi == off).then_some(n.set)
+        }
+        BlockInst::And(a, b) => match (inst_byte_at(native, usize::from(a), off, depth + 1), inst_byte_at(native, usize::from(b), off, depth + 1)) {
+            (Some(p), Some(q)) => Some(and(p, q)),
+            (p, q) => p.or(q),
+        },
+        BlockInst::AndNot(a, _) => inst_byte_at(native, usize::from(a), off, depth + 1),
+        BlockInst::Or(a, b) => {
+            let (p, q) = (inst_byte_at(native, usize::from(a), off, depth + 1)?, inst_byte_at(native, usize::from(b), off, depth + 1)?);
+            Some(std::array::from_fn(|k| p[k] | q[k]))
+        }
+        // A bit at `p` is the operand's at `p - k`: its byte at `p + off` is the operand's at
+        // `off + k`.
+        BlockInst::Prev(a, k) => inst_byte_at(native, usize::from(a), off + i32::from(k), depth + 1),
+        BlockInst::Escaped(a) => inst_byte_at(native, usize::from(a), off + 1, depth + 1),
+        _ => None,
+    }
+}
+
 /// What an output needs of the bytes, offset by offset (`needs`'s, unmerged): a bit at `p`
 /// only where, for some `(d, set)`, the byte at `p + d` is in `set`. Where `needs` merges two
 /// tests at two offsets into one set over both (a control byte or a `\` before, so a newline

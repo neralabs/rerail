@@ -1797,3 +1797,65 @@ Stepped: the run's end is `ldr`, `cbnz`, `rbit`, `clz` into the
 rare head, as lean's. A string and its comma: 224 (lean 223).
 Counts, reported: words 105.8, punctuation 53.3, mixed 56.2,
 strings 305.5, numbers 173.0, comments 285.1.
+
+## A rare token that ends plainly puts no start back
+
+**Intro.** The lean lexer leaves some bytes out of its starts: a
+word's inner bytes, and a pair's second byte. After a rare token it
+only does `starts &= bits(cursor - base)`. It never puts a start
+back, because each `match` arm knows what it read: a string ends at
+a quote, and the number arm reads the word after it itself.
+
+Ours put a start back after every rare token. That means the bit
+after the token where it is a word's inner byte or a pair's second,
+plus the reread flag for chained pairs. About 15 instructions, and
+the values it needs stayed live across the reader's call.
+
+**What the compiler knows.** Whether a rule's tokens need a start
+put back follows from the grammar. A token needs none when:
+
+- its last byte is no word byte and no pair's first byte, or
+- the byte after it is no word byte and no pair's second.
+
+`plain_end` decides this per rule, from the outputs' exact bytes at
+an offset (`native_cpu_bytes::output_byte_at`):
+
+- a reader: each arm at its closer, and its `other` rule;
+- a last: its output at the token's end;
+- a pair rule: its first byte where no second follows, and each
+  second.
+
+For `.rr`, the string, the comment and the backtick literal end
+plainly. A digit, `#`, a word byte and `(` do not.
+
+```
+// The comment's reader, from the grammar:
+//   line  = line_open .. lf outside   -> the byte after is `\n`
+//   block = block_open .. block_end   -> its last byte is `/`
+//   else  `/` alone (a pair rule)     -> `/` is no pair's first
+```
+
+**The change.** The rule's fact is a bit of its first byte's entry
+(`TOKEN_PLAIN_END`). A rare start's token body branches on it once,
+after the entry's load, as the lean lexer's `match` picks an arm.
+Each class (`Side::Rare(Some(plain))`) gets its own rule table,
+holding only its rules, and its own tail. The plain class's tail
+has no put-back.
+
+Dropped first: one tail with a branch on the bit after the join.
+rustc made it `csel`s, so both sides ran on every rare token, and
+strings went up (305.5 → 310.5). The decision has to come before
+the join, as lean's does.
+
+Also dropped: the rare tail ORed the run's `rest` into its starts.
+A rare start's starts are `rest` already (`run_done`'s). The OR
+only kept `rest` live across the call.
+
+Stepped, a string and its comma: 216 (lean 223). The starts left
+after the string are `lsr; lsl; ldr; cmp; csel` (lean: `cmp; b`,
+then the mask). Counts, reported: words 105.8, punctuation 53.2,
+mixed 56.2, strings 297.3, numbers 173.0, comments 271.9.
+
+Still open around the call: after it, seven values are reloaded
+(the table base, the file's pointers, constants), where lean keeps
+them in callee-saved registers.
