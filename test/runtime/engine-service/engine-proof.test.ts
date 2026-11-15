@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { connect, createServer as createSocketServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -34,16 +35,17 @@ server.listen(process.argv[1], () => {
  * An engine that answers proofs for "capability", whose process takes every instance of its own pipe and then stops its
  * event loop for the milliseconds it is given, as a busy daemon's does while its pipe has no free instance: once its
  * loop runs again it accepts those connections and sets up new instances, and a proof that asks again is answered.
- * It prints how many instances it took and how the open after the last one ended: `EBUSY` once none was free.
+ * It prints how many instances it took and how the open after the last one ended (`busy <n> EBUSY` once none was
+ * free), and when its loop runs again (`free <epoch ms>`). It does that the number of rounds it is given, 300 ms apart.
  */
 const BUSY_ENGINE = `
 const { engineProof, ENGINE_CHALLENGE_HEADER } = await import(process.argv[1]);
-const { openSync, writeSync } = await import("node:fs");
-const [path, stopMs] = process.argv.slice(2);
+const { closeSync, openSync, writeSync } = await import("node:fs");
+const [path, stopMs, rounds] = process.argv.slice(2);
 const server = (await import("node:http")).createServer((request, response) => {
   response.end(JSON.stringify({ proof: engineProof("capability", String(request.headers[ENGINE_CHALLENGE_HEADER])) }));
 });
-server.listen(path, () => {
+const round = (left) => {
   const taken = [];
   let ended = "free";
   while (taken.length < 16) {
@@ -51,12 +53,52 @@ server.listen(path, () => {
   }
   writeSync(1, "busy " + taken.length + " " + ended + "\\n");
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(stopMs));
+  writeSync(1, "free " + Date.now() + "\\n");
+  for (const fd of taken) closeSync(fd);
+  if (left > 1) setTimeout(() => round(left - 1), 300);
+};
+server.listen(path, () => round(Number(rounds)));`;
+
+/**
+ * A listener that takes every instance of its own pipe, prints `busy <n> EBUSY`, stops its event loop for the
+ * milliseconds it is given, then prints `gone <epoch ms>` and ends, as a busy daemon that is ended does: its pipe goes.
+ */
+const ENDING_LISTENER = `
+const { openSync, writeSync } = require("node:fs");
+const [path, stopMs] = process.argv.slice(1);
+require("node:net").createServer(() => {}).listen(path, () => {
+  const taken = [];
+  let ended = "free";
+  while (taken.length < 16) {
+    try { taken.push(openSync(path, "r+")); } catch (error) { if (error.code !== "EBUSY") throw error; ended = "EBUSY"; break; }
+  }
+  writeSync(1, "busy " + taken.length + " " + ended + "\\n");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(stopMs));
+  writeSync(1, "gone " + Date.now() + "\\n");
+  process.exit(0);
 });`;
+
+/** Windows' timer tick: a timer there fires only on one, so a wait of 1 to 15 ms takes about 15.6 ms. */
+const TIMER_TICK_MS = 15.625;
+/** What a proof may take past a tick to connect and have its answer, on a loaded test machine. */
+const EXCHANGE_MS = 10;
 
 /** A process that asks the engine on a pipe for one proof with a 1 s limit, prints the answer, and ends by itself. */
 const PROBER = `
 const { engineCapabilityProof } = await import(process.argv[1]);
 process.stdout.write(JSON.stringify({ answer: await engineCapabilityProof(process.argv[2], "capability", 1000) }) + "\\n");`;
+/**
+ * A process that asks the engine on a pipe for one proof with a 2 s limit, and prints the answer, how long it took and
+ * how long its event loop worked meanwhile.
+ */
+const WORK_PROBER = `
+const { engineCapabilityProof } = await import(process.argv[1]);
+const { performance } = await import("node:perf_hooks");
+const began = Date.now();
+const before = performance.eventLoopUtilization();
+const answer = await engineCapabilityProof(process.argv[2], "capability", 2000);
+const workMs = Math.round(performance.eventLoopUtilization(before).active);
+process.stdout.write(JSON.stringify({ answer, ms: Date.now() - began, workMs }) + "\\n");`;
 const PROOF_MODULE = new URL("../../../src/runtime/engine-proof.ts", import.meta.url).href;
 const TSX = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
@@ -112,12 +154,22 @@ async function stuckListener(path: string): Promise<ChildProcess> {
   return child;
 }
 
+/** The lines `child` prints, one per call; a child that ends first fails the test. */
+function linesOf(child: ChildProcess): () => Promise<string> {
+  const lines = createInterface({ input: child.stdout! })[Symbol.asyncIterator]();
+  return async () => {
+    const next = await lines.next();
+    if (next.done === true) throw new Error(`the child process ended (exit ${String(child.exitCode)}) before it printed a line`);
+    return String(next.value);
+  };
+}
+
 /**
  * Starts {@link BUSY_ENGINE} on `path`, and returns once every instance of its pipe is taken and its loop has stopped: a
  * proof then finds no free instance, and is answered only through its retry.
  */
 async function busyEngine(path: string, stopMs: number): Promise<void> {
-  expect(await firstLine(startNode(BUSY_ENGINE, [PROOF_MODULE, path, String(stopMs)], true))).toMatch(/^busy [1-9]\d* EBUSY\n$/u);
+  expect(await firstLine(startNode(BUSY_ENGINE, [PROOF_MODULE, path, String(stopMs), "1"], true))).toMatch(/^busy [1-9]\d* EBUSY\n$/u);
 }
 
 /**
@@ -230,6 +282,19 @@ describe.runIf(process.platform === "win32")("the engine proof, against an engin
     expect(answer, `the process ended ${ranOnMs} ms after its answer`).toBe("silent");
     expect(ranOnMs).toBeLessThan(SLACK_MS);
   }, 45_000);
+
+  // A try on every tick is a connect that fails at once and a plain open. Measured on Windows 11 with 455 pipes, over a
+  // 2 s limit, by the event loop's own clock: 130 such tries took 37 to 43 ms, as much as 33 tries 50 ms apart that
+  // each listed the machine's pipes (37 to 49 ms), and a try on every tick with that listing took 135 to 155 ms. The
+  // bound leaves room for a loaded test machine.
+  it("costs its process no more work than a few dozen tries while every instance stays taken for the whole limit", async () => {
+    const path = pipePath("cost");
+    await stuckListener(path);
+    expect(await takeEveryInstance(path)).toBeGreaterThan(0);
+    const printed = JSON.parse(await firstLine(startNode(WORK_PROBER, [PROOF_MODULE, path], true))) as { answer: unknown; ms: number; workMs: number };
+    expect({ answer: printed.answer, inTime: printed.ms < 2_000 + SLACK_MS }, `answered after ${printed.ms} ms`).toEqual({ answer: "silent", inTime: true });
+    expect(printed.workMs, `the proof's event loop worked ${printed.workMs} ms of its ${printed.ms} ms`).toBeLessThan(120);
+  }, 45_000);
 });
 
 describe.runIf(process.platform === "win32")("the engine proof, against a pipe's holder that takes the request and never reads it", () => {
@@ -261,6 +326,44 @@ describe.runIf(process.platform === "win32")("the engine proof, against a busy e
     await busyEngine(path, 500);
     const began = Date.now();
     expect(await engineCapabilityProof(path, "capability", 2_000), `the proof answered after ${Date.now() - began} ms`).toBe("proved");
+  }, 45_000);
+
+  // main's connect waited for a free instance inside Windows, which hands it one the moment the engine sets it up. A
+  // proof that sleeps between tries finds the instance only at its next try.
+  it("is answered within a timer tick of the engine freeing an instance", async () => {
+    const path = pipePath("freed");
+    const rounds = 9;
+    const line = linesOf(startNode(BUSY_ENGINE, [PROOF_MODULE, path, "500", String(rounds)], true));
+    const late: number[] = [];
+    for (let round = 0; round < rounds; round += 1) {
+      expect(await line()).toMatch(/^busy [1-9]\d* EBUSY$/u);
+      const answered = engineCapabilityProof(path, "capability", 2_000).then(answer => ({ answer, at: Date.now() }));
+      const freedAt = Number((await line()).slice("free ".length));
+      const { answer, at } = await answered;
+      expect(answer).toBe("proved");
+      late.push(at - freedAt);
+    }
+    late.sort((a, b) => a - b);
+    // Seven of the nine.
+    expect(late[6], `answered ${late.join(", ")} ms after the engine freed an instance`).toBeLessThan(TIMER_TICK_MS + EXCHANGE_MS);
+  }, 45_000);
+
+  // main's wait for a free instance ended as soon as the pipe went, and the lookup then forgot the ended daemon.
+  it("answers refused within a timer tick of the engine's pipe going", async () => {
+    const late: number[] = [];
+    for (let round = 0; round < 5; round += 1) {
+      const path = pipePath(`gone-${round}`);
+      const line = linesOf(startNode(ENDING_LISTENER, [path, "500"]));
+      expect(await line()).toMatch(/^busy [1-9]\d* EBUSY$/u);
+      const answered = engineCapabilityProof(path, "capability", 2_000).then(answer => ({ answer, at: Date.now() }));
+      const goneAt = Number((await line()).slice("gone ".length));
+      const { answer, at } = await answered;
+      expect(answer).toBe("refused");
+      late.push(at - goneAt);
+    }
+    late.sort((a, b) => a - b);
+    // Four of the five.
+    expect(late[3], `answered ${late.join(", ")} ms after the engine's pipe went`).toBeLessThan(TIMER_TICK_MS + EXCHANGE_MS);
   }, 45_000);
 
   // The engine start asks before it listens beside a held pipe: a busy engine of this home read as another process
