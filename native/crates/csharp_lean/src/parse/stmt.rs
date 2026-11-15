@@ -184,6 +184,9 @@ impl<'a> P<'a> {
                     self.close(n);
                     n
                 }
+                // A statement may start with a local function's modifiers: tree-sitter lexes these as
+                // the modifier keywords there, and what follows is no declaration (`partial.M()`).
+                w::PARTIAL | w::REQUIRED => return self.refuse(),
                 _ => self.declaration_or_expression(s)?,
             },
             _ => self.declaration_or_expression(s)?,
@@ -468,7 +471,10 @@ impl<'a> P<'a> {
         if self.top_comma_pub(1, close) {
             self.expr(slot(f::VALUE, Ctx::Bare))?;
         } else {
-            self.punct_tk(K::SwitchStatement, T::LParen, false)?;
+            // `switch ((a, b))`: before a tuple the `(` is no implied word (the tuple alone may
+            // follow `switch`), so it is stored.
+            let tuple = self.kind_at(1) == T::LParen && self.matching(1) == Some(close - 1) && self.top_comma_pub(2, close - 1);
+            self.punct_tk(K::SwitchStatement, T::LParen, tuple)?;
             self.expr(slot(f::VALUE, Ctx::Expr))?;
             self.punct_tk(K::SwitchStatement, T::RParen, false)?;
         }

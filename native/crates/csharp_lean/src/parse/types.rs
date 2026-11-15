@@ -40,7 +40,14 @@ impl<'a> P<'a> {
                 return Ok(n);
             }
             T::Name if t.word == w::DELEGATE && self.kind_at(1) == T::Star => self.function_pointer_type(s)?,
-            T::Name if t.word == w::VAR && !matches!(self.kind_at(1), T::Lt | T::Dot | T::ColonColon) => self.leaf_in(K::ImplicitType, s)?,
+            // Before `and` or `or` (a pattern's combinators) tree-sitter takes `var` as a name.
+            T::Name if t.word == w::VAR && !matches!(self.kind_at(1), T::Lt | T::Dot | T::ColonColon) && !(self.is_word_at(1, w::AND) || self.is_word_at(1, w::OR)) => {
+                // `var with`: `with` is lexed as its keyword there, an error.
+                if self.is_word_at(1, w::WITH) {
+                    return self.refuse();
+                }
+                self.leaf_in(K::ImplicitType, s)?
+            }
             T::Name if w::is_predefined(t.word) => self.leaf_in(K::PredefinedType, s)?,
             T::Name if !w::is_reserved(t.word) => self.name(s)?,
             T::LParen => self.tuple_type(s)?,

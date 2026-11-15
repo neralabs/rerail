@@ -3474,6 +3474,14 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A { void F() { a = x is not 1 and not 2; b = x is 1 or not 2 and 3; c = x is A.M(); d = x is global::A.B; } }\n",
         // A switch arm's `(…)` before `=>` is a pattern, not a lambda's parameters.
         "class A { int F() => x switch { (1) => 2, (\"a\") => 3, (A) => 4, _ => 0 }; }\n",
+        // After `is` in a chain with a left operand, the constant stands alone where the chain's
+        // last operand is a literal, `typeof` or another `is`, and takes the operators after it
+        // where that operand is a name or an access; a relational pattern takes a conditional.
+        "class A { void F() { a = p || b is null || c > 1; b = p || b is X || c; c = p && b is X && c == 1; d = b is X || c > 1; e = b is X ? 1 : 2; f = c is > 0 ? 1 : 2; g = p || b is X || c.d; h = p && b is X && c is Y; i = p || b is X || typeof(T); } }\n",
+        // `await` in an argument; a tuple type's array; a type's `,`s after `is` in parentheses;
+        // positional patterns (by their first element) and tuple constants; a list pattern's `,`
+        // before a discard; `switch` over a tuple in parentheses; a namespace's `;`.
+        "namespace N { class A { void F() { f(await t); x = new (A a, B b)[3]; y = (c is D<K, V> d && d.E); if (x is (_, 1) or (1, _)) { } if (x is (A a, B b) z) { } if (x is [1, _] or [_, _, 3]) { } switch ((a, b)) { case (_, _) when c: break; } } } };\n",
     ];
     let grammar = Grammar::new(GrammarDialect::CSharp).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3496,9 +3504,19 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(csharp_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
-    // Valid, but tree-sitter reads its type arguments as comparisons (`(new S < A) > ((c) { })`):
-    // refused, not read as the object creation it is.
-    for odd in ["class A { object o = new S<A>(c) { }; }\n", "class A { object o = new List<(A a, B b)>(q); }\n"] {
+    // Valid, but tree-sitter reads its type arguments as comparisons (`(new S < A) > ((c) { })`,
+    // elements `new S < A` and `B > { }` between an initializer's `,`s, a declaration's type split
+    // at its `,` in a tuple), or a dotted constant as a member access over its `is`: refused, not
+    // read as what it is.
+    for odd in [
+        "class A { object o = new S<A>(c) { }; }\n",
+        "class A { object o = new List<(A a, B b)>(q); }\n",
+        "class A { object[] o = { new S<A, B> { } }; }\n",
+        "class A { object o = new S<A>(new L<E> { e }); }\n",
+        "class A { object o = (c is D<K, V> d, 1); }\n",
+        "class A { bool b = p || x is A.B || 1; }\n",
+        "class A { bool b = x is A.B ? 1 : 2; }\n",
+    ] {
         assert!(!parser.parse(odd, None).unwrap().root_node().has_error(), "{odd:?} reads with an error");
         assert!(csharp_lean::encode(&grammar, odd, &|| false).is_err(), "read {odd:?}");
     }

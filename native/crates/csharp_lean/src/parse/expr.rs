@@ -61,7 +61,7 @@ pub(super) fn assignment(t: T) -> Option<K> {
     })
 }
 
-const P_COND: u8 = 2;
+pub(super) const P_COND: u8 = 2;
 pub(super) const P_CONST: u8 = 3;
 const P_REL: u8 = 10;
 const P_WITH: u8 = 14;
@@ -257,7 +257,10 @@ impl<'a> P<'a> {
                 n
             }
             T::LParen => self.paren(s)?,
-            T::Name if t.word == w::AWAIT && self.await_ahead() => {
+            // `await` is a keyword wherever an await expression may start, so tree-sitter reads one
+            // there (`await + 1` is `await (+1)`); before no operand it inserts one: an error.
+            T::Name if t.word == w::AWAIT && !self.await_ahead() => return self.refuse(),
+            T::Name if t.word == w::AWAIT => {
                 let n = self.open_in(K::AwaitExpression, s)?;
                 self.tk(K::AwaitExpression, K::TAwait)?;
                 self.unary(EXPR)?;
@@ -292,7 +295,7 @@ impl<'a> P<'a> {
     /// Whether `await` next is an await expression's (an operand follows it).
     fn await_ahead(&mut self) -> bool {
         let t = self.peek_at(1);
-        starts_operand(t) && !(t.kind == T::Name && matches!(t.word, w::AND | w::OR)) && !matches!(t.kind, T::Plus | T::Minus | T::Star | T::Amp | T::Caret)
+        starts_operand(t) && !(t.kind == T::Name && matches!(t.word, w::AND | w::OR))
     }
 
     /// `(`: a lambda's parameters, a cast, a tuple or a parenthesized expression.
@@ -319,7 +322,8 @@ impl<'a> P<'a> {
             self.close(n);
             return Ok(n);
         }
-        if self.top_comma(1, close) {
+        let Some(tuple) = self.top_comma(1, close) else { return self.refuse() };
+        if tuple {
             let n = self.open_in(K::TupleExpression, s)?;
             self.list(K::TupleExpression, T::RParen, true, false, |p| p.argument())?;
             self.close(n);
@@ -358,15 +362,27 @@ impl<'a> P<'a> {
     }
 
     /// Whether a `,` stands at the top level between tokens `from` and `to` (exclusive).
-    fn top_comma(&mut self, from: usize, to: usize) -> bool {
-        let mut j = from;
+    fn top_comma(&mut self, from: usize, to: usize) -> Option<bool> {
+        let (mut j, mut typed_comma) = (from, false);
         while j < to {
             match self.kind_at(j) {
-                T::Comma => return true,
+                // After a declaration whose type holds `,`s (`(c is D<K, V> d, 1)`), tree-sitter
+                // splits the type at them: not read.
+                T::Comma => return (!typed_comma).then_some(true),
                 T::LParen | T::LBracket | T::LBrace => match self.matching(j) {
                     Some(e) => j = e,
-                    None => return false,
+                    None => return Some(false),
                 },
+                // The type after `is` or `as` (`x is A<B, C> y`): its `,`s are its own.
+                T::Name if matches!(self.word_at(j), w::IS | w::AS) => {
+                    if let Some(e) = self.scan_type(j + 1)
+                        && e > j + 1
+                    {
+                        typed_comma |= self.is_ident_at(e) && (j + 1..e).any(|i| self.kind_at(i) == T::Comma);
+                        j = e;
+                        continue;
+                    }
+                }
                 // A name's type arguments (as `simple_name` reads them): their `,`s are theirs.
                 T::Lt if j > from && self.is_ident_at(j - 1) => {
                     if let Some(e) = self.scan_type_args(j) {
@@ -380,7 +396,7 @@ impl<'a> P<'a> {
             }
             j += 1;
         }
-        false
+        Some(false)
     }
 
     /// Whether `(` … `)` (closing `close` tokens ahead) is a cast's: a type fills it and an operand
@@ -670,6 +686,11 @@ impl<'a> P<'a> {
     pub(super) fn argument(&mut self) -> R<()> {
         let n = self.open(K::Argument, f::NONE, C_NONE)?;
         if self.is_ident() && self.kind_at(1) == T::Colon {
+            // An argument may start an async lambda or an await expression: there tree-sitter
+            // lexes `async` and `await` as their keywords, and `:` after one is an error.
+            if self.is_word(w::ASYNC) || self.is_word(w::AWAIT) {
+                return self.refuse();
+            }
             self.ident(slot(f::NAME, Ctx::Bare))?;
             self.leaf(K::TColon, f::NONE, C_NONE)?;
             // `name: new A<B, C> { … }`: tree-sitter reads `new A < B` and `C > { … }` (two
@@ -703,7 +724,8 @@ impl<'a> P<'a> {
     /// Whether a declaration expression (`var x`, `int x`, `A<B> c`) starts `k` tokens ahead: a
     /// type and a name, then `,` or `)`.
     pub(super) fn declaration_expression_ahead(&mut self, k: usize) -> bool {
-        if self.is_word_at(k, w::REF) {
+        // `await x` there is an `await_expression` to tree-sitter, not a type `await`'s.
+        if self.is_word_at(k, w::REF) || self.is_word_at(k, w::AWAIT) {
             return false;
         }
         let Some(e) = self.scan_type(k) else { return false };
@@ -745,6 +767,17 @@ impl<'a> P<'a> {
                     return self.refuse();
                 }
                 self.initializer(BARE)?;
+                self.close(n);
+                Ok(n)
+            }
+            // `new (A a, B b)[n]`: a tuple type's array, wherever its elements read as types.
+            T::LParen if self.scan_type_base(1).is_some_and(|e| self.kind_at(e) == T::LBracket) => {
+                let n = self.open_in(K::ArrayCreationExpression, s)?;
+                self.tk(K::ArrayCreationExpression, K::TNew)?;
+                self.array_type_with_ranks(slot(f::TYPE, Ctx::Bare))?;
+                if self.peek() == T::LBrace {
+                    self.initializer(BARE)?;
+                }
                 self.close(n);
                 Ok(n)
             }
@@ -833,7 +866,8 @@ impl<'a> P<'a> {
 
     /// Whether tree-sitter reads `new A<X>(c) …` as comparisons, `(new A < X) > (c)`, where its type
     /// argument is also an expression: `new A<X>(c) { … }` with a name in each (the `(c) { … }` a
-    /// cast), and `new A<(X x, Y y)>(c)` (a tuple of declarations) with one argument. Not read.
+    /// cast), `new A<X>(new L<E> { … })` (one generic creation with an initializer), and
+    /// `new A<(X x, Y y)>(c)` (a tuple of declarations) with one argument. Not read.
     fn creation_reads_as_comparisons(&mut self) -> bool {
         let mut k = 1;
         while self.is_ident_at(k) && self.kind_at(k + 1) == T::Dot {
@@ -849,6 +883,10 @@ impl<'a> P<'a> {
         let Some(m) = self.matching(e) else { return false };
         let (args, close) = (k + 2, e - 1);
         if self.kind_at(m + 1) == T::LBrace && self.name_only(args, close) && m > e + 1 && self.name_only(e + 1, m) {
+            return true;
+        }
+        // `new A<X>(new L<E> { … })`: one argument, a generic creation with an initializer.
+        if self.is_word_at(e + 1, w::NEW) && !self.top_comma_pub(e + 1, m) && self.kind_at(m - 1) == T::RBrace && (e + 2..m).any(|i| self.kind_at(i) == T::Lt) {
             return true;
         }
         // `<(X x, Y y)>`: a tuple whose elements are named.
@@ -892,6 +930,9 @@ impl<'a> P<'a> {
     pub(super) fn initializer(&mut self, s: Slot) -> R<N> {
         let n = self.open_in(K::InitializerExpression, s)?;
         self.list(K::InitializerExpression, T::RBrace, true, true, |p| {
+            if p.element_splits_creation() {
+                return p.refuse();
+            }
             if p.peek() == T::LBracket && p.element_binding_ahead() {
                 // `[k] = v`: an element binding as an assignment's left.
                 let b = p.bracketed_arguments(K::ElementBindingExpression, f::NONE, C_NONE)?;
@@ -909,6 +950,36 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
+    /// Whether the element next (to its `,` or the list's close) holds `new A<B, C> { … }`: where
+    /// commas separate elements, tree-sitter reads it as elements `new A < B` and `C > { … }`
+    /// (each a comparison). Not read.
+    fn element_splits_creation(&mut self) -> bool {
+        let (mut k, mut depth) = (0usize, 0u32);
+        loop {
+            match self.kind_at(k) {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace if depth > 0 => depth -= 1,
+                T::RParen | T::RBracket | T::RBrace | T::Comma | T::Semi | T::Eof if depth == 0 => return false,
+                T::Name if depth == 0 && self.is_word_at(k, w::NEW) => {
+                    let mut j = k + 1;
+                    while self.is_ident_at(j) && self.kind_at(j + 1) == T::Dot {
+                        j += 2;
+                    }
+                    if self.is_ident_at(j)
+                        && self.kind_at(j + 1) == T::Lt
+                        && let Some(e) = self.scan_type_args(j + 1)
+                        && self.kind_at(e) == T::LBrace
+                        && (j + 2..e).any(|i| self.kind_at(i) == T::Comma)
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+    }
+
     /// Whether `[` … `]` next is followed by an assignment operator.
     fn element_binding_ahead(&mut self) -> bool {
         self.matching(0).is_some_and(|e| assignment(self.kind_at(e + 1)).is_some())
@@ -916,8 +987,17 @@ impl<'a> P<'a> {
 
     /// `collection_expression`: `[` elements `]`, a trailing `,` allowed.
     fn collection(&mut self, s: Slot) -> R<N> {
+        // A `[` here may also start a lambda's attributes: after it tree-sitter lexes an
+        // attribute target (`method`, `type`, …) as its keyword, which only a `:` may follow.
+        let t = self.peek_at(1);
+        if t.kind == T::Name && matches!(t.word, w::FIELD | w::EVENT | w::METHOD | w::PARAM | w::PROPERTY | w::RETURN | w::TYPE | w::TYPEVAR) {
+            return self.refuse();
+        }
         let n = self.open_in(K::CollectionExpression, s)?;
         self.list(K::CollectionExpression, T::RBracket, true, true, |p| {
+            if p.element_splits_creation() {
+                return p.refuse();
+            }
             let e = p.open(K::CollectionElement, f::NONE, C_NONE)?;
             if p.peek() == T::DotDot {
                 let sp = p.open(K::SpreadElement, f::NONE, C_NONE)?;

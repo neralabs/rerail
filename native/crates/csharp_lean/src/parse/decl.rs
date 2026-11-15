@@ -127,6 +127,11 @@ impl<'a> P<'a> {
             self.type_declaration(kind, slot(f::NONE, Ctx::TypeDecl))?;
             return Ok(());
         }
+        // At the top level `record` starts a declaration to tree-sitter's lexer (a keyword there):
+        // a statement led by it is an error.
+        if self.is_word(w::RECORD) {
+            return self.refuse();
+        }
         let saved = std::mem::replace(&mut self.in_statement, true);
         let r = if in_if {
             self.statement(STMT).map(|_| ())
@@ -199,8 +204,9 @@ impl<'a> P<'a> {
         self.tk(K::NamespaceDeclaration, K::TNamespace)?;
         self.name(slot(f::NAME, Ctx::Bare))?;
         self.declaration_list()?;
+        // Its `;` is the scanner's hidden `_optional_semi`, never stored.
         if self.peek() == T::Semi {
-            self.leaf(K::TSemi, f::NONE, C_NONE)?;
+            self.bump()?;
         }
         self.close(n);
         Ok(())

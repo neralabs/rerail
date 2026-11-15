@@ -1,19 +1,20 @@
 //! Patterns: `is`, `case` labels, switch expression arms, and the designations they bind.
 
-use super::expr::{P_CONST, binary_prec, is_binary};
+use super::expr::{P_COND, P_CONST, binary_prec, is_binary};
 use super::*;
 
 impl<'a> P<'a> {
     /// `left is …`: an `is_expression` (a type) or an `is_pattern_expression`, as tree-sitter
     /// reads them:
     /// - a type that is no expression (`int`, `T[]`, `A<B>`) alone is an `is_expression`;
-    /// - a name before a binary operator is one too when the operator binds tighter than the
-    ///   constant's slot allows, or inside a constant that already absorbs (`Cmode`);
+    /// - a name before a binary operator is one too inside a constant that already absorbs
+    ///   (`Cmode`), or with a left operand where `constant_alone` reads the constant alone;
     /// - every other is a pattern. At a chain's start (`Cmode::Start`) its constant takes the
     ///   operators after it (`x is null || y` is `x is (null || y)`) when `constant_takes` agrees:
-    ///   with no other `is` in the range, or with a plain constant ending it;
-    /// - shapes whose reading depends on more than this (dotted names before an operator, a
-    ///   conditional access that wrapped the chain, a range ending at `?`) refuse.
+    ///   with no other `is` in the range, or with a plain constant ending it; with a left operand,
+    ///   unless `constant_alone` reads it alone;
+    /// - shapes whose reading depends on more than this (a dotted name read alone, a conditional
+    ///   access that wrapped the chain, a range ending at `?`) refuse.
     pub(super) fn is_tail(&mut self, left: N, s: Slot, min: u8) -> R<N> {
         let start = !self.in_constant;
         let is_expression = match self.is_type_ahead() {
@@ -21,11 +22,20 @@ impl<'a> P<'a> {
             // A name alone before an operator, where the `is` does not start its chain (or stands
             // in a constant): an `is_expression`.
             // A dotted name there: tree-sitter's readings vary; not read.
-            Some((true, after)) if is_binary(after) && self.kind_at(2) == T::Dot => return self.refuse(),
+            Some((true, after)) if is_binary(after) && self.in_constant => true,
             // After a conditional access wrapped the chain before it (`a || b?.c != d || e is A ||`),
-            // likewise.
+            // not read.
             Some((true, after)) if is_binary(after) && self.wrapped_chain => return self.refuse(),
-            Some((true, after)) => is_binary(after) && (min > P_CONST || self.in_constant),
+            // With a left operand, as `constant_alone` reads it; a dotted name read alone is a
+            // member access over the `is` (`(b is X).Y`): not read.
+            Some((true, after)) if is_binary(after) && min > P_CONST => match self.constant_alone(1) {
+                Some(true) if self.kind_at(2) == T::Dot => return self.refuse(),
+                Some(alone) => alone,
+                None => return self.refuse(),
+            },
+            // A dotted name before a conditional's `?` is a member access over the `is` too.
+            Some((true, T::Question)) if self.kind_at(2) == T::Dot => return self.refuse(),
+            Some((true, _)) => false,
             None => false,
         };
         if is_expression {
@@ -52,7 +62,11 @@ impl<'a> P<'a> {
         if t.kind != T::Name || matches!(t.word, w::NOT | w::VAR | w::NULL | w::TRUE | w::FALSE | w::UNDERSCORE) {
             return None;
         }
-        let e = self.scan_type(1)?;
+        let mut e = self.scan_type(1)?;
+        // A `?` before no designation is a conditional's (`x is A ? b : c`), not a nullable's.
+        if self.kind_at(e - 1) == T::Question && !self.is_ident_at(e) {
+            e -= 1;
+        }
         let after = self.peek_at(e);
         let continues = (after.kind == T::Name && !matches!(after.word, w::AS | w::IS | w::SWITCH | w::WITH)) || matches!(after.kind, T::LBrace | T::LParen);
         if continues {
@@ -61,12 +75,14 @@ impl<'a> P<'a> {
         Some((self.name_only(1, e), after.kind))
     }
 
-    /// After an `is` that starts its chain, whether its constant (from the next token) takes the
-    /// operators after it as tree-sitter does: `Some(false)` where no other `is` stands in them,
-    /// `Some(true)` where the last `is` among them has a plain constant that ends them, `None`
-    /// otherwise (tree-sitter's choice there is not read).
-    fn constant_takes(&mut self) -> Option<bool> {
-        let (mut k, mut depth, mut last_is, mut others, mut ops) = (0usize, 0u32, None, 0u32, 0u32);
+    /// The operators after a constant (from `from` tokens ahead) up to its chain's end: the end's
+    /// index, the last `is` among them, their count, and where the last operand starts (after the
+    /// last binary operator or `is`). `None` where tree-sitter's choice is not read (a conditional
+    /// with operators before its `?`, the text's end).
+    fn chain_scan(&mut self, from: usize) -> Option<Chain> {
+        let (mut k, mut depth) = (from, 0u32);
+        let mut c = Chain { end: 0, last_is: None, others: 0, last: from };
+        let mut ops = 0u32;
         loop {
             let t = self.peek_at(k);
             match t.kind {
@@ -80,42 +96,90 @@ impl<'a> P<'a> {
                 T::Question if ops == 0 && !matches!(self.kind_at(k + 1), T::Dot | T::LBracket) => break,
                 T::Question => return None,
                 T::Name if t.word == w::IS => {
-                    last_is = Some(k);
-                    others += 1;
+                    c.last_is = Some(k);
+                    c.others += 1;
+                    c.last = k + 1;
                 }
-                k2 if is_binary(k2) => ops += 1,
+                k2 if is_binary(k2) => {
+                    ops += 1;
+                    c.last = k + 1;
+                }
                 k2 if super::expr::assignment(k2).is_some() => break,
                 _ => {}
             }
             k += 1;
         }
-        let Some(j) = last_is else { return Some(false) };
-        // In a longer chain, tree-sitter's readings vary (its parse versions are bounded).
-        if others > 3 {
-            return None;
+        c.end = k;
+        Some(c)
+    }
+
+    /// After an `is` that starts its chain, whether its constant (from the next token) takes the
+    /// operators after it as tree-sitter does: `Some(false)` where no other `is` stands in them,
+    /// `Some(true)` where the last `is` among them has a plain constant that ends them, `None`
+    /// otherwise (tree-sitter's choice there is not read).
+    fn constant_takes(&mut self) -> Option<bool> {
+        let c = self.chain_scan(0)?;
+        let Some(j) = c.last_is else { return Some(false) };
+        self.plain_is_ends(&c, j).then_some(true)
+    }
+
+    /// Whether the `is` at `j`, the last in a chain (`c`), has a plain constant that ends it (a
+    /// literal, `null`, a dotted name, `not` or `-` before one). `false` in a longer chain too:
+    /// tree-sitter's readings vary there (its parse versions are bounded).
+    fn plain_is_ends(&mut self, c: &Chain, j: usize) -> bool {
+        if c.others > 3 {
+            return false;
         }
-        // `is` and a plain constant (a literal, `null`, a dotted name, `-` a number), then the end.
-        let mut c = j + 1;
-        if self.is_word_at(c, w::NOT) {
-            c += 1;
+        let mut k = j + 1;
+        if self.is_word_at(k, w::NOT) {
+            k += 1;
         }
-        if self.kind_at(c) == T::Minus {
-            c += 1;
+        if self.kind_at(k) == T::Minus {
+            k += 1;
         }
-        let t = self.peek_at(c);
+        let t = self.peek_at(k);
         let plain = match t.kind {
-            T::Int | T::Real | T::Char | T::Str => c + 1,
-            T::Name if matches!(t.word, w::NULL | w::TRUE | w::FALSE) => c + 1,
-            T::Name if !w::is_reserved(t.word) => {
-                let e = self.scan_type(c)?;
-                if !self.name_only(c, e) {
-                    return None;
-                }
-                e
-            }
-            _ => return None,
+            T::Int | T::Real | T::Char | T::Str => k + 1,
+            T::Name if matches!(t.word, w::NULL | w::TRUE | w::FALSE) => k + 1,
+            T::Name if !w::is_reserved(t.word) => match self.scan_type(k) {
+                Some(e) if self.name_only(k, e) => e,
+                _ => return false,
+            },
+            _ => return false,
         };
-        (plain == k).then_some(true)
+        plain == c.end
+    }
+
+    /// After an `is` whose chain has a left operand (`a || b is X || …`), whether tree-sitter
+    /// reads its constant alone (`(a || b is X) || …`) rather than taking the operators after it
+    /// (`a || b is (X || …)`), from `from` tokens ahead: its two parse versions meet where the
+    /// chain's last operand reduces, and the alone reading wins where that operand is a literal
+    /// (`1`, `"s"`, `null`, `-1`), `default`, `sizeof(…)`, `typeof(…)`, or an `is` with a plain
+    /// constant; the other wins where it is a name, a call, an access, a parenthesized or any
+    /// other expression. `None` where neither is read (an `is` with any other pattern last).
+    fn constant_alone(&mut self, from: usize) -> Option<bool> {
+        let c = self.chain_scan(from)?;
+        if let Some(j) = c.last_is
+            && j + 1 == c.last
+        {
+            // A dotted name there is a member access over its `is` (`(c is T).U`): not read.
+            let dotted = (j + 1..c.end).any(|k| self.kind_at(k) == T::Dot);
+            return (self.plain_is_ends(&c, j) && !dotted).then_some(true);
+        }
+        let mut k = c.last;
+        while matches!(self.kind_at(k), T::Minus | T::Plus | T::Bang | T::Tilde) {
+            k += 1;
+        }
+        let t = self.peek_at(k);
+        Some(match t.kind {
+            T::Int | T::Real | T::Char | T::Str | T::Verbatim | T::Raw | T::Interp => k + 1 == c.end,
+            T::Name if matches!(t.word, w::NULL | w::TRUE | w::FALSE) => k + 1 == c.end,
+            T::Name if t.word == w::DEFAULT && k + 1 == c.end => true,
+            T::Name if matches!(t.word, w::DEFAULT | w::SIZEOF | w::TYPEOF) && self.kind_at(k + 1) == T::LParen => {
+                self.matching(k + 1).is_some_and(|e| e + 1 == c.end)
+            }
+            _ => false,
+        })
     }
 
     /// Whether tokens `from..to` are a dotted name alone (after an alias's `A::`), type arguments
@@ -186,7 +250,9 @@ impl<'a> P<'a> {
             T::Lt | T::Le | T::Gt | T::Ge => {
                 let n = self.open_in(K::RelationalPattern, s)?;
                 self.leaf(punct(t.kind).expect("an operator"), f::NONE, C_NONE)?;
-                self.binary_expr(EXPR, P_CONST)?;
+                // Its operand is a whole expression to tree-sitter, a conditional's included
+                // (`x is > 0 ? a : b` is `x is > (0 ? a : b)`).
+                self.binary_expr(EXPR, P_COND)?;
                 self.close(n);
                 n
             }
@@ -203,6 +269,17 @@ impl<'a> P<'a> {
                 if !self.paren_is_pattern(0, close) {
                     // `("a")`, `(1)`, `(a + 1)`: a constant's parenthesized expression.
                     self.constant_pattern(s)?
+                } else if self.top_comma_pub(1, close) && self.positional_ahead(close) {
+                    let n = self.open_in(K::RecursivePattern, s)?;
+                    let c = self.open(K::PositionalPatternClause, f::NONE, C_NONE)?;
+                    self.list(K::PositionalPatternClause, T::RParen, true, false, |p| p.subpattern())?;
+                    self.close(c);
+                    if self.peek() == T::LBrace {
+                        self.property_clause()?;
+                    }
+                    self.designation_opt()?;
+                    self.close(n);
+                    n
                 } else if self.top_comma_pub(1, close) {
                     let n = self.open_in(K::ConstantPattern, s)?;
                     self.binary_expr(slot(f::NONE, Ctx::Lit), P_CONST)?;
@@ -217,7 +294,7 @@ impl<'a> P<'a> {
                     n
                 }
             }
-            T::Name if t.word == w::UNDERSCORE && !self.continues_expression(1) => self.leaf_in(K::Discard, s)?,
+            T::Name if self.discard_at(0) => self.leaf_in(K::Discard, s)?,
             T::Name if t.word == w::VAR && self.kind_at(1) == T::LParen => {
                 let n = self.open_in(K::VarPattern, s)?;
                 self.tk(K::VarPattern, K::TVar)?;
@@ -230,6 +307,45 @@ impl<'a> P<'a> {
         };
         self.depth -= 1;
         Ok(n)
+    }
+
+    /// Whether `(` … `)` next (its `)` at `close`), with `,`s in it, is a `positional_pattern_clause`
+    /// to tree-sitter rather than a constant's tuple: its first element decides (`(_, 1)` is
+    /// positional, `(1, _)` a tuple whose `_` is a name), unless an element after it can only be a
+    /// pattern's (`(1, > 2)`), or a designation or a property clause follows (`(1, 2) y`).
+    fn positional_ahead(&mut self, close: usize) -> bool {
+        let after = self.peek_at(close + 1);
+        if after.kind == T::LBrace || (after.kind == T::Name && !w::is_reserved(after.word) && !matches!(after.word, w::AND | w::OR | w::WHEN)) {
+            return true;
+        }
+        // The first element: `_`, `var`, `not`, a relational operator, `{`, a declaration
+        // (`A a`), or a parenthesized pattern.
+        let t = self.peek_at(1);
+        let first = match t.kind {
+            T::Lt | T::Le | T::Gt | T::Ge | T::LBrace => true,
+            T::Name if t.word == w::UNDERSCORE => matches!(self.kind_at(2), T::Comma),
+            T::Name if matches!(t.word, w::VAR | w::NOT) => true,
+            T::Name => self.scan_type(1).is_some_and(|e| self.is_ident_at(e) && self.kind_at(e + 1) == T::Comma),
+            T::LParen => self.matching(1).is_some_and(|c| self.paren_is_pattern(1, c)),
+            _ => false,
+        };
+        if first {
+            return true;
+        }
+        // A later element only a pattern may start.
+        let mut j = 1;
+        while j < close {
+            match self.kind_at(j) {
+                T::LParen | T::LBracket | T::LBrace => match self.matching(j) {
+                    Some(e) => j = e,
+                    None => return false,
+                },
+                T::Comma if matches!(self.kind_at(j + 1), T::Lt | T::Le | T::Gt | T::Ge | T::LBrace) => return true,
+                _ => {}
+            }
+            j += 1;
+        }
+        false
     }
 
     /// Whether `(` at `k` (its `)` at `close`) opens a `parenthesized_pattern` to tree-sitter, not a
@@ -300,7 +416,11 @@ impl<'a> P<'a> {
     /// A pattern that starts with a type: a declaration, a recursive pattern, a type pattern, or a
     /// constant (a name).
     fn type_led_pattern(&mut self, s: Slot) -> R<N> {
-        let Some(e) = self.scan_type(0) else { return self.constant_pattern(s) };
+        let Some(mut e) = self.scan_type(0) else { return self.constant_pattern(s) };
+        // A `?` before no designation is a conditional's (`x is A ? b : c`).
+        if self.kind_at(e - 1) == T::Question && !self.is_ident_at(e) {
+            e -= 1;
+        }
         let after = self.peek_at(e);
         let designation = (after.kind == T::Name && !w::is_reserved(after.word) && !matches!(after.word, w::AND | w::OR | w::WHEN))
             || (after.kind == T::LParen && self.designation_paren_ahead(e));
@@ -330,7 +450,7 @@ impl<'a> P<'a> {
             return self.constant_pattern(s);
         }
         let n = self.open_in(K::TypePattern, s)?;
-        self.ty(slot(f::TYPE, Ctx::Type))?;
+        self.ty_in_expr(slot(f::TYPE, Ctx::Type))?;
         self.close(n);
         Ok(n)
     }
@@ -364,9 +484,16 @@ impl<'a> P<'a> {
                 self.binary_expr(lit, P_CONST)?;
             }
             Cmode::Start(min) => {
-                let Some(has_is) = self.constant_takes() else { return self.refuse() };
-                // Inside a chain, an `is` with others after it takes none of the operators.
-                if has_is && min > P_CONST {
+                // With a left operand, as `constant_alone` reads it.
+                let (alone, has_is) = if min > P_CONST {
+                    let Some(alone) = self.constant_alone(0) else { return self.refuse() };
+                    let Some(c) = self.chain_scan(0) else { return self.refuse() };
+                    (alone, c.others > 0)
+                } else {
+                    let Some(has_is) = self.constant_takes() else { return self.refuse() };
+                    (false, has_is)
+                };
+                if alone {
                     self.binary_expr(lit, u8::MAX)?;
                     if binary_prec(self.peek()).is_some_and(|p| p >= min) {
                         return self.refuse();
@@ -468,6 +595,11 @@ impl<'a> P<'a> {
         }
     }
 
+    /// Whether a `discard` stands `k` tokens ahead: `_` that no expression continues.
+    fn discard_at(&mut self, k: usize) -> bool {
+        self.is_word_at(k, w::UNDERSCORE) && !self.continues_expression(k + 1)
+    }
+
     /// `list_pattern`: `[` patterns and `..` `]`, then a designation. A `..` in the list makes its
     /// gaps no implied word: every token is stored.
     fn list_pattern(&mut self, s: Slot) -> R<N> {
@@ -483,10 +615,12 @@ impl<'a> P<'a> {
                 }
                 spread = true;
             }
+            // `, _`: a discard after a `,` stores it.
+            spread |= self.kind_at(j) == T::Comma && self.discard_at(j + 1);
         }
         if spread {
-            // Gap by gap: one that holds a `..` (or a trailing `,`) stores its tokens, another is
-            // its kind's implied word.
+            // Gap by gap: one that holds a `..` (or a trailing `,`, or a `,` before a discard)
+            // stores its tokens, another is its kind's implied word.
             let mut first = true;
             loop {
                 let mut k = usize::from(first);
@@ -502,7 +636,7 @@ impl<'a> P<'a> {
                         _ => break,
                     }
                 }
-                let stored = (0..k).any(|j| self.kind_at(j) == T::DotDot) || (end && !first && k > 1);
+                let stored = (0..k).any(|j| self.kind_at(j) == T::DotDot) || (end && !first && k > 1) || (!first && !end && self.discard_at(k));
                 for _ in 0..k {
                     let tok = punct(self.peek()).expect("a list token");
                     self.gap_tk(K::ListPattern, tok, stored)?;

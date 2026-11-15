@@ -333,6 +333,18 @@ enum Cmode {
     Inner(u8),
 }
 
+/// A constant's chain after it, as `P::chain_scan` reads it.
+struct Chain {
+    /// The index of the token that ends it.
+    end: usize,
+    /// The last `is` in it.
+    last_is: Option<usize>,
+    /// Its `is`s.
+    others: u32,
+    /// Where its last operand starts.
+    last: usize,
+}
+
 #[derive(Clone, Copy)]
 struct Dropped {
     tok: usize,
