@@ -198,6 +198,15 @@ into notes once the queue is done).
     member, renamed, and also those of the member it was named after where that was another (two copies of each
     rule; possible before too, when a class's first member was an output). A class now keeps its namesake's rules,
     or its first member's where its name is new.
+  - *After review 3, verified* (a31db6c55): two more. (1) Keeping every unread relation out of `congruence` left a
+    copy unmerged where all its source's readers read the copy; letting any unread relation join broke 6 dropping
+    tests instead (an unreached library relation, `function_kind`, read by name through `nearest`, named the class
+    of the reached `cc_boundary`). Now an unread relation joins only a class with its own widened copy
+    (`rr_wide_<attr>_<r>`) and names it; any other stays apart. (2) The assertion mapped every copy to its source
+    unconditionally, so `rr_wide_node_text_same_some`, which reads a copy that really differs (the cross-file
+    `node_text` read of `rr_wide_node_text_cmp_same_ask`), looked equal to `same_some`. It is now a greatest
+    fixpoint: copies equal to their sources with only equal copies read as sources. dropping_unreached 8/8,
+    `every_switch_lowering_reads_is_classified`, the simplify test pass (cargo). Pending review 4.
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
@@ -257,7 +266,11 @@ into notes once the queue is done).
   tree, or is agreed with the farm's owner; my `CARGO_TARGET_DIR` change in test-remote is gone; the EMFILE has a
   cause (descriptors per test counted) rather than only a higher limit; the host's
   `~/Library/Caches/rerail-test-remote` is removed.
-- **Record**: —
+- **Record**: merged build-and-test-loop-time (32ddcae93). Its test-remote sends the job to farm-agent `exec`, which
+  builds in a per-checkout target under the farm root (farm-agent 301–307) and sets this machine's open-file limit
+  (308–311); my `CARGO_TARGET_DIR` and `ulimit` lines are gone. The E0463 cause (two writers in one dependency
+  directory) is in t37 §4 "What broke", by the farm's owner. Open: the host's `~/Library/Caches/rerail-test-remote`
+  to remove; the EMFILE's descriptors per test not counted.
 
 ### Q9. The failing and unverified tests
 
@@ -313,6 +326,11 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     descriptors). The farm already strips those variables (farm.py 968–970, installed 14:19). These are cargo's
     replays of compiles made before that, and they go when the crates compile again: to confirm on the next
     rebuild of those crates.
+  - After the merge (a31db6c55): the five code warnings are gone. The three jobserver lines still replay (those
+    crates did not recompile). The farm's new check also flags `native/lab/tape16/scripts/bench-pack.sh:48`, which
+    sets `RUSTFLAGS` and `CARGO_TARGET_DIR` on purpose to compare flags (lab code, not mine to change; for the
+    tape16 owner). Relax builds stop on macOS refusing to exec (AppleSystemPolicy "Security policy would not allow
+    process", the Relax binary and native build scripts, 15:29–15:42), intermittent: the user decides the route.
 
 ## Questions for the user
 
