@@ -324,7 +324,22 @@ pub struct Scoped {
     seeds: lower::Seeds,
 }
 
+impl Scoped {
+    /// The alias a program of text `src` lowered in this scope is kept under as its image.
+    pub fn program_image(&self, src: &str) -> crate::content_store::HashKey {
+        program_key(src, &self.keys)
+    }
+}
+
 impl Library {
+    /// The aliases the library's images are kept under: each module's, and the linked library's.
+    pub fn image_keys(&self) -> Vec<crate::content_store::HashKey> {
+        if self.modules.is_empty() {
+            return Vec::new();
+        }
+        self.keys.iter().copied().chain([linked_key(&self.keys)]).collect()
+    }
+
     /// The scope of a program whose library files are `files`, seeded.
     pub fn scoped(&self, files: &[PathBuf]) -> Scoped {
         let (scope, keys) = self.scope(files);

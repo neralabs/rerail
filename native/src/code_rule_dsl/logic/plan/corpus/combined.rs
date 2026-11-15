@@ -33,6 +33,10 @@ const PATH: &str = "rerail/combined";
 /// The relation holding the program's text's digest (sha256 hex).
 const PROGRAM: &str = "rr_combined_program";
 
+/// The relation holding the images the combine read or kept (decision 0246 §6): their aliases (sha256 hex). A run
+/// that names the entry names them too, so collection keeps them while it keeps the run.
+const IMAGE: &str = "rr_combined_image";
+
 /// The relation holding the read record: (path, sha256 hex, or "" for a miss).
 const READ_FILE: &str = "rr_combined_read_file";
 
@@ -94,13 +98,15 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 
 /// Keeps `program`, combined from texts `key` after reading library files `read`, in the store. A program that does
 /// not read back as written is not kept.
-pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], program: &Program) -> StoreResult<bool> {
+pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey]) -> StoreResult<bool> {
     // A program that does not read back the same from its text is not kept: the next run combines it again.
     let Some((digest, text_source)) = program_text::store(store, program)? else { return Ok(false) };
     let mut facts = Facts::new();
     facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&digest).into())].into()]);
     let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();
     facts.insert(READ_FILE.to_owned(), rows);
+    let images = images.iter().filter_map(|k| k.sha256_bytes()).map(|d| [Value::Str(hex(&d).into())].into()).collect();
+    facts.insert(IMAGE.to_owned(), images);
     let text = source_text(key);
     let hash = HashKey::sha256(text.as_bytes());
     let source = match store.held_source_by_hash(hash)? {
@@ -160,6 +166,7 @@ pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::syn
     if let Some(found) = program_source(cache, key, false).ok().flatten() {
         cache.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[found])));
         late.lock().expect("the late sources").push(found);
+        late.lock().expect("the late sources").extend(image_sources(cache, key).ok().unwrap_or_default());
         return;
     }
     // Not stored, and no write of the entry queued (`remember`'s): the writer would find nothing either.
@@ -174,6 +181,7 @@ pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::syn
         Box::new(move |store| {
             let found = program_source(store, &key, true)?;
             late.lock().expect("the late sources").extend(found);
+            late.lock().expect("the late sources").extend(image_sources(store, &key)?);
             Ok(())
         }),
     );
@@ -190,6 +198,25 @@ fn program_source(store: &ContentStore, key: &[u8; 32], held: bool) -> StoreResu
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
     let Some(digest) = unhex(digest) else { return Ok(None) };
     by_hash(HashKey::from_sha256_digest(digest))
+}
+
+/// The images texts `key`'s entry names (`IMAGE`) that the store still keeps.
+fn image_sources(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<crate::content_store::SourceId>> {
+    let Some(source) = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(Vec::new()) };
+    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
+    let Some(result) = memo.results.get(&plan().plans[0]) else { return Ok(Vec::new()) };
+    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(Vec::new()) };
+    let mut out = Vec::new();
+    for row in facts.get(IMAGE).into_iter().flatten() {
+        if let [Value::Str(digest)] = row.as_slice()
+            && let Some(digest) = unhex(digest)
+            && let Some(id) = store.source_by_alias(HashKey::from_sha256_digest(digest))?
+        {
+            out.push(id);
+        }
+    }
+    crate::code_rule_dsl::prof::count("corpus.combined_images_named", out.len());
+    Ok(out)
 }
 
 /// What the write of texts `key`'s program is queued under (`write_back`, decision 0102).

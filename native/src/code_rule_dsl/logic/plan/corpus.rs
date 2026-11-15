@@ -564,7 +564,7 @@ fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, re
         return Ok((program.clone(), key));
     }
     let program = match read {
-        Some(read) if programs.len() == 1 && extra.is_empty() => combine_read(programs, extra, Some(read))?,
+        Some(read) if programs.len() == 1 && extra.is_empty() => combine_read(programs, extra, Some(read), None)?,
         _ => combine_stored(programs, extra, &key, lists)?,
     };
     let mut kept = cache.lock().expect("the combined programs");
@@ -596,14 +596,15 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front:
         crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || "read from the store: the same texts, and every library file they read reads the same".into());
         return Ok(program);
     }
-    let (program, read) = crate::code_rule_dsl::logic::rr::recording(|| combine_texts(programs, extra));
+    let mut images = Vec::new();
+    let (program, read) = crate::code_rule_dsl::logic::rr::recording(|| combine_read(programs, extra, None, Some(&mut images)));
     let program = program?;
     {
         let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the combined program in the store, queued".into());
         // Checked, made into facts and written by the store's writer (decision 0102); one that does not read back as
         // written is not kept.
         let (key, files, kept) = (*key, read.clone(), program.clone());
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "the combined program", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &files, &kept).map(drop)));
+        store.write_back_syms(crate::content_store::write_back::Syms::None, "the combined program", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &files, &kept, &images).map(drop)));
     }
     crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || format!("combined; kept in the store behind the run, with the {} library files it read", read.len()));
     Ok(program)
@@ -861,12 +862,14 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
 }
 
 pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
-    combine_read(programs, extra, None)
+    combine_read(programs, extra, None, None)
 }
 
 /// `combine_texts`, the one text's program given already lowered (`read`): it is that program, not the text lowered
 /// again.
-fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -> Result<front::Program> {
+/// `images`: where the aliases of the module and program images the combine read or kept are added (decision 0246
+/// §6), for the combined program's entry to name.
+fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<front::Program> {
     use front::{Literal, Program};
     // A program reads only relations it declares: an error here, not the planner's panic later (`front::declared`).
     let parse = |text: &str| -> Result<Program> {
@@ -988,6 +991,10 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
         })
         .collect::<std::result::Result<Vec<_>, Error>>()?;
     drop(lowering);
+    if let (Some(out), Some(library), Some(_)) = (images_used, in_scope, images.as_ref()) {
+        out.extend(library.image_keys());
+        out.extend(programs.iter().zip(&scope_of).filter_map(|(text, k)| Some(scoped[(*k)?].program_image(text))));
+    }
     // `RERAIL_DUMP_PROGRAMS=<file>`: each program's prefix (`p<i>_`) and its first policy or line (a debugging aid).
     if let Ok(path) = std::env::var("RERAIL_DUMP_PROGRAMS") {
         let lines: String = programs
