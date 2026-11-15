@@ -4981,6 +4981,124 @@ impl<'a> Run<'a, '_> {
         Ok(Some(source.len()))
     }
 
+    /// `dfs_first` (`front::Native::DfsFirst`, `_memo` with roots) from the rows the engine holds, kept as a held
+    /// relation: no table read or written (decision 0104). `None`: an input is not held (`native_relation` then
+    /// makes the rows from tables).
+    fn native_dfs_first(&mut self, rel: &str, edge: &str, target: &str, roots: Option<&str>) -> Result<Option<usize>> {
+        use super::native::component;
+        if self.model.inputs.atoms.is_none() {
+            return Ok(None);
+        }
+        let held = |this: &Self, r: &str| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+            if this.native_rels.contains(r) {
+                component::derived(this.db, r)
+            } else if this.fields().is_input(r) {
+                crate::code_rule_dsl::facts::vtab::bound_source(this.db, r)
+            } else {
+                None
+            }
+        };
+        let (Some(e), Some(t)) = (held(self, edge), held(self, target)) else { return Ok(None) };
+        let roots = match roots {
+            Some(r) => match held(self, r) {
+                Some(s) => Some((r, s)),
+                None => return Ok(None),
+            },
+            None => None,
+        };
+        let edges: Vec<(i64, i64, i64)> = (0..e.len()).map(|r| (e.value(r, 0), e.value(r, 1), e.value(r, 2))).collect::<BTreeSet<_>>().into_iter().collect();
+        let targets: Vec<i64> = (0..t.len()).map(|r| t.value(r, 0)).collect::<BTreeSet<_>>().into_iter().collect();
+        // `dfs_first_memo`'s roots in increasing order of their second column (a number, or a symbol by its text),
+        // each root once, as `native_relation` orders them.
+        let roots: Option<Vec<i64>> = match roots {
+            Some((name, s)) => {
+                let symbol = self.fields().types(name)[1] == "sym";
+                let pairs: BTreeSet<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
+                let mut keyed: Vec<((i64, String), i64)> = Vec::with_capacity(pairs.len());
+                for (root, k) in pairs {
+                    let key = if symbol { (0, super::native::symbol_text(&self.db, k)?) } else { (k, String::new()) };
+                    keyed.push((key, root));
+                }
+                keyed.sort();
+                let mut seen = BTreeSet::new();
+                Some(keyed.into_iter().map(|(_, r)| r).filter(|r| seen.insert(*r)).collect())
+            }
+            None => None,
+        };
+        let rows = crate::code_rule_dsl::logic::native::dfs_first::dfs_first(&edges, &targets, roots.as_deref());
+        let values: Vec<Vec<i64>> = rows.into_iter().map(|(a, b, c)| vec![a, b, c]).collect();
+        component::retain(self.db, rel, values, vec![b'i'; self.fields().width(rel)])?;
+        self.native_rels.insert(rel.to_owned());
+        let source = component::derived(self.db, rel).expect("just retained");
+        let stats = source.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: source.len() as i64,
+            delta: source.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+        });
+        Ok(Some(source.len()))
+    }
+
+    /// `match_all` (`front::Native::MatchAll`) over the input the engine holds, kept as a held relation: no table read
+    /// or written (decision 0104). `None`: the input is not held, or the run has no atoms (`match_all` then reads
+    /// the table).
+    fn native_match_all(&mut self, rel: &str, input: &str, pattern: &str, groups: &[String], positions: bool) -> Result<Option<usize>> {
+        use super::native::component;
+        if self.model.inputs.atoms.is_none() {
+            return Ok(None);
+        }
+        let held = if self.native_rels.contains(input) {
+            component::derived(self.db, input)
+        } else if self.fields().is_input(input) {
+            crate::code_rule_dsl::facts::vtab::bound_source(self.db, input)
+        } else {
+            None
+        };
+        let Some(s) = held else { return Ok(None) };
+        let re = regex::Regex::new(pattern).map_err(|e| Error::Plan(format!("match_all: bad regex {pattern:?}: {e}")))?;
+        let values: BTreeSet<i64> = (0..s.len()).map(|r| s.value(r, 0)).collect();
+        let mut texts: Vec<(i64, String)> = Vec::with_capacity(values.len());
+        for v in values {
+            texts.push((v, super::native::symbol_text(&self.db, v)?));
+        }
+        use crate::code_rule_dsl::logic::native::match_all;
+        let captures: Vec<(i64, Vec<&str>, Option<[i64; 3]>)> = texts
+            .iter()
+            .flat_map(|(v, t)| {
+                let rows: Vec<(Vec<&str>, Option<[i64; 3]>)> = if positions {
+                    match_all::occurrences(&re, groups, t).into_iter().map(|(row, at)| (row, Some(at))).collect()
+                } else {
+                    match_all::rows(&re, groups, t).into_iter().map(|row| (row, None)).collect()
+                };
+                rows.into_iter().map(move |(row, at)| (*v, row, at))
+            })
+            .collect();
+        let mut ids = super::native::intern_batch(&self.db, captures.iter().flat_map(|(_, row, _)| row.iter().copied()))?.into_iter();
+        let rows: BTreeSet<Vec<i64>> = captures
+            .into_iter()
+            .map(|(v, row, at)| {
+                std::iter::once(v)
+                    .chain(row.iter().map(|_| ids.next().expect("one atom per capture")))
+                    .chain(at.into_iter().flatten())
+                    .collect()
+            })
+            .collect();
+        component::retain(self.db, rel, rows.into_iter().collect(), vec![b'i'; self.fields().width(rel)])?;
+        self.native_rels.insert(rel.to_owned());
+        let source = component::derived(self.db, rel).expect("just retained");
+        let stats = source.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: source.len() as i64,
+            delta: source.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+        });
+        Ok(Some(source.len()))
+    }
+
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
     /// held as the index, read in place by its readers, no row made. `None`: an input is not held natively (the rows
     /// are then made by `reach_rows`).
@@ -10214,6 +10332,29 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
             && let Some(NativeSpec::Components { edge, own }) = f0.native(rel).map(|n| &n.spec)
             && let Some(n) = run.native_components(rel, f0.rel_name(*edge), f0.rel_name(*own))?
+        {
+            super::profile::stratum(&skey, "native fact operator over held relations", String::new);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // `match_all` over the input the engine holds, likewise.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(NativeSpec::MatchAll { input, pattern, groups, positions }) = f0.native(rel).map(|n| &n.spec)
+            && let Some(n) = {
+                let groups: Vec<String> = groups.iter().map(|&g| f0.text(g).to_owned()).collect();
+                run.native_match_all(rel, f0.rel_name(*input), f0.text(*pattern), &groups, *positions)?
+            }
+        {
+            super::profile::stratum(&skey, "native fact operator over held relations", String::new);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // `dfs_first` (and `_memo`) from the rows the engine holds, likewise.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(NativeSpec::DfsFirst { edge, target, roots }) = f0.native(rel).map(|n| &n.spec)
+            && let Some(n) = run.native_dfs_first(rel, f0.rel_name(*edge), f0.rel_name(*target), roots.map(|r| f0.rel_name(r)))?
         {
             super::profile::stratum(&skey, "native fact operator over held relations", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
