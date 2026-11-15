@@ -1,5 +1,5 @@
 """The farm's live mirror (README.md, "Live mirror"): each host keeps the files its compiles read on
-its own disk, at the build machine's paths, and gets only what changed, over one connection.
+its own disk, under its farm root (farm-agent), and gets only what changed, over one connection.
 
 A daemon here (`serve`) holds a `farm-agent` per host over ssh. A compile that goes to a host asks
 the daemon (`compile`, over a Unix socket): the daemon compares the files the compile may read
@@ -67,6 +67,8 @@ class Host:
             self.over_tcp()
         self.lock = threading.Lock()
         self.sent = {}
+        # The crate directories of this machine's cargo registry that the host has the same (`same`).
+        self.same = set()
         self.waiting = {}
         self.next_id = 0
         self.closed = False
@@ -168,6 +170,19 @@ class Host:
     def run(self, job):
         return self.ask(dict(job, op="run"))
 
+    def has_same(self, directory):
+        """Whether the host's own copy of `directory` (a crate of the cargo registry, at the same path
+        there) is this machine's, file for file: then a compile reads it in place (farm-agent,
+        `same`). Asked once a directory: the registry's crates never change."""
+        if directory in self.same:
+            return True
+        files = {p: digest(p) for p in tree(directory)}
+        reply = self.ask({"op": "same", "files": files}, timeout=60)
+        if reply is not None and not reply.get("differ") and None not in files.values():
+            self.same.add(directory)
+            return True
+        return False
+
     def read(self):
         while True:
             try:
@@ -186,7 +201,7 @@ class Host:
                 with open(tmp, "wb") as f:
                     f.write(payload)
                 os.replace(tmp, path)
-            elif header["op"] in ("done", "had"):
+            elif header["op"] in ("done", "had", "same?"):
                 waiting = self.waiting.get(header["id"])
                 if waiting:
                     waiting["result"] = header
@@ -247,6 +262,21 @@ def checkout_files(checkout):
     return names
 
 
+digests = {}
+
+
+def digest(path):
+    import hashlib
+    try:
+        st = os.stat(path)
+        k = (st.st_mtime_ns, st.st_size)
+        if digests.get(path, (None,))[0] != k:
+            digests[path] = (k, hashlib.sha256(open(path, "rb").read()).hexdigest())
+        return digests[path][1]
+    except OSError:
+        return None
+
+
 def tree(root):
     return [os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs]
 
@@ -301,6 +331,9 @@ def work(job):
     """Sends what `job` may read, then runs it. What fails here never fails twice the same way: a
     host whose agent stopped or could not write is down for its back-off, and one whose run failed
     or read other files than this machine's is asked again what it holds (it may have been cleaned)."""
+    if job.get("version") != farm.VERSION:
+        stale_install[0] = True
+        return failed(f"the mirror daemon is farm version {farm.VERSION}, the caller {job.get('version')}: it restarts")
     name = job["host"]
     known = next((x for x in farm.hosts() if x["name"] == name), {"name": name})
     health = farm.health(known)
@@ -308,6 +341,9 @@ def work(job):
         return failed(f"{name} is not usable: {health.get('why')}")
     h = host(name)
     started = time.time()
+    for d in job["run"].get("inplace", []):
+        if not h.has_same(d):
+            return failed(f"{name}'s own copy of {d} is missing or not this machine's")
     try:
         files = needed(job, job["since"])
         if job.get("verify"):
@@ -332,18 +368,44 @@ def work(job):
         cwd = job["run"].get("cwd", "/")
         stale = [p for p, seen in result.get("read", {}).items()
                  if seen is None or list(stat(os.path.join(cwd, p)) or [])[:2] != seen]
-        if result["code"] != 0 or stale:
+        # 71: an output named the host's root (farm-agent): a fact of the crate, not of the copies.
+        if (result["code"] != 0 and result["code"] != 71) or stale:
             h.sent.clear()
     reply["times"] = {"sync": round(sent - started, 3), "compile": round(time.time() - sent, 3), "files": len(files),
                       "transport": h.transport}
     return reply
 
 
+# The installed farm's files, as they were when this daemon started: when `setup` installs another
+# version, the daemon stops taking compiles (the next one starts the new daemon) and ends once its
+# compiles end. A caller of another version is refused at once (`work`).
+INSTALLED = [os.path.join(farm.SHARE, f) for f in ("farm.py", "mirror.py", "farm-agent")]
+stale_install = [False]
+busy = [0]
+busy_lock = threading.Lock()
+
+
+def installed():
+    return [farm.stamp(p) for p in INSTALLED]
+
+
+def counted(conn):
+    with busy_lock:
+        busy[0] += 1
+    try:
+        handle(conn)
+    finally:
+        with busy_lock:
+            busy[0] -= 1
+
+
 def serve():
-    """The daemon: one per user; exits after IDLE_SECONDS without a compile."""
+    """The daemon: one per user; exits after IDLE_SECONDS without a compile, or once the installed
+    farm is another version (`INSTALLED`)."""
     lock = farm.Lock(SOCKET + ".lock", blocking=False)
     if not lock.held:
         return
+    started_as = installed()
     try:
         os.unlink(SOCKET)
     except OSError:
@@ -351,15 +413,23 @@ def serve():
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(SOCKET)
     server.listen(256)
-    server.settimeout(30)
-    while time.time() - last_job[0] < IDLE_SECONDS:
+    server.settimeout(2)
+    while time.time() - last_job[0] < IDLE_SECONDS and not stale_install[0] and installed() == started_as:
         try:
             conn, _ = server.accept()
         except socket.timeout:
             continue
-        threading.Thread(target=handle, args=(conn,), daemon=True).start()
+        threading.Thread(target=counted, args=(conn,), daemon=True).start()
     server.close()
     os.unlink(SOCKET)
+    lock.release()
+    # The compiles already taken finish (each is bounded by COMPILE_SECONDS); the next daemon may
+    # already serve new ones.
+    deadline = time.time() + farm.COMPILE_SECONDS
+    while busy[0] and time.time() < deadline:
+        time.sleep(0.2)
+    for name, h in list(hosts.items()):
+        h.stop()
 
 
 def connect():
@@ -384,7 +454,7 @@ def compile(job):
         return None
     f = s.makefile("rwb")
     try:
-        send(f, job)
+        send(f, dict(job, version=farm.VERSION))
         reply, _ = receive(f)
         return reply
     finally:
