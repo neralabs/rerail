@@ -93,9 +93,8 @@ pub fn simplify(prog: &mut Program) -> Report {
     report.constants += ground_rules(prog);
     report.constants += decided_fact_tests(prog);
     // `RERAIL_EXISTENCE_COUNTS=off`: existence counts stay counts, for comparison.
-    use rayon::prelude::*;
     if std::env::var("RERAIL_EXISTENCE_COUNTS").map_or(true, |v| v != "off") {
-        report.existence += prog.rules.par_iter_mut().map(existence_as_reads).sum::<usize>();
+        report.existence += prog.rules.iter_mut().map(existence_as_reads).sum::<usize>();
     }
     report.inlined = inline_node_tests(prog);
     // `RERAIL_INLINE_FILTERS=off`: filters are built, for comparison.
@@ -104,12 +103,12 @@ pub fn simplify(prog: &mut Program) -> Report {
     }
     // `RERAIL_JOIN_KEYS=off`: no concatenation runs backwards and no relation is keyed by a function, for comparison.
     let join_keys = std::env::var("RERAIL_JOIN_KEYS").map_or(true, |v| v != "off");
-    // Each rule rewritten alone, on the pool's threads: each pass reads only its rule (and the kind sets and
+    // Each rule rewritten alone: each pass reads only its rule (and the kind sets and
     // declarations, which none changes).
     let (kindsets, decls) = (&prog.kindsets, &prog.decls);
     let counts = prog
         .rules
-        .par_iter_mut()
+        .iter_mut()
         .map(|rule| {
             let inverses = if join_keys { concat_inverses(rule) } else { 0 };
             cat_variables(rule);
@@ -121,7 +120,7 @@ pub fn simplify(prog: &mut Program) -> Report {
             let implied = drop_implied(rule);
             [inverses, constants, within, keyed, singletons, kind_tests, implied]
         })
-        .reduce(|| [0; 7], |a, b| std::array::from_fn(|i| a[i] + b[i]));
+        .fold([0; 7], |a, b| std::array::from_fn(|i| a[i] + b[i]));
     let [inverses, constants, within, keyed, singletons, kind_tests, implied] = counts;
     report.inverses += inverses;
     report.constants += constants;
@@ -141,7 +140,7 @@ pub fn simplify(prog: &mut Program) -> Report {
     report.climbs = climbs_as_axes(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
-        report.implied += prog.rules.par_iter_mut().map(drop_implied).sum::<usize>();
+        report.implied += prog.rules.iter_mut().map(drop_implied).sum::<usize>();
         if super::profile::on() {
             similar_relations(prog, &mut report);
         }
@@ -1733,16 +1732,15 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         }
     }
     let types = |rel: &str| -> Vec<Name> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default() };
-    // Each relation's signatures are its own, made on the pool's threads; the numbering that follows them is in
+    // Each relation's signatures are its own; the numbering that follows them is in
     // `cands`' order, as one thread gives it, so the classes are the same whatever the threads.
-    use rayon::prelude::*;
     let mut class: Vec<usize> = Vec::with_capacity(cands.len());
     {
         // A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
         // below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
         // apart from its twin.
         let firsts: Vec<(Vec<Name>, usize, Vec<String>)> = cands
-            .par_iter()
+            .iter()
             .map(|&r| {
                 let rules = rules_of.get(r).map_or(0, |rs| {
                     rs.iter()
@@ -1789,7 +1787,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     };
     // A candidate's rules as `canonical` reads them: the program's own, or with every constant `?`.
     let bodies: Vec<Vec<std::borrow::Cow<'_, Rule>>> = cands
-        .par_iter()
+        .iter()
         .map(|&r| rules_of.get(r).into_iter().flatten().map(|x| if abstract_constants { std::borrow::Cow::Owned(abstracted(x)) } else { std::borrow::Cow::Borrowed(*x) }).collect())
         .collect();
     let mut classes = class.iter().collect::<BTreeSet<_>>().len();
@@ -1797,10 +1795,10 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     // relation a placeholder (its template), and the relations read kept in the order it labels them. A round's
     // signature of a rule is its template and those relations' labels, equal exactly when the texts `canonical`
     // gives under the round's labels are (a relation's name has no character of the text around it).
-    // The texts made on the pool's threads, numbered in `cands`' order, each relation read kept by its number.
+    // The texts made, numbered in `cands`' order, each relation read kept by its number.
     let names_made = CanonicalNames::new();
     let texts: Vec<Vec<(String, Vec<u32>)>> = bodies
-        .par_iter()
+        .iter()
         .map(|rules| {
             rules
                 .iter()
@@ -1845,7 +1843,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     let n_cands = cands.len() as u32;
     loop {
         let sigs: Vec<Vec<(usize, Vec<Label>)>> = shapes
-            .par_iter()
+            .iter()
             .map(|shaped| {
                 let mut sig: Vec<(usize, Vec<Label>)> = shaped
                     .iter()
