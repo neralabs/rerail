@@ -124,6 +124,8 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         // `asked_by`: the k-th rule of each request relation, one row for each relation whose readers it serves
         // (decision 0174).
         ("asked", &["p:sym", "req:sym", "k:int", "by:sym"]),
+        // `widened`: each widened copy and the relation it copies (decision 0174).
+        ("widened", &["p:sym", "copy:sym", "of:sym"]),
         // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
         ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
         // `tapes`: the columns declared `tape` (decision 0103 §3).
@@ -431,6 +433,9 @@ impl Writer<'_> {
                     self.row("asked", vec![s(req), n(k), s(b)]);
                 }
             }
+        }
+        for (copy, of) in &prog.widened {
+            self.row("widened", vec![s(copy), s(of)]);
         }
         for (span, text) in &prog.rx_spans {
             // Kinds and captures carry their names after a unit separator.
@@ -853,6 +858,9 @@ impl<'a, C: Cell> Reader<'a, C> {
                 rules.resize_with(k + 1, BTreeSet::new);
             }
             rules[k].insert(by);
+        }
+        for row in self.get("widened") {
+            prog.widened.insert(text(&row[0])?, text(&row[1])?);
         }
         Ok(prog)
     }

@@ -3992,6 +3992,7 @@ pub fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Pr
         answered.push(attr);
     }
     let wide = w.rules(&all);
+    let widened: Vec<(String, String)> = wide.copies.iter().map(|(rel, _)| (w.wide(rel), rel.clone())).collect();
     for (rel, cols) in &wide.copies {
         decision("on request: widened copies", || format!("{} of {rel}, columns {cols:?} of {}{}", w.wide(rel), w.arity(rel), if cols.len() < w.arity(rel) { " (the others are bound only by what the copy leaves out)" } else { "" }));
     }
@@ -4035,6 +4036,7 @@ pub fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Pr
         prog.decls.insert(req.into(), vec![(cols[0].0.clone(), "node".into())].into());
         prog.inputs.retain(|i| i != rel);
     }
+    prog.widened.extend(widened);
     prog.decls.extend(wide.decls.into_iter().map(|(r, cols)| (r.into(), cols.into_iter().map(|(n, t)| (n.into(), t.into())).collect())));
     for (rel, rows) in wide.facts {
         prog.facts.entry(rel).or_default().extend(rows.into_iter().map(List::from));
@@ -4077,6 +4079,7 @@ pub fn undo_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Progr
         prog.rules.retain(|r| !gone.contains(r.head.rel.as_str()) && !copy(r.head.rel.as_str()));
         prog.decls.retain(|k, _| !copy(k.as_str()));
         prog.asked_by.retain(|k, _| !gone.contains(k) && !copy(k));
+        prog.widened.retain(|k, _| !copy(k));
         // A token's answer read `node_text`, declared for it where the program had none: unread now, it goes.
         if round.iter().any(|a| matches!(a.answer, Answer::Children { .. }) && gone.contains(a.rel))
             && !prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == "node_text")

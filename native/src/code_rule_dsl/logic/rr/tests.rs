@@ -3455,26 +3455,6 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
             }
             let mut p = front::prune(p);
-            // A widened copy (`rr_wide_<attr>_<r>`, decision 0174) whose kept rules are `r`'s own: a reader that
-            // binds through `r` only in an unreached clause made the copy, which is `r` once that clause's requests
-            // are pruned. It is read as `r`.
-            let copies: Vec<(String, String)> = p.decls.keys().filter_map(|w| {
-                let r = ["rr_wide_token_", "rr_wide_node_text_"].iter().find_map(|pre| w.strip_prefix(pre))?;
-                let renamed = |x: &front::Rule| { let mut x = x.clone(); x.head.rel = r.into(); x };
-                let same = p.rules.iter().filter(|x| x.head.rel == w.as_str()).all(|x| p.rules.iter().any(|y| y.head.rel == r && y.head.args.len() == x.head.args.len() && format!("{y:?}") == format!("{:?}", renamed(x))));
-                same.then(|| (w.to_string(), r.to_owned()))
-            }).collect();
-            for (w, r) in &copies {
-                p.rules.retain(|x| x.head.rel != w.as_str());
-                p.decls.remove(w.as_str());
-                for x in &mut p.rules {
-                    for l in x.body.make_mut().iter_mut() {
-                        if let Literal::Atom(a) = l && a.rel == w.as_str() {
-                            a.rel = r.as_str().into();
-                        }
-                    }
-                }
-            }
             let kept = p.rules.clone();
             let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
             let mut renumber = |s: &str| -> String {

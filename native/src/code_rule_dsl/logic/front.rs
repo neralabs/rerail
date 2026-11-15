@@ -1167,10 +1167,51 @@ pub fn prune(mut prog: Program) -> Program {
     let mut keep = kept.into_iter();
     prog.rules.retain(|_| keep.next().unwrap());
     prog.asked_by.retain(|req, readers| !readers.is_empty() || prog.rules.iter().any(|r| r.head.rel == req.as_str()));
+    fold_widened(&mut prog);
     // Native metadata owns real dependency edges. A dead producer must not keep its demands
     // alive in the file-local split or cause them to be exported across every chunk.
     prog.natives.retain(|rel, _| need.contains(rel));
     prog
+}
+
+/// Each widened copy (`Program::widened`) whose kept rules are its relation's own, read as that relation: the request
+/// rules that read the attribute through the relation went with their readers, so the copy is the relation again,
+/// and computing it twice is waste. To a fixpoint, as a copy read through another copy is equal once that one is
+/// folded. A copy is left alone where its facts or columns differ, or a native or an output names it.
+fn fold_widened(prog: &mut Program) {
+    loop {
+        let same = |copy: &str, of: &str| {
+            let renamed = |r: &Rule| {
+                let mut r = r.clone();
+                r.head.rel = of.into();
+                format!("{r:?}")
+            };
+            let mine: BTreeSet<String> = prog.rules.iter().filter(|r| r.head.rel == copy).map(renamed).collect();
+            let theirs: BTreeSet<String> = prog.rules.iter().filter(|r| r.head.rel == of).map(|r| format!("{r:?}")).collect();
+            !mine.is_empty()
+                && mine == theirs
+                && prog.decls.get(copy).map(|c| c.len()) == prog.decls.get(of).map(|c| c.len())
+                && prog.facts.get(copy) == prog.facts.get(of)
+                && !prog.outputs.iter().any(|o| o == copy)
+                && !prog.natives.contains_key(copy)
+                && !prog.natives.values().any(|n| n.reads().contains(&copy))
+        };
+        let Some((copy, of)) = prog.widened.iter().find(|(c, o)| same(c, o)).map(|(c, o)| (c.clone(), o.clone())) else { return };
+        prog.rules.retain(|r| r.head.rel != copy.as_str());
+        for r in &mut prog.rules {
+            for l in r.body.make_mut().iter_mut() {
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                    && a.rel == copy.as_str()
+                {
+                    a.rel = of.as_str().into();
+                }
+            }
+        }
+        prog.decls.remove(copy.as_str());
+        prog.facts.remove(&copy);
+        prog.asked_by.remove(&copy);
+        prog.widened.remove(&copy);
+    }
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it)

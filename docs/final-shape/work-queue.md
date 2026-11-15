@@ -97,6 +97,21 @@ into notes once the queue is done).
     without a measured saving. Atoms not measured. Every program here found 0 rows on the sample, so the identical
     outputs are a weak check; base_tests (39), node_text (3), program_image (17), maintained (4) and file_local (2)
     pass.
+  - *Review 1* (independent reviewer, 6440af641) found, each to fix:
+    1. The session test passes on empty data: `node_text` read in the cross-file part is empty (`@rr_node_text_any`
+       1 → 0 rows; `passes` should hold `f`), with `RERAIL_TEXT_TESTS=row` too: a wrong result from before this
+       change. The stratum is never reached in a session; the asserts check that a test exists, not that it ran.
+    2. A 0117 session reaching a kept text-test stratum likely errors: its maintained form keeps `rel` and adds
+       `rel__ins` as natives, and `native_stratum_` refuses natives (plan.rs 6349), then 9765–9779 returns the error.
+    3. Whole-program maintenance (`RERAIL_MAINTAIN_WHOLE`, `maintained::run`) makes the form but leaves `rel` in the
+       part's natives, so the dispatch (plan.rs 10100) rebuilds it from the whole new `node_text`: every string
+       tested again each run (correct, but the "maintained exactly" claim is false).
+    4. Done-when unmet: atoms not measured, findings all empty, work not lower.
+    5. `RERAIL_TEXT_TESTS` is not in the prepared program's key (corpus.rs ~2617; `RERAIL_AST_PARTS`,
+       `RERAIL_NODE_SOURCES` share the gap).
+    6. A `TextTest` native does not survive print and parse (`native_definition` does not recognise its rule).
+    7. On a device binding the text tests now run on the host (the device form of 0174 for TextTest is bypassed),
+       which no guard records: "no host work on Metal".
 
 ### Q3. No duplicate widened copies; the dropping test strict again
 
@@ -104,7 +119,16 @@ into notes once the queue is done).
   `dropping_unreached_clauses_prunes_to_the_same_program` comparing programs as they are.
 - **Done when**: lowering whole then pruning yields no `rr_wide_*` relation whose rules are its relation's own; the
   test's widened-copy collapse (rr/tests.rs, f2653a913) is removed and the 8 dropping tests pass.
-- **Record**: —
+- **Record**: built, pending review. The copy that stayed is a copy of a request relation (eslint-yoda's
+  `rr_wide_node_text_rr_token_req`): `rr_token_req` has a rule that reads `node_text` for a reader that is never
+  reached, so its copy is made. Gated `prune` drops that rule with its reader, and the copy is left with
+  `rr_token_req`'s own rules. Only `prune` can see this, so lowering records each copy and its relation
+  (`Program::widened`, carried through the program's facts as `widened` rows, its image's about relations and
+  the plan-choice digest; `undo_on_request` clears it). `prune` then reads a copy left with its relation's own
+  rules as that relation, to a fixpoint (`front::fold_widened`). It leaves a copy alone where its facts or arity
+  differ, or where a native or an output names it. The test's collapse is gone. dropping_unreached (8),
+  lowering_is_idempotent (11), rdl_programs_translate, program_image (17), the on-request tests (node_text 2,
+  base 1, parse request, requested source, cone of requests) pass.
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
@@ -216,3 +240,14 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
    Measured on 47 data-layer programs, per row vs native costs the same (+0.6%). Options: (a) leave copies per row
    (as built); (b) teach the factorized store and the export cut to see through a row-filter native, so copies can
    be native too (more work, no measured gain at 50 files).
+2. **Q2/Q5: a node's text read in the cross-file part is empty (a wrong result).** A cross-file reader
+   (`passes(f) :- uses(_, f), node_text(f, t), …`, `uses` cross-file) asks for the text of another file's node.
+   `@rr_node_text_any` reads only batches still held, and each chunk's batch is dropped when the chunk is done, so
+   the answer is empty (0174 §6 lists it as open). In a session the unchanged files have no batch at all. Options:
+   (a) a request that would be derived in the cross-file part is widened to its file-local literals
+   (`rr_node_text_req(f) :- def(f, _)`): answered and kept per file, exported like any file-local relation; exact
+   in sessions, at the cost of more texts answered and interned (0144 §5's trade, measured before keeping);
+   (b) the cross-file part reads the asked documents back from the tape cache (exact rows, a tape read per asked
+   unchanged document, in sessions too); (c) keep every batch held to the end of the run (memory grows with the
+   corpus; does not cover sessions). Recommended: (a), the magic-sets widening 0174 already does, and no new
+   mechanism.
