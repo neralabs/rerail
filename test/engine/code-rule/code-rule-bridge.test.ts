@@ -892,6 +892,38 @@ describe("CodeRuleBridge", () => {
     expect(mostHoldingSlots(listings.asked.slice(before))).toBe(LISTINGS_AGAIN_AT_ONCE - 1);
   }, 30_000);
 
+  it("hands the slot of a slow listing asked again on once it has held it a second, and not before", async () => {
+    const { root, checkouts, sourceRoot } = await changedCheckouts(LISTINGS_AGAIN_AT_ONCE + 1);
+    const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), sourceRoot });
+    // The baseline walk's listing of each checkout runs past its time limit. The first listings asked again, one in each
+    // slot, wait until the end of the test, as Gits that take long do; the last waits for a slot. Only the test moves the
+    // faked timers the slots' waits run on, so a slow machine cannot move them past the second.
+    listings.late.push(...checkouts);
+    const slow = Array.from({ length: LISTINGS_AGAIN_AT_ONCE }, () => holdNextListingAgain());
+    const askedGit = (): number => listings.calls.filter(call => call.startsWith("again ")).length;
+    // Resolves at the next turn of the event loop, once what the timers just settled has run its callbacks.
+    const nextTurn = async (): Promise<void> => { await new Promise(resolve => setImmediate(resolve)); };
+    const asked: number[] = [];
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await Promise.all(slow.map(hold => hold.asked));
+      vi.advanceTimersByTime(LISTING_AGAIN_WAIT_MS - 1);
+      await nextTurn();
+      asked.push(askedGit());
+      vi.advanceTimersByTime(1);
+      await nextTurn();
+      asked.push(askedGit());
+    } finally {
+      vi.useRealTimers();
+    }
+    for (const hold of slow) hold.release();
+    await bridge.settleListingsAgain();
+    // A millisecond before the second, the last still waited for a slot; at the second it took one and asked Git.
+    expect(asked).toEqual([LISTINGS_AGAIN_AT_ONCE, LISTINGS_AGAIN_AT_ONCE + 1]);
+  });
+
   it("asks Git for the next checkout once a listing asked again has answered, while an audit holds the bridge's queue", async () => {
     const { root, checkouts, sourceRoot } = await changedCheckouts(LISTINGS_AGAIN_AT_ONCE + 1);
     const audited = Promise.withResolvers<void>();
