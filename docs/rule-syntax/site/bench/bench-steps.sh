@@ -6,16 +6,18 @@
 #   corpus0, pack-B, home-B, rules/<dir>, rs-now/lib (async_blocking renamed in the copy).
 # CPU = user + sys from /usr/bin/time -l; peak = footprint (RSS also shown: it counts the store's file map).
 set -u
-SP=${SP:-/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-Benchmarks-and-parity/9ce40b48-a2db-4358-adf2-9d3e897cd8b1/scratchpad}
-CLI=${CLI:-/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-Current-state-benchmarks/82265501-2f05-4a34-8cd0-9fa01fea2cf1/scratchpad/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
-RULES=$1; ENGINE=$2; shift 2; EXTRA=("RERAIL_SQL_STRICT=1" "$@"); R=$SP/run-steps
+SP=${SP:-${RERAIL_SHARED:-$HOME/orca/rerail-shared}/bench/step-vs-main}
+CLI=${CLI:-$SP/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
+RULES=$1; ENGINE=$2; shift 2; EXTRA=("RERAIL_SQL_STRICT=1" "$@"); R=${OUT:-$PWD/tmp/bench}/run-steps  # run outputs: the caller's ./tmp, never the shared inputs
 rm -rf "$R"; mkdir -p "$R"
+# Main's pack (edited by the "rule" step) and home run on copies, never on the shared inputs.
+cp -R $SP/pack-B $SP/home-B $R/
 cp -R $SP/corpus0 $R/corpus-dl; cp -R $SP/corpus0 $R/corpus-main
 (cd $R/corpus-main && git init -q && find . -name "*.py" -print0 | xargs -0 git add -- && git -c user.email=b@example.com -c user.name=bench commit -qm corpus)
 cp -R $SP/rules/$RULES $R/rules; cp -R $SP/rs-now/packs $R/packs
-PACK=$SP/pack-B; cp $PACK/rules/bandit-b101-assert-used.json $R/b101.json.orig
+PACK=$R/pack-B; cp $PACK/rules/bandit-b101-assert-used.json $R/b101.json.orig
 file=_internal/bootstrap_observation.py
-echo "$(ls $R/rules | wc -l | tr -d ' ') Datalog rules, main $(RERAIL_HOME=$SP/home-B RERAIL_AUTOSTART=0 node $CLI packs list | head -1 | sed 's/.*: //'); editing $file; engine $ENGINE"
+echo "$(ls $R/rules | wc -l | tr -d ' ') Datalog rules, main $(RERAIL_HOME=$R/home-B RERAIL_AUTOSTART=0 node $CLI packs list | head -1 | sed 's/.*: //'); editing $file; engine $ENGINE"
 
 edit() { # <step> <corpus>
   local t=$2/$file
@@ -41,7 +43,7 @@ for r in cold warm append body comment import rule; do
   env "${EXTRA[@]}" RERAIL_TAPE_CACHE=$R/store.sqlite RERAIL_RR_LIB=$SP/rs-now/lib nice -n 19 /usr/bin/time -l "$ENGINE" logic $R/rules $R/corpus-dl $R/dl-$r --chunk 1000000 > $R/dl-$r.log 2>&1
   rc=$?; "$ENGINE" csv $R/dl-$r > /dev/null 2>&1; f=$( [ -f $R/dl-$r/violation.csv ] && wc -l < $R/dl-$r/violation.csv | tr -d ' ' || echo '?')
   set -- $(measure $R/dl-$r.log); printf "%-8s %-8s %8s %8s %8s %8s %9s  %s\n" $r datalog $1 $2 $3 $4 $f "rc=$rc $(grep -o '[0-9]* components native' $R/dl-$r.log | head -1)"
-  RERAIL_HOME=$SP/home-B RERAIL_AUTOSTART=0 nice -n 19 /usr/bin/time -l node $CLI scan --repo $R/corpus-main --scope repository --pack python --json --no-send > $R/main-$r.json 2> $R/main-$r.log
+  RERAIL_HOME=$R/home-B RERAIL_AUTOSTART=0 nice -n 19 /usr/bin/time -l node $CLI scan --repo $R/corpus-main --scope repository --pack python --json --no-send > $R/main-$r.json 2> $R/main-$r.log
   rc=$?; f=$(python3 -I -c 'import json,sys; j=json.load(open(sys.argv[1])); print(len(j["violations"]))' $R/main-$r.json 2>/dev/null || echo '?')
   set -- $(measure $R/main-$r.log); printf "%-8s %-8s %8s %8s %8s %8s %9s  %s\n" $r main $1 $2 $3 $4 $f "rc=$rc"
 done

@@ -26,7 +26,10 @@ use super::{InRel, Key, Src, Step, is_dead};
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rerail_accel::{Batch, Kernel, Launch, Output};
 use rustc_hash::{FxHashMap as HashMap, FxHasher};
-use std::cell::{Cell, OnceCell};
+#[cfg(any(test, feature = "test-hooks"))]
+use std::cell::Cell;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::collections::BTreeSet;
 use std::hash::Hasher;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -54,13 +57,13 @@ impl Table {
 /// A count step's state in one join: the rows its walks read, and its counts per row once built.
 #[derive(Default)]
 pub(super) struct StepForm {
-    spent: Cell<u64>,
-    tried: Cell<bool>,
+    spent: AtomicU64,
+    tried: AtomicBool,
     /// Whether the relation's tables were looked at for one by this step's columns (once: another step's, or a
     /// wave's, is read as this step's own).
-    looked: Cell<bool>,
-    table: OnceCell<Arc<Table>>,
-    per_row: OnceCell<Vec<u32>>,
+    looked: AtomicBool,
+    table: OnceLock<Arc<Table>>,
+    per_row: OnceLock<Vec<u32>>,
 }
 
 /// The tables a run found worth building, by relation (its table's name) and columns: the next chunk builds them ahead,
@@ -90,9 +93,9 @@ thread_local! {
     pub(super) static AT_ONCE: Cell<bool> = const { Cell::new(false) };
 }
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn at_once() -> bool { false }
+pub(super) fn at_once() -> bool { false }
 #[cfg(any(test, feature = "test-hooks"))]
-fn at_once() -> bool { AT_ONCE.with(Cell::get) }
+pub(super) fn at_once() -> bool { AT_ONCE.with(Cell::get) }
 
 fn off_on() -> bool {
     std::env::var("RERAIL_COUNT_TABLE").is_ok_and(|v| v == "off")
@@ -229,10 +232,10 @@ pub(super) fn count(form: &StepForm, src: &Src, keys: &[(usize, Key)], tests: &[
     if let Some(t) = form.table.get() {
         return Some(t.count(key));
     }
-    if form.looked.get() {
+    if form.looked.load(Relaxed) {
         return None;
     }
-    form.looked.set(true);
+    form.looked.store(true, Relaxed);
     let (rel, cols) = cols_of(src, keys, tests)?;
     let t = rel.tables.lock().unwrap().get(&cols).cloned()?;
     let n = t.count(key);
@@ -243,22 +246,24 @@ pub(super) fn count(form: &StepForm, src: &Src, keys: &[(usize, Key)], tests: &[
 /// Notes that step `i` of `steps` walked `walked` rows for one probe, and builds its table once walking has cost as
 /// much as building it would (see the module's comment).
 pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
-    if form.tried.get() {
+    if form.tried.load(Relaxed) {
         return;
     }
     let Step::Scalar { src, keys, tests, kind: ScalarKind::Count, col: None, .. } = &steps[i] else { return };
     let Some((rel, cols)) = cols_of(src, keys, tests) else {
-        form.tried.set(true);
+        form.tried.store(true, Relaxed);
         return;
     };
-    let spent = form.spent.get() + walked + 1;
-    form.spent.set(spent);
+    let spent = form.spent.fetch_add(walked + 1, Relaxed) + walked + 1;
     let left = per_row_left(steps, i);
     let cost = rel.len() as u64 + left.as_ref().map_or(0, |(l, _)| l.len() as u64) + FLOOR;
     if spent < cost && !at_once() {
         return;
     }
-    form.tried.set(true);
+    // A morsel on another thread may pass the cost at the same time: one of them builds.
+    if form.tried.swap(true, Relaxed) {
+        return;
+    }
     crate::code_rule_dsl::logic::lanes::prof::count(if left.is_some() { "count per row" } else { "count table (histogram)" }, "rows walked by probes before the build paid", spent);
     if off_on() {
         return;

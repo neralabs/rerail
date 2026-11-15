@@ -6,8 +6,8 @@
 # Inputs (never clean them up): corpus0, corpus1, pack-B/home-B, pack-1/home-1, rules/B-now, rules/B-one, rs-now.
 # CPU = user + sys from /usr/bin/time -l; peak = footprint (RSS also shown: it counts the store's file map).
 set -u
-SP=${SP:-/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-Benchmarks-and-parity/9ce40b48-a2db-4358-adf2-9d3e897cd8b1/scratchpad}
-CLI=${CLI:-/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-Current-state-benchmarks/82265501-2f05-4a34-8cd0-9fa01fea2cf1/scratchpad/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
+SP=${SP:-${RERAIL_SHARED:-$HOME/orca/rerail-shared}/bench/step-vs-main}
+CLI=${CLI:-$SP/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
 SHAPE=$1; ENGINE=$2; shift 2; EXTRA=("RERAIL_SQL_STRICT=1" "$@")
 case $SHAPE in
   full)     CORPUS=$SP/corpus0; RULES=$SP/rules/B-now; HOME_=$SP/home-B; PACK=$SP/pack-B; STEPS="cold warm append body comment import rule" ;;
@@ -15,8 +15,12 @@ case $SHAPE in
   one-rule) CORPUS=$SP/corpus0; RULES=$SP/rules/B-one; HOME_=$SP/home-1; PACK=$SP/pack-1; STEPS="cold warm append rule" ;;
   *) echo "shape: full, one-file or one-rule"; exit 2 ;;
 esac
-R=$SP/run-$SHAPE
+R=${OUT:-$PWD/tmp/bench}/run-$SHAPE  # run outputs: the caller's ./tmp, never the shared inputs
 mkdir -p "$R"
+# The "rule" step edits main's copy of B101, and main's CLI writes its home: both run on copies here, never on
+# the shared inputs (a home's pack link is relative: ../../../../pack-X, so the two stay side by side).
+rm -rf "$R/$(basename $PACK)" "$R/$(basename $HOME_)"; cp -R "$PACK" "$HOME_" "$R/"
+PACK=$R/$(basename $PACK); HOME_=$R/$(basename $HOME_)
 cp -R $CORPUS $R/corpus-dl; cp -R $CORPUS $R/corpus-main
 (cd $R/corpus-main && git init -q && find . -name "*.py" -print0 | xargs -0 git add -- && git -c user.email=b@example.com -c user.name=bench commit -qm corpus)
 cp -R $RULES $R/rules; cp -R $SP/rs-now/packs $R/packs

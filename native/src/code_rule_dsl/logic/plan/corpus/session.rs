@@ -103,6 +103,12 @@ thread_local! {
     static FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// A job's runs are its caller's session's, and full when its caller's are (`run_state`, decision 0192).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["BOUND"], &BOUND);
+    c.copy(&["FULL"], &FULL);
+}
+
 /// Opens a session in `dir` and binds it to this thread's runs: they are its runs until the guard is dropped.
 pub fn start(dir: &Path) -> std::result::Result<Bound, String> {
     Handle::open(dir).map(|handle| handle.bind())

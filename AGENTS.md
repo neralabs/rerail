@@ -24,6 +24,10 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
+`scripts/dev/clean-target` (`--dry-run` first) removes from a worktree's `target/` what its builds
+can no longer use: another rustc's artifacts, builds superseded for 7 days, debug objects no binary
+names, stale incremental state. Never run a full `cargo clean`.
+
 ### Test tiers (cargo-nextest)
 
 `.config/nextest.toml` splits the library's tests in two tiers (docs/final-shape/notes/t37, §2).

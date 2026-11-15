@@ -1132,9 +1132,18 @@ impl Put {
     /// This frame encoded, its rows dropped.
     pub fn encoded(self) -> Encoded {
         let Put { rel, part, digest, reads, rows } = self;
-        let bytes = super::cross_rows::encode(rows.types.len(), &rows.rows);
+        let bytes = Self::encode_rows(&rows);
         let Rows { types, n, rows } = rows;
         drop(rows);
+        Self::encoded_as(rel, part, digest, reads, types, n, bytes)
+    }
+    /// Rows' bytes as `encoded` encodes them, for a frame made from them later (`encoded_as`): encoded where the
+    /// rows are (a job of their own), and named where the frame's digest and reads are known.
+    pub fn encode_rows(rows: &Rows) -> Vec<u8> {
+        super::cross_rows::encode(rows.types.len(), &rows.rows)
+    }
+    /// A frame of rows already encoded (`encode_rows`).
+    pub fn encoded_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: Vec<u8>) -> Encoded {
         Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Arc::new(bytes), store: None } }) }
     }
 }
