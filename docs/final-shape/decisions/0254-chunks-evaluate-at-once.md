@@ -85,6 +85,14 @@ other work):
 | one at a time (`RERAIL_CHUNKS_AT_ONCE=1`) | 113.8 s | 234.1 s | 150.8 s | 2,989 B | 2.78 GB | 29,747 |
 | 8 at once | 50.3 s | 242.0 s | 67.0 s | 2,645 B | 2.91 GB | 29,747 (the same set) |
 
+A release build on the same M3 Max (all 16 cores; load average 9–13 from other work), with the file digests read on the
+pool and a load's path resolved once (c437302c7):
+
+| | wall | user | sys | instructions | peak | violations |
+|---|---|---|---|---|---|---|
+| 8 at once | 44.1 s | 202.8 s | 71.0 s | 2,222 B | 2.66 GB | 29,747 (the same set) |
+| 15 at once (`RERAIL_CHUNKS_AT_ONCE=15`) | 38.1 s | 210.9 s | 61.9 s | 2,188 B | 2.77 GB | 29,747 (the same set) |
+
 System time halves: the pool's threads evaluate chunks instead of waking for a component's small jobs and
 yielding.
 
