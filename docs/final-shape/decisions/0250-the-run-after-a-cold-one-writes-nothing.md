@@ -50,6 +50,22 @@ Collection works on its own thread, beside the run's end, and maybe in another p
 run's roots to settle. So it keeps what no stored root holds while it is young: a run lasts minutes, the grace is an
 hour. Older unheld answers go as before.
 
+### News that forgets nothing
+
+A change under a watched root that touches nothing kept (another session's `.git/index.lock`, a log written beside
+the corpus) still moved the stored cursor: a warm run wrote it. Now it is as no news. The stored cursor stays where
+it is, and memory's moves on for the process's later asks. The next process replays from the stored cursor, a
+superset of what changed, so no change is missed. The user approved this (2026-11-15).
+
+Two bounds store the cursor again, as the existing aged-cursor write (`WARM_WRITES_ALLOWED`, unchanged):
+
+- the cursor is `CURSOR_AGE` events behind (as before, for no news);
+- the replay names `CURSOR_PATHS` (1024) paths. It names them all again each run, and a churning root once grew
+  each run's matching from 8 to 53 G instructions when the cursor stayed unbounded.
+
+This holds only where the root's part of the store is read into memory, as `watch` reads it first: only there does
+memory holding nothing named mean the store holds nothing either.
+
 ## What this gives up
 
 - **Unheld answers stay up to an hour longer.** They cost only space.
@@ -67,6 +83,8 @@ hour. Older unheld answers go as before.
   process.
 - `rerails_own_files_watch_nothing` (store): listing, stat, digest and canonical of own files ask no root.
 - `collection_drops_what_no_run_asks_any_more` (store): a young unheld answer and canonical form are kept.
+- `news_that_forgets_nothing_keeps_the_stored_cursor` (store): unrelated news writes nothing; `CURSOR_PATHS`
+  paths, or an answer forgotten, store the cursor.
 
 Measured on dl10 (`layer-violations.rr`, fresh store): the second run went from exit 3 (5 to 26 faults) to exit 0
 with no faults, 0.57 s wall. The third run is clean too, and the findings are unchanged.

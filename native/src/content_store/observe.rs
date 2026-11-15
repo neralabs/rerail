@@ -917,10 +917,10 @@ impl Observer {
             let keys: Vec<PathBuf> = map.range::<Path, _>((std::ops::Bound::Included(g), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(g)).map(|(k, _)| k.clone()).collect();
             keys.iter().filter(|k| map.remove(k.as_path()).is_some()).count()
         }
-        let mut forgotten = 0u64;
+        let (mut forgotten, mut canon_forgotten) = (0u64, 0usize);
         for g in &gone {
             forgotten += under(&mut self.entries, g) as u64;
-            under(&mut self.canon, g);
+            canon_forgotten += under(&mut self.canon, g);
         }
         for l in &listings {
             forgotten += u64::from(self.entries.remove(l.as_path()).is_some());
@@ -941,11 +941,17 @@ impl Observer {
             // under keeps its cursor moving: a replay from a kept cursor names every path changed since, and matching
             // them against every answer kept grew each run (971 paths named in the work tree's root, 8 -> 53 G
             // instructions a warm batch, when the cursor stayed whenever nothing was forgotten).
-            if paths.is_empty() {
+            // News that forgets nothing is as none (another program's files under the root, a lock file): what is
+            // kept holds as of the stored cursor still, and a warm run wrote the moved cursor for it. Only where the
+            // root's part of the store is read (`watch` reads it first): memory holding nothing named then means the
+            // store holds nothing either. Until the replay names `CURSOR_PATHS` paths: it names them all again each run.
+            // No reader: the store held nothing as the observer opened, and what it wrote since is memory's too.
+            let loaded = k.reader.is_none() || k.loaded.iter().any(|u| root.starts_with(u));
+            if forgotten == 0 && canon_forgotten == 0 && (paths.is_empty() || loaded) {
                 // Unless the store's cursor has aged (`CURSOR_AGE`): only an FSEvents id has an age.
                 let Some(key) = volume.map(|v| cursor_key(root, v)) else { return };
                 let aged = k.stored.get(&key).and_then(|s| s.parse::<u64>().ok()).zip(cursor.parse::<u64>().ok()).is_some_and(|(s, now)| now.saturating_sub(s) >= CURSOR_AGE);
-                if !aged {
+                if !aged && paths.len() < CURSOR_PATHS {
                     return;
                 }
                 k.stored.insert(key.clone(), cursor.to_owned());
@@ -1289,6 +1295,11 @@ fn text_cursor(v: &rusqlite::types::Value) -> Option<String> {
 /// stored again (a timestamp, `profile::WARM_WRITES_ALLOWED`), at most once in this many events. A replay from a
 /// cursor 2 million events old cost nothing measurable, from one 7 million old 0.6 to 2 s for its first ask.
 const CURSOR_AGE: u64 = 1 << 20;
+
+/// How many paths the journal may name under a root, none of them an answer kept, while its stored cursor stays: a
+/// replay from the stored cursor names them all again each run, so past this many it is stored again (a timestamp,
+/// `profile::WARM_WRITES_ALLOWED`).
+const CURSOR_PATHS: usize = 1024;
 
 /// How long collection keeps an answer or canonical form no stored root holds (`collect`): longer than a run lasts, so
 /// the run that recorded it has settled its roots first.
@@ -2147,6 +2158,40 @@ mod tests {
         o.forget(root, &[], Some(volume), &(1000 + CURSOR_AGE + 5).to_string());
         o.written();
         assert_eq!(stored(), Some((1000 + CURSOR_AGE).to_string()), "stored again once, then aged from there");
+        drop(o);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// News that forgets nothing (another program's file under a watched root) keeps the stored cursor too, until it
+    /// ages or its replay names `CURSOR_PATHS` paths: a warm run wrote the moved cursor whenever anything changed
+    /// under a root, though nothing it kept had (`RERAIL_WARM`). News that forgets an answer stores it at once.
+    #[test]
+    fn news_that_forgets_nothing_keeps_the_stored_cursor() {
+        let base = std::env::temp_dir().join(format!("rerail-unrelated-news-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let store = base.join("store.files");
+        let (root, volume) = (Path::new("/r"), [7u8; 16]);
+        let key = cursor_key(root, volume);
+        let stored = || -> Option<String> {
+            let db = Connection::open(&store).ok()?;
+            db.query_row("SELECT value FROM observer_meta WHERE key = ?1", [&key], |r| r.get::<_, rusqlite::types::Value>(0)).ok().as_ref().and_then(text_cursor)
+        };
+        let mut o = Observer::open(Some(&store));
+        o.db.as_mut().unwrap().stored.insert(key.clone(), "1000".into());
+        // The root's part of the store read first, as `watch` reads it.
+        o.ensure(root);
+        o.entries.insert(PathBuf::from("/r/kept.py"), Entry { kind: Kind::File, stat: Stat::default(), digest: [0; 32], listing: None, recorded_ns: 0 });
+        o.forget(root, &[PathBuf::from("/r/other/x.lock")], Some(volume), "1010");
+        o.written();
+        assert_eq!(stored(), None, "nothing forgotten: nothing written");
+        let many: Vec<PathBuf> = (0..CURSOR_PATHS).map(|i| PathBuf::from(format!("/r/other/{i}"))).collect();
+        o.forget(root, &many, Some(volume), "1020");
+        o.written();
+        assert_eq!(stored(), Some("1020".to_owned()), "a replay of that many paths: stored again");
+        o.forget(root, &[PathBuf::from("/r/kept.py")], Some(volume), "1030");
+        o.written();
+        assert_eq!(stored(), Some("1030".to_owned()), "an answer forgotten: stored with the delete");
         drop(o);
         let _ = std::fs::remove_dir_all(&base);
     }
