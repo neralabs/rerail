@@ -171,7 +171,7 @@ describe("GitReads", () => {
     await expect(reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, signal }))).resolves.toEqual(new Map());
     await expect(new GitReads().run(signal => gitHead(root, { signal }))).resolves.toMatch(/^[0-9a-f]{40}/u);
     await writeFile(join(root, "b.py"), "untracked\n");
-    // A stopped listing names no file changed, and says it cannot tell rather than none.
+    // A stopped listing names no file changed, and answers that it cannot tell rather than none.
     await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toBeUndefined();
     await expect(new GitReads().run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual(["b.py"]);
   });
@@ -253,7 +253,7 @@ describe("GitReads", () => {
 });
 
 describe("gitModifiedOrUntrackedListing", () => {
-  it("says that a listing Git failed failed, where gitModifiedOrUntrackedPaths answers none", async () => {
+  it("answers failed for a listing Git failed, where gitModifiedOrUntrackedPaths answers none", async () => {
     const root = await repository({ "a.py": "1\n" });
     await writeFile(join(root, "b.py"), "untracked\n");
     await expect(gitModifiedOrUntrackedListing(root)).resolves.toEqual({ ended: "printed", paths: ["b.py"] });

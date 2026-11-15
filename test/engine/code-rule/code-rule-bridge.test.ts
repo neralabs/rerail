@@ -655,7 +655,7 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
-  it("reports a walk whose Git did not list the files changed before the session in time, and lists them again off the walks' path", async () => {
+  it("puts in checkpoint's answer once a checkout whose Git did not list the files changed before the session in time, and lists them again off the walks' path", async () => {
     const root = await workspace();
     const dirty = join(root, "src", "dirty.py");
     await writeFile(dirty, "committed\n");
@@ -706,7 +706,7 @@ describe("CodeRuleBridge", () => {
     ]);
     asked.release();
     await bridge.settleListingsAgain();
-    // The second late listing is reported once, and is the last.
+    // The second late listing enters checkpoint's answer once, and is the last.
     expect((await bridge.checkpoint("turn")).failures).toEqual([expect.objectContaining({
       code: "source-incomplete",
       message: ".: Git did not list the checkout's changed files in time again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole",
@@ -715,7 +715,7 @@ describe("CodeRuleBridge", () => {
     expect(listings.calls).toEqual([`walk ${root}`, `again ${root}`]);
   });
 
-  it("reports a checkout whose listing asked again failed, whose files changed before the session keep no first sight", async () => {
+  it("puts a checkout whose listing asked again failed in checkpoint's answer once, and its files changed before the session keep no first sight", async () => {
     const root = await workspace();
     const dirty = join(root, "src", "dirty.py");
     await writeFile(dirty, "committed\n");
@@ -727,23 +727,23 @@ describe("CodeRuleBridge", () => {
     // The baseline walk's listing runs past its time limit; the one asked again fails, as a Git that exits with an error does.
     listings.late.push(root);
     asyncGitCalls.failing = "--modified";
-    const said: string[] = [];
+    const answered: string[] = [];
     try {
       await bridge.openWorkspace("session-1");
-      said.push(...(await bridge.checkpoint("turn")).failures.map(failure => failure.message));
+      answered.push(...(await bridge.checkpoint("turn")).failures.map(failure => failure.message));
       await bridge.settleListingsAgain();
     } finally {
       asyncGitCalls.failing = undefined;
     }
-    said.push(...(await bridge.checkpoint("turn")).failures.map(failure => failure.message));
-    // Said once: at the first boundary after it, or there beside the late listing when it failed first.
-    expect(said.flatMap(message => message.split("; ")).filter(message => message.includes("asked again"))).toEqual([
+    answered.push(...(await bridge.checkpoint("turn")).failures.map(failure => failure.message));
+    // In one answer: the first boundary's after it, or that one beside the late listing when it failed first.
+    expect(answered.flatMap(message => message.split("; ")).filter(message => message.includes("asked again"))).toEqual([
       ".: Git could not list the checkout's changed files when asked again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole",
     ]);
     expect((await bridge.checkpoint("turn")).failures).toEqual([]);
   });
 
-  it("asks Git again at the next late listing of a checkout whose listing asked again threw, and reports the throw once", async () => {
+  it("asks Git again at the next late listing of a checkout whose listing asked again threw, and puts the throw in checkpoint's answer once", async () => {
     const root = await workspace();
     const dirty = join(root, "src", "dirty.py");
     const draft = join(root, "deep", "draft.py");
@@ -781,7 +781,7 @@ describe("CodeRuleBridge", () => {
     })]);
   });
 
-  it("says both that a checkout's listing asked again failed and that a later walk's listing ran late, with no boundary between", async () => {
+  it("puts both in checkpoint's answer: a checkout's listing asked again failed, and a later walk's listing ran late, with no boundary between", async () => {
     const root = await workspace();
     const dirty = join(root, "src", "dirty.py");
     const draft = join(root, "deep", "draft.py");
@@ -807,7 +807,7 @@ describe("CodeRuleBridge", () => {
       asyncGitCalls.failing = undefined;
     }
     secondWalk.release();
-    // The first boundary says what the failure cost the files changed before the session, besides the late listings.
+    // The first boundary's answer holds what the failure cost the files changed before the session, besides the late listings.
     expect((await bridge.checkpoint("turn")).failures.map(failure => failure.message)).toEqual([
       ".: Git did not list the checkout's changed files in time; .: Git could not list the checkout's changed files when asked again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole",
     ]);
@@ -1778,7 +1778,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
   });
 
-  it("reports a worktree whose Git did not list the files changed before the session in time, and lists them again off the walks' path", async () => {
+  it("puts in checkpoint's answer a worktree whose Git did not list the files changed before the session in time, and lists them again off the walks' path", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(root, "wt"));
     const path = join(worktree, "src", "a.py");

@@ -450,8 +450,9 @@ interface SourceDiscovery {
   /** Subtrees whose first successful observation must still be a baseline. */
   baselineRoots: Set<string>;
   /**
-   * What the next boundary says once (`newlyLate`) of each checkout whose Git did not list its changed files in time:
-   * each text once, so a later late walk of a checkout does not hide that its listing asked again failed or ran late.
+   * The texts the next boundary puts once in `checkpoint`'s answer (`newlyLate`), which the daemon does not read, of
+   * each checkout whose Git did not list its changed files in time: each text once, so a later late walk of a checkout
+   * does not hide that its listing asked again failed or ran late.
    */
   readonly late: Set<string>;
   /**
@@ -654,15 +655,15 @@ function newlyUnread(discovery: SourceDiscovery, unread: SourceDiscovery["unread
   }
   return errors;
 }
-/** What the boundary says of the checkouts in `SourceDiscovery.late`, each said once. */
+/** The texts of `SourceDiscovery.late` for the boundary's `checkpoint` answer, each put there once. */
 function newlyLate(discovery: SourceDiscovery): string[] {
   const errors = [...discovery.late];
   discovery.late.clear();
   return errors;
 }
 /**
- * What a boundary says first, and after the listing asked again, of a checkout whose Git did not list its changed files in
- * time; and after a listing asked again that failed.
+ * What a boundary's `checkpoint` answer holds of a checkout whose Git did not list its changed files in time, first and
+ * after the listing asked again; and after a listing asked again that failed. The daemon does not read that answer.
  */
 const LATE_LISTING = "Git did not list the checkout's changed files in time";
 const KEPT_NO_FIRST_SIGHT = "a shell edit to a file changed there before the session is checked against Git's text of it, or whole";
@@ -710,8 +711,8 @@ function sourcesAt(scan: SourceScan, paths: readonly string[]): Map<string, Sour
 }
 /**
  * What the last walks of the session folder and of the other worktrees could not check, with each unlisted file too large
- * to read and each checkout Git did not list in time that this session has not yet reported; else whether the session
- * folder's walk is still to finish.
+ * to read that this session has not yet reported at its stamp, and each text of `SourceDiscovery.late` (`newlyLate`);
+ * else whether the session folder's walk is still to finish.
  */
 function discoveryGap(discovery: SourceDiscovery): string | undefined {
   const errors = [discovery.error, discovery.worktrees.error].filter(error => error !== undefined);
@@ -1748,9 +1749,10 @@ export class CodeRuleBridge {
    * checked at the boundary each reaches. Each checkout's listing asks Git once it holds one of `LISTINGS_AGAIN_AT_ONCE`
    * slots, in the order asked, and hands its slot on once Git has answered or has run `LISTING_AGAIN_WAIT_MS`: the load
    * that made them late meets no more than that many more Gits at once from this session while each answers in time,
-   * and a slow one keeps the rest waiting no longer than that. The next boundary reports each checkout (`newlyLate`).
-   * `late` holds the sources the walk saw first in each, whose first-sight text it could not keep; a listing asked again
-   * that has not answered yet, running or waiting its turn, takes them on.
+   * and a slow one keeps the rest waiting no longer than that. Each checkout's text goes once into the next boundary's
+   * `checkpoint` answer (`newlyLate`), which the daemon does not read. `late` holds the sources the walk saw first in
+   * each, whose first-sight text it could not keep; a listing asked again that has not answered yet, running or waiting
+   * its turn, takes them on.
    */
   #listLateAgain(discovery: SourceDiscovery, late: SourceScan["lateListings"]): void {
     for (const [checkout, seen] of late) {
@@ -1802,8 +1804,9 @@ export class CodeRuleBridge {
   /**
    * Keeps the first-sight text of each of `seen` that `listing`, of `checkout` asked again, lists and that is still as
    * the late walk saw it and as the session last observed it (`#keepFirstSeenTexts`). A second late listing is the last,
-   * as is one that fails or throws: it is reported once, and the checkout's files changed before the session keep no
-   * first-sight text. Either way the checkout is no longer waited for, so its next late listing is asked again.
+   * as is one that fails or throws: its text goes once into the next `checkpoint` answer, which the daemon does not
+   * read, and the checkout's files changed before the session keep no first-sight text. Either way the checkout is no
+   * longer waited for, so its next late listing is asked again.
    */
   async #takeListedAgain(discovery: SourceDiscovery, checkout: string, seen: ReadonlyMap<string, Source>, listing: ChangedPathsListing): Promise<void> {
     discovery.askingAgain.delete(checkout);
@@ -2422,9 +2425,9 @@ export class CodeRuleBridge {
   /**
    * The sources `walk` saw first that their checkout's Git lists as modified or untracked. A checkout whose Git ran past
    * its time limit lists none: the walk goes on, and puts what it saw first there in `scan.lateListings`, for a listing
-   * asked again once the walk is applied (`#listLateAgain`). Had the walk taken it as listing none and said nothing, each
-   * such file would be measured whole at the session's next shell write to it; had it waited for a second listing, or
-   * failed, what it found would be checked at a later boundary.
+   * asked again once the walk is applied (`#listLateAgain`). Had the walk taken it as listing none, each such file
+   * would be measured whole at the session's next shell write to it; had it waited for a second listing, or failed,
+   * what it found would be checked at a later boundary.
    */
   async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<string[]> {
     const firstSeen = [...scan.sources.keys()].filter(path => this.#firstSeen(discovery, walk, path));
