@@ -4528,6 +4528,12 @@ fn markdown_inline_tapes_from_the_lean_parser_are_tree_sitters() {
         "<a href=\"x.y\" b=c.d> </a> <br/> <x@y.z> <http://a.b>",
         "&amp; &#12; &#x1F; \\* a\\\nb  \nc",
         "[a *b] c* and *a [b* c]",
+        // Emphasis after an image, where its opener needs no last token: kept.
+        "![a](b)\n*c*",
+        // Eight images: tree-sitter's stack keeps each reading.
+        "![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)",
+        // A link's `_` lexed for the text alone (no emphasis open): an opener, hidden.
+        "[^_]",
     ];
     let grammar = Grammar::new(GrammarDialect::MarkdownInline).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -4546,8 +4552,21 @@ fn markdown_inline_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Refused: an empty text; an HTML comment (not read yet); an emphasis delimiter tree-sitter may
     // lex again after a reduction (`x __b c __d()`: its emphasis closes at `__d`); two trees of one
-    // score (`![c] ![d][e]`: an image and a shortcut link, or one full-reference image).
-    for refused in ["", "<!-- c -->", "x __b c __d()", "![c] ![d][e]"] {
+    // score (`![c] ![d][e]`: an image and a shortcut link, or one full-reference image); an opener
+    // after an image that needs the last token's white space or punctuation (tree-sitter's stack
+    // holds both of the image's readings and lexes again across them: `*(c.)*` is then text);
+    // nine images (past `MAX_LINK_COUNT`, tree-sitter reads the first as `!` and a link); a link's
+    // delimiter whose token depends on the versions' order (`_[^_]`: tree-sitter stores the `_`).
+    for refused in [
+        "",
+        "<!-- c -->",
+        "x __b c __d()",
+        "![c] ![d][e]",
+        "![a](b)\n*(c.)*",
+        "![a]) .*/ b*",
+        "![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)",
+        "_[^_]",
+    ] {
         assert!(markdown_inline_lean::encode(&grammar, refused, &|| false).is_err(), "accepted {refused:?}");
     }
 }
