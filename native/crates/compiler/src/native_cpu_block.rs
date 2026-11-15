@@ -4076,7 +4076,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     heads.push((head, Step::Token));
 
     f.switch_to_block(head);
-    let h = f.block_params(head).to_vec();
+    let mut h = f.block_params(head).to_vec();
     // Waiting: the state as the head has it, for the next part.
     if let Some(wait) = wait {
         f.switch_to_block(wait);
@@ -4096,34 +4096,30 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // Whether a refill reads the block after a spent one (`REREAD_FLAG`): with the lean
     // lexer's starts, the marks folded, in one part.
     let mut skips = false;
+    // The inner loop's header (`from_word`), where the loop has one.
+    let mut inner: Option<cranelift_codegen::ir::Block> = None;
     match walked {
         Some(o) => {
             // The next start, the first of the block's left (`cand`); none left, the cursor's
             // block loaded (`refill`): its starts from the cursor, its runs.
-            let cand = h[STATE_WORDS];
             let refill_limit = if rd.bytewise(o) && outs.iter().all(|&k| rd.bytewise(k)) { None } else { limit };
             folded = !lift.is_empty() && refill_limit.is_none();
             skips = folded && lean.is_some();
-            let (from_cand, refill, from_word) = (f.create_block(), f.create_block(), f.create_block());
-            f.append_block_param(from_word, types::I64);
-            f.append_block_param(from_word, types::I64);
-            for _ in 0..runs.len() {
+            // Two loops, as the lean lexer's: over blocks (`head`, its refill), and over a
+            // block's starts (`from_word`). The block's words are the refill's, which the
+            // inner loop's every token reads and none changes; a token that leaves starts
+            // goes on in the inner loop, else back to the refill.
+            let (refill, from_word) = (f.create_block(), f.create_block());
+            for _ in 0..2 + STATE_WORDS {
                 f.append_block_param(from_word, types::I64);
             }
-            if folded {
-                f.append_block_param(from_word, types::I64);
-                f.append_block_param(from_word, types::I64);
-            }
-            let kept: Vec<Value> = if folded { vec![h[3], h[4]] } else { Vec::new() };
-            f.ins().brif(cand, from_cand, &[], refill, &[]);
-            f.switch_to_block(from_cand);
-            let base = f.ins().band_imm(h[1], !63);
-            let tz = f.ins().ctz(cand);
-            let s0 = f.ins().iadd(base, tz);
-            let args: Vec<BlockArg> = [s0, cand].iter().chain(&h[STATE_WORDS + 1..]).chain(&kept).map(|&v| v.into()).collect();
-            f.ins().jump(from_word, &args);
+            f.ins().jump(refill, &[]);
             // A block's words: from the cursor's, a word at a time past those with no start.
+            // Once a block, not a token: the token's way is the loop's hot one, as the lean
+            // lexer's inner run loop inside its loop over windows (`set_cold_block`, the
+            // weights rustc's allocator spills by).
             f.switch_to_block(refill);
+            f.set_cold_block(refill);
             let more = f.create_block();
             f.append_block_param(more, types::I64);
             f.append_block_param(more, types::I64);
@@ -4255,8 +4251,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             };
             // The carried `from` goes on as it came where the loop reads it from the records
             // (`after_last_start`): a value no token changes.
-            let found: Vec<Value> = if folded { vec![pend_q, h[4]] } else { Vec::new() };
-            let args: Vec<BlockArg> = [s1, x].iter().chain(&words).chain(&found).map(|&v| v.into()).collect();
+            let state = [h[0], h[1], h[2], if folded { pend_q } else { h[3] }, h[4], h[5]];
+            let args: Vec<BlockArg> = [s1, x].iter().chain(&state).map(|&v| v.into()).collect();
             f.ins().brif(x, from_word, &args, next, &[]);
             f.switch_to_block(next);
             let q1 = f.ins().iadd_imm(q, 1);
@@ -4280,13 +4276,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             f.ins().jump(more, &[q1.into(), ones.into(), acc1.into()]);
             // The start: a token, or past the file.
             f.switch_to_block(from_word);
+            heads.push((from_word, Step::Token));
+            inner = Some(from_word);
             let fw = f.block_params(from_word).to_vec();
             // Every start is inside the file (the refill's `valid`).
             let s = fw[0];
-            regs = Some(BlockRegs { cand: fw[1], runs: runs.iter().copied().zip(fw[2..2 + runs.len()].iter().copied()).collect() });
-            if folded {
-                (pending_in, from_in) = (fw[2 + runs.len()], fw[3 + runs.len()]);
-            }
+            regs = Some(BlockRegs { cand: fw[1], runs: runs.iter().copied().zip(words.iter().copied()).collect() });
+            // The token's state, the inner loop's: what the code after reads as the head's.
+            h = fw[2..].iter().copied().chain(std::iter::once(fw[1])).chain(words.iter().copied()).collect();
+            (pending_in, from_in) = (h[3], h[4]);
             f.ins().jump(token, &[s.into()]);
         }
         None => {
@@ -4702,10 +4700,24 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         if let Some(p) = reread {
             back[3] = p.into();
         }
-        back.push(left.into());
-        back.extend(g.runs.iter().map(|&(_, v)| BlockArg::from(v)));
+        if let Some(inner) = inner {
+            // Starts left in the block: the next, in the inner loop, as the lean lexer's
+            // `while run != 0`; none, the refill (the head, its words unread).
+            let base = f.ins().band_imm(cv[1], !63);
+            let tz = f.ins().ctz(left);
+            let s0 = f.ins().iadd(base, tz);
+            let on: Vec<BlockArg> = [s0, left].iter().copied().map(BlockArg::from).chain(back.iter().cloned()).collect();
+            back.push(zero.into());
+            back.extend(g.runs.iter().map(|_| BlockArg::from(zero)));
+            f.ins().brif(left, inner, &on, head, &back);
+        } else {
+            back.push(left.into());
+            back.extend(g.runs.iter().map(|&(_, v)| BlockArg::from(v)));
+            f.ins().jump(head, &back);
+        }
+    } else {
+        f.ins().jump(head, &back);
     }
-    f.ins().jump(head, &back);
     }
 
     // The file's end: a refusal sets the totals' flag, the count after the extracts'. A bit

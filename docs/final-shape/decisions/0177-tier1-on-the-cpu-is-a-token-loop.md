@@ -1569,3 +1569,38 @@ spills differently, and that path is now longer:
 Still apart from lean: the spent block's gap marks are re-read by
 the bytes (`marks_in`, a call a block), and the token path has more
 stack accesses than lean's two loads.
+
+## Two loops, as the lean lexer's
+
+**Intro.** The lean lexer has two loops: one over windows, which
+makes a window's masks, and one inside it over the window's starts,
+which only reads them. Ours had one loop. Its head took the block's
+run words as parameters, so every token passed them back, and rustc
+stored and reloaded them each token. The pair mask was stored at a
+token's start and loaded at its end, and the marks so far went
+through the stack and back.
+
+**The change.** The block's starts are a loop of their own
+(`from_word`, its header): the token's state words and the starts
+left are its parameters. The run words are the refill's values,
+which dominate it, and no token passes them. A token that leaves
+starts goes on in the inner loop (`while run != 0`); one that leaves
+none goes back to the head, whose refill reads the next block. The
+head no longer branches on the starts: it is reached with none.
+
+The token path, stepped by instruction on a line of words: 47
+instructions for a short word (lean: 67). It has two loads from the
+stack, the pair mask and the bytes' address, against lean's two (its
+word and pair masks). It has no stores and one back branch, where
+there were seven stack accesses and two jumps.
+
+Counts, reported (before this change, after; lean):
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 104.1 | 100.1 | 97.9 |
+| Punctuation | 61.6 | 55.9 | 53.5 |
+| Mixed | 64.6 | 59.2 | 63.1 |
+| Strings | 288.5 | 293.2 | 240.6 |
+| Numbers | 171.9 | 172.0 | 107.3 |
+| Comments | 265.2 | 270.6 | 193.2 |
