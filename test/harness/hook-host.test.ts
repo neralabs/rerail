@@ -2007,10 +2007,11 @@ describe("the hook start check", () => {
     const holder = await heldByAnotherProgram(keptAnswerFile(app), "Read", "Read");
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped", codexAnsweredAtOnce);
     try {
-      const checksBefore = host.proofs.found.length;
+      const [checksBefore, renamesBefore] = [host.proofs.found.length, traffic.renames.length];
       const answers = settled(await Promise.allSettled(hooksAtOnce(host, app, 20)));
+      const renames = traffic.renames.slice(renamesBefore);
       expect({
-        answers, refused: traffic.renames.length > 0 && traffic.renames.every(code => WINDOWS_HOLDS.includes(code)),
+        answers, refused: renames.length > 0 && renames.every(code => WINDOWS_HOLDS.includes(code)),
         repeated: host.proofs.found.slice(checksBefore), kept: readFileSync(keptAnswerFile(app), "utf8"), folder: readdirSync(dirname(keptAnswerFile(app))),
       }).toEqual({
         answers: Array.from({ length: 20 }, () => false), refused: true, repeated: Array.from({ length: 10 }, () => true), kept,
@@ -2086,10 +2087,15 @@ describe("the hook start check", () => {
     } finally {
       await held.end();
     }
-    keptAt(app, Date.now() - 2 * 60_000);
+    // Windows can hold the file a moment longer once the holder ends, as a virus scan of a file just closed does: each
+    // later write tries again.
     const prompt = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
     try {
-      expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+      for (let write = 0; write < 10 && readdirSync(answers).length > 1; write += 1) {
+        if (write > 0) await delay(200);
+        keptAt(app, Date.now() - 2 * 60_000);
+        expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+      }
     } finally {
       await prompt.close();
     }
