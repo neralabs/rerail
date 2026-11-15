@@ -145,6 +145,8 @@ ast-grep-language = { version = "=0.51.0", default-features = false, features = 
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
 
 [build-dependencies]
+# The grammars' token automata (`tape::token_automata`), built with the build.
+rustc-hash = "=2.1.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # The vendored grammars (`src/build_grammars.rs`): compiled, their parsers generated from grammar.json, SQL's read
