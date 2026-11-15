@@ -361,6 +361,8 @@ pub fn run_policies(
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let (mut diagnostics, mut runs) = (Vec::new(), Vec::new());
+    // One run for the file observer: each root asked of the journal once for the batch.
+    let _observed = super::logic::plan::corpus::ObservedBatch::begin();
     // Every policy's includes resolved by one run of phase 0 (`bootstrap.rr`) over all of them, each graph kept for
     // the policy's own read: not one run a policy. A path phase 0 cannot read is the policy's own error, below.
     let seeds: Vec<super::logic::plan::corpus::phase0::Seed> =
@@ -1150,6 +1152,7 @@ fn upkeep_command(args: &[String]) -> Result<String, String> {
         }
         let store = std::sync::Arc::new(ContentStore::open(Path::new(path)).map_err(e)?);
         jobs.push(register(Box::new(Collect::new(&store))));
+        jobs.push(register(Box::new(crate::content_store::upkeep::Frames::new(Path::new(path)))));
         jobs.push(register(Box::new(crate::code_rule_dsl::workspace::storage::SearchIndex::new(&store))));
         jobs.push(register(Box::new(SqliteFile::new(Path::new(path), Tables::All))));
         held.push(store);

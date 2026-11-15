@@ -271,6 +271,13 @@ pub struct Trained {
 /// installs it. With fewer than `min` samples, nothing is trained.
 #[cfg(target_os = "macos")]
 pub fn train(samples: &[Sample], config: &CostConfig, min: usize) -> Result<Trained, String> {
+    train_until(samples, config, min, &|| false)
+}
+
+/// [`train`], given up between its phases (the comparison, the training, the kernels' compile) once `stop` says so:
+/// upkeep's retraining yields to a run that begins (`upkeep::Slice::stopper`). Nothing is put in place then.
+pub fn train_until(samples: &[Sample], config: &CostConfig, min: usize, stop: &dyn Fn() -> bool) -> Result<Trained, String> {
+    const STOPPED: &str = "stopped: a run began";
     if samples.len() < min {
         return Err(format!("{} samples, fewer than {min}", samples.len()));
     }
@@ -278,8 +285,14 @@ pub fn train(samples: &[Sample], config: &CostConfig, min: usize) -> Result<Trai
     if !comparison.model_wins() {
         return Ok(Trained { comparison, model: None });
     }
+    if stop() {
+        return Err(STOPPED.into());
+    }
     let all: Vec<_> = samples.iter().map(sample).collect();
     let model = std::sync::Arc::new(CostModel::train(&all, config)?);
+    if stop() {
+        return Err(STOPPED.into());
+    }
     // Its kernels compiled here, not on the first placement that asks; one that fails leaves the rates.
     model.warm()?;
     install(Some(model.clone()));

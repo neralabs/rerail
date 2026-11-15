@@ -75,6 +75,7 @@ impl StorageMaintenance {
         use rerail_accel::upkeep::register;
         let jobs = vec![
             register(Box::new(Collect::new(&store))),
+            register(Box::new(crate::content_store::upkeep::Frames::new(store.database_path()))),
             register(Box::new(SearchIndex::new(&store))),
             register(Box::new(SqliteFile::new(store.database_path(), Tables::All))),
         ];
@@ -157,6 +158,10 @@ impl rerail_accel::upkeep::Job for SearchIndex {
         self.name.clone()
     }
 
+    fn file(&self) -> Option<std::path::PathBuf> {
+        self.store.upgrade().map(|s| s.database_path().to_path_buf())
+    }
+
     fn due(&mut self) -> rerail_accel::upkeep::Due {
         // Upkeep is behind the run: its SQL is on its own connections, never a wave's (decision 0104).
         crate::code_rule_dsl::logic::profile::behind_the_run();
@@ -173,7 +178,8 @@ impl rerail_accel::upkeep::Job for SearchIndex {
         crate::code_rule_dsl::logic::profile::behind_the_run();
         use rerail_accel::upkeep::Step;
         let Some(store) = self.store.upgrade() else { return Ok(Step::Done) };
-        index_stored_tapes_until(&store, &self.stop, &mut self.cursor, slice.until);
+        // A run that begins stops it between batches, the backlog still due (`Slice::over`).
+        index_stored_tapes_until(&store, &self.stop, &mut self.cursor, slice.until, &|| slice.over());
         Ok(if self.cursor.is_none() { Step::Done } else { Step::More })
     }
 }
@@ -190,7 +196,7 @@ pub fn index_stored_tapes(
     stop: &AtomicBool,
     cursor: &mut Option<crate::content_store::TapeId>,
 ) {
-    index_stored_tapes_until(store, stop, cursor, Instant::now() + Duration::from_secs(1));
+    index_stored_tapes_until(store, stop, cursor, Instant::now() + Duration::from_secs(1), &|| false);
 }
 
 /// [`index_stored_tapes`] until `until`.
@@ -199,9 +205,10 @@ pub fn index_stored_tapes_until(
     stop: &AtomicBool,
     cursor: &mut Option<crate::content_store::TapeId>,
     until: Instant,
+    over: &dyn Fn() -> bool,
 ) {
     let mut grammars = HashMap::<i64, Arc<tape::Grammar>>::new();
-    while Instant::now() < until && !stop.load(Ordering::Acquire) {
+    while Instant::now() < until && !stop.load(Ordering::Acquire) && !over() {
         let Ok(backlog) = store.tapes_without_search_index_after(
             grammar_version(),
             i64::from(tape::TAPE_FORMAT_VERSION),

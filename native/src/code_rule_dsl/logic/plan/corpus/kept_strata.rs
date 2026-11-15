@@ -112,7 +112,9 @@ impl<'s> Kept<'s> {
     fn flush(&mut self, used: Option<Vec<FrameRel>>) {
         let (puts, gone) = (std::mem::take(&mut self.puts), std::mem::take(&mut self.gone));
         self.values = 0;
-        if !puts.is_empty() || !gone.is_empty() || used.is_some() {
+        // Nothing put or forgotten: nothing written (decision 0227). A program's use of its relations is not marked
+        // a run: collection keeps them while a kept manifest names the program (`collect_unreachable_frames`).
+        if !puts.is_empty() || !gone.is_empty() {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's frames, queued".into());
             self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token(), self.program)));
         }
@@ -418,6 +420,10 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types, rows, n } });
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
+    // Nothing changed: nothing written (decision 0211).
+    if puts.is_empty() {
+        return;
+    }
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
     store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token(), part.key)));
 }

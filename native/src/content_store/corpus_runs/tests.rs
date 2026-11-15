@@ -404,3 +404,54 @@ fn a_lanes_sources_are_its_newest_runs_whichever_build_ran_it() {
     assert_eq!(store.lane_sources("/repo", &[2; 32]).unwrap(), sources[2..].to_vec(), "lane 2's own");
     assert!(store.lane_sources("/other", &[1; 32]).unwrap().is_empty(), "by root");
 }
+
+/// Decision 0227: a keep decision leaves the frames it made unreachable to the `frames` upkeep job, which is due
+/// until it has swept them, and a utility job: finished by `finish_soon`, with no scheduler.
+#[test]
+fn a_keep_decision_leaves_its_sweep_to_the_frames_job() {
+    use rerail_accel::upkeep::Job as _;
+    let (_path, store) = store("corpus-frames-job");
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let mut job = crate::content_store::upkeep::Frames::new(store.database_path());
+    assert_eq!(job.qos(), rerail_accel::upkeep::Qos::Utility);
+    assert!(!store.frames_sweep_wanted().unwrap(), "a new store has nothing to sweep");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::No);
+    let source = store.put_source(&noise(7, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(507, 256)).unwrap();
+    assert!(store.record_corpus_run("/repo", &[source], 7, 9, [7u8; 32], 1_000).unwrap());
+    store.keep_corpus_runs(&policy, 1_000).unwrap();
+    assert!(store.frames_sweep_wanted().unwrap(), "the decision is past the last sweep");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::Urgent);
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    assert_eq!(job.step(&rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)).unwrap(), rerail_accel::upkeep::Step::Done);
+    assert!(!store.frames_sweep_wanted().unwrap(), "swept");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::No);
+}
+
+/// Decision 0190 §8: a sweep yields to a run that begins over its store, here another process's (its shared lock on
+/// `<store>.runs.lock`). The step stops with its transaction rolled back, and the sweep stays due for after the run.
+#[test]
+fn a_sweep_yields_to_a_run_over_its_store() {
+    use rerail_accel::upkeep::Job as _;
+    let (_path, store) = store("corpus-frames-yield");
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let mut job = crate::content_store::upkeep::Frames::new(store.database_path());
+    let source = store.put_source(&noise(8, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(508, 256)).unwrap();
+    assert!(store.record_corpus_run("/repo", &[source], 7, 9, [8u8; 32], 1_000).unwrap());
+    store.keep_corpus_runs(&policy, 1_000).unwrap();
+    assert!(store.frames_sweep_wanted().unwrap());
+    let mut lock = store.database_path().as_os_str().to_owned();
+    lock.push(".runs.lock");
+    let run = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&lock).unwrap();
+    run.lock_shared().unwrap();
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let slice = || rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop).over_file(store.database_path());
+    assert_eq!(job.step(&slice()).unwrap(), rerail_accel::upkeep::Step::More, "the run stops the sweep");
+    assert!(store.frames_sweep_wanted().unwrap(), "still due");
+    run.unlock().unwrap();
+    // The probe is cached for 25 ms.
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert_eq!(job.step(&slice()).unwrap(), rerail_accel::upkeep::Step::Done);
+    assert!(!store.frames_sweep_wanted().unwrap(), "swept once the run ended");
+}
