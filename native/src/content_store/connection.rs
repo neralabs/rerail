@@ -576,14 +576,13 @@ impl ContentStore {
         stop: Option<&std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
         operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
-        self.yield_writer();
         let mut connection = self
             .connection
             .lock()
             .expect("content store connection unavailable");
         if let Some(stop) = stop {
             let stop = std::sync::Arc::clone(stop);
-            connection.progress_handler(1000, Some(move || stop()));
+            connection.progress_handler(1000, Some(move || stop()))?;
         }
         // One attempt: its caller retries, or runs it again later (`begin` leaves the retry to it).
         let outer = IN_RETRY.replace(true);
@@ -595,7 +594,7 @@ impl ContentStore {
             Ok(value)
         });
         if stop.is_some() {
-            connection.progress_handler(0, None::<fn() -> bool>);
+            connection.progress_handler(0, None::<fn() -> bool>)?;
         }
         value
     }
@@ -609,7 +608,6 @@ impl ContentStore {
     ) -> StoreResult<T> {
         // Opening the thread's connection (if an idle release closed it) is not a wait for
         // another writer, and must not fail as one.
-        self.yield_writer();
         let mut connection = self.connection.lock().map_err(StoreError::Invalid)?;
         let _no_wait = NoBusyWait::enter();
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;

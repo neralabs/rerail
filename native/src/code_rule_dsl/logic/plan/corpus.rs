@@ -2116,7 +2116,8 @@ fn run_handed(
     {
         use std::io::Write as _;
         let cpu = |a: (f64,f64,f64), b: (f64,f64,f64)| b.0 + b.1 - a.0 - a.1;
-        let mut file = std::fs::OpenOptions::new().append(true).open(dir.join("profile.txt")).map_err(|e| Error::Plan(format!("profile lifecycle: {e}")))?;
+        // Made here when the run wrote none (a run the whole-run cutoff answered, `reuse::reused`).
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("profile.txt")).map_err(|e| Error::Plan(format!("profile lifecycle: {e}")))?;
         writeln!(file, "\n== Whole run lifecycle (process CPU, including workers)\nobserver {:.6} s; include graphs {:.6} s; execution {:.6} s; final observations {:.6} s\nThese intervals partition the run; do not add them to nested span totals.",
             cpu(lifecycle_start,lifecycle_observed),cpu(lifecycle_observed,lifecycle_seeded),
             cpu(lifecycle_seeded,lifecycle_executed),cpu(lifecycle_executed,lifecycle_written))
@@ -2185,6 +2186,9 @@ fn run_observed(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    // The run's writes are waves of its own (decision 0259): each sealed at a boundary of the run (`end_wave`), the
+    // last as the run ends, and the store takes each in one transaction.
+    let _waves = crate::content_store::write_back::run_waves();
     let programs = given.programs;
     // The run's distinct lists (decision 0172): every program it reads from a stored text takes its lists from here,
     // so the lists its programs have in common are made once. It goes with the run.
@@ -4578,6 +4582,8 @@ fn run_observed(
         doing: &worker_doing,
     };
     let builder = &builder;
+    // What the run wrote before its waves is a wave: the combined program, the prepared sources, the plan holds.
+    crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Before);
     let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, memo::Content)>)> {
     // The main thread's error or end stops the builder: no job it starts after is left running.
     let _stop = Stopper(&builder.stopped);
@@ -5216,6 +5222,8 @@ fn run_observed(
         crate::code_rule_dsl::logic::native::forget_inputs(&db);
         phase("local", statements.count());
         statements.enter("wait");
+        // The chunk's writes are one wave: its tapes, tree counts and memo entries.
+        crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Chunk);
         Ok(())
     };
     // One batch's chunks, to its end; false when the builder has ended.
@@ -7513,6 +7521,8 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
         collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
     }
+    // The cross part's writes are one wave: its kept strata's frames, retained rows, rounds and statistics.
+    crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Cross);
     statements.enter("write");
     let writing = crate::code_rule_dsl::logic::profile::span(|| "write the outputs".into());
     // Every output has its file, empty when nothing made a row: a run read whole from the memo hands no rows of a

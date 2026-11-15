@@ -5178,6 +5178,20 @@ on the connection the run's query runs on (`vtab::bound_source(db, "node")`, as 
 (`Store::at`). Test: `rr_comparison::concurrent_runs_read_their_own_long_texts` (four concurrent runs, each its own
 `a.py`); the module passes 4 of 4 runs, the long-text pair 6 of 6.
 
+## O175. The typing oracle tests lock up beside a nested phase run, about one group run in ten (2026-11-15)
+
+`typing::oracle_tests` (30 tests) stalled in 2 of 20 group runs (killed at the 120 s cap; the others pass in 21 to
+57 s), at a machine load of 40 to 50, every test stopped at once. A stack sample of a stalled run: 15 test threads
+wait for the session's lock (`session::current`, `SESSION.lock()`); a pool thread (`rerail-cpu 0`) is in an outer
+run's `phases::sources` job, whose phase run (`run_read` → `run_observed` → `session::generation`) waits for the
+same lock, helping the pool meanwhile (`help_until_as`, decision 0100 §12); one test thread, in its run, waits for
+a job it started beside it (`Beside::join`); two test threads and five pool threads wait at rayon latches in
+`hiding::carry` (two in `in_worker_cold`); twelve pool threads are idle. The store's writers are idle, waiting
+for waves, and no thread waits on the writer. So the cycle runs through the session's lock and the pool's waits,
+not the store. Seen while building decision 0259 stage 1; whether it predates that build is not measured (the
+earlier binary is gone). Open: find the lock's holder, and whether a run's beside job can need the lock its own run
+holds.
+
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
 Status: superseded by decision 0225 (draft): the split's questions become rules over the image, after 0173 stage 2. the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). A body's numbering is kept with its digest for the run, and every fixpoint, `split_constants`'s included, runs on
