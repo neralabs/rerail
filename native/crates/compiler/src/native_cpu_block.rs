@@ -4202,7 +4202,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let mut inner: Option<cranelift_codegen::ir::Block> = None;
     // The loop over a block's runs (`mid`, its header) and the starts after the run (`rest`),
     // where the rare starts split them, as the lean lexer's.
-    let mut runs_loop: Option<(cranelift_codegen::ir::Block, Value)> = None;
+    let mut runs_loop: Option<(cranelift_codegen::ir::Block, Value, cranelift_codegen::ir::Block)> = None;
     // The rare starts' head, where the runs loop has one: its token block, the state, the
     // block's registers, as the run loop's (`Side::Rare`).
     let mut rare_part: Option<(cranelift_codegen::ir::Block, Vec<Value>, BlockRegs)> = None;
@@ -4425,22 +4425,31 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let below = f.ins().band_not(below, rare);
                 let run = f.ins().band(cand, below);
                 let rest = f.ins().bxor(cand, run);
-                let (go_run, not_run, go_rare) = (f.create_block(), f.create_block(), f.create_block());
-                f.ins().brif(run, go_run, &[], not_run, &[]);
+                // The run's end (`run_done`, with the starts after the run and the state): the
+                // rare start found here, as the lean lexer's `if rare == 0 { break }` after its
+                // run; none, the refill. `mid` comes to it with no run.
+                let (go_run, run_done, go_rare) = (f.create_block(), f.create_block(), f.create_block());
+                for _ in 0..1 + STATE_WORDS {
+                    f.append_block_param(run_done, types::I64);
+                }
+                let now: Vec<BlockArg> = mp.iter().map(|&v| v.into()).collect();
+                f.ins().brif(run, go_run, &[], run_done, &now);
                 f.switch_to_block(go_run);
                 let tz = f.ins().ctz(run);
                 let s0 = f.ins().iadd(q64, tz);
                 let args: Vec<BlockArg> = [s0, run].iter().chain(st).map(|&v| v.into()).collect();
                 f.ins().jump(from_word, &args);
-                f.switch_to_block(not_run);
+                f.switch_to_block(run_done);
+                let dp = f.block_params(run_done).to_vec();
+                let (left, st) = (dp[0], &dp[1..]);
                 let refill_args: Vec<BlockArg> = st.iter().copied().chain(std::iter::once(zero)).chain(runs.iter().map(|_| zero)).map(BlockArg::from).collect();
                 f.ins().brif(rare, go_rare, &[], head, &refill_args);
                 f.switch_to_block(go_rare);
                 let tz = f.ins().ctz(rare);
                 let s0 = f.ins().iadd(q64, tz);
-                let args: Vec<BlockArg> = [s0, cand].iter().chain(st).map(|&v| v.into()).collect();
+                let args: Vec<BlockArg> = [s0, left].iter().chain(st).map(|&v| v.into()).collect();
                 f.ins().jump(rare_word.expect("with mid"), &args);
-                runs_loop = Some((mid, rest));
+                runs_loop = Some((mid, rest, run_done));
                 // The rare head: the state and the block's words as the run loop's, its token
                 // block its own.
                 let rw = rare_word.expect("with mid");
@@ -4875,7 +4884,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let m = f.ins().ishl(ones, sh);
             // With the runs (`runs_loop`), the starts left are the run's and those after it.
             let cand = match runs_loop {
-                Some((_, rest)) => f.ins().bor(g.cand, rest),
+                Some((_, rest, _)) => f.ins().bor(g.cand, rest),
                 None => g.cand,
             };
             let mut left = f.ins().band(cand, m);
@@ -4912,7 +4921,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         if let Some(p) = reread {
             back[3] = p.into();
         }
-        if let (Some(inner), Some((mid, rest))) = (inner, runs_loop) {
+        if let (Some(inner), Some((mid, rest, run_done))) = (inner, runs_loop) {
             // A fused token: the run's next start, in the inner loop, as the lean lexer's
             // `while run != 0`; the run done, the starts after it (`mid`). Another rule's token:
             // the starts left, by `mid`, out of the inner loop.
@@ -4922,7 +4931,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let tz = f.ins().ctz(left);
                 let s0 = f.ins().iadd(base, tz);
                 let on: Vec<BlockArg> = [s0, left].iter().copied().map(BlockArg::from).chain(back.iter().cloned()).collect();
-                f.ins().brif(left, inner, &on, mid, &after);
+                f.ins().brif(left, inner, &on, run_done, &after);
             } else {
                 f.ins().jump(mid, &after);
             }

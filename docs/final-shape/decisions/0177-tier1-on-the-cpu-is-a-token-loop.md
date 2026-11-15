@@ -1778,4 +1778,22 @@ Counts, reported (before, after; lean):
 Tried and dropped first: sending the run's end straight to the
 rare start `mid` had found, with one shared token head. rustc then
 moved the rare path's checks into that head: a plain word went
-from 42 instructions to 49. With the heads apart, it is next.
+from 42 instructions to 49. With the heads apart, it holds (below).
+
+## The run's end takes the rare start found
+
+**Intro.** The lean lexer finds `rare` before its run. When the run
+ends, it takes `rare`'s lowest bit at once (`ldr`, `cbz`, `rbit`,
+`clz`). Ours went back to `mid`, which found `rare` and `run` again
+from the starts after the run (four loads), found no run, then the
+rare start.
+
+**The change.** The run's end (`run_done`) is a block of `mid`'s,
+which `mid` comes to with no run: the rare start `mid` found, else
+the refill. A fused token whose run is done goes there with the
+starts after the run.
+
+Stepped: the run's end is `ldr`, `cbnz`, `rbit`, `clz` into the
+rare head, as lean's. A string and its comma: 224 (lean 223).
+Counts, reported: words 105.8, punctuation 53.3, mixed 56.2,
+strings 305.5, numbers 173.0, comments 285.1.
