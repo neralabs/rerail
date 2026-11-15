@@ -351,7 +351,7 @@ describe("Claude Code settings.json", () => {
    * that node fails and the launcher is there, and `node.exe` from PATH after. `afterRecorded` stands in for what
    * follows the recorded node.
    */
-  function cmdEntry(launcher: string, node: string, hook: string, afterRecorded = ["||", "if", "exist", launcher, "exit", "/b", "0"]) {
+  function cmdEntry(launcher: string, node: string, hook: string, afterRecorded = ["||", "if", "exist", launcher, "(", "exit", "/b", "0", ")", "else", "(", "exit", "/b", "1", ")"]) {
     const fallback = ["set", "NoDefaultCurrentDirectoryInExePath=1", "&", "node.exe", launcher, node, hook];
     return {
       type: "command",
@@ -673,7 +673,7 @@ describe("Claude Code settings.json", () => {
     // The launcher gone with the install it came in: an entry left over shows a hook error, as a `node` entry's does.
     await rename(launcherPath, `${launcherPath}.gone`);
     const leftOver = start();
-    expect(leftOver.status, leftOver.stderr).not.toBe(0);
+    expect(leftOver.status, leftOver.stderr).toBe(1);
     expect(leftOver.stderr).toContain("Cannot find module");
     await rename(`${launcherPath}.gone`, launcherPath);
     // Last, since Windows may keep a crashed program's file open for a while to report the crash.

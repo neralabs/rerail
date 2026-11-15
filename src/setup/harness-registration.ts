@@ -641,17 +641,18 @@ function isFullWindowsPath(path: string): boolean {
  * folder, a repository, before PATH's. cmd stays node's parent, so a host that kills it on a timeout leaves node
  * running; the hook then ends itself (`exitWhenParentGone`).
  *
- * `|| if exist <launcher> exit /b 0` after the recorded node fails open as the launcher does (`quiet` in
- * `hook-launcher.ts`): a recorded node that is there but cannot start (a file an upgrade cut short, a build for another
- * processor), or a launcher that ends in a native crash, would otherwise show Claude Code a hook error on every event,
- * where a `node` entry's launcher answers for it. Claude Code goes on after an empty answer with exit 0 as after `{}`,
- * and an `echo {}` there would follow any answer the hook wrote before such a crash and make that answer unreadable.
- * Once the launcher's file is gone, with the Rerail install it came in, node's failure stays a hook error, as for a
- * `node` entry, which tells the person an entry is left over. The fallback has no such ending: a `node.exe` missing
- * from PATH shows as a hook error, as it does when a `node` entry finds no node.
+ * `|| if exist <launcher> ( exit /b 0 ) else ( exit /b 1 )` after the recorded node fails open as the launcher does
+ * (`quiet` in `hook-launcher.ts`): a recorded node that is there but cannot start (a file an upgrade cut short, a build
+ * for another processor), or a launcher that ends in a native crash, would otherwise show Claude Code a hook error on
+ * every event, where a `node` entry's launcher answers for it. Claude Code goes on after an empty answer with exit 0 as
+ * after `{}`, and an `echo {}` there would follow any answer the hook wrote before such a crash and make that answer
+ * unreadable. Once the launcher's file is gone, with the Rerail install it came in, the hook ends with exit 1 and node's
+ * "Cannot find module", as a `node` entry does, which tells the person an entry is left over; the `else` says so, since
+ * cmd ends with exit 0 after an `if` whose test fails. The fallback has no such ending: a `node.exe` missing from PATH
+ * shows as a hook error, as it does when a `node` entry finds no node.
  */
 function cmdHookArgs(launched: LauncherArgs): string[] {
-  return cmdHookLine(launched, ["||", "if", "exist", launched[0], "exit", "/b", "0"]);
+  return cmdHookLine(launched, ["||", "if", "exist", launched[0], "(", "exit", "/b", "0", ")", "else", "(", "exit", "/b", "1", ")"]);
 }
 
 /** The words of a cmd.exe hook line, with `afterRecorded` after the recorded node's command inside its parentheses. */
