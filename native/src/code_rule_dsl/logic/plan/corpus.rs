@@ -6544,14 +6544,14 @@ fn run_observed(
                     }
                     drop(s);
                     written_key = Some(ckey);
-                    if let Some(s) = session.as_ref() {
+                    // Only from a stack as the session's last run here left it: a stat of its file, not a read.
+                    if let Some(s) = session.as_ref()
+                        && s.stacks.lock().expect("the session's stacks").get(out).is_some_and(|stack| stack.stands(out))
+                    {
                         let written = s.written.lock().expect("the session's written outputs");
                         // Not the findings nor typing's outputs, which this run reads as well as writes.
                         for rel in cross.program.outputs.iter().filter(|r| cut.clean.contains(*r) && !matches!(r.as_str(), "finding" | "type_of")) {
-                            let file = out.join(format!("{rel}.csv"));
-                            if let Some((_, n)) = written.get(&file).filter(|(k, _)| *k == ckey)
-                                && file.exists()
-                            {
+                            if let Some((_, n)) = written.get(&out.join(rel)).filter(|(k, _)| *k == ckey) {
                                 unchanged_outputs.insert(rel.clone(), *n);
                             }
                         }
@@ -7464,26 +7464,21 @@ fn run_observed(
             }
         }
     }
-    // The outputs as one flat image (decision 0239): over the session's last image, an overlay of the outputs this
-    // run made again; otherwise a base of them all. The image is made from the runs' rows as they are (stage 2);
-    // each `.csv` file is then its relation's lines as the image shows them (every reader still reads the files).
+    // The outputs as one flat image (decision 0239), the file every reader reads (`output::lines`, `output::rows`):
+    // over the session's stack, an overlay of the outputs this run made again; otherwise a base of them all. The image
+    // is made from the runs' rows as they are.
     {
         let flags = if own { output::flags::OWN } else { 0 } | if syntax::definition_ids() { output::flags::DEFINITION_IDS } else { 0 };
-        // An unchanged output is read from the stack its file was written with; a stack past its depth is folded.
-        let old = if unchanged_outputs.is_empty() { Vec::new() } else { output::read(&out).unwrap_or_default() };
-        let inherit = !old.is_empty() && unchanged_outputs.keys().all(|r| output::find(&old, r).is_some());
-        let overlay = inherit && old.len() < output::MAX_DEPTH;
+        // An unchanged output is in the stack as the session's last run left it (`unchanged_outputs`); the stack is
+        // read only to fold it, past its depth.
+        let depth = if unchanged_outputs.is_empty() { 0 } else { session.as_ref().and_then(|s| s.stacks.lock().expect("the session's stacks").get(out).map(|k| k.depth)).unwrap_or(0) };
+        let overlay = depth > 0 && depth < output::MAX_DEPTH;
         let mut image = output::Builder::new(flags, overlay);
-        if inherit && !overlay {
+        if !unchanged_outputs.is_empty() && !overlay {
+            let old = output::read(out).map_err(Error::Plan)?;
             for rel in unchanged_outputs.keys() {
-                image.take(rel, output::find(&old, rel).expect("checked"));
-            }
-        } else if !inherit {
-            // No stack to read them from: the files that stand, read as text.
-            for rel in unchanged_outputs.keys() {
-                let text = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
-                let lines: Vec<String> = text.lines().map(str::to_owned).collect();
-                image.lines(rel, &[], &[], &lines, &|_, v| v.to_owned());
+                let held = output::find(&old, rel).ok_or_else(|| Error::Plan(format!("{rel}: unchanged, but not in {}", out.display())))?;
+                image.take(rel, held);
             }
         }
         // A node column's value as the writer showed it, for a column the image holds as text (one holding a value
@@ -7550,26 +7545,28 @@ fn run_observed(
             made.push(rel);
         }
         let bytes = image.finish();
-        output::write(&out, &bytes).map_err(|e| Error::Plan(e.to_string()))?;
+        output::write(out, &bytes).map_err(|e| Error::Plan(e.to_string()))?;
         let made_image = output::Image::one(&bytes).map_err(Error::Plan)?;
         for rel in made {
-            let lines = made_image.rel(rel).expect("made").lines();
-            let mut text = lines.join("\n");
-            if !lines.is_empty() {
-                text.push('\n');
-            }
-            std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;
-            rows.insert(rel.to_owned(), lines.len());
+            rows.insert(rel.to_owned(), made_image.rel(rel).expect("made").rows);
         }
-    }
-    // What a session's run of this program wrote, for its next (`unchanged_outputs`); any other run's writes forget it.
-    if let Some(s) = session.as_ref() {
-        let mut written = s.written.lock().expect("the session's written outputs");
-        for (rel, n) in &rows {
-            let file = out.join(format!("{rel}.csv"));
-            match written_key {
-                Some(key) => written.insert(file, (key, *n)),
-                None => written.remove(&file),
+        // What a session's run of this program wrote, for its next (`unchanged_outputs`); any other run's writes
+        // forget it. A base holds no output an earlier run wrote but this one did not make or keep.
+        if let Some(s) = session.as_ref() {
+            let mut written = s.written.lock().expect("the session's written outputs");
+            if !overlay {
+                written.retain(|p, _| p.parent() != Some(out));
+            }
+            for (rel, n) in &rows {
+                match written_key {
+                    Some(key) => written.insert(out.join(rel), (key, *n)),
+                    None => written.remove(&out.join(rel)),
+                };
+            }
+            let mut stacks = s.stacks.lock().expect("the session's stacks");
+            match session::Stack::stat(out) {
+                Some(stack) => stacks.insert(out.to_path_buf(), session::Stack { depth: if overlay { depth + 1 } else { 1 }, ..stack }),
+                None => stacks.remove(out),
             };
         }
     }

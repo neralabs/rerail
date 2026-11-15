@@ -72,7 +72,7 @@ uses(n, f) :- imp(n, q), def(f, q).
     let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |text: &str| super::run(text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
-    let uses = || std::fs::read_to_string(out.join("uses.csv")).unwrap();
+    let uses = || crate::code_rule_dsl::logic::plan::output::text(&out, "uses").unwrap();
     let text = program("uses", "");
     let first = run(&text).unwrap();
     assert_eq!(first.cross, (0, 3), "three components, none stored yet");
@@ -110,7 +110,7 @@ uses(n, f) :- imp(n, q), def(f, q).
     let stored = run(&near);
     drop(switched);
     stored.unwrap();
-    assert_eq!(std::fs::read_to_string(out.join("far.csv")).unwrap().lines().count(), 1);
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "far").unwrap().lines().count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -155,7 +155,7 @@ outer(f, x) :- named(x), encl(f, p), bound(p, x).
     let run = |on: bool| {
         let options = if on { Value::Null } else { json!({"factorize": "off"}) };
         let report = super::run_with_options(&[&program], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options).unwrap();
-        (report.memo.0, std::fs::read_to_string(out.join("outer.csv")).unwrap())
+        (report.memo.0, crate::code_rule_dsl::logic::plan::output::text(&out, "outer").unwrap())
     };
     let (hits, whole) = run(false);
     assert_eq!(hits, 0, "a new memo");
@@ -222,7 +222,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     let _ = std::fs::remove_dir_all(&base);
     let out = base.join("out");
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -380,7 +380,7 @@ fn the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_
     std::fs::write(&rule, REACH_RULE).unwrap();
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -471,8 +471,8 @@ unused(f) :- def(f, _), !used(f).
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let read = |f: &str| std::fs::read_to_string(out.join(f)).unwrap();
-        (report.cross_kept, read("uses.csv") + &read("unused.csv"))
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
+        (report.cross_kept, read("uses") + &read("unused"))
     };
     let (first, derived) = run("kept.sqlite");
     let (ran, all) = first.expect("a run with a tape cache keeps its cross-file strata");
@@ -520,7 +520,7 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let mut loaded: Vec<String> = std::fs::read_to_string(out.join("n_loaded.csv")).unwrap().lines().map(|l| l.rsplit('/').next().unwrap().to_owned()).collect();
+        let mut loaded: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "n_loaded").unwrap().lines().map(|l| l.rsplit('/').next().unwrap().to_owned()).collect();
         loaded.sort();
         (report.cone_kept.expect("a run with a tape cache keeps its cone's strata"), loaded)
     };
@@ -576,7 +576,7 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let mut loaded: Vec<String> = std::fs::read_to_string(out.join("n_loaded.csv")).unwrap().lines().map(|l| l.rsplit('/').next().unwrap().to_owned()).collect();
+        let mut loaded: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "n_loaded").unwrap().lines().map(|l| l.rsplit('/').next().unwrap().to_owned()).collect();
         loaded.sort();
         (report.cone_rounds, loaded)
     };
@@ -637,7 +637,7 @@ unused(f) :- def(f, _), !used(f).
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        (report.cross_maintained.0, std::fs::read_to_string(out.join("unused.csv")).unwrap())
+        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::text(&out, "unused").unwrap())
     };
     let (cold, derived) = run("kept.sqlite");
     assert_eq!(cold, 0, "nothing kept: every stratum derived");
@@ -693,7 +693,7 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
-        let rows = ["unused", "lone"].map(|r| std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap());
+        let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::text(&out, r).unwrap());
         (report.cross_maintained.0, rows)
     };
     let run = |store: &str| run_on(store, Binding::Cpu);
@@ -763,7 +763,7 @@ reach(a, a) :- side(a), never(a).
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let rows = ["reach", "side"].map(|r| std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap());
+        let rows = ["reach", "side"].map(|r| crate::code_rule_dsl::logic::plan::output::text(&out, r).unwrap());
         (report.cross_maintained, rows)
     };
     run("kept.sqlite");
@@ -873,7 +873,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
             let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
             let out = dir.path().join("out");
             super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-            assert_eq!(std::fs::read_to_string(out.join("defs.csv")).unwrap().trim(), "f");
+            assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "defs").unwrap().trim(), "f");
             let path = super::tape_cache_path().unwrap();
             assert_ne!(path, template);
             assert!(path.to_string_lossy().contains("rerail-test-stores"), "{}", path.display());
@@ -1005,7 +1005,7 @@ fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_
     let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
     let out = base.join("out");
     super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
     let mods = read("mods");
     for row in ["src/shop/__init__.py\tshop", "src/shop/base.py\tshop.base", "src/shop/child.py\tshop.child", "src/manage.py\tsrc.manage", "a/b/c/m.py\ta.b.c.m"] {
         assert!(mods.lines().any(|l| l == row), "{row} in:\n{mods}");
@@ -1034,7 +1034,7 @@ fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
     let out = base.join("out");
     super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let asked = std::fs::read_to_string(out.join("rr_embed_req.csv")).unwrap_or_default();
+    let asked = crate::code_rule_dsl::logic::plan::output::text(&out, "rr_embed_req").unwrap_or_default();
     assert_eq!(asked.lines().count(), 1, "only \"List[int]\" is asked for:\n{asked}");
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -1057,6 +1057,6 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
     let stack = std::thread::Builder::new().stack_size(64 << 20);
     let run = stack.spawn(move || super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map(|_| out)).unwrap();
     let out = run.join().unwrap().unwrap();
-    assert_eq!(std::fs::read_to_string(out.join("annotated.csv")).unwrap_or_default(), "typed.py\n");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "annotated").unwrap_or_default(), "typed.py\n");
     let _ = std::fs::remove_dir_all(&base);
 }

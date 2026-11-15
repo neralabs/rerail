@@ -125,8 +125,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let typing = Typing { rust: Some(name.ends_with("_rust")), ..typing.clone() };
         let report = super::run_typed(&[&format!("{src}\n{spans}")], root, None, &out, modes, binding, chunk_nodes, &typing)?;
         let rows = |rel: &str| -> Result<Vec<Vec<String>>> {
-            let text = std::fs::read_to_string(out.join(format!("{rel}.csv"))).map_err(|e| Error::Plan(format!("{name}: {rel}: {e}")))?;
-            Ok(text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect())
+            crate::code_rule_dsl::logic::plan::output::rows(&out, rel).map_err(|e| Error::Plan(format!("{name}: {rel}: {e}")))
         };
         let mut at: BTreeMap<String, [String; 4]> = BTreeMap::new();
         for r in rows("typing_bridge_at")? {

@@ -49,7 +49,7 @@ v(s, d) :- types__vtype(s, _, d).
     // Phase 1 (`sources`: the source files loaded, the imports resolved) runs first; every later phase reads it.
     assert_eq!(names, ["sources", "struct", "types"]);
     let rows = |rel: &str| -> Vec<String> {
-        let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(str::to_owned).collect();
         v.sort();
         v
     };
@@ -117,7 +117,7 @@ sh(f, n, c, w) :- struct__shape(f, n, c, w).
     let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, ["sources", "struct"]);
     let rows = |rel: &str| -> Vec<String> {
-        let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(str::to_owned).collect();
         v.sort();
         v
     };
@@ -165,7 +165,7 @@ ro(f) :- types__ropen(f).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
     let rows = |rel: &str| -> Vec<String> {
-        let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(str::to_owned).collect();
         v.sort();
         v
     };
@@ -238,7 +238,7 @@ lib_attr(c, x) :- types__attr(c, x, _, _), types__owner(c, o), lib(o).
 "#;
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
-    let count = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).map_or(0, |t| t.lines().count());
+    let count = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).map_or(0, |t| t.lines().count());
     let show = |what: &str, r: &corpus::Report| {
         for p in &r.phase_runs {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
@@ -257,7 +257,7 @@ lib_attr(c, x) :- types__attr(c, x, _, _), types__owner(c, o), lib(o).
     println!("TYPES workspace annotations: {} written, {} resolved ({:.1}%), {} to a library's symbol", count("ann"), count("ann_ok"), pct(count("ann_ok"), count("ann")), count("ann_lib"));
     println!("TYPES library class lookups answered by attr: {}", count("lib_attr"));
     for rel in ["imp_miss", "ann_miss"] {
-        let text = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+        let text = crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
         for l in text.lines().take(25) {
             println!("TYPES {rel}: {l}");
         }

@@ -24,7 +24,7 @@ fn a_session_reruns_what_an_edit_changed() {
     let rule = packs().join("bandit-b301-pickle.rr");
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let findings = || std::fs::read_to_string(out.join("violation.csv")).unwrap();
+    let findings = || crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap();
     let fresh = run();
     let expected = findings();
     let _ = fresh;
@@ -58,7 +58,7 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -136,7 +136,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -207,7 +207,7 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -270,7 +270,7 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -406,7 +406,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -524,7 +524,7 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -587,7 +587,7 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -706,7 +706,7 @@ fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() 
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };

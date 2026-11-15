@@ -287,3 +287,39 @@ fn rows_of_every_shape() {
     assert_eq!(s.lines(), ["0\t0", "2\t20", "4\t40"]);
     assert_eq!(s.without_first().lines(), ["0", "20", "40"]);
 }
+
+#[test]
+fn a_directorys_outputs_are_read_from_its_stack() {
+    let dir = std::env::temp_dir().join(format!("rerail-output-readers-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let l = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<String>>();
+    // No stack: every relation absent.
+    assert_eq!(text(&dir, "a").unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    put_lines(&dir, &[("a", &l(&["x\t1", "y\t2"])), ("e", &[])]).unwrap();
+    assert_eq!(text(&dir, "a").unwrap(), "x\t1\ny\t2\n");
+    assert_eq!(text(&dir, "e").unwrap(), "");
+    assert_eq!(text(&dir, "b").unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    // Over the stack, an overlay: the rest read through.
+    put_lines(&dir, &[("b", &l(&["v\twith\ttabs"]))]).unwrap();
+    assert_eq!(read(&dir).unwrap().len(), 2);
+    assert_eq!(lines(&dir, "a").unwrap(), ["x\t1", "y\t2"]);
+    assert_eq!(names(&dir).unwrap(), ["a", "b", "e"]);
+    // A row's values each as shown, a tab in one too (a relation of rows of one width is held by its columns).
+    assert_eq!(rows(&dir, "a").unwrap(), [vec!["x", "1"], vec!["y", "2"]]);
+    // At its depth, the stack is folded into one base that reads the same.
+    for i in 0..MAX_DEPTH {
+        put_lines(&dir, &[("a", &l(&[&format!("z\t{i}")]))]).unwrap();
+    }
+    assert!(read(&dir).unwrap().len() <= MAX_DEPTH);
+    assert_eq!(lines(&dir, "a").unwrap(), [format!("z\t{}", MAX_DEPTH - 1)]);
+    assert_eq!(lines(&dir, "b").unwrap(), ["v\twith\ttabs"]);
+    // A base of some of them; `.csv` files of all.
+    let base = base_of(&dir, ["b", "none"].into_iter()).unwrap();
+    let one = Image::one(&base).unwrap();
+    assert!(!one.is_overlay());
+    assert_eq!(one.names().collect::<Vec<_>>(), ["b"]);
+    let to = dir.join("csv");
+    assert_eq!(to_csv(&dir, &to).unwrap(), 3);
+    assert_eq!(std::fs::read_to_string(to.join("a.csv")).unwrap(), text(&dir, "a").unwrap());
+    let _ = std::fs::remove_dir_all(&dir);
+}

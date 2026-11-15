@@ -23,11 +23,11 @@ fn corpus(name: &str, files: &[(&str, &str)]) -> PathBuf {
     dir
 }
 
-/// `program`'s outputs over the corpus in `dir`, by relation: each `<rel>.csv` as the runner writes it.
+/// `program`'s outputs over the corpus in `dir`, by relation: each `<rel>` as the runner writes it (`output::text`).
 fn run(dir: &std::path::Path, program: &str, outputs: &[&str]) -> Vec<String> {
     let out = dir.join(".out");
     super::run(program, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    outputs.iter().map(|rel| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default()).collect()
+    outputs.iter().map(|rel| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default()).collect()
 }
 
 /// Rows as the runner writes a relation: sorted, deduplicated, each ended by `\n`.

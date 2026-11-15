@@ -1143,7 +1143,7 @@ fn replay_run(k: usize, event: &Event, program: &Replayed, root: &Path) -> Outco
         Err(error) => return Outcome::Error { run: true, error },
     };
     for r in &show {
-        let rows = std::fs::read_to_string(dir.join(".out").join(format!("{r}.csv"))).unwrap_or_else(|_| "(no file)".to_owned());
+        let rows = crate::code_rule_dsl::logic::plan::output::text(&dir.join(".out"), r).unwrap_or_else(|_| "(no relation)".to_owned());
         eprintln!("{} {r}:\n{rows}", event.test);
     }
     // Where the oracle records no code, (path, line) only.
@@ -1417,8 +1417,8 @@ fn findings(program: &str, dir: &Path) -> Result<Vec<String>, String> {
 fn finding_keys(program: &str, dir: &Path) -> Result<Vec<(String, u64, String)>, String> {
     let out = dir.join(".out");
     super::super::plan::corpus::run(program, dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map_err(|e| e.to_string())?;
-    // Every output has its file, empty or not: no `violation.csv` is a program without violations.
-    let csv = std::fs::read_to_string(out.join("violation.csv")).map_err(|e| format!("violation.csv: {e}"))?;
+    // Every output is in the image, empty or not: no `violation` is a program without violations.
+    let csv = crate::code_rule_dsl::logic::plan::output::text(&out, "violation").map_err(|e| format!("violation: {e}"))?;
     Ok(csv
         .lines()
         .map(|l| {
@@ -1983,11 +1983,11 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
     // Of two runs, each its own file (`<file>.converted`, `<file>.hand-written`).
     if let Some(keep) = std::env::var_os("RERAIL_MEASURE_KEEP") {
         let keep = if label == "all" { PathBuf::from(keep) } else { PathBuf::from(format!("{}.{label}", PathBuf::from(keep).display())) };
-        std::fs::copy(out.join("violation.csv"), keep).unwrap();
+        std::fs::write(keep, crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap()).unwrap();
     }
     // Violations per rule: the first column of `violation.csv` is the rule's id.
     let mut per: BTreeMap<String, usize> = BTreeMap::new();
-    for line in std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines() {
+    for line in crate::code_rule_dsl::logic::plan::output::text(&out, "violation").unwrap_or_default().lines() {
         let id = line.split('\t').next().unwrap_or("").trim_matches('"').to_owned();
         *per.entry(id).or_default() += 1;
     }

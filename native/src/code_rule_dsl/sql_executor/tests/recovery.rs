@@ -376,7 +376,7 @@ fn corpus_sql_uses_the_shared_wave_kernel_for_min_lattices() {
     );
     result.unwrap();
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("out/smallest.csv")).unwrap(),
+        crate::code_rule_dsl::logic::plan::output::text(&dir.path().join("out"), "smallest").unwrap(),
         "1\t3\n"
     );
 }
@@ -426,7 +426,7 @@ fn both_sql_entry_points_share_custom_lattices_and_logical_zero_arity_outputs() 
         ("total", "2\n"),
     ] {
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(format!("out/{name}.csv")))
+            crate::code_rule_dsl::logic::plan::output::text(&dir.path().join("out"), name)
                 .unwrap_or_else(|e| panic!("{name}: {e}")),
             text,
             "{name}"
@@ -478,7 +478,7 @@ fn combined_corpus_programs_keep_boolean_output_metadata_after_renaming() {
     .unwrap();
     for name in ["p0_flag", "p1_flag"] {
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(format!("out/{name}.csv"))).unwrap(),
+            crate::code_rule_dsl::logic::plan::output::text(&dir.path().join("out"), name).unwrap(),
             "\n"
         );
     }

@@ -553,16 +553,15 @@ fn loads_documents(program: &Program, dir: Option<&Path>, seen: &mut BTreeSet<St
 fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<String>>>> {
     let mut rows: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
     for export in &declared.exports {
-        let text = std::fs::read_to_string(out.join(format!("{export}.csv"))).map_err(|e| {
-            let held: Vec<String> = std::fs::read_dir(out).map(|d| d.filter_map(|f| f.ok().map(|f| f.file_name().to_string_lossy().into_owned())).collect()).unwrap_or_default();
+        let read = crate::code_rule_dsl::logic::plan::output::rows(out, export).map_err(|e| {
+            let held = crate::code_rule_dsl::logic::plan::output::names(out).unwrap_or_default();
             Error::Plan(format!("phase {name}: {export}: {e} (in {}, which holds {held:?})", out.display()))
         })?;
         let width = program.decls[export.as_str()].len();
-        let read: Vec<Vec<String>> = text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect();
-        // Outputs are lines of tab-separated values, unescaped: a value holding a newline or a tab would come back
-        // as other rows, and be handed on as facts no rule made.
+        // Each value as it is, a newline or a tab in it too; a relation held by its lines (rows the run handed of
+        // differing widths) comes back a row of one value, and would be handed on as facts no rule made.
         if let Some(bad) = read.iter().find(|r| r.len() != width) {
-            return Err(Error::Plan(format!("phase {name}: {export}: a row of {} values, not {width} (a value holds a newline or a tab): {:?}", bad.len(), bad.join("\t"))));
+            return Err(Error::Plan(format!("phase {name}: {export}: a row of {} values, not {width}: {:?}", bad.len(), bad.join("\t"))));
         }
         rows.insert(export.clone(), read);
     }

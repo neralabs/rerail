@@ -323,9 +323,9 @@ pub fn run_program(
             corpus::run_with_options(&[text.as_str()], root, None, dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options))
         }
         .map_err(|e| e.to_string())?;
-        match std::fs::read_to_string(dir.join("rr_diagnostic.csv")) {
-            Ok(text) => {
-                for line in text.lines() {
+        match crate::code_rule_dsl::logic::plan::output::lines(dir, "rr_diagnostic") {
+            Ok(lines) => {
+                for line in &lines {
                     rows.push(serde_json::from_str::<serde_json::Value>(line).map_err(|e| e.to_string())?);
                 }
             }
@@ -450,7 +450,7 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
 }
 
 /// One group's policies run as one pack into `out/pack-<first>`, and each one's findings written to its own
-/// `out/<k>/rr_diagnostic.csv`: per member, its findings and its run's record. `None` when the pack's run fails or a
+/// `out/<k>` (its `rr_diagnostic`, in `outputs.rro`): per member, its findings and its run's record. `None` when the pack's run fails or a
 /// finding names no member's id: the group's policies then run alone, each with its own error.
 fn run_pack(
     paths: &[std::path::PathBuf],
@@ -471,24 +471,25 @@ fn run_pack(
         return Ok(None);
     };
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
-    let mut lines: Vec<Vec<&str>> = group.members.iter().map(|_| Vec::new()).collect();
-    let text = match std::fs::read_to_string(dir.join("rr_diagnostic.csv")) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+    let mut lines: Vec<Vec<String>> = group.members.iter().map(|_| Vec::new()).collect();
+    let text = match crate::code_rule_dsl::logic::plan::output::lines(&dir, "rr_diagnostic") {
+        Ok(lines) => lines,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(e.to_string()),
     };
-    for line in text.lines() {
+    for line in &text {
         let finding: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
         let Some(at) = finding["policy"].as_str().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
         each[at].push(finding);
-        lines[at].push(line);
+        lines[at].push(line.clone());
     }
     let mut done = Vec::with_capacity(group.members.len());
     for (((&k, found), lines), metadata) in group.members.iter().zip(each).zip(lines).zip(&group.metadata) {
         let own = out.join(k.to_string());
         std::fs::create_dir_all(&own).map_err(|e| format!("{}: {e}", own.display()))?;
-        let written: String = lines.iter().map(|l| format!("{l}\n")).collect();
-        std::fs::write(own.join("rr_diagnostic.csv"), written).map_err(|e| format!("{}: {e}", own.display()))?;
+        // Its own outputs, a base of its findings alone (decision 0239).
+        let _ = std::fs::remove_file(own.join(crate::code_rule_dsl::logic::plan::output::FILE));
+        crate::code_rule_dsl::logic::plan::output::put_lines(&own, &[("rr_diagnostic", &lines)]).map_err(|e| format!("{}: {e}", own.display()))?;
         let run = serde_json::json!({"path": paths[k].display().to_string(), "files": report.files, "metadata": metadata, "together": group.members.len()});
         done.push((found, run));
     }
@@ -638,11 +639,14 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
                 r.files += each.files;
                 r.nodes += each.nodes;
                 r.chunks += each.chunks;
-                let found = std::fs::read_to_string(dir.join("violation.csv")).unwrap_or_default();
+                // Its findings joined to the first run's, over `out`'s outputs (decision 0239).
+                let found = crate::code_rule_dsl::logic::plan::output::lines(&dir, "violation").unwrap_or_default();
                 if !found.is_empty() {
-                    use std::io::Write;
-                    let mut all = std::fs::OpenOptions::new().append(true).create(true).open(out.join("violation.csv")).map_err(|e| e.to_string())?;
-                    all.write_all(found.as_bytes()).map_err(|e| e.to_string())?;
+                    let mut all = crate::code_rule_dsl::logic::plan::output::lines(out, "violation").unwrap_or_default();
+                    all.extend(found);
+                    all.sort_unstable();
+                    all.dedup();
+                    crate::code_rule_dsl::logic::plan::output::put_lines(out, &[("violation", &all)]).map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -730,7 +734,7 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -805,6 +809,16 @@ pub fn cli(args: &[String]) -> Result<String, String> {
         // The program `logic` runs for a file: `core.rr` and its includes resolved, lowered and printed as `.rr`.
         Some("flatten") => match &args[1..] {
             [file] => crate::tools::flatten(Path::new(file.as_str())),
+            _ => Err(USAGE.into()),
+        },
+        // A run's outputs (`out/outputs.rro`, decision 0239) as `.csv` files, one per relation, in `to` (`out` itself
+        // when not given): for scripts that read them.
+        Some("csv") => match &args[1..] {
+            [out] | [out, _] => {
+                let to = Path::new(args.get(2).unwrap_or(out).as_str());
+                let n = crate::code_rule_dsl::logic::plan::output::to_csv(Path::new(out.as_str()), to).map_err(|e| e.to_string())?;
+                Ok(format!("{n} relations written to {}\n", to.display()))
+            }
             _ => Err(USAGE.into()),
         },
         #[cfg(feature = "tape-cache")]

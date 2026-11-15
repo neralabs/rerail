@@ -342,7 +342,7 @@ fn t_programs_plan_and_run_like_t() {
         assert_eq!(got.text().keys().cloned().collect::<Vec<_>>(), files, "{name}");
         assert!(!lines.is_empty() && got.text().values().any(|r| !r.is_empty()), "{name}");
         for (rel, rows) in &got.text() {
-            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
+            let expected = crate::code_rule_dsl::logic::plan::output::text(&golden, rel).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
                 failures.push(format!("{name} {rel}: {} rows, expected {}", rows.len(), expected.len()));
@@ -374,7 +374,7 @@ fn t_programs_run_natively_like_t() {
         let got = run_sql_native(&program(name), &facts(), modes, load).unwrap_or_else(|e| panic!("{case}: {e}"));
         let golden = root().join(format!("plan/golden/{name}"));
         for (rel, rows) in &got.text() {
-            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
+            let expected = crate::code_rule_dsl::logic::plan::output::text(&golden, rel).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             assert_eq!(rows.iter().map(String::as_str).collect::<Vec<_>>(), expected, "{case} {rel}");
         }
@@ -447,7 +447,7 @@ fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures:
             })
             .collect();
         rows.sort();
-        let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
+        let expected = crate::code_rule_dsl::logic::plan::output::text(&golden, rel).unwrap();
         let expected: Vec<&str> = expected.lines().collect();
         if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
             let i = (0..rows.len().max(expected.len())).find(|&i| rows.get(i).map(String::as_str) != expected.get(i).copied());
@@ -742,7 +742,7 @@ fn product_programs_derive_t_outputs() {
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
         // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
         for (rel, rows) in got.text().iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
-            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
+            let expected = crate::code_rule_dsl::logic::plan::output::text(&golden, rel).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
                 let got: BTreeSet<&str> = rows.iter().map(String::as_str).collect();
@@ -785,7 +785,7 @@ fn own_ingestion_derives_what_t_facts_do() {
             .collect::<Vec<_>>()
             .join("\t")
     };
-    let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_else(|e| panic!("{}: {rel}: {e}", out.display()));
+    let read = |out: &std::path::Path, rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_else(|e| panic!("{}: {rel}: {e}", out.display()));
     for name in ["workload", "calls"] {
         let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
@@ -844,7 +844,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     println!("{:?}", r.typing);
     assert!(r.typing.pending.is_empty(), "{:?}", r.typing);
     assert_eq!(r.typing.declared, 4, "version: str, make: int, thing: bytes | None");
-    let types: BTreeSet<String> = std::fs::read_to_string(dir.join("out-app/type_of.csv")).unwrap().lines().map(|l| l.rsplit('\t').next().unwrap().to_owned()).collect();
+    let types: BTreeSet<String> = crate::code_rule_dsl::logic::plan::output::text(&dir.join("out-app"), "type_of").unwrap().lines().map(|l| l.rsplit('\t').next().unwrap().to_owned()).collect();
     assert_eq!(types, BTreeSet::from(["str", "int", "bytes", "None"].map(String::from)));
     // One term per typed node (the three calls and the three names they are assigned to): other.thing()'s, and
     // `c`'s through it, are the closed union bytes | None.
@@ -858,7 +858,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let cold = Typing { site: Some((dir.join("site"), dir.join("empty-cache"))), ..Default::default() };
     let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
     assert_eq!(r.typing.pending, vec!["vendor".to_owned(), "vendor.core".to_owned()]);
-    assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&dir.join("out-cold"), "type_of").unwrap(), "");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -891,7 +891,7 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         super::corpus::run(program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let mut names = [a, b];
         names.sort_unstable();
-        assert_eq!(std::fs::read_to_string(out.join("name.csv")).unwrap(), format!("{}\n{}\n", names[0], names[1]));
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "name").unwrap(), format!("{}\n{}\n", names[0], names[1]));
         #[cfg(target_os = "linux")]
         {
             let open: Vec<std::path::PathBuf> = std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect();
@@ -947,7 +947,7 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
     let out = dir.join("out");
     let r = super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(r.files, 3);
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     assert_eq!(read("private_in_impl"), "impl/base.py\t_also\t1\nimpl/sqlite/fts/manager.py\t_hidden\t2\n");
     assert_eq!(read("async_in_fts"), "fetch_async\n");
     let _ = std::fs::remove_dir_all(&dir);
@@ -992,7 +992,7 @@ top(c) :- callee(n, c), !inside(n, _, fn).
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     assert_eq!(read("call_in"), "f\touter\ng\tinner\ng\touter\n");
     assert_eq!(read("calls_g"), "inner\nouter\n");
     assert_eq!(read("top"), "h\n");
@@ -1086,7 +1086,7 @@ more(f) :- callee(c, f), 1 + count : { arg(c, _, _) } > 3.
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     let a = |order: &mut dyn Iterator<Item = i32>, sep: &str| order.map(|i| format!("a{i}")).collect::<Vec<_>>().join(sep);
     let mut text_order: Vec<String> = (0..=10).map(|i| format!("a{i}")).collect();
     text_order.sort();
@@ -1123,7 +1123,7 @@ fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, Strin
         let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
         let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));
         native = r.native;
-        got.push(rels.iter().map(|rel| (rel.to_string(), std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap())).collect::<BTreeMap<_, _>>());
+        got.push(rels.iter().map(|rel| (rel.to_string(), crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap())).collect::<BTreeMap<_, _>>());
     }
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(got[0], got[1], "SQL and native");
@@ -1229,7 +1229,7 @@ PIN(s) :- spot(_, s).
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     assert_eq!(
         read("violation"),
         // The sixth column is the finding's (0165): a call's 0-based byte column, 0 for a place.
@@ -1335,7 +1335,7 @@ not_split2(s) :- q(s), !split_dot(s, "os", "path.join").
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     let expected = [
         // g's nearest function is inner, which fnode leaves out.
         ("near_d", "f\tb\ng\tb\nk\tdeep\n"),
@@ -1395,7 +1395,7 @@ after(s, k) :- fname(f, s), k = count : { earlier(f, n) }.
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     let rows = |rel: &str| read(rel).lines().map(|l| l.split('\t').map(str::to_owned).collect::<Vec<_>>()).collect::<Vec<_>>();
     let count = |rel: &str, s: &str| rows(rel).iter().find(|r| r[0] == s).map(|r| r[1].parse::<u32>().unwrap());
     // f's subtree has more nodes than e's, and e comes after f, so fewer nodes follow it.
@@ -1453,7 +1453,7 @@ gone(s) :- arg_pos(s, 0), !(arg_pos(_, 2)).
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     assert_eq!(read("pos"), "x\t0\ny\t1\nz\t2\n");
     assert_eq!(read("whole"), "xyz\n");
     assert_eq!(read("up"), "1\n2\n3\n4\n");
@@ -1504,7 +1504,7 @@ tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$"
     for modes in ["", "program"] {
         let out = dir.join(format!("out{modes}"));
         super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
         assert_eq!(read("short"), "g\n", "{modes}");
         assert_eq!(read("plain"), "os.path\nos.path.join\n", "{modes}");
         assert_eq!(read("untailed"), "", "{modes}");
@@ -1524,7 +1524,7 @@ fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[
     }
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let got = outputs.iter().map(|rel| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default()).collect();
+    let got = outputs.iter().map(|rel| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default()).collect();
     let _ = std::fs::remove_dir_all(&dir);
     got
 }

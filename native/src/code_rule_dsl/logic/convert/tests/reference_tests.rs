@@ -75,7 +75,7 @@ open(p, s, e) :- reference_open(n), node(d, n, _, s, e), doc(d, p, _).
     );
     let out = dir.join(".out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
     let num = |s: &str| s.parse::<u32>().unwrap();
     Graph {
         edges: read("edge")

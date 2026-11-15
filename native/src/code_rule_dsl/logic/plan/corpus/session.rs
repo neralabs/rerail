@@ -33,9 +33,12 @@ pub(in crate::code_rule_dsl) struct Session {
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
     /// per cross program (`retain::key`): a run's passes are different programs, and one would take the other's place.
     pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
-    /// Each output file a run of the session wrote: the program's cross-file key and its rows. A later run of that
-    /// program whose output stratum is clean leaves the file as it is.
+    /// Each output a run of the session wrote (`out/<rel>`): the program's cross-file key and its rows. A later run of
+    /// that program whose output stratum is clean leaves it in the stack as it is.
     pub(super) written: Mutex<std::collections::HashMap<PathBuf, ([u8; 32], usize)>>,
+    /// Each output directory's stack as the session's last run there left it (`out`): what a stat of its file finds,
+    /// and its depth. A stack that is not as it was holds no output of the session's.
+    pub(super) stacks: Mutex<std::collections::HashMap<PathBuf, Stack>>,
     /// Each memoised program's base relations' statistics, kept by file (decision 0096 §3, `keptstats`).
     pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], super::keptstats::Keeper>>,
     /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
@@ -71,6 +74,7 @@ pub fn start(dir: &Path) -> std::result::Result<(), String> {
         memo: Default::default(),
         cross: Default::default(),
         written: Mutex::new(Default::default()),
+        stacks: Mutex::new(Default::default()),
         stats: Mutex::new(Default::default()),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
@@ -155,3 +159,23 @@ impl Held {
 
 // Its tests run in the engine's test binary (its facade of this module mounts `session/tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rr` libraries).
+
+/// An output stack as a run left it: its file's length and modification time, and its images.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Stack {
+    pub len: u64,
+    pub modified: std::time::SystemTime,
+    pub depth: usize,
+}
+
+impl Stack {
+    /// The stack in `out` as a stat finds it (its depth not known: 0).
+    pub fn stat(out: &std::path::Path) -> Option<Stack> {
+        let m = std::fs::metadata(out.join(crate::code_rule_dsl::logic::plan::output::FILE)).ok()?;
+        Some(Stack { len: m.len(), modified: m.modified().ok()?, depth: 0 })
+    }
+    /// Whether the stack in `out` is as `self` (its file not written since).
+    pub fn stands(&self, out: &std::path::Path) -> bool {
+        Stack::stat(out).is_some_and(|s| s.len == self.len && s.modified == self.modified)
+    }
+}

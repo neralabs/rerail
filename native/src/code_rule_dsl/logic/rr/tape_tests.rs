@@ -258,7 +258,7 @@ errors(l, m) :- syntax_error(_, l, m).
     let out = root.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let rows = |rel: &str| {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default().lines().map(str::to_owned).collect();
         rows.sort();
         rows
     };
@@ -344,7 +344,7 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
         .map(|(k, p)| crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(p), &root, &root.join(format!("alone{k}")), &serde_json::Value::Null).unwrap())
         .collect();
     let alone: Vec<Vec<String>> = reports.iter().map(codes).collect();
-    let written = |k: usize| std::fs::read_to_string(root.join("out").join(k.to_string()).join("rr_diagnostic.csv")).unwrap_or_default();
+    let written = |k: usize| crate::code_rule_dsl::logic::plan::output::text(&root.join("out").join(k.to_string()), "rr_diagnostic").unwrap_or_default();
     let (w0, w1, w2) = (written(0), written(1), written(2));
     let _ = std::fs::remove_dir_all(&root);
     for p in [&a, &b, &c] {

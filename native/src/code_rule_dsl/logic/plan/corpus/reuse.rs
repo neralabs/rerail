@@ -39,7 +39,7 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
 
 fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
-    h.update(b"rerail.run-reuse/v1\0");
+    h.update(b"rerail.run-reuse/v2\0");
     for p in programs {
         h.update((p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
@@ -117,13 +117,9 @@ pub fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// The outputs a run wrote: each `<rel>.csv` in `out`, as (name, bytes).
-fn outputs_of<'a>(out: &Path, names: impl Iterator<Item=&'a str>) -> Vec<(String,Vec<u8>)> {
-    let mut files=names.filter_map(|name| {
-        let name=format!("{name}.csv");
-        std::fs::read(out.join(&name)).ok().map(|bytes|(name,bytes))
-    }).collect::<Vec<_>>();
-    files.sort(); files
+/// The outputs a run wrote, as one file: a base of the relations `names` of the stack in `out` (decision 0239).
+fn outputs_of<'a>(out: &Path, names: impl Iterator<Item = &'a str>) -> Vec<(String, Vec<u8>)> {
+    crate::code_rule_dsl::logic::plan::output::base_of(out, names).map(|bytes| vec![(crate::code_rule_dsl::logic::plan::output::FILE.to_owned(), bytes)]).unwrap_or_default()
 }
 
 pub fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
@@ -188,8 +184,10 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     let mut report = Report::default();
     for (name, bytes) in &outputs {
         std::fs::write(out.join(name), bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
-        let rel = name.trim_end_matches(".csv").to_owned();
-        report.rows.insert(rel, bytes.iter().filter(|b| **b == b'\n').count());
+        let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        for rel in image.names() {
+            report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
+        }
     }
     let now = super::thread_usage();
     report.phases.push(("unchanged: phase 0 checked every read, outputs kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));

@@ -289,7 +289,7 @@ impl Outcome {
     }
 }
 
-/// A finding's key, from a row of `rr_diagnostic.csv`.
+/// A finding's key, from a row of `rr_diagnostic`.
 #[derive(Clone, Debug, PartialEq)]
 struct Finding {
     code: String,
@@ -385,10 +385,10 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
         })
         .collect();
     let rows = |relation: &str| -> Result<Vec<Vec<String>>, String> {
-        match std::fs::read_to_string(out.join(format!("{relation}.csv"))) {
-            Ok(text) => Ok(text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()),
+        match crate::code_rule_dsl::logic::plan::output::rows(&out, relation) {
+            Ok(rows) => Ok(rows),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(format!("{relation}.csv: {e}")),
+            Err(e) => Err(format!("{relation}: {e}")),
         }
     };
     let mut outcome = Outcome { failures: Vec::new(), findings: findings.iter().map(ToString::to_string).collect() };

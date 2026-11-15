@@ -183,7 +183,7 @@ fn derive(
     own["inputFiles"] = serde_json::json!([]);
     let out = scratch.join("constants");
     let report: Report = super::run_with_options(programs, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
-    let texts = wanted.iter().map(|rel| (rel.clone(), std::fs::read_to_string(out.join(format!("{}.csv", copy(rel)))).unwrap_or_default())).collect();
+    let texts = wanted.iter().map(|rel| (rel.clone(), crate::code_rule_dsl::logic::plan::output::text(&out, &copy(rel)).unwrap_or_default())).collect();
     let _ = std::fs::remove_dir_all(&out);
     Ok(((texts, report.consulted), report.plans))
 }

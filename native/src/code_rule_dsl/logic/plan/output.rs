@@ -20,7 +20,8 @@
 //! outputs a later run made again, each whole; a relation is read from the last image that holds it. Each image's
 //! strings, documents and places are its own. A stack is folded into one base past [`MAX_DEPTH`] images.
 //!
-//! Text is a reader: [`Image::show`] gives a relation's rows as the lines its `.csv` file held, sorted.
+//! Text is a reader: [`lines`] and [`text`] give a relation's rows as the lines its `.csv` file held, sorted; [`to_csv`]
+//! writes the files for scripts that read them.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -795,6 +796,85 @@ pub fn write(dir: &Path, image: &[u8]) -> std::io::Result<()> {
     } else {
         std::fs::write(path, image)
     }
+}
+
+/// Relation `rel` of the stack in `dir`, read where it is: absent (`NotFound`) where `dir` holds no stack or the stack
+/// no such relation.
+fn with<T>(dir: &Path, rel: &str, f: impl FnOnce(Rel<'_>) -> T) -> std::io::Result<T> {
+    let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
+    find(&stack, rel).map(f).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no relation {rel}", dir.display())))
+}
+
+/// Relation `rel` of the stack in `dir` as the lines its `.csv` file held: each tab-separated, sorted, each once.
+pub fn lines(dir: &Path, rel: &str) -> std::io::Result<Vec<String>> {
+    with(dir, rel, |r| r.lines())
+}
+
+/// Relation `rel` of the stack in `dir` as its `.csv` file's text: its lines, each ended by a newline.
+pub fn text(dir: &Path, rel: &str) -> std::io::Result<String> {
+    lines(dir, rel).map(|lines| lines.iter().map(|l| format!("{l}\n")).collect())
+}
+
+/// Relation `rel` of the stack in `dir` as rows of its values, each as the `.csv` file showed it (a value may hold a
+/// tab or a newline): sorted, each once.
+pub fn rows(dir: &Path, rel: &str) -> std::io::Result<Vec<Vec<String>>> {
+    with(dir, rel, |r| {
+        let mut rows: Vec<Vec<String>> = (0..r.rows).map(|i| (0..r.width).map(|c| r.shown(i, c)).collect()).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        rows
+    })
+}
+
+/// The names of the relations the stack in `dir` holds, each once.
+pub fn names(dir: &Path) -> std::io::Result<Vec<String>> {
+    let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
+    let mut names: Vec<String> = stack.iter().flat_map(|i| i.names().map(str::to_owned)).collect();
+    names.sort_unstable();
+    names.dedup();
+    Ok(names)
+}
+
+/// Relations given as lines (each tab-separated, a value as shown) written over the stack in `dir`, each whole: an
+/// overlay where a stack stands below its depth, a base folding it where it is that deep, else a base of them alone.
+pub fn put_lines(dir: &Path, rels: &[(&str, &[String])]) -> std::io::Result<()> {
+    let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
+    let flags = stack.last().map_or(0, Image::flags);
+    let overlay = !stack.is_empty() && stack.len() < MAX_DEPTH;
+    let mut image = Builder::new(flags, overlay);
+    if !stack.is_empty() && !overlay {
+        let names: std::collections::BTreeSet<&str> = stack.iter().flat_map(Image::names).filter(|n| rels.iter().all(|(r, _)| r != n)).collect();
+        for name in names {
+            image.take(name, find(&stack, name).expect("named"));
+        }
+    }
+    for (rel, lines) in rels {
+        image.lines(rel, &[], &[], lines, &|_, v| v.to_owned());
+    }
+    std::fs::create_dir_all(dir)?;
+    write(dir, &image.finish())
+}
+
+/// A base of the stack in `dir`'s relations `names` (those it holds), each as the stack reads it.
+pub fn base_of<'a>(dir: &Path, names: impl Iterator<Item = &'a str>) -> std::io::Result<Vec<u8>> {
+    let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
+    let mut image = Builder::new(stack.last().map_or(0, Image::flags), false);
+    for name in names {
+        if let Some(rel) = find(&stack, name) {
+            image.take(name, rel);
+        }
+    }
+    Ok(image.finish())
+}
+
+/// The stack in `dir` written out as `.csv` files in `to`, one per relation (for scripts that read them).
+pub fn to_csv(dir: &Path, to: &Path) -> std::io::Result<usize> {
+    std::fs::create_dir_all(to)?;
+    let names = names(dir)?;
+    for name in &names {
+        std::fs::write(to.join(format!("{name}.csv")), text(dir, name)?)?;
+    }
+    Ok(names.len())
 }
 
 #[cfg(test)]

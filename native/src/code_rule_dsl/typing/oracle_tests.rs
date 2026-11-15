@@ -75,7 +75,7 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
     println!("cross-file rounds {:?}", report.rounds);
     assert!(report.rounds.converged || report.rounds.pending, "unconverged with no pending round: {:?}", report.rounds);
     let rows = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+        crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
     let at: BTreeMap<String, (usize, usize)> = rows("oracle_score_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
     let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
@@ -245,7 +245,7 @@ pub(super) fn score_rust(program: &str) -> (usize, BTreeMap<String, Departure>) 
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("score-rust");
     corpus::run(&format!("{program}\n{RUST_SPANS}"), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let rows = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+        crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
     let at = |node: &str, pos: &BTreeMap<String, usize>| -> (String, u64, u64) {
         let file = node.rsplit_once(':').unwrap().0.to_owned();
@@ -361,7 +361,7 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("score-types");
     corpus::run(&format!("{program}\n{TYPE_SPANS}"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let rows = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+        crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
     let at: BTreeMap<String, (String, usize, usize)> = rows("oracle_type_at")
         .into_iter()
@@ -462,7 +462,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
 .output edge, proven, unknown
 ";
     let rows = |out: &Path, rel: &str| -> BTreeSet<String> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect()
+        crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(str::to_owned).collect()
     };
     let direct = crate::code_rule_dsl::fixtures::temp().with_extension("direct");
     corpus::run(&format!("{}\n{keyed}", program("calls")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -505,7 +505,7 @@ at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
     let out = rule_dir.join("out");
     corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let mut got: BTreeSet<(String, u64)> = BTreeSet::new();
-    for l in std::fs::read_to_string(out.join("at.csv")).unwrap().lines() {
+    for l in crate::code_rule_dsl::logic::plan::output::text(&out, "at").unwrap().lines() {
         let r: Vec<&str> = l.split('\t').collect();
         let src = std::fs::read_to_string(project.join(r[0])).unwrap();
         got.insert((r[2].to_owned(), line(&src, r[1].parse().unwrap())));
@@ -560,7 +560,7 @@ own(n) :- imp(n, _).
 "#;
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("world");
     corpus::run(rule, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     assert_eq!(read("got"), "collections\tcollections\nos\tos\nos.path\tos\n");
     // The loaded documents' rows are not the corpus's: main.py's three imports only.
     assert_eq!(read("own").lines().count(), 3, "{}", read("own"));
@@ -576,7 +576,7 @@ fn calls_into_the_standard_library_reach_its_stubs() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_load/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("stdlib");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let text = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     let rows: Vec<(&str, &str)> = text.lines().filter_map(|l| l.split_once('\t')).collect();
     // Cells are `path:node`: the one call is main.py's, its target in the stub.
     assert_eq!(rows.len(), 1, "{text}");
@@ -597,7 +597,7 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_site/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("site");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let text = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     let mut got: Vec<String> = text
         .lines()
         .filter_map(|l| l.split_once('\t'))
@@ -628,12 +628,12 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_decl/app");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("decl");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let text = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
+    let text = crate::code_rule_dsl::logic::plan::output::text(&out, "type_of").unwrap();
     let mut got: Vec<&str> = text.lines().filter_map(|l| l.split_once('\t')).map(|(_, t)| t).filter(|t| *t != "module").collect();
     got.sort();
     // version() and make(): str; other.thing(): bytes | None.
     assert_eq!(got, ["None", "bytes", "str", "str"], "{text}");
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     assert!(targets.contains("world_decl/decls/vendor/core.pyi:"), "{targets}");
     assert!(targets.contains("world_decl/decls/other.pyi:"), "{targets}");
     assert!(targets.contains("site-packages/vendor/__init__.py:"), "{targets}");
@@ -654,8 +654,8 @@ fn a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_att
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
+    let open = crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap();
     // c.size() and h.first().size() reach Concrete.size; h.first() reaches Holder.first.
     assert_eq!(targets.lines().count(), 3, "{targets}");
     assert_eq!(open, "", "{open}");
@@ -675,10 +675,10 @@ fn a_method_declared_to_return_its_class_parameter_returns_what_the_receivers_ge
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     // get, get, pick, and the three `.m()` calls.
     assert_eq!(targets.lines().count(), 6, "{targets}");
-    assert_eq!(std::fs::read_to_string(out.join("call_open.csv")).unwrap(), "");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap(), "");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -696,9 +696,9 @@ fn a_subscript_is_a_call_of_its_receivers_getitem() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     assert_eq!(targets.lines().count(), 2, "{targets}");
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    let open = crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap();
     assert_eq!(open.lines().count(), 1, "{open}");
     let _ = std::fs::remove_dir_all(&project);
 }
@@ -716,9 +716,9 @@ fn a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered(
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     assert_eq!(targets.lines().count(), 2, "{targets}");
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    let open = crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap();
     assert_eq!(open.lines().count(), 2, "{open}");
     let _ = std::fs::remove_dir_all(&project);
 }
@@ -737,12 +737,12 @@ fn a_declared_generic_return_carries_the_receivers_binding() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     assert_eq!(targets.lines().count(), 2, "{targets}");
     // Both calls target one definition (V.run, not W.run).
     let defs: BTreeSet<&str> = targets.lines().filter_map(|l| l.split('\t').nth(1)).collect();
     assert_eq!(defs.len(), 1, "{targets}");
-    assert_eq!(std::fs::read_to_string(out.join("call_open.csv")).unwrap(), "");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap(), "");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -775,7 +775,7 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
         read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
@@ -819,7 +819,7 @@ fn the_analysis_phase_fits_a_library_overload_by_its_keywords_and_its_literal_ar
     // The overloads each call fits (`lcfn`), by the call's line.
     let text = format!("{}\n{JEDI_SPANS}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
         read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
@@ -859,7 +859,7 @@ fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_argu
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
         read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
@@ -906,7 +906,7 @@ fn the_analysis_phase_binds_a_library_context_managers_type_variable_from_the_wr
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
         read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
@@ -949,7 +949,7 @@ fn the_analysis_phase_rules_out_an_overload_whose_none_parameter_is_given_a_lite
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
         read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
@@ -986,7 +986,7 @@ fn the_analysis_phase_reads_a_library_generic_base_as_known() {
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
     assert_eq!(read("call_open"), "", "A() and A().go() of a class with a library generic base");
     assert_eq!(read("call_target").lines().count(), 2, "{}", read("call_target"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -1014,7 +1014,7 @@ fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
         read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
@@ -1052,7 +1052,7 @@ fn the_analysis_phase_awaits_an_async_loops_next_value_and_an_async_withs_entere
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
         read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
@@ -1103,7 +1103,7 @@ rtype(f, a, d) :- types__rtype(f, a, d).
     let run = || corpus::run_with_options(&[reader], &ws, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({})).unwrap();
     let dump = || -> Vec<Vec<String>> {
         ["binds", "anc", "attr", "rtype"].iter().map(|r| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, r).unwrap_or_default().lines().map(str::to_owned).collect();
             v.sort();
             v
         }).collect()
@@ -1156,9 +1156,9 @@ fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     assert_eq!(targets.lines().count(), 1, "{targets}");
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    let open = crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap();
     assert_eq!(open.lines().count(), 1, "{open}");
     let _ = std::fs::remove_dir_all(&project);
 }
@@ -1178,11 +1178,11 @@ fn a_paramspec_wrapper_call_holds_the_declared_class_bound_by_the_wrapped_return
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
     assert_eq!(targets.lines().count(), 2, "{targets}");
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    let open = crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap_or_default();
     assert_eq!(open.lines().count(), 0, "{open}");
-    let types = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
+    let types = crate::code_rule_dsl::logic::plan::output::text(&out, "type_of").unwrap();
     assert_eq!(types.lines().filter(|l| l.ends_with("\tm.V")).count(), 2, "{types}");
     let _ = std::fs::remove_dir_all(&project);
 }
@@ -1201,8 +1201,8 @@ fn a_functions_own_type_variable_is_bound_by_its_arguments_generic() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
+    let open = crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap_or_default();
     eprintln!("T {targets}\nO {open}");
     assert_eq!(open.lines().count(), 0, "{open}");
     assert_eq!(targets.lines().count(), 7, "{targets}");
@@ -1222,8 +1222,8 @@ fn a_protocol_parameters_type_variable_is_what_the_arguments_method_returns() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    let targets = crate::code_rule_dsl::logic::plan::output::text(&out, "call_target").unwrap();
+    let open = crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap_or_default();
     assert_eq!(open.lines().count(), 0, "{open}");
     assert_eq!(targets.lines().count(), 2, "{targets}");
     let _ = std::fs::remove_dir_all(&project);
@@ -1243,8 +1243,8 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let types = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    let types = crate::code_rule_dsl::logic::plan::output::text(&out, "type_of").unwrap();
+    let open = crate::code_rule_dsl::logic::plan::output::text(&out, "call_open").unwrap_or_default();
     assert_eq!(open.lines().count(), 0, "{open}");
     assert_eq!(types.lines().filter(|l| l.ends_with("\tm.A") || l.ends_with("\tm.B")).count(), 4, "{types}");
     let _ = std::fs::remove_dir_all(&project);
@@ -1275,7 +1275,7 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     let report = corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(report.typing_runs.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["calls"]);
     let mut got: BTreeSet<(String, u64, String)> = BTreeSet::new();
-    for l in std::fs::read_to_string(out.join("at.csv")).unwrap().lines() {
+    for l in crate::code_rule_dsl::logic::plan::output::text(&out, "at").unwrap().lines() {
         let r: Vec<&str> = l.split('\t').collect();
         let src = std::fs::read_to_string(project.join(r[0])).unwrap();
         got.insert((r[2].to_owned(), line(&src, r[1].parse().unwrap()), r[0].to_owned()));
@@ -1355,7 +1355,7 @@ fn benchmark_python_calls_program_corpus() {
     // The comparison below is the benchmark's, not the run's: its own span, for the memory sampler's peaks.
     let compare = crate::code_rule_dsl::logic::profile::span(|| "benchmark: compare with Jedi".to_owned());
     let rows = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+        crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
     let at: BTreeMap<String, (usize, usize)> = rows("oracle_jedi_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
     let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
@@ -1374,7 +1374,7 @@ fn benchmark_python_calls_program_corpus() {
     };
     let open: BTreeSet<(String, usize, usize)> = rows("call_open").iter().map(|r| key(&r[0])).collect();
     // The analysis phase (calls_p3) names no library node: a call that reaches a library's callable is `call_lib`.
-    let lib_calls: BTreeSet<(String, usize, usize)> = if out.join("call_lib.csv").exists() { rows("call_lib").iter().map(|r| key(&r[0])).collect() } else { BTreeSet::new() };
+    let lib_calls: BTreeSet<(String, usize, usize)> = if crate::code_rule_dsl::logic::plan::output::text(&out, "call_lib").is_ok() { rows("call_lib").iter().map(|r| key(&r[0])).collect() } else { BTreeSet::new() };
     let mut named: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
     for r in rows("call_target") {
         let t = target(&r[1]);
@@ -1502,7 +1502,7 @@ fn probe_the_analysis_phase() {
     corpus::run(&text, &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let asked: Vec<String> = rules.lines().filter_map(|l| l.trim().strip_prefix(".output ")).flat_map(|l| l.split(',').map(|r| r.trim().to_owned())).collect();
     for rel in ["call_target", "call_open", "call_lib"].into_iter().map(str::to_owned).chain(asked) {
-        println!("== {rel}\n{}", std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default());
+        println!("== {rel}\n{}", crate::code_rule_dsl::logic::plan::output::text(&out, &rel).unwrap_or_default());
     }
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1526,7 +1526,7 @@ fn spike_liveness_of_the_calls_program() {
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("{} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
-    let counts = liveness::read_counts(&std::fs::read_to_string(out.join(format!("{}.csv", liveness::COUNTS))).unwrap());
+    let counts = liveness::read_counts(&crate::code_rule_dsl::logic::plan::output::text(&out, liveness::COUNTS).unwrap());
     let _ = std::fs::remove_dir_all(&out);
     let get = |m: &BTreeMap<String, u64>, w: &str| m.get(w).copied().unwrap_or(0);
     let mut rows: Vec<(&String, &BTreeMap<String, u64>)> = counts.iter().collect();
@@ -1592,7 +1592,7 @@ ats(s, p, l) :- struct__at(s, p, l).
 "#;
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
-    let count = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).map_or(0, |t| t.lines().count());
+    let count = |rel: &str| crate::code_rule_dsl::logic::plan::output::text(&out, rel).map_or(0, |t| t.lines().count());
     let show = |what: &str, r: &corpus::Report| {
         let p = &r.phase_runs[0];
         let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
@@ -1608,7 +1608,7 @@ ats(s, p, l) :- struct__at(s, p, l).
     let outputs = ["units", "modules", "defs", "imports", "bindings", "bases", "members", "params", "rets", "ats"];
     let dump = || -> BTreeMap<&str, Vec<String>> {
         outputs.iter().map(|rel| {
-            let mut lines: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            let mut lines: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap_or_default().lines().map(str::to_owned).collect();
             lines.sort();
             (*rel, lines)
         }).collect()
@@ -1689,7 +1689,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     let run = || corpus::run_with_options(&[&reader], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let dump = || -> BTreeMap<String, Vec<String>> {
         exports.iter().map(|e| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("out_{e}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, &format!("out_{e}")).unwrap_or_default().lines().map(str::to_owned).collect();
             v.sort();
             (e.clone(), v)
         }).collect()
@@ -1853,7 +1853,7 @@ fn spike_o125_session_maintains_calls() {
     let rels = ["call_target", "call_open", "type_of", "possible_type", "finding"];
     let outputs = || -> Vec<Vec<String>> {
         rels.iter().map(|r| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, r).unwrap_or_default().lines().map(str::to_owned).collect();
             v.sort();
             v
         }).collect()
@@ -1967,7 +1967,7 @@ fn spike_o125_replay() {
     let rels = ["call_target", "call_open", "type_of", "possible_type"];
     let outputs = || -> Vec<Vec<String>> {
         rels.iter().map(|r| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, r).unwrap_or_default().lines().map(str::to_owned).collect();
             v.sort();
             v
         }).collect()

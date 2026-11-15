@@ -18,7 +18,7 @@
         )
         .unwrap();
         let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
-        let defs = || std::fs::read_to_string(out.join("defs.csv")).unwrap();
+        let defs = || crate::code_rule_dsl::logic::plan::output::text(&out, "defs").unwrap();
         let first = run();
         let sources = first.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
         assert_eq!(sources.exports, vec![("document".to_owned(), 2), ("library".to_owned(), 0)], "each source file is a document of phase 1's, and no library is set");
@@ -56,7 +56,7 @@
         let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
         let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
         let rows = |rel: &str| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+            let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, rel).unwrap().lines().map(str::to_owned).collect();
             v.sort();
             v
         };
@@ -123,7 +123,7 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
         phase("unit, def", "");
         let text = print(&reader(".decl p1__def(s: symbol, k: symbol)"));
         let first = run(&text).unwrap();
-        let r = || std::fs::read_to_string(out.join("r.csv")).unwrap();
+        let r = || crate::code_rule_dsl::logic::plan::output::text(&out, "r").unwrap();
         assert_eq!(r(), "m\nm.f\nm.g\n");
         assert_eq!(first.phase_runs.iter().find(|r| r.name == "p1").expect("p1 ran").exports, [("unit".to_owned(), 3), ("def".to_owned(), 3)]);
         assert_eq!(first.files, 0, "the reader reads only the phase's exports, so no file");
@@ -181,7 +181,7 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let run = |text: &str| crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options);
         let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl p2__anc(s: symbol, a: symbol)\n.decl r(s: symbol, a: symbol)\nr(s, a) :- p2__anc(s, a).\n.output r\n").unwrap()).unwrap();
         let report = run(&reader).unwrap();
-        assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "B\tA\n");
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "r").unwrap(), "B\tA\n");
         // Phase 1 (`sources`) first, which gives every run its documents, then both phases, listed flat, in the order
         // they ran; p2's own run checked p1 once, not again.
         let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
@@ -189,11 +189,11 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         assert!(report.phase_runs[2].report.phase_runs.is_empty(), "p1 is not checked again inside p2's run");
         // Nothing changed: the same rows.
         run(&reader).unwrap();
-        assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "B\tA\n");
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "r").unwrap(), "B\tA\n");
         // p1 changed (its program: no class has a base now): p2, which reads it, is not kept.
         std::fs::write(phases.join("p1.rr"), p1.replace("text(e, b).", "text(e, b), b = \"none\".")).unwrap();
         run(&reader).unwrap();
-        assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "", "p2 run again over p1's new exports");
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "r").unwrap(), "", "p2 run again over p1's new exports");
         // A reader of p2 that loads documents itself is refused: p1 loaded none, so first give p1 a load.
         std::fs::write(phases.join("p1.rr"), format!("{p1}\nload(\"x.pyi\", \"x\", \"python\") :- def(\"A\", _).\n")).unwrap();
         let loading = reader.replace(".output r", "load(\"y.pyi\", \"y\", \"python\") :- r(_, _).\n.output r");
@@ -224,7 +224,7 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let reader = "#include \"core.rr\"\n.decl mode(m: symbol)\nmode(m) :- env(\"mode\", m).\n.decl p1__def(s: symbol, k: symbol)\n.decl r(s: symbol, m: symbol)\nr(s, m) :- p1__def(s, _), mode(m), kind(_, \"module\").\n.output r\n";
         let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
         let report = crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
-        assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "A\tstrict\n");
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::text(&out, "r").unwrap(), "A\tstrict\n");
         assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["sources", "p1"]);
         let _ = std::fs::remove_dir_all(&dir);
     }

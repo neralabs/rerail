@@ -70,7 +70,7 @@ impl Drop for Corpus {
 }
 
 fn rows(out: &Path) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_to_string(out.join("info.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+    let mut v: Vec<String> = crate::code_rule_dsl::logic::plan::output::text(&out, "info").unwrap_or_default().lines().map(str::to_owned).collect();
     v.sort();
     v
 }

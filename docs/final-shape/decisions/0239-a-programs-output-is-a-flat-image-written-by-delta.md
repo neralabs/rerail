@@ -1,6 +1,6 @@
 # 0239: A program's output is a flat image, written by delta
 
-Status: draft (2026-11-14); stages 1 and 2 built (`plan::output`). Builds on decisions 0173 (a program is a flat image),
+Status: draft (2026-11-14); stages 1–3 built (`plan::output`). Builds on decisions 0173 (a program is a flat image),
 0140 (the tape is the engine's bytes, read in place), 0209 (statistics are one flat table) and 0212 (kept frames
 are of content). Follows 0230, whose "still open" list it replaces at its top.
 
@@ -112,9 +112,16 @@ typing rounds, `typing::outputs`) read the columns.
    (memo entries, guests' requests, `typing::outputs`, tests through `Outcome::text`). Still text: a memo entry's
    file-local output (`memo::Entry::lines`), read as one part per output (`Rows::from_lines`), and the `.csv`
    files.
-3. **The readers on the image:** phases, phase 0, the bridge, constants, reuse, `test-rr`, typing rounds and the
-   tests (about 350 reads in 21 files) read it, through rows or `lines`. The `.csv` files are no longer written.
-   The records that kept the text (constants, reuse) take a new format.
+3. **The readers on the image** (built): `output::lines`, `text` (the bytes the `.csv` file held) and `rows` (each
+   value as shown, a tab or a newline in it too) read a relation of the stack in a directory. Phases, phase 0, the
+   typing bridge, constants, `test-rr`, the CLI's findings, a pack's members and the other dialects' findings read
+   and write through them; the tests (about 180 reads in 22 files) read `output::text`. The `.csv` files are no
+   longer written. The whole-run cutoff's record holds one base of the run's outputs (`output::base_of`; its key's
+   version is 2). A session knows its stack by a stat of its file (length, modification time, depth: `session::Stack`),
+   so an unchanged output is kept without reading the stack, and the stack is read only to fold it.
+   `rerail-engine csv <out> [<to>]` writes the `.csv` files for the scripts that read them (the bench and pack
+   scripts, the explorer, `sql-executor.py`, the data-layer probes), which call it after each run. Typing rounds'
+   golden files and `rrlab` (Soufflé's own outputs) are not the engine's outputs, and stay.
 4. **Overlays of rows** (§3).
 
 ## Measured

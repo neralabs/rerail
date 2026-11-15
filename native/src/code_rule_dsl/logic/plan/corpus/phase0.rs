@@ -308,7 +308,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let run = super::run_with_options(&[&text], &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
     IN_PHASE_0.with(|c| c.set(false));
     let read = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+        crate::code_rule_dsl::logic::plan::output::rows(&out, rel).unwrap_or_default()
     };
     let result = run.map(|report| {
         let mut g = Graph { plans: report.plans, ..Graph::default() };
