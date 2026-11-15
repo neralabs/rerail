@@ -1650,6 +1650,14 @@ const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void
     change: app => inDatabase(database => adoptRemote(database, recordCheckout(database, app).repositoryKey, "https://example.invalid/team/other.git")),
   },
   { what: "another daemon runs", change: () => undefined, startedAt: 2 },
+  {
+    what: "the folder of kept answers is a link to a copy of it", change: () => {
+      const answers = join(process.env.RERAIL_HOME!, "stopped-answers");
+      cpSync(answers, `${answers}-copy`, { recursive: true });
+      retried(() => renameSync(answers, `${answers}-before`));
+      folderLink(`${answers}-copy`, answers);
+    },
+  },
 ];
 
 /**
@@ -2051,6 +2059,10 @@ describe("the hook start check", () => {
       symlinkSync(`\\\\${silentServer()}\\share`, join(root, "srv"), "dir");
       renameSync(join(app, ".git"), join(root, "app.git"));
       symlinkSync(join(root, "srv", "app.git"), join(app, ".git"), "dir");
+    } },
+    { what: "the folder of kept answers is a link to a server", shape: () => {
+      mkdirSync(process.env.RERAIL_HOME!, { recursive: true });
+      symlinkSync(`\\\\${silentServer()}\\share`, join(process.env.RERAIL_HOME!, "stopped-answers"), "dir");
     } },
   ])("waits for a late daemon at once where $what", { timeout: 60_000 }, async ({ shape }, { skip }) => {
     const root = await temporaryDirectory({ started: false });
