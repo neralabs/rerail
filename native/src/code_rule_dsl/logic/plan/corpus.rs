@@ -1083,6 +1083,17 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     let mut policies: Vec<scoping::Policy> = Vec::new();
     // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0222): read once, it is no program's.
     let makes_guests = makes_guests || library.as_ref().is_some_and(|l| l.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str())));
+    // The node attributes answered on request (decision 0174) are the combined program's, made once below over all
+    // its readers: a part lowered on its own (a program's own part, without the library's rules) could not see
+    // which library relations read an attribute, so its requests read them as they are, not through their widened
+    // copies, and a request was recursive with its attribute (PYI062 with PYI059: `literal_down` negates
+    // `typing_subscript`, which reads `value` through `exports`, and `rr_value_req` read `literal_leaf`).
+    if let Some(l) = library.as_mut() {
+        crate::code_rule_dsl::logic::rr::lower::undo_on_request(l);
+    }
+    for p in parsed.iter_mut() {
+        crate::code_rule_dsl::logic::rr::lower::undo_on_request(p);
+    }
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     for (unit, mut prog) in units {
@@ -1219,6 +1230,10 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     all.inputs.retain(|rel| !projected.contains(rel));
     // The helpers' columns, typed by the library's declarations, which each program was lowered without.
     crate::code_rule_dsl::logic::rr::retype_helpers(&mut all);
+    // The attributes on request over the combined program's readers (decision 0174; undone in each part above).
+    for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
+        crate::code_rule_dsl::logic::rr::lower::sources_on_request(&mut all, round);
+    }
     // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules are
     // the same for every program, so one analysis gives what each program's would.
     if shared && makes_guests {

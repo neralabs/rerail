@@ -1050,3 +1050,27 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
     assert_eq!(std::fs::read_to_string(out.join("annotated.csv")).unwrap_or_default(), "typed.py\n");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Two programs combined with the library they share stratify (decision 0174, E32): PYI062's `literal_down` negates
+/// `typing_subscript`, which reads `value` through `exports`. The node attributes are answered on request over
+/// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
+/// with `value` through that negation, and the pair was refused as not stratifiable.
+#[test]
+fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.py"), "from typing import Generic, Literal, TypeVar\nT = TypeVar('T')\nx: Literal[1, 1]\nclass C(Generic[T], int): pass\n").unwrap();
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rr", "ruff-pyi059-generic-not-last-base-class.rr"]
+        .iter()
+        .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
+        .collect();
+    let out = dir.join("out");
+    let ran = super::run_all(&programs.iter().map(String::as_str).collect::<Vec<_>>(), &dir.join("src"), &out, "program", Binding::Cpu, 1 << 18);
+    let findings = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap();
+    assert!(findings.contains("PYI062") && findings.contains("PYI059"), "both rules' findings: {findings}");
+}

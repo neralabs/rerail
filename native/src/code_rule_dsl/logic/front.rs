@@ -920,6 +920,7 @@ impl<'p> Graph<'p> {
                     }
                     let component: BTreeSet<String> = scc.iter().map(|&r| self.names[r as usize].to_owned()).collect();
                     let (vn, wn) = (self.names[v as usize].to_owned(), self.names[w as usize].to_owned());
+                    unstratified_trace(&vn, &wn, &component);
                     out.push(if self.aggs.contains(&(v, w)) {
                         Error::AggregationInRecursion { head: vn, aggregated: wn, component }
                     } else {
@@ -933,6 +934,13 @@ impl<'p> Graph<'p> {
             }
         }
         out
+    }
+}
+
+/// `RERAIL_STRATA_COUNTS` (a diagnostic): a refused component's members, which the error's message leaves out.
+pub fn unstratified_trace(head: &str, dep: &str, component: &BTreeSet<String>) {
+    if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
+        eprintln!("RERAIL_STRATA_COUNTS unstratified (magic sets may recover): {head} -> {dep} in a component of {}: {}", component.len(), component.iter().cloned().collect::<Vec<_>>().join(" "));
     }
 }
 
