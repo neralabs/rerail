@@ -123,7 +123,33 @@ The shape (2026-11-15):
   runs only the strata that derive the missing relations (`plan::Hooks::only`). The relations outside the cone are
   the entry's. A semi-join's base rows (`file_local::semijoin_bases`) are taken again for the nodes all its
   exports hold, the entry's and the run's.
-- **No new store, no new cache**: the entry is the frame 0146 made, its sections renamed.
+- **No new store, no new cache**: the entry is the frame 0146 made, with one more section.
+
+Built (2026-11-15) as above, with one change: the sections keep their relations' names, and the entry holds the
+identities it was made under in one more section (`memo::COVERED`, two words each). A relation with no rows for
+a file has no section, so whether an entry holds it is read there, not from its rows. The space names the phase
+and the file-local part's relations as well: nested runs with no memoised relations otherwise shared one space
+and overwrote each other's frames. The kept statistics, the tree counts and a session's inputs stay keyed by the
+whole program: they are of every file together.
+
+Measured on the edit profile (ep2, load 30–45), findings identical to the warm run's at each step:
+
+| Step | Instructions | CPU | `local` |
+|---|---|---|---|
+| warm | 8.1 G | 0.7 s | — |
+| one rule: a literal added to its body, before | 765 G | 75.3 s | 23 s |
+| the same, now (3 of 1,266 relations missed, in every file) | 431–460 G | 45–52 s | 12–13 s |
+
+All 300 files are partial hits, and their chunks run 15 of 4,238 rules. What is left is not the cone's rules but
+the files around them (profile shares of the edit):
+- **every entry written again whole** (15%): each now holds new identities, so 447 MB of rows are encoded again for
+  three relations' sake;
+- **guests** (24%) and parsing and each file's facts: a partial hit is built as a missed file is, though its cone
+  reads a few base relations;
+- **the entries' rows handed on again** (7%): through the export's set, not appended as a full hit's are.
+
+Each is the shape this section asks for, not yet met: an entry's sections written when their rows change, and a
+partial hit built only for what its cone reads. Next.
 
 ### 3. A message is not the program
 

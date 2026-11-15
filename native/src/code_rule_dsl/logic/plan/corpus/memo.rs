@@ -11,7 +11,7 @@
 
 use crate::content_store::{ContentStore, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod numbering;
 use numbering::Stored;
@@ -25,6 +25,83 @@ const SCHEMA: u32 = crate::content_store::live_fact_schema(7);
 /// file hands on its base rows as an evaluated one does.
 pub(super) fn base_key(rel: &str) -> String {
     format!("base:{rel}")
+}
+
+/// The entry's key for the identities of the relations it holds (decision 0225 §2): two words of each export's and
+/// file-local output's identity (`identities`) it was made under. A relation's rows in an entry are its rows only
+/// when its identity now is among them; a relation with no rows for the file has no key in `rows`, so whether it
+/// is held is read here, not from `rows`. An `own:` key: it holds no symbol, and stays with the outputs' frame.
+pub(super) const COVERED: &str = "own:covered";
+
+/// The words `identity` is held by in `COVERED`.
+pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
+    [i64::from_le_bytes(identity[..8].try_into().expect("8 bytes")), i64::from_le_bytes(identity[8..16].try_into().expect("8 bytes"))]
+}
+
+/// The identities `entry` holds (`COVERED`).
+pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
+    entry.rows.get(COVERED).map(|(_, v)| v.chunks_exact(2).map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
+}
+
+/// Records that `entry` holds the relations of `identities`.
+pub(super) fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32]>) {
+    let mut words: Vec<[i64; 2]> = covered(entry).into_iter().chain(identities.map(covered_words)).collect();
+    words.sort_unstable();
+    words.dedup();
+    entry.rows.insert(COVERED.to_owned(), (2, words.into_iter().flatten().collect()));
+}
+
+/// Each of `rels`' identity in the file-local program `local` (decision 0225 §2): `plan::identities`, a digest of its
+/// stratum's rules and of what they read down to the inputs, with the inputs whose rows are not in the program's
+/// text digested with their values where a relation's rules reach them: the run's options (`option_input`) and the
+/// earlier phases' exports (`phased`). So an export's identity changes when a rule it is derived from does, and only
+/// then.
+pub(in crate::code_rule_dsl) fn identities(
+    local: &crate::code_rule_dsl::logic::front::Program,
+    rels: &BTreeSet<String>,
+    options: &serde_json::Value,
+    phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
+) -> Result<BTreeMap<String, [u8; 32]>, String> {
+    use crate::code_rule_dsl::logic::front;
+    let (sccs, _) = front::strata(local).map_err(|e| e.to_string())?;
+    let by_stratum = front::rules_by_stratum(local, &sccs);
+    let ids = crate::code_rule_dsl::logic::plan::identities(local, &sccs, &by_stratum);
+    // The value inputs each stratum reaches, in the strata's order.
+    let mut reach: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for (scc, rules) in sccs.iter().zip(&by_stratum) {
+        let mut leaves: BTreeSet<&str> = BTreeSet::new();
+        for a in rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()) {
+            let rel = a.rel.as_str();
+            if crate::code_rule_dsl::typing::file_local::option_input(rel) || phased.contains_key(rel) {
+                leaves.insert(rel);
+            } else if let Some(more) = reach.get(rel) {
+                leaves.extend(more.iter().copied());
+            }
+        }
+        for rel in scc {
+            reach.insert(rel.as_str(), leaves.clone());
+        }
+    }
+    let mut out = BTreeMap::new();
+    for rel in rels {
+        let Some(id) = ids.get(rel) else { continue };
+        let leaves = reach.get(rel.as_str()).cloned().unwrap_or_default();
+        if leaves.is_empty() {
+            out.insert(rel.clone(), *id);
+            continue;
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.corpus-local-identity/v1\0");
+        hash.update(id);
+        let options_read = leaves.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r));
+        if options_read {
+            hash.update(options.to_string().as_bytes());
+        }
+        let by_rows: Vec<&str> = leaves.into_iter().filter(|r| phased.contains_key(*r)).collect();
+        let digest = with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r])));
+        out.insert(rel.clone(), digest);
+    }
+    Ok(out)
 }
 
 /// Which column of a base relation's row (in `input_columns` order) names the file the row is kept for.
@@ -78,6 +155,26 @@ pub fn doc_keys(paths: &[String]) -> Vec<i64> {
             key as i64
         })
         .collect()
+}
+
+/// The memo's frames' program part (decision 0225 §2): the phase that runs, and the names of the file-local part's
+/// relations (those an entry holds, those its rules derive, its inputs), not their rules, which each entry's
+/// `COVERED` identities name. Two programs of other relations (a phase's, a nested run's) keep their entries apart;
+/// a rule's edit keeps the space, and misses only the relations it reaches.
+pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code_rule_dsl::logic::front::Program, phase: Option<&str>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-space/v2\0");
+    hash.update(phase.unwrap_or("").as_bytes());
+    let derived: BTreeSet<&str> = local.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let inputs: BTreeSet<&str> = local.inputs.iter().map(String::as_str).collect();
+    for part in [ids.keys().map(String::as_str).collect::<BTreeSet<&str>>(), derived, inputs] {
+        hash.update(b"\x01");
+        for rel in part {
+            hash.update(rel.as_bytes());
+            hash.update(b"\0");
+        }
+    }
+    hash.finalize().into()
 }
 
 /// The run's plan: the engine build, the grammar version and `program` (a digest of the file-local part as lowered,
@@ -1051,6 +1148,20 @@ pub mod tests {
         .expect("a posting's columns are known");
         assert_eq!(entry.rows["own:postings:field:f"].1, vec![65_555, 10], "not mapped");
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "nor taken for an atom");
+    }
+
+    #[test]
+    fn an_entry_holds_the_identities_it_was_made_under_and_no_others() {
+        let (a, b, c) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+        let mut entry = Entry { key: 7, ..Entry::default() };
+        cover(&mut entry, [a, b].iter());
+        cover(&mut entry, [b].iter());
+        let held = covered(&entry);
+        assert_eq!(held.len(), 2);
+        assert!(held.contains(&covered_words(&a)) && held.contains(&covered_words(&b)) && !held.contains(&covered_words(&c)));
+        // It is an `own:` key: the outputs' frame keeps it, and it names no symbol.
+        assert!(outputs_of(&entry).rows.contains_key(COVERED));
+        assert_eq!(Syms::default().columns(COVERED, 2), Some(vec![false, false]));
     }
 
     #[test]
