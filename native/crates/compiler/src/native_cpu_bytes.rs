@@ -191,6 +191,12 @@ impl<'a> Bytewise<'a> {
         let x = usize::from(self.native.outputs[usize::from(o)]);
         let d = i64::from(self.native.output_delays[usize::from(o)]);
         let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, &mut carry, heads);
+        // Where the output is false on a zero byte (`zero_kills`), none past the file's end
+        // already: the bytes there are zeros, more than the 16 and its delay
+        // (`native_cpu_block::Batch`).
+        if crate::native_cpu_lanes::zero_kills(self.native, x, d as u32) {
+            return m;
+        }
         // The bits of the file's bytes: `len - p` of them, at most 16.
         let rem = f.ins().isub(at.len, p);
         let zero = f.ins().iconst(types::I64, 0);

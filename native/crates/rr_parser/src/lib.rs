@@ -1521,6 +1521,28 @@ pub mod tests {
         assert_eq!(found, vec![6]);
     }
 
+    /// A `within(d)` the CPU's windows leave out (`native_cpu_lanes::unguarded`): where another
+    /// conjunct is false on the byte it guards when that byte is zero, as the bytes off a file
+    /// of the batch are (`zero_kills`). A `.` a byte back needs none; a byte not `a`, or a zero
+    /// byte, does.
+    #[test]
+    fn a_within_goes_where_a_zero_byte_refuses() {
+        use rerail_compiler::block_native::BlockInst::{And, EqByte, Not, Prev, Within};
+        use rerail_compiler::native_cpu_lanes::{unguarded, zero_kills};
+        let c = crate::compiled().expect("compiles");
+        let mut n = c.native.clone();
+        n.insts = vec![EqByte(b'.'), Prev(0, 1), Within(1), And(1, 2), Not(0), And(4, 2), EqByte(0), And(6, 2), And(3, 0)];
+        assert!(zero_kills(&n, 1, 1));
+        assert!(!zero_kills(&n, 1, 0));
+        assert!(!zero_kills(&n, 4, 0));
+        assert!(!zero_kills(&n, 6, 0));
+        assert_eq!(unguarded(&n, 3), Some(vec![1]));
+        assert_eq!(unguarded(&n, 5), None);
+        assert_eq!(unguarded(&n, 7), None);
+        // Through the `and`s: the `.` of the outer one's inner one.
+        assert_eq!(unguarded(&n, 8), Some(vec![1, 0]));
+    }
+
     /// The records' layout the compiler chose (`records::RecordLayout`): rr's token loop writes
     /// each token's start, last and code, its only extracts, so on the CPU they are rows, the
     /// lean lexer's `Tok`; tier 2 reads them a row a token and its tapes are the columns'.

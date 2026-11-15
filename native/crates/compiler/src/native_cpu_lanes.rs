@@ -165,6 +165,51 @@ fn lane_plan(native: &BlockNative, deep: bool) -> (Vec<bool>, Vec<u8>, Vec<bool>
     (lanes, lag, at_zero, can)
 }
 
+/// Whether value `x` is false wherever the byte `back` before its position is zero: its bytes
+/// say so (an `eq_byte` of a byte not zero, a class without the zero byte, a plane's bit), a
+/// `prev` further back, either side of an `and`, both of an `or`.
+pub fn zero_kills(native: &BlockNative, x: usize, back: u32) -> bool {
+    fn go(native: &BlockNative, x: usize, back: u32, depth: u32) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        let o = |a: u16| usize::from(a);
+        match native.insts[x] {
+            BlockInst::EqByte(b) => back == 0 && b != 0,
+            BlockInst::Class { table, bits } => back == 0 && class_byte(&native.tables[usize::from(table)], 0) & bits == 0,
+            BlockInst::Plane(_) => back == 0,
+            BlockInst::PlaneBefore(_) => back == 1,
+            BlockInst::Pair { before, table, bits } => {
+                (back == 0 && class_byte(&native.tables[usize::from(table)], 0) & bits == 0) || (back == 1 && class_byte(&native.tables[usize::from(before)], 0) & bits == 0)
+            }
+            BlockInst::Prev(a, k) => back >= u32::from(k) && go(native, o(a), back - u32::from(k), depth + 1),
+            BlockInst::And(a, b) => go(native, o(a), back, depth + 1) || go(native, o(b), back, depth + 1),
+            BlockInst::Or(a, b) => go(native, o(a), back, depth + 1) && go(native, o(b), back, depth + 1),
+            _ => false,
+        }
+    }
+    go(native, x, back, 0)
+}
+
+/// Of the `and`s from `at`, the conjuncts that alone are the same on a file of the batch's
+/// layout: but each `within(d)` whose byte another conjunct is false on when zero
+/// (`zero_kills`). The bytes off the file are zeros, `native_cpu_block::FRONT` of them before
+/// it (so `d` at most that). None where every conjunct stays.
+pub fn unguarded(native: &BlockNative, at: usize) -> Option<Vec<usize>> {
+    let mut leaves = Vec::new();
+    let mut work = vec![at];
+    while let Some(x) = work.pop() {
+        match native.insts[x] {
+            BlockInst::And(a, b) => work.extend([usize::from(b), usize::from(a)]),
+            _ if !leaves.contains(&x) => leaves.push(x),
+            _ => {}
+        }
+    }
+    let guard = |w: usize| matches!(native.insts[w], BlockInst::Within(d) if usize::from(d) <= crate::native_cpu_block::FRONT && leaves.iter().any(|&y| y != w && zero_kills(native, y, u32::from(d))));
+    let kept: Vec<usize> = leaves.iter().copied().filter(|&w| !guard(w)).collect();
+    (kept.len() < leaves.len()).then_some(kept)
+}
+
 /// A byte-local value is on the vectors only where that saves a mask or a carried field: a
 /// `prev` or logic none of whose readers is on the vectors, and whose operands are masks anyway,
 /// is cheaper as a mask's operation; a `within` no value on the vectors reads, too.
@@ -821,6 +866,17 @@ impl<'a> Lanes<'a> {
             }
             BlockInst::Not(a) => self.get_at(f, o(a), c, lag).not(),
             BlockInst::And(a, b) => {
+                // A `within` the other conjuncts need no test of: off the file the byte it
+                // guards is zero, and one of them is false on it (`unguarded`).
+                // (A full block's body has no `within` to test: `position` none.)
+                if let Some(kept) = self.position.and_then(|_| unguarded(self.native, at)) {
+                    let mut acc = Lane::Known(true);
+                    for x in kept {
+                        let v = self.get_at(f, x, c, lag);
+                        acc = Lane::and(f, acc, v);
+                    }
+                    return acc;
+                }
                 let (x, y) = (self.get_at(f, o(a), c, lag), self.get_at(f, o(b), c, lag));
                 Lane::and(f, x, y)
             }

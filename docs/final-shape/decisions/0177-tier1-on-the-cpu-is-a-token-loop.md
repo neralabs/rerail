@@ -1031,3 +1031,39 @@ constants `wide` takes.
 |---|---|---|---|
 | Words | 103.4 | 101.6 | 97.9 |
 | Punctuation | 57.0 | 56.6 | 53.5 |
+
+## No guard the zeros make (2026-11-15)
+
+**The problem.** A number's 16-byte window tested the file's ends
+three times:
+
+- a `within` of the program (the byte after a `.` is in the file);
+- the window's cut at the file's length;
+- the run's bound at it.
+
+That is about 30 instructions for each number. But a batch's files
+have zeros on both sides (`FRONT` before, at least the delay and 16
+after: simdjson's padded input).
+
+**The change.** `native_cpu_lanes::zero_kills` asks of a value
+whether it is false wherever the byte some way back is zero: an
+`eq_byte` of a byte not zero, a class without zero, a `prev` further
+back, either side of an `and`, both of an `or`.
+
+- A `within(d)` (`d` at most `FRONT`) is left out of a conjunction
+  where another conjunct is false on the byte it guards
+  (`unguarded`), in the windows that have a position, not a full
+  block's body.
+- `short_word` leaves out its cut at the length where the output is
+  false on a zero byte.
+
+Comments had the same guard.
+
+`a_within_goes_where_a_zero_byte_refuses` checks the analysis on a
+small program. Making `zero_kills` always true still passes the named
+tests: rr's guards are all ones the zeros make.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Numbers | 272 | 246 | 107 |
+| Comments | 591 | 498 | 193 |
