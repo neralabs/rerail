@@ -3960,7 +3960,7 @@ fn css_parse_costs() {
 /// SQL's tapes from the lean parser (the product's parser for SQL, decision 0214) are
 /// tree-sitter-sql's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
 /// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is
-/// `rerail-css-lean`'s `oracle`.
+/// `rerail-sql-lean`'s `oracle`.
 #[test]
 fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
     use crate::code_rule_dsl::tape::sql_lean;
@@ -4003,6 +4003,10 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         // `grant … on all tables in schema`; `rollup`; `set (a, b) =`; `like` and `partition by`.
         "SELECT position('a' IN name), substring(name FROM 1 FOR 3), trim(BOTH ' ' FROM name), extract(epoch FROM at) FROM users OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY;\nINSERT INTO t DEFAULT VALUES;\nGRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO app;\n",
         "SELECT a, sum(b) FROM t GROUP BY ROLLUP (a);\nUPDATE t SET (a, b) = (1, 2) WHERE id = 1;\nCREATE TABLE t2 (LIKE t INCLUDING ALL);\nCREATE TABLE logs (id bigint, at timestamptz) PARTITION BY RANGE (at);\n",
+        // `default current_timestamp`: the keyword; a quoted column name: a `literal`; `trim(both
+        // from x)`: no unit; `begin; …; end`: a `block`.
+        "CREATE TABLE t (\"a\" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL, b int DEFAULT (current_timestamp));\nCREATE INDEX i ON t (\"a\" DESC, b);\n",
+        "SELECT trim(BOTH FROM name) FROM t;\nBEGIN;\nSELECT 1;\nEND;\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Sql).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -4021,7 +4025,21 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
     // `id=?` is one operator (`op_other`) to tree-sitter-sql, so a syntax error.
-    for invalid in ["SELECT (1;\n", "SELECT a FROM t WHERE;\n", "CREATE TABLE t (a int;\n", "SELECT 'a;\n", "SELECT a FROM t WHERE id=?;\n"] {
+    // `@ b` is a `_tsql_parameter` (an identifier), `table` and `grouping` keywords where they
+    // stand, `((select …) > 0)` no subquery, and an expression after `default current_timestamp`
+    // none.
+    for invalid in [
+        "SELECT (1;\n",
+        "SELECT a FROM t WHERE;\n",
+        "CREATE TABLE t (a int;\n",
+        "SELECT 'a;\n",
+        "SELECT a FROM t WHERE id=?;\n",
+        "SELECT a @ t.b AS c;\n",
+        "SELECT a FROM t WHERE (table = 'x');\n",
+        "SELECT a FROM t GROUP BY grouping, a;\n",
+        "SELECT a FROM t WHERE ((SELECT 1) > 0 OR b);\n",
+        "CREATE TABLE t (a int DEFAULT current_timestamp + 1);\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(sql_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
