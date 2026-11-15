@@ -934,6 +934,53 @@ reads were too noisy to use, and the field timings vary by ±30%.
   without a table. In exchange the field needs the parent, a table in L1, and a search the tail
   never paid. Only disk gains.
 
+### Step 15: what step 13's branch costs, and what to do about it (E23)
+
+Step 13's read is `if byte < 255 { byte } else { side list }`. E23 (in `tape16 code8`, `Rank8`)
+times its parts apart:
+
+- **The compare alone:** a select against the cutoff, with no branch.
+- **The branch alone:** the same branch, to a cold call that reads nothing.
+- **Past the cutoff by rank:** the low byte found by counting the 255s before the node, instead
+  of searching the block's offsets. It reads the block's start, a count per 64-node group, and 8
+  words of the group; the offsets array goes.
+- **A block decoded whole:** the bytes widened in a vectorised loop, then the block's side-list
+  entries patched in by offset. There is no branch per node.
+
+| ns a read (M3, load 5) | dl Python | dl Rust | rerail Python | rerail Rust | rerail TS | JSON (no tail) |
+|---|---|---|---|---|---|---|
+| nodes past the cutoff | 0.36% | 1.37% | 0.73% | 1.10% | 1.12% | 0% |
+| at random: the byte | 0.33 | 0.33 | 0.35 | 0.33 | 0.33 | 0.60–0.63 |
+| at random: the compare alone (select) | 0.41 | 0.42 | 0.44 | 0.41 | 0.41 | 0.65–0.67 |
+| at random: the branch alone | 0.52 | 0.53 | 0.54 | 0.54 | 0.51 | 0.71–0.73 |
+| at random: step 13's read (branch and search) | 0.56 | 0.57 | 0.57 | 0.60 | 0.55 | 0.70–0.73 |
+| at random: past the cutoff by rank | 0.59 | 0.60 | 0.60 | 0.63 | 0.58 | 0.72–0.73 |
+| in order: the compare alone | 0.07 | 0.07 | 0.07 | 0.07 | 0.06 | 0.07 |
+| in order: step 13's read | 0.47 | 0.48 | 0.49 | 0.50 | 0.47 | 0.42 |
+| in order: a block decoded whole | 0.09 | 0.09 | 0.09 | 0.09 | 0.09 | 0.09 |
+
+Every read agrees with step 13's, on every corpus.
+
+- **The mispredicts are small.** Only the 0.4–1.4% of nodes past the cutoff take the branch the
+  other way. The branch costs about the same where it is never taken (data-layer TypeScript and
+  JSON: +0.06–0.07 over the select) as where it is (+0.10–0.11), so the mispredicts come to 0.05 ns
+  a read or less.
+- **The branch costs by its shape, not its misses.** A loop holding a branch to a call is not
+  unrolled or vectorised as the select is: about +0.1 ns a read at random, and in order 0.47
+  against 0.07 (7×).
+- **In order, decode a block at a time:** 0.09 ns a node on every corpus, 5× under step 13's read,
+  with the tail handled by the side list's own offsets. Sweeps, scans and the GPU read this way:
+  bytes compared or widened in bulk, the list patched in, no branch per node.
+- **At random, keep the branch.** It is right 99% of the time and costs about 0.2 ns over the
+  byte. Making it branch-free would compute the tail on every read, which costs more than the miss.
+- **A test against a code below the cutoff needs no read at all:** it compares the byte, which is
+  the select's cost or less.
+- **Rank instead of search: same speed** (0.58–0.63 against 0.55–0.60), but no offsets array: 1 B
+  less a node past the cutoff (0.004–0.014 B a node). Worth it only for memory.
+- **E22's branches** (a hash probe that collides on a third of reads, and misses with no mark) go
+  with E22. A static table per language could use a perfect hash (one probe, a select), but the
+  field stays in the code.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1105,3 +1152,6 @@ In order. Each step is measured on all three corpora, every answer checked.
 14. **The field out of the code (E22).** Done: the base fits in 8 bits with no tail, but the field then
     needs the parent's base and the child's index (0.03–0.41% misses), a 5–20 KiB table, and 3–6×
     step 13's read; disk 7–12% smaller. The field stays in the code.
+15. **Step 13's branch (E23).** Done: mispredicts cost 0.05 ns a read or less. The branch's shape
+    costs about 0.1 at random and blocks vectorising in order (0.47 against 0.07). Reads in order
+    decode a block whole (0.09 ns a node); reads at random keep the branch.

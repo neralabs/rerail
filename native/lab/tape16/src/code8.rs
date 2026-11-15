@@ -401,7 +401,7 @@ pub fn run(files: &[&File]) -> Report {
         wrong: 0,
         ns: [[0.0; 2]; 6],
         disk: [[0.0; 2]; 3],
-        rank: RankReport { tail: [0; 4], tail_train: 0, side_bytes: 0, wrong: 0, ns: [[0.0; 2]; 2], disk: [0.0; 2] },
+        rank: RankReport { tail: [0; 4], tail_train: 0, side_bytes: 0, wrong: 0, ns: [[0.0; 2]; 6], disk: [0.0; 2] },
     };
     // E21: numbered by frequency on the training files.
     let num = rank_numbers(nc, &train);
@@ -484,7 +484,33 @@ pub fn run(files: &[&File]) -> Report {
         both(&order, n, &best, |i| u64::from(c8.get_ident(i))),
     ];
     let r8 = Rank8::new(c, &num, 255);
-    r.rank.ns = [both(&order, n, &best, |i| u64::from(r8.byte(i))), both(&order, n, &best, |i| u64::from(r8.get(i)))];
+    let blocks = n.div_ceil(BLOCK);
+    let bulk = best(&|| {
+        let mut out = [0u32; BLOCK];
+        let mut s = 0u64;
+        for b in 0..blocks {
+            let m = r8.decode_block(b, &mut out);
+            s = out[..m].iter().fold(s, |s, &x| s.wrapping_add(u64::from(x)));
+        }
+        s
+    });
+    r.rank.ns = [
+        both(&order, n, &best, |i| u64::from(r8.byte(i))),
+        both(&order, n, &best, |i| u64::from(r8.get(i))),
+        both(&order, n, &best, |i| u64::from(r8.get_min(i))),
+        both(&order, n, &best, |i| u64::from(r8.get_branch_only(i))),
+        both(&order, n, &best, |i| u64::from(r8.get_rank(i))),
+        [f64::NAN, bulk],
+    ];
+    // The rank read and the block decode agree with the plain one.
+    r.rank.wrong += (0..n).filter(|&i| r8.get_rank(i) != r8.get(i)).count() as u64;
+    {
+        let mut out = [0u32; BLOCK];
+        for b in 0..blocks {
+            let m = r8.decode_block(b, &mut out);
+            r.rank.wrong += (0..m).filter(|&j| out[j] != r8.get(b * BLOCK + j)).count() as u64;
+        }
+    }
     drop(r8);
     // The renumbered read agrees with the code wherever the byte is unshared.
     r.wrong += (0..n).filter(|&i| c8.one[c8.byte(i) as usize] != SHARED && c8.get_ident(i) as u16 != c8.one[c8.byte(i) as usize] && c8.get_ident(i) != u32::from(c8.byte(i))).count() as u64;
@@ -563,6 +589,10 @@ pub fn print(title: &str, r: &Report) {
     println!("| E21, numbered by frequency: nodes past the cutoff 255 / 252 / 240 / 224 (measured; 255 on the chosen) | {} / {} / {} / {} ({}) |", pct(k.tail[0], r.measured_nodes), pct(k.tail[1], r.measured_nodes), pct(k.tail[2], r.measured_nodes), pct(k.tail[3], r.measured_nodes), pct(k.tail_train, r.train_nodes));
     println!("| E21 memory, B a node (cutoff 255); decoded wrong | {:.3}; {} |", 1.0 + k.side_bytes as f64 / r.measured_nodes.max(1) as f64, k.wrong);
     println!("| E21 read at random / in order, ns: the byte alone; the code (compare, side list past the cutoff) | {:.2} / {:.2}; {:.2} / {:.2} |", k.ns[0][0], k.ns[0][1], k.ns[1][0], k.ns[1][1]);
+    println!("| E23 read at random / in order, ns: the compare alone (a select, no branch) | {:.2} / {:.2} |", k.ns[2][0], k.ns[2][1]);
+    println!("| E23 read at random / in order, ns: the branch to a call that reads nothing | {:.2} / {:.2} |", k.ns[3][0], k.ns[3][1]);
+    println!("| E23 read at random / in order, ns: past the cutoff by rank (word counts, no search) | {:.2} / {:.2} |", k.ns[4][0], k.ns[4][1]);
+    println!("| E23 read in order, ns: a block decoded whole (bytes widened, side list patched in) | {:.2} |", k.ns[5][1]);
     println!("| E21 on disk, zstd 3 + dict / LZ4 HC + dict (bytes + side list) | {:.3} / {:.3} |", k.disk[0], k.disk[1]);
     println!();
 }
@@ -579,6 +609,20 @@ pub struct Rank8 {
     start: Vec<u32>,
     off: Vec<u8>,
     low: Vec<u8>,
+    /// Per 64-node group: the nodes past the cutoff before it in its block (E23: the rank read).
+    sub: Vec<u8>,
+    nodes: usize,
+}
+
+const GROUP: usize = 64;
+const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+const HI: u64 = 0x8080_8080_8080_8080;
+
+/// The high bit of each byte of `w` that is 0xFF, exactly (no borrow between bytes).
+#[inline(always)]
+fn ff_bytes(w: u64) -> u64 {
+    let x = !w;
+    !(((x & LO7) + LO7) | x) & HI
 }
 
 /// The numbering: code -> number, most frequent first (codes unseen in `train` last, in code order).
@@ -636,7 +680,22 @@ impl Rank8 {
         for b in 0..blocks {
             start[b + 1] += start[b];
         }
-        Rank8 { bytes, cut, per, start, off, low }
+        let groups = n.div_ceil(GROUP);
+        let mut sub = vec![0u8; groups];
+        {
+            let mut per_group = vec![0u32; groups];
+            for i in 0..n {
+                if u32::from(bytes[i]) >= cut {
+                    per_group[i / GROUP] += 1;
+                }
+            }
+            for g in 0..groups {
+                sub[g] = if g % (BLOCK / GROUP) == 0 { 0 } else { (u32::from(sub[g - 1]) + per_group[g - 1]) as u8 };
+            }
+        }
+        // Padded to whole groups (zeros, never the prefix) so a group reads as 8 words.
+        bytes.resize(groups * GROUP, 0);
+        Rank8 { bytes, cut, per, start, off, low, sub, nodes: n }
     }
     #[inline(always)]
     pub fn byte(&self, i: usize) -> u8 {
@@ -659,6 +718,69 @@ impl Rank8 {
         let (s, e) = (self.start[b] as usize, self.start[b + 1] as usize);
         let k = self.off[s..e].binary_search(&((i % BLOCK) as u8)).expect("a node past the cutoff is listed");
         self.cut + (v - self.cut) * self.per + u32::from(self.low[s + k])
+    }
+    /// E23: the compare alone, no branch (a select against the cutoff).
+    #[inline(always)]
+    pub fn get_min(&self, i: usize) -> u32 {
+        u32::from(self.byte(i)).min(self.cut)
+    }
+    /// E23: the same branch as `get`, to a cold call that reads nothing: the mispredict without the search.
+    #[inline(always)]
+    pub fn get_branch_only(&self, i: usize) -> u32 {
+        let v = u32::from(self.byte(i));
+        if v < self.cut {
+            return v;
+        }
+        self.cold_const()
+    }
+    #[cold]
+    #[inline(never)]
+    fn cold_const(&self) -> u32 {
+        std::hint::black_box(self.cut)
+    }
+    /// E23: past the cutoff, the low byte by rank (no search, no offsets): the block's start, the group's
+    /// count, and the prefix bytes before the node in its group, counted a word at a time.
+    #[inline(always)]
+    pub fn get_rank(&self, i: usize) -> u32 {
+        let v = u32::from(self.byte(i));
+        if v < self.cut {
+            return v;
+        }
+        self.tail_rank(i, v)
+    }
+    #[cold]
+    #[inline(never)]
+    fn tail_rank(&self, i: usize, v: u32) -> u32 {
+        debug_assert!(self.cut == 255, "the rank read counts the one prefix 255");
+        let g = i / GROUP;
+        let base = g * GROUP;
+        let k = i - base;
+        let mut r = self.start[i / BLOCK] as usize + usize::from(self.sub[g]);
+        let words: &[u8; GROUP] = self.bytes[base..base + GROUP].try_into().expect("padded to whole groups");
+        for w in 0..GROUP / 8 {
+            let word = u64::from_le_bytes(words[w * 8..w * 8 + 8].try_into().unwrap());
+            let before = if 8 * w + 8 <= k { u64::MAX } else if 8 * w < k { (1u64 << ((k - 8 * w) * 8)) - 1 } else { 0 };
+            r += (ff_bytes(word) & before).count_ones() as usize;
+        }
+        self.cut + (v - self.cut) * self.per + u32::from(self.low[r])
+    }
+    /// E23: a block decoded whole, in order: the bytes widened (vectorised), then the block's side-list
+    /// entries patched in by their offsets. No branch a node.
+    pub fn decode_block(&self, b: usize, out: &mut [u32; BLOCK]) -> usize {
+        let s = b * BLOCK;
+        let e = (s + BLOCK).min(self.len());
+        for (o, &x) in out.iter_mut().zip(&self.bytes[s..e]) {
+            *o = u32::from(x);
+        }
+        let (ls, le) = (self.start[b] as usize, self.start[b + 1] as usize);
+        for j in ls..le {
+            let o = usize::from(self.off[j]);
+            out[o] = self.cut + (out[o] - self.cut) * self.per + u32::from(self.low[j]);
+        }
+        e - s
+    }
+    pub fn len(&self) -> usize {
+        self.nodes
     }
     pub fn tail_nodes(&self) -> usize {
         self.off.len()
@@ -689,7 +811,7 @@ pub struct RankReport {
     pub side_bytes: u64,
     pub wrong: u64,
     /// ns a read at random / in order: the byte alone; the code (cutoff 255).
-    pub ns: [[f64; 2]; 2],
+    pub ns: [[f64; 2]; 6],
     /// zstd 3 + dict / LZ4 HC + dict, B a node, cutoff 255.
     pub disk: [f64; 2],
 }
