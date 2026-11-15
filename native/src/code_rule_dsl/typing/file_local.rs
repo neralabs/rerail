@@ -1277,6 +1277,11 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
                     next.decls.insert(name.clone().into(), cols.clone().into());
                     let kname = format!("fzk{}_{rel}", next.decls.len());
                     next.decls.insert(kname.clone().into(), [cols.last().cloned().expect("the key")].into());
+                    // A part's key reduces the other parts as a semijoin, stored so it holds each key once. Inlined,
+                    // its readers join the part's body again, every row per key: the product the parts replace
+                    // (`fzk(d) :- node(d, v, …), text(v, _)` into a reader that binds `d` enumerates the document's
+                    // nodes for every row). So it is never inlined, whatever the statistics price it at.
+                    next.qualifiers.entry(kname.clone()).or_default().insert("no_inline".to_owned());
                     atoms.push(Atom { rel: name.into(), args: iface.iter().map(|v| Term::Var(v.clone().into())).collect(), neg: false, gated: false });
                     keys.push(Atom { rel: kname.into(), args: [Term::Var(key.clone().into())].into(), neg: false, gated: false });
                     bodies.push(part.clone());

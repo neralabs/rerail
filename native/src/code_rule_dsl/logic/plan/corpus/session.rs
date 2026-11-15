@@ -33,7 +33,9 @@ pub(in crate::code_rule_dsl) struct Session {
     /// program whose output stratum is clean leaves the file as it is.
     pub(super) written: Mutex<std::collections::HashMap<PathBuf, ([u8; 32], usize)>>,
     /// Each memoised program's base relations' statistics, kept by file (decision 0096 §3, `keptstats`).
-    pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], super::keptstats::Keeper>>,
+    /// The kept statistics, by the memo's space, with the whole file-local program they were kept under: valid only
+    /// while that program is the last whose entries the space holds (decision 0225 §2).
+    pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], ([u8; 32], super::keptstats::Keeper)>>,
     /// Its runs' connections and stores, kept from run to run (`connections`): an edit's run opens none.
     pub(super) connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
     /// Its runs' chunk mixes' tree counts (`own_counts`), read from memory as they are written behind the runs.

@@ -106,7 +106,7 @@ impl<'a> P<'a> {
                 return Ok(true);
             }
             self.rekey(n.at, EXPR);
-            self.infix(n, EXPR, 0)?
+            self.infix_fresh(n, EXPR)?
         } else {
             self.expr(EXPR, 0)?
         };
@@ -131,7 +131,8 @@ impl<'a> P<'a> {
         use T::*;
         let t = self.tok();
         match t.kind {
-            Dot | Question | Plus | Slash | Percent | Caret | EqEq | Ne | Le | Ge | Gt | GtGt | Eq | PlusEq | MinusEq | StarEq | SlashEq | PercentEq | CaretEq | AmpEq | PipeEq | LtLtEq | GtGtEq => true,
+            // Also `||`, `&&` and `..=`, which tree-sitter takes as the expression's (`if a {} || b`).
+            Dot | Question | Plus | Slash | Percent | Caret | EqEq | Ne | Le | Ge | Gt | GtGt | PipePipe | AmpAmp | DotDotEq | Eq | PlusEq | MinusEq | StarEq | SlashEq | PercentEq | CaretEq | AmpEq | PipeEq | LtLtEq | GtGtEq => true,
             Name => t.word == w::AS,
             _ => false,
         }
@@ -223,7 +224,7 @@ impl<'a> P<'a> {
             w::UNION if next.kind == T::Name => Item::Union,
             w::STATIC if !(next.kind == T::Pipe || next.kind == T::PipePipe || next.kind == T::Name && matches!(next.word, w::MOVE | w::ASYNC)) => Item::Static,
             w::CONST if next.kind == T::LBrace => return None,
-            w::CONST if next.kind == T::Name && matches!(next.word, w::FN | w::UNSAFE | w::ASYNC | w::EXTERN) => Item::Fn,
+            w::CONST if next.kind == T::Name && matches!(next.word, w::FN | w::UNSAFE | w::ASYNC | w::EXTERN | w::DEFAULT) => Item::Fn,
             w::CONST => Item::Const,
             w::UNSAFE | w::ASYNC | w::DEFAULT | w::EXTERN => {
                 // Modifiers, then what they qualify.
@@ -248,6 +249,8 @@ impl<'a> P<'a> {
                             }
                         }
                         w::FN => return Some(Item::Fn),
+                        // `default` qualifies a function alone (`default impl` is an error).
+                        w::IMPL | w::TRAIT if (k..j).any(|i| self.is_word_at(i, w::DEFAULT)) => return None,
                         w::IMPL if j > k => return Some(Item::Impl),
                         w::TRAIT if j > k => return Some(Item::Trait),
                         _ => return None,
@@ -299,10 +302,13 @@ impl<'a> P<'a> {
         }
         self.tk(K::VisibilityModifier, K::TPub, f::NONE)?;
         if self.peek() == T::LParen && self.restricted(0) {
-            // `(` is implied before `self`, `super` and `in`; `crate` is the rule's other choice
-            // alone, so its `(` is stored.
+            // `(` is implied before `self`, `super` and `in`, where `in`'s path is longer than
+            // one of those words; `crate` is the rule's other choice alone, so its `(` is
+            // stored, and so is the `(` of `in crate`, `in self` and `in super`, which `( word`
+            // reaches by a shorter word.
             let crate_ = self.is_word_at(1, w::CRATE);
-            self.gap_tk(K::VisibilityModifier, K::TLParen, crate_)?;
+            let lone_in = self.is_word_at(1, w::IN) && matches!(self.peek_at(2).word, w::CRATE | w::SELF | w::SUPER) && self.peek_at(2).kind == T::Name && self.peek_at(3).kind == T::RParen;
+            self.gap_tk(K::VisibilityModifier, K::TLParen, crate_ || lone_in)?;
             let t = self.tok();
             match t.word {
                 w::CRATE => drop(self.leaf(K::Crate, f::NONE, C_NONE)?),
@@ -602,6 +608,15 @@ impl<'a> P<'a> {
             self.ty(TYPE, true)?;
             return Ok(());
         }
+        if self.is_underscore() && self.peek_at(1).kind == T::Colon && self.peek_at(2).kind == T::DotDotDot {
+            // `_: ...`: the variadic parameter's pattern is its `_`, stored.
+            let n = self.open(K::VariadicParameter, f::NONE, C_NONE);
+            self.leaf(K::TUnderscore, f::PATTERN, C_PAT)?;
+            self.tk(K::VariadicParameter, K::TColon, f::NONE)?;
+            self.tk(K::VariadicParameter, K::TDotDotDot, f::NONE)?;
+            self.close(n);
+            return Ok(());
+        }
         let n = self.open(K::Parameter, f::NONE, C_NONE);
         if self.is_word(w::MUT) {
             self.leaf(K::MutableSpecifier, f::NONE, C_NONE)?;
@@ -815,7 +830,14 @@ impl<'a> P<'a> {
             match self.peek() {
                 T::Lifetime => self.lifetime(left)?,
                 T::Name if self.is_word(w::FOR) && self.peek_at(1).kind == T::Lt => self.higher_ranked(left)?,
-                _ => drop(self.ty(left, false)?),
+                _ => {
+                    // The grammar's left sides: no unit, macro, `dyn`, `impl`, `!` or function type.
+                    let n = self.ty(left, false)?;
+                    let allowed = [K::TypeIdentifier, K::ScopedTypeIdentifier, K::GenericType, K::ReferenceType, K::PointerType, K::TupleType, K::ArrayType, K::PrimitiveType];
+                    if !allowed.contains(&n.kind) {
+                        return self.refuse();
+                    }
+                }
             }
             if self.peek() != T::Colon {
                 return self.refuse();
@@ -862,8 +884,13 @@ impl<'a> P<'a> {
                 self.expect_tk(K::StructItem, T::Semi, K::TSemi)?;
             }
             _ => {
+                // `struct S where …;`: a `where` takes a body after it.
+                let where_ = self.is_word(w::WHERE);
                 self.where_opt()?;
                 if self.peek() == T::Semi {
+                    if where_ {
+                        return self.refuse();
+                    }
                     self.tk(K::StructItem, K::TSemi, f::NONE)?;
                 } else {
                     self.field_declaration_list(slot(f::BODY, Ctx::Bare))?;

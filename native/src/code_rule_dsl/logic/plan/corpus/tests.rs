@@ -1077,9 +1077,9 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
 
 /// A text test over `node_text` that a cross-file relation reads (`passes` reads `uses`, which joins two files) gives
 /// a run's outputs with an empty store after each edit, and no cross-file stratum made natively is derived again.
-/// The request for the text is narrowed to the node's own document (O-cross-file-answers), so the text is answered,
-/// and tested, in the chunk that holds it; the hub's filter form for a text test in the cross-file part (42f34ad0e)
-/// is not written over `maintain::rewrite_over` (its stratum would be derived again, which is exact).
+/// The request for the text is narrowed to the node's own document (0264), so the text is answered, and tested, in
+/// the chunk that holds it; a text test left in the cross-file part is maintained as a filter of its input's strings
+/// (`maintain::rewrite_over`'s `L::Test`).
 #[test]
 fn a_cross_file_text_test_is_maintained_as_a_filter() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
@@ -1166,8 +1166,8 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
 /// one value be reused under another, or make a session's next run cold.
 #[test]
 fn every_switch_lowering_reads_is_classified() {
-    /// The switches lowering and preparation read that change no prepared program: checks, dumps and traces, and the
-    /// store's path.
+    /// The switches combining, lowering and preparation read that change no prepared program: checks, dumps, traces
+    /// and profiles, the store's and the cost model's paths, the session's binding.
     const NOT_PREPARING: &[&str] = &[
         "RERAIL_BLESS_CENSUS",
         "RERAIL_IDEMPOTENCY_DUMP",
@@ -1181,32 +1181,113 @@ fn every_switch_lowering_reads_is_classified() {
         // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
         "RERAIL_STRATA_COUNTS",
         "RERAIL_TAPE_CACHE",
+        "RERAIL_DUMP_PROGRAMS",
+        "RERAIL_TIMELINE",
+        "RERAIL_PROFILE",
+        "RERAIL_SQL_STRICT",
+        "RERAIL_WARM",
+        "RERAIL_MEMO_PROGRAM_DUMP",
+        "RERAIL_STATS_KEEP_TRACE",
+        "RERAIL_SESSION",
+        // The library's directory: its files' paths and digests are in the texts' digest (the module graph).
+        "RERAIL_RR_LIB",
+        // The cost model's file: its estimates steer plan choices, which keep the program's meaning (`plan::run`).
+        "RERAIL_COSTS",
+        // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
+        "RERAIL_SOURCES_PHASE",
     ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
-    let places = [
-        "logic/rr", "logic/front.rs", "logic/front", "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs",
-        "logic/magic", "logic/plan/lower.rs", "logic/plan/corpus/cross_memo.rs", "typing/file_local.rs", "typing/file_local",
-    ];
-    let read = regex::Regex::new(r#"var(?:_os)?\("(RERAIL_[A-Z0-9_]+)"\)"#).unwrap();
-    let mut files = Vec::new();
-    let mut pending: Vec<std::path::PathBuf> = places.iter().map(|p| root.join(p)).collect();
-    let missing: Vec<&std::path::PathBuf> = pending.iter().filter(|p| !p.exists()).collect();
-    assert!(missing.is_empty(), "places that are gone: {missing:?}");
-    while let Some(p) = pending.pop() {
-        if p.is_dir() {
-            pending.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
-        } else if p.extension().is_some_and(|e| e == "rs") && !p.file_name().unwrap().to_string_lossy().contains("tests") {
-            files.push(p);
+    // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
+    let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
+    let sources = |places: &[&str]| -> Vec<(String, String)> {
+        let mut files = Vec::new();
+        let mut pending: Vec<std::path::PathBuf> = places.iter().map(|p| root.join(p)).collect();
+        let missing: Vec<&std::path::PathBuf> = pending.iter().filter(|p| !p.exists()).collect();
+        assert!(missing.is_empty(), "places that are gone: {missing:?}");
+        while let Some(p) = pending.pop() {
+            if p.is_dir() {
+                pending.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
+            } else if p.extension().is_some_and(|e| e == "rs") && !p.file_name().unwrap().to_string_lossy().contains("tests") {
+                files.push((p.strip_prefix(&root).unwrap().display().to_string(), std::fs::read_to_string(&p).unwrap()));
+            }
         }
-    }
-    assert!(files.len() > 10, "{files:?}");
+        files
+    };
+    // A switch read through a helper (`syntax::definition_ids()` for `RERAIL_NODE_IDS`) is read where the helper is
+    // called: every short function of the tree (under 20 lines) that names a switch, by a name no other function has.
+    let accessors: std::collections::HashMap<String, Vec<String>> = {
+        let every = sources(&["."]);
+        let fn_start = regex::Regex::new(r"(?m)^[ \t]*(?:pub(?:\([^)]*\))? )?(?:const )?fn ([a-z_][a-z0-9_]*)").unwrap();
+        let mut found: std::collections::HashMap<String, (usize, Vec<String>)> = std::collections::HashMap::new();
+        for (_, text) in &every {
+            let starts: Vec<(usize, String)> = fn_start.captures_iter(text).map(|c| (c.get(0).unwrap().start(), c[1].to_owned())).collect();
+            for (i, (at, name)) in starts.iter().enumerate() {
+                let end = starts.get(i + 1).map_or(text.len(), |n| n.0);
+                let body = &text[*at..end];
+                let switches: Vec<String> = read.captures_iter(body).map(|c| c[1].to_owned()).collect();
+                let e = found.entry(name.clone()).or_insert((0, Vec::new()));
+                e.0 += 1;
+                if body.lines().count() < 20 {
+                    e.1.extend(switches);
+                }
+            }
+        }
+        found.into_iter().filter(|(_, (n, sw))| *n == 1 && !sw.is_empty()).map(|(name, (_, sw))| (name, sw)).collect()
+    };
+    let call = regex::Regex::new(r"\b([a-z_][a-z0-9_]*)\(").unwrap();
+    let reads = |text: &str| -> Vec<String> {
+        let mut all: Vec<String> = read.captures_iter(text).map(|c| c[1].to_owned()).collect();
+        for c in call.captures_iter(text) {
+            let before = &text[..c.get(0).unwrap().start()];
+            if !before.ends_with("fn ") {
+                all.extend(accessors.get(&c[1]).into_iter().flatten().cloned());
+            }
+        }
+        all
+    };
+    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program) and `combine_read`.
+    let corpus = std::fs::read_to_string(root.join("logic/plan/corpus.rs")).unwrap();
+    let region = |from: &str, to: &str| -> String {
+        let a = corpus.find(from).unwrap_or_else(|| panic!("corpus.rs has no {from:?}"));
+        let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
+        corpus[a..b].to_owned()
+    };
+    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), and the `.rr` lowering its
+    // `rr::parse` runs (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    let mut combining = sources(&["logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs"]);
+    combining.push(("corpus.rs, combine_read".to_owned(), region("\nfn combine_read(", "\n}\n")));
+    // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
+    // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
+    // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
+    // `choices::key`, which holds the switches those read (`RERAIL_INLINE`, `RERAIL_INLINE_ONLY`,
+    // `RERAIL_OBSERVED_STEPS`).
+    let mut preparing = sources(&[
+        "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
+        "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",
+    ]);
+    preparing.push(("corpus.rs, run_observed's preparation".to_owned(), region("\nfn run_observed(", "Arc::new(Prepared {")));
     let mut unlisted = std::collections::BTreeSet::new();
-    for f in &files {
-        for c in read.captures_iter(&std::fs::read_to_string(f).unwrap()) {
-            if !super::PREPARING.contains(&&c[1]) && !NOT_PREPARING.contains(&&c[1]) {
-                unlisted.insert(format!("{} in {}", &c[1], f.strip_prefix(&root).unwrap().display()));
+    let mut seen = std::collections::BTreeSet::new();
+    for (files, allowed) in [(&combining, vec![super::COMBINING]), (&preparing, vec![super::COMBINING, super::PREPARING])] {
+        for (name, text) in files.iter() {
+            for switch in reads(text) {
+                seen.insert(switch.clone());
+                if !allowed.iter().any(|l| l.contains(&switch.as_str())) && !NOT_PREPARING.contains(&switch.as_str()) {
+                    let list = if allowed.len() == 1 { "COMBINING" } else { "PREPARING" };
+                    unlisted.insert(format!("{switch} in {name} (wants {list})"));
+                }
             }
         }
     }
-    assert!(unlisted.is_empty(), "switches lowering reads that are neither PREPARING nor NOT_PREPARING: {unlisted:?}");
+    assert!(unlisted.is_empty(), "switches read in combining or preparing, in neither its list nor NOT_PREPARING: {unlisted:?}");
+    // And the other way: a listed switch keys what it changes, read in combining or preparing, or after them by what
+    // hangs off the prepared key (the run's extraction: `with_long_text`'s text nodes and anchors, the span
+    // prefilter, both in `facts/vtab/syntax.rs`; the rest of `run_observed`). One read nowhere there keys nothing it
+    // changes: a session's next run cold for nothing.
+    for text in sources(&["facts/vtab/syntax.rs"]).into_iter().map(|(_, t)| t).chain([region("\nfn run_observed(", "\n}\n")]) {
+        seen.extend(reads(&text));
+    }
+    let unread: Vec<&str> = super::COMBINING.iter().chain(super::PREPARING).copied().filter(|s| !seen.contains(*s)).collect();
+    assert!(unread.is_empty(), "switches listed as combining or preparing that nothing there reads: {unread:?}");
 }

@@ -43,9 +43,13 @@ fi
 host=$(printf '%s' "${T16_LABEL:-cpu}" | tr -cs 'A-Za-z0-9' '-' | sed 's/^-//; s/-$//')
 mkdir -p "$here/results"
 for build in $builds; do
-    flags=""
-    [ "$build" = native ] && flags="-C target-cpu=native"
-    RUSTFLAGS="$flags" CARGO_TARGET_DIR="target-$build" nice -n 19 cargo build --bin tape16
+    # The base build is the farm's, shared with every worktree; the native one differs by design (the
+    # flag is what is measured), so it says so (`RERAIL_FARM_ANY_ENV`, scripts/build/farm/README.md).
+    if [ "$build" = native ]; then
+        RERAIL_FARM_ANY_ENV=1 RUSTFLAGS="-C target-cpu=native" nice -n 19 cargo build --target-dir "target-$build" --bin tape16
+    else
+        nice -n 19 cargo build --target-dir "target-$build" --bin tape16
+    fi
     for c in "$here"/cap/*.cap; do
         name=$(basename "$c" .cap)
         res="$here/results/$host-$cmd-$build-$name.md"

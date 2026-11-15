@@ -525,14 +525,12 @@ fn live_threads() -> Vec<(u32, String)> {
     {
         unsafe extern "C" {
             fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::kern_return_t;
+            // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
+            static mach_task_self_: libc::mach_port_t;
         }
         let mut list: libc::thread_act_array_t = std::ptr::null_mut();
         let mut count: libc::mach_msg_type_number_t = 0;
         // SAFETY: the task's own threads; the list and each port's right are given back below.
-        unsafe extern "C" {
-            // What `mach_task_self()` reads: the task's own port, set as the process starts.
-            static mach_task_self_: libc::mach_port_t;
-        }
         let task = unsafe { mach_task_self_ };
         if unsafe { libc::task_threads(task, &mut list, &mut count) } != 0 {
             return Vec::new();
@@ -1353,12 +1351,10 @@ pub fn decisions() -> BTreeMap<(String, String), u64> {
     state().decisions.clone()
 }
 
-/// The decisions made since `before` (`decisions`), with how often: what a step decided, for a run that reuses the
-/// step's result to state again (`add_decisions`).
+/// The decisions made since `before` (`decisions`), with how often: what a step decided.
 pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
     decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
 }
-
 
 /// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
 /// refused, by reason (no stratum is moved from the device to the CPU without a line here).

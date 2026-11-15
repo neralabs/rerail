@@ -29,7 +29,7 @@ use cranelift_frontend::FunctionBuilder;
 const MAX_LAG: u8 = 16;
 
 /// Which instructions are computed on the byte vectors, and what is known of them.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Plan {
     /// Computed on the byte vectors.
     pub lanes: Vec<bool>,
@@ -56,7 +56,7 @@ pub struct Plan {
 /// bits came in zero, and values only they read. The full body computes them behind one branch,
 /// so a block with nothing for them (a block without numbers, for a number check) skips them,
 /// their class masks and their `prev`s included.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Region {
     pub gate: usize,
     /// A test before the gate's: the gate's other operand, when the gate's byte class is made a
@@ -106,6 +106,25 @@ struct Can {
 
 fn class_byte(t: &ClassTable, b: u8) -> u8 {
     t.lo[usize::from(b & 15)] & t.hi[usize::from(b >> 4)]
+}
+
+/// The bytes of a class (`bits` of table `t`) as one run `lo..=hi`, where they are one.
+pub fn byte_range(t: &ClassTable, bits: u8) -> Option<(u8, u8)> {
+    let mut set = [0u64; 4];
+    for b in 0..=255u8 {
+        if class_byte(t, b) & bits != 0 {
+            set[usize::from(b) / 64] |= 1 << (b % 64);
+        }
+    }
+    set_range(set)
+}
+
+/// A 256-bit set of bytes as one run `lo..=hi`, where it is one (not empty).
+pub fn set_range(set: [u64; 4]) -> Option<(u8, u8)> {
+    let has = |b: usize| set[b / 64] >> (b % 64) & 1 == 1;
+    let lo = (0..256).find(|&b| has(b))?;
+    let hi = (0..256).rev().find(|&b| has(b))?;
+    (lo..=hi).all(has).then_some((lo as u8, hi as u8))
 }
 
 /// Which values are byte-local, on the vectors, and how far back each reads (its leaves' bytes at
@@ -163,6 +182,51 @@ fn lane_plan(native: &BlockNative, deep: bool) -> (Vec<bool>, Vec<u8>, Vec<bool>
         (lanes[at], lag[at], at_zero[at], can[at]) = (l, s, z, c);
     }
     (lanes, lag, at_zero, can)
+}
+
+/// Whether value `x` is false wherever the byte `back` before its position is zero: its bytes
+/// say so (an `eq_byte` of a byte not zero, a class without the zero byte, a plane's bit), a
+/// `prev` further back, either side of an `and`, both of an `or`.
+pub fn zero_kills(native: &BlockNative, x: usize, back: u32) -> bool {
+    fn go(native: &BlockNative, x: usize, back: u32, depth: u32) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        let o = |a: u16| usize::from(a);
+        match native.insts[x] {
+            BlockInst::EqByte(b) => back == 0 && b != 0,
+            BlockInst::Class { table, bits } => back == 0 && class_byte(&native.tables[usize::from(table)], 0) & bits == 0,
+            BlockInst::Plane(_) => back == 0,
+            BlockInst::PlaneBefore(_) => back == 1,
+            BlockInst::Pair { before, table, bits } => {
+                (back == 0 && class_byte(&native.tables[usize::from(table)], 0) & bits == 0) || (back == 1 && class_byte(&native.tables[usize::from(before)], 0) & bits == 0)
+            }
+            BlockInst::Prev(a, k) => back >= u32::from(k) && go(native, o(a), back - u32::from(k), depth + 1),
+            BlockInst::And(a, b) => go(native, o(a), back, depth + 1) || go(native, o(b), back, depth + 1),
+            BlockInst::Or(a, b) => go(native, o(a), back, depth + 1) && go(native, o(b), back, depth + 1),
+            _ => false,
+        }
+    }
+    go(native, x, back, 0)
+}
+
+/// Of the `and`s from `at`, the conjuncts that alone are the same on a file of the batch's
+/// layout: but each `within(d)` whose byte another conjunct is false on when zero
+/// (`zero_kills`). The bytes off the file are zeros, `native_cpu_block::FRONT` of them before
+/// it (so `d` at most that). None where every conjunct stays.
+pub fn unguarded(native: &BlockNative, at: usize) -> Option<Vec<usize>> {
+    let mut leaves = Vec::new();
+    let mut work = vec![at];
+    while let Some(x) = work.pop() {
+        match native.insts[x] {
+            BlockInst::And(a, b) => work.extend([usize::from(b), usize::from(a)]),
+            _ if !leaves.contains(&x) => leaves.push(x),
+            _ => {}
+        }
+    }
+    let guard = |w: usize| matches!(native.insts[w], BlockInst::Within(d) if usize::from(d) <= crate::native_cpu_block::FRONT && leaves.iter().any(|&y| y != w && zero_kills(native, y, u32::from(d))));
+    let kept: Vec<usize> = leaves.iter().copied().filter(|&w| !guard(w)).collect();
+    (kept.len() < leaves.len()).then_some(kept)
 }
 
 /// A byte-local value is on the vectors only where that saves a mask or a carried field: a
@@ -801,6 +865,20 @@ impl<'a> Lanes<'a> {
                 let s = self.splat(f, byte);
                 Lane::V(f.ins().icmp(IntCC::Equal, b, s), false)
             }
+            // A class of one run of bytes, its table not looked up here already: a subtract
+            // and a compare, as a compiler lowers a range test (a digit's `b - '0' <= 9`).
+            BlockInst::Class { table, bits } if !self.lookups.contains_key(&(usize::from(table), c, lag)) && byte_range(&self.native.tables[usize::from(table)], bits).is_some() => {
+                let (lo, hi) = byte_range(&self.native.tables[usize::from(table)], bits).expect("a range");
+                let b = self.bytes(f, c, lag);
+                if lo == hi {
+                    let s = self.splat(f, lo);
+                    return Lane::V(f.ins().icmp(IntCC::Equal, b, s), false);
+                }
+                let from = self.splat(f, lo);
+                let d = f.ins().isub(b, from);
+                let span = self.splat(f, hi - lo);
+                Lane::V(f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d, span), false)
+            }
             BlockInst::Class { table, bits } => {
                 let v = self.lookup(f, usize::from(table), c, lag);
                 self.none_of(f, v, bits)
@@ -821,6 +899,17 @@ impl<'a> Lanes<'a> {
             }
             BlockInst::Not(a) => self.get_at(f, o(a), c, lag).not(),
             BlockInst::And(a, b) => {
+                // A `within` the other conjuncts need no test of: off the file the byte it
+                // guards is zero, and one of them is false on it (`unguarded`).
+                // (A full block's body has no `within` to test: `position` none.)
+                if let Some(kept) = self.position.and_then(|_| unguarded(self.native, at)) {
+                    let mut acc = Lane::Known(true);
+                    for x in kept {
+                        let v = self.get_at(f, x, c, lag);
+                        acc = Lane::and(f, acc, v);
+                    }
+                    return acc;
+                }
                 let (x, y) = (self.get_at(f, o(a), c, lag), self.get_at(f, o(b), c, lag));
                 Lane::and(f, x, y)
             }

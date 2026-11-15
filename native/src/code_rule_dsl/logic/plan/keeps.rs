@@ -644,7 +644,7 @@ fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTr
                 continue;
             }
             let Some(&n) = model.stats.card.get(rel) else { continue };
-            let cols = (0..a.arity()).map(|c| model.ndv.get_at(&rel, c).map_or(n, |d| d.min(n))).collect();
+            let cols = (0..a.arity()).map(|c| model.ndv.at(&rel, c).map_or(n, |d| d.min(n))).collect();
             counted.insert(rel, cols);
         }
     }
@@ -1275,7 +1275,7 @@ fn overlay<'a>(f: Fields<'_>, model: &mut Model, rels: impl Iterator<Item = &'a 
         let Some(rows) = observed_rows(rel, nodes) else { continue };
         let width = f.arity(rel).unwrap_or(0);
         let cols = observed_cols(rel, nodes, rows);
-        let before = (0..width).map(|c| (model.ndv.get_at(&rel, c).copied(), model.stats.fan.get_at(&rel, c).copied())).collect();
+        let before = (0..width).map(|c| (model.ndv.at(&rel, c).copied(), model.stats.fan.at(&rel, c).copied())).collect();
         saved.push((rel.to_owned(), model.stats.card.get(rel).copied(), before));
         model.stats.card.insert(rel.to_owned(), rows.max(1.0));
         for (c, (ndv, fan)) in cols.into_iter().enumerate().take(width) {
@@ -1387,12 +1387,12 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
                 for c in 0..width {
                     let (seen_ndv, seen_fan) = seen.get(c).copied().unwrap_or((None, None));
                     if let Some(f) = seen_fan
-                        && model.stats.fan.get_at(&rel, c).is_none()
+                        && model.stats.fan.at(&rel, c).is_none()
                     {
                         model.stats.fan.insert((rel.clone(), c), f);
                         inserted.fan.push((rel.clone(), c));
                     }
-                    if model.ndv.get_at(&rel, c).is_some() {
+                    if model.ndv.at(&rel, c).is_some() {
                         continue;
                     }
                     if let Some(d) = seen_ndv {
@@ -1409,7 +1409,7 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
                                 && !a.neg()
                                 && let Some(at) = a.args().position(|t| t.var() == Some(x))
                             {
-                                if let Some(&d) = model.ndv.get_at(&v.rel_name(a.rel()), at) {
+                                if let Some(&d) = model.ndv.at(&v.rel_name(a.rel()), at) {
                                     ndv = ndv.min(d);
                                 }
                             }

@@ -1129,7 +1129,7 @@ fn violations_at_places_and_their_lines_lower() {
     ))
     .unwrap();
     let settings: Vec<(&str, &str)> = p.settings.iter().map(|(k, t)| (k.as_str(), t.as_str())).collect();
-    assert_eq!(settings, [("policy", "\"p\" revision 1"), ("suppress", "V eslint \"@scope/a-b\", \"a-b\" over {x}"), ("suppress", "V oxlint \"a-b\""), ("fix", "V safe drop \"Remove it\"")]);
+    assert_eq!(settings, [("policy", "\"p\" revision 1"), ("suppress", "V eslint \"@scope/a-b\", \"a-b\" over {x}"), ("suppress", "V oxlint \"a-b\""), ("fix", "V safe drop \"Remove it\""), ("message", "V \"{x}\""), ("message", "W \"w\"")]);
     let rules = |rel: &str| p.rules.iter().filter(|r| r.head.rel == "violation" && r.head.args[1] == s(rel)).map(ToString::to_string).collect::<Vec<_>>();
     assert_eq!(
         rules("V"),
@@ -3463,12 +3463,14 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
         let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
         // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them, and `simplify` the
-        // variables it renames apart (`rr_earlier27_f18`, `_t<k>` and `_f<k>` after the name, simplify.rs): each
-        // renumbered by its first appearance in the pruned rules, as dropped clauses no longer take numbers before it.
+        // variables it renames apart (`rr_earlier27_f18`, `_t<k>` and `_f<k>` after the name, simplify.rs); dropped
+        // clauses no longer take numbers before them, and a context or cover made once is read again where an equal
+        // one is asked for (`Lowerer::helper_once`), so its rules sit where the first asker, maybe a dropped clause,
+        // made them. So the programs are compared with every helper's number masked (`rr_agg#`, `rr_earlier#_f18`),
+        // and a helper's rules by its stem alone (an aggregate's columns are its fresh variables in the order of
+        // their names, which the numbers change).
         let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
         let fresh = regex::Regex::new(r"\brr_([a-z]+)([0-9]+)_([ft][0-9]+)\b").unwrap();
-        // A widened copy of a helper (`rr_wide_node_text_rr_up9`): the helper renumbered within it, its body compared.
-        let copied = regex::Regex::new(r"\b(rr_wide_[a-z_]*?_)(rr_[a-z_]*[a-z][0-9]+)\b").unwrap();
         let shape = |mut p: Program| {
             // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
             // (`corpus::run_observed`), those a library derives (embeds, loads) and those lowering makes of a body's
@@ -3486,7 +3488,10 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             crate::code_rule_dsl::logic::simplify::simplify(&mut p);
             let p = front::prune(p);
             // Q3's property itself: no widened copy is left with its relation's own rules, each copy read as its
-            // relation (a recursive copy reads itself, a copy of `r` reads the copy of what `r` reads).
+            // relation (a recursive copy reads itself, a copy of `r` reads the copy of what `r` reads). A copy equals
+            // its relation when their rules are equal with every equal copy read as its relation: the greatest such
+            // set, from all copies assumed equal, each dropped once its rules differ. (A copy whose read copy differs,
+            // as a cross-file `node_text` read makes it, is rightly its own.)
             let copies = lower::ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| format!("rr_wide_{}_", a.rel)).collect::<Vec<_>>();
             let source = |rel: &str| -> String {
                 let mut at = rel;
@@ -3495,89 +3500,57 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
                 at.to_owned()
             };
-            let as_sources = |x: &front::Rule| {
-                let mut x = x.clone();
-                x.head.rel = source(&x.head.rel).as_str().into();
-                for l in x.body.make_mut().iter_mut() {
-                    if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                        a.rel = source(&a.rel).as_str().into();
-                    }
+            // Each as `congruence` compares rules (`simplify::canonical_rule`): up to variable names in every position,
+            // as `simplify` renames inlined variables apart with one counter for the whole program (`_f<k>`, `_t<k>`).
+            let rules_as = |rel: &str, same: &BTreeSet<String>| {
+                let label = |n: &str| front::Name::new(&if same.contains(n) { source(n) } else { n.to_owned() });
+                p.rules.iter().filter(|x| x.head.rel == rel).map(|x| crate::code_rule_dsl::logic::simplify::canonical_rule(x, &label)).collect::<BTreeSet<_>>()
+            };
+            let mut same: BTreeSet<String> = p.decls.keys().filter(|w| source(w) != w.as_str()).map(|w| w.to_string()).collect();
+            loop {
+                let next: BTreeSet<String> = same.iter().filter(|w| rules_as(w, &same) == rules_as(&source(w), &same)).cloned().collect();
+                if next == same {
+                    break;
                 }
-                format!("{x:?}")
-            };
-            // A copy is its relation's own only if every copy it reads is too: a copy that reads another copy whose
-            // rules differ from its relation's (a reader widened it) is needed, though it reads as its relation once
-            // every copy is read as its source.
-            let rules_of = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(as_sources).collect::<BTreeSet<_>>();
-            let copies_read = |rel: &str| -> BTreeSet<String> {
-                p.rules.iter().filter(|x| x.head.rel == rel).flat_map(|x| x.body.iter()).filter_map(|l| match l {
-                    Literal::Atom(a) | Literal::Agg { atom: a, .. } if source(&a.rel) != a.rel.as_str() => Some(a.rel.to_string()),
-                    _ => None,
-                }).collect()
-            };
-            let differs = |w: &str| { let mine = rules_of(w); !mine.is_empty() && mine != rules_of(&source(w)) };
-            for w in p.decls.keys().filter(|w| source(w) != w.as_str()) {
+                same = next;
+            }
+            for w in &same {
                 let r = source(w);
-                let mine = rules_of(w);
-                if mine.is_empty() || mine != rules_of(&r) {
-                    continue;
-                }
-                // The copies it reads, to a fixpoint: one that differs is the witness that it is needed.
-                let (mut seen, mut todo) = (BTreeSet::new(), vec![w.to_string()]);
-                while let Some(c) = todo.pop() {
-                    if seen.insert(c.clone()) {
-                        todo.extend(copies_read(&c));
-                    }
-                }
-                let witness = seen.iter().find(|c| differs(c.as_str()));
-                assert!(
-                    witness.is_some(),
-                    "{}: {w} is left with {r}'s own rules, and so is every copy it reads ({seen:?}): {:#?}",
-                    path.display(),
-                    p.rules.iter().filter(|x| x.head.rel == w.as_str()).map(|x| x.to_string()).collect::<Vec<_>>()
-                );
-                if std::env::var_os("RERAIL_WIDE_WITNESS").is_some() {
-                    let c = witness.expect("a witness");
-                    let show = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(|x| x.to_string()).collect::<Vec<_>>();
-                    eprintln!("{}: {w} needed: {c} differs from {}: {:#?} against {:#?}", path.display(), source(c), show(c), show(&source(c)));
+                let raw = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(|x| format!("{x:?}")).collect::<Vec<_>>();
+                assert!(raw(w).is_empty(), "{}: {w} is left with {r}'s own rules\n {w}: {:#?}\n {r}: {:#?}", path.display(), raw(w), raw(&r));
+            }
+            // Why a copy is needed (`RERAIL_WIDE_WITNESS`, from the tape-lab branch's form of this check): a copy kept
+            // apart from its relation reads, to a fixpoint, a copy whose rules differ from its relation's.
+            if std::env::var_os("RERAIL_WIDE_WITNESS").is_some() {
+                let show = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(|x| x.to_string()).collect::<Vec<_>>();
+                for w in p.decls.keys().filter(|w| source(w) != w.as_str() && !same.contains(w.as_str())) {
+                    let differs: Vec<String> = p.rules.iter().filter(|x| x.head.rel == w.as_str()).flat_map(|x| x.body.iter()).filter_map(Literal::atom).map(|a| a.rel.to_string()).filter(|c| source(c) != *c && !same.contains(c)).collect();
+                    eprintln!("{}: {w} needed: reads {differs:?}: {:#?} against {:#?}", path.display(), show(w), show(&source(w)));
                 }
             }
             let kept = p.rules.clone();
-            let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-            let mut renumber = |s: &str| -> String {
-                let s = fresh.replace_all(s, |c: &regex::Captures| {
-                    let n = names.len();
-                    names.entry(c[0].to_owned()).or_insert_with(|| format!("rr_{}#{n}_{}", &c[1], &c[3])).clone()
-                });
-                let s = copied.replace_all(&s, |c: &regex::Captures| {
-                    let inner = helper.captures(&c[2]).expect("a helper's name");
-                    let n = names.len();
-                    let helper = names.entry(c[2].to_owned()).or_insert_with(|| format!("rr_{}#{n}", &inner[1])).clone();
-                    format!("{}{helper}", &c[1])
-                });
-                helper.replace_all(&s, |c: &regex::Captures| {
-                    let n = names.len();
-                    names.entry(c[0].to_owned()).or_insert_with(|| format!("rr_{}#{n}", &c[1])).clone()
-                }).into_owned()
-            };
+            let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#").into_owned();
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.
             let place_variant = |r: &front::Rule| r.head.rel.as_str() == "violation" && r.head.args.iter().any(|a| matches!(a, Term::Call(n, _) if n == "place_path"));
             // A helper's rules (`rr_agg7`, its columns its fresh variables in the order of their names, which the
-            // numbers change) are compared by their number for each helper; every other rule exactly.
+            // numbers change) are compared by their stem; every other rule exactly, its helpers' numbers masked. A
+            // widened copy (`rr_wide_node_text_rr_up9`) is compared by its rules.
             let numbered = |rel: &str| helper.is_match(rel) && !rel.starts_with("rr_wide_");
-            let mut rules: Vec<String> = p.rules.iter().filter(|r| !place_variant(r)).map(|r| {
-                let text = renumber(&format!("{r:?}"));
-                if numbered(r.head.rel.as_str()) { format!("helper {}", renumber(r.head.rel.as_str())) } else { text }
-            }).collect();
+            let mut rules: Vec<String> = p
+                .rules
+                .iter()
+                .filter(|r| !place_variant(r))
+                .map(|r| if numbered(r.head.rel.as_str()) { format!("helper {}", mask(r.head.rel.as_str())) } else { mask(&format!("{r:?}")) })
+                .collect();
             rules.sort();
             let named: BTreeSet<String> = p.rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))).collect();
-            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(r.as_str())).map(|(r, c)| if numbered(r) { format!("{}/{}", renumber(r), c.len()) } else { renumber(&format!("{r}{c:?}")) }).collect();
+            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(r.as_str())).map(|(r, c)| if numbered(r) { format!("{}/{}", mask(r), c.len()) } else { mask(&format!("{r}{c:?}")) }).collect();
             decls.sort();
-            let natives: BTreeSet<String> = p.natives.keys().map(|n| renumber(n)).collect();
+            let natives: BTreeSet<String> = p.natives.keys().map(|n| mask(n)).collect();
             // The facts of the relations the rules name (`simplify` makes ground rules facts), and the outputs'.
-            let mut facts: Vec<String> = p.facts.iter().filter(|(r, _)| named.contains(r.as_str()) || p.outputs.contains(r)).map(|(r, rows)| renumber(&format!("{r}{rows:?}"))).collect();
+            let mut facts: Vec<String> = p.facts.iter().filter(|(r, _)| named.contains(r.as_str()) || p.outputs.contains(r)).map(|(r, rows)| mask(&format!("{r}{rows:?}"))).collect();
             facts.sort();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
             // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.

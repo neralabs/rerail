@@ -740,6 +740,8 @@ pub fn cli(args: &[String]) -> Result<String, String> {
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
 pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
+    // Done as the library loaded, except where nothing runs then (the browser's build).
+    crate::install_store_functions();
     let budgets = budget_options(args)?;
     let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).
@@ -778,6 +780,9 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
         }
         // Several policies over one repository, each over its own language's files (O105).
         Some("run-policies") if args.len() > 3 => {
+            // Decision 0243: the process ends with the run, before any idle time: its join searches are served at the
+            // run's end.
+            crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
             let paths = args[3..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
             serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(&args[1]), Path::new(&args[2]), &serde_json::Value::Null)?).map_err(|e| e.to_string())
         }

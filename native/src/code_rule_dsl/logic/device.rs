@@ -7,7 +7,7 @@
 use std::any::Any;
 use std::sync::{Arc, OnceLock};
 
-use super::native::setfix::{Fresh, Interner, JoinRule, Store};
+use super::native::setfix::{Fresh, InRel, Interner, JoinRule, Store};
 
 pub mod lattice;
 pub mod nearest;
@@ -62,6 +62,26 @@ pub trait SolverDevice: Send + Sync {
     fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused>;
     /// Checks every submission the relational executor makes against the engine's launch budget (decision 0100 §2).
     fn install_launch_guard(&self);
+    /// Columns' exact statistics and `k` most common values (decision 0209 §6), in one batch. A relation's column the
+    /// device holds is read where it is (decision 0261); the others are gathered. Also how many were read in place.
+    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused>;
+}
+
+/// A column for `SolverDevice::column_stats`: values on the host, or column `.1` of an engine relation.
+pub enum StatColumn<'a> {
+    Values(&'a [i64]),
+    Rel(&'a Arc<InRel>, usize),
+}
+
+/// A column's statistics: its rows, distinct values, sums of its values' counts squared and cubed, and its most
+/// common values with their counts, most common first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ColumnStats {
+    pub rows: u64,
+    pub ndv: u64,
+    pub sq: u64,
+    pub cube: u64,
+    pub top: Vec<(i64, u64)>,
 }
 
 static SOLVER: OnceLock<&'static dyn SolverDevice> = OnceLock::new();

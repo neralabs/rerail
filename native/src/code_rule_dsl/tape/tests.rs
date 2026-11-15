@@ -3,6 +3,9 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use ast_grep_core::AstGrep;
 use ast_grep_core::tree_sitter::StrDoc;
 
+/// The engine's own parsers against tree-sitter over repositories and suites (`lean_parsers_survey`).
+mod survey;
+
 #[test]
 fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let source = "value = left + right\n";
@@ -2745,6 +2748,34 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "x = a + b * c - d.e.f(g)[h] + i - j ** k ** l + (m + n) * o.p\n",
         "x = a or b and c or not d and e.f(g or h)[i and j] or k\n",
         "x = a.b(c + d.e(f * g + h)[i - j].k + l).m\n",
+        // A with item's parentheses around one `as` and a `,`: a tuple.
+        "with (a as b,):\n    pass\n",
+        // A walrus's value is no conditional: the conditional wraps the named expression.
+        "if (y := f(x)) if c else d:\n    pass\n",
+        "x = [y := a or b, z := lambda: 1]\n",
+        // `type` subscripted is a name; `type X = …` an alias.
+        "type[1] = 2\n",
+        "type X = int\ntype Y[T] = list[T]\n",
+        // A splat's form by its place: a statement's primary, a pattern's, an expression's.
+        "*a.b.c\n",
+        "*a, = b\n",
+        "x = a, *b.c\n",
+        "f(*a.b, *c)\n",
+        "[*a for x in y]\n",
+        // `_` in a union and a splat is stored; alone, it is not.
+        "match p:\n    case A(x) | _:\n        pass\n    case [*_, _]:\n        pass\n    case {\"k\": _}:\n        pass\n",
+        "match p:\n    case _ | _:\n        pass\n",
+        "match p:\n    case 1 | -2 | x:\n        pass\n",
+        "for x in lambda: y:\n    pass\n",
+        "def f(*async): pass\n",
+        // A line below the block inside brackets: no DEDENT where a closer may follow, a string
+        // starts the line, or an f-string's interpolation is open (the scanner's
+        // `inside_interpolated_string`, set as the f-string starts).
+        "def f():\n    x = (a +\n'b')\n",
+        "def f():\n    x = f\"\"\"{(a +\nb)}\"\"\"\n",
+        "def f():\n    x = f\"\"\"{(f\"a\" +\n'b')}\"\"\"\n",
+        "def f():\n    x = f\"\"\"{(f\"a\" + f\"{c +\nd}\")}\"\"\"\n",
+        "def f():\n    x = f\"{g(a,\nb)}\"\n",
     ] {
         let ours = python_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
         let tree = parser.parse(source, None).unwrap();
@@ -2786,6 +2817,19 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "@p.\ndef f():\n    pass\n",
         // After a bare name, tree-sitter's lexer reads `:=` in an interpolation: a walrus.
         "f\"{x:=}\"\n",
+        // `async` and `await` are keywords as a definition's or a parameter's name.
+        "def await(): pass\n",
+        "class async: pass\n",
+        "def f(async=1): pass\n",
+        "lambda await: 1\n",
+        // A line below the block where no closer may follow inside brackets: the scanner's DEDENT,
+        // in an interpolation too once a nested string has ended (its end clears the flag).
+        "def f():\n    (bar.\nbaz)\n",
+        "def f():\n    (a +\nbaz)\n",
+        "def f():\n    x = (a +\nf'b')\n",
+        "def f():\n    x = f\"\"\"{(f\"a\" +\nb)}\"\"\"\n",
+        "def f():\n    x = f\"\"\"{('a' + f\"{c}\" + (d +\ne))}\"\"\"\n",
+        "def f():\n    x = f\"\"\"{f\"a\" +\nb}\"\"\"\n",
     ] {
         let tree = parser.parse(invalid, None).unwrap();
         assert!(tree.root_node().has_error(), "{invalid:?} reads without an error");
@@ -2893,13 +2937,48 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "let s = `a${b}c` + tag`d` + /re[/]g/.source; a = b\n(c)\n",
         "x = async (a) => { await a }\ny = a => a?.b?.[c]?.(d)\n",
         "a\n++b\nreturn\n",
+        "debugger;\nif (a) debugger\n",
+        // A declarator's `undefined` is a name; `yield` as a parameter, and as `void`'s operand.
+        "var a = 1, undefined;\nlet undefined\nfunction f(undefined) {}\n",
+        "function f(yield, b = yield) { void yield; }\nx = function* (yield) {}\n",
+        // A class body's `{` is stored before a `;`.
+        "class A { ; m() {} }\nx = class { ;; }\n",
+        // A comment on a `}`'s line, before the automatic semicolon the grammar allows there: in
+        // the block (or class) where `||` may follow it (an empty block, a function's body), and
+        // where the scanner gives no semicolon at the `}` (a line follows, not `,` or `(`).
+        "if (a) {} // c\nx\n{ a } // c\nx\nfunction f() {} // c\n// d\nx = function () {} // c\n+ y\n",
+        "class B {} // c\nx\nf(() => {} // c\n)\ntry {} // c\ncatch (e) {}\n{} // c\n(x)\nf(function () {} // c\n, 1)\n",
+        "{} /* a */ // c\n.5\nif (a) { b } // c\nelse {} // d\nx\n",
+        "function f() {} // c",
+        "42 /* c */ // d",
         // Chains: each operator or postfix wraps the chain so far (held by the writer until it ends).
         "x = a + b * c - d.e.f(g)[h] + i - j ** k ** l + (m + n) * o.p\n",
         "x = a /* c */ + b // d\n  + c.d /* e */ .f\n  (g)\n",
         "x = a.b(c + d.e(f * g + h)[i - j].k + l).m\n",
         "x = new a.b[c + d].e(f + g.h) + new i.j\n",
+        // `await (…)` and a postfix: JavaScript calls a name `await`; TypeScript awaits.
+        "async function f() { await (a)(); await (a).b; await (a)[0]; await (a)?.b; await (a)`t`; await (a)++; await (a)\n++b; await (a); f()++ }\n",
+        // `let` before a line break and a name or `{` is a name's statement (the scanner's `;`);
+        // before `[`, a declaration.
+        "let\nx\nif (1) let\n{}\nL: let // c\n{}\nlet\n[a] = b;\n",
     ];
-    let jsx = ["const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n"];
+    // Arguments no expression reads: a call of `await` in JavaScript, errors in TypeScript.
+    // U+0085 is no blank: a name's character.
+    let common = [common.as_slice(), &["x =\u{85}1\ny = a\u{85}b\nz = 1;\u{85}\n"]].concat();
+    let js = [
+        "async function f() { await (...a); await (); await (a, b)() }\n",
+        // A hashbang ends at `\n` only.
+        "#!/usr/bin/env node\r\nx = 1\n",
+        "#! a\r{\n",
+        // `yield` as an operand is a `yield_expression`, as a pattern's name an identifier
+        // holding its token; a catch clause's `undefined` is a name.
+        "x = a * yield;\nvar {a: yield} = b;\n[yield] = c;\nvar [d, ...yield] = e;\ntry {} catch (undefined) {}\n",
+    ];
+    let jsx = [
+        "const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n",
+        // A tag's comments are in it, before its `>` or `/>`.
+        "x = <A b={c} /* d */ />\ny = <A b={c} // d\n />\nz = < /*a*/ ></ /*b*/>\nw = <A /* d */></A /* e */>\n",
+    ];
     let ts = [
         "let x: A | B & C[] = y as const;\nlet z = <T>w;\n",
         "interface I<T extends U = V> extends J { a?: number; readonly b: string; (x: T): void; new (): I<T>; [k: string]: any }\n",
@@ -2908,11 +2987,39 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "enum E { A = 1, B, }\nconst enum F {}\ndeclare module 'm' { export function f(): void; }\nnamespace N.M { }\n",
         "function f<T>(this: Window, a?: T, ...b: T[]): a is T;\nfunction f() {}\nexport = f;\n",
         "const q = a + b as T + c.d!.e<F>(g) satisfies H;\nconst r = a * b as U | V;\n",
+        "async function f() { await (a)!; await (a)<T>(); await (a as B).c() }\n",
         "const g = f<string>(x)!.y satisfies Z;\nimport q = require('q');\nimport type { R } from 'r' with { type: 'json' };\n",
+        // `x as A.B.C` is `(x as A.B).C` but where the `as` starts a parenthesized expression's,
+        // an array's or an object's first element.
+        "f(a as B.C.D)\nx = (b, a as B.C.D)\ny = [b, a as B.C.D]\nz = { j: 1, k: f(a as B.C.D) }\n",
+        "(a as B.C.D)\nx = [...a as B.C.D]\ny = { k: a as B.C.D }\nz = (c + a as B.C.D).e\n",
+        // A tagged template with type arguments.
+        "x = f<T>`t`\ny = a.f<{ a: string }>`t ${b}`\n",
+        // A modifier at its line's end names the member, but `static` before a name and `get`.
+        "class A {\n  public\n  m() {}\n  static\n  *g() {}\n  readonly\n  r: string\n}\n",
+        "class B {\n  static\n  m() {}\n  get\n  n() {}\n  static\n  x = 1\n}\n",
+        // Modifiers in the grammar's order.
+        "abstract class A {\n  private static override readonly async m() {}\n  protected abstract override n(): void;\n  declare public static override readonly p: number;\n  private readonly abstract q: string;\n  accessor r = 1\n  constructor(public override readonly s: T) { super() }\n}\n",
+        // A `(` or `<` on a new line starts an object type's call signature.
+        "interface I {\n  a\n  (): T\n  b?\n  <U>(): U\n}\n",
+        // A reserved identifier before `in` is a computed name's expression, not a mapped type's.
+        "type M = { [type in K]: B; [string in K]?: C };\nlet b: bigint.A;\nfunction f(a?: number = 1) {}\n",
+        // `as A.B.C` splits its last name off before `[k]`, `|`, `&` and after `keyof`, not
+        // before type arguments or `[]`; `typeof a[k]` is a lookup over the query, `typeof f<T>`
+        // an instantiation's query; `new a!.B()`.
+        "x = a as A.B.C['l'];\ny = a as keyof A.B.C;\nz = a as A.B.C | undefined;\nw = a as A.B.C[];\nv = a as A.B.C<T>;\nlet t: typeof a[0];\nlet u: typeof p<'a'>;\nq = g<typeof a[0]>(b);\nr = new m!.A();\n",
+        // `f<T>` then a line break and an operand: comparisons; `interface` takes its name across
+        // a line break; `namespace N` before a line break and `{` has no body; an accessor's
+        // `get` across a line break; a class body's `}` after a `,`.
+        "let x = f<true>\ny\ninterface\nF {}\nnamespace M\n{}\ninterface I {\n  get\n  foo(): string;\n}\ndeclare class C {\n  m(): T,\n}\n",
     ];
-    let tsx = ["const C = <T,>(p: T) => <Table<T> rows={p} />;\n"];
+    let tsx = [
+        "const C = <T,>(p: T) => <Table<T> rows={p} />;\n",
+        // TSX reads `this` in a tag's name as an identifier.
+        "x = <this.a></this.a>\ny = <this.a.b />\n",
+    ];
     let cases: [(Dialect, Vec<&str>); 3] = [
-        (Dialect::JavaScript, common.iter().chain(&jsx).copied().collect()),
+        (Dialect::JavaScript, common.iter().chain(&js).chain(&jsx).copied().collect()),
         (Dialect::TypeScript, common.iter().chain(&ts).copied().collect()),
         // `<T>w` is an element's start in TSX, not a type assertion.
         (Dialect::Tsx, common.iter().chain(&ts[1..]).chain(&jsx).chain(&tsx).copied().collect()),
@@ -2946,15 +3053,97 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
             let theirs = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
             assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "{dialect:?}: the tapes of a chain of {} bytes differ", source.len());
         }
+        // Nested parentheses in parameter defaults, as minifiers write (`E = (E = (E = …`): each `(`
+        // is tried as an arrow function once, not again for each enclosing one (once 2^40 tries).
+        for source in [format!("x = {}1{};\n", "(a = ".repeat(40), ")".repeat(40)), format!("x = {}1{};\n", "async(a = ".repeat(40), ")".repeat(40))] {
+            let ours = ecma_lean::encode(dialect, &grammar, &source, &|| false).unwrap_or_else(|why| panic!("{dialect:?} refused {source:?}: {why:?}")).unwrap();
+            let tree = parser.parse(&source, None).unwrap();
+            let theirs = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
+            assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "{dialect:?}: the tapes of {source:?} differ");
+        }
         // Past what tree-sitter's tape is compared at: the lean parser's own, not refused (no chain limit).
         for source in [format!("x = {}a;\n", "a + ".repeat(200_000)), format!("x = a{};\n", ".b(c)".repeat(100_000))] {
             assert!(ecma_lean::encode(dialect, &grammar, &source, &|| false).is_ok_and(|t| t.is_ok()), "{dialect:?} refused a chain of {} bytes", source.len());
         }
         // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser
         // has one behavior: tree-sitter's tape, or a refusal.
-        for invalid in ["f(a b)\n", "x = (1,\n", "if (a {\n", "const s = 'open\n", "class A { m( }\n", "let x = [1, 2"] {
+        let mut invalid = vec!["f(a b)\n", "x = (1,\n", "if (a {\n", "const s = 'open\n", "class A { m( }\n", "let x = [1, 2", "import {b} from"];
+        // A NUL anywhere: tree-sitter reads none, in a token or between them.
+        invalid.extend(["x = 'a\0b'\n", "x = 1 // a\0b\n", "x = 1;\0\n"]);
+        if dialect == Dialect::JavaScript {
+            // tree-sitter-javascript's reserved words are no names; `yield` is no arrow's parameter
+            // and takes no `/` after it.
+            invalid.extend(["var var = 1;\n", "import { default } from 'a'\n", "x = yield => 1\n", "function* g() { yield / 2 }\n"]);
+        }
+        if dialect != Dialect::JavaScript {
+            invalid.extend([
+                // Modifiers out of the grammar's order, or twice.
+                "class A { public public a; }\n",
+                "class A { static public m() {} }\n",
+                "class A { override static m() {} }\n",
+                "abstract class A { abstract async m(); }\n",
+                "class A { static declare p: T; }\n",
+                "class A { declare m() {} }\n",
+                "class A { constructor(readonly public a: T) {} }\n",
+                "class A { a?!: T }\n",
+                // A `(` or `<` on a new line after a class member's name.
+                "class A {\n  a\n  () {}\n}\n",
+                "class A {\n  a\n  <T>() {}\n}\n",
+                // Words tree-sitter-typescript reads as their expressions' or operators'.
+                "function f(null: T) {}\n",
+                "x = (class) => 1\n",
+                "x = async (await) => 1\n",
+                "let as = 1;\n",
+                "let satisfies = 1;\n",
+                // No member of a predefined type, a literal's or `this`; `asserts` takes its name.
+                "let v: void.x;\n",
+                "let v: this.x;\n",
+                "function f(v: unknown): asserts {}\n",
+                "type M = { [type in keyof A]: B };\n",
+                // A pattern a function type's `(` reads as an object type.
+                "type F = ({ a: string }: O) => any;\n",
+                "type F = ([{ a: b }]: O) => any;\n",
+                // A default after `?` with no type; a rest parameter's default.
+                "function f(a? = 1) {}\n",
+                "class A { m(...a = 0) {} }\n",
+                "export import a = require('a');\n",
+                // `using` as a parameter's name, `type.a<T>`, `get` then a property's name on
+                // the next line.
+                "f = (a, using?: string) => 1;\n",
+                "let t: [type.cast<unknown>, '?'];\n",
+                "interface I {\n  get\n  foo: string;\n}\n",
+            ]);
+        }
+        for invalid in invalid {
             assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{dialect:?}: {invalid:?} reads without an error");
             assert!(ecma_lean::encode(dialect, &grammar, invalid, &|| false).is_err(), "{dialect:?} accepted {invalid:?}");
+        }
+        // Valid, but tree-sitter reads `export` before a line break as a name's statement, and
+        // JavaScript's `await [a]` and a postfix, and `for await (let [x] of …)`, as subscripts of
+        // names: refused, not read as what they are.
+        let mut odd = vec!["export\nconst a = 1;\n", "async function f() { for await (let [x] of y) {} }\n"];
+        if dialect != Dialect::JavaScript {
+            // Readings tree-sitter-typescript decides past these rules: `as A.B.C | D.E`, a
+            // trailing dotted name in an `as` type, `f<() => { a: T }>(c)` (comparisons), type
+            // arguments with a type not read, `<T, U>(a) => {}` then `<`, `namespace as {}`,
+            // `new` before a line break, `/ /* c */a /`.
+            odd.extend([
+                "x = a as A.B.C | D.E.F;\n",
+                "x = a as () => A.B.C;\n",
+                "x = f<() => { a: T }>(c);\n",
+                "x = f<typeof a['k'].c>(b);\n",
+                "<T, U>(a: T) => {}\n<V>(b: V) => {}\n",
+                "namespace as {}\n",
+                "const u = new\n  URL(a);\n",
+                "var r = / /**/a /;\n",
+            ]);
+        }
+        if dialect == Dialect::JavaScript {
+            odd.extend(["async function f() { x = await [1].y; }\n", "f(await [1]?.[0]);\n"]);
+        }
+        for odd in odd {
+            assert!(!parser.parse(odd, None).unwrap().root_node().has_error(), "{dialect:?}: {odd:?} reads with an error");
+            assert!(ecma_lean::encode(dialect, &grammar, odd, &|| false).is_err(), "{dialect:?} read {odd:?}");
         }
     }
 }
@@ -3054,6 +3243,9 @@ fn rust_tapes_from_the_lean_parser_are_tree_sitters() {
     use crate::code_rule_dsl::tape::rust_lean;
     let sources = [
         "",
+        // A byte-order mark: passed, the root starting after it and the white space.
+        "\u{feff}",
+        "\u{feff}  #![a]\nfn f() {}\n",
         "// only a comment\n//! inner doc\n/// outer doc\nfn f() {}\n",
         "use a::{b as c, d::*, self};\nuse ::e;\npub(crate) mod m { pub(super) struct S; }\n",
         "#[derive(Debug)]\npub struct P<'a, T: Clone + 'a, const N: usize> where T: Default { pub x: &'a [T; N], y: Option<Box<dyn Fn(u8) -> u8>> }\n",
@@ -3065,6 +3257,12 @@ fn rust_tapes_from_the_lean_parser_are_tree_sitters() {
         "fn h() { let s = r#\" raw \"#; let c = 'c'; let b = b\"bytes\"; let l = |a, b: u8| -> u8 { a + b }; a.b::<T>().await?; }\n",
         "macro_rules! m { ($x:expr, $($y:tt)*) => { $x + m!($($y)*) }; () => {} }\nmacro_rules! set( { $($k:expr),* } => {}; );\n",
         "unsafe extern \"C\" fn v(n: i32, mut args: ...) {}\ntype F = for<'a> fn(&'a str, _) -> &'a str;\nstatic S: Option<&str> = None;\n",
+
+        "#!/usr/bin/env run\nfn f<'r#a>(x: &'r#a u8) -> u8 { return { 1 }; }\n",
+        "pub(in crate::a) fn f() {}\npub(self) fn g() {}\nextern \"C\" { fn v(a: i32, _: ...); }\n",
+        "fn f() { let c = |x| _; match x { | _ => 1 } let b = a as u8 < c; let r = 0..; let x @ 1 = 2; }\n",
+        "fn f() where T: A, &'a T: B, (u8,): C, [u8; 1]: D { let g = a::<T>::b(); let d = ::a::b; }\n",
+        "impl X { const default fn f() {} default const unsafe fn g() {} }\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Rust).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3083,7 +3281,12 @@ fn rust_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
     // one behavior: tree-sitter's tape, or a refusal.
-    for invalid in ["fn f(a b) {}\n", "fn f() { let x = (1,\n", "struct S {\n", "fn f() { 'open }\n", "pub impl X {}\n", "fn f(_: fn(&_)) {}\n", "fn f() { x.1e0; }\n"] {
+    for invalid in ["fn f(a b) {}\n", "fn f() { let x = (1,\n", "struct S {\n", "fn f() { 'open }\n", "pub impl X {}\n", "fn f(_: fn(&_)) {}\n", "fn f() { x.1e0; }\n",
+        "fn f() where (): A {}\n", "type T = Box<dyn 'a + A>;\n", "fn f() { str![[a]]; }\n", "default impl T for F {}\n",
+        "struct S where A: B;\n", "fn f() {\u{2028}}\n", "fn f() { let c = |a, | a; }\n", "fn f() { a as T < b; }\n",
+        "fn f() { u8::<T>(); }\n", "type T = A::<B>;\n", "fn f() { let u8 @ 1 = 2; }\n", "type T = self;\n",
+        "type T = A<u8 = B>;\n", "impl X { const default: u8 = 1; }\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(rust_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
@@ -3183,6 +3386,15 @@ fn java_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A { String s = \"a\\n\\u0041\" + \"\" + \"\"\"\n  block \\\"\"\"\"; char c = '\\''; long n = 0x1FL + 017 + 0b1 + 1_000; double d = .5e-3 + 0x1.8p1; }\n",
         "module m.n { requires transitive a.b; exports c to d, e; opens f; uses g.H; provides i.J with k.L, m.N; }\n",
         "sealed interface S permits A {} non-sealed class A implements S { void f(A this) { a = b & c += 4; } }\n",
+
+        "\n",
+        "\u{feff}class A { void f(int i, A this) {} void g(A A.this) {} }\n",
+        "x = (byte) i++; y = (T)(Q) v++; z = (short)+ v--; w = (A & B) + c; v = (A & B) (c); u = -(byte) v++;\n",
+        "x = (a.b) + c; y = d + (a.b) + c; z = d * (a.b) + c; w = (a) + b + c; v = -(a.b) + c;\n",
+        "String @A [] @B [] x;\nObject c = new @J String [1] @B(5) [];\nvoid f(String [] @B [] a) {}\n",
+        "s = \"\"\"\n  /* \"c\" */ x\n  // \"d\"\n  /* e */ y\n\"\"\";\n",
+        "switch (x) { case A -> r -> r.m; case B, C -> (r) -> s -> t; case D -> r -> { }; };\n",
+        "x = switch (t) { case A -> r -> { f(); }; default -> 1; };\nclass _ {}\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Java).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3201,7 +3413,10 @@ fn java_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
     // one behavior: tree-sitter's tape, or a refusal.
-    for invalid in ["class A { void f( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void f() { a(b,); } }\n", "class A { char c = 'ab; }\n", "class A { void f() { x = 1 }\n"] {
+    for invalid in ["class A { void f( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void f() { a(b,); } }\n", "class A { char c = 'ab; }\n", "class A { void f() { x = 1 }\n",
+        "class A {\u{3000}}\n", "class A { // a\0b\n}\n", "class A { String s = \"a\0b\"; }\n", "class A { void f(int i, A A.this) {} }\n",
+        "class A { void _() {} }\n", "x = (A & B) ~c;\n", "switch (x) { default -> a; }.f();\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(java_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
@@ -3301,6 +3516,39 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A { string s = \"a\\n\" + @\"b\"\"c\" + $\"x{y,3:F2}z{{\" + \"\"\"\n  raw\n  \"\"\"; char c = '\\''; long n = 0x1FL + 1_000UL; double d = .5e-3 + 1.5m; }\n",
         "#region R\n#if DEBUG\nclass A { }\n#elif X\nclass B { }\n#else\nclass C { }\n#endif\n#endregion\n#pragma warning disable CS1591\n",
         "unsafe class A { void F(int* p, delegate*<int, void> g) { int* q = &x; fixed (byte* b = a) { } Span<int> s = stackalloc int[2]; } }\n",
+        // A parenthesized pattern holds a name chain or a pattern; a literal, an operator or a call
+        // is a constant's parenthesized expression.
+        "class A { void F() { a = x is not (\"a\"); b = x is (1) or (A); c = x is (A.B.M()); d = x is (a + 1); e = x is (1 or 2); f = x is (var v); g = x is ((1)); h = x is (this.P); } }\n",
+        // `not` takes a whole pattern; `A.M()` and `global::A.B` after `is` are constants.
+        "class A { void F() { a = x is not 1 and not 2; b = x is 1 or not 2 and 3; c = x is A.M(); d = x is global::A.B; } }\n",
+        // A switch arm's `(…)` before `=>` is a pattern, not a lambda's parameters.
+        "class A { int F() => x switch { (1) => 2, (\"a\") => 3, (A) => 4, _ => 0 }; }\n",
+        // After `is` in a chain with a left operand, the constant stands alone where the chain's
+        // last operand is a literal, `typeof` or another `is`, and takes the operators after it
+        // where that operand is a name or an access; a relational pattern takes a conditional.
+        "class A { void F() { a = p || b is null || c > 1; b = p || b is X || c; c = p && b is X && c == 1; d = b is X || c > 1; e = b is X ? 1 : 2; f = c is > 0 ? 1 : 2; g = p || b is X || c.d; h = p && b is X && c is Y; i = p || b is X || typeof(T); } }\n",
+        // `await` in an argument; a tuple type's array; a type's `,`s after `is` in parentheses;
+        // positional patterns (by their first element) and tuple constants; a list pattern's `,`
+        // before a discard; `switch` over a tuple in parentheses; a namespace's `;`.
+        // The left operand's leftmost operand decides too (a call's or `!a`'s lets the constant
+        // take the operators), as do operators all tighter than the one before the `is`; a
+        // relational pattern takes `and`'s conditional; keywords as a declaration's name after a
+        // type in arguments and brackets; casts to sized arrays and of collections; a
+        // parenthesized lvalue's class at a statement's start; `nameof(C)` in a case label.
+        "class A { void F() { a = p && b is X == 1; b = f() && b is X && 2; c = !a && r is V && p is W; d = (n == 1) && p[0] is L && 2; e = r is > 0 and < 5 ? 1 : 2; f(a * null); g = x[a * b]; h = (T[])[1]; i = (a[0]) - b; (t).ToString(); switch (y) { case nameof(C): break; } using (await t) { } j = y is 4 && b is 5; } }\n",
+        // `as` after an `is` with no operator after it wraps the `is`; with one, it is the
+        // constant's. A pointer indirection takes no postfix operator (`*p[0]` is `(*p)[0]`); a
+        // creation's later rank with sizes is an element access; `..` is right-associative.
+        "unsafe class A { void F() { a = y is null as O; b = y is A as O; c = y is 1 as O ?? q; d = p && y is not null as O; e = *p[0].q; *p[0] = 1; f = **p[0]; g = new int[4][2][3]; h = new int[4][]; i = 1..3..5; j = a[..3..]; } }\n",
+        // A bare `this` before `with` or `switch` stores the gap's `{`; `orderby`'s `,` after a
+        // direction is stored; `ref readonly` and `scoped ref` in a lambda's parameter are
+        // modifiers; an `#if` in a top-level `#if` is a statement.
+        "class A { void F() { a = this with { P = 1 }; b = this switch { { } => 1 }; c = y with { }; d = from b in c orderby b.P descending, b.D select b; e = (ref readonly int p) => 0; f = (scoped ref int q) => 0; } }\n",
+        "#if A\n#if B\nusing X;\nclass C { }\n#endif\n#endif\n",
+        // A text of a BOM or blanks alone: the root starts at its end.
+        "\u{feff}",
+        "  \n",
+        "namespace N { class A { void F() { f(await t); x = new (A a, B b)[3]; y = (c is D<K, V> d && d.E); if (x is (_, 1) or (1, _)) { } if (x is (A a, B b) z) { } if (x is [1, _] or [_, _, 3]) { } switch ((a, b)) { case (_, _) when c: break; } } } };\n",
     ];
     let grammar = Grammar::new(GrammarDialect::CSharp).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3319,9 +3567,54 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
     // one behavior: tree-sitter's tape, or a refusal.
-    for invalid in ["class A { void F( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void F() { G(a,); } }\n", "class A { char c = 'ab; }\n", "class A { void F() { x = 1 } }\n"] {
+    for invalid in ["class A { void F( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void F() { G(a,); } }\n", "class A { char c = 'ab; }\n", "class A { void F() { x = 1 } }\n",
+        // tree-sitter-c-sharp's own failures on valid C#: `$""`, `with` and attribute targets
+        // lexed as keywords, `from _`, a pragma's trailing `,`, a region's text of `#region`, a
+        // lambda parameter's name alone after modifiers.
+        "class A { string s = $\"\"; }\n",
+        "class A { void F() { T with = new T(); } }\n",
+        "class A { object o = new D { [type] = 0 }; }\n",
+        "class A { object o = s?[field]; }\n",
+        "class A { object o = from _ in a select 1; }\n",
+        "#pragma warning restore CS0618,\nclass A { }\n",
+        "#region #region\n#endregion\n",
+        "class A { object o = (ref readonly p) => 0; }\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(csharp_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+    // Valid, but tree-sitter reads its type arguments as comparisons (`(new S < A) > ((c) { })`,
+    // elements `new S < A` and `B > { }` between an initializer's `,`s, a declaration's type split
+    // at its `,` in a tuple, `(x is A) < T > &&f`), a dotted constant as a member access over its
+    // `is`, `.. a ?? []` as a range, `[a * b]` as an element binding, or reads a chain whose
+    // grouping its parse versions decide past these rules (a comment in it): refused, not read as
+    // what it is.
+    for odd in [
+        "class A { object o = new S<A>(c) { }; }\n",
+        "class A { object o = new List<(A a, B b)>(q); }\n",
+        "class A { object[] o = { new S<A, B> { } }; }\n",
+        "class A { object o = new S<A>(new L<E> { e }); }\n",
+        "class A { object o = (c is D<K, V> d, 1); }\n",
+        "class A { bool b = p || x is A.B || 1; }\n",
+        "class A { bool b = x is A.B ? 1 : 2; }\n",
+        "class A { object o = (P)S.W<R>(o); }\n",
+        "class A { object o = f<(A a, B b)>(c); }\n",
+        "class A { bool b = x is A<T> && f == 1; }\n",
+        "class A { bool b = r is var (a, b); }\n",
+        "class A { object o = [.. a ?? []]; }\n",
+        "class A { bool b = x is [.., var w] && w.K == k; }\n",
+        "class A { object o = [a * b]; }\n",
+        "class A { void F() { foreach (L<V<T>> b in c) { } } }\n",
+        "class A { bool b = a && y is not null && // c\n 1; }\n",
+        "class A { bool b = y is 4 && b is S.O; }\n",
+        // `x is 1 + 2 as O` (`as` after a tighter operator), `x is A.B as O` (a member access
+        // over the `is`), `(r = new X<A, B>(c))` (a tuple of comparisons).
+        "class A { object o = y is 1 + 2 as O; }\n",
+        "class A { object o = y is A.B as O; }\n",
+        "class A { object o = (r = new X<A, B>(c)); }\n",
+    ] {
+        assert!(!parser.parse(odd, None).unwrap().root_node().has_error(), "{odd:?} reads with an error");
+        assert!(csharp_lean::encode(&grammar, odd, &|| false).is_err(), "read {odd:?}");
     }
 }
 
@@ -3362,6 +3655,12 @@ fn php_tapes_from_the_lean_parser_are_tree_sitters() {
         "<?php\n#[Attr(1, name: 'x')]\nfunction f(#[SensitiveParameter] $p): never { throw new \\Exception(); }\n$r = f(...);\n$v = strlen(string: 'x');\n",
         "<html><?php echo $title; ?></html>\n",
         "<?php\necho 1 ?>\n",
+        // A bare heredoc word's start takes the blanks after `<<<`; a nowdoc's first string starts
+        // past the empty lines after its opening line.
+        "<?php\n$a = <<< E\na\nE;\n$b = <<<'E'\n\n\n    a\n\nb\nE;\n",
+        // An indented heredoc's comment that closes early, and a keyword as a method's or a
+        // named argument's name where it starts no expression.
+        "<?php\n$x = <<<EOF\n  q\n  /*\n  */\n  r\n  EOF;\nf(class: 1, echo: 2);\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Php).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3381,10 +3680,19 @@ fn php_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
     // one behavior: tree-sitter's tape, or a refusal.
-    for invalid in ["<?php\nfunction f( {\n", "<?php\n$a = [1,\n", "<?php\nclass A {\n", "<?php\n$a[$b->c\n\ncontinue;\n", "<?php\n$s = 'abc;\n", "<?php\nclass A { public const FALSE = 1; }\n"] {
+    for invalid in ["<?php\nfunction f( {\n", "<?php\n$a = [1,\n", "<?php\nclass A {\n", "<?php\n$a[$b->c\n\ncontinue;\n", "<?php\n$s = 'abc;\n", "<?php\nclass A { public const FALSE = 1; }\n",
+        // A keyword that starts an expression as a named argument's name; `const NAMESPACE`; a
+        // trailing `,` in a group `use`.
+        "<?php\nf(include: 1);\n", "<?php\nf(new: 1);\n", "<?php\nclass A { const NAMESPACE = 1; }\n", "<?php\nuse A\\{B,};\n",
+    ] {
         assert!(parse(&mut parser, invalid).root_node().has_error(), "{invalid:?} reads without an error");
         assert!(php_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
+    // An indented heredoc whose `/*` (past its first line) closes on its eleventh line: tree-sitter
+    // reads it with an error.
+    let long = format!("<?php\n$x = <<<EOF\n  q\n  /*\n{}  */\n  r\n  EOF;\n", "  \n".repeat(8));
+    assert!(parse(&mut parser, &long).root_node().has_error(), "{long:?} reads without an error");
+    assert!(php_lean::encode(&grammar, &long, &|| false).is_err(), "accepted {long:?}");
 }
 
 /// The product reads PHP with the lean parser: a file's image through the engine's parse
@@ -3633,10 +3941,22 @@ fn html_tapes_from_the_lean_parser_are_tree_sitters() {
         );
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
-    for invalid in ["<div>\n", "<p a=\"x>\n", "a > b\n", "<script>x\n", "<!DOCTYPE>\n", "<p>open at the end\n", "</div>\n"] {
+    for invalid in ["<div>\n", "<p a=\"x>\n", "a > b\n", "<script>x\n", "<!DOCTYPE>\n", "<p>open at the end\n", "</div>\n", "<%include file=\"a\"/>\n"] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(html_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
+    // The scanner serializes its open tags into tree-sitter's 1024-byte buffer: 127 custom tags of
+    // six letters fit (4 + 127 × 8 bytes), the 128th comes back nameless and its end tag is an
+    // error. Read to the limit, refused past it.
+    let nested = |k: usize| format!("{}{}", "<abcdef>\n".repeat(k), "</abcdef>\n".repeat(k));
+    let fits = nested(127);
+    let ours = html_lean::encode(&grammar, &fits, &|| false).unwrap_or_else(|why| panic!("refused 127 tags: {why:?}")).unwrap();
+    let tree = parser.parse(&fits, None).unwrap();
+    assert!(!tree.root_node().has_error(), "127 tags read with an error");
+    assert!(ours.to_bytes().unwrap() == TapeImage::encode(tree.root_node(), &grammar, &fits, &|| false).unwrap().primary.to_bytes().unwrap(), "the tapes of 127 tags differ");
+    let past = nested(128);
+    assert!(parser.parse(&past, None).unwrap().root_node().has_error(), "128 tags read without an error");
+    assert!(html_lean::encode(&grammar, &past, &|| false).is_err(), "accepted 128 tags");
 }
 
 /// The product reads HTML with the lean parser: a file's image through the engine's parse
@@ -3730,6 +4050,15 @@ fn css_tapes_from_the_lean_parser_are_tree_sitters() {
         "@keyframes k { from { opacity: 0; } 50% { opacity: .5; } to { opacity: 1; } }\n",
         "li:nth-child(2n + 1):not(.a, .b)::after { content: '\\201C'; }\n",
         "a[href^=\"http\"], input[type=text] { b: c }\n.n { &:hover { d: e; } }\n",
+        // An+B's `\s*` is the token's without a `+` after it; `of` is stored.
+        ":nth-child(2n of a.b) {}\n:nth-child(odd of .a) {}\n:nth-child(2n ) {}\n:nth-child(2n + 1 of a) {}\n",
+        // A pseudo-element's or a pseudo-class's argument: a `plain_value` where it is longer
+        // than a selector's name, else a selector (`:not` takes selectors alone).
+        "::slotted(cr-button:hover) {}\n::slotted(hr:not([hidden])) {}\n:foo(a.b) {}\n::slotted(button) {}\n:not(a.b) {}\n",
+        // A comment where a string's token starts, when it ends past the content: in the string;
+        // the closing quote then stored, as in an empty string.
+        "a{content:\"/* \"}b{content:\" */\"}\n",
+        "a{content:\"\\a/* \"}b{content:\"*/\"}\na{content:\"/* x */ y\"}\na{content:\"/* */\"}\na{content:\"\n\"}\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Css).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3747,7 +4076,16 @@ fn css_tapes_from_the_lean_parser_are_tree_sitters() {
         );
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
-    for invalid in ["a {\n", "a { b: c; \n", "a b {} }\n", "@keyframes k { 1.5% { a: b; } }\n", "a { b: 'c }\n"] {
+    for invalid in [
+        "a {\n",
+        "a { b: c; \n",
+        "a b {} }\n",
+        "@keyframes k { 1.5% { a: b; } }\n",
+        "a { b: 'c }\n",
+        // In a block an at-keyword may start a postcss statement: `(min-width:` is its value.
+        "a{@container (min-width: 1px){}}\n",
+        "::slotted(button:not(:first-child, .a)) {}\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(css_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
@@ -3829,7 +4167,7 @@ fn css_parse_costs() {
 /// SQL's tapes from the lean parser (the product's parser for SQL, decision 0214) are
 /// tree-sitter-sql's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
 /// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is
-/// `rerail-css-lean`'s `oracle`.
+/// `rerail-sql-lean`'s `oracle`.
 #[test]
 fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
     use crate::code_rule_dsl::tape::sql_lean;
@@ -3872,6 +4210,10 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         // `grant … on all tables in schema`; `rollup`; `set (a, b) =`; `like` and `partition by`.
         "SELECT position('a' IN name), substring(name FROM 1 FOR 3), trim(BOTH ' ' FROM name), extract(epoch FROM at) FROM users OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY;\nINSERT INTO t DEFAULT VALUES;\nGRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO app;\n",
         "SELECT a, sum(b) FROM t GROUP BY ROLLUP (a);\nUPDATE t SET (a, b) = (1, 2) WHERE id = 1;\nCREATE TABLE t2 (LIKE t INCLUDING ALL);\nCREATE TABLE logs (id bigint, at timestamptz) PARTITION BY RANGE (at);\n",
+        // `default current_timestamp`: the keyword; a quoted column name: a `literal`; `trim(both
+        // from x)`: no unit; `begin; …; end`: a `block`.
+        "CREATE TABLE t (\"a\" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL, b int DEFAULT (current_timestamp));\nCREATE INDEX i ON t (\"a\" DESC, b);\n",
+        "SELECT trim(BOTH FROM name) FROM t;\nBEGIN;\nSELECT 1;\nEND;\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Sql).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3890,7 +4232,21 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
     // `id=?` is one operator (`op_other`) to tree-sitter-sql, so a syntax error.
-    for invalid in ["SELECT (1;\n", "SELECT a FROM t WHERE;\n", "CREATE TABLE t (a int;\n", "SELECT 'a;\n", "SELECT a FROM t WHERE id=?;\n"] {
+    // `@ b` is a `_tsql_parameter` (an identifier), `table` and `grouping` keywords where they
+    // stand, `((select …) > 0)` no subquery, and an expression after `default current_timestamp`
+    // none.
+    for invalid in [
+        "SELECT (1;\n",
+        "SELECT a FROM t WHERE;\n",
+        "CREATE TABLE t (a int;\n",
+        "SELECT 'a;\n",
+        "SELECT a FROM t WHERE id=?;\n",
+        "SELECT a @ t.b AS c;\n",
+        "SELECT a FROM t WHERE (table = 'x');\n",
+        "SELECT a FROM t GROUP BY grouping, a;\n",
+        "SELECT a FROM t WHERE ((SELECT 1) > 0 OR b);\n",
+        "CREATE TABLE t (a int DEFAULT current_timestamp + 1);\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(sql_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
@@ -3987,6 +4343,13 @@ fn markdown_tapes_from_the_lean_parser_are_tree_sitters() {
         "---\ntitle: x\n---\n\n~~~ {.python}\ncode\n~~~\n",
         "[`a`]:\n    https://x/y?a&b=c&amp;d\n[b]: u\n\"t\" x\n\n```c&#38;d\n```\n",
         "> [a]:\n> <u> 'multi\n> line'\n",
+        // A lone delimiter cell's trailing `|` is implied (left out), a second cell's is stored.
+        "| a |\n| - |\n| b |\n\n| a | b |\n| - | - |\n",
+        // Definitions after a blank line in a list item; a label led by a reference, as a
+        // definition or indented.
+        "* a\n\n  [b]: u\n  [c]: v\n\n[&amp; b]: u\n\n  [&amp; b](u)\n",
+        // `<!…` (HTML block 4) ends with its container, not at `>`.
+        "> <!X a>\n> b\n\nc\n\n<!DOCTYPE html>\n<html lang=\"en\">\n\npara\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Markdown).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -4004,7 +4367,9 @@ fn markdown_tapes_from_the_lean_parser_are_tree_sitters() {
         );
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
-    for invalid in ["a\n\n* ", "* <div>\n\n  y\n", "[\\<b>]\n"] {
+    // Also: an unindented label led by a character reference that is no definition, and an empty
+    // delimiter cell (tree-sitter inserts a MISSING one).
+    for invalid in ["a\n\n* ", "* <div>\n\n  y\n", "[\\<b>]\n", "[&amp; b](u)\n", "- [&#1; b](u)\n", "| a | b |\n| - |  |\n", "| a | b |\n|  | - |\n"] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(markdown_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
@@ -4083,6 +4448,198 @@ fn markdown_parse_costs() {
     }
 }
 
+/// Vue's tapes from the lean parser (the product's parser for Vue, decision 0242) are
+/// tree-sitter-vue's, byte for byte, on hand-written cases, and so are the programs they embed
+/// (`FileImage::embedding`, built from either tape); a file tree-sitter reads with an error the
+/// lean parser refuses (its file goes to tree-sitter). The corpus comparison is `rerail-vue-lean`'s
+/// `oracle`.
+#[test]
+fn vue_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::vue_lean;
+    let sources = [
+        "",
+        "  \n",
+        "<template>\r\n  <div :a :b=\"c\" @d.e.f=\"g\" #h v-on:[i].j=\"k\" v-if='x'>\r\n    x {{ y }} z\r\n  </div>\r\n</template>\r\n",
+        "\u{feff}<template><p>a<div>b</div><br>c<ul><li>1<li>2</ul></template>\n",
+        "<template><ElTable.TableColumn :a=\"b\"/><x/><template v-slot:y=\"{ z }\"/></template>\n<script setup lang=\"ts\">\nif (a</b) {} // </scri\nconst y = 1\n</script>\n<style scoped>a{}</style>\n",
+        "<!DOCTYPE html>\n<!-- c -->\n<template>\n  <a>  x <b>y</b>\n  z\r\n  </a>\n  <p>a < b { c } d}</p>\n  <q>{{}}{{\n}}{{ a }}}</q>\n  <i x=y z = \"w\" u='' v=\"\">&amp;</i>\n</template>\n",
+        "<template><div></span></div></template>  ",
+        "<script></script> <style>x</style>",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Vue).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Vue.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = vue_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap();
+        assert!(
+            ours.to_bytes().unwrap() == theirs.primary.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs.primary, &grammar)
+        );
+        let ours = FileImage::embedding(ours, &grammar, source, &|| false).unwrap();
+        assert_eq!(ours.derived.len(), theirs.derived.len(), "{source:?}");
+        for (a, b) in ours.derived.iter().zip(&theirs.derived) {
+            assert_eq!(a.text, b.text, "{source:?}");
+            assert_eq!(a.tape.to_bytes().unwrap(), b.tape.to_bytes().unwrap(), "{source:?}");
+        }
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
+    for invalid in ["<template>\n", "<div><br>", "foo", "<a>x\n  > y</a>", "<template>{{ a </template>", "</div>\n", "<script />"] {
+        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(vue_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+    // Past the scanner's 1024-byte serialized state (here 4 + 1 + 128 × 8 bytes) the innermost tag
+    // comes back nameless, and tree-sitter reads its end tag as an `erroneous_end_tag`: refused.
+    let nested = |k: usize| format!("<template>\n{}{}</template>\n", "<abcdef>\n".repeat(k), "</abcdef>\n".repeat(k));
+    assert!(vue_lean::encode(&grammar, &nested(127), &|| false).is_ok_and(|t| t.is_ok()), "refused 127 tags");
+    assert!(vue_lean::encode(&grammar, &nested(128), &|| false).is_err(), "accepted 128 tags");
+}
+
+/// The product reads Vue with the lean parser: a file's documents through the engine's parse
+/// (`TapeImage::parse`) are the lean parser's tape and the program built from it; a file it
+/// refuses goes to tree-sitter-vue.
+#[test]
+fn the_product_reads_vue_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::vue_lean;
+    let grammar = Grammar::new(GrammarDialect::Vue).unwrap();
+    assert!(tree_parser(GrammarDialect::Vue).is_some(), "Vue's parser is installed");
+    let source = "<template><p :class=\"a\">{{ b }}</p></template>\n<script>\nexport default { data: () => ({ a: 1, b: 2 }) }\n</script>\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = vue_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    assert_eq!(product.derived.len(), 1, "the component's program");
+    let invalid = "<template>\n";
+    assert!(vue_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// What a Vue file's tape costs, by parser: the lean parser (`tape::vue_lean`, the product's)
+/// against tree-sitter-vue, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read. The file's documents
+/// (its tape and the program its view builds) are measured too, from either parser.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn vue_parse_costs() {
+    let ecma_dialect = |d: GrammarDialect| match d {
+        GrammarDialect::TypeScript => rerail_ecma_lean::Dialect::TypeScript,
+        GrammarDialect::Tsx => rerail_ecma_lean::Dialect::Tsx,
+        _ => rerail_ecma_lean::Dialect::JavaScript,
+    };
+    use crate::code_rule_dsl::tape::vue_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Vue;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| vue_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| vue_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    // The embedded programs' texts, each read by the lean ECMAScript parser (tree-sitter where it
+    // refuses one) and by tree-sitter alone.
+    let programs: Vec<(GrammarDialect, String)> = files
+        .iter()
+        .filter_map(|f| {
+            let tape = vue_lean::encode(&grammar, f, &|| false).unwrap().unwrap();
+            let root = crate::code_rule_dsl::embed::host::Host::new(&tape, &grammar).root()?;
+            let view = crate::code_rule_dsl::vue::view::View::build(root, f, &|| false)?;
+            Some((view.dialect(), view.text().to_owned()))
+        })
+        .collect();
+    let read_lean = programs
+        .iter()
+        .filter(|(d, text)| crate::code_rule_dsl::embed::Parse::read(*d, text, &|| false).is_some_and(|p| p.is_lean()))
+        .count();
+    let program_bytes: usize = programs.iter().map(|(_, text)| text.len()).sum();
+    let tape_of = |d: GrammarDialect, text: &str, parse: crate::code_rule_dsl::embed::Parse| match parse {
+        crate::code_rule_dsl::embed::Parse::Tape(tape) => tape.node_count(),
+        crate::code_rule_dsl::embed::Parse::Tree(tree) => {
+            let grammar = Grammar::embedded(d).unwrap();
+            TapeImage::encode_tree_image(tree.root_node(), &grammar, text, None, &|| false).map_or(0, |t| t.node_count())
+        }
+    };
+    let program_nodes: usize = programs
+        .iter()
+        .map(|(d, text)| tape_of(*d, text, crate::code_rule_dsl::embed::Parse::Tree(crate::code_rule_dsl::embed::Parse::tree_sitter(*d, text).unwrap())))
+        .sum();
+    eprintln!("{} programs, {read_lean} read by the lean parser, {program_bytes} bytes, {program_nodes} program nodes", programs.len());
+    for (d, text) in &programs {
+        if let Err(why) = crate::code_rule_dsl::tape::ecma_lean::encode(ecma_dialect(*d), &Grammar::embedded(*d).unwrap(), text, &|| false) {
+            let dir = std::env::var("RERAIL_VUE_REFUSED").unwrap_or_default();
+            if !dir.is_empty() {
+                std::fs::write(format!("{dir}/{}.txt", text.len()), text).unwrap();
+            }
+            eprintln!("refused, {:?}: {why:?}", d);
+        }
+    }
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(vue_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("lean: the documents", Box::new(|f| {
+            let tape = vue_lean::encode(&grammar, f, &|| false).unwrap().unwrap();
+            usize::from(std::hint::black_box(FileImage::embedding(tape, &grammar, f, &|| false)).is_ok())
+        })),
+        ("tree-sitter host: the documents", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let programs_by = |lean: bool| {
+        programs
+            .iter()
+            .map(|(d, text)| {
+                let parse = if lean {
+                    crate::code_rule_dsl::embed::Parse::read(*d, text, &|| false).unwrap()
+                } else {
+                    crate::code_rule_dsl::embed::Parse::Tree(crate::code_rule_dsl::embed::Parse::tree_sitter(*d, text).unwrap())
+                };
+                tape_of(*d, text, parse)
+            })
+            .sum::<usize>()
+    };
+    // Each step a pass: the files' steps over every file, the programs' over every program.
+    let each_file = &files;
+    let mut passes: Vec<(&str, Box<dyn Fn() -> usize + '_>)> = steps
+        .into_iter()
+        .map(|(name, step)| (name, Box::new(move || each_file.iter().map(|f| step(f)).sum::<usize>()) as Box<dyn Fn() -> usize>))
+        .collect();
+    passes.push(("lean: the programs' tapes", Box::new(|| programs_by(true))));
+    passes.push(("tree-sitter: the programs' tapes", Box::new(|| programs_by(false))));
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); passes.len()];
+    for _ in 0..3 {
+        for (i, (_, pass)) in passes.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            std::hint::black_box(pass());
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("Vue: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in passes.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a host node, {:7.1} cycles a host node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
 /// Inline texts' tapes from the lean parser (the product's parser for Markdown's inline grammar,
 /// decision 0234) are tree-sitter-md-inline's, byte for byte, on hand-written cases: links of each
 /// kind, images, emphasis by its delimiters' runs, code and LaTeX spans, HTML tags, autolinks,
@@ -4102,6 +4659,12 @@ fn markdown_inline_tapes_from_the_lean_parser_are_tree_sitters() {
         "<a href=\"x.y\" b=c.d> </a> <br/> <x@y.z> <http://a.b>",
         "&amp; &#12; &#x1F; \\* a\\\nb  \nc",
         "[a *b] c* and *a [b* c]",
+        // Emphasis after an image, where its opener needs no last token: kept.
+        "![a](b)\n*c*",
+        // Eight images: tree-sitter's stack keeps each reading.
+        "![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)",
+        // A link's `_` lexed for the text alone (no emphasis open): an opener, hidden.
+        "[^_]",
     ];
     let grammar = Grammar::new(GrammarDialect::MarkdownInline).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -4120,8 +4683,21 @@ fn markdown_inline_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Refused: an empty text; an HTML comment (not read yet); an emphasis delimiter tree-sitter may
     // lex again after a reduction (`x __b c __d()`: its emphasis closes at `__d`); two trees of one
-    // score (`![c] ![d][e]`: an image and a shortcut link, or one full-reference image).
-    for refused in ["", "<!-- c -->", "x __b c __d()", "![c] ![d][e]"] {
+    // score (`![c] ![d][e]`: an image and a shortcut link, or one full-reference image); an opener
+    // after an image that needs the last token's white space or punctuation (tree-sitter's stack
+    // holds both of the image's readings and lexes again across them: `*(c.)*` is then text);
+    // nine images (past `MAX_LINK_COUNT`, tree-sitter reads the first as `!` and a link); a link's
+    // delimiter whose token depends on the versions' order (`_[^_]`: tree-sitter stores the `_`).
+    for refused in [
+        "",
+        "<!-- c -->",
+        "x __b c __d()",
+        "![c] ![d][e]",
+        "![a](b)\n*(c.)*",
+        "![a]) .*/ b*",
+        "![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)\n![a](b)",
+        "_[^_]",
+    ] {
         assert!(markdown_inline_lean::encode(&grammar, refused, &|| false).is_err(), "accepted {refused:?}");
     }
 }

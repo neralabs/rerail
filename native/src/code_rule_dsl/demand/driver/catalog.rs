@@ -162,8 +162,6 @@ impl SqlViolationRow {
         })
     }
 
-
-
     pub(super) fn to_value(&self) -> Value {
         let mut id = crate::code_rule_dsl::eval::violation_id(
             &self.rule_id,
@@ -223,8 +221,6 @@ pub(super) struct QueryOutcome {
 pub(super) struct SqlPlans {
     plan: Result<relational::SqlCatalogPlan, String>,
     clause_keys: BTreeMap<ClauseId, (String, String)>,
-    #[cfg(test)]
-    failure_injection: std::sync::Mutex<Option<(usize, String)>>,
 }
 
 impl SqlPlans {
@@ -252,12 +248,8 @@ impl SqlPlans {
                 )
             }),
             clause_keys,
-            #[cfg(test)]
-            failure_injection: std::sync::Mutex::new(None),
         }
     }
-
-
 
     /// Executes a completed relational catalog plan. Phase 1 creates the plan but does not yet
     /// pack its terminal descriptors into the expanded virtual-table relation.
@@ -506,13 +498,6 @@ impl SqlPlans {
         .and_then(|demand| demand.with_file_facts(file_facts, file_paths))
         .and_then(|demand| demand.with_document_maps(document_maps, plan.requires_document_maps()))
         .map_err(|error| format!("packed batch verification failed: {error:?}"))?;
-        #[cfg(test)]
-        let demand = match self.failure_injection.lock().unwrap().take() {
-            Some((producer, code)) => demand
-                .with_failure_injection(producer, code)
-                .map_err(|error| format!("packed failure injection failed: {error:?}"))?,
-            None => demand,
-        };
         let mut outcome = drive_sql(
             demand,
             &statements,
@@ -589,7 +574,6 @@ fn production_backend() -> ExecutionBackend {
         ExecutionBackend::CpuJit
     }
 }
-
 
 fn drive_sql(
     demand: PackedDemand,
@@ -752,8 +736,6 @@ thread_local! {
         slot
     };
 }
-
-
 
 #[cfg(test)]
 mod policy_lowering_tests;

@@ -219,6 +219,8 @@ rerail-markdown-lean = { path = "crates/markdown_lean" }
 rerail-markdown-inline-lean = { path = "crates/markdown_inline_lean" }
 # The lean SQL parser, measured directly (`tape::tests::sql_parse_costs`).
 rerail-sql-lean = { path = "crates/sql_lean" }
+# The lean Vue parser, measured directly (`tape::tests::vue_parse_costs`).
+rerail-vue-lean = { path = "crates/vue_lean" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`), named here rather than through
 # the engine as its own dev-dependency: that built and linked the engine library (and its cdylib) a second time
 # into every test build (docs/final-shape/notes/t37-edit-loop-time.md).

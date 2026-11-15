@@ -15,7 +15,7 @@
 mod block;
 mod kinds;
 mod parse;
-mod tags;
+pub mod tags;
 
 #[cfg(test)]
 mod oracle;

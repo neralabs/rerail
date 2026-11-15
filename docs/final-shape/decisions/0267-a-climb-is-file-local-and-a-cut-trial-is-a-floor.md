@@ -41,9 +41,15 @@ made it the corrected least, and it ran for 22 s a stratum that the planner's ow
    so it is file-local. It runs in the chunks, and the rules above it can be file-local too. A climb
    whose seed is cross-file stays cross-file. The pack has one: its seed reads `sym_of`, which follows
    imports.
-2. **A cut trial's ratio is a floor** (`joins::put_tried`, its `cut` argument). It raises an order's kept
-   ratio to the floor when the floor is over 1. A floor under 1 says nothing, so it is not kept, and the
-   order keeps its price. A completed trial and a run are kept as before, as a geometric mean.
+2. **A cut trial's ratio is a floor** (`joins::put_trial`). It raises an order's kept ratio to the floor when
+   the floor is over 1, and never lowers it. A floor under 1 says nothing, so it is not kept, and the order
+   keeps its price or what it measured. A completed trial and a run are kept as before, merged by their
+   weights (0247).
+
+   The hub found the same fault on PostHog's `attr_of` (e19120e1d, "a join trial cut at its budget is at
+   least its price"). Its fix kept a cut trial as `max(ratio, 1)` through the weighted merge. That could
+   pull a kept ratio toward the floor from either side: a measured 0.5 up toward 1, a measured 10 down
+   toward 3. Merged on 2026-11-15, the hub's `put_trial` stays the one entry point, with this rule.
 
 ## Measured
 

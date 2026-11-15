@@ -68,9 +68,9 @@ Each pack's findings on request are the same rows as the eager oracle's.
 
 ## Not done
 
-- The hub's filter form for a text test in the cross-file part (42f34ad0e) is still not written over
-  `maintain::rewrite_over`. Its test, `a_cross_file_text_test_is_maintained_as_a_filter`, passes now because the
-  text test is the chunk's.
+- The hub's filter form for a text test in the cross-file part (42f34ad0e) was not written over
+  `maintain::rewrite_over` when this was decided. Its test, `a_cross_file_text_test_is_maintained_as_a_filter`,
+  passed because the text test is the chunk's. The hub has since written it (`L::Test`), merged on 2026-11-15.
 - A request that cannot be narrowed asks for every node. In the python pack that happens where a reader joins the
   node only by a symbol (`kind($v, $k), kind($e, $k)`). More values are then answered and interned (0144 §5's
   trade), at no measured cost on these samples.
