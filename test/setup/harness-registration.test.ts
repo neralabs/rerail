@@ -347,10 +347,11 @@ describe("Claude Code settings.json", () => {
   const cmdThere = (path: string): boolean => path === systemCmd();
 
   /**
-   * The entry of a Windows hook that cmd.exe starts: under the recorded node while it exists, ending with exit 0 when
-   * that node does not, and `node.exe` from PATH after. `afterRecorded` stands in for what follows the recorded node.
+   * The entry of a Windows hook that cmd.exe starts: under the recorded node while it exists, ending with exit 0 where
+   * that node fails and the launcher is there, and `node.exe` from PATH after. `afterRecorded` stands in for what
+   * follows the recorded node.
    */
-  function cmdEntry(launcher: string, node: string, hook: string, afterRecorded = ["||", "exit", "/b", "0"]) {
+  function cmdEntry(launcher: string, node: string, hook: string, afterRecorded = ["||", "if", "exist", launcher, "exit", "/b", "0"]) {
     const fallback = ["set", "NoDefaultCurrentDirectoryInExePath=1", "&", "node.exe", launcher, node, hook];
     return {
       type: "command",
@@ -626,7 +627,7 @@ describe("Claude Code settings.json", () => {
     const settings = await readJson(join(home, ".claude", "settings.json"));
     const [{ hooks: [entry] }] = (settings.hooks as { SessionStart: [{ hooks: [{ command: string; args: string[] }] }] }).SessionStart;
     const start = () => spawnSync(entry.command, entry.args, { cwd: repository, input: "{}", encoding: "utf8", windowsHide: true });
-    return { entry, nodePath, start };
+    return { entry, nodePath, launcherPath, start };
   }
 
   it.runIf(process.platform === "win32")("starts a Windows hook as Claude Code does, in one node: the recorded one, and once it is gone node.exe from PATH", async () => {
@@ -651,9 +652,9 @@ describe("Claude Code settings.json", () => {
     expect(JSON.parse(fallback.stdout), fallback.stderr).toEqual(answer(process.execPath));
   }, 60_000);
 
-  it.runIf(process.platform === "win32")("fails a Windows hook open where the recorded node cannot start or ends in a native crash, and shows a node.exe missing from PATH", async () => {
+  it.runIf(process.platform === "win32")("fails a Windows hook open where the recorded node cannot start or ends in a native crash, and shows a missing node.exe or launcher", async () => {
     // A hook that ends in a native crash once it has read the event, as an out-of-memory abort does.
-    const { entry, nodePath, start } = await windowsHookEntry('import { readFileSync } from "node:fs";\nreadFileSync(0);\nprocess.abort();\n');
+    const { entry, nodePath, launcherPath, start } = await windowsHookEntry('import { readFileSync } from "node:fs";\nreadFileSync(0);\nprocess.abort();\n');
     expect(entry.command).toMatch(/cmd\.exe$/iu);
     // A `node` entry's launcher, on another node, starts the recorded node as a child and answers each failure below
     // with exit 0: no hook error under every tool call. Claude Code goes on after an empty answer as after `{}`.
@@ -667,9 +668,15 @@ describe("Claude Code settings.json", () => {
     vi.stubEnv("PATH", "");
     const missing = start();
     expect(missing.status, missing.stderr).not.toBe(0);
-    // Last, since Windows may keep a crashed program's file open for a while to report the crash.
     vi.stubEnv("PATH", dirname(process.execPath));
     await rename(`${nodePath}.aside`, nodePath);
+    // The launcher gone with the install it came in: an entry left over shows a hook error, as a `node` entry's does.
+    await rename(launcherPath, `${launcherPath}.gone`);
+    const leftOver = start();
+    expect(leftOver.status, leftOver.stderr).not.toBe(0);
+    expect(leftOver.stderr).toContain("Cannot find module");
+    await rename(`${launcherPath}.gone`, launcherPath);
+    // Last, since Windows may keep a crashed program's file open for a while to report the crash.
     failedOpen(start());
   }, 60_000);
 

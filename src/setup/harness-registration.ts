@@ -641,15 +641,17 @@ function isFullWindowsPath(path: string): boolean {
  * folder, a repository, before PATH's. cmd stays node's parent, so a host that kills it on a timeout leaves node
  * running; the hook then ends itself (`exitWhenParentGone`).
  *
- * `|| exit /b 0` after the recorded node fails open as the launcher does (`quiet` in `hook-launcher.ts`): a recorded
- * node that is there but cannot start (a file an upgrade cut short, a build for another processor), or a launcher that
- * ends in a native crash, would otherwise show Claude Code a hook error on every event, where a `node` entry's launcher
- * answers for it. Claude Code goes on after an empty answer with exit 0 as after `{}`, and an `echo {}` there would
- * follow any answer the hook wrote before such a crash and make that answer unreadable. The fallback has no such
- * ending: a `node.exe` missing from PATH shows as a hook error, as it does when a `node` entry finds no node.
+ * `|| if exist <launcher> exit /b 0` after the recorded node fails open as the launcher does (`quiet` in
+ * `hook-launcher.ts`): a recorded node that is there but cannot start (a file an upgrade cut short, a build for another
+ * processor), or a launcher that ends in a native crash, would otherwise show Claude Code a hook error on every event,
+ * where a `node` entry's launcher answers for it. Claude Code goes on after an empty answer with exit 0 as after `{}`,
+ * and an `echo {}` there would follow any answer the hook wrote before such a crash and make that answer unreadable.
+ * Once the launcher's file is gone, with the Rerail install it came in, node's failure stays a hook error, as for a
+ * `node` entry, which tells the person an entry is left over. The fallback has no such ending: a `node.exe` missing
+ * from PATH shows as a hook error, as it does when a `node` entry finds no node.
  */
 function cmdHookArgs(launched: LauncherArgs): string[] {
-  return cmdHookLine(launched, ["||", "exit", "/b", "0"]);
+  return cmdHookLine(launched, ["||", "if", "exist", launched[0], "exit", "/b", "0"]);
 }
 
 /** The words of a cmd.exe hook line, with `afterRecorded` after the recorded node's command inside its parentheses. */
@@ -660,7 +662,8 @@ function cmdHookLine([launcher, node, hook]: LauncherArgs, afterRecorded: readon
 
 /**
  * The cmd.exe lines registration reads as its own, so a refresh replaces and a removal takes out each of them: the one
- * it writes (`cmdHookArgs`), and the same line without `|| exit /b 0`, which a build of Rerail has written.
+ * it writes (`cmdHookArgs`), and the same line with nothing after the recorded node's command, which a build of Rerail
+ * has written.
  */
 const CMD_HOOK_FORMS: readonly ((launched: LauncherArgs) => string[])[] = [cmdHookArgs, launched => cmdHookLine(launched, [])];
 
