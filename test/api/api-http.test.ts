@@ -258,7 +258,8 @@ describe("Rerail API over HTTP", () => {
       sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
     }
 
-    expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps).toEqual({
+    const { gaps } = await getJson<{ gaps: Record<string, unknown> }>(`/api/sessions/${SESSION.sessionId}`);
+    expect(gaps).toEqual({
       droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2, discoveryGapsMore: true,
       // Each place with why, in the order the session met them, for the person to act on.
       discoveryGapPlaces: [
@@ -266,6 +267,11 @@ describe("Rerail API over HTTP", () => {
         { boundary: "turn", ...large, observedAt: expect.any(Number) },
       ],
     });
+    // The API's published answer (/openapi.json) names each of these fields, so a client written against it reads them.
+    type Documented = { paths: Record<string, { get?: { responses: Record<string, { content?: Record<string, { schema?: { properties?: { gaps?: { properties?: Record<string, unknown> } } } }> }> } }> };
+    const documented = await getJson<Documented>("/openapi.json");
+    const declared = documented.paths["/api/sessions/{sessionId}"]?.get?.responses["200"]?.content?.["application/json"]?.schema?.properties?.gaps?.properties;
+    expect(Object.keys(declared ?? {}).sort()).toEqual(Object.keys(gaps).sort());
   });
 
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {
