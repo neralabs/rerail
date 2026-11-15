@@ -360,7 +360,9 @@ Start-Sleep 60`;
       const refused = loadDaemonTls(files, shared);
       await expect(refused).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
       await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
-      expect(performance.now() - started).toBeLessThan(5_000);
+      // Within the start's own bounds (10 s for the Node process that opens the files to start, 2 s for its open),
+      // however long that start takes on this machine; never the holder's 60 s.
+      expect(performance.now() - started).toBeLessThan(10_000 + 2_000 + 1_000);
       await endHolders();
     }
   }, 30_000);

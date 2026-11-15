@@ -1,5 +1,4 @@
 import { createPrivateKey, randomBytes, X509Certificate } from "node:crypto";
-import { once } from "node:events";
 import { constants, createReadStream, existsSync, realpathSync } from "node:fs";
 import { open, readFile, stat, rm, type FileHandle } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
@@ -792,22 +791,34 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
   if (others !== undefined) {
     // A function, so a `$` in the key's path is never read as a replacement pattern.
     const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
-    const refusal = `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`;
-    const key = await readPrivateKey(tls.keyFile);
-    throw key !== undefined && (await certificateServes(tls.certFile, key)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
+    throw await refusedKey(tls, `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };
 }
 
 /**
- * What `path` holds, read once (`readRefusedTlsFile`), when it is a regular file this account reads that parses as a
- * private key; undefined otherwise. A folder, a FIFO, a file another program holds with a lease or an oplock, one
- * larger than any key, a certificate or any other file is no key.
+ * What a start whose key others can read throws: `TlsKeyExposedError`, on which the daemon serves this computer alone,
+ * when the key is a private key this account reads (`readPrivateKey`) and the certificate would serve with it
+ * (`certificateServes`); else `refusal`, main's message for this command line. On Windows a Node child opens the two
+ * files first (`openedInChild`). When its open was still waiting at its bound, the start refuses; when it never got to
+ * open them, the refusal says why on a line of its own, since the person would otherwise expect the daemon on loopback.
+ */
+async function refusedKey(tls: DaemonTlsFiles, refusal: string): Promise<Error> {
+  const child = process.platform === "win32" ? await openedInChild([tls.keyFile, tls.certFile]) : OPENED;
+  if (child.kind !== "opened") return new Error(child.kind === "held" ? refusal : `${refusal}\n${child.why}`);
+  const key = await readPrivateKey(tls.keyFile);
+  return key !== undefined && (await certificateServes(tls.certFile, key)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
+}
+
+/**
+ * What `path` holds, read once (`readWithoutWaiting`), when it is a regular file this account reads that parses as a
+ * private key; undefined otherwise. A folder, a FIFO, a file another program holds with a lease, one larger than any
+ * key, a certificate or any other file is no key.
  */
 async function readPrivateKey(path: string): Promise<Buffer | undefined> {
   try {
-    const key = await readRefusedTlsFile(path);
+    const key = await readWithoutWaiting(path);
     if (key !== undefined) createPrivateKey(key);
     return key;
   } catch {
@@ -820,11 +831,11 @@ async function readPrivateKey(path: string): Promise<Buffer | undefined> {
  * in `loadDaemonTls`, then `RerailDaemon.start`'s parse and the server's pairing), for a start whose key others can read,
  * which serves with neither. A certificate that cannot be read, holds no certificate or is not `key`'s throws what that
  * start throws for it beside a private key, naming a folder, whose read error names no file. A file
- * `readRefusedTlsFile` does not read (a FIFO, one another program holds with a lease or an oplock, one larger than any
- * certificate) serves nothing.
+ * `readWithoutWaiting` does not read (a FIFO, one another program holds with a lease, one larger than any certificate)
+ * serves nothing.
  */
 async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
-  const cert = (await readRefusedTlsFile(certFile))?.toString("utf8");
+  const cert = (await readWithoutWaiting(certFile))?.toString("utf8");
   if (cert === undefined) return false;
   certificateFingerprint(cert);
   createSecureContext({ cert, key });
@@ -847,37 +858,92 @@ const REFUSED_TLS_FILE_MAX_BYTES = 1024 * 1024;
 const OPEN_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 
 /**
- * What the file at `path` holds, for a start that refused its key (`readWithoutWaiting`). On Windows, only once a Node
- * child has opened it (`openedInChild`); undefined when the child has not.
+ * What a refused start's Node child did with the key and the certificate on Windows (`openedInChild`): opened them, or
+ * failed to, in time; began but was still in an open at its bound; or never got to open them, with the line a refusal
+ * then adds.
  */
-async function readRefusedTlsFile(path: string): Promise<Buffer | undefined> {
-  if (process.platform === "win32" && !(await openedInChild(path))) return undefined;
-  return await readWithoutWaiting(path);
+type ChildOpen = { readonly kind: "opened" } | { readonly kind: "held" } | { readonly kind: "unstarted"; readonly why: string };
+
+const OPENED: ChildOpen = { kind: "opened" };
+const HELD: ChildOpen = { kind: "held" };
+
+/** A child that never got to open the files: why the daemon does not serve this computer meanwhile, as a sentence. */
+function unstarted(why: string): ChildOpen {
+  return { kind: "unstarted", why: `This daemon would serve this computer alone meanwhile, but the Node process that opens the key and the certificate for it first ${why}.` };
 }
 
-/** How long a refused start waits on Windows for a Node child to open its key or certificate (`openedInChild`). */
+/**
+ * How long a refused start waits on Windows for its Node child to begin, from the spawn (`openedInChild`). A Node start
+ * takes about 40 ms on a quiet machine, and its 95th percentile reached 3.5 s on a laptop busy with coding agents. A
+ * child that has not begun within 10 s leaves too little of `rerail daemon start`'s 15 s wait for a daemon on loopback.
+ */
+const CHILD_START_WAIT_MS = 10_000;
+
+/** How long the child's opens of the key and the certificate may wait, from the moment it begins them (`openedInChild`). */
 const CHILD_OPEN_WAIT_MS = 2_000;
 
-/** The child's work: open the file named after its script to read it, then close it; the daemon reports errors. */
-const CHILD_OPEN = "try { require('node:fs').closeSync(require('node:fs').openSync(process.argv[1], 'r')); } catch {}";
+/** How long a refused start waits for its Node child to exit once it has ended it: milliseconds, even in an open. */
+const CHILD_END_WAIT_MS = 1_000;
 
 /**
- * Windows: whether a Node child opened `path` to read it, or failed to, within `CHILD_OPEN_WAIT_MS`. Windows has no
- * open that skips another program's oplock: one that caches writes, as Windows' SMB server holds for a client caching
- * the file, holds every open that reads it until its holder acknowledges the break, and a holder that never does holds
- * it until it closes the file. The child's open waits in the daemon's place. Past the bound the start leaves the child
- * behind and refuses the key as main does: an open waiting in the daemon itself would keep its process from exiting
- * until the holder lets go, long after `rerail daemon start` stopped waiting. Once the child's open is through, the
- * break is acknowledged, and the daemon's own open does not wait.
+ * The child's work: say it began, open each file named after its script to read it and close it, then say it is done;
+ * the daemon reports what an open throws. The writes are synchronous, so the first leaves before an open that waits.
  */
-async function openedInChild(path: string): Promise<boolean> {
-  const child = spawn(process.execPath, ["-e", CHILD_OPEN, path], { stdio: "ignore" });
-  let timer: NodeJS.Timeout | undefined;
-  const waited = new Promise<false>(resolve => { timer = setTimeout(resolve, CHILD_OPEN_WAIT_MS, false); });
+const CHILD_OPEN = "const fs = require('node:fs'); fs.writeSync(1, 'b'); for (const file of process.argv.slice(1)) { try { fs.closeSync(fs.openSync(file, 'r')); } catch {} } fs.writeSync(1, 'd');";
+
+/**
+ * Windows: what one Node child did when asked to open `files` to read them. Windows has no open that skips another
+ * program's oplock: one that caches writes, as Windows' SMB server holds for a client caching the file, holds every
+ * open that reads it until its holder acknowledges the break, and a holder that never does holds it until it closes the
+ * file. The child's open waits in the daemon's place: an open waiting in the daemon itself would keep its process from
+ * exiting until the holder lets go, long after `rerail daemon start` stopped waiting. The opens get
+ * `CHILD_OPEN_WAIT_MS` from the moment the child says it began, so a busy machine's slow Node start does not eat into
+ * them, and the start gets `CHILD_START_WAIT_MS`; a child past either bound is ended. A child that cannot be spawned,
+ * or ends before it began, never leads to an open in the daemon. Once the child's opens are through, any break is
+ * acknowledged, and the daemon's own open does not wait.
+ */
+async function openedInChild(files: readonly string[]): Promise<ChildOpen> {
+  let child: ReturnType<typeof spawn>;
   try {
-    const opened = await Promise.race([once(child, "exit").then(() => true, () => true), waited]);
-    if (!opened) child.kill();
-    return opened;
+    child = spawn(process.execPath, ["-e", CHILD_OPEN, ...files], { stdio: ["ignore", "pipe", "ignore"] });
+  } catch (error) {
+    return unstarted(`could not start: ${errorText(error)}`);
+  }
+  const exited = new Promise(resolve => {
+    child.once("exit", resolve);
+    child.once("error", resolve);
+  });
+  try {
+    return await childOpen(child);
+  } finally {
+    // One that said it is done ends by itself; one still starting, or in an open, is ended here, and the start goes on
+    // once it has exited, so nothing it started outlives it, or after `CHILD_END_WAIT_MS` at most.
+    child.kill();
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, CHILD_END_WAIT_MS).unref())]);
+  }
+}
+
+/** What `child` did (`openedInChild`): said it was done, ran out of time in an open after it began, or never began. */
+async function childOpen(child: ReturnType<typeof spawn>): Promise<ChildOpen> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await new Promise<ChildOpen>(resolve => {
+      timer = setTimeout(resolve, CHILD_START_WAIT_MS, unstarted(`did not start within ${CHILD_START_WAIT_MS / 1_000} s`));
+      child.on("error", error => resolve(unstarted(`could not start: ${error.message}`)));
+      // Only after all its output, so a child that said it is done counts as done however soon it ends.
+      child.on("close", code => resolve(unstarted(`ended (exit code ${code ?? "none"}) before it opened them`)));
+      // A failed read only ends its output, which `close` or a bound then answers; unheard, it would throw here.
+      child.stdout?.on("error", () => undefined);
+      let said = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        said += chunk.toString();
+        if (said.includes("d")) resolve(OPENED);
+        else if (said === "b") {
+          clearTimeout(timer);
+          timer = setTimeout(resolve, CHILD_OPEN_WAIT_MS, HELD);
+        }
+      });
+    });
   } finally {
     clearTimeout(timer);
   }
