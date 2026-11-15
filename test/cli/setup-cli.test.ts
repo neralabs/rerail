@@ -257,6 +257,9 @@ describe("rerail install --root", () => {
     await mkdir(join(context.home, PROFILES_DIR, "acme"), { recursive: true });
     await mkdir(join(context.home, DEVICE_SECRETS_DIR), { recursive: true });
     await writeFile(join(context.home, DEVICE_SECRETS_DIR, "acme"), "secret");
+    // The daemon's last answer of stopped a hook keeps for a folder.
+    await mkdir(join(context.home, "stopped-answers", "4242-1"), { recursive: true });
+    await writeFile(join(context.home, "stopped-answers", "4242-1", "0123456789abcdef0123456789abcdef.json"), "{}");
     const written = [CONSENT_FILE, ACTIVE_PROFILE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_PORT_FILE, DAEMON_LOG_FILE, `${DAEMON_LOG_FILE}.1`, "daemon.json.4242.tmp", RULES_DUMP_FILE];
     for (const name of written) await writeFile(join(context.home, name), "");
     await writeFile(join(context.home, RERAIL_DATABASE_FILE), "rules and history");
@@ -265,7 +268,7 @@ describe("rerail install --root", () => {
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], context)).toBe(0);
     const planned = output.mock.calls.join("");
-    for (const name of [...written, PROFILES_DIR, DEVICE_SECRETS_DIR, LOCKS_DIR, SEEN_AGENTS_FILE]) {
+    for (const name of [...written, PROFILES_DIR, DEVICE_SECRETS_DIR, LOCKS_DIR, SEEN_AGENTS_FILE, "stopped-answers"]) {
       expect(planned).toContain(`Would delete ${join(context.home, name)} (Rerail's settings, logs and records).`);
     }
     expect(planned).toContain(`Would delete ${context.home} (the Rerail home).`);

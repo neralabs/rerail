@@ -62,6 +62,7 @@ import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
+import { STOPPED_ANSWERS_DIR } from "../runtime/stopped-answers.js";
 import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
@@ -438,8 +439,9 @@ const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "
 export const CONSENT_FILE = "consent.json";
 
 /**
- * What Rerail itself writes in its home, by the name its writer gives it: settings, records, locks, `rerail activate`'s
- * profiles and device secrets, `rules export`'s dump and the installation.
+ * What Rerail itself writes in its home, by the name its writer gives it: settings, records, locks, the daemon's last
+ * answers of stopped that hooks repeat, `rerail activate`'s profiles and device secrets, `rules export`'s dump and the
+ * installation.
  */
 const RERAIL_HOME_ENTRIES: readonly string[] = [
   CONSENT_FILE,
@@ -461,6 +463,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   CURRENT_LINK,
   LAUNCHER_DIR,
   SCRUB_HINT_FILE,
+  STOPPED_ANSWERS_DIR,
 ];
 
 /** What Rerail writes in its home under these names and longer ones: SQLite's `-wal` and `-shm`, `rerail update`'s `.pre-update` copy. */
