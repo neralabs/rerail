@@ -46,7 +46,7 @@ export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
 /** In the Rerail home: the port the daemon last listened on, which the next start without `--port` prefers. */
 export const DAEMON_PORT_FILE = "daemon-port.json";
-/** How often the daemon of a home checks that daemon.json still holds its record (`RerailDaemonOptions.recordCheckMs`). */
+/** How often the daemon of a home checks that daemon.json still holds its record (`RerailDaemonOptions.recordCheck`). */
 const RECORD_CHECK_MS = 1_000;
 
 /**
@@ -99,11 +99,11 @@ export interface RerailDaemonOptions {
   /** Written once the server is listening and removed on close. */
   stateFile?: string;
   /**
-   * How often the daemon checks that `stateFile` still holds what it wrote, and writes it again when it is gone or
-   * differs. The daemon of a Rerail home passes it (`runHomeDaemon`), since it alone holds the home's lock; omitted,
-   * the state file is written once.
+   * Every `everyMs` the daemon checks that `stateFile` still holds what it wrote, and writes it again when it is gone or
+   * differs, while `holdsHome` says it still holds the Rerail home at `home`. The daemon of a home passes it
+   * (`runHomeDaemon`), since it alone holds the home's lock; omitted, the state file is written once.
    */
-  recordCheckMs?: number;
+  recordCheck?: { readonly everyMs: number; readonly home: string; readonly holdsHome: () => boolean };
   nativeHealth?: () => NativeHealth;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
@@ -601,28 +601,44 @@ export class RerailDaemon {
   }
 
   /**
-   * Writes `stateFile`, the record hooks, starts and stops find this daemon by, and with `recordCheckMs` keeps it: every
-   * that many milliseconds it reads the file and writes it again when it is gone or holds anything else. The file can go
+   * Writes `stateFile`, the record hooks, starts and stops find this daemon by, and with `recordCheck` keeps it: every
+   * `everyMs` it reads the file and writes it again when it is gone or holds anything else. The file can go
    * while the daemon runs: a lookup that takes a live daemon for a dead one removes it, as does the close of a daemon
    * from an earlier build that shared the home. Nothing finds a daemon no file names, and every start beside it refuses
    * to run; one that names this daemon with a capability it does not accept gets every hook refused. Only this daemon
    * writes the file, so anything but what it wrote is wrong. The check reads one small file and writes only when it
-   * differs.
+   * differs. It ends for good once the daemon no longer holds the home (`holdsHome`): a home moved or removed while it
+   * runs, and maybe made again at its path, is no longer its own, and a record it wrote there would name it to every
+   * start and hook in that home while it records into a database that home does not hold.
    */
   async #record(stateFile: string): Promise<void> {
     const text = `${JSON.stringify(this.state(), null, 2)}\n`;
     await replaceFile(stateFile, text, { mode: 0o600 });
-    const ms = this.#options.recordCheckMs;
-    if (ms === undefined) return;
+    const check = this.#options.recordCheck;
+    if (check === undefined) return;
     this.#recordCheck = setInterval(() => {
-      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, text));
-    }, ms);
+      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, text, check));
+    }, check.everyMs);
     this.#recordCheck.unref();
   }
 
-  /** Writes `text` to `stateFile` again unless the file holds it. */
-  async #restoreRecord(stateFile: string, text: string): Promise<void> {
-    if (this.#closed) return;
+  /** Writes `text` to `stateFile` again unless the file holds it, while this daemon holds its home (`check.holdsHome`). */
+  async #restoreRecord(stateFile: string, text: string, check: NonNullable<RerailDaemonOptions["recordCheck"]>): Promise<void> {
+    if (this.#closed || this.#recordCheck === undefined) return;
+    // A check that throws cannot tell, and the home counts as held: the record is kept, as before the check.
+    let holds = true;
+    try {
+      holds = check.holdsHome();
+    } catch {
+      // Held, as above.
+    }
+    if (!holds) {
+      clearInterval(this.#recordCheck);
+      this.#recordCheck = undefined;
+      process.stderr.write(`rerail daemon: this daemon (pid ${process.pid}) no longer holds the Rerail home at ${check.home}: it was moved `
+        + `or removed. The daemon stops writing ${stateFile}; end it, then run rerail daemon start.\n`);
+      return;
+    }
     const found = await readFile(stateFile, "utf8").catch(() => undefined);
     if (found === text) return;
     try {
@@ -1159,23 +1175,24 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheckMs" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "remoteRefused">;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
  * daemon lock before anything opens a store or binds a pipe, a socket or a port, so a second daemon stops here naming
  * the first: two starts at once, or a start whose wait for a slow daemon ran out, could otherwise leave two, one holding
- * the port and the other the one daemon.json names. Only the holder keeps daemon.json (`recordCheckMs`): two daemons
+ * the port and the other the one daemon.json names. Only the holder keeps daemon.json (`recordCheck`): two daemons
  * that each did would write over each other. The lock goes with the process however it ends; an exit also removes the
  * holder's record beside it. A loopback restart for a TLS key it may not serve with runs in this process and keeps the
  * lock. A restart at the heap ceiling launches the next daemon just before this one exits, and that one keeps trying
  * for the lock for a second.
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
-  const homeLock = await holdHomeDaemonLock(defaultRerailHome());
+  const home = defaultRerailHome();
+  const homeLock = await holdHomeDaemonLock(home);
   if (homeLock === undefined) return await serveRerailDaemon(argv, services);
   process.once("exit", () => homeLock.release());
-  await serveRerailDaemon(argv, { ...services, recordCheckMs: RECORD_CHECK_MS });
+  await serveRerailDaemon(argv, { ...services, recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() } });
 }
 
 /**

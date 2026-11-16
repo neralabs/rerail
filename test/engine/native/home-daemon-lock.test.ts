@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -114,4 +114,22 @@ describe("the daemon lock of a Rerail home", () => {
     // The daemon runs as on a machine without the lock, kept to one by its engine socket or pipe, never refused.
     expect(await holdHomeDaemonLock(home)).toBeUndefined();
   });
+  // Windows keeps a folder that holds an open file from being moved, so a home there cannot go while its daemon runs.
+  it.skipIf(process.platform === "win32")("holds the home only while the lock file it locked is at its path: not once the home is moved or made again", async () => {
+    const home = await temporaryHome();
+    const lease = await holdHomeDaemonLock(home);
+    expect(lease).toBeDefined();
+    leases.push(lease!);
+    expect(lease!.holdsHome()).toBe(true);
+    const moved = `${home}-moved`;
+    homes.push(moved);
+    await rename(home, moved);
+    expect(lease!.holdsHome()).toBe(false);
+    // A home made again at the path, a daemon's lock file in it or not, is another home.
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    expect(lease!.holdsHome()).toBe(false);
+    const other = await holdInAnotherProcess(home);
+    expect(homeDaemonHolder(home)).toBe(other.pid);
+    expect(lease!.holdsHome()).toBe(false);
+  }, 30_000);
 });

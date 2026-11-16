@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -281,6 +281,26 @@ describe("the daemons of a Rerail home", () => {
     expect(await stopDaemon(home)).toBe("stopped");
     expect(processAlive(first.pid)).toBe(false);
     expect(liveDaemons(home)).toEqual([]);
+  }, 60_000);
+
+  // Windows keeps a running daemon's current folder, its home, from being moved or removed.
+  it.skipIf(process.platform === "win32")("writes no daemon.json into a home made again where its own was, once its own was moved away", async () => {
+    const daemon = daemonProcess(home, env, ["--port", "0"]);
+    others.push(daemon);
+    await until(async () => await recordedPid(home) === daemon.pid, 30_000);
+    const moved = `${home}-moved`;
+    await rename(home, moved);
+    try {
+      await mkdir(home);
+      // The daemon checks its record every second.
+      await delay(3_000);
+      expect(existsSync(stateFile)).toBe(false);
+      await ended(daemon);
+      expect(await exitMessage(daemon)).toContain(`no longer holds the Rerail home at ${home}`);
+    } finally {
+      await ended(daemon);
+      await removeFolder(moved);
+    }
   }, 60_000);
 
   /** What a daemon killed outright leaves, or what happens to it after: its lock released, its records left. */

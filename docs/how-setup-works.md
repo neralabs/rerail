@@ -549,7 +549,9 @@ Within one Rerail home every build, a checkout's included, runs one daemon. The 
 home the same way, before it opens the database or binds a port, and a second daemon started there exits with
 `Another Rerail daemon (pid …) runs in …`. The daemon checks every second that `daemon.json` holds what it wrote and
 writes the file again when it is gone or differs, so a start or a stop that finds the lock held and no `daemon.json`
-waits for it and then uses or stops that daemon, instead of starting another. Asking the lock loads the native engine,
+waits for it and then uses or stops that daemon, instead of starting another. It stops that check for good once its
+home was moved or removed, so a home made again at the same path never gets a `daemon.json` naming a daemon that does
+not hold it. Asking the lock loads the native engine,
 so a start or a stop asks it only when `locks/daemon.json`, the record the holder keeps beside the lock, names a process
 that runs, and on Windows only while the home's engine pipe is there too: Windows keeps a loaded engine from being
 deleted, and `rerail install --remove` stops the daemon before it removes `versions/`. Where the lock cannot be asked or

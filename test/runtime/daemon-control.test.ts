@@ -268,7 +268,7 @@ describe("Rerail daemon control", () => {
       workspaceRoot: home,
       port: 0,
       stateFile,
-      recordCheckMs: 20,
+      recordCheck: { everyMs: 20, home, holdsHome: () => true },
       nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
     });
     const written = readFileSync(stateFile, "utf8");

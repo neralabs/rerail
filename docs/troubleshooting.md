@@ -576,6 +576,12 @@ writes this line to the home's `daemon.log` and exits; a `rerail daemon start` t
 `rerail daemon start` finds it. If it does not, `rerail daemon stop` stops it once `daemon.json` names it, or gives the
 pid to end; if the stop finds none and a start prints this line again, end the process it names and start again.
 
+### `this daemon (pid …) no longer holds the Rerail home at …`
+
+The Rerail home was moved or removed while its daemon ran. The daemon writes this line to `daemon.log` and stops
+writing `daemon.json`, so a home made again at that path never names it, but it still runs, recording into the
+database of the home it lost. End the pid it names, then run `rerail daemon start`.
+
 ### Containers: the dashboard does not open from the host
 
 The daemon listens on the container's loopback only, so a published port (`-p 4737:4737`) gets an empty reply. Set-up

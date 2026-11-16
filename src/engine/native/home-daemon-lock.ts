@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { replaceFileSync } from "../file-replace.js";
@@ -34,8 +34,31 @@ export class HomeDaemonConflictError extends Error {
 }
 
 export interface HomeDaemonLease {
+  /**
+   * Whether the lock file this process locked is still the one at its path: false once the home was moved or removed,
+   * whether or not a home was made again there. The OS lock goes with the file, so another daemon can then hold the
+   * home at that path, and this one holds none. Never throws: where the file system cannot tell (an error other than a
+   * missing file, or no file id), the home counts as held, as before the check.
+   */
+  holdsHome(): boolean;
   /** Gives the lock up before process exit, once the daemon has closed. */
   release(): void;
+}
+
+/**
+ * Which file is at `path`, as the file system tells files apart: "none" when no file is there, its path gone with its
+ * folder; undefined when it cannot tell, as for a file Windows has marked for deletion and a file system with no file
+ * ids.
+ */
+function fileAt(path: string): Pick<BigIntStats, "dev" | "ino"> | "none" | undefined {
+  try {
+    // Bigint: Windows' 64-bit file ids do not fit a number.
+    const found = statSync(path, { bigint: true });
+    return found.ino === 0n ? undefined : { dev: found.dev, ino: found.ino };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "none" : undefined;
+  }
 }
 
 /** Module state keeps the native handle reachable: a collected handle would close, and so release, the lock. */
@@ -88,7 +111,14 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
   recordHolder(home);
   const taken = lock;
   held = taken;
+  // The file this process locked, read by path just after: only a home moved in that instant could give another.
+  const locked = fileAt(path);
   return {
+    holdsHome() {
+      if (locked === undefined || locked === "none") return true;
+      const now = fileAt(path);
+      return now === undefined || (now !== "none" && now.dev === locked.dev && now.ino === locked.ino);
+    },
     release() {
       if (held !== taken) return;
       held = undefined;

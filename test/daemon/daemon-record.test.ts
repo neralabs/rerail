@@ -45,7 +45,7 @@ it("lets a write of daemon.json its record check has in flight land before its c
     workspaceRoot: home,
     port: 0,
     stateFile,
-    recordCheckMs: 20,
+    recordCheck: { everyMs: 20, home, holdsHome: () => true },
     nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
   });
   const started = Promise.withResolvers<void>();
@@ -63,5 +63,68 @@ it("lets a write of daemon.json its record check has in flight land before its c
   await closing;
   expect(closedBeforeTheWrite).toBe(false);
   // Landing after the close, the write would leave a daemon.json that names a daemon that is gone.
+  expect(existsSync(stateFile)).toBe(false);
+}, 20_000);
+
+it("stops writing daemon.json, saying why once, when it no longer holds its home, and keeps it while it does", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rerail-record-"));
+  homes.push(home);
+  process.env.RERAIL_HOME = home;
+  const stateFile = join(home, DAEMON_STATE_FILE);
+  let holds = true;
+  let checks = 0;
+  const said: string[] = [];
+  const write = vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+    said.push(String(chunk));
+    return true;
+  });
+  const daemon = await RerailDaemon.start({
+    version: "0.0.0-test",
+    databasePath: join(home, "rerail.sqlite"),
+    workspaceRoot: home,
+    port: 0,
+    stateFile,
+    recordCheck: { everyMs: 20, home, holdsHome: () => { checks += 1; return holds; } },
+    nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
+  });
+  try {
+    await rm(stateFile);
+    await vi.waitFor(() => expect(existsSync(stateFile)).toBe(true));
+    // The home was moved or removed, and maybe made again at its path: a record written there would name this daemon.
+    holds = false;
+    await rm(stateFile);
+    await vi.waitFor(() => expect(said.join("")).toContain(`no longer holds the Rerail home at ${home}`));
+    const asked = checks;
+    await delay(200);
+    expect(existsSync(stateFile)).toBe(false);
+    // The check ended for good: it asks no more and says so once.
+    expect(checks).toBe(asked);
+    expect(said.filter(line => line.includes("no longer holds"))).toHaveLength(1);
+  } finally {
+    write.mockRestore();
+    await daemon.close();
+  }
+}, 20_000);
+
+it("keeps writing daemon.json when it cannot tell whether it holds its home, and still closes", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rerail-record-"));
+  homes.push(home);
+  process.env.RERAIL_HOME = home;
+  const stateFile = join(home, DAEMON_STATE_FILE);
+  const daemon = await RerailDaemon.start({
+    version: "0.0.0-test",
+    databasePath: join(home, "rerail.sqlite"),
+    workspaceRoot: home,
+    port: 0,
+    stateFile,
+    recordCheck: { everyMs: 20, home, holdsHome: () => { throw new Error("EIO: the file system could not say"); } },
+    nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
+  });
+  try {
+    await rm(stateFile);
+    await vi.waitFor(() => expect(existsSync(stateFile)).toBe(true));
+  } finally {
+    await daemon.close();
+  }
   expect(existsSync(stateFile)).toBe(false);
 }, 20_000);
