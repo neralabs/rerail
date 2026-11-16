@@ -103,6 +103,18 @@ impl Graph {
         Ok(())
     }
 
+    /// The files `from` (a text's key, or a module's path) includes, in order: for a test.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn includes_of(&self, from: &str) -> Vec<PathBuf> {
+        self.includes.get(from).into_iter().flatten().map(|(_, _, p)| p.clone()).collect()
+    }
+
+    /// Whether `path` is a module of the graph: for a test.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn has_module(&self, path: &std::path::Path) -> bool {
+        self.digests.contains_key(path)
+    }
+
     /// Its includes, missing names and absent candidates, for a test's message.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn describe(&self) -> String {
@@ -175,8 +187,8 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
     let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(includes.len() + 1);
     let names = includes.iter().cloned().chain((!t_shape).then(|| (-1, "core.rr".to_owned())));
     for (at, name) in names {
-        // `bootstrap.rr`'s candidate: `cat(lib, "/", name)`, as written, not made canonical.
-        let path = PathBuf::from(format!("{}/{name}", lib.display()));
+        // `bootstrap.rr`'s candidate, `cat(lib, "/", name)`, named as its module is (`module_path`).
+        let path = module_path(&format!("{}/{name}", lib.display()));
         if !file.digests.contains_key(&path) {
             return false;
         }
@@ -188,6 +200,21 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
     let graph = whole.of(seed, 0);
     KEPT.get_or_init(Default::default).lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
     true
+}
+
+/// The file `bootstrap.rr` found for an include, by the path its module is loaded as. Its candidate is written
+/// `cat(lib, "/", name)`, while a loaded document is named by its canonical path (`world::load`), and each module's
+/// own includes are keyed by that name (`p0_names` reads it off the document): on Windows `\` separates the
+/// canonical path and `/` the candidate, so an include's includes were looked up under the other spelling and lost
+/// (an included module's `#include "python/env.rr"`, read as missing). The canonical path where the file is there,
+/// else the candidate in the platform's separators.
+pub fn module_path(candidate: &str) -> PathBuf {
+    dunce::canonicalize(candidate).unwrap_or_else(|_| PathBuf::from(in_separators(candidate, std::path::MAIN_SEPARATOR)))
+}
+
+/// `path` with its `/` separators written as `separator`, as a canonical path on that platform spells them.
+pub fn in_separators(path: &str, separator: char) -> String {
+    if separator == '/' { path.to_owned() } else { path.replace('/', &separator.to_string()) }
 }
 
 /// A text seed's key in phase 0's facts, by its place among the run's seeds.
@@ -298,7 +325,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         let mut g = Graph { plans: report.plans, ..Graph::default() };
         for r in read("p0_include") {
             if let [from, at, name, path] = r.as_slice() {
-                g.includes.entry(from.clone()).or_default().push((at.parse().unwrap_or(0), name.clone(), PathBuf::from(path)));
+                g.includes.entry(from.clone()).or_default().push((at.parse().unwrap_or(0), name.clone(), module_path(path)));
             }
         }
         for v in g.includes.values_mut() {

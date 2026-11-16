@@ -46,3 +46,23 @@
         let err = crate::code_rule_dsl::logic::rr::parse("#include \"no/such.rr\"\n").expect_err("refused").to_string();
         assert!(err.contains("no such file in the library"), "{err}");
     }
+
+    /// An include's file is named as its module is loaded (`module_path`), so the module's own includes are found
+    /// under it: Windows' canonical paths are `\`-separated where `bootstrap.rr` writes `cat(lib, "/", name)`, and
+    /// an included module's includes were lost (`python/modules.rr`'s `python/env.rr`: "py_stdlib … not declared").
+    #[test]
+    fn an_include_is_named_as_its_module_is_loaded() {
+        // A Windows candidate, as `cat` writes it, against the canonical path a load names it by.
+        assert_eq!(super::in_separators(r"D:\a\rerail\docs\rule-syntax\lib/python/env.rr", '\\'), r"D:\a\rerail\docs\rule-syntax\lib\python\env.rr");
+        assert_eq!(super::in_separators("/srv/lib/python/env.rr", '/'), "/srv/lib/python/env.rr");
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let candidate = format!("{}/python/env.rr", lib.display());
+        assert_eq!(super::module_path(&candidate), dunce::canonicalize(lib.join("python").join("env.rr")).unwrap());
+        // Every module an include reaches that includes files itself is an includer under the same name.
+        let seed = crate::code_rule_dsl::logic::rr::text_seed("#include \"python/modules.rr\"\n.decl x(s: symbol)\n").unwrap().expect("includes");
+        let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
+        let env = dunce::canonicalize(lib.join("python").join("env.rr")).unwrap();
+        assert!(graph.has_module(&env), "python/modules.rr's include of python/env.rr is in its graph:\n{}", graph.describe());
+        let modules = dunce::canonicalize(lib.join("python").join("modules.rr")).unwrap();
+        assert!(graph.includes_of(&modules.to_string_lossy()).contains(&env), "{}", graph.describe());
+    }
