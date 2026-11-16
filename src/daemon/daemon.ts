@@ -21,6 +21,7 @@ import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
+import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -68,6 +69,8 @@ export interface RerailDaemonOptions {
   version: string;
   /** Internal testing: false keeps the remote sink's sender off; tests may shorten its interval. */
   remoteSink?: false | { intervalMs: number };
+  /** False keeps the hourly forgetting of removed checkouts off ({@link startCheckoutPruning}); tests may shorten its interval. */
+  checkoutPruning?: false | { intervalMs: number };
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -439,6 +442,7 @@ export class RerailDaemon {
   /** The Merge Assist the API and every session share, while the experiment is on: stopped before the database closes. */
   readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
+  #checkoutPruning: CheckoutPruning | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -538,6 +542,8 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
+      // Once nothing can fail the start: checkouts whose folder is gone stop costing every read of their repository.
+      if (options.checkoutPruning !== false) daemon.#checkoutPruning = startCheckoutPruning(databasePath, options.checkoutPruning ?? {});
       return daemon;
     } catch (error) {
       await closeAfterFailedStart(started, stores);
@@ -599,6 +605,7 @@ export class RerailDaemon {
     this.#closed = true;
     try {
       await this.#remoteSink?.stop();
+      await this.#checkoutPruning?.stop();
       await closeHttpServer(this.#server);
     } finally {
       try {

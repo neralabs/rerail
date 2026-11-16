@@ -52,15 +52,20 @@ describe("Merge Assist storage", () => {
 
   it("forgets what Merge Assist kept for a checkout Rerail forgets", async () => {
     const db = await database();
-    const checkout = join(realpathSync(await folder()), "app");
-    mkdirSync(checkout);
-    git(checkout, "init", "-q", "-b", "main");
+    const root = realpathSync(await folder());
+    const main = join(root, "app");
+    const checkout = join(root, "app-feature");
+    mkdirSync(main);
+    git(main, "init", "-q", "-b", "main");
+    git(main, "commit", "-q", "--allow-empty", "-m", "base");
+    git(main, "worktree", "add", "-q", "-b", "feature", checkout);
+    recordCheckout(db, main);
     recordCheckout(db, checkout);
     db.insert(mergeAssistState).values([`conflicts:${checkout}`, `scan:${checkout}`, `scanning:${checkout}`, `settings:${REPOSITORY}`]
       .map(key => ({ key, valueJson: "[]", updatedAt: 1 }))).run();
-    await removeFolder(checkout);
+    git(main, "worktree", "remove", checkout);
 
-    expect(pruneCheckouts(db)).toEqual([checkout]);
+    expect(await pruneCheckouts(db)).toEqual([checkout]);
     expect(keys(db)).toEqual([`settings:${REPOSITORY}`]);
   });
 
