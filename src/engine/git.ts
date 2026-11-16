@@ -466,20 +466,64 @@ async function gitOutput(cwd: string, args: readonly string[], signal: AbortSign
 
 /** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
 async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = 1024 * 1024): Promise<string | undefined> {
+  const read = await readGit(cwd, args, signal, maxBuffer);
+  return read.ended === "printed" ? read.stdout : undefined;
+}
+
+/**
+ * How a Git read ended: with what Git printed, failing (no Git, an error, past `maxBuffer`), or ended past its time limit;
+ * one its `signal` stopped reads the same ({@link GitReadOptions}).
+ */
+type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readonly ended: "failed" | "timed-out" };
+
+/**
+ * Runs a Git command as `gitOutput` does, and says how it ended. Git's stderr goes to the null device, as `streamGit`'s
+ * does: no answer reads it, and a process Git started that outlives Git (a repository's clean filter can leave one)
+ * holds it for as long as it runs and writes there as much as it likes, while the read answers once Git has exited and
+ * its output has closed.
+ */
+async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
   const executable = readerGit(signal);
-  if (executable === undefined) return undefined;
-  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
-  const child = execFile(
-    executable,
-    [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => settle(error === null && signal?.aborted !== true ? stdout : undefined),
-  );
-  // execFile's own `close` listener comes first and answers with the output; this one answers a Git that was ended and
-  // whose output stays open.
-  settleWhenDone(child, () => settle(undefined), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
-  const [output] = await Promise.all([promise, exited(child)]);
-  return output;
+  if (executable === undefined) return { ended: signal?.aborted === true ? "timed-out" : "failed" };
+  const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  const printed = gitPrinted(child, maxBuffer);
+  // This `close` listener comes first and answers with what a Git that exited with status 0 printed. The next answers
+  // every other end, saying whether the time limit or `signal` ended the read, and a Git that was ended and whose output
+  // stays open.
+  child.on("close", (status: number | null) => {
+    const stdout = printed(status);
+    if (stdout !== undefined && signal?.aborted !== true) settle({ ended: "printed", stdout });
+  });
+  settleWhenDone(child, ended => settle({ ended: ended ? "timed-out" : "failed" }), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
+  const [read] = await Promise.all([promise, exited(child)]);
+  return read;
+}
+
+/**
+ * Reads what `child`, the Git of a read, prints: as UTF-8, and at most `maxBuffer` bytes, past which it ends Git
+ * ({@link endPastMaxBuffer}). Answers that text for the `status` Git exited with: only for 0, and only within
+ * `maxBuffer`.
+ */
+function gitPrinted(child: ChildProcess, maxBuffer: number): (status: number | null) => string | undefined {
+  const chunks: string[] = [];
+  let bytes = 0;
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    bytes += Buffer.byteLength(chunk);
+    if (bytes <= maxBuffer) chunks.push(chunk);
+    else endPastMaxBuffer(child);
+  });
+  return status => (status === 0 && bytes <= maxBuffer ? chunks.join("") : undefined);
+}
+
+/** Ends a Git that printed more than its read takes: closes its output, then sends it SIGTERM. */
+function endPastMaxBuffer(child: ChildProcess): void {
+  child.stdout?.destroy();
+  child.kill();
 }
 
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
@@ -698,13 +742,27 @@ export async function gitCrlfPaths(
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
 
 /**
- * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
- * but not ignored; relative to `cwd`. Empty without Git, outside a repository, past the timeout, or past
- * `MAX_LISTED_PATH_BYTES` of paths.
+ * How a listing of `gitModifiedOrUntrackedListing` ended: with the paths Git listed, failing (no Git, an error, outside a
+ * repository, past `MAX_LISTED_PATH_BYTES` of paths), or past its time limit or stopped ({@link GitRead}).
  */
-export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
-  const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
-  return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
+export type ChangedPathsListing = { readonly ended: "printed"; readonly paths: string[] } | { readonly ended: "failed" | "timed-out" };
+
+/** Lists the files `gitModifiedOrUntrackedPaths` answers, and says how the listing ended. */
+export async function gitModifiedOrUntrackedListing(cwd: string, options: GitReadOptions = {}): Promise<ChangedPathsListing> {
+  const read = await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
+  return read.ended === "printed" ? { ended: "printed", paths: read.stdout.split("\0").filter(path => path !== "") } : read;
+}
+
+/**
+ * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
+ * but not ignored; relative to `cwd`. Empty without Git, outside a repository, or past `MAX_LISTED_PATH_BYTES` of paths.
+ * Undefined when Git ran past its time limit, or `options.signal` stopped it: it did not say which files changed, and
+ * none is not its answer.
+ */
+export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[] | undefined> {
+  const listing = await gitModifiedOrUntrackedListing(cwd, options);
+  if (listing.ended === "timed-out") return undefined;
+  return listing.ended === "printed" ? listing.paths : [];
 }
 
 /**
@@ -733,6 +791,67 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[], 
 /** How long a read waits for Git's output to close once the Git it ended has exited. */
 const EXIT_DRAIN_MS = 500;
 
+/** How often a Git read looks at its time limit on the clock ({@link lookPastTimeLimit}). */
+const TIME_LIMIT_TICK_MS = 1_000;
+
+/** What a Git read has had so far: how many of Git's exit and its output's end. */
+interface ReadProgress {
+  ends: number;
+}
+
+/**
+ * A Git read's time limit, asked at each look ({@link lookPastTimeLimit}) with what the read has had so far: whether it
+ * may go on. It may while it has run less than `limitMs` on the clock, as a timer of `limitMs` allowed, however much of
+ * that time the event loop stalled; past that, only once more after Git exited or its output ended since the last look,
+ * since the read closes then. A Git still printing at that look ends there, as that timer ended it, and the read
+ * answers that it ran late: a walk asks such a listing once more off its path (`CodeRuleBridge`).
+ */
+function timeLimit(limitMs: number): (progress: Readonly<ReadProgress>) => boolean {
+  const startedAt = performance.now();
+  let endsBefore = 0;
+  return progress => {
+    const ending = progress.ends > endsBefore;
+    endsBefore = progress.ends;
+    return ending || performance.now() - startedAt < limitMs;
+  };
+}
+
+/** What `child`'s read has had so far ({@link ReadProgress}), kept up to date. */
+function readProgress(child: ChildProcess): Readonly<ReadProgress> {
+  const progress: ReadProgress = { ends: 0 };
+  const ended = (): void => {
+    progress.ends += 1;
+  };
+  child.stdout?.once("end", ended);
+  child.once("exit", ended);
+  return progress;
+}
+
+/**
+ * Calls `end` once `child`'s read is past its time limit (`limitMs`, {@link timeLimit}), and returns what stops it. It
+ * looks one loop turn after each tick: after a stall, Node runs its timers before it reads what a Git that finished
+ * during the stall printed and handles its exit, and the look sees both.
+ */
+function lookPastTimeLimit(child: ChildProcess, limitMs: number, end: () => void): () => void {
+  const tickMs = Math.min(TIME_LIMIT_TICK_MS, limitMs);
+  const mayGoOn = timeLimit(limitMs);
+  const progress = readProgress(child);
+  let look: NodeJS.Immediate | undefined;
+  const stop = (): void => {
+    clearInterval(ticks);
+    clearImmediate(look);
+  };
+  const ticks = setInterval(() => {
+    look ??= setImmediate(() => {
+      look = undefined;
+      if (mayGoOn(progress)) return;
+      stop();
+      end();
+    });
+  }, tickMs);
+  return stop;
+}
+
 /** What ends a Git read before its Git is done: its time limit, and the signal that stops the reads it belongs to. */
 interface ReadLimits {
   readonly timeoutMs: number;
@@ -747,32 +866,35 @@ interface ReadLimits {
  * killing only the launcher left the real Git running in the repository. Node's own `signal` option kills the child
  * alone, so it is not used. The real Git holds the output too, so the output closes once the whole tree has exited;
  * should it stay open anyway, the answer does not wait for it. A Git that exits by itself is read to the end of its
- * output; one a signal from elsewhere ended is waited for as one this ended.
+ * output; one a signal from elsewhere ended is waited for as one this ended. `timeoutMs` is time on the clock, however
+ * much of it the event loop stalled, and a read past it goes on only once more after Git exited or its output ended
+ * ({@link timeLimit}). `settle` is told whether `timeoutMs` or `signal` ended the read.
  */
-function settleWhenDone(child: ChildProcess, settle: () => void, { timeoutMs, signal }: ReadLimits): void {
+function settleWhenDone(child: ChildProcess, settle: (ended: boolean) => void, { timeoutMs, signal }: ReadLimits): void {
   let ended = false;
   const forget = (): void => {
-    clearTimeout(timer);
+    stopLooking();
     signal?.removeEventListener("abort", end);
   };
   const drain = (): void => {
     forget();
     setTimeout(() => {
       child.stdout?.destroy();
-      settle();
+      settle(ended);
     }, EXIT_DRAIN_MS).unref();
   };
   const end = (): void => {
+    stopLooking();
     ended = true;
     // A child that has exited has no tree left to reach, and its pid may name another process by now.
     if (child.exitCode === null && child.signalCode === null) endProcessTree(child);
     else drain();
   };
-  const timer = setTimeout(end, timeoutMs);
+  const stopLooking = lookPastTimeLimit(child, timeoutMs, end);
   signal?.addEventListener("abort", end, { once: true });
   const done = (): void => {
     forget();
-    settle();
+    settle(ended);
   };
   child.on("error", done);
   child.on("close", done);
@@ -803,7 +925,7 @@ async function streamGit(cwd: string, args: readonly string[], stream: GitStream
     stdio: ["pipe", "pipe", "ignore"],
   });
   child.stdout.on("data", stream.onData);
-  settleWhenDone(child, settle, { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
+  settleWhenDone(child, () => settle(), { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
   // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
   child.stdin.on("error", () => undefined);
   child.stdin.end(stream.input);

@@ -386,7 +386,24 @@ Xcode installed.
 Set-up records the Node that ran it for the launcher, the hooks and the Claude Code status line. Homebrew's is
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
 recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
-Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux.
+Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux. Where
+set-up found another `node` first on `PATH`, or none, Claude Code's hooks on Windows start through `cmd.exe`, which
+runs the recorded Node itself while it exists and `node.exe` from `PATH` once it is gone, so each hook event runs one
+Node rather than two. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, or
+where `cmd.exe` would split a path of the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of
+`& ( ) ^ | < > , ; =`. Its look for `node` on `PATH` ends at the first folder on a server (`\\server\share`), which it
+never opens, since a share that does not answer holds each look for about 21 s, and it writes the `cmd.exe` entry
+there. A drive letter mapped to such a share is looked into: set-up then waits about 21 s once, and each hook event
+afterwards does not. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
+exits 0 with no answer, as the launcher answers for a hook that fails, so Claude Code shows no hook error.
+`rerail update` chooses again from the `PATH` it runs with, and `rerail status` and the dashboard count Claude Code as
+connected in either case, without reading `PATH`.
+
+Rerail 0.1.4 and earlier know only the `node` entry. Run `rerail install --remove` before installing one of them:
+its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twice, and its removal leaves the
+`cmd.exe` entries, which then fail on every event once its install is gone (Claude Code shows a hook error and goes
+on). If that has happened, delete from `~/.claude/settings.json` each hook entry whose `command` ends in `cmd.exe`
+and whose `args` name `hook-launcher.js`.
 
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
 says `needs Node 24 or newer`.
@@ -447,6 +464,11 @@ Rerail updates only when you ask; nothing polls the registry or installs a versi
 
 The only paths are `rerail update` and re-running `npx @neralabs/rerail setup`. `rerail update --channel <tag>` picks
 the npm dist-tag (`latest`, `beta`, or `next`).
+
+`rerail update` names each step on stderr as it starts (checking npm, downloading, checking signatures, checking the
+new version starts, switching to it) and says when one runs long enough that npm may be stuck
+([reference](reference.md#update)). Rule packs update separately: it ends by listing each installed pack with a newer
+version on its channel and the `rerail packs add` command that installs them ([rule packs](rule-packs.md#rerail-packs)).
 
 <details>
 <summary>Registry and credentials</summary>

@@ -291,14 +291,19 @@ async function approveSessions(run: Run, answer: string | undefined, repo: strin
     return { answer: undefined };
   }
   if (environment.sessionsApproved()) return { answer };
-  const form = sessionsQuestion({
-    carriedArgs: repo === undefined ? [] : [SETUP_FLAGS.repo, repo],
-    remoteHosts: remoteHostsOf(packsHome(run)),
-    ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
-  });
-  const picked = await choose(run, form, SESSIONS_ANSWERS);
+  const picked = await choose(run, sessionsForm(run, repo), SESSIONS_ANSWERS);
   if (picked === undefined) return halted(run.io);
   return approveSessions(run, picked, repo);
+}
+
+/** T2b's question; a relayed run asks it of the person reading it in a coding agent session. */
+function sessionsForm(run: Run, repo: string | undefined): QuestionForm {
+  return sessionsQuestion({
+    carriedArgs: repo === undefined ? [] : [SETUP_FLAGS.repo, repo],
+    remoteHosts: remoteHostsOf(packsHome(run)),
+    inSession: run.io.relayed === true || run.io.lane === "json",
+    ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
+  });
 }
 
 /** The hosts of this home's remotes (`rerail remote`), or null when their configuration cannot be read. */

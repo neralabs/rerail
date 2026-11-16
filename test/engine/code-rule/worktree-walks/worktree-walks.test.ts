@@ -817,7 +817,7 @@ function watcherOf(roots: readonly string[], scans: string[]): WorktreeWatcher {
         scans.push(root);
         return {
           sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set([root]),
-          unmerged: new Map(), seen: { folders: new Set([""]), leftOut: new Set() },
+          unmerged: new Map(), lateListings: new Map(), seen: { folders: new Set([""]), leftOut: new Set() },
         };
       },
       take: async () => undefined,

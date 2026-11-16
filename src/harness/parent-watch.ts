@@ -2,8 +2,9 @@
  * Ends a hook process on Windows once the process that started it is gone.
  *
  * A coding agent that gives up on a slow hook kills the process it started. On macOS and Linux that is node itself,
- * since the `sh` launcher replaces itself with node (`exec`). On Windows it is the cmd.exe (Cursor) or PowerShell
- * (Codex) that runs node, or the hook launcher (Claude Code), and killing a parent there never kills its children: the
+ * since the `sh` launcher replaces itself with node (`exec`). On Windows it is the cmd.exe (Cursor, and Claude Code where
+ * set-up found another node first on PATH) or PowerShell (Codex) that runs node, or the hook launcher (Claude Code),
+ * and killing a parent there never kills its children: the
  * hook ran on, holding its session's lock, and the session's next hook waited up to 30 s for it. The agent has dropped
  * the hook by then, so nothing reads what it would answer.
  */

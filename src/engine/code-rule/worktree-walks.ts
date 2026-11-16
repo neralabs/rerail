@@ -65,8 +65,9 @@ export interface WorktreeFindings {
   /**
    * For each of `checkouts`, the files its Git lists as modified or untracked (`gitModifiedOrUntrackedPaths`), relative
    * to it: listed once for every session that takes the worktree for the first time in this walk, and only then.
+   * Undefined for a checkout whose Git ran past its time limit: it did not say which files changed.
    */
-  readonly listed: ReadonlyMap<string, readonly string[]>;
+  readonly listed: ReadonlyMap<string, readonly string[] | undefined>;
   /** Subtrees the walk could not read. */
   readonly failedRoots: ReadonlySet<string>;
   readonly errors: readonly ScanError[];
@@ -276,8 +277,8 @@ function retried(scan: SourceScan): boolean {
 }
 
 /** What Git lists as modified or untracked in each of `checkouts`, one Git process each. */
-async function listChanged(git: GitReads, checkouts: ReadonlySet<string>): Promise<Map<string, readonly string[]>> {
-  const listed = new Map<string, readonly string[]>();
+async function listChanged(git: GitReads, checkouts: ReadonlySet<string>): Promise<Map<string, readonly string[] | undefined>> {
+  const listed = new Map<string, readonly string[] | undefined>();
   for (const checkout of checkouts) listed.set(checkout, await git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal })));
   return listed;
 }
@@ -288,8 +289,8 @@ async function listedFor(
   root: string,
   watchers: readonly WatcherWalk[],
   checkouts: ReadonlySet<string>,
-): Promise<Map<string, readonly string[]>> {
-  return watchers.some(watcher => watcher.firstSight.has(root)) ? await listChanged(git, checkouts) : new Map<string, readonly string[]>();
+): Promise<Map<string, readonly string[] | undefined>> {
+  return watchers.some(watcher => watcher.firstSight.has(root)) ? await listChanged(git, checkouts) : new Map<string, readonly string[] | undefined>();
 }
 
 /**
