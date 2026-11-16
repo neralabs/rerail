@@ -549,10 +549,12 @@ impl<'s> Lexer<'s> {
         let hexd = |c: u8| c.is_ascii_hexdigit();
         let dec = |c: u8| c.is_ascii_digit();
         let (c0, c1) = (self.at(s), self.at(s + 1));
+        // C++: `0x` with no digit after is `0` and a user-defined literal's suffix `x`
+        // (tree-sitter-cpp's longest match).
         let mut i = if c0 == b'0' && matches!(c1, b'x' | b'X') {
-            self.digits(s + 2, hexd).unwrap_or(s + 2)
+            self.digits(s + 2, hexd).unwrap_or(if self.cpp && self.at(s + 2) != b'.' { s + 1 } else { s + 2 })
         } else if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            self.digits(s + 2, dec).unwrap_or(s + 2)
+            self.digits(s + 2, dec).unwrap_or(if self.cpp { s + 1 } else { s + 2 })
         } else if c0 == b'.' {
             s
         } else {
@@ -649,8 +651,13 @@ impl<'s> Lexer<'s> {
 
     /// A directive's argument from `at` (`preproc_arg`: `\S([^/\n]|\/[^*]|\\\r?\n)*`), blanks and
     /// `\`-newlines before it passed: its start and end; `None` where the line (or the file) ends
-    /// first, or a comment starts.
-    pub fn arg(&self, mut at: usize) -> Option<(usize, usize)> {
+    /// first, or a comment starts. `Err` where tree-sitter's read is not one this parser keeps.
+    ///
+    /// The line end after a directive is `token.immediate`: after a blank it cannot be read, so
+    /// white space (line ends too) is passed and the next line's text is the argument
+    /// (`#define A \nint x;` defines `A` as `int x;`).
+    pub fn arg(&self, mut at: usize) -> Result<Option<(usize, usize)>, Refusal> {
+        let from = at;
         loop {
             at = self.blocks.blank_end(at);
             match self.continuation(at) {
@@ -658,9 +665,21 @@ impl<'s> Lexer<'s> {
                 None => break,
             }
         }
+        // (A `\r` just before the `\n` is the line end's: `\r?\n`.)
+        let blanks_end = if at > from && self.at(at - 1) == b'\r' { at - 1 } else { at };
+        if blanks_end > from && self.at(at) == b'\n' {
+            while at < self.src.len() && (self.at(at).is_ascii_whitespace() || self.at(at) == 0x0b) {
+                at = self.continuation(at).unwrap_or(at + 1);
+            }
+            // The file's end, or a comment (an extra, after which the line end is no immediate
+            // token either): tree-sitter's reading there is not kept.
+            if at >= self.src.len() || self.at(at) == b'/' && matches!(self.at(at + 1), b'*' | b'/') {
+                return Err(Refusal::Parse(at as u32));
+            }
+        }
         match self.at(at) {
-            b'\n' | 0 if at >= self.src.len() || self.at(at) == b'\n' => return None,
-            b'/' if matches!(self.at(at + 1), b'*' | b'/') => return None,
+            b'\n' | 0 if at >= self.src.len() || self.at(at) == b'\n' => return Ok(None),
+            b'/' if matches!(self.at(at + 1), b'*' | b'/') => return Ok(None),
             _ => {}
         }
         let s = at;
@@ -668,15 +687,15 @@ impl<'s> Lexer<'s> {
         loop {
             i = self.blocks.arg_stop(i);
             if i >= self.src.len() {
-                return Some((s, self.src.len()));
+                return Ok(Some((s, self.src.len())));
             }
             match self.src[i] {
-                b'\n' => return Some((s, i)),
+                b'\n' => return Ok(Some((s, i))),
                 b'\\' => i += if self.at(i + 1) == b'\r' && self.at(i + 2) == b'\n' { 3 } else { 2 },
                 _ => {
                     // `/`: the argument's unless a block comment starts.
                     if self.at(i + 1) == b'*' {
-                        return Some((s, i));
+                        return Ok(Some((s, i)));
                     }
                     i += 2;
                 }

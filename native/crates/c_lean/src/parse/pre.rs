@@ -86,7 +86,7 @@ impl<'a> P<'a> {
     /// line holds one; the tokens after it lexed again.
     fn argument(&mut self, field: u8) -> R<()> {
         let from = self.last_end as usize;
-        if let Some((s, e)) = self.lx.arg(from) {
+        if let Some((s, e)) = self.lx.arg(from)? {
             self.relex_over(s, e);
             self.span_leaf(K::PreprocArg, field, C_NONE, s, e);
         }
