@@ -6645,6 +6645,10 @@ impl<'a> Run<'a, '_> {
         let raised = joins::raised_all();
         for r in rules {
             let b = vs.at(r);
+            // Not raising: only a raised column is made, so a rule that reads no raised relation has none.
+            if !raise && !(0..b.len()).any(|i| matches!(b.view(i), Lit::Atom(a) if !a.neg() && raised.iter().any(|(rel, _)| rel == b.rel(a)))) {
+                continue;
+            }
             let mut held: HashMap<VarSlot, Vec<(&str, usize)>> = HashMap::new();
             for i in 0..b.len() {
                 let Lit::Atom(a) = b.view(i) else { continue };
