@@ -3,10 +3,12 @@
 //! retirement and the drop) and the sources; the engine places tapes in it (its
 //! `residency::slabs`: reading frames, the reader's derived parts, the checks).
 //!
-//! - **Slabs** are anonymous mappings of `SLAB_BYTES` (an object larger gets its own), each with
-//!   one retained no-copy shared `MTLBuffer` (`MappedBuffer::slab`). Objects are bump-allocated at
-//!   16 bytes; a slab is append-only until it is retired whole: no compaction, no partial
-//!   `MADV_DONTNEED`.
+//! - **Slabs** are leases of `SLAB_BYTES` (an object larger gets its own class) from the one GPU
+//!   buffer pool (`rerail_accel::gpu::shared`, 0266 §16), so a retired slab's buffer is recycled
+//!   whole by the next lease of its class, the residency's or any other user's. Objects are
+//!   bump-allocated at 16 bytes; a slab is append-only until it is retired whole: no compaction.
+//!   A recycled slab holds its last lease's bytes, so each room in it is zeroed as it is handed
+//!   out; a new one reads zero.
 //! - **A resident document** is keyed by its tape's SHA-256 (the store's canonical hash, which
 //!   covers the format version). It holds, in one slab: the v9np image byte-identical to its
 //!   frame's content (columns at 16-byte offsets, format 11), the source's UTF-8 bytes, and what a
@@ -22,15 +24,18 @@
 //!   with the documents.
 //! - **Leases** are the `Arc`s a batch holds: a retired slab's memory goes when the last batch
 //!   reading it lets go.
-//! - **Budget.** Slabs are reserved against the Metal buffer budget before they are mapped (as
-//!   every buffer is); the residency may hold `RESIDENT_SHARE` of it, the rest being the runs'
-//!   workspaces. Past it, the least recently used slabs not read by the admission are retired; a
-//!   batch that still does not fit is refused (`Error::BackendCapacity`), and the wave splits it.
+//! - **Budget.** Slabs are leased within the one Metal budget, with every other GPU buffer; the
+//!   residency may hold `RESIDENT_SHARE` of it, the rest being the runs' workspaces. Past either,
+//!   the least recently used slabs not read by the admission are retired; a batch that still does
+//!   not fit is refused (`Error::BackendCapacity`), and the wave splits it.
+//! - **Eviction.** The residency is the pool's evictor (`set_evictor`, called by `lib.rs`): when
+//!   another user's buffer needs room that idle buffers cannot give, the least recently used slab
+//!   is retired, and its buffer comes back to the pool once the last batch reading it lets go.
 //! - **The drop:** two minutes after each full execution (`executed`), every resident document,
 //!   slab and compiled pipeline is released (architecture §5, F4).
 
 use crate::Error;
-use crate::runtime::MappedBuffer;
+use rerail_accel::gpu::shared::Pooled;
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, LazyLock, Mutex};
@@ -96,10 +101,26 @@ pub struct DocView {
 }
 const _: () = assert!(std::mem::size_of::<DocView>() == 96);
 
-/// A slab: its buffer and identity. Its bump position is the residency's (`State`).
+/// A slab: its lease of the pool and its identity. Its bump position is the residency's (`State`).
 pub struct Slab {
     pub id: u64,
-    pub buffer: MappedBuffer,
+    lease: Pooled,
+}
+
+impl Slab {
+    /// Its buffer, as kernels bind it.
+    pub fn buffer(&self) -> &metal::Buffer {
+        self.lease.buffer()
+    }
+
+    /// Its bytes as the host writes them.
+    pub fn host(&self) -> *mut u8 {
+        self.lease.host()
+    }
+
+    pub fn byte_length(&self) -> usize {
+        self.lease.length() as usize
+    }
 }
 
 /// A resident document: its slab (held: a lease) and where its parts are.
@@ -117,7 +138,7 @@ pub struct Resident {
 impl Resident {
     /// The bytes at `offset..offset + length` of its slab.
     pub fn bytes_at(&self, offset: u32, length: usize) -> &[u8] {
-        let slab = &self.slab.buffer;
+        let slab = &self.slab;
         assert!(offset as usize + length <= slab.byte_length(), "a resident part inside its slab");
         // SAFETY: admission wrote these bytes before publishing the document, and nothing writes
         // them again: a slab is append-only and the document's range is its own.
@@ -147,10 +168,10 @@ pub struct ResidentSource {
 impl ResidentSource {
     /// Its bytes, as the device reads them.
     pub fn bytes(&self) -> &[u8] {
-        assert!(self.offset + self.len <= self.slab.buffer.byte_length(), "a resident source inside its slab");
+        assert!(self.offset + self.len <= self.slab.byte_length(), "a resident source inside its slab");
         // SAFETY: admission wrote these bytes before publishing the source, and nothing writes
         // them again: a slab is append-only and the source's range is its own.
-        unsafe { std::slice::from_raw_parts(self.slab.buffer.host().add(self.offset), self.len) }
+        unsafe { std::slice::from_raw_parts(self.slab.host().add(self.offset), self.len) }
     }
 }
 
@@ -225,6 +246,8 @@ impl DocTable {
 struct SlabEntry {
     slab: Arc<Slab>,
     used: usize,
+    /// It holds an earlier lease's bytes: each room is zeroed as it is handed out.
+    recycled: bool,
     /// The admission clock when a document of it was last asked for.
     last_use: u64,
 }
@@ -267,28 +290,40 @@ fn limit() -> usize {
 
 
 impl State {
-    /// A slab with `bytes` free, as (index, offset): the newest slab's room, else a new slab
-    /// (retiring the least recently used ones not in `keep` while the budget is short).
+    /// A slab with `bytes` free, as (index, offset), zero: the newest slab's room, else a new
+    /// slab (retiring the least recently used ones not in `keep` while the budget is short).
     fn room(&mut self, bytes: usize, keep: &[u64]) -> Result<(usize, usize), Error> {
+        let (at, offset) = self.room_dirty(bytes, keep)?;
+        let entry = &self.slabs[at];
+        if entry.recycled {
+            // SAFETY: `offset..offset + bytes` is inside the slab and no one's yet: nothing reads it.
+            unsafe { std::ptr::write_bytes(entry.slab.host().add(offset), 0, bytes) };
+        }
+        Ok((at, offset))
+    }
+
+    fn room_dirty(&mut self, bytes: usize, keep: &[u64]) -> Result<(usize, usize), Error> {
         if let Some(last) = self.slabs.last()
-            && last.slab.buffer.byte_length() - last.used >= bytes
+            && last.slab.byte_length() - last.used >= bytes
         {
             return Ok((self.slabs.len() - 1, last.used));
         }
         let length = bytes.max(SLAB_BYTES);
         loop {
-            let held = self.slabs.iter().map(|entry| entry.slab.buffer.byte_length()).sum::<usize>();
+            let held = self.slabs.iter().map(|entry| entry.slab.byte_length()).sum::<usize>();
             if held + length <= limit() {
-                match MappedBuffer::slab(length) {
-                    Ok(buffer) => {
+                // The pool's evictor is this residency, whose lock is held here: it skips, and the
+                // retiring is this loop's.
+                match rerail_accel::gpu::shared::lease_within(length) {
+                    Ok(lease) => {
                         self.next_slab += 1;
-                        let slab = Arc::new(Slab { id: self.next_slab, buffer });
-                        self.slabs.push(SlabEntry { slab, used: 0, last_use: self.clock });
+                        let recycled = !lease.fresh();
+                        let slab = Arc::new(Slab { id: self.next_slab, lease });
+                        self.slabs.push(SlabEntry { slab, used: 0, recycled, last_use: self.clock });
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, 0));
                     }
-                    Err(Error::BackendCapacity) => {}
-                    Err(error) => return Err(error),
+                    Err(_) => rerail_prof::count("capacity.residency_slab", 1),
                 }
             }
             if !self.retire(keep) {
@@ -379,7 +414,7 @@ pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<V
         let (at, offset) = state.room(room, &keep)?;
         let entry = &mut state.slabs[at];
         // SAFETY: `room` gave this range to this source alone, inside the slab's mapping.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), entry.slab.buffer.host().add(offset), bytes.len()) };
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), entry.slab.host().add(offset), bytes.len()) };
         entry.used = offset + room;
         entry.last_use = clock;
         let slab = Arc::clone(&entry.slab);
@@ -445,6 +480,14 @@ pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Err
     Ok(())
 }
 
+/// The pool's evictor (`rerail_accel::gpu::shared::set_evictor`): retires the least recently used
+/// slab, whatever reads it, when the residency's lock is free now; whether it did. A batch holding
+/// the slab keeps its memory until it ends; the documents in it are admitted again when next asked.
+pub fn evict() -> bool {
+    let Ok(mut state) = STATE.0.try_lock() else { return false };
+    state.retire(&[])
+}
+
 /// Forgets everything resident: documents, sources and slabs (each slab's memory goes as its last
 /// batch lets go). The engine's drop releases its pipelines and pools with it.
 pub fn clear() {
@@ -487,4 +530,40 @@ pub fn executed(drop_all: fn()) {
             })
             .expect("the residency's drop thread");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The residency's slabs are the pool's: one evicted goes back to it whole, and the next slab leased of its class is
+    /// that buffer, its rooms zeroed though it holds the last lease's bytes.
+    #[test]
+    fn an_evicted_slab_is_recycled_and_its_rooms_read_zero() {
+        if crate::METAL_DEVICE.is_none() {
+            return;
+        }
+        // The residency is the process's; other tests of this crate admit sources into it too.
+        static ONE: Mutex<()> = Mutex::new(());
+        let _one = ONE.lock().unwrap_or_else(|p| p.into_inner());
+        clear();
+        // An object past `SLAB_BYTES` gets a class of its own: 64 MiB + 1 MiB is in the 80 MiB class.
+        let big = vec![0xA5_u8; SLAB_BYTES + (1 << 20)];
+        let first = admit_sources(&[&big]).unwrap();
+        let address = first[0].slab.buffer().gpu_address();
+        assert_eq!(first[0].bytes(), &big[..]);
+        drop(first);
+        assert!(evict(), "the residency's slab retired");
+        assert_eq!(held().sources, 0);
+        // A smaller source, of the same class: the buffer comes back, dirty, and its room reads zero past the bytes.
+        let small = vec![0x11_u8; SLAB_BYTES + (1 << 19)];
+        let again = admit_sources(&[&small]).unwrap();
+        assert_eq!(again[0].slab.buffer().gpu_address(), address, "the evicted slab's buffer served the next lease");
+        assert_eq!(again[0].bytes(), &small[..]);
+        // SAFETY: the room's margin, inside the slab, written by no one but the zeroing.
+        let margin = unsafe { std::slice::from_raw_parts(again[0].slab.host().add(again[0].offset + small.len()), SOURCE_MARGIN) };
+        assert!(margin.iter().all(|&b| b == 0), "a room in a recycled slab is zero");
+        drop(again);
+        clear();
+    }
 }

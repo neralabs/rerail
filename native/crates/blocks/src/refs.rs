@@ -15,10 +15,12 @@ pub struct Ptr<T> {
 unsafe impl<T: 'static> Pod for Ptr<T> {}
 
 impl<T> Ptr<T> {
+    #[inline]
     pub fn is_null(&self) -> bool {
         self.off.load(Relaxed) == 0
     }
 
+    #[inline]
     pub fn get(&self) -> Option<&T> {
         let off = self.off.load(Relaxed);
         if off == 0 {
@@ -58,18 +60,22 @@ pub struct Span<T> {
 unsafe impl<T: 'static> Pod for Span<T> {}
 
 impl<T> Span<T> {
+    #[inline]
     pub fn len(&self) -> usize {
         self.len.load(Relaxed) as usize
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    #[inline]
     pub fn as_ptr(&self) -> *const T {
         unsafe { (self as *const Self as *const u8).offset(self.off.load(Relaxed) as isize) as *const T }
     }
 
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         let n = self.len();
         if n == 0 {
@@ -83,6 +89,7 @@ impl<T> Span<T> {
     /// # Safety
     /// The block is open, and no other thread writes these items.
     #[allow(clippy::mut_from_ref)]
+    #[inline]
     pub unsafe fn as_mut_slice(&self) -> &mut [T] {
         let n = self.len();
         if n == 0 {
