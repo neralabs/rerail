@@ -37,7 +37,7 @@ impl Scratch {
     pub fn anon(reserved: usize) -> Scratch {
         #[cfg(unix)]
         let p = unsafe {
-            libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0)
+            libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | crate::RESERVE_ONLY, -1, 0)
         };
         #[cfg(unix)]
         assert!(p != libc::MAP_FAILED, "mmap of {reserved} bytes of scratch failed");
