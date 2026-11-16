@@ -423,7 +423,7 @@ rerail status            # whether Rerail is started here, otherwise daemon/data
 rerail version           # the installed version
 rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
-rerail scan --session ID --scope repository --wait  # internal testing, experimental (RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1 for the daemon): inspect findings in Sessions
+rerail scan --session ID --scope repository --wait  # internal testing, experimental (RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1 for the daemon): findings at /api/audits?auditId=<run>, not in the dashboard
 rerail settings --session ID --mode log             # save this workspace's default
 rerail update check      # is a newer version on the channel?
 rerail update            # install it
@@ -545,6 +545,19 @@ lock however the daemon ends, `kill -9` included, so there is never a stale lock
 A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `daemon.json` no longer names.
 `rerail daemon start` prints its exit message from `daemon.log`.
 
+Within one Rerail home every build, a checkout's included, runs one daemon. The daemon holds `locks/daemon.lock` in the
+home the same way, before it opens the database or binds a port, and a second daemon started there exits with
+`Another Rerail daemon (pid …) runs in …`. The daemon checks every second that `daemon.json` holds what it wrote and
+writes the file again when it is gone or differs, so a start or a stop that finds the lock held and no `daemon.json`
+waits for it and then uses or stops that daemon, instead of starting another. It stops that check for good once its
+home was moved or removed, so a home made again at the same path never gets a `daemon.json` naming a daemon that does
+not hold it. Asking the lock loads the native engine,
+so a start or a stop asks it only when `locks/daemon.json`, the record the holder keeps beside the lock, names a process
+that runs, and on Windows only while the home's engine pipe is there too: Windows keeps a loaded engine from being
+deleted, and `rerail install --remove` stops the daemon before it removes `versions/`. Where the lock cannot be asked or
+taken (the engine does not load, or the lock file does not open), no start or stop waits on it, and the daemon runs
+without it, kept to one by its engine socket or pipe, as before the lock.
+
 </details>
 
 <details>
@@ -552,11 +565,15 @@ A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `
 
 Everything else goes through the daemon, not in-process evaluation. The Claude Code, Codex and Cursor hooks, OMP and
 Pi sessions, and `rerail events` streams (in internal testing) send events to it, starting it when it is not running,
-after a reboot too (unless `RERAIL_AUTOSTART=0`). CLI commands such as `rerail settings` and `rerail scan` (in
-internal testing) use its API.
+after a reboot too (unless `RERAIL_AUTOSTART=0`). When several of them find it down at once, one starts it: a start
+in the background first creates `autostart.claim` in the Rerail home, naming the process it launches, and the others
+leave the start to that one. The claim ends when that start ends, whether the daemon came up or not. Its launcher
+renews it every second while it runs, for 30 s at most, and a claim nothing renewed for 5 s no longer holds, so a
+launcher that was killed holds no start back, whatever process gets its pid. CLI commands such as `rerail settings` and `rerail scan` (in internal
+testing) use its API.
 
 Any other process opening the machine-wide store gets an error and a failed policy run, not a second writer.
-Development builds never take the lock and never open that store.
+Development builds never take the main-instance lock and never open that store.
 
 </details>
 
