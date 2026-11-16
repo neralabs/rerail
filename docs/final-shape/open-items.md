@@ -5306,6 +5306,16 @@ The test is ignored with this item's name until the item is answered.
 It passes again with 0286 (the request narrowed to the node's document), merged into the hub with Native-and-GPU-strata
 (2026-11-16), and is no longer ignored.
 
+Two answers built on benchmarks-on-integration (2026-11-16) and left out when it was merged into the hub, which has
+both already: a node read whose node the pushed file-local join binds goes into the helper it makes (theirs'
+`node_read_of`, 3e6665763; the hub's `node_read`, decision 0292 §3, a7c429a4a, which also pushes such a component
+whatever else would leave it), and a request the split finds cross-file widened to its file-local literals (theirs'
+`localize_requests`, efd980fe1; the hub's `requests_file_local`, decision 0286, which also unfolds a cross-file atom
+holding the node). There, B010 with C414 over ten files of the bench corpus ran without the error, eager and on
+request, and the full pack over 300 files gave the same counts on every step of the three bench shapes (M3 Max). Open:
+the same B010 with C414 run under 0286's narrowing, and B010's findings eager against on request on files where it
+finds some.
+
 ## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
 
 Status: closed by 0267 (2026-11-15). There were two causes. First, every climb (`inside`, `has`, a nearest

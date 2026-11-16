@@ -718,6 +718,36 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
     }
 }
 
+/// Phase 0's graph of a seed as an image (decision 0246): read from the shipped bundle, else `store` (the engine
+/// build's, `image_store`, opened once by the caller for all its seeds), its lease renewed; `phase0::graphs` checks it
+/// holds before it takes it.
+pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey) -> Option<Vec<u8>> {
+    let (bytes, id) = images::read(store, key)?;
+    if let (Some(store), Some(id)) = (store, id) {
+        renew_image(store, id);
+    }
+    Some(bytes.into_owned())
+}
+
+/// Keeps a graph's image (`graph_image`) where none is kept under its key yet. A seed's key names the seed, not the
+/// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
+/// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
+/// images. The shipped bundle's graphs are its library's; exported, the last derived is the one written.
+pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) -> bool {
+    use crate::content_store::write_back::{Key, Syms};
+    const WHAT: &str = "phase 0's graph of a seed";
+    images::export(key, &bytes);
+    let Some(store) = store else { return false };
+    let n = bytes.len();
+    store.write_back_unless_full(Syms::None, WHAT, n, vec![(Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
+        if store.source_by_alias(key)?.is_some() {
+            return Ok(());
+        }
+        let id = store.put_source(&bytes, &[key])?;
+        store.pin_source(id, IMAGE_OWNER, image_lease())
+    }))
+}
+
 /// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
 /// images an earlier run kept or renewed within that writes nothing (decision 0250), and an image read at least
 /// every half lease is never collected.
@@ -868,7 +898,7 @@ pub fn read_seed(src: &str) -> Result<TextRead, Error> {
         .collect();
     let seed = (!includes.is_empty() && !phase0::active()).then(|| {
         let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
-        phase0::Seed::Text { t_shape, includes }
+        phase0::Seed::Text { t_shape, includes, phases: phases_named(&statements) }
     });
     Ok(TextRead { seed, statements })
 }
@@ -954,7 +984,7 @@ fn resolve_shared(statements: Vec<syntax::Statement>) -> Result<(SharedFiles, Ve
             _ => None,
         })
         .collect();
-    let g = phase0::graph(&phase0::Seed::Text { t_shape, includes: names.iter().map(|(k, n, _)| (*k, n.clone())).collect() })?;
+    let g = phase0::graph(&phase0::Seed::Text { t_shape, includes: names.iter().map(|(k, n, _)| (*k, n.clone())).collect(), phases: phases_named(&own) })?;
     if let Some((_, at, name)) = g.missing.iter().find(|(f, _, _)| f == phase0::TEXT) {
         let line = names.iter().find(|(k, _, _)| k == at).map_or(0, |(_, _, l)| *l);
         return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
@@ -972,6 +1002,33 @@ fn resolve_shared(statements: Vec<syntax::Statement>) -> Result<(SharedFiles, Ve
 }
 
 /// Each module's statements, without its includes (the graph placed them), read off its stored tape.
+
+/// The phase programs a text's own declarations name (`<phase>__<export>`, as `phases::phase_files` reads them): not
+/// its own phase (`.phase`), a typing program's or the engine's (`typing_`, `rr_`). Phase 0 resolves them with its
+/// includes (`p0_text_phase`), so the run's rule files are listed without reading a module again (decision 0246).
+pub fn phases_named(statements: &[syntax::Statement]) -> Vec<String> {
+    let own = statements.iter().find_map(|(item, _)| match item {
+        syntax::Item::Setting { key, text } if key == "phase" => Some(text.trim().to_owned()),
+        _ => None,
+    });
+    let mut out: Vec<String> = statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Decl { name, .. } => name.split_once("__"),
+            _ => None,
+        })
+        .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("typing_") && !phase.starts_with("rr_"))
+        .map(|(phase, _)| phase.to_owned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The engine's own library programs a run is given besides its includes (`TextNames::included`), canonical.
+pub fn engine_files() -> Vec<PathBuf> {
+    ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect()
+}
 
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
 /// for a text that includes nothing, or while phase 0 itself runs.
@@ -1008,7 +1065,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
         return Ok(None);
     }
     let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
-    Ok(Some(phase0::Seed::Text { t_shape, includes: names }))
+    Ok(Some(phase0::Seed::Text { t_shape, includes: names, phases: phases_named(&statements) }))
 }
 
 /// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.

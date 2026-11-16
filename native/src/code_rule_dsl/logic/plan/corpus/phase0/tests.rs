@@ -54,7 +54,7 @@
     #[test]
     fn a_seeds_graph_is_its_own_whatever_run_derived_it() {
         let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
-        let text = super::Seed::Text { t_shape: false, includes: vec![(0, "python/env.rr".to_owned())] };
+        let text = super::Seed::Text { t_shape: false, includes: vec![(0, "python/env.rr".to_owned())], phases: Vec::new() };
         let alone = super::derive(std::slice::from_ref(&text)).unwrap().of(&text, 0);
         let seeds = vec![super::Seed::File(lib.join("python/env.rr")), super::Seed::File(lib.join("python/imports.rr")), text.clone()];
         let shared = super::derive(&seeds).unwrap();
