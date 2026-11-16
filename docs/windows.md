@@ -242,8 +242,10 @@ database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key
 each key to the spelling this version looks it up by (`currentPathKey`), or, for a key on another drive, leaves them for
 the first reader of that folder (below), so a checkout keeps its start state, its rule settings, its audit settings and
 audit, and its presentation preferences. The rows under the old spelling stay as they were, so an earlier version that
-opens the database later, after a downgrade or for a coding agent whose Rerail is still on that version, reads
-everything it read before. The step records each spelling it copied from in the table `path_key_spellings`, and this
+opens the database later, after a downgrade or for a coding agent whose Rerail is still on that version, finds each row
+it wrote where it wrote it. Its own lists show this version's copies beside its rows (a folder outside Git twice among
+the checkouts), and where it saved one folder under both spellings it reads the newer of the two rows under the stored
+spelling (below). The step records each spelling it copied from in the table `path_key_spellings`, and this
 version's lists leave the copies under those spellings out, so each folder is listed once: repositories and their
 checkouts, the checkouts above and inside one, presentation preferences, and the list of repository audits, which also
 reads where each audit ran through that table (an earlier version wrote a Git checkout's audits under the session's
@@ -283,9 +285,13 @@ session opened there as `c:\…` still finds its audit settings under that spell
 key, and the database still opens. A lookup that fails for a reason that can pass (a busy file, a share that did not
 answer) leaves the key waiting for a later open from its drive. On macOS and Linux the step reads and copies nothing.
 
-Rows an earlier version writes after the step, under a spelling the step never saw, stay under that spelling: the step
-runs once per database. Rows it writes under a spelling the step recorded update its own copies, which this version
-does not list.
+What an earlier version changes later under a spelling the step recorded reaches this version too. Triggers in the
+database (`src/engine/storage/path-key-spelling-triggers.ts`), which run inside that version's own writes, carry a start
+or a stop it makes to this version's row for the folder, and each audit setting, rule setting of the checkout,
+repository audit and presentation preference it saves, changes or deletes there, unless this version's row is newer. A
+write that leaves a row's values as they were (a session that only touches its checkout) carries nothing. Nothing goes
+the other way: an earlier version reads its own rows, as it does beside a version without the step. Rows an earlier
+version writes under a spelling the step never saw stay under that spelling: the step runs once per database.
 
 <details>
 <summary>Other places that compare Windows paths</summary>

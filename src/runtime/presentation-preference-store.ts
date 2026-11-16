@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { RerailHost } from "../engine/adapter-contract.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import {
@@ -46,14 +46,20 @@ export class SqlitePresentationPreferenceStore {
 
   /**
    * Removes the folder's preference for `host`, and the copies kept under the folder's earlier spellings for an earlier
-   * build (`pathKeySpellings`), so no build shows it after; the count is of this build's own.
+   * build (`pathKeySpellings`), so no build shows it after; the count is of this build's own. This build's row goes
+   * first: deleting an earlier spelling's row deletes this build's too (`path-key-spelling-triggers.ts`), and a row a
+   * trigger deleted first would not be counted.
    */
   remove(repository: string, host: PresentationPreference["host"]): number {
     const key = repositoryKey(repository);
     const earlier = this.#database.select({ stored: pathKeySpellings.stored }).from(pathKeySpellings).where(eq(pathKeySpellings.current, key));
-    return this.#database.delete(presentationPreferences)
-      .where(and(or(eq(presentationPreferences.repository, key), inArray(presentationPreferences.repository, earlier)), eq(presentationPreferences.host, host)))
-      .returning({ repository: presentationPreferences.repository }).all().filter(row => row.repository === key).length;
+    return this.#database.transaction(tx => {
+      const removed = tx.delete(presentationPreferences)
+        .where(and(eq(presentationPreferences.repository, key), eq(presentationPreferences.host, host))).run().changes;
+      tx.delete(presentationPreferences)
+        .where(and(inArray(presentationPreferences.repository, earlier), eq(presentationPreferences.host, host))).run();
+      return removed;
+    }, { behavior: "immediate" });
   }
 
   effective(repository: string, host: RerailHost): PresentationPresence {

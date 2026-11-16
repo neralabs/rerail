@@ -15,6 +15,7 @@ import { listRepositories, nestedCheckouts, recordCheckout } from "../../../src/
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { currentPathKey, pathKeysCanMove, readableRoots, withDriveBudget } from "../../../src/engine/storage/path-key-spelling.js";
+import { PATH_KEY_SPELLING_TRIGGER_STATEMENTS } from "../../../src/engine/storage/path-key-spelling-triggers.js";
 import { hookRerailStarted } from "../../../src/harness/index.js";
 import {
   setCheckoutStarted, SqlitePresentationPreferenceStore, startStateReader, stopRerail, workspaceStartState, type RepositorySetupIo,
@@ -54,6 +55,11 @@ vi.mock("node:worker_threads", async importOriginal => {
 });
 
 const STEP = "path-keys-as-stored";
+/** Takes the step's table and triggers out of a file this build wrote, as a file an earlier build wrote holds neither. */
+const STEP_UNDONE: ReadonlyArray<readonly [string]> = [
+  ...PATH_KEY_SPELLING_TRIGGER_STATEMENTS.map(statement => [`DROP TRIGGER IF EXISTS ${/`(\w+)`/u.exec(statement)?.[1]}`] as const),
+  ["DROP TABLE IF EXISTS path_key_spellings"],
+];
 const temporaryDirectories: string[] = [];
 /** What a test started that outlives it unless ended: a daemon's stores and engine endpoint, a `subst` drive letter. */
 const ends: Array<() => void | Promise<void>> = [];
@@ -209,7 +215,7 @@ function earlierBuildRecorded(folder: string, databasePath: string, stored: stri
     ["UPDATE audit_requests SET workspace_root = ?", stored],
     ["UPDATE presentation_preferences SET repository = ? WHERE repository <> ''", stored],
     ["DELETE FROM schema_migrations WHERE id = ?", STEP],
-    ["DROP TABLE IF EXISTS path_key_spellings"],
+    ...STEP_UNDONE,
   ]);
 }
 
@@ -349,13 +355,18 @@ function terminal(): RepositorySetupIo & { said: string[] } {
   return { lane: "terminal", said, say: text => { said.push(text); } };
 }
 
-function spellings(databasePath: string): unknown[] {
+/** `query`'s rows, read from the file as it is on a plain read-only connection. */
+function fileRows(databasePath: string, query: string, ...parameters: string[]): unknown[] {
   const client = new Database(databasePath, { readonly: true });
   try {
-    return client.prepare("SELECT stored, current FROM path_key_spellings ORDER BY stored").all();
+    return client.prepare(query).all(...parameters);
   } finally {
     client.close();
   }
+}
+
+function spellings(databasePath: string): unknown[] {
+  return fileRows(databasePath, "SELECT stored, current FROM path_key_spellings ORDER BY stored");
 }
 
 describe("path keys an earlier build stored under another spelling", () => {
@@ -379,6 +390,65 @@ describe("path keys an earlier build stored under another spelling", () => {
     openRerailDatabase(databasePath).$client.close();
 
     expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
+  });
+
+  // The step copied once, and this build went on reading the copy: a stop an earlier build sharing the file made there
+  // afterwards read as started, Steer set back read as Log, a rule set back on read as off.
+  it("carry over what an earlier build changes later under the spelling it stored, and nothing it writes unchanged", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    const later = Date.now() + 60_000;
+    // The earlier build, its own statements on its own rows: `rerail stop`, the rule back to its default, Steer in the
+    // touched-files scope, the status line back to compact, and `rerail scrub` cleaning the repository audit's error.
+    write(databasePath, [
+      ["UPDATE checkouts SET started = 0 WHERE checkout_path = ?", stored],
+      ["DELETE FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ?", stored],
+      [`INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, '{"scope":"touched-files","mode":"steer"}', ${later})
+        ON CONFLICT (workspace_root) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at`, stored],
+      [`INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'compact')
+        ON CONFLICT (repository, host) DO UPDATE SET presence = excluded.presence`, stored],
+      ["UPDATE repository_audits SET status = 'failed', error = 'cleaned' WHERE workspace_root = ?", stored],
+    ]);
+
+    expect(recordsAt(folder, databasePath)).toMatchObject({
+      startState: "stopped", settings: [], auditSettings: { scope: "touched-files", mode: "steer" }, presence: "compact",
+      repositoryAuditList: [{ workspaceRoot: folder, status: "failed" }],
+    });
+    expect(fileRows(databasePath, "SELECT error FROM repository_audits WHERE workspace_root = ?", folder)).toEqual([{ error: "cleaned" }]);
+
+    // This build starts the checkout again and sets Log; the earlier build then records a session there, which touches
+    // its row, and saves the audit settings it holds as they were: neither undoes what this build set.
+    write(databasePath, [
+      ["UPDATE checkouts SET started = 1 WHERE checkout_path = ?", folder],
+      [`UPDATE audit_settings SET settings_json = '{"scope":"ai-output","mode":"log"}', updated_at = ${later + 1} WHERE workspace_root = ?`, folder],
+      [`UPDATE checkouts SET last_seen_at = ${later + 2} WHERE checkout_path = ?`, stored],
+      [`UPDATE audit_settings SET updated_at = ${later + 2} WHERE workspace_root = ?`, stored],
+    ]);
+
+    expect(recordsAt(folder, databasePath)).toMatchObject({ startState: "started", auditSettings: { scope: "ai-output", mode: "log" } });
+    expect(earlierBuildReads(databasePath, stored)).toMatchObject({
+      started: { started: 0 }, setting: undefined, auditSettings: { mode: "steer" }, presence: { presence: "compact" },
+    });
+  });
+
+  // 0.1.4 keys a folder outside Git by the folder as its session spelt it. After the step, a stop it made there read as
+  // started here, where a build without the step read it stopped: it counts the earlier row as the folder's container.
+  it.runIf(process.platform === "win32")("carry, on Windows, a stop an earlier build makes later in a folder outside Git it stored in another case", async () => {
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+    vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
+    const { folder, databasePath } = await checkoutFolder({ git: false });
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder).replace(/^[A-Z]:/u, drive => drive.toLowerCase());
+    earlierBuildRecorded(folder, databasePath, stored);
+    expect(workspaceStartState(folder, databasePath)).toBe("started");
+
+    write(databasePath, [["UPDATE checkouts SET started = 0 WHERE checkout_path = ?", stored]]);
+
+    expect([workspaceStartState(folder, databasePath), workspaceStartState(stored, databasePath)]).toEqual(["stopped", "stopped"]);
   });
 
   it("merge with rows this build already wrote for the folder: the newer row stays, and the start state is kept", async () => {
@@ -662,7 +732,7 @@ describe("path keys an earlier build stored under another spelling", () => {
     write(databasePath, [
       [`INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, '{"scope":"repository","mode":"log"}', 1)`, stored],
       ["DELETE FROM schema_migrations WHERE id = ?", STEP],
-      ["DROP TABLE IF EXISTS path_key_spellings"],
+      ...STEP_UNDONE,
     ]);
     for (let open = 0; open < 100; open += 1) openRerailDatabase(databasePath).$client.close();
 
@@ -794,8 +864,14 @@ describe("path keys an earlier build stored under another spelling", () => {
 
   it("keep their spelling outside Windows, where the realpath did not change", async () => {
     const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
-    expect(actual.currentPathKey("/no/such/Folder", "linux")).toBe("/no/such/Folder");
-    expect(actual.currentPathKey("/no/such/Folder", "darwin")).toBe("/no/such/Folder");
+    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-key-spelling-")));
+    temporaryDirectories.push(root);
+    // A folder that is there, reached through a link: on Windows its key moves to the folder the link names.
+    mkdirSync(join(root, "real", "here"), { recursive: true });
+    symlinkSync(join(root, "real"), join(root, "link"), "junction");
+    const linked = join(root, "link", "here");
+
+    expect(["linux", "darwin"].map(platform => actual.currentPathKey(linked, platform as NodeJS.Platform))).toEqual([linked, linked]);
   });
 
   // The start-state check copied through a writable open that waited up to 5 s for another writer's lock, then threw

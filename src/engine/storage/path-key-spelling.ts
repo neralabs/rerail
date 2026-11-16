@@ -4,8 +4,9 @@
  * Git as it was typed), and this build looks each folder up by the spelling the file system stores. Without the copy, a
  * checkout's start state and settings, its audit settings and audit, and its presentation preferences read as unset
  * after the update. The rows under the earlier spelling stay as they were, so an earlier build that shares the file
- * (after a downgrade, or a coding agent's hooks from an older install) still reads all of them; `path_key_spellings`
- * records each spelling that moved, which this build's lists leave out (`notAnEarlierSpelling` in `schema.ts`). The
+ * (after a downgrade, or a coding agent's hooks from an older install) still reads all of them, and what it changes there
+ * later reaches the copies through triggers (`path-key-spelling-triggers.ts`); `path_key_spellings` records each
+ * spelling that moved, which this build's lists leave out (`notAnEarlierSpelling` in `schema.ts`). The
  * `path-keys-as-stored` step (`migrations.ts`) runs it once per file, on Windows only: it reads the keys and looks each
  * up before the open takes the write lock (`lookUpPathKeys`), then, under the lock, writes a few rows per moved folder
  * (`respellPathKeys`). It never rewrites the audit history, and no lookup on disk runs under the lock. An open looks up

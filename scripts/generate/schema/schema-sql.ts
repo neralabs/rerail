@@ -28,6 +28,7 @@ import {
   steerFeedback,
   workLinks,
   AUDIT_HISTORY_TRIGGER_STATEMENTS,
+  PATH_KEY_SPELLING_TRIGGER_STATEMENTS,
   auditRuleSetRules,
   auditRuleSets,
   auditRuleSetUses,
@@ -41,7 +42,9 @@ export const SCHEMA_SQL_PATH = resolve(fileURLToPath(import.meta.url), "..", "..
 
 /**
  * Render the DDL for the Drizzle tables in `src/engine/storage/schema.ts`, then the triggers that keep the derived
- * audit history in step (`audit-history.ts`), as an idempotent statement list applied verbatim on every open.
+ * audit history in step (`audit-history.ts`) and those that carry an earlier build's writes under a folder spelling it
+ * stored over to this build's key (`path-key-spelling-triggers.ts`), as an idempotent statement list applied verbatim
+ * on every open.
  */
 export async function renderRerailSchemaStatements(): Promise<string[]> {
   const empty = await generateSQLiteDrizzleJson({});
@@ -89,6 +92,7 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
         .replace(/;$/u, ""),
     ),
     ...AUDIT_HISTORY_TRIGGER_STATEMENTS,
+    ...PATH_KEY_SPELLING_TRIGGER_STATEMENTS,
   ];
 }
 
