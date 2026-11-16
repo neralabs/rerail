@@ -83,15 +83,6 @@ function needleCatalog() {
   })]);
 }
 
-/** Holds `evaluator` in its open until `gate` settles, as a slow open (compiling its rules, say) would. A gate that rejects fails the open. */
-function heldOpen(evaluator: NativeCodeRuleEnforcer, gate: Promise<void>): void {
-  const open = evaluator.openWorkspace.bind(evaluator);
-  evaluator.openWorkspace = async sessionId => {
-    await gate;
-    await open(sessionId);
-  };
-}
-
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -363,8 +354,7 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "turn", cwd: root };
     try {
       const start = runtime.ingest({ kind: "session-start", eventId: "start", session });
-      // The evaluator opens without waiting for its attach, so the repository audit's workspace may follow at once.
-      await vi.waitFor(() => expect(attachments.workspaces.length).toBeGreaterThanOrEqual(1));
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
       attachments.workspaces[0]!.release();
       await start;
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
@@ -407,7 +397,7 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "closing", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      await vi.waitFor(() => expect(attachments.workspaces.length).toBeGreaterThanOrEqual(1));
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
       attachments.workspaces[0]!.release();
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
       let closed = false;
@@ -571,7 +561,7 @@ describe("source-scoped steers", () => {
     }
   });
 
-  it("checks a tool call's edit at its result while the session's content store is still attaching", async () => {
+  it("starts a session before its evaluator opens, and answers a tool call at once without code rules", async () => {
     const root = await realpath(await temporaryDirectory());
     const databasePath = join(root, "rerail.sqlite");
     const attachments = gateStorageAttachments();
@@ -579,28 +569,25 @@ describe("source-scoped steers", () => {
       storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
       createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
     });
-    const reader = new SqliteSessionReader(databasePath);
     const session = { host: "omp" as const, sessionId: "early", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      // The session has started; its evaluator's content store is still waiting to attach.
+      // The session has started; its evaluator is still waiting to attach storage.
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
       expect(await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: session.sessionId, text: "edit it" })).toEqual([]);
-      // The evaluator opened with its rules: the call is begun, so its edit is checked when its result arrives.
+      // The call does not wait for the evaluator, so its edit is not checked when its result arrives either.
       expect(await runtime.ingest({
         kind: "call", eventId: "call", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", input: { path: "edited.py" },
       })).toEqual([]);
+      attachments.workspaces[0]!.release();
+      await runtime.codeRulesOpened(session.sessionId);
       await writeFile(join(root, "edited.py"), "NEEDLE\n");
-      // The check waits for the attach, which ends while the result waits for it.
-      setTimeout(() => attachments.workspaces[0]!.release(), 50);
       expect(await runtime.ingest({
         kind: "result", eventId: "result", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
-      })).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
-      expect(reader.events(session.sessionId).filter(event => event.kind === "code-rules-pending")).toEqual([]);
+      })).toEqual([]);
     } finally {
-      reader.close();
       for (const workspace of attachments.workspaces) workspace.release();
       attachments.restore();
       await runtime.dispose();
@@ -650,7 +637,6 @@ describe("source-scoped steers", () => {
     const attachments = gateStorageAttachments();
     const evaluators: NativeCodeRuleEnforcer[] = [];
     const firstClosed = Promise.withResolvers<void>();
-    const firstOpening = Promise.withResolvers<void>();
     const runtime = new RerailRuntime({
       storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
       createAuditor: options => {
@@ -658,7 +644,6 @@ describe("source-scoped steers", () => {
         if (evaluators.length === 0) {
           const close = evaluator.close.bind(evaluator);
           evaluator.close = async (...args) => { await close(...args); firstClosed.resolve(); };
-          heldOpen(evaluator, firstOpening.promise);
         }
         evaluators.push(evaluator);
         return evaluator;
@@ -668,18 +653,19 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "reopened", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start-1", session });
-      // The first evaluator is still held in its open: the session closes and its id starts again.
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
+      // The first evaluator is still held in its storage attach: the session closes and its id starts again.
       await runtime.closeSession(session.sessionId);
       await runtime.ingest({ kind: "session-start", eventId: "start-2", session });
-      // The second session's evaluator has opened and its repository audit's workspace waits for the gate.
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
+      attachments.workspaces[1]!.release();
+      // The second session's evaluator has opened and its repository audit waits for the gate.
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(3));
+      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
       attachments.workspaces[0]!.release();
-      await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits)
-        .toEqual([expect.objectContaining({ scope: "repository", status: "running" })]));
-      firstOpening.resolve();
       await firstClosed.promise;
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
-      attachments.workspaces[1]!.release();
+      attachments.workspaces[2]!.release();
       await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
         expect.objectContaining({ scope: "repository", status: "completed" }),
       ]));
@@ -710,7 +696,6 @@ describe("source-scoped steers", () => {
     const databasePath = join(root, "rerail.sqlite");
     const attachments = gateStorageAttachments();
     const firstClosed = Promise.withResolvers<void>();
-    const firstOpening = Promise.withResolvers<void>();
     let created = 0;
     const runtimeOptions = {
       storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
@@ -719,7 +704,6 @@ describe("source-scoped steers", () => {
         if (created++ === 0) {
           const close = evaluator.close.bind(evaluator);
           evaluator.close = async (...args) => { await close(...args); firstClosed.resolve(); };
-          heldOpen(evaluator, firstOpening.promise);
         }
         return evaluator;
       },
@@ -731,18 +715,19 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "reopened-elsewhere", cwd: root };
     try {
       await first.ingest({ kind: "session-start", eventId: "start-1", session });
-      // The first evaluator is still held in its open; its runtime closes the session without waiting for it.
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
+      // The first evaluator is still held in its storage attach; its runtime closes the session without waiting for it.
       await first.closeSession(session.sessionId);
       await second.ingest({ kind: "session-start", eventId: "start-2", session });
-      // The second runtime's evaluator has opened and its repository audit's workspace waits for the gate.
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
+      attachments.workspaces[1]!.release();
+      // The second runtime's evaluator has opened and its repository audit waits for the gate.
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(3));
+      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
       attachments.workspaces[0]!.release();
-      await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits)
-        .toEqual([expect.objectContaining({ scope: "repository", status: "running" })]));
-      firstOpening.resolve();
       await firstClosed.promise;
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
-      attachments.workspaces[1]!.release();
+      attachments.workspaces[2]!.release();
       await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
         expect.objectContaining({ scope: "repository", status: "completed" }),
       ]));
@@ -755,40 +740,21 @@ describe("source-scoped steers", () => {
     }
   });
 
-  describe("a code-rule boundary reached while the evaluator is still opening", () => {
-    /**
-     * A runtime whose first evaluator is held in its open (compiling its rules, say) until `open()`, or fails to open at
-     * `fail()`. After `holdRelease()` the evaluator's close waits for the function it returns; `releasing` settles once
-     * a close has begun.
-     */
-    async function openingFixture(host: RerailHost = "claude-code") {
+  describe("a code-rule boundary reached while the evaluator is still opening (indexing)", () => {
+    /** A runtime whose first evaluator is held in its storage attach. */
+    async function openingFixture() {
       const root = await realpath(await temporaryDirectory());
       const databasePath = join(root, "rerail.sqlite");
-      const opening = Promise.withResolvers<void>();
-      // `fail()` may come before the open reaches its hold: the hold still fails, and the rejection is not unhandled.
-      opening.promise.catch(() => undefined);
-      const releasing = Promise.withResolvers<void>();
-      let releaseHold: Promise<void> = Promise.resolve();
-      let letGo = (): void => undefined;
+      const attachments = gateStorageAttachments();
       const runtime = new RerailRuntime({
         storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
-        createAuditor: options => {
-          const evaluator = new NativeCodeRuleEnforcer(needleCatalog(), options);
-          heldOpen(evaluator, opening.promise);
-          const close = evaluator.close.bind(evaluator);
-          evaluator.close = async (...args) => {
-            releasing.resolve();
-            await releaseHold;
-            await close(...args);
-          };
-          return evaluator;
-        },
+        createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
       });
       const audits = new SqliteAuditStore(databasePath);
       const reader = new SqliteSessionReader(databasePath);
-      const session = { host, sessionId: "slow-open", cwd: root };
+      const session = { host: "omp" as const, sessionId: "slow-open", cwd: root };
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      const pending = () => reader.events(session.sessionId).filter(event => event.kind === "code-rules-pending").map(event => event.payload);
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
       const call = (toolCallId: string) => runtime.ingest({
         kind: "call", eventId: `call-${toolCallId}`, sessionId: session.sessionId, toolCallId, toolName: "write", input: { path: "edited.py" },
       });
@@ -805,204 +771,45 @@ describe("source-scoped steers", () => {
         return delivered;
       };
       const close = async () => {
-        opening.resolve();
-        letGo();
+        for (const workspace of attachments.workspaces) workspace.release();
+        attachments.restore();
         await runtime.dispose();
         audits.close();
         reader.close();
       };
-      const holdRelease = () => {
-        const held = Promise.withResolvers<void>();
-        releaseHold = held.promise;
-        letGo = () => held.resolve();
-        return letGo;
-      };
-      return {
-        root, session, audits, pending, call, result, steers, runtime, close, holdRelease, releasing: releasing.promise,
-        open: () => opening.resolve(),
-        fail: () => opening.reject(new Error("the rules cannot compile")),
-      };
-    }
-    const needleSteer = expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") });
-
-    /** A tool call answered at once, while the evaluator is still held in its open: it never waits for it. */
-    async function callAtOnce(test: Awaited<ReturnType<typeof openingFixture>>): Promise<void> {
-      const started = performance.now();
-      expect(await test.call("write")).toEqual([]);
-      expect(performance.now() - started).toBeLessThan(500);
+      return { root, session, attachments, audits, reader, call, result, steers, runtime, close };
     }
 
-    it("answers a tool call at once, and checks its edit at its result once the evaluator has opened", async () => {
+    it("is answered at once without code rules and recorded in the session's history", async () => {
       const test = await openingFixture();
       try {
-        await callAtOnce(test);
+        // The evaluator never opens in this stretch: each boundary answers on its own, without waiting for it.
+        expect(await test.call("write")).toEqual([]);
         await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        // The evaluator opens while the result waits for it.
-        setTimeout(test.open, 100);
-        expect(await test.result("write")).toEqual([needleSteer]);
-        expect(test.pending()).toEqual([]);
-      } finally { await test.close(); }
-    });
-
-    it("in OMP has a tool result wait for the evaluator as long as it waits for a check, past a hook's wait", async () => {
-      const test = await openingFixture("omp");
-      try {
-        await callAtOnce(test);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        // Later than the 1 s a Claude Code hook would wait, well inside the 10 s an OMP tool result waits for a check.
-        setTimeout(test.open, 1_500);
-        expect(await test.result("write")).toEqual([needleSteer]);
-        expect(test.pending()).toEqual([]);
-      } finally { await test.close(); }
-    });
-
-    it("answers a result past its wait without code rules, records it, and checks the call's edit once the evaluator opens", async () => {
-      const test = await openingFixture();
-      try {
-        await callAtOnce(test);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        const resultStarted = performance.now();
         expect(await test.result("write")).toEqual([]);
-        const turnStarted = performance.now();
         expect(await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: test.session.sessionId, text: "done" })).toEqual([]);
-        // The result waits a hook's 1 s once; the turn end after it does not wait again.
-        expect(turnStarted - resultStarted).toBeLessThan(1_500);
-        expect(performance.now() - turnStarted).toBeLessThan(500);
-        // The call is not among them: it is begun once the evaluator opens.
-        expect(test.pending()).toEqual([{ boundary: "result" }, { boundary: "turn-end" }]);
+        expect(test.reader.events(test.session.sessionId).filter(event => event.kind === "code-rules-pending").map(event => event.payload))
+          .toEqual([{ boundary: "call" }, { boundary: "result" }, { boundary: "turn-end" }]);
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual([]);
-        test.open();
-        // Opened: the call is begun with what its file held before it ran, and its edit checked; the steer comes next.
-        expect(await test.steers()).toEqual([needleSteer]);
+        test.attachments.workspaces[0]!.release();
+        // Opened: the call it answered is not begun or finished late. The evaluator's first walk still sees the file
+        // changed while it ran, and the call's window, opened as it was answered, makes the change the session's own.
+        expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
+
       } finally { await test.close(); }
     });
 
-    it("checks, once the evaluator opens, a Claude Code edit whose call came after its tool ran, by what its result says", async () => {
+    it("does not check at its result the edit of a call it answered while indexing, even once the evaluator has opened", async () => {
       const test = await openingFixture();
       try {
-        const sessionId = test.session.sessionId;
-        const path = join(test.root, "edited.py");
-        // A daemon too busy to answer the hook in time takes the call up once the Write has made the file.
-        await writeFile(path, "NEEDLE\n");
-        const input = { file_path: path, content: "NEEDLE\n" };
-        expect(await test.runtime.ingest({ kind: "call", eventId: "call-late", sessionId, toolCallId: "late", toolName: "Write", input })).toEqual([]);
-        const output = { type: "create", filePath: path, content: "NEEDLE\n", structuredPatch: [] };
-        expect(await test.runtime.ingest({ kind: "result", eventId: "result-late", sessionId, toolCallId: "late", toolName: "Write", output })).toEqual([]);
-        test.open();
-        expect(await test.steers()).toEqual([needleSteer]);
-      } finally { await test.close(); }
-    });
-
-    it("checks at its result the edit of a call answered while the evaluator opened, once it has opened", async () => {
-      const test = await openingFixture();
-      try {
-        await callAtOnce(test);
-        test.open();
-        await test.runtime.codeRulesOpened(test.session.sessionId);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        expect(await test.result("write")).toEqual([needleSteer]);
-        expect(test.pending()).toEqual([]);
-      } finally { await test.close(); }
-    });
-
-    it("records a tool call made while the evaluator opened when it then fails to open", async () => {
-      const test = await openingFixture();
-      try {
-        setTimeout(test.fail, 50);
         expect(await test.call("write")).toEqual([]);
+        test.attachments.workspaces[0]!.release();
         await test.runtime.codeRulesOpened(test.session.sessionId);
-        await vi.waitFor(() => expect(test.pending()).toEqual([{ boundary: "call" }]));
-      } finally { await test.close(); }
-    });
-
-    it("records a tool call made while an evaluator that failed to open is still being released", async () => {
-      const test = await openingFixture();
-      try {
-        const letGo = test.holdRelease();
-        test.fail();
-        // The session has let go of the failed evaluator's bridge, and the open has not settled: its release is held.
-        await test.releasing;
-        expect(await test.call("write")).toEqual([]);
-        letGo();
-        await test.runtime.codeRulesOpened(test.session.sessionId);
-        await vi.waitFor(() => expect(test.pending()).toEqual([{ boundary: "call" }]));
-      } finally { await test.close(); }
-    });
-
-    it("records a result that waited for an evaluator whose open then failed, and the call it went on without", async () => {
-      const test = await openingFixture();
-      try {
-        await callAtOnce(test);
         await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        setTimeout(test.fail, 100);
         expect(await test.result("write")).toEqual([]);
-        await vi.waitFor(() => expect(test.pending()).toEqual([{ boundary: "call" }, { boundary: "result" }]));
       } finally { await test.close(); }
     });
-
-    it("gives a result one cap for its wait for the evaluator and its edit check", async () => {
-      const attachments = gateStorageAttachments();
-      const test = await openingFixture();
-      try {
-        await callAtOnce(test);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        // The evaluator opens 600 ms on, and the edit's check then waits for its held content store attach.
-        setTimeout(test.open, 600);
-        const started = performance.now();
-        expect(await test.result("write")).toEqual([]);
-        // What the open left of a hook's 1 s, not 1 s more.
-        expect(performance.now() - started).toBeLessThan(1_400);
-        for (const workspace of attachments.workspaces) workspace.release();
-        // Checked all the same: the steer comes at the next step.
-        expect(await test.steers()).toEqual([needleSteer]);
-      } finally {
-        for (const workspace of attachments.workspaces) workspace.release();
-        attachments.restore();
-        await test.close();
-      }
-    }, 30_000);
   });
-
-  it("checks, once an OMP session reopens, a call begun before a restart whose result came while it reopened and outlasted its wait", async () => {
-    const root = await realpath(await temporaryDirectory());
-    const options = {
-      storageRoot: join(root, "sessions"), databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, autostart: false,
-      embedder: testEmbedder,
-    };
-    const session = { host: "omp" as const, sessionId: "reopened-past-wait", cwd: root };
-    // The call is begun by a runtime the daemon's restart then ends.
-    const first = new RerailRuntime({ ...options, createAuditor: auditorOptions => new NativeCodeRuleEnforcer(needleCatalog(), auditorOptions) });
-    await first.ingest({ kind: "session-start", eventId: "start", session });
-    await first.codeRulesOpened(session.sessionId);
-    await first.ingest({ kind: "call", eventId: "call", sessionId: session.sessionId, toolCallId: "write", toolName: "write", input: { path: "edited.py" } });
-    await first.dispose();
-    await writeFile(join(root, "edited.py"), "NEEDLE\n");
-    const opening = Promise.withResolvers<void>();
-    const second = new RerailRuntime({
-      ...options,
-      createAuditor: auditorOptions => {
-        const evaluator = new NativeCodeRuleEnforcer(needleCatalog(), auditorOptions);
-        heldOpen(evaluator, opening.promise);
-        return evaluator;
-      },
-    });
-    try {
-      // The result reopens the session, whose evaluator opens only 10.5 s on, past the 10 s an OMP result waits.
-      setTimeout(opening.resolve, 10_500);
-      expect(await second.ingest({
-        kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "write", toolName: "write", output: "written",
-      })).toEqual([]);
-      await second.codeRulesOpened(session.sessionId);
-      // Checked against what its file held before the restart: the steer comes at the next step.
-      await vi.waitFor(async () => {
-        const delivered = await second.ingest({ kind: "user-prompt", eventId: `poll-${Math.random()}`, sessionId: session.sessionId, text: "continue" });
-        expect(delivered).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
-      }, { timeout: 15_000 });
-    } finally {
-      opening.resolve();
-      await second.dispose();
-    }
-  }, 40_000);
 
   describe("a Claude Code session reopened while its rules open again", () => {
     it("waits at its first tool call for its rules, so the edit's steer rides its own result", async () => {

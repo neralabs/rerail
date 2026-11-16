@@ -618,8 +618,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #workspaceEvaluations = new Map<NativeCodeRuleDslWorkspace, Evaluation>();
   /** The `package` (as JSON, `null` for none) of each ECMA source `#apply` gave a workspace, by path. */
   readonly #workspacePackages = new Map<NativeCodeRuleDslWorkspace, Map<string, string>>();
-  /** What each workspace's applies wait for: its storage attach, or the session's end, whichever comes first. */
-  readonly #workspaceStorage = new Map<NativeCodeRuleDslWorkspace, Promise<unknown>>();
+  readonly #workspaceStorage = new Map<NativeCodeRuleDslWorkspace, Promise<boolean>>();
   readonly #pending = new Map<string, StoredEdit>();
   readonly #applied = new Map<string, StoredEdit>();
   readonly #readFailures = new Map<string, AuditFailure>();
@@ -655,8 +654,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #pump: Promise<void> | undefined;
   #busy = false;
   #closing = false;
-  /** Settles as `#closing` turns true, so work waiting on the native engine (a store attach) stops waiting. */
-  readonly #interrupted = Promise.withResolvers<void>();
   #closed = false;
   readonly #scopeAudits = new Set<Promise<unknown>>();
   readonly #generatedEditAudits = new Set<Promise<unknown>>();
@@ -804,42 +801,29 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
 
-  /**
-   * Open once the catalog's code rules are registered in a new workspace: a boundary waiting for the evaluator waits for
-   * its rules alone. The content store attaches behind it, off the JS thread, as a replacement's does: the first apply
-   * waits for the attach (`#nextRevision`), and an attach that fails closes the workspace and records why, as a failed
-   * open does.
-   */
   async openWorkspace(sessionId: string): Promise<void> {
     if (this.#sessionId !== undefined || this.#closing)
       throw new Error("Executable policy enforcer cannot be reopened");
     this.#sessionId = sessionId;
     this.#reportQuarantined();
-    const prepared = this.#openingWorkspace();
-    if (prepared === undefined) return;
-    this.#workspace = prepared;
-    // A workspace a newer catalog replaced meanwhile was disposed with its attach, and one the session's end closed has
-    // nothing left to check: neither is closed again or recorded as failing.
-    void prepared.storage.catch((error: unknown) => {
-      if (this.#workspace !== prepared || this.#closing) return;
-      this.#disposeWorkspace(prepared.workspace);
-      this.#workspace = undefined;
-      this.#recordOpenFailure(error);
-    });
-  }
-
-  /** The workspace the evaluator opens with, or undefined once why it could not be made is recorded. */
-  #openingWorkspace(): PreparedWorkspace | undefined {
+    let prepared: PreparedWorkspace | undefined;
     try {
-      return this.#prepareWorkspace();
+      prepared = this.#prepareWorkspace();
+      this.#workspace = prepared;
+      await prepared.storage;
     } catch (error) {
-      this.#recordOpenFailure(error);
-      return undefined;
+      if (prepared !== undefined && this.#workspace === prepared) {
+        this.#disposeWorkspace(prepared.workspace);
+        this.#workspace = undefined;
+      }
+      this.#recordImmediate(
+        this.#scope,
+        this.#mode,
+        0,
+        [],
+        [failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate")],
+      );
     }
-  }
-
-  #recordOpenFailure(error: unknown): void {
-    this.#recordImmediate(this.#scope, this.#mode, 0, [], [failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate")]);
   }
 
   updateSettings(settings: Required<AuditSettings>): void {
@@ -1004,7 +988,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], null);
     }
     this.#closing = true;
-    this.#interrupted.resolve();
     if (this.#sessionId !== undefined) {
       if (options?.interruptAudits === false) this.#interruptOwnAudits();
       else this.#record(() => this.#audits.interrupt(this.#sessionId!));
@@ -1097,11 +1080,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
     // Observed by every apply and by the owner of the workspace; never an unhandled rejection meanwhile.
     storage.catch(() => undefined);
-    // Raced once per workspace, not once per apply: a race per apply would leave a reaction on the session's end for
-    // every edit the session makes.
-    const attachedOrEnded = Promise.race([storage, this.#interrupted.promise]);
-    attachedOrEnded.catch(() => undefined);
-    this.#workspaceStorage.set(workspace, attachedOrEnded);
+    this.#workspaceStorage.set(workspace, storage);
     this.#workspaceRevisions.set(workspace, 0);
     this.#workspaceEvaluations.set(workspace, emptyEvaluation());
     this.#workspacePackages.set(workspace, new Map());
@@ -1998,13 +1977,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     throw new Error("Policy execution interrupted by session closure");
   }
 
-  /**
-   * The revision `workspace`'s next apply takes, recorded as its current one once its storage is attached. A session
-   * that ends during the attach does not wait for it: the apply stops, and its edit's audit was ended as interrupted.
-   */
+  /** The revision `workspace`'s next apply takes, recorded as its current one once its storage is attached. */
   async #nextRevision(workspace: NativeCodeRuleDslWorkspace): Promise<number> {
     await this.#workspaceStorage.get(workspace);
-    if (this.#closing) throw new Error("Policy execution interrupted by session closure");
     const current = this.#workspaceRevisions.get(workspace);
     // A workspace disposed meanwhile (a superseded replacement) must not be revived in the revision map.
     if (current === undefined) throw new Error("Policy workspace was disposed");
