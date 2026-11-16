@@ -3130,57 +3130,97 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         }
         fused_exit = Some(fdone);
         let (go, table, on) = (f.create_block(), f.create_block(), f.create_block());
-        // By the entry's bits where they name these rules (`TOKEN_FUSED_*`): a bit test, no
-        // compare of the rule, which a compiler would make one switch with the table's.
-        let (is_n, is_r, either) = if t.fused == Some((kn, kr)) {
-            let bit = |f: &mut FunctionBuilder<'_>, b: i64| {
-                let x = f.ins().band_imm(entry, 1 << b);
-                f.ins().icmp_imm(IntCC::NotEqual, x, 0)
-            };
-            let (n, r) = (bit(f, TOKEN_FUSED_PAIR), bit(f, TOKEN_FUSED_RUN));
-            let x = f.ins().band_imm(entry, 1 << TOKEN_FUSED_PAIR | 1 << TOKEN_FUSED_RUN);
-            (n, r, x)
-        } else {
-            let rule = rule_in(f, entry);
-            let n = f.ins().icmp_imm(IntCC::Equal, rule, kn as i64);
-            let r = f.ins().icmp_imm(IntCC::Equal, rule, kr as i64);
-            (n, r, f.ins().bor(n, r))
-        };
-        f.ins().brif(either, go, &[], table, &[]);
-        f.switch_to_block(go);
-        // The pair's second byte: the block's pair word's bit (`PAIR_WORD`), as the lean
-        // lexer's; else the table's row for the next byte.
-        let l_n = match reg_of(PAIR_WORD) {
-            Some(w) => {
-                let bit = f.ins().ushr(w, sh);
-                let bit = f.ins().band_imm(bit, 1);
-                f.ins().iadd(s, bit)
-            }
-            None => next_last(f, t, c, s, raw, entry, pi),
-        };
-        // The run from `s + 1` in the block's word, by two shifts (none past the block): whole
-        // where it ends inside the block, as the lean lexer's `run`.
-        let v = reg_of(o).expect("a register word");
-        let y = f.ins().ushr(v, sh);
-        let y = f.ins().ushr_imm(y, 1);
-        let y = f.ins().bnot(y);
-        let ones = f.ins().ctz(y);
-        let to = f.ins().iadd(sh, ones);
-        let past = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, to, 63);
-        let l_r = f.ins().iadd(s, ones);
-        let slow = f.ins().band(is_r, past);
-        f.ins().brif(slow, blocks[kr], &[], on, &[]);
-        f.switch_to_block(on);
-        // The tests' blocks first (`tested` is built from an empty block), then the select.
         let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = r.checks.iter().zip(&t.filters).filter(|(x, _)| usize::from(x.rule) == kn || usize::from(x.rule) == kr).map(|(x, &b)| (*x, b)).collect();
-        let l_sel;
-        if tests.is_empty() {
-            l_sel = f.ins().select(is_n, l_n, l_r);
-            f.ins().jump(fdone, &[l_sel.into(), nohits.into(), untag.into(), nohits.into()]);
+        // The token's last, made in `on` after the tests' blocks (`tested` is built from an
+        // empty block), on to the tests or the exit.
+        let finish = |f: &mut FunctionBuilder<'_>, last: &dyn Fn(&mut FunctionBuilder<'_>) -> Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| {
+            if tests.is_empty() {
+                let l = last(f);
+                f.ins().jump(fdone, &[l.into(), nohits.into(), untag.into(), nohits.into()]);
+            } else {
+                let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], 1, None, None, heads);
+                let l = last(f);
+                f.ins().jump(to, &[l.into(), untag.into(), nohits.into()]);
+            }
+        };
+        let pair_word = reg_of(PAIR_WORD);
+        let v = reg_of(o).expect("a register word");
+        if let (Some(pw), Some(_), true) = (pair_word, t.lean, t.fused == Some((kn, kr))) {
+            // The lean lexer's starts (`lean_starts`): a run token's first byte is a run byte, a
+            // pair's is not, and the pair word is set at a pair's first byte alone. Then the
+            // token's length is lean's `words.max(n1)`: the run from its first byte (none at a
+            // pair's), and 1 or, at the pair word's bit, 2. One branch, to the run rule's block
+            // where the run reaches the block's end (lean's `at + words == 64`), or to the rules'
+            // table where the entry names neither rule.
+            let either = f.ins().band_imm(entry, 1 << TOKEN_FUSED_PAIR | 1 << TOKEN_FUSED_RUN);
+            let y = f.ins().ushr(v, sh);
+            let y = f.ins().bnot(y);
+            let words = f.ins().ctz(y);
+            let to = f.ins().iadd(sh, words);
+            // The common way first, the run past the block after it (its code laid out after the
+            // loop's, as `word_end`'s byte loop is after lean's run loop).
+            let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, to, 64);
+            if side == Side::Fused {
+                // The table is the run rule's block alone (`only`).
+                let named = f.ins().icmp_imm(IntCC::NotEqual, either, 0);
+                let fast = f.ins().band(inside, named);
+                f.ins().brif(fast, on, &[], table, &[]);
+            } else {
+                f.ins().brif(either, go, &[], table, &[]);
+                f.switch_to_block(go);
+                f.ins().brif(inside, on, &[], blocks[kr], &[]);
+            }
+            f.switch_to_block(on);
+            finish(f, &|f: &mut FunctionBuilder<'_>| {
+                let bit = f.ins().ushr(pw, sh);
+                let bit = f.ins().band_imm(bit, 1);
+                let n1 = f.ins().iadd_imm(bit, 1);
+                let len = f.ins().umax(words, n1);
+                let end = f.ins().iadd(s, len);
+                f.ins().iadd_imm(end, -1)
+            }, heads);
         } else {
-            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], 1, None, None, heads);
-            l_sel = f.ins().select(is_n, l_n, l_r);
-            f.ins().jump(to, &[l_sel.into(), untag.into(), nohits.into()]);
+            // By the entry's bits where they name these rules (`TOKEN_FUSED_*`): a bit test, no
+            // compare of the rule, which a compiler would make one switch with the table's.
+            let (is_n, is_r, either) = if t.fused == Some((kn, kr)) {
+                let bit = |f: &mut FunctionBuilder<'_>, b: i64| {
+                    let x = f.ins().band_imm(entry, 1 << b);
+                    f.ins().icmp_imm(IntCC::NotEqual, x, 0)
+                };
+                let (n, r) = (bit(f, TOKEN_FUSED_PAIR), bit(f, TOKEN_FUSED_RUN));
+                let x = f.ins().band_imm(entry, 1 << TOKEN_FUSED_PAIR | 1 << TOKEN_FUSED_RUN);
+                (n, r, x)
+            } else {
+                let rule = rule_in(f, entry);
+                let n = f.ins().icmp_imm(IntCC::Equal, rule, kn as i64);
+                let r = f.ins().icmp_imm(IntCC::Equal, rule, kr as i64);
+                (n, r, f.ins().bor(n, r))
+            };
+            f.ins().brif(either, go, &[], table, &[]);
+            f.switch_to_block(go);
+            // The pair's second byte: the block's pair word's bit (`PAIR_WORD`), as the lean
+            // lexer's; else the table's row for the next byte.
+            let l_n = match pair_word {
+                Some(w) => {
+                    let bit = f.ins().ushr(w, sh);
+                    let bit = f.ins().band_imm(bit, 1);
+                    f.ins().iadd(s, bit)
+                }
+                None => next_last(f, t, c, s, raw, entry, pi),
+            };
+            // The run from `s + 1` in the block's word, by two shifts (none past the block): whole
+            // where it ends inside the block, as the lean lexer's `run`.
+            let y = f.ins().ushr(v, sh);
+            let y = f.ins().ushr_imm(y, 1);
+            let y = f.ins().bnot(y);
+            let ones = f.ins().ctz(y);
+            let to = f.ins().iadd(sh, ones);
+            let past = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, to, 63);
+            let l_r = f.ins().iadd(s, ones);
+            let slow = f.ins().band(is_r, past);
+            f.ins().brif(slow, blocks[kr], &[], on, &[]);
+            f.switch_to_block(on);
+            finish(f, &|f: &mut FunctionBuilder<'_>| f.ins().select(is_n, l_n, l_r), heads);
         }
         f.switch_to_block(table);
     }

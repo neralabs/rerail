@@ -3300,3 +3300,42 @@ Numbers then 113.3 instructions, 17.1 cycles a token (lean 107.3,
 Tests: `native_cpu_shape::tests::only_a_run_of_bytes_is_a_bytes_loop`;
 `a_numbers_arm_is_leans_loop` (the generated Rust: two `loop`s, no
 vector load, one call, cold), which replaces `a_numbers_arm_reads_one_window`.
+
+## A token's end is lean's `max`
+
+**Intro.** In the run loop, lean takes a token's length as
+`words.max(n1)`: the run of word bits from its first byte (none at a
+punctuation's) and the table's length (1, or 2 for a pair). There is one
+branch, for a word that runs to the block's end. Ours branched on the
+entry's two fused-rule bits, made a pair's last and a run's last (the
+run from the byte after), branched again on "a run, past the block",
+and chose one last by a `select` on the pair bit.
+
+Where the loop's starts are lean's (`lean_starts`, `RecordTables::lean`),
+three things hold:
+
+- a run token's first byte is a run byte;
+- a pair's first byte is not;
+- the pair word's bit is set at a pair's first byte alone.
+
+Then lean's form is exact, and `rule_last` makes it:
+
+```rust
+let words = (!(word >> sh)).trailing_zeros();   // 0 at a punctuation
+let n1 = 1 + (pair >> sh & 1);                  // 2 at a pair's first byte
+if sh + words < 64 && entry_names_a_fused_rule {
+    end = s + words.max(n1);
+}
+```
+
+The common way is the branch's first target, so the emitted Rust lays
+the run-past-the-block code after the loop's, as lean's `word_end`.
+Elsewhere the old form stays.
+
+Measured, as information: instructions a token, words 98.8 → 93.7,
+punctuation 54.2 → 51.7, mixed code 55.6 → 52.9. Words' cycles are
+unchanged (20.3 against lean's 15.7): the end's dependency chain was
+not what holds words back.
+
+Test: `a_tokens_end_is_leans_max` (the generated Rust: one branch in the
+run loop before the token's end, a `ctz`, an unsigned `max`).

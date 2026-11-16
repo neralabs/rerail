@@ -119,6 +119,24 @@ fn the_run_loop_calls_nothing() {
     assert!(calls.contains(&0), "every word hash's loop has calls or a rules' match: {calls:?}");
 }
 
+/// A word's or a punctuation's end is lean's `pos + words.max(n1)`: the run from its first
+/// byte (none at a punctuation's) and 1, or 2 at the pair word's bit; one branch before it, to
+/// the run past the block or a byte of neither rule, not a branch on the entry's rule bits and
+/// a `select` between a pair's last and a run's.
+#[test]
+fn a_tokens_end_is_leans_max() {
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    // The run loop's end: the first unsigned `max` of two values (`vN.max(vM)`; a signed one
+    // is `(vN as i64).max(..)`).
+    let at = f0.match_indices(".max(v").map(|(at, _)| at).find(|&at| f0[..at].ends_with(|c: char| c.is_ascii_digit())).expect("a max");
+    let head = f0[..at].rfind(": loop {").expect("the run loop");
+    let body = &f0[head..at];
+    assert!(!body.contains("(pin, ") && !body.contains("loop {\n'"), "the run loop's head before its end: {body}");
+    assert_eq!(body.matches("if ").count(), 1, "the branches before a token's end: {body}");
+    assert!(body.contains(".trailing_zeros()"), "the run from the token's first byte: {body}");
+}
+
 /// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)
 /// is the 64-bit `addp` of its halves (`clif_rust`): rustc keeps one `addp` a step, simdjson's
 /// five instructions, where it made each `vpaddq_u8(a, a)` three.
