@@ -2038,8 +2038,9 @@ pub mod tests {
             }
         }
         // A form feed in a gap across blocks: the refill folds a passed block's bits, and the
-        // bits before the cursor's block (a backtick literal's, a comment's) by the bytes.
-        for pad in [0usize, 30, 60] {
+        // bits before the cursor's block (a backtick literal's, a comment's) by the bytes; the
+        // last start's block's bits from its carried words, the start at its block's end too.
+        for pad in [0usize, 30, 60, 61, 62, 63] {
             let p = " ".repeat(pad);
             inputs.push(format!("{p}r(x) :- x = {{\"a\":\x0c{}1}}.\n", " ".repeat(70)).into_bytes());
             inputs.push(format!("{p}r(x) :- x = `\x0c{}`, y = 1.\n", "a".repeat(80)).into_bytes());

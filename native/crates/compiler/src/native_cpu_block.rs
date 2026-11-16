@@ -4543,15 +4543,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
 
     f.switch_to_block(head);
     let mut h = f.block_params(head).to_vec();
-    // Waiting: the state as the head has it, for the next part.
-    if let Some(wait) = wait {
-        f.switch_to_block(wait);
-        f.set_cold_block(wait);
-        let k = c.index(f, h[0]);
-        let args: Vec<BlockArg> = std::iter::once(k).chain(h[1..STATE_WORDS].iter().copied()).map(BlockArg::from).collect();
-        f.ins().jump(then, &args);
-        f.switch_to_block(head);
-    }
+    // The head's state, which a wait stores for the next part (below), and the bits the refill
+    // took from the words the head carries (`carried`), which the next part's head has not.
+    let head_h = h.clone();
+    let mut carried_bits: Option<Value> = None;
     let mut regs = None;
     // The marks' bits so far and where the gap marks' bits not in them start, at the token.
     let (mut pending_in, mut from_in) = (h[3], h[4]);
@@ -4621,9 +4616,32 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // The gap marks' bits before the cursor's block (a token across blocks): by the
             // bytes, a word at a time, cold. Then from the cursor's block, each passed one's.
             let acc0 = if folded {
+                // The last start's block is the one the token loop left, its gap marks' words
+                // at the head (`carried`): its bits past the start from them, as the lean
+                // lexer's window keeps its masks. Only blocks a token crossed, by the bytes.
                 let q064 = f.ins().ishl_imm(q0, 6);
                 let before = f.ins().iadd_imm(q064, -1);
-                marks_in(f, &rd, c, &lift, fr, before, None, false, heads)
+                let lo = f.ins().band_imm(fr, 63);
+                let inside = f.ins().icmp_imm(IntCC::NotEqual, lo, 0);
+                let ahead = f.ins().icmp(IntCC::UnsignedLessThan, fr, q064);
+                let inside = f.ins().band(inside, ahead);
+                let above = f.ins().ishl(ones, lo);
+                let mut a = zero;
+                for &(mk, mo) in &lift {
+                    let w = h[STATE_WORDS + 1 + runs.iter().position(|&k| k == mo).expect("a mark's word at the head")];
+                    let x = f.ins().band(w, above);
+                    let any = f.ins().icmp_imm(IntCC::NotEqual, x, 0);
+                    let any = f.ins().band(any, inside);
+                    let any = f.ins().uextend(types::I64, any);
+                    let bit = f.ins().ishl_imm(any, i64::from(mk));
+                    a = f.ins().bor(a, bit);
+                }
+                carried_bits = Some(a);
+                let next_q = f.ins().bor_imm(fr, 63);
+                let next_q = f.ins().iadd_imm(next_q, 1);
+                let rest = f.ins().select(inside, next_q, fr);
+                let crossed = marks_in(f, &rd, c, &lift, rest, before, None, false, heads);
+                f.ins().bor(a, crossed)
             } else {
                 zero
             };
@@ -4806,7 +4824,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 f.switch_to_block(run_done);
                 let dp = f.block_params(run_done).to_vec();
                 let (left, st) = (dp[0], &dp[1..]);
-                let refill_args: Vec<BlockArg> = st.iter().copied().chain(std::iter::once(zero)).chain(runs.iter().map(|_| zero)).map(BlockArg::from).collect();
+                // The block's gap marks' words to the refill (`carried`), the others none.
+                let carried: Vec<Value> = runs.iter().zip(&words).map(|(&k, &w)| if folded && lift.iter().any(|&(_, mo)| mo == k) { w } else { zero }).collect();
+                let refill_args: Vec<BlockArg> = st.iter().copied().chain(std::iter::once(zero)).chain(carried).map(BlockArg::from).collect();
                 f.ins().brif(rare, go_rare, &[], head, &refill_args);
                 f.switch_to_block(go_rare);
                 let tz = f.ins().ctz(rare);
@@ -4843,6 +4863,20 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let more = f.ins().icmp(IntCC::UnsignedLessThan, h[0], end);
             f.ins().brif(more, token, &[], finish, &[h[2].into(), end.into(), h[3].into(), h[4].into()]);
         }
+    }
+
+    // Waiting: the state as the head has it, for the next part, with the bits the refill took
+    // from the carried words (the next part's head carries none).
+    if let Some(wait) = wait {
+        f.switch_to_block(wait);
+        f.set_cold_block(wait);
+        let k = c.index(f, head_h[0]);
+        let mut st: Vec<Value> = head_h[1..STATE_WORDS].to_vec();
+        if let Some(a) = carried_bits {
+            st[2] = f.ins().bor(st[2], a);
+        }
+        let args: Vec<BlockArg> = std::iter::once(k).chain(st).map(BlockArg::from).collect();
+        f.ins().jump(then, &args);
     }
 
     // The token's body, once a head: the run loop's and the rare starts', where they are two
@@ -5394,7 +5428,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let s0 = f.ins().iadd(base, tz);
             let on: Vec<BlockArg> = [s0, left].iter().copied().map(BlockArg::from).chain(back.iter().cloned()).collect();
             back.push(zero.into());
-            back.extend(g.runs.iter().map(|_| BlockArg::from(zero)));
+            // The block's gap marks' words to the refill (`carried`), the others none.
+            back.extend(g.runs.iter().map(|&(k, w)| BlockArg::from(if folded && lift.iter().any(|&(_, mo)| mo == k) { w } else { zero })));
             f.ins().brif(left, inner, &on, head, &back);
         } else {
             back.push(left.into());

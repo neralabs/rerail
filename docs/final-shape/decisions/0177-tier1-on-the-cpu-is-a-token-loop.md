@@ -2133,3 +2133,51 @@ a block's edges, at the file's end, and beside both comments.
 
 Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
 strings 325.2, numbers 161.0, comments 253.2.
+
+## A block's gap marks stay in its words
+
+The lean lexer keeps a window's masks for the whole window. Ours
+made a block's gap-mark word (`json_bad`'s form feed, an `eq(12)`
+mask) at the refill and then dropped it. Only a flag
+(`GAP_FLAG`) stayed.
+
+The next refill needed that word again. A form feed after the last
+token's first byte belongs to the next grammar token, so the refill
+folds the bytes from there to the block's end into the marks so far.
+It did that from the bytes: a loop that called the mask's function
+(`marks_in`'s slow path) once per block it covered. That ran on every
+refill, in files with no form feed too.
+
+**The change.**
+
+- **The words go to the refill.** The head already has a slot for
+  each of the block's words. A token that leaves the block now passes
+  its gap marks' words there, where it passed zeros before.
+- **The refill folds them.** The last token started in the block the
+  loop left. Its bits past that start are `word & (!0 << start)`,
+  taken where the start is inside that block and before the block the
+  refill reads.
+- **Only crossed blocks by the bytes.** The bytes after that block,
+  up to the one read now, are blocks a token crossed. Those alone go
+  through the slow path, and its range test skips it when there are
+  none.
+- **A wait keeps them.** A part's head carries no words, so a token
+  that waits stores the marks so far with the carried bits already
+  in them.
+
+```rust
+// generated (tier1_aot.rs), the refill:
+v250 = start & 63;
+v253 = (v250 != 0) & (start < block_q * 64);   // the start's block, passed
+v255 = gap_word & (!0 << v250);                // carried from the head
+v260 = pending | (((v255 != 0) & v253) << 12); // json_bad's bit
+// then the slow path from the next block, empty unless a token crossed
+```
+
+Tests: `the_marks_tests_are_the_masks` gains pads 61 to 63, which put
+the last start at its block's end. With the carried bits dropped, the
+test fails. No rr test makes a token wait, because each of rr's reads
+is from the bytes, so the wait's fold is not tested.
+
+Counts, reported: words 101.1, punctuation 52.9, mixed 55.1,
+strings 306.2, numbers 158.0, comments 231.2.
