@@ -5385,14 +5385,28 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // is the one the refill read last (the state's, `spent_q`): the lean lexer's
             // `base`, in a register, no record read back.
             let h3 = f.ins().band_imm(h[3], !REREAD_FLAG);
+            // By a branch, not a `select`: on the common way the next block is the spent one's
+            // next (`h[4]`, in a register), so its loads wait on no token. A `select` of the
+            // cursor's block made every refill's loads wait for the block's last token's end,
+            // the token chain and the refill in series, where the lean lexer's next window is
+            // `base + 64` whatever its tokens did (0177, "The next block waits on no token").
             let (q0, m0) = if skips {
                 let read = f.ins().iadd_imm(qc, 1);
                 let spent = f.ins().icmp(IntCC::Equal, h[4], read);
                 let reread = f.ins().icmp_imm(IntCC::SignedLessThan, h[3], 0);
                 let reread = f.ins().bnot(reread);
                 let here = f.ins().band(spent, reread);
-                let qn = f.ins().iadd_imm(qc, 1);
-                (f.ins().select(here, qn, qc), f.ins().select(here, ones, mc))
+                let (next, cursor, chosen) = (f.create_block(), f.create_block(), f.create_block());
+                f.append_block_param(chosen, types::I64);
+                f.append_block_param(chosen, types::I64);
+                f.ins().brif(here, next, &[], cursor, &[]);
+                f.switch_to_block(next);
+                f.ins().jump(chosen, &[h[4].into(), ones.into()]);
+                f.switch_to_block(cursor);
+                f.set_cold_block(cursor);
+                f.ins().jump(chosen, &[qc.into(), mc.into()]);
+                f.switch_to_block(chosen);
+                (f.block_params(chosen)[0], f.block_params(chosen)[1])
             } else {
                 (qc, mc)
             };

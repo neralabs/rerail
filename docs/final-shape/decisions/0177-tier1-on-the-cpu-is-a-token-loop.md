@@ -3504,3 +3504,67 @@ Only the `-` test's code changed. The other rows moved by rustc's code
 for `f0` as a whole, as before.
 
 Test: `a_tests_next_byte_asks_no_bound`.
+
+## The next block waits on no token
+
+**Intro.** Lean's next window is `base + 64` whatever its tokens did:
+only a rare token or a word across the block's end moves its cursor. So
+the core loads and classifies the next block while the current block's
+tokens are still being written. Ours chose the next block from the
+cursor, the end of the token before. Every refill's loads therefore
+waited for the end of the block's last token, and the token chain and
+the refill ran in series.
+
+**How it was found.** Words took 18.6 cycles a token against lean's 15.5,
+at fewer instructions.
+
+- **Not branches.** Instruments' CPU Counters (bottlenecks mode) showed
+  the same front-end and mispredict shares as lean (about 2% and 3%).
+  Ours had 48% "processing" (back-end) to lean's 34%.
+- **Per block, not per token.** On lines of exactly 64 bytes, so that
+  every block is the same, ours matched lean only where no word was
+  looked up. Lean without its lookup ran 13.1 cycles a token, ours 16.5
+  at the same instruction count: about 27 cycles a block.
+- **The cause.** In the assembly, the refill's block index was
+  `cinc x15, (end >> 6), eq`, from the last token's end, and its vector
+  loads used it.
+
+**Fix.** The IR already chose the block by a branch on `here` (the token
+ended in the block already read): `h[4]`, the spent block's next, held in
+a register, else the cursor's block. Built as a `select`, LLVM kept the
+data dependency. Built as a branch with a cold arm, LLVM folded it back
+into a `csel`: `cold_path` alone does not stop that.
+
+`clif_rust` now writes every cold block as `cold_path()` and an empty
+`asm!` (`COLD`). The `asm!` emits no instruction and touches no memory
+or flags, but LLVM does not speculate it, so the arm stays a branch, as
+the IR has it.
+
+This is what a cold block means in the compiler's IR: its work is off the
+hot way. A folded cold arm puts its inputs on the hot way. The marks'
+merge in the token tail was folded the same way, and is a branch now too.
+
+Measured, as information (cycles a token, lean in brackets):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 20.1 (15.7) | 17.8 (15.4) |
+| Punctuation | 9.1 (9.0) | 8.9 (8.8) |
+| Mixed code | 10.0 (9.0) | 9.3 (8.8) |
+| Strings | 65.4 (84.6) | 62.4 (84.0) |
+| Numbers | 17.9 (22.9) | 17.6 (22.6) |
+| Comments | 68.7 (68.8) | 64.8 (68.4) |
+
+Instructions a token fell by 1–8 (words 86.7 → 83.1). On a 64-byte line
+of words that look up nothing, ours is 14.8 against lean's 15.5.
+
+What is left of the words gap, about 2.4 cycles a token:
+
+- **The lookup.** It costs ours about 2.9 cycles a word and lean about
+  2.1. With the hash's multiply and slot load taken off the chain (an
+  experiment, wrong results), most of the difference went.
+- **The base loop.** Without lookups, ours is 14.8 cycles a token
+  against lean's 13.1.
+
+Test: `a_cold_block_stays_a_branch` (every cold block carries the
+`asm!`).

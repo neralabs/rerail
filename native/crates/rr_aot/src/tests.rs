@@ -211,6 +211,17 @@ fn a_tests_next_byte_asks_no_bound() {
     assert!(!test.contains("as i64)"), "a bound in the `-` test: {test}");
 }
 
+/// A cold block stays a branch (`clif_rust::COLD`): each `cold_path` with the empty `asm!` that
+/// keeps LLVM from folding the arm into a `select`. Folded, the refill's next block waited on
+/// the block's last token's end, the refill's loads after the token chain.
+#[test]
+fn a_cold_block_stays_a_branch() {
+    let src = include_str!("tier1_aot.rs");
+    let cold = src.matches("core::hint::cold_path();").count();
+    assert!(cold > 0, "no cold block");
+    assert_eq!(src.matches("core::hint::cold_path(); unsafe { core::arch::asm!(\"\", options(nomem, nostack, preserves_flags)) };").count(), cold, "a cold block rustc may fold");
+}
+
 /// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)
 /// is the 64-bit `addp` of its halves (`clif_rust`): rustc keeps one `addp` a step, simdjson's
 /// five instructions, where it made each `vpaddq_u8(a, a)` three.
@@ -462,7 +473,7 @@ fn tier1_by_kind() {
         Some(l) => vec![("line", l.as_str())],
         None => kinds.to_vec(),
     };
-    // `RR_KIND`: that kind alone, tier 1 for `RR_SECONDS`, for a profile.
+    // `RR_KIND`: that kind alone, tier 1 (or lean, `RR_WHO`) for `RR_SECONDS`, for a profile.
     let only = std::env::var("RR_KIND").ok();
     let seconds: f64 = std::env::var("RR_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
     for (name, line) in kinds {
@@ -475,10 +486,16 @@ fn tier1_by_kind() {
         let comments = text.matches("//").count() + text.matches("/*").count();
         let tokens = rr::lean::token_count(&text) + comments;
         if only.is_some() {
+            // `RR_WHO=lean`: the lean lexer alone, for the same profile of it.
+            let lean = std::env::var("RR_WHO").is_ok_and(|w| w == "lean");
             let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
             let t0 = thread_cpu();
             while (thread_cpu() - t0).as_secs_f64() < seconds {
-                b.call(&aot.parser.tier1);
+                if lean {
+                    std::hint::black_box(rr::lean::token_count(std::hint::black_box(&text)));
+                } else {
+                    b.call(&aot.parser.tier1);
+                }
             }
             continue;
         }
@@ -583,7 +600,7 @@ fn a_numbers_arm_is_leans_loop() {
     assert!(!arm.contains("vld1q_u8"), "a window in the number arm: {arm}");
     // Its one call, the whole rule's, cold.
     assert_eq!(arm.matches("unsafe { f").count(), 1, "the number arm's calls: {arm}");
-    assert!(arm.contains("core::hint::cold_path();\nlet t = unsafe { f"), "the whole rule's call not cold: {arm}");
+    assert!(arm.contains("preserves_flags)) };\nlet t = unsafe { f"), "the whole rule's call not cold: {arm}");
     // A leading zero known from the first `while`'s turn (`way_lane`), inline: the long way's
     // call alone cold.
     assert_eq!(arm.matches("cold_path").count(), 1, "a cold test in the number arm: {arm}");

@@ -12,6 +12,14 @@
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use std::fmt::Write;
 
+/// A cold block's first line. `cold_path` makes the branch to it unlikely; the empty `asm!`
+/// (no instruction, no memory, flags kept) keeps it a branch. Without it LLVM folded small
+/// cold arms into `csel`s, so the hot way waited on the cold way's inputs: the refill's next
+/// block on the block's last token's end, every block's loads after its token chain (0177,
+/// "The next block waits on no token"), where the compiler's IR has a branch the core predicts.
+const COLD: &str = "core::hint::cold_path(); unsafe { core::arch::asm!(\"\", options(nomem, nostack, preserves_flags)) };\n";
+
+
 /// A fingerprint of a text (FNV-1a). The generated source carries its own (`SOURCE`): the
 /// ahead-of-time build runs only where the JIT's program translates to it again.
 pub fn fingerprint(clif: &str) -> u64 {
@@ -156,9 +164,9 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
             let mut s = String::new();
             // A cold block (`set_cold_block`) says so to rustc, as Cranelift lays it out: the
             // branch to it unlikely, its code out of the hot path, and no register kept for it
-            // where the hot path wants one.
+            // where the hot path wants one (`COLD`).
             if f.layout.is_cold(blocks[node]) {
-                s.push_str("core::hint::cold_path();\n");
+                s.push_str(COLD);
             }
             for inst in f.layout.block_insts(blocks[node]).filter(|i| !absorbed.contains(i)) {
                 s.push_str(&instruction(f, inst, &name, &|k, _| jump(k))?);
@@ -176,7 +184,8 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     for blk in f.layout.blocks() {
         writeln!(out, "            {} => {{", blk.as_u32()).unwrap();
         if f.layout.is_cold(blk) {
-            out.push_str("                core::hint::cold_path();\n");
+            out.push_str("                ");
+            out.push_str(COLD);
         }
         for inst in f.layout.block_insts(blk).filter(|i| !absorbed.contains(i)) {
             let s = instruction(f, inst, &name, &|_, to: ir::Block| Ok(format!("b = {}; continue;", to.as_u32())))?;
