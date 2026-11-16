@@ -596,6 +596,35 @@ pass.
   `rr_cover135` against `rr_cover121`, 2,383 lines against 2,385).
 - **Done when**: both pass, each traced to its cause (and a commit that made it red, where one did).
 
+### Q23. The transducer's Metal tests register no language in `rerail-device-metal`
+
+- **Found** (2026-11-16, at the Native-and-GPU-strata merge, 1980a6ea9): four tests of
+  `rerail-device-metal --features metal-tests` panic on "no language registered for Python" (language.rs 733):
+  `metal_successor_tests::unrelated_query_values_do_not_require_all_pairs_within_a_task`,
+  `…::active_successor_generations_keep_complete_winners_within_eighteen_dispatches`,
+  `metal_dynamic_execution::tests::complete_convergence_routing_reaches_terminal_barrier_within_shared_budget`,
+  `metal_frontier_conformance::production::wide_cursor_frames_and_capture_sequences_complete_within_evaluation_budget`.
+  That test binary registers no language on either side (the hub's too). 0289's view test registers Python itself.
+- **Done when**: they pass, the registration made where the crate's tests read a registry (hosted in the engine, as
+  open-items' "Hosted in the engine" did for the others, or registered once for the crate's tests).
+
+### Q24. A two-run process's second run names fewer sources when its files are new
+
+- **Found** (2026-11-16, at the Bend-language-investigation merge, 69cd343c5):
+  `a_second_run_in_one_process_records_the_first_runs_manifest` (0251) fails, and fails the same with that branch's
+  own test binary. Files written just before the runs reproduce it: the two-run process's second run records a
+  manifest of 6 sources (ids 20–25) beside the first run's 9 (20–28). With the same files a few seconds old, it
+  adds none.
+- **Done when**: the test passes with fresh files, traced to which of the three sources the second run leaves out
+  and why (the racy-mtime window is the lead).
+
+### Q25. `rrs_records_are_rows_on_the_cpu` expects no `/` among the punctuation bytes
+
+- **Found** (2026-11-16, at the Parser-generators merge, bca645c47): `punct_bytes` holds `/` (47) since 0177's
+  "a `/` alone" step (its code is its kind, no word looked up); the test's expected set is the fused pair rule's
+  bytes. Red with that branch's own binary at its head (23:01), green at 19:32. Theirs to settle, their area.
+- **Done when**: the test states the set the token loop reads codes for, and passes.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
