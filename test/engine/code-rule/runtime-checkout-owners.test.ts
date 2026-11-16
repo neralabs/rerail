@@ -64,11 +64,11 @@ describe("a runtime's checkout lookups", () => {
       await runtime.codeRulesOpened(session.sessionId);
       const owners = instanceOf(lookups.mock.contexts, CheckoutOwners);
       const checkouts = 1 + worktrees.length;
-      // The walk of the other worktrees runs behind the session folder's own walk; once it has looked up every folder of
-      // every worktree, it is waited for whole, so no lookup of its lands after the session closes.
-      await vi.waitFor(() => expect(owners.cachedFolders()).toBeGreaterThanOrEqual(checkouts * (1 + FOLDERS.length)), { timeout: 30_000, interval: 20 });
+      // The walk of the other worktrees runs behind the session folder's own walk; once it has looked up the folders below
+      // each worktree's top, it is waited for whole, so no lookup of its lands after the session closes.
+      await vi.waitFor(() => expect(owners.cachedFolders()).toBeGreaterThanOrEqual(checkouts * FOLDERS.length), { timeout: 30_000, interval: 20 });
       await instanceOf(opens.mock.contexts, CodeRuleBridge).settleWorktreeWalk();
-      expect(owners.cachedFolders()).toBeGreaterThanOrEqual(checkouts * (1 + FOLDERS.length));
+      expect(owners.cachedFolders()).toBeGreaterThanOrEqual(checkouts * FOLDERS.length);
 
       await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
 

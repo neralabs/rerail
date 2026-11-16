@@ -6,15 +6,18 @@
  * once, for every session watching it, and keeps what it saw as a snapshot; each session takes from a walk only the
  * sources that changed since the snapshot it took last (`CodeRuleBridge`).
  *
- * A walk reads only the worktrees that may have changed since it last read them: each a change notice named
- * (`WorktreeNotices`) or that cannot be watched, and each whose `HEAD`, index or nested worktrees moved, which every
- * walk reads. It hands each session what it saw of the others last time. Reading them all stat'ed every file of
- * every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
+ * A walk reads only the worktrees that may have changed since it last read them: each it has no read of, each a change
+ * notice named or that cannot be watched (`WorktreeNotices`), each where something no notice tells of moved (its
+ * `HEAD`, its index, the worktrees inside it, and what `WorktreeLook` looks at), and each whose last read is
+ * `WORKTREE_FULL_WALK_MS` old. It hands each session what it saw of the others last time. Reading them all stat'ed
+ * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
 import { sep } from "node:path";
 import { gitHead, gitModifiedOrUntrackedPaths, GitReads, gitUnmergedReader } from "../git.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
-import { noticesTaken, WatchedWorktrees, type WorktreeNotices, type WorktreeRead } from "./worktree-notices.js";
+import type { TreeWatch } from "./tree-watch.js";
+import { lookMoved, type WorktreeLook, WorktreeLooks } from "./worktree-look.js";
+import { SharedTreeWatch, WorktreeNotices, type WorktreeRead } from "./worktree-notices.js";
 
 /**
  * The least time between two walks of the other worktrees that answer one session's asks, which take time per worktree
@@ -25,8 +28,9 @@ import { noticesTaken, WatchedWorktrees, type WorktreeNotices, type WorktreeRead
 export const WORKTREE_WALK_GAP_MS = 5_000;
 
 /**
- * How long walks trust change notices: the first walk after this reads every worktree, so a change no notice told of
- * (one the system lost without saying so) is found then.
+ * How long walks trust change notices for a worktree: a walk reads one whose last read began this long ago, and one is
+ * timed for it though every session watching it is idle. A write no notice tells of (through a hard link, a memory
+ * map, a file another program holds open on Windows, or one the system lost without saying so) is found then.
  */
 export const WORKTREE_FULL_WALK_MS = 600_000;
 
@@ -160,6 +164,29 @@ interface Kept {
   readonly retry: boolean;
   /** The other worktrees and sessions' checkouts inside it that the read left out (`leftOut`), one per line. */
   readonly skipped: string;
+  /** The look taken before the read; undefined for a worktree that was not watched, which every walk reads. */
+  readonly look: WorktreeLook | undefined;
+  /** When the read began (`Date.now()`). */
+  readonly readAt: number;
+}
+
+/** What a walk saw of a worktree before deciding whether to read it. */
+type WorktreeState = Pick<WorktreeFindings, "head" | "unmerged"> & {
+  readonly observedAt: number;
+  readonly skipped: string;
+  readonly look: WorktreeLook | undefined;
+};
+
+/**
+ * Whether what no notice tells of moved since `kept` was read: the worktrees and sessions' checkouts inside it, its
+ * `HEAD`, its index, or what its look saw. The index moved when the unmerged entries are a new map, since
+ * `gitUnmergedReader` hands back the same one while the index file's stamp holds; a path the index tracks is never
+ * ignored, so a file the last read left out as ignored may count now. An index that cannot be stamped is a new map each
+ * walk, and the worktree is read on every walk, as before notices.
+ */
+function movedSince(kept: Kept, state: WorktreeState): boolean {
+  if (kept.skipped !== state.skipped || kept.findings.head !== state.head || kept.findings.unmerged !== state.unmerged) return true;
+  return kept.look === undefined || state.look === undefined || lookMoved(kept.look, state.look);
 }
 
 const OBSERVED_FIELDS = ["language", "stamp", "digest", "readError", "modifiedAt"] as const;
@@ -255,6 +282,7 @@ export class WorktreeWalks {
   readonly #gapMs: number;
   readonly #fullWalkMs: number;
   readonly #notices: WorktreeNotices;
+  readonly #looks: WorktreeLooks;
   /** Every session watching, in the order they started: a worktree is read through the first that watches it. */
   readonly #watching: Watching[] = [];
   readonly #kept = new Map<string, Kept>();
@@ -270,12 +298,18 @@ export class WorktreeWalks {
   #walk: Promise<void> | undefined;
   /** Starts the timed walk now, to answer an ask whose gap is over; undefined while no walk is timed. */
   #wake: (() => void) | undefined;
-  #fullWalkAt = Number.NEGATIVE_INFINITY;
+  /** Times the walk that reads the worktree whose last read is next due (`WORKTREE_FULL_WALK_MS`). */
+  #reread: NodeJS.Timeout | undefined;
 
-  constructor(options: { gapMs?: number; fullWalkMs?: number; notices?: WorktreeNotices } = {}) {
+  /**
+   * `notices`: none by default, so every worktree is read on every walk; `RepositoryWorktreeWalks` gives each walk the
+   * engine's. `looks`: what each walk looks at in a watched worktree (`WorktreeLooks`).
+   */
+  constructor(options: { gapMs?: number; fullWalkMs?: number; notices?: WorktreeNotices; looks?: WorktreeLooks } = {}) {
     this.#gapMs = options.gapMs ?? WORKTREE_WALK_GAP_MS;
     this.#fullWalkMs = options.fullWalkMs ?? WORKTREE_FULL_WALK_MS;
-    this.#notices = options.notices ?? new WatchedWorktrees();
+    this.#notices = options.notices ?? new WorktreeNotices();
+    this.#looks = options.looks ?? new WorktreeLooks();
   }
 
   watch(watcher: WorktreeWatcher): WorktreeWatch {
@@ -351,7 +385,34 @@ export class WorktreeWalks {
     } finally {
       const end = Date.now();
       for (const watching of askers) watching.nextWalkAt = end + Math.max(this.#gapMs, end - startedAt);
+      this.#armReread();
     }
+  }
+
+  /**
+   * Times a walk for when the oldest read kept is `WORKTREE_FULL_WALK_MS` old, so the reread comes though every session
+   * watching that worktree is idle. Walks that read every worktree (no period) need no timer.
+   */
+  #armReread(): void {
+    clearTimeout(this.#reread);
+    this.#reread = undefined;
+    if (this.#fullWalkMs <= 0 || this.#kept.size === 0) return;
+    const oldest = Math.min(...[...this.#kept.values()].map(kept => kept.readAt));
+    this.#reread = setTimeout(() => this.#rereadDue(), Math.max(0, oldest + this.#fullWalkMs - Date.now()));
+    this.#reread.unref?.();
+  }
+
+  /** Has each session watching a worktree whose read is due take part in a walk, which it did not ask for. */
+  #rereadDue(): void {
+    this.#reread = undefined;
+    const due = new Set([...this.#kept].filter(([, kept]) => this.#due(kept)).map(([root]) => root));
+    for (const watching of this.#watching) if ([...watching.worktrees].some(root => due.has(root))) watching.requested = true;
+    // The walk, or the one running, times the next reread as it ends.
+    this.#schedule();
+  }
+
+  #due(kept: Kept): boolean {
+    return Date.now() - kept.readAt >= this.#fullWalkMs;
   }
 
   /** Waits `ms`, or until `#wake` is called; resolves whether it was woken first. */
@@ -387,6 +448,8 @@ export class WorktreeWalks {
     // A walk timed for its ask alone is called off; one timed for another session's waits on.
     this.#wake?.();
     if (this.#watching.length > 0) return;
+    clearTimeout(this.#reread);
+    this.#reread = undefined;
     const git = this.#git;
     this.#git = new GitReads();
     await git.stop();
@@ -398,6 +461,7 @@ export class WorktreeWalks {
     for (const root of this.#kept.keys()) if (!roots.has(root)) this.#kept.delete(root);
     for (const root of this.#owed) if (!roots.has(root)) this.#owed.delete(root);
     this.#notices.retain(roots);
+    this.#looks.retain(roots);
   }
 
   /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
@@ -455,8 +519,8 @@ export class WorktreeWalks {
 
   /**
    * Reads each worktree the walk's sessions watch that may have changed, and hands on what was kept of each other. What
-   * a read found is kept only once the whole walk has read, and only of a worktree some session still watches: one
-   * whose sessions all closed meanwhile is not held for nobody.
+   * a read found is kept only of a worktree some session still watches: one whose sessions all closed meanwhile is not
+   * held for nobody.
    */
   async #read(walking: ReadonlyMap<Watching, WatcherWalk>): Promise<WorktreeWalk> {
     const roots = new Set([...walking.values()].flatMap(walk => [...walk.worktrees]));
@@ -466,31 +530,20 @@ export class WorktreeWalks {
       const observedAt = await [...walking.keys()][0]!.watcher.clock();
       const skip = leftOut(roots, walking.values());
       // Every notice the system queued before the walk began counts in it.
-      await noticesTaken();
-      const full = this.#fullWalkDue();
+      this.#notices.collect();
+      const files = this.#looks.begin();
       const found = new Map<string, WorktreeFindings>();
-      const read = new Map<string, Kept>();
       for (const root of roots) {
-        const state = { ...checkouts.get(root)!, observedAt, skipped: skippedIn(root, skip) };
+        const kept = this.#kept.get(root);
         // Asked first, of every worktree: it starts the watch before a first read.
         const noticed = this.#notices.changed(root);
-        const kept = this.#kept.get(root);
-        if (kept !== undefined && !noticed && !full && !this.#mustRead(root, kept, state)) {
-          found.set(root, await this.#keptFindings(root, kept, walking));
-          continue;
-        }
-        this.#owed.add(root);
-        this.#notices.reading(root);
-        const result = await this.#readWorktree(root, skip, walking, state);
-        if (result === undefined) continue;
-        found.set(root, result.findings);
-        const { texts: _texts, listed: _listed, ...findings } = result.findings;
-        read.set(root, { findings, retry: retried(result.scan), skipped: state.skipped });
-      }
-      for (const [root, kept] of read) {
-        if (!this.#watched(root)) continue;
-        this.#kept.set(root, kept);
-        this.#owed.delete(root);
+        // A worktree no notice can tell of is read on every walk: nothing it would look at decides that.
+        const look = this.#notices.watching(root) ? await this.#looks.look(this.#git, files, root, kept?.findings.checkouts ?? []) : undefined;
+        const state: WorktreeState = { ...checkouts.get(root)!, observedAt, skipped: skippedIn(root, skip), look };
+        const findings = kept !== undefined && !noticed && !this.#mustRead(root, kept, state)
+          ? await this.#keptFindings(root, kept, walking)
+          : await this.#readAndKeep(root, skip, walking, state);
+        if (findings !== undefined) found.set(root, findings);
       }
       return { found, observedAt };
     } catch (error) {
@@ -498,24 +551,32 @@ export class WorktreeWalks {
     }
   }
 
-  /** Whether this walk is the one that reads every worktree again (`WORKTREE_FULL_WALK_MS`). */
-  #fullWalkDue(): boolean {
-    const now = Date.now();
-    if (now - this.#fullWalkAt < this.#fullWalkMs) return false;
-    this.#fullWalkAt = now;
-    return true;
+  /**
+   * Whether `root` is read though no notice named it: its last read did not finish, left something to try again or is
+   * `WORKTREE_FULL_WALK_MS` old, or what no notice tells of moved (`movedSince`).
+   */
+  #mustRead(root: string, kept: Kept, state: WorktreeState): boolean {
+    return this.#owed.has(root) || kept.retry || this.#due(kept) || movedSince(kept, state);
   }
 
-  /**
-   * Whether `root` is read though no notice named it: its last read did not finish or left something to try again, or
-   * what no notice tells of moved: its `HEAD`, its index, or the worktrees and sessions' checkouts inside it. The index
-   * moved when the unmerged entries are a new map, since `gitUnmergedReader` hands back the same one while the index
-   * file's stamp holds; a path the index tracks is never ignored, so a file the last read left out as ignored may count
-   * now. An index that cannot be stamped is a new map each walk, and the worktree is read on every walk, as before notices.
-   */
-  #mustRead(root: string, kept: Kept, state: Pick<WorktreeFindings, "head" | "unmerged"> & { readonly skipped: string }): boolean {
-    if (this.#owed.has(root) || kept.retry || kept.skipped !== state.skipped) return true;
-    return kept.findings.head !== state.head || kept.findings.unmerged !== state.unmerged;
+  /** Reads `root` and keeps what the read found while a session watches it; undefined when no session could read it. */
+  async #readAndKeep(
+    root: string,
+    skip: ReadonlySet<string>,
+    walking: ReadonlyMap<Watching, WatcherWalk>,
+    state: WorktreeState,
+  ): Promise<WorktreeFindings | undefined> {
+    this.#owed.add(root);
+    this.#notices.reading(root);
+    const readAt = Date.now();
+    const result = await this.#readWorktree(root, skip, walking, state);
+    if (result === undefined) return undefined;
+    const { texts: _texts, listed: _listed, ...findings } = result.findings;
+    if (this.#watched(root)) {
+      this.#kept.set(root, { findings, retry: retried(result.scan), skipped: state.skipped, look: state.look, readAt });
+      this.#owed.delete(root);
+    }
+    return result.findings;
   }
 
   /** What a walk hands on of a worktree it did not read: what was kept, no text, and Git's listing for a session's first sight. */
@@ -596,25 +657,34 @@ export class WorktreeWalks {
 /**
  * One `WorktreeWalks` per repository, for the sessions of an engine service's runtimes or of one runtime. Sessions of
  * one repository share its walk; sessions of two repositories never share one, so a slow walk of one repository's
- * worktrees never holds back what another repository's sessions record.
+ * worktrees never holds back what another repository's sessions record. Every walk takes its notices from one engine
+ * watch (`treeWatch`), which `close` releases; without one, every walk reads every worktree.
  */
 export class RepositoryWorktreeWalks {
-  readonly #options: { gapMs?: number };
+  readonly #options: { gapMs?: number; fullWalkMs?: number };
+  readonly #treeWatch: SharedTreeWatch | undefined;
   /** Kept for the service's life: an idle walk holds no snapshot, and there is one per repository sessions opened in. */
   readonly #walks = new Map<string, WorktreeWalks>();
 
-  constructor(options: { gapMs?: number } = {}) {
-    this.#options = options;
+  constructor(options: { gapMs?: number; fullWalkMs?: number; treeWatch?: TreeWatch | undefined } = {}) {
+    const { treeWatch, ...walks } = options;
+    this.#options = walks;
+    this.#treeWatch = treeWatch === undefined ? undefined : new SharedTreeWatch(treeWatch);
   }
 
   /** The walk of the repository `repository` names, the same for every checkout of it (its clone id). */
   of(repository: string): WorktreeWalks {
     let walks = this.#walks.get(repository);
     if (walks === undefined) {
-      walks = new WorktreeWalks(this.#options);
+      walks = new WorktreeWalks({ ...this.#options, notices: new WorktreeNotices({ treeWatch: this.#treeWatch?.user() }) });
       this.#walks.set(repository, walks);
     }
     return walks;
+  }
+
+  /** Releases the engine watch and every handle it holds; the sessions, closed first, have let go of their worktrees. */
+  close(): void {
+    this.#treeWatch?.close();
   }
 }
 
