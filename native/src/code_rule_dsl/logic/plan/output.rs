@@ -306,6 +306,14 @@ impl Builder {
     }
     /// The image's bytes.
     pub fn finish(self) -> Vec<u8> {
+        let done = self.finish_parts();
+        let mut out = vec![0u8; done.len()];
+        done.write(&mut out);
+        out
+    }
+    /// The image's regions, made: its length known before it is written (`Finished::write`), so it can be written
+    /// where it is kept (a memo entry, into its segment's mapped pages) with no copy of it whole first.
+    pub fn finish_parts(self) -> Finished {
         let mut w: Vec<Vec<u8>> = vec![Vec::new(); REGIONS];
         let put = |w: &mut Vec<Vec<u8>>, r: R, v: u64| w[r as usize].extend_from_slice(&v.to_le_bytes());
         put(&mut w, R::Meta, if self.overlay { meta::OVERLAY } else { meta::BASE });
@@ -336,25 +344,7 @@ impl Builder {
             put(&mut w, R::Places, *path);
             put(&mut w, R::Places, *line as u64);
         }
-        let mut out = vec![0u8; HEADER];
-        out[..8].copy_from_slice(&MAGIC);
-        out[8..12].copy_from_slice(&FORMAT.to_le_bytes());
-        out[12..16].copy_from_slice(&(REGIONS as u32).to_le_bytes());
-        for (r, bytes) in w.iter().enumerate() {
-            while out.len() % 16 != 0 {
-                out.push(0);
-            }
-            let at = 16 + 24 * r;
-            let offset = out.len() as u64;
-            out[at..at + 4].copy_from_slice(&WIDTH[r].to_le_bytes());
-            out[at + 8..at + 16].copy_from_slice(&((bytes.len() / WIDTH[r] as usize) as u64).to_le_bytes());
-            out[at + 16..at + 24].copy_from_slice(&offset.to_le_bytes());
-            out.extend_from_slice(bytes);
-        }
-        while out.len() % 16 != 0 {
-            out.push(0);
-        }
-        out
+        Finished { regions: w }
     }
 }
 
@@ -510,6 +500,41 @@ impl Rows {
         rows.sort_unstable();
         rows.dedup();
         rows
+    }
+}
+
+/// An image's regions, made (`Builder::finish_parts`): its length, and the image written into memory of that length.
+pub struct Finished {
+    regions: Vec<Vec<u8>>,
+}
+
+impl Finished {
+    /// The image's length in bytes: its header, and each region at 16 bytes.
+    pub fn len(&self) -> usize {
+        self.regions.iter().fold(HEADER, |at, r| at.next_multiple_of(16) + r.len()).next_multiple_of(16)
+    }
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+    /// Writes the image into `out`, `len()` bytes, every byte (padding zeroed).
+    pub fn write(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), self.len(), "an image's memory of its length");
+        out[..HEADER].fill(0);
+        out[..8].copy_from_slice(&MAGIC);
+        out[8..12].copy_from_slice(&FORMAT.to_le_bytes());
+        out[12..16].copy_from_slice(&(REGIONS as u32).to_le_bytes());
+        let mut end = HEADER;
+        for (r, bytes) in self.regions.iter().enumerate() {
+            let offset = end.next_multiple_of(16);
+            out[end..offset].fill(0);
+            let at = 16 + 24 * r;
+            out[at..at + 4].copy_from_slice(&WIDTH[r].to_le_bytes());
+            out[at + 8..at + 16].copy_from_slice(&((bytes.len() / WIDTH[r] as usize) as u64).to_le_bytes());
+            out[at + 16..at + 24].copy_from_slice(&(offset as u64).to_le_bytes());
+            out[offset..offset + bytes.len()].copy_from_slice(bytes);
+            end = offset + bytes.len();
+        }
+        out[end..].fill(0);
     }
 }
 

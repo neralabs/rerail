@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod memo_pack;
-pub use memo_pack::{MemoBlob, MemoBytes, MemoPut};
+pub use memo_pack::{MemoBlob, MemoBytes, MemoPut, MemoRow, MemoSegments, SegmentWriter};
 pub(super) use memo_pack::drop_memo_space;
 
 /// The run each space last counted in this process, by its token: a later program of that run puts under the same

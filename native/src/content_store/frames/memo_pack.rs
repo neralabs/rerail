@@ -141,42 +141,219 @@ impl<'a> Segments<'a> {
     }
 }
 
-/// A new segment of `entries` (each an image, its document key and content digest), in `dir` under a name of this
-/// writer's: written through a deferrable lease of the pool, written back and frozen. Returns its file, its block
-/// mapped read-only, and each entry's offset.
-fn write_segment(dir: &Path, entries: &[(&[u8], i64, &[u8; 32])]) -> StoreResult<(PathBuf, Frozen, Vec<usize>)> {
-    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    std::fs::create_dir_all(dir)?;
-    let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let file = dir.join(format!("w-{}-{n}.seg", std::process::id()));
-    let len = rerail_blocks::journal::reserve_for(entries.len(), entries.iter().map(|e| e.0.len()), ALIGN);
-    let fill = |block: &rerail_blocks::block::Block| -> Vec<usize> {
-        rerail_blocks::journal::init(block, entries.len());
-        entries.iter().map(|(bytes, key, digest)| rerail_blocks::journal::put(block, bytes, ALIGN, *key as u32, u64::from_le_bytes(digest[..8].try_into().expect("eight bytes")))).collect()
-    };
+/// The entries of a batch, written into segments on the producer's thread (decision 0295 §1: the wave's, into its
+/// own leases): each placed in the open lease and written there by its maker (`put`), with no copy of it made
+/// first; a lease without room for the next is sealed and another opened. `seal` hands them on to the store's
+/// writer (`put_memo_segments`), and they are read in place meanwhile (`MemoSegments::entry`).
+pub struct SegmentWriter {
+    dir: PathBuf,
+    /// The entries still to come (each lease's table has room for them all) and the bytes a lease is made of.
+    left: usize,
+    lease: usize,
+    open: Option<Open>,
+    done: Vec<Done>,
+    placed: Vec<(usize, usize, usize)>,
+}
+
+/// A segment being written: a deferrable lease of the pool, or (no mapping, WASI) a block in memory.
+enum Open {
     #[cfg(unix)]
-    let (frozen, at) = {
-        #[cfg(target_os = "macos")]
-        let lease = rerail_accel::gpu::shared::lease_deferrable_host(kind::JOURNAL, len, &file).map_err(StoreError::Invalid)?;
-        #[cfg(not(target_os = "macos"))]
-        let lease = rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, len, true)?;
-        let at = fill(lease.block());
-        let written = lease.seal().write_back();
-        let frozen = written.inspect_err(|_| {
-            let _ = std::fs::remove_file(&file);
-        })?;
-        (frozen, at)
-    };
-    // No mapping: the block made in memory, written as one file.
+    Mapped(rerail_blocks::deferrable::Deferrable),
     #[cfg(not(unix))]
-    let (frozen, at) = {
-        let block = rerail_blocks::block::Block::anon(kind::JOURNAL, len.next_multiple_of(rerail_blocks::block::PAGE));
-        let at = fill(&block);
-        let frozen = block.freeze();
-        std::fs::write(&file, frozen.bytes(0, frozen.used()))?;
-        (rerail_blocks::journal::open(&file).map_err(StoreError::Invalid)?, at)
-    };
-    Ok((file, frozen, at))
+    Memory(rerail_blocks::block::Block, PathBuf),
+}
+
+/// A segment sealed, on its way to the writer, then written back; its file under its writer's name until the
+/// batch's rows name it.
+enum Done {
+    #[cfg(unix)]
+    Mapped(rerail_blocks::deferrable::Sealed, Frozen),
+    #[cfg(not(unix))]
+    Memory(Frozen, PathBuf),
+    /// Written back: its block, read in place, and its file.
+    Written(Frozen, PathBuf),
+}
+
+impl Open {
+    fn block(&self) -> &rerail_blocks::block::Block {
+        match self {
+            #[cfg(unix)]
+            Open::Mapped(d) => d.block(),
+            #[cfg(not(unix))]
+            Open::Memory(b, _) => b,
+        }
+    }
+    fn seal(self) -> Done {
+        match self {
+            #[cfg(unix)]
+            Open::Mapped(d) => {
+                let sealed = d.seal();
+                let reader = sealed.reader();
+                Done::Mapped(sealed, reader)
+            }
+            #[cfg(not(unix))]
+            Open::Memory(b, path) => Done::Memory(b.freeze(), path),
+        }
+    }
+}
+
+impl Done {
+    fn reader(&self) -> &Frozen {
+        match self {
+            #[cfg(unix)]
+            Done::Mapped(_, r) => r,
+            #[cfg(not(unix))]
+            Done::Memory(r, _) => r,
+            Done::Written(r, _) => r,
+        }
+    }
+    fn file(&self) -> &Path {
+        match self {
+            #[cfg(unix)]
+            Done::Mapped(s, _) => s.path(),
+            #[cfg(not(unix))]
+            Done::Memory(_, f) => f,
+            Done::Written(_, f) => f,
+        }
+    }
+    /// The writer's half: its pages written back and its state frozen (`Sealed::write_back`; a block no device
+    /// wrapped stays mapped, its readers reading on), or (no mapping) its bytes written as one file. Once.
+    fn write_back(self) -> StoreResult<Done> {
+        match self {
+            #[cfg(unix)]
+            Done::Mapped(sealed, reader) => {
+                let path = sealed.path().to_owned();
+                let frozen = sealed.write_back()?;
+                drop(reader);
+                Ok(Done::Written(frozen, path))
+            }
+            #[cfg(not(unix))]
+            Done::Memory(frozen, path) => {
+                std::fs::write(&path, frozen.bytes(0, frozen.used()))?;
+                Ok(Done::Written(frozen, path))
+            }
+            written @ Done::Written(..) => Ok(written),
+        }
+    }
+}
+
+impl SegmentWriter {
+    /// A writer of `n` entries into segments in `dir`, about `estimate` bytes in all: the size of its first lease.
+    pub fn new(dir: &Path, n: usize, estimate: usize) -> SegmentWriter {
+        SegmentWriter { dir: dir.to_owned(), left: n, lease: estimate, open: None, done: Vec::new(), placed: Vec::new() }
+    }
+
+    /// Places the next entry, `len` bytes of document `key` and content `digest`, and has `write` write it there.
+    pub fn put(&mut self, len: usize, key: i64, digest: &[u8; 32], write: impl FnOnce(&mut [u8])) -> StoreResult<()> {
+        let digest = u64::from_le_bytes(digest[..8].try_into().expect("eight bytes"));
+        for fresh in [false, true] {
+            if fresh || self.open.is_none() {
+                if let Some(open) = self.open.take() {
+                    self.done.push(open.seal());
+                }
+                let need = rerail_blocks::journal::reserve_for(self.left.max(1), std::iter::once(len), ALIGN);
+                self.open = Some(self.lease(self.lease.max(need))?);
+            }
+            let open = self.open.as_ref().expect("an open segment");
+            if let Some(at) = rerail_blocks::journal::place(open.block(), len, ALIGN, key as u32, digest) {
+                // SAFETY: `at..at + len` was just placed in the open block, for this entry alone.
+                write(unsafe { std::slice::from_raw_parts_mut(open.block().ptr::<u8>(at), len) });
+                self.placed.push((self.done.len(), at, len));
+                self.left = self.left.saturating_sub(1);
+                return Ok(());
+            }
+        }
+        Err(StoreError::Invalid(format!("a memo entry of {len} bytes found no room in a segment made for it")))
+    }
+
+    fn lease(&self, bytes: usize) -> StoreResult<Open> {
+        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        std::fs::create_dir_all(&self.dir)?;
+        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let file = self.dir.join(format!("w-{}-{n}.seg", std::process::id()));
+        #[cfg(target_os = "macos")]
+        let open = Open::Mapped(rerail_accel::gpu::shared::lease_deferrable_host(kind::JOURNAL, bytes, &file).map_err(StoreError::Invalid)?);
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true)?);
+        #[cfg(not(unix))]
+        let open = Open::Memory(rerail_blocks::block::Block::anon(kind::JOURNAL, bytes.next_multiple_of(rerail_blocks::block::PAGE)), file);
+        rerail_blocks::journal::init(open.block(), self.left.max(1));
+        Ok(open)
+    }
+
+    /// Seals the open segment: the entries go to the writer, read in place meanwhile.
+    pub fn seal(mut self) -> MemoSegments {
+        if let Some(open) = self.open.take() {
+            self.done.push(open.seal());
+        }
+        MemoSegments { done: self.done.into_iter().map(Some).collect(), placed: self.placed, named: false }
+    }
+}
+
+/// A batch's sealed segments (`SegmentWriter::seal`) and where each entry is in them, in the order put. Its files
+/// are removed when it is dropped, unless its rows name them (`put_memo_segments`).
+pub struct MemoSegments {
+    done: Vec<Option<Done>>,
+    placed: Vec<(usize, usize, usize)>,
+    named: bool,
+}
+
+impl MemoSegments {
+    /// Entry `i`, where it is.
+    pub fn entry(&self, i: usize) -> MemoBytes {
+        let (seg, at, len) = self.placed[i];
+        MemoBytes { block: self.done[seg].as_ref().expect("a segment").reader().clone(), at, len }
+    }
+    pub fn len(&self) -> usize {
+        self.placed.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.placed.is_empty()
+    }
+    /// Writes every segment back that is not yet (the writer's half; again after a failure, only those left).
+    fn write_back(&mut self) -> StoreResult<()> {
+        for d in &mut self.done {
+            match d.take() {
+                Some(segment) => *d = Some(segment.write_back()?),
+                None => return Err(StoreError::Invalid("a memo segment whose write-back failed".into())),
+            }
+        }
+        Ok(())
+    }
+    fn files(&self) -> Vec<PathBuf> {
+        self.done.iter().flatten().map(|d| d.file().to_owned()).collect()
+    }
+}
+
+impl Drop for MemoSegments {
+    fn drop(&mut self) {
+        if !self.named {
+            for f in self.files() {
+                let _ = std::fs::remove_file(f);
+            }
+        }
+    }
+}
+
+/// An entry of a batch, as `put_memo_segments` records it: what finds it (its part, path, content and document
+/// key), and whether it is kept over the entry stored at its part (`MemoPut::over`).
+pub struct MemoRow {
+    pub part: i64,
+    pub path: String,
+    pub digest: [u8; 32],
+    pub key: i64,
+    pub over: bool,
+}
+
+/// `entries` (each an image, its document key and content digest) in new segments of `dir`, written back.
+fn write_segments(dir: &Path, entries: &[(&[u8], i64, &[u8; 32])]) -> StoreResult<MemoSegments> {
+    let mut w = SegmentWriter::new(dir, entries.len(), rerail_blocks::journal::reserve_for(entries.len(), entries.iter().map(|e| e.0.len()), ALIGN));
+    for (bytes, key, digest) in entries {
+        w.put(bytes.len(), *key, digest, |out| out.copy_from_slice(bytes))?;
+    }
+    let mut segments = w.seal();
+    segments.write_back()?;
+    Ok(segments)
 }
 
 /// An entry's row (`COLUMNS`): its part, path, content and document key, where it is, and where what is kept over
@@ -201,6 +378,13 @@ fn row_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         over: (over_len > 0).then(|| Ok::<_, rusqlite::Error>(At { seg: r.get(7)?, at: r.get::<_, i64>(8)? as u64, len: over_len as usize })).transpose()?,
     })
 }
+
+/// An entry's row as compaction reads it: its space, part, document key, content digest, place, and the place of
+/// what is kept over it.
+type Compacted = (Vec<u8>, i64, i64, Vec<u8>, At, Option<At>);
+
+/// An entry compaction keeps: its space, part, document key, content digest, bytes and what is kept over it.
+type Kept<'a> = (&'a [u8], i64, i64, [u8; 32], MemoBytes, Option<MemoBytes>);
 
 const COLUMNS: &str = "part, path, digest, doc, pack, at, len, over_pack, over_at, over_len";
 
@@ -289,25 +473,53 @@ impl ContentStore {
     }
 
     /// Writes `puts` into `space` (each replacing the entry at its part, or kept over it: `MemoPut::over`): their
-    /// images in one new segment, written before the transaction, which numbers it and inserts their rows. Of each
-    /// path written whole, the newest `keep` contents stay (decision 0117: an edited file's earlier entries go).
+    /// images in new segments, then `put_memo_segments`.
     pub fn put_memo_entries(&self, space: &[u8; 32], puts: Vec<MemoPut>, keep: usize) -> StoreResult<()> {
         if puts.is_empty() {
             return Ok(());
         }
+        let lens = puts.iter().map(|p| p.bytes.len());
+        let mut w = SegmentWriter::new(&self.memo_dir(), puts.len(), rerail_blocks::journal::reserve_for(puts.len(), lens, ALIGN));
+        let mut rows = Vec::with_capacity(puts.len());
+        for p in puts {
+            w.put(p.bytes.len(), p.key, &p.digest, |out| out.copy_from_slice(&p.bytes))?;
+            rows.push(MemoRow { part: p.part, path: p.path, digest: p.digest, key: p.key, over: p.over });
+        }
+        self.put_memo_segments(space, &mut w.seal(), &rows, keep)
+    }
+
+    /// The directory a run's `SegmentWriter` writes the store's segments in.
+    pub fn memo_dir(&self) -> PathBuf {
+        pack_dir(&self.database_path)
+    }
+
+    /// The writer's half of a batch (`SegmentWriter`): its segments written back (`Sealed::write_back`), then, in
+    /// one transaction, numbered, renamed into place and their entries' rows inserted, `rows[i]` entry `i`. Of each
+    /// path written whole, the newest `keep` contents stay (decision 0117: an edited file's earlier entries go).
+    pub fn put_memo_segments(&self, space: &[u8; 32], segments: &mut MemoSegments, rows: &[MemoRow], keep: usize) -> StoreResult<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        assert_eq!(rows.len(), segments.len(), "a row an entry");
         let database = self.database_path.clone();
-        let (file, block, offsets) = write_segment(&pack_dir(&database), &puts.iter().map(|p| (&p.bytes[..], p.key, &p.digest)).collect::<Vec<_>>())?;
+        segments.write_back()?;
+        let files = segments.files();
         let done = self.immediate_transaction_once(|t| {
-            let seg = next_segment(t)?;
-            t.execute_cached("INSERT INTO memo_packs(pack) VALUES (?1)", [seg])?;
-            std::fs::rename(&file, segment_path(&database, seg))?;
+            let mut numbers = Vec::with_capacity(files.len());
+            for _ in &files {
+                let seg = next_segment(t)?;
+                t.execute_cached("INSERT INTO memo_packs(pack) VALUES (?1)", [seg])?;
+                numbers.push(seg);
+            }
             // The parts whose entry took what is kept over it.
             let mut kept_over = HashSet::new();
-            for (p, &at) in puts.iter().zip(&offsets) {
+            for (i, p) in rows.iter().enumerate() {
+                let (s, at, len) = segments.placed[i];
+                let seg = numbers[s];
                 if p.over {
                     let n = t.execute_cached(
                         "UPDATE memo_entries SET over_pack = ?1, over_at = ?2, over_len = ?3, over_raw = ?3 WHERE space = ?4 AND part = ?5 AND digest = ?6 AND doc = ?7 AND framed = 1",
-                        params![seg, at as i64, p.bytes.len() as i64, &space[..], p.part, &p.digest[..], p.key],
+                        params![seg, at as i64, len as i64, &space[..], p.part, &p.digest[..], p.key],
                     )?;
                     if n > 0 {
                         kept_over.insert(p.part);
@@ -316,12 +528,12 @@ impl ContentStore {
                     // Written whole: what was kept over the entry it replaces goes with it (the columns' defaults).
                     t.execute_cached(
                         "INSERT OR REPLACE INTO memo_entries(space, part, path, digest, doc, pack, at, len, raw, framed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 1)",
-                        params![&space[..], p.part, p.path, &p.digest[..], p.key, seg, at as i64, p.bytes.len() as i64],
+                        params![&space[..], p.part, p.path, &p.digest[..], p.key, seg, at as i64, len as i64],
                     )?;
                 }
             }
             let mut gone = Vec::new();
-            let paths: HashSet<&str> = puts.iter().filter(|p| !p.over).map(|p| p.path.as_str()).collect();
+            let paths: HashSet<&str> = rows.iter().filter(|p| !p.over).map(|p| p.path.as_str()).collect();
             for path in paths {
                 let mut st = t.prepare_cached("SELECT part FROM memo_entries WHERE space = ?1 AND path = ?2 ORDER BY pack DESC, at DESC LIMIT -1 OFFSET ?3")?;
                 let old: Vec<i64> = st.query_map(params![&space[..], path, keep as i64], |r| r.get(0))?.collect::<Result<_, _>>()?;
@@ -330,21 +542,23 @@ impl ContentStore {
                     gone.push(part);
                 }
             }
-            Ok((gone, kept_over))
+            Ok((gone, kept_over, numbers))
         });
-        if done.is_err() {
-            let _ = std::fs::remove_file(&file);
+        let (gone, kept_over, numbers) = done?;
+        // Each segment under its number, once its rows are committed: a reader meanwhile misses.
+        segments.named = true;
+        for (file, seg) in files.iter().zip(numbers) {
+            std::fs::rename(file, segment_path(&database, seg))?;
         }
-        let (gone, kept_over) = done?;
-        // The snapshot holds what is written, where its space's entries were admitted: in the segment, mapped.
+        // The snapshot holds what is written, where its space's entries were admitted: in its segment, mapped.
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             if snapshot.admitted.contains(space) {
                 let held = snapshot.memo.entry(*space).or_default();
-                for (p, at) in puts.into_iter().zip(offsets) {
-                    let bytes = MemoBytes { block: block.clone(), at, len: p.bytes.len() };
+                for (i, p) in rows.iter().enumerate() {
+                    let bytes = segments.entry(i);
                     if !p.over {
-                        held.insert(p.part, Arc::new(MemoBlob { path: p.path, digest: p.digest, key: p.key, bytes, over: None }));
+                        held.insert(p.part, Arc::new(MemoBlob { path: p.path.clone(), digest: p.digest, key: p.key, bytes, over: None }));
                     } else if kept_over.contains(&p.part)
                         && let Some(entry) = held.get_mut(&p.part)
                     {
@@ -386,7 +600,7 @@ impl ContentStore {
             let packs: Vec<i64> = t.prepare_cached("SELECT pack FROM memo_packs")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
             t.execute_cached("DELETE FROM memo_entries WHERE framed = 0", [])?;
             // Each entry and what is kept over it (`over_len` 0: nothing).
-            let rows: Vec<(Vec<u8>, i64, i64, Vec<u8>, At, Option<At>)> = t
+            let rows: Vec<Compacted> = t
                 .prepare_cached("SELECT space, part, doc, digest, pack, at, len, over_pack, over_at, over_len FROM memo_entries ORDER BY pack, at")?
                 .query_map([], |r| {
                     let at = |p: usize| -> rusqlite::Result<At> { Ok(At { seg: r.get(p)?, at: r.get::<_, i64>(p + 1)? as u64, len: r.get::<_, i64>(p + 2)? as usize }) };
@@ -396,7 +610,7 @@ impl ContentStore {
                 .collect::<Result<_, _>>()?;
             let mut segments = Segments::new(&database);
             // An entry not there is forgotten; what is kept over it, where not there, too.
-            let mut kept: Vec<(&[u8], i64, i64, [u8; 32], MemoBytes, Option<MemoBytes>)> = Vec::new();
+            let mut kept: Vec<Kept<'_>> = Vec::new();
             for (space, part, doc, digest, at, over) in &rows {
                 match (segments.at(*at), <[u8; 32]>::try_from(digest.as_slice())) {
                     (Some(bytes), Ok(digest)) => kept.push((space, *part, *doc, digest, bytes, over.and_then(|o| segments.at(o)))),
@@ -416,10 +630,14 @@ impl ContentStore {
             if kept.is_empty() {
                 return Ok((packs, None));
             }
-            let (file, _, offsets) = write_segment(&pack_dir(&database), &entries)?;
+            let mut placed = write_segments(&pack_dir(&database), &entries)?;
+            let file = match &placed.files()[..] {
+                [file] => file.clone(),
+                _ => return Err(StoreError::Invalid("the memo's compaction made more than one segment".into())),
+            };
             let seg = packs.iter().copied().max().unwrap_or(0) + 1;
             t.execute_cached("INSERT INTO memo_packs(pack) VALUES (?1)", [seg])?;
-            let mut offsets = offsets.into_iter();
+            let mut offsets = placed.placed.clone().into_iter().map(|p| p.1);
             for (space, part, _, _, _, over) in &kept {
                 let at = offsets.next().expect("an offset an entry");
                 let (over_at, over_len) = match over {
@@ -431,10 +649,8 @@ impl ContentStore {
                     params![seg, at as i64, over_at, over_len, space, part],
                 )?;
             }
-            if let Err(e) = std::fs::rename(&file, segment_path(&database, seg)) {
-                let _ = std::fs::remove_file(&file);
-                return Err(e.into());
-            }
+            std::fs::rename(&file, segment_path(&database, seg))?;
+            placed.named = true;
             Ok((packs, Some(seg)))
         })?;
         for pack in old.into_iter().filter(|&p| Some(p) != file) {

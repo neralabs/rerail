@@ -12,6 +12,9 @@
 //!   kernel's pages, dirty since they were wired), and only then the header's state written, frozen. A segment whose
 //!   state says frozen has every page written back; one that does not is not trusted (`Block::open_file`).
 //!
+//! A block no device wrapped (the host's writes alone) is written back in place: one `MS_SYNC`, the truncation and
+//! the state, and its mapping and readers stay.
+//!
 //! Nothing else writes a kernel's pages back: not `sync`, not the OS's flush, not the process's exit (0295 §7). So
 //! the state written last is what makes them safe.
 
@@ -28,6 +31,8 @@ use std::time::Duration;
 struct Mapping {
     base: *mut u8,
     len: usize,
+    /// Wrapped for a device: a kernel may have written it, so its write-back unmaps it first (module doc).
+    wrapped: bool,
     /// The no-copy wrap the GPU binds the block through, made once with the mapping; let go at the seal.
     #[cfg(target_os = "macos")]
     gpu: Mutex<Option<metal::Buffer>>,
@@ -101,9 +106,14 @@ impl Deferrable {
         let gpu = device.map(|d| {
             d.new_buffer_with_bytes_no_copy(p as *const std::ffi::c_void, len as u64, metal::MTLResourceOptions::StorageModeShared, None)
         });
+        #[cfg(target_os = "macos")]
+        let wrapped = gpu.is_some();
+        #[cfg(not(target_os = "macos"))]
+        let wrapped = false;
         let mapping = Arc::new(Mapping {
             base: p.cast(),
             len,
+            wrapped,
             #[cfg(target_os = "macos")]
             gpu: Mutex::new(gpu),
         });
@@ -179,6 +189,16 @@ impl Sealed {
     /// The writer's half (module doc). Returns the block mapped again read-only, frozen, every page written back.
     pub fn write_back(self) -> io::Result<Frozen> {
         let Sealed { frozen, mapping, path, kind, length } = self;
+        // Written by the host alone: no page is wired, so one `MS_SYNC` writes every one, and the mapping stays,
+        // its readers reading on (the block a queued write's readers hold).
+        if !mapping.wrapped {
+            msync(mapping.base, length, libc::MS_SYNC)?;
+            let f = OpenOptions::new().read(true).write(true).open(&path)?;
+            f.set_len(length as u64)?;
+            f.write_all_at(&FROZEN.to_ne_bytes(), std::mem::offset_of!(Header, state) as u64)?;
+            let _ = kind;
+            return Ok(frozen);
+        }
         // The host's dirty pages: written now, on this thread. A kernel's are wired and skipped.
         msync(mapping.base, length, libc::MS_ASYNC)?;
         // The unmap, once the readers let go: the driver's wire on a kernel's pages ends with it.

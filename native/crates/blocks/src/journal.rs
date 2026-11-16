@@ -81,16 +81,27 @@ pub fn add(journal: &Block, src: &Block, start: usize, end: usize, entry: usize,
 /// Copies `bytes` (one entry, its root at its start) into a journal block (`init`) at `align`, and records its place
 /// under `key` and `digest`. Returns its offset. Safe from many threads at once.
 pub fn put(journal: &Block, bytes: &[u8], align: usize, key: u32, digest: u64) -> usize {
-    let dst = journal.alloc(bytes.len(), align);
+    let dst = place(journal, bytes.len(), align, key, digest).expect("room in the journal");
     // SAFETY: `dst..dst + len` was just allocated in the block, for this copy alone.
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), journal.base_ptr().add(dst), bytes.len()) };
+    dst
+}
+
+/// Room for one entry of `len` bytes in a journal block (`init`) at `align`, its place recorded under `key` and
+/// `digest`: its offset, the caller to write it (`Block::ptr`) before the block is sealed. `None` when the block
+/// has no room for it (or its table none for another entry). Safe from many threads at once.
+pub fn place(journal: &Block, len: usize, align: usize, key: u32, digest: u64) -> Option<usize> {
     let root: &JournalRoot = journal.root();
+    if root.n.load(Acquire) as usize >= root.entries.len() {
+        return None;
+    }
+    let dst = journal.try_alloc(len, align)?;
     let i = root.n.fetch_add(1, AcqRel) as usize;
     assert!(i < root.entries.len(), "journal entries past its capacity");
     let loc = unsafe { root.entries.as_ptr().add(i) as *mut EntryLoc };
-    let end = (dst + bytes.len()) as u64;
+    let end = (dst + len) as u64;
     unsafe { *loc = EntryLoc { key, pad: 0, digest, start: dst as u64, end, entry: dst as u64 } };
-    dst
+    Some(dst)
 }
 
 /// The bytes `init`, `cap` entries and `put`s of `lens` at `align` take, at most: a block's reservation for them.

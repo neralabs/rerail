@@ -11,7 +11,7 @@
 //! its segment (`MemoBytes`).
 
 use super::{Entry, Syms};
-use crate::code_rule_dsl::logic::plan::output::{Builder, Image, Rows, col};
+use crate::code_rule_dsl::logic::plan::output::{Builder, Finished, Image, Rows, col};
 use crate::content_store::atoms::{Atoms, Sym};
 use crate::content_store::{MemoBytes, StoreError, StoreResult};
 use std::collections::HashMap;
@@ -22,8 +22,18 @@ fn bad(what: impl std::fmt::Display) -> StoreError {
     StoreError::Invalid(format!("a corpus memo entry {what}"))
 }
 
-/// The entry's image: its symbols' strings read from `atoms`, the table its rows were made under.
+/// The entry's image (`encode_parts`), as bytes.
+#[cfg(test)]
 pub(super) fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Vec<u8>> {
+    let made = encode_parts(entry, syms, atoms)?;
+    let mut out = vec![0u8; made.len()];
+    made.write(&mut out);
+    Ok(out)
+}
+
+/// The entry's image, made and not yet written (`Finished::write`: into its segment): its symbols' strings read from
+/// `atoms`, the table its rows were made under.
+pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Finished> {
     let mut b = Builder::new(0, false);
     b.rows_as_is(NODES, &[col::INT], vec![entry.nodes as i64]);
     let mut shown: HashMap<i64, i64> = HashMap::new();
@@ -71,7 +81,7 @@ pub(super) fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<V
         }
         b.rows_as_is(&format!("o:{name}"), types, values);
     }
-    Ok(b.finish())
+    Ok(b.finish_parts())
 }
 
 /// The image of `bytes` (`encode`'s), checked, read where it is.
