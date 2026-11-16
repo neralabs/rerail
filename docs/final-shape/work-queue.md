@@ -536,6 +536,24 @@ pass.
       by the frame (`frames.data` → `frame_data(id INTEGER PRIMARY KEY, data)`), or `frames` as a rowid table with
       a unique index on its key. Then (2) collection drops the identities no live program reads; (3) how much of the
       347 MB a run reads at all, now that kept inputs are decoded where read (Q20).
+    - **Step (2) tried in the run, does not work** (2026-11-16). The run of no phase deleted, behind the run, the
+      frames of every identity its read left out (patch kept: `working-data/patches/q19-step2-in-run-forget.patch`,
+      with its test). Two faults:
+      - **It contradicts the keep policy.** The cross space is one per root. `CorpusPolicy` protects each root's
+        newest 64 lanes, and a lane is the programs' texts (`rerail.corpus-lane/v2`): policy sets that run one
+        process each over a root keep their frames. A run that deletes what it does not read deletes a sibling
+        lane's, and the two make each other cold.
+      - **The first delete is the backlog.** On ep2 the first run (cold build) left out 55,162 identities, about
+        165K frames and GBs of blobs. SQLite reads a blob's overflow chain to free it. The run reached its 115 s cap
+        waiting on the writer, nothing committed.
+    - **Why collection keeps them.** `collect_unreachable_frames` (0227) already drops a dead program's frames. On
+      ep2 all 357 plans are live and 31 live programs hold the cross space (`frame_program_used`): each edit is a new
+      lane, so the 64 protected lanes keep up to 64 edits' predecessors. The space's size is the policy's, not a
+      missing collector.
+    - **The user's call:** how an edit's predecessor stops being protected. Recommended: a lane also names its
+      policy set (where its rules come from), and a lane superseded by a newer one of the same policy set keeps no
+      protection. Reverting an edit is then cold. The alternative is fewer protected lanes, which also drops sibling
+      policy sets. Either way the first collection of ep2's backlog deletes GBs and runs in upkeep, not in a run.
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 
