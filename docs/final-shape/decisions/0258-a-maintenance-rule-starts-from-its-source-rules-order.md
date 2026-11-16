@@ -5,6 +5,15 @@ Status: built (2026-11-15). Takes up decision 0230's first open item: a session'
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).
 
+Kept (the user, 2026-11-15): source orders stay. They are an escape hatch from inefficient rules. cost-classifier's
+withdrawal of this decision (49297f11e, "plan: remove source orders") is not taken when that branch is merged.
+django-bugs' form (efcbd0717: tried inside the search, `RERAIL_SOURCE_ORDERS` opt-in) is the form the hub takes.
+Off by default on data (django-bugs' "Re-validated" and "The start inside the search", O125 sessions 12-16): the
+plans are the same (join work at parity, "same as full: true" either way), and on plans for more: 47.7 ms against
+40.7 ms of first-sight planning thread CPU, alternating rounds; 65.5 against 59.0 ms in the start-first form. The
+rule's own work moves by noise only (34.19/33.98/34.43 G off, 33.82/34.19/34.19 G on). Nothing measured shows the
+case it is kept for, a rule the search plans badly; `RERAIL_SOURCE_ORDERS=on` is the hatch there.
+
 ## Intro
 
 A session maintains a changed stratum with rules written from its rules (decision 0077 §3). For a rule
