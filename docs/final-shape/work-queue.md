@@ -462,6 +462,22 @@ pass.
   0.26 M rows priced 0.26 M in two runs of the 300-file bench; `annotation` and `ann_ctx` (the other readers from the
   container) kept theirs (0.35 M and 0.36 M, as with 0297). Self-reviewed per reviewer-brief.md; tests in 0299.
 
+### Q28. A strict run stops on the writer's back-pressure when chunks end together
+
+- **Found** (2026-11-16, a 300-file bench run at load 30): `RERAIL_SQL_STRICT` ended the run at "a wait for the
+  store's writer: the queue's back-pressure". Each chunk's memo entries are one job of 60–80 MB (counted as their
+  decoded rows: `base:within` alone 7–10 MB, then `node`, `tape`, `rr_token_named`, three `xd_…_rr_diagnostic`
+  exports of about a row a node). A chunk's wave is held in the queue until its whole transaction commits: 0.2–1.0
+  s of the writer's wall each, 2.3 s for the first (1.1 s of it the commit). Chunks end in a burst (six memo jobs
+  in 6 s, `RERAIL_WRITES`'s timeline); three ending within one wave's write is 67.7 + 62.5 + 63.8 MB over the 192
+  MB cap, and the third waits. With `RERAIL_WRITE_QUEUE_MB=128` or `96` it stops so every run, at any load. The
+  cap does not bound the queue otherwise: the cross part's frames (300 MB in one job, no sealed wave before them)
+  take the queue to 307 MB in every run with no wait.
+- **Fixed on phased-facts** by 0295 step 4 (1449681e9): the run writes memo entries into mapped segments and the
+  queue counts their pointer rows (about 100 bytes an entry), not their images. Frames are its step 5.
+- **Done when**: 0295 step 4 is merged here (through the hub), and a strict 300-file run with
+  `RERAIL_WRITE_QUEUE_MB=96` completes.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
