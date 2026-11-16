@@ -114,6 +114,7 @@
     "check:windows-paths": "node scripts/check/check-windows-paths.mjs",
     "deps:sync": "node scripts/deps/sync-pins.mjs",
     "test": "vitest run --dir test",
+    "test:coverage:lint-config": "vitest run test/engine/catalog/lint-config/ test/cli/packs/packs-calibrate.test.ts --coverage.enabled --coverage.provider=v8 --coverage.include=\"src/engine/catalog/lint-config/**\" --coverage.include=src/cli/packs-calibrate.ts --coverage.exclude=\"src/engine/catalog/lint-config/generated/**\" --coverage.reporter=text --coverage.reportsDirectory=.rerail/coverage/lint-config --coverage.thresholds.perFile --coverage.thresholds.100",
     "test:conformance": "npm run conformance:languages:check",
     "test:native": "cargo test --manifest-path Cargo.toml --workspace",
     "test:code-rule-dsl-runtime": "vitest run test/engine/native/native-code-rule-dsl-runtime.test.ts",

@@ -46,7 +46,7 @@ Editing a By Rerail rule stores a copy in the library, added where the original 
 
 ### Packs
 
-A **rule pack** (`packs/<id>/`, [pack format](pack-format.md)) holds rule documents in `rules/` and a `pack.json`, but no code. Set-up recommends the packs that fit; `rerail packs list`, `add`, `remove` and `recommend` manage them afterwards. See [Rule packs](rule-packs.md).
+A **rule pack** (`packs/<id>/`, [pack format](pack-format.md)) holds rule documents in `rules/` and a `pack.json`, but no code. Set-up recommends the packs that fit; `rerail packs list`, `add`, `remove` and `recommend` manage them afterwards. `rerail packs calibrate [--repo <dir>] [--dry-run] [--json]` reads the repository's own lint config again, as set-up does, and updates the settings it gave the repository's packs: a setting you made yourself stays ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). See [Rule packs](rule-packs.md).
 
 <details>
 <summary>How matching works, and your own packs</summary>

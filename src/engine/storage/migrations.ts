@@ -158,6 +158,17 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     },
   },
   {
+    // A rule setting's `origin`: `lint-config` for one the repository's lint config gave (set-up, `rerail packs
+    // calibrate`), null for a person's or an agent's, which calibrating leaves alone. No floor: an older build never
+    // reads the column. Its writes name only the columns it knows, so a row it inserts has no origin, and its upsert
+    // of an existing row keeps the row's origin: a calibrated row an older build's dashboard changed still reads as
+    // calibrated, and the next calibration may replace that change. Its delete takes the origin with the row.
+    id: "rule-settings-origin",
+    up(database) {
+      addColumn(database, "rule_settings", "origin", "text");
+    },
+  },
+  {
     // An audit's `origin`: `ongoing`, or `scan` for one someone asked for, whose violations the dashboard leaves out.
     // The four triggers that derive history from `audits` are dropped, and the DDL right after creates them again
     // skipping scans. The scans a file already holds are marked where it still names them (`markRecordedScans`). No

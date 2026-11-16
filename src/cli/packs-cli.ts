@@ -37,6 +37,7 @@ import {
   type PackVersion,
 } from "../setup/rule-pack-store.js";
 import { withPacksLock } from "../setup/packs-lock.js";
+import { runPacksCalibrateCommand } from "./packs-calibrate.js";
 
 /**
  * A version (`0.1.1`, `0.1.2-next.0`), a range (`^0.1.0`) or a dist-tag (`next`): what may follow a pack's name. Not
@@ -232,41 +233,62 @@ async function recommend(args: readonly string[], usage: () => string, store: Pa
   return 0;
 }
 
-/** `rerail packs list|add|remove|recommend`, on `store`'s home. `add` and `remove` hold the packs lock while npm runs. */
+/** `rerail packs add`: installs the packs named, then lists what is installed, warning of each pack Rerail has not reviewed. */
+async function add(args: readonly string[], usage: () => string, store: PackStore): Promise<number> {
+  if (args.length === 0) throw new Error(`Name a rule pack to add, for example rerail packs add typescript\n\n${usage()}`);
+  // Checked as set-up's install is: a pack that installs but is left out is put back, and the command fails.
+  const added = await addPackSpecs(args.map(packAddSpec), store);
+  if ("problem" in added) throw new Error(added.problem);
+  const catalog = loadRuleCatalog(store.home);
+  const warnings = added.installed.flatMap(pack => {
+    const localSource = catalog.packs.get(pack.id)?.localSource;
+    return rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER && localSource === undefined ? [] : [unreviewedWarning(pack, localSource)];
+  });
+  write([...installedLines(store.home), ...warnings]);
+  return 0;
+}
+
+/** `rerail packs remove`: uninstalls the packs named under the packs lock, then lists what is installed. */
+async function remove(args: readonly string[], usage: () => string, store: PackStore): Promise<number> {
+  if (args.length === 0 || args.some(argument => packagesToRemove(argument, store.home) === undefined)) {
+    throw new Error(`Name the rule packs to remove by id or package, for example rerail packs remove typescript\n\n${usage()}`);
+  }
+  const removed = [...new Set(args.flatMap(argument => packagesToRemove(argument, store.home)!))];
+  await withPacksLock(store.home, async () => {
+    // Read under the lock, so no install in between changes which package holds an id.
+    const problem = takeoverProblem(removed, store.home);
+    if (problem !== undefined) throw new Error(problem);
+    await store.remove(removed);
+  });
+  write(installedLines(store.home));
+  return 0;
+}
+
+/** `rerail packs list`: the packs installed, and the rules of this checkout's own `.rerail/rules`. */
+function list(args: readonly string[], usage: () => string, store: PackStore): number {
+  parseArguments(args, { flags: [], options: [] }, argument => `Unknown packs list option: ${argument}\n\n${usage()}`);
+  write([...installedLines(store.home), ...worktreeLines(store.home, repositoryIdentityLocation(process.cwd()).workspaceRoot)]);
+  return 0;
+}
+
+type PacksSubcommand = (args: readonly string[], usage: () => string, store: PackStore) => number | Promise<number>;
+
+/** By the word a person types: a Map, so a word like `toString` is no subcommand. */
+const PACKS_SUBCOMMANDS: ReadonlyMap<string, PacksSubcommand> = new Map<string, PacksSubcommand>([
+  ["list", list],
+  ["add", add],
+  ["remove", remove],
+  ["recommend", recommend],
+  ["calibrate", (args, usage, store) => runPacksCalibrateCommand(args, usage, { home: store.home })],
+]);
+
+/**
+ * `rerail packs list|add|remove|recommend|calibrate`, on `store`'s home (`list` without a subcommand). `add` and
+ * `remove` hold the packs lock while npm runs.
+ */
 export async function runPacksCommand(args: readonly string[], usage: () => string, store: PackStore = npmPackStore()): Promise<number> {
-  const [subcommand, ...rest] = args;
-  if (subcommand === "list" || subcommand === undefined) {
-    parseArguments(rest, { flags: [], options: [] }, argument => `Unknown packs list option: ${argument}\n\n${usage()}`);
-    write([...installedLines(store.home), ...worktreeLines(store.home, repositoryIdentityLocation(process.cwd()).workspaceRoot)]);
-    return 0;
-  }
-  if (subcommand === "add") {
-    if (rest.length === 0) throw new Error(`Name a rule pack to add, for example rerail packs add typescript\n\n${usage()}`);
-    // Checked as set-up's install is: a pack that installs but is left out is put back, and the command fails.
-    const added = await addPackSpecs(rest.map(packAddSpec), store);
-    if ("problem" in added) throw new Error(added.problem);
-    const catalog = loadRuleCatalog(store.home);
-    const warnings = added.installed.flatMap(pack => {
-      const localSource = catalog.packs.get(pack.id)?.localSource;
-      return rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER && localSource === undefined ? [] : [unreviewedWarning(pack, localSource)];
-    });
-    write([...installedLines(store.home), ...warnings]);
-    return 0;
-  }
-  if (subcommand === "remove") {
-    if (rest.length === 0 || rest.some(argument => packagesToRemove(argument, store.home) === undefined)) {
-      throw new Error(`Name the rule packs to remove by id or package, for example rerail packs remove typescript\n\n${usage()}`);
-    }
-    const removed = [...new Set(rest.flatMap(argument => packagesToRemove(argument, store.home)!))];
-    await withPacksLock(store.home, async () => {
-      // Read under the lock, so no install in between changes which package holds an id.
-      const problem = takeoverProblem(removed, store.home);
-      if (problem !== undefined) throw new Error(problem);
-      await store.remove(removed);
-    });
-    write(installedLines(store.home));
-    return 0;
-  }
-  if (subcommand === "recommend") return await recommend(rest, usage, store);
-  throw new Error(`Unknown packs command: ${subcommand}\n\n${usage()}`);
+  const [subcommand = "list", ...rest] = args;
+  const run = PACKS_SUBCOMMANDS.get(subcommand);
+  if (run === undefined) throw new Error(`Unknown packs command: ${subcommand}\n\n${usage()}`);
+  return await run(rest, usage, store);
 }
