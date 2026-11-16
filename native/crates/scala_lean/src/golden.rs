@@ -2116,3 +2116,159 @@ trait H {
 "###,
     );
 }
+
+#[test]
+fn while_do_macro_end_markers_unicode() {
+    same(
+        r###"object A:
+  def a =
+    while !done && b do
+      c()
+    while
+      d = e
+      d > 0
+    do f()
+    do {
+      g()
+    } while (h)
+  def i(s: String): Int = macro M.j
+  def k =
+    x match
+      case 1 => 2
+    end match
+    if y then
+      z
+    end if
+  type ⊥ = Nothing
+  val cʹ = 1
+  val l = m(
+    "n" -> o:
+      p
+  )
+  val q = r { implicit s: T =>
+    u
+  }
+"###,
+        r###"compilation_unit [0..372]
+  object_definition [0..372]
+    object [0..6]
+    identifier name: [7..8]
+    template_body body: [8..372]
+      : [8..9]
+      function_definition [12..136]
+        identifier name: [16..17]
+        = [18..19]
+        indented_block body: [24..136]
+          while_expression {expression} [24..58]
+            infix_expression condition: {expression} [30..40]
+              prefix_expression left: [30..35]
+                ! [30..31]
+                identifier [31..35]
+              operator_identifier operator: [36..38]
+              identifier right: [39..40]
+            do condition: [41..43]
+            indented_block body: [50..58]
+              call_expression {expression} [50..53]
+                identifier function: [50..51]
+                arguments arguments: [51..53]
+                  arguments [51..52]
+                  ) [52..53]
+          while_expression {expression} [58..98]
+            indented_block condition: [70..92]
+              assignment_expression {expression} [70..75]
+                identifier left: [70..71]
+                identifier right: {expression} [74..75]
+              infix_expression {expression} [82..87]
+                identifier left: [82..83]
+                operator_identifier operator: [84..85]
+                integer_literal right: [86..87]
+            do condition: [92..94]
+            call_expression body: {expression} [95..98]
+              identifier function: [95..96]
+              arguments arguments: [96..98]
+                arguments [96..97]
+                ) [97..98]
+          do_while_expression [103..133]
+            block body: {expression} [106..123]
+              call_expression {expression} [114..117]
+                identifier function: [114..115]
+                arguments arguments: [115..117]
+                  arguments [115..116]
+                  ) [116..117]
+            parenthesized_expression condition: [130..133]
+              arguments [130..131]
+              identifier {expression} [131..132]
+              ) [132..133]
+      function_definition [136..169]
+        identifier name: [140..141]
+        parameters parameters: [141..152]
+          arguments [141..142]
+          parameter [142..151]
+            identifier name: [142..143]
+            type_identifier type: [145..151]
+          ) [151..152]
+        type_identifier return_type: [154..157]
+        = [158..159]
+        macro_body body: {expression} [160..169]
+          field_expression [166..169]
+            identifier value: [166..167]
+            identifier field: [168..169]
+      function_definition [172..259]
+        identifier name: [176..177]
+        = [178..179]
+        indented_block body: [184..259]
+          match_expression {expression} [184..223]
+            identifier value: {expression} [184..185]
+            match [186..191]
+            indented_cases body: [198..214]
+              case_clause [198..209]
+                integer_literal pattern: [203..204]
+                => [205..207]
+                integer_literal body: {expression} [208..209]
+            end_marker [214..223]
+              match [218..223]
+          if_expression {expression} [228..256]
+            identifier condition: {expression} [231..232]
+            then condition: [233..237]
+            indented_block consequence: [244..250]
+              identifier {expression} [244..245]
+            end_marker [250..256]
+              if [254..256]
+      type_definition [259..277]
+        type_identifier name: [264..267]
+        = [268..269]
+        type_identifier type: [270..277]
+      val_definition [280..291]
+        identifier pattern: [284..287]
+        integer_literal value: {expression} [290..291]
+      val_definition [294..330]
+        identifier pattern: [298..299]
+        call_expression value: {expression} [302..330]
+          identifier function: [302..303]
+          arguments arguments: [303..330]
+            arguments [303..304]
+            call_expression {expression} [309..329]
+              infix_expression function: [309..317]
+                string left: [309..312]
+                operator_identifier operator: [313..315]
+                identifier right: [316..317]
+              colon_argument arguments: [325..329]
+                indented_block [325..329]
+                  identifier {expression} [325..326]
+            ) [329..330]
+      val_definition [333..371]
+        identifier pattern: [337..338]
+        call_expression value: {expression} [341..371]
+          identifier function: [341..342]
+          block arguments: [343..371]
+            lambda_expression [345..370]
+              implicit parameters: [345..353]
+              identifier parameters: [354..355]
+              : parameters: [355..356]
+              type_identifier parameters: [357..358]
+              => [359..361]
+              indented_block [366..370]
+                identifier {expression} [366..367]
+"###,
+    );
+}

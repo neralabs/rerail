@@ -88,7 +88,10 @@ impl P<'_> {
         if field != f::NONE {
             self.t.refield(n, field);
         }
-        self.t.set_class(n, EXPR_CLASS);
+        // `do_while_expression` is `_indentable_expression`'s, not in `expression`: no class.
+        if self.t.kind_at(n) != K::DoWhileExpression {
+            self.t.set_class(n, EXPR_CLASS);
+        }
         Ok(n)
     }
 
@@ -150,7 +153,29 @@ impl P<'_> {
                 w::TRY => return self.try_expression(),
                 w::RETURN => return self.return_expression(),
                 w::THROW => return self.throw_expression(),
-                w::DO | w::MACRO => return self.refuse(),
+                w::DO => return self.do_while_expression(),
+                w::MACRO => {
+                    // `macro a.f` (`macro_body`, its operand unfielded): its precedence is above a
+                    // call's and a generic function's, so the operand takes the `.` steps and
+                    // `[T]` or `(…)` after it apply over the macro body.
+                    let m = self.mark();
+                    let n = self.open(K::MacroBody);
+                    self.tk(K::TMacro)?;
+                    let o = self.mark();
+                    let mut x = self.atom()?;
+                    while self.peek() == T::Dot && !self.tok().nl {
+                        self.t.refield(x, f::VALUE);
+                        let fx = self.t.wrap(o, K::FieldExpression, f::NONE);
+                        self.tk(K::TDot)?;
+                        self.identifier(f::FIELD)?;
+                        x = self.close(fx);
+                    }
+                    self.t.unmark(o);
+                    let n = self.close(n);
+                    let r = self.suffixes(m, n);
+                    self.t.unmark(m);
+                    return r;
+                }
                 _ => {}
             }
         }
@@ -176,6 +201,7 @@ impl P<'_> {
                 let x = self.t.wrap(m, K::MatchExpression, f::NONE);
                 self.tk(K::TMatch)?;
                 self.match_body()?;
+                self.kw_end_marker(w::MATCH, K::TMatch)?;
                 n = self.close(x);
                 continue;
             }
@@ -196,9 +222,14 @@ impl P<'_> {
                 break;
             }
             if t.kind == T::Op && t.code == op::COLON && !t.nl {
-                if self.layout(v::COLON_EOL | AFTER_OPERAND)? == Some(Ext::ColonEol) {
-                    // A colon argument (fewer braces): refused.
-                    return self.refuse();
+                if let Some(eol) = self.colon_argument_ahead()? {
+                    // A colon argument after an infix expression (`"a" -> b:`): the call's
+                    // function is the expression so far.
+                    self.t.refield(n, f::FUNCTION);
+                    let x = self.t.wrap(m, K::CallExpression, f::NONE);
+                    self.colon_argument(eol)?;
+                    n = self.close(x);
+                    continue;
                 }
                 self.t.refield(n, f::NONE);
                 let x = self.t.wrap(m, K::AscriptionExpression, f::NONE);
@@ -241,6 +272,8 @@ impl P<'_> {
         loop {
             let t = self.tok();
             let (prec, right) = match t.kind {
+                // An operator past ASCII (`⊕`): its precedence class is not read here.
+                T::Op if self.text(t)[0] >= 0x80 => return self.refuse(),
                 T::Op if !op::is_reserved(t.code) && t.code != op::ARROW && t.code != op::QARROW => op_class(self.text(t)),
                 T::Id if t.code == w::NONE || !w::is_reserved(t.code) && !matches!(t.code, w::IF | w::ELSE | w::THEN | w::CATCH | w::WITH | w::FORSOME | w::END | w::DERIVES | w::USES) => (7, false),
                 T::BackId => (7, false),
@@ -656,7 +689,7 @@ impl P<'_> {
             // type in `parameters`, then an indentable expression.
             let l = self.open(K::LambdaExpression);
             if self.is_word(w::IMPLICIT) {
-                return self.refuse();
+                self.tkf(K::TImplicit, f::PARAMETERS)?;
             }
             self.identifier(f::PARAMETERS)?;
             self.tkf(K::TColon, f::PARAMETERS)?;
@@ -704,11 +737,14 @@ impl P<'_> {
 
     /// Whether `name: T =>` comes next on the line (a typed lambda in braces).
     fn typed_lambda_ahead(&mut self) -> bool {
-        if !(Self::is_name(self.tok()) && self.tok().code != w::UNDERSCORE && self.is_op_at(1, op::COLON)) {
+        // `implicit x: T =>` too.
+        let k = usize::from(self.is_word(w::IMPLICIT));
+        let t = self.peek_at(k);
+        if !(Self::is_name(t) && t.code != w::UNDERSCORE && self.is_op_at(k + 1, op::COLON)) {
             return false;
         }
         let mut d = 0i32;
-        for j in 2..64 {
+        for j in k + 2..k + 64 {
             let t = self.peek_at(j);
             if t.nl || t.kind == T::Eof {
                 return false;
@@ -870,6 +906,7 @@ impl P<'_> {
             self.kw(w::ELSE, K::TElse)?;
             self.indentable_f(f::ALTERNATIVE)?;
         }
+        self.kw_end_marker(w::IF, K::TIf)?;
         Ok(self.close(n))
     }
 
@@ -919,15 +956,74 @@ impl P<'_> {
     }
 
     /// `while (c) body`, `while c do body` (`while_expression`: `condition`, `body`).
-    fn while_expression(&mut self) -> R<u32> {
-        let n = self.open(K::WhileExpression);
+    /// `end match` (`if`, `while`, `for`, `try`, `new`) on the line after the construct
+    /// (`_end_marker_kw_tail`: the semicolon, then an `end_marker`: the scanner's `end` unwritten,
+    /// then the keyword's token), inside the construct's node.
+    pub(super) fn kw_end_marker(&mut self, word: u8, kind: K) -> R<()> {
+        if !(self.tok().nl && self.is_word(w::END)) {
+            return Ok(());
+        }
+        let nx = self.peek_at(1);
+        if nx.nl || nx.kind != T::Id || nx.code != word {
+            return Ok(());
+        }
+        if self.with_fol(0, |p| p.layout(v::SEMI))? != Some(Ext::Semi) {
+            return Ok(());
+        }
+        self.take();
+        if self.layout(v::END_KW)? != Some(Ext::EndKw) {
+            return self.refuse();
+        }
+        self.take();
+        let n = self.open(K::EndMarker);
+        let e = self.bump()?;
+        self.t.last_end = e.end;
+        self.tk(kind)?;
+        self.close(n);
+        Ok(())
+    }
+
+    /// `do body while (c)` (`do_while_expression`: `body`, `condition`).
+    fn do_while_expression(&mut self) -> R<u32> {
+        let n = self.open(K::DoWhileExpression);
+        self.tk(K::TDo)?;
+        self.with_fol(0, |p| p.expression_f(f::BODY))?;
+        if !self.is_word(w::WHILE) {
+            return self.refuse();
+        }
         self.tk(K::TWhile)?;
         if self.peek() != T::LParen {
             return self.refuse();
         }
-        let close = self.matching(0);
-        if self.word_at(close + 1) == w::DO {
+        let c = self.paren_expression()?;
+        if self.t.kind_at(c) != K::ParenthesizedExpression {
             return self.refuse();
+        }
+        self.t.refield(c, f::CONDITION);
+        Ok(self.close(n))
+    }
+
+    fn while_expression(&mut self) -> R<u32> {
+        let n = self.open(K::WhileExpression);
+        self.tk(K::TWhile)?;
+        if self.peek() != T::LParen || {
+            let close = self.matching(0);
+            self.word_at(close + 1) == w::DO
+        } {
+            // `while c do body` (Scala 3): the condition indentable, an automatic semicolon
+            // before `do` taken, `do` in the condition's field.
+            let fol = self.fol;
+            self.with_fol(0, |p| p.indentable_f(f::CONDITION))?;
+            if self.with_fol(0, |p| p.layout(v::SEMI))? == Some(Ext::Semi) {
+                self.take();
+            }
+            if !self.is_word(w::DO) {
+                return self.refuse();
+            }
+            self.tkf(K::TDo, f::CONDITION)?;
+            self.with_fol(fol, |p| p.indentable_f(f::BODY))?;
+            self.kw_end_marker(w::WHILE, K::TWhile)?;
+            return Ok(self.close(n));
         }
         let c = self.paren_expression()?;
         if self.t.kind_at(c) != K::ParenthesizedExpression {
@@ -1017,6 +1113,7 @@ impl P<'_> {
             _ => return self.refuse(),
         };
         self.with_fol(fol, |p| p.indentable_f(f::BODY))?;
+        self.kw_end_marker(w::FOR, K::TFor)?;
         Ok(self.close(n))
     }
 
@@ -1143,6 +1240,7 @@ impl P<'_> {
             self.indentable_f(f::NONE)?;
             self.close(c);
         }
+        self.kw_end_marker(w::TRY, K::TTry)?;
         Ok(self.close(n))
     }
 

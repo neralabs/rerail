@@ -464,10 +464,13 @@ impl<'s> Lexer<'s> {
                 (Op, op::code(&self.src[s..e]), e)
             }
             c if c >= 0x80 => {
-                let Some((ch, _)) = decode(self.src, s) else { return Err(Refusal::Lex(s as u32)) };
+                let Some((ch, n)) = decode(self.src, s) else { return Err(Refusal::Lex(s as u32)) };
                 if ch.is_alphabetic() && letter_sure(ch) {
                     let e = self.name_end(s)?;
                     (Id, 0, e)
+                } else if matches!(ch as u32, 0x2190..=0x2194 | 0x2200..=0x22ff) && !op_char(self.at(s + n)) && self.at(s + n) < 0x80 {
+                    // A mathematical operator alone (`_op_name`'s first pattern: `⊥`, `∀`).
+                    (Op, op::NONE, s + n)
                 } else {
                     return Err(Refusal::Lex(s as u32));
                 }
@@ -653,8 +656,14 @@ pub fn decode(src: &[u8], at: usize) -> Option<(char, usize)> {
 }
 
 /// Whether `c` (past ASCII) is surely a letter to the identifier's pattern (`\p{L}` and `\p{Nl}`
-/// in the scripts read for certain: Latin, Greek, Cyrillic, kana, CJK, Hangul).
+/// in the scripts read for certain: Latin, Greek, Cyrillic, kana, CJK, Hangul, the modifier
+/// letters).
 fn letter_sure(c: char) -> bool {
     let u = c as u32;
-    matches!(u, 0xc0..=0x24f | 0x370..=0x3ff | 0x400..=0x4ff | 0x3040..=0x30ff | 0x4e00..=0x9fff | 0xac00..=0xd7a3) && u != 0xd7 && u != 0xf7 && u != 0x37e && u != 0x387
+    // The modifier letters the pattern names (U+02B0–02C1 are `\p{Lm}`, U+02E0–02E4 listed).
+    matches!(u, 0xc0..=0x24f | 0x2b0..=0x2c1 | 0x2e0..=0x2e4 | 0x370..=0x3ff | 0x400..=0x4ff | 0x3040..=0x30ff | 0x4e00..=0x9fff | 0xac00..=0xd7a3)
+        && u != 0xd7
+        && u != 0xf7
+        && u != 0x37e
+        && u != 0x387
 }
