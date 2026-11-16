@@ -321,10 +321,12 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
   });
 
-  // A link under a stopped hook's own name, its target gone, as a person's link at the live name that a hook took and was
-  // stopped holding. The move reads the link's own change time, never what it leads to: `fs.statSync` on it would follow
-  // it, and on Windows a link to a network share that does not answer makes that wait about 21 s at every move.
-  it.for(LINKS)("removes $link under a stopped hook's own name a day after it last changed, never reading through it", async ({ make }, context) => {
+  // A link under a stopped hook's own name, its target gone, as a person's link that a hook took in the moment the person
+  // made it at the live name, and was stopped holding. The move removes only a regular file, the one kind a hook leaves
+  // there: the link stays, as on `main` it would have stayed at the live name, and the move reads nothing through it.
+  // `fs.statSync` on it would follow it, and on Windows a link to a network share that does not answer makes that wait
+  // about 21 s at every move.
+  it.for(LINKS)("keeps $link under a stopped hook's own name, never reading through it or removing it", async ({ make }, context) => {
     const rerailHome = await home();
     const day = 24 * 60 * 60 * 1_000;
     const link = takenName(rerailHome, 2 ** 31 - 1);
@@ -342,7 +344,7 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     const parts = [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`];
     expect({ withinTheDay: await moveAt(changed + day - 60_000), past: await moveAt(changed + day + 60_000) }).toEqual({
       withinTheDay: { followed: "", files: [...parts, basename(link)].sort() },
-      past: { followed: "", files: parts },
+      past: { followed: "", files: [...parts, basename(link)].sort() },
     });
   });
 

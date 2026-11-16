@@ -199,7 +199,7 @@ function moveTaken(taken: string, path: string, movedAside: string): boolean {
  * Puts the link a person made at the live name `path`, which this hook took as `taken`, back as it was, by one rename
  * with no retries, then moves it as `main` moves the log ({@link moveLink}). The rename replaces a log another hook
  * began at the live name in that moment. When it fails, this throws: the hook writes nothing, and the link stays under
- * the hook's name, where no hook reads through it.
+ * the hook's name, where no hook reads or removes it ({@link removeStrandedLogs}).
  */
 function putBackLink(taken: string, path: string, movedAside: string): true {
   renameWithRetrySync(taken, path, { retryMs: 0 });
@@ -375,16 +375,19 @@ function fileId({ dev, ino }: BigIntStats, name: string): string {
  * on, a give-back and a write each set the file's change time, and no hook runs for a day, so the hook that took such a
  * log has ended, whatever process has its pid now. A hook held up since it opened the log to append opened it by the
  * live name, which the file lost at a change, and read its clock before that: a failure it writes into the file after the
- * removal is older than the period status counts, as is every failure the file holds. A link under a hook's name, as a
- * person's link at the live name that a hook took and was stopped holding, goes the same way a day after the link itself
- * last changed: the link is removed, and what it leads to is never read. A hook that moves the log aside calls this,
- * once per 256 KB of failures.
+ * removal is older than the period status counts, as is every failure the file holds. Only a regular file is removed,
+ * the one kind a hook leaves under its name. A link there, as a person's link a hook took in the moment between its
+ * look and its take and was stopped holding, stays where it is, as on `main` the link stays at the live name: no hook
+ * reads through it or removes it. A hook that moves the log aside calls this, once per 256 KB of failures.
  */
 function removeStrandedLogs(home: string, now: number): void {
   for (const name of takenLogs(home)) {
     const path = join(home, name);
     try {
-      if (lastChangeAt(path) < now - HOOK_FAILURE_WINDOW_MS) unlinkSync(path);
+      // Read from the name itself, never through a link: following one to a network share that does not answer waits
+      // about 21 s on Windows.
+      const stats = lstatSync(path);
+      if (stats.isFile() && lastChangeAt(stats) < now - HOOK_FAILURE_WINDOW_MS) unlinkSync(path);
     } catch {
       // Moved on or removed by another hook, or refused: a later move tries again.
     }
@@ -392,13 +395,10 @@ function removeStrandedLogs(home: string, now: number): void {
 }
 
 /**
- * When the name `path` last changed, epoch ms: the later of its change time and its write time, so that a file system
- * that keeps no change time, as FAT does not, still gives the last write. Read from the name itself, never through a
- * link: following one to a network share that does not answer waits about 21 s on Windows. For a file that is no link
- * `lstat` gives what `stat` gives.
+ * When the file `stats` describes last changed, epoch ms: the later of its change time and its write time, so that a
+ * file system that keeps no change time, as FAT does not, still gives the last write.
  */
-function lastChangeAt(path: string): number {
-  const { ctimeMs, mtimeMs } = lstatSync(path);
+function lastChangeAt({ ctimeMs, mtimeMs }: Stats): number {
   return Math.max(ctimeMs, mtimeMs);
 }
 
