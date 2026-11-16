@@ -1,0 +1,1 @@
+In a repository with many worktrees, Rerail's daemon now reads again only the other worktrees where the operating system reports a change or Git's `HEAD` or index moved, and all of them every 10 minutes. It read every file of every worktree each time, which with 190 worktrees kept up to half a core busy.

@@ -44,7 +44,8 @@ import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./igno
 import { ToolCallWindows } from "./tool-call-windows.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks, type WorktreeWatch,
+  type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
+  type WorktreeWatch,
 } from "./worktree-walks.js";
 
 export { WORKTREE_WALK_GAP_MS } from "./worktree-walks.js";
@@ -586,6 +587,8 @@ export interface SourceScan {
   readonly checkouts: Set<string>;
   /** The unmerged entries of each of `checkouts` that no walk had read, read after the scan (`#readPassedCheckouts`). */
   readonly unmerged: Map<string, ReadonlyMap<string, string>>;
+  /** For a read of another worktree (`#scanWorktree`): what it walked into and what it left out, which a notice is weighed against. */
+  readonly seen?: { readonly folders: Set<string>; readonly leftOut: Set<string> };
 }
 function emptyScan(): SourceScan {
   return { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map() };
@@ -1733,7 +1736,7 @@ export class CodeRuleBridge {
    * per walk, before its first read (`rules`): every session watching takes what it reads, and its rules, as of its
    * last event, may predate a rule another session's event already applies.
    */
-  async #scanWorktree(discovery: SourceDiscovery, request: WorktreeScan, rules: { current: boolean }): Promise<SourceScan | undefined> {
+  async #scanWorktree(discovery: SourceDiscovery, request: WorktreeScan, rules: { current: boolean }): Promise<WorktreeScanned | undefined> {
     if (this.#abandoned(discovery)) return undefined;
     if (!rules.current) {
       rules.current = true;
@@ -1748,13 +1751,14 @@ export class CodeRuleBridge {
     };
     const abandoned = (): boolean => this.#abandoned(discovery);
     const scope: WalkScope = { root: request.root, startedAt: request.startedAt, get cancelled() { return abandoned(); } };
+    const seen = { folders: new Set<string>(), leftOut: new Set<string>() };
     const scan = await this.#observeSources({
       discovery: scope, checkoutOf: path => this.#owningCheckout(discovery.root, named(path)), view,
       observedAt: request.observedAt, previousSources: request.previous, captureChanges: request.captureChanges,
       baselineRoots: request.baselineRoots, buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
-      scan: emptyScan(), stack: [request.root], roots: request.skip,
+      scan: { ...emptyScan(), seen }, stack: [request.root], roots: request.skip,
     });
-    return abandoned() ? undefined : scan;
+    return abandoned() ? undefined : { ...scan, seen };
   }
 
   /**
@@ -2390,10 +2394,14 @@ export class CodeRuleBridge {
    * A folder's `.git` is not entered either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`).
    */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
-    for await (const entry of await opendir(absolute)) {
+    const listing = await opendir(absolute);
+    const seen = walk.scan.seen;
+    seen?.folders.add(sessionPath(walk.discovery.root, absolute));
+    for await (const entry of listing) {
       if (walk.discovery.cancelled) return;
       if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
       else if (this.#walksInto(walk, absolute, entry)) walk.stack.push(join(absolute, entry.name));
+      else seen?.leftOut.add(sessionPath(walk.discovery.root, join(absolute, entry.name)));
     }
   }
 
@@ -2418,6 +2426,7 @@ export class CodeRuleBridge {
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
     const path = sessionPath(walk.discovery.root, absolute);
     if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
+    else walk.scan.seen?.leftOut.add(path);
   }
 
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
