@@ -205,7 +205,12 @@ export class WorktreeNotices {
       this.#watched.delete(notice.root);
       this.#ended.set(notice.root, this.#now());
     }
-    if (this.#byFolder) this.#replaced(watched, notice.renamed);
+    // A notice that lost its paths may have lost a folder that went and came back: the next read's folders are all
+    // watched again, and the engine keeps the watches it holds.
+    if (this.#byFolder) {
+      if (notice.lost) watched.folders = new Set();
+      else this.#replaced(watched, notice.renamed);
+    }
     if (notice.ended || notice.lost || watched.seen === undefined || counts(watched.seen, notice)) {
       watched.changed = true;
       this.#noticed.add(notice.root);
@@ -295,12 +300,13 @@ export class SharedTreeWatch {
   #unwatchFor(user: object, root: string): void {
     const users = this.#roots.get(root);
     if (users === undefined || !users.delete(user)) return;
-    if (users.size > 0) {
-      this.#watch.watch(root, unionOf(users));
-      return;
+    if (users.size > 0) this.#watch.watch(root, unionOf(users));
+    else {
+      this.#roots.delete(root);
+      this.#watch.unwatch(root);
     }
-    this.#roots.delete(root);
-    this.#watch.unwatch(root);
+    // A user that watches nothing more has no notices to come: its queue goes with its last root.
+    if (![...this.#roots.values()].some(holders => holders.has(user))) this.#queues.delete(user);
   }
 
   #takeFor(user: object): TreeNotice[] {

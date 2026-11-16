@@ -167,6 +167,19 @@ describe("WorktreeNotices", () => {
     expect(subject.changed("/w")).toBe(true);
   });
 
+  it("watches every folder again on Linux after a notice that lost its paths, which may have hidden a folder put back", () => {
+    const watch = new ScriptedWatch();
+    const { notices: subject } = notices(watch, "linux");
+    const walked = { folders: new Set(["", "a"]), leftOut: new Set<string>() };
+    read(subject, "/w", walked);
+    read(subject, "/w", walked);
+    // A burst past the engine's cap: which folders went and came back is no longer known.
+    watch.notice("/w", { lost: true });
+    subject.collect();
+    read(subject, "/w", walked);
+    expect(watch.calls.filter(call => call.startsWith("watch"))).toEqual(["watch /w []", "watch /w [,a]", "watch /w [,a]"]);
+  });
+
   it("hands on each worktree a notice counted in since a read of it began, once", () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch);
