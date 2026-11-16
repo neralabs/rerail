@@ -3589,7 +3589,10 @@ fn run_observed(
     };
     let memoised = memo.is_some() && t.is_none() && unlocated.is_empty() && !reads_declared && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off") && options.get("memo").and_then(|v| v.as_str()) != Some("off");
     crate::code_rule_dsl::logic::profile::decision("per-file memo", || match (&located, memoised) {
-        (_, true) => format!("each file's file-local rows are memoised under its content, path and the run's plan{}; {} relations given a document column", if session.is_some() { ", in this session's memory" } else { "" }, located.as_ref().map_or(0, Vec::len)),
+        (_, true) => format!("each file's file-local rows are memoised under its content, path and the run's plan{}; {} relations given a document column; {}", if session.is_some() { ", in this session's memory" } else { "" }, located.as_ref().map_or(0, Vec::len), match crate::code_rule_dsl::typing::file_local::moved(&lowered.program) {
+            m if m.is_empty() => "none moved to the cross-file part".to_owned(),
+            m => format!("moved to the cross-file part, their rows naming no document (decision 0290): {m:?}"),
+        }),
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
         _ => format!("off ({})", if memo.is_none() { "no persistent store" } else if t.is_some() { "T's facts" } else if unlocated.is_empty() { "typing, RERAIL_CORPUS_MEMO=off or the run's `memo: off`" } else { "a relation without a location column" }),
     });

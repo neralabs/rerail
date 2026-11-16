@@ -618,12 +618,15 @@ fn split_in(
             !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),
         _ => true,
     });
+    // A relation `locate` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file.
+    let moved = |r: &str| prog.qualified(r, CROSS_FILE);
     // The file-local relations by number, and each cross-file one's cause.
-    let mut local_now: Vec<bool> = (0..n).map(|r| match was(r) { Some(p) => p.local.contains(rels.names[r]), None => !cross_native(rels.names[r]) }).collect();
+    let mut local_now: Vec<bool> = (0..n).map(|r| match was(r) { Some(p) => p.local.contains(rels.names[r]), None => !cross_native(rels.names[r]) && !moved(rels.names[r]) }).collect();
     let mut causes: BTreeMap<String, String> = (0..n)
         .filter_map(|r| match was(r) {
             Some(p) => p.causes.get(rels.names[r]).map(|c| (rels.names[r].to_owned(), c.clone())),
-            None => cross_native(rels.names[r]).then(|| (rels.names[r].to_owned(), "made natively".to_owned())),
+            None if cross_native(rels.names[r]) => Some((rels.names[r].to_owned(), "made natively".to_owned())),
+            None => moved(rels.names[r]).then(|| (rels.names[r].to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
         })
         .collect();
     let base_locations = |rel: &str| base_locations(prog, rel);
@@ -1684,7 +1687,44 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
 /// `doc`, `tape_line`, …, a document column left unnamed included, or a node through `node(d, n, …)`), and the
 /// cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
 /// one whose rule binds no location is left; its name is returned in the `Err`: its rows are not attributable.
+///
+/// A relation left so is moved to the cross-file part (qualified `CROSS_FILE`, decision 0290), with every file-local
+/// relation that reads it, and the program is located again: the chunks then hand on only located rows, and the per-file
+/// memo holds for the rest of the program. The `Err` is left for a relation the moves cannot place, which none is.
 pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, Vec<String>> {
+    let mut located = Vec::new();
+    loop {
+        match locate_once(prog) {
+            Ok(now) => {
+                located.extend(now);
+                return Ok(located);
+            }
+            Err((now, blocked)) => {
+                located.extend(now);
+                // Each round moves a relation the split held file-local; a moved one is cross-file and no target again.
+                let fresh: Vec<String> = blocked.into_iter().filter(|r| !prog.qualified(r, CROSS_FILE)).collect();
+                if fresh.is_empty() {
+                    return Err(prog.qualifiers.iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r.clone()).collect());
+                }
+                for rel in fresh {
+                    prog.qualifiers.entry(rel).or_default().insert(CROSS_FILE.to_owned());
+                }
+            }
+        }
+    }
+}
+
+/// The qualifier `locate` gives a relation whose rows name no document: the split holds it cross-file (decision 0290).
+pub const CROSS_FILE: &str = "cross_file";
+
+/// The relations `locate` moved to the cross-file part (`CROSS_FILE`).
+pub fn moved(prog: &crate::code_rule_dsl::logic::front::Program) -> Vec<&str> {
+    prog.qualifiers.iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r.as_str()).collect()
+}
+
+/// One round of `locate`: the relations located, and in the `Err` those left beside them.
+#[allow(clippy::type_complexity)]
+fn locate_once(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, (Vec<String>, Vec<String>)> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::BTreeSet;
     let split = programs(prog);
@@ -1805,5 +1845,5 @@ pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<
         located.push(rel.clone());
     }
     prog.rules = rules;
-    if blocked.is_empty() { Ok(located) } else { Err(blocked) }
+    if blocked.is_empty() { Ok(located) } else { Err((located, blocked)) }
 }
