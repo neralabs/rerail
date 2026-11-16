@@ -1,8 +1,8 @@
 # 0305: Lean parsers for Kotlin, Swift and Scala, tested against tree-sitter
 
 Status: decided (user, 2026-11-16: "please create and test Rerail lean parsers for Swift, Kotlin
-and Scala … get to Treesitter-equivalence for direct-to-tape parsers on valid input"). Kotlin
-and Swift built; Scala follows in this record.
+and Scala … get to Treesitter-equivalence for direct-to-tape parsers on valid input"). All three
+built.
 
 ## Intro
 
@@ -118,6 +118,49 @@ differ**; all 41 error texts refused. Golden tests: 15 probe texts (`golden.rs`)
 About 140 MB/s on one core under load (`swift_costs`, the corpus 20 times: 53.5 MB in 0.38 s of
 user time, 12 MB resident).
 
+## Scala
+
+`rerail-scala-lean` has the same shape and shares `block.rs` and `tw.rs`. What is Scala's own:
+
+- **The external scanner is ported whole** (`scan.rs`): automatic semicolons, indents and
+  outdents (Scala 3's significant indentation), a `:` at a line's end, the gate before `else`,
+  `catch`, `finally` and `yield`, the soft modifiers (`inline`, `opaque`, `open`, …), and the
+  block comments it reads. The parser asks it with the valid set tree-sitter's state would give:
+  its own tokens, those of what may follow (`fol`), and block comments. A wider set gives another
+  token: after a bare `for`'s enumerators only the gate is valid, not the enclosing list's
+  semicolon, or `yield` on the `for`'s column reads as a new statement. Answers are kept per
+  position and valid set; `take` commits one.
+- **Strings are whole lexer tokens**, interpolations included (`${…}` lexed through to its `}`), so
+  a look ahead never reads a string's text as code. The parser writes the pieces afterwards.
+- **A name the grammar gives at run time.** tree-sitter-scala aliases `(` to `arguments` in some
+  rules. The engine's walk fails on a runtime-named child its automaton lacks, so it stores every
+  child of those nodes. `gen_kinds.py` (`RUNTIME_NAMED`) turns off the automata that take no other
+  token before `(`, and the parser writes `(` as a leaf. A `for (…)`'s tokens are all leaves.
+- **`extension` is a soft identifier**: wherever an identifier is read, it is an `identifier`
+  holding the keyword's token.
+- **Shapes read from tree-sitter's tapes**, probed on short texts: a block lambda takes the
+  `{expression}` class only with one statement in its body; a case clause ends at a semicolon the
+  scanner gives, with the comments before it; a `new A(x) with B` base is an
+  `applied_constructor_type`; `new A(x)(y)` has one argument list (the next is a call); `if (c) -1`
+  keeps the parenthesized condition unless a `then` follows; a bound's `<:`/`>:` end it
+  (`A >: L <: U`), but not inside brackets; colon arguments (`xs.map: x =>`, `f(a):`) take the
+  operand before the `:` as the function; `10 seconds` is a postfix expression.
+- **Refused** where not probed: a postfix operator inside an operation, `'{…}` quotes, given
+  conditionals (`given [T](x) => …`), a type's `a.extension.B`, `macro`, and the rest of the
+  corpus's unread forms (named tuples, `do … while`, `end` markers after some definitions, XML
+  literals).
+
+Oracle (`RERAIL_SCALA_OUT`): 440 files from 22 repositories
+(`~/orca/rerail-shared/lean-corpus/scala`), 439 without errors: **382 the same, 56 refused, 1
+differs**; the error text refused. The one that differs: tree-sitter reads
+`new BoxPanel(x) { … }` as a call of an instance with a block argument there, and as an instance
+with a template body when the same text is taken alone: the choice depends on the GLR versions the
+file's later text keeps alive. Left open. Golden tests: 16 probe texts (`golden.rs`), the same.
+
+About 58 MB/s on one core while the machine was loaded (`scala_costs`, the corpus 20 times: 71.6 MB
+in 1.24 s of user time, 16 MB resident, `quiet-run --here` with a load average of 78 on 18 cores),
+so not comparable with Kotlin's and Swift's figures.
+
 ## Testing loop
 
 The engine writes expected tapes once per corpus (`python_tape_expect`, under Relax, a few
@@ -125,4 +168,4 @@ minutes); the lean crate's oracle compares all files in about a second under Rel
 (`relax test rerail-kotlin-lean --lib -- oracle --ignored`), with the caches shared
 (`RELAX_SHARE=rerail`, `RELAX_SHARED_OPEN=1`). Probing tree-sitter's choice on a short text is
 the same engine run over a list of probe files. Golden unit tests hold tree-sitter's tapes of short
-texts (`parse::tests` for Kotlin, `golden.rs` for Swift).
+texts (`parse::tests` for Kotlin, `golden.rs` for Swift and Scala).
