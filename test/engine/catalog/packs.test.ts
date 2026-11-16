@@ -161,6 +161,17 @@ describe("validatePack", () => {
       writeFileSync(readme, readFileSync(readme, "utf8").replace(/^### `assert-used`\n[\s\S]*$/mu, ""));
       editAssertUsedPort(directory, port => ({ ...port, policy: "candidates/rules/assert-used.json", examples }));
     };
+  /** `pass-statement` made an own rule (conformance.json `own`) whose clauses set `violation.suppress`, as a port moved into own would. */
+  const ownSuppressingPassStatement = (directory: string): void => {
+    editJson(join(directory, "conformance.json"), conformance => ({ ...conformance, own: ["pass-statement"] }));
+    editJson(join(directory, "rules", "pass-statement.json"), document => ({
+      ...document,
+      clauses: z
+        .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+        .parse(document.clauses)
+        .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { noqa: { codes: ["PASS1"] } } } })),
+    }));
+  };
   const pair = (caught: string, passes: string): unknown => ({ caught: { path: "src/a.py", text: caught }, passes: { path: "src/a.py", text: passes } });
 
   it("passes a candidate's example pair in conformance.json, its caught example firing and its passes example silent", async () => {
@@ -362,16 +373,7 @@ describe("validatePack", () => {
     ],
     [
       "an own rule whose document sets violation.suppress, as a port moved into own would",
-      directory => {
-        editJson(join(directory, "conformance.json"), conformance => ({ ...conformance, own: ["pass-statement"] }));
-        editJson(join(directory, "rules", "pass-statement.json"), document => ({
-          ...document,
-          clauses: z
-            .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
-            .parse(document.clauses)
-            .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { noqa: { codes: ["PASS1"] } } } })),
-        }));
-      },
+      ownSuppressingPassStatement,
       { proof: [expect.stringMatching(/^pass-statement: /u)] },
     ],
     [
@@ -587,6 +589,18 @@ describe("validatePack", () => {
     const validation = await validatePack(changed("valid", change));
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
+  });
+
+  it("gives an own rule whose caught example does not fire and whose document sets violation.suppress its example failure as its reason", async () => {
+    const validation = await validatePack(
+      changed("valid", directory => {
+        ownSuppressingPassStatement(directory);
+        editPassStatement(directory, rule => ({ ...rule, examples: { caught: { path: "src/a.py", text: "x = 1\n" }, passes: { path: "src/a.py", text: "x = 2\n" } } }));
+      }),
+    );
+    const caught = "pass-statement: the caught example (src/a.py) produces no PASS violation";
+    expect(failing(validation)).toEqual({ proof: [expect.stringMatching(/^pass-statement: an own rule /u)], examples: [caught] });
+    expect(validation.rules.find(rule => rule.id === "pass-statement")).toEqual({ id: "pass-statement", document: "rules/pass-statement.json", status: "failed", reason: caught });
   });
 
   it.each([

@@ -53,6 +53,7 @@ import {
   openDashboard,
   startDaemon,
   stopDaemon,
+  keepAutostartClaim,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   type DaemonLaunchOptions,
@@ -859,6 +860,22 @@ async function main(): Promise<number> {
   const rawArgs = process.argv.slice(2);
   const managedChild = rawArgs[0] === MANAGED_CHILD_ARGUMENT;
   const args = managedChild ? rawArgs.slice(1) : rawArgs;
+  const answered = await runBeforeDispatch(args, manifest);
+  if (answered !== undefined) return answered;
+  keepClaimOfLauncher(args, home);
+
+  if (!managedChild && !isVersionIndependentCommand(args)) {
+    const exit = await dispatchToManagedVersion(args, updater);
+    if (exit !== undefined) return exit;
+  }
+  return await runCommand(args, { home, updater, activation, profileStore, packageVersion: manifest.version });
+}
+
+/**
+ * What this package answers before any hand-off to the active version: a Node too old to run on, the MCP bridge, and
+ * `rerail version`. Undefined for every other command.
+ */
+async function runBeforeDispatch(args: readonly string[], manifest: PackageManifest): Promise<number | undefined> {
   const tooOld = refuseUnsupportedNode(args);
   if (tooOld !== undefined) return tooOld;
   if (args[0] === "mcp-bridge") {
@@ -874,25 +891,26 @@ async function main(): Promise<number> {
     process.stdout.write(`${manifest.name.split("/").pop()} ${manifest.version}\n`);
     return 0;
   }
+  return undefined;
+}
 
-  if (!managedChild && !isVersionIndependentCommand(args)) {
-    const exit = await dispatchToManagedVersion(args, updater);
-    if (exit !== undefined) return exit;
-  }
+/**
+ * A `rerail daemon start` an autostart launched keeps its claim held while it runs, a hand-off to the active version
+ * included, so the processes that find the daemon down leave the start to it (`keepAutostartClaim`).
+ */
+function keepClaimOfLauncher(args: readonly string[], home: string): void {
+  const commandArgs = takeOption(args, "--profile").args;
+  if (commandArgs[0] === "daemon" && commandArgs[1] === "start") keepAutostartClaim(home);
+}
 
+/** Runs the command `args` name, in this package. */
+async function runCommand(args: readonly string[], base: Omit<CommandContext, "profile">): Promise<number> {
   const profileOption = takeOption(args, "--profile");
   const commandArgs = profileOption.args;
   const command = commandArgs[0];
   if (command === undefined) throw new Error(`Missing command\n\n${usage()}`);
   if (needsActivationProfiles(command, commandArgs.slice(1), profileOption.value)) requireExperiment("ACTIVATION_PROFILES");
-  const context: CommandContext = {
-    home,
-    updater,
-    activation,
-    profileStore,
-    packageVersion: manifest.version,
-    profile: profileOption.value,
-  };
+  const context: CommandContext = { ...base, profile: profileOption.value };
   const commandArguments = commandArgs.slice(1);
   const exit = (await runAccountCommand(command, commandArguments, context))
     ?? (await runProjectCommand(command, commandArguments, context));
