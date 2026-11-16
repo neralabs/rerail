@@ -2845,3 +2845,34 @@ file's length), and `a_full_windows_word_is_not_cut` (zeros past the
 end, then text past the padding).
 
 Counts, reported: comments 224.1, strings 261.7.
+
+## The padding is the compiler's input
+
+**Intro.** The padding is the application's promise, not the
+compiler's choice. An application may want less of it (a smaller
+copy, a file read in place) and pay a rare branch at the file's end
+instead. So the compiler takes it as an input.
+
+**The change.**
+
+- **`BlockNative::pad`.** The zero bytes after every file that the code
+  may count on. It is `BACK` (256) by default, and the application may
+  set it before compiling. Tier 1, tier 2 and the AOT build read it
+  from the same program.
+- **`pad_reach`.** The bytes past the end a window may read (start,
+  64 bytes, delays, a 16-byte over-read). `Bytewise::padded` holds only
+  where `pad` covers that reach. Otherwise every window takes the cold
+  cut of "A full window is not cut".
+- **The layout follows the program.** `CompiledBlock::pad` tells
+  `Batch` how many zeros to lay out. Metal's tier 2 asserts the slab's
+  margin covers it.
+- **`rr_parser::compile_padded`.** It compiles the grammar with a
+  given padding.
+
+Tests: `a_padded_windows_word_is_not_cut` (at `BACK`, at the reach,
+one less, and none), `a_full_windows_word_is_not_cut` (text right
+after the end, with no padding), and
+`an_unpadded_programs_tapes_are_the_padded` (the corpus, the same
+tapes).
+
+Counts, reported: unchanged (the default's source is the same).

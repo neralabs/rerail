@@ -46,8 +46,10 @@ pub fn image_on(parser: &Parser, run: &Resident, i: usize) -> Result<Vec<u8>, Re
         record_stride: run.layout.stride() as usize,
     };
     let mut tape = parser.tier2.tape(starts.1);
-    // SAFETY: as above; the source's bytes have `SOURCE_MARGIN` readable bytes after them in
-    // its slab; the tape is sized for the stream.
+    // The code counts on the program's padding (`BlockNative::pad`): the slab's margin is its.
+    assert!(parser.tier1.pad <= crate::slabs::SOURCE_MARGIN, "a program padded past the slab's margin");
+    // SAFETY: as above; the source's bytes have `SOURCE_MARGIN` zero bytes after them in its
+    // slab, the program's padding at least; the tape is sized for the stream.
     let r = unsafe { parser.tier2.call(source.slab.buffer.host().add(source.offset), source.len, view, &mut tape) };
     if r != 0 {
         return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });

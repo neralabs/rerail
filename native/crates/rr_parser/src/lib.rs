@@ -99,6 +99,13 @@ pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
 
 /// `compile_with` of a grammar's text (a test's variant of the `.rr` grammar).
 pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compiled, String> {
+    compile_padded(grammar, shape, rerail_compiler::native_cpu_block::BACK as u16)
+}
+
+/// `compile_text`, the code counting on `pad` zero bytes after every file (`BlockNative::pad`,
+/// the application's input): with fewer than a window reaches, each window is cut on a rare
+/// branch.
+pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> Result<Compiled, String> {
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
     let id = |names: &[&str], name: &str| -> u16 {
@@ -116,6 +123,9 @@ pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compi
     let program = rir::assemble(&compiled.text())?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     native.tag = rerail_tape_format::RR_TAG;
+    for b in &mut native.block_programs {
+        b.pad = pad;
+    }
     // Tier 2 a function a grammar rule (`by_rules`): a call of the grammar is a native call,
     // its return a native return; the optimizer on. Its entries and arms weighted by the
     // samples' traffic. `RR_CUT=traffic`: the clusters cut by traffic instead, as before.
@@ -641,6 +651,24 @@ pub mod tests {
         eprintln!("{} files: rules take {}, one machine {}", files.len(), taken[0], taken[1]);
         assert_eq!(differ, Vec::new(), "(file, shape) whose tape is not the engine's");
         assert_eq!(taken[0], taken[1], "the shapes take the same files");
+    }
+
+    /// The padding is the compiler's input (`BlockNative::pad`): the grammar compiled to count on
+    /// none writes the default's tapes, and takes the same files (its windows cut on the rare
+    /// branch: `native_cpu_bytes`' `a_padded_windows_word_is_not_cut`).
+    #[test]
+    #[ignore = "the corpus: run by name"]
+    fn an_unpadded_programs_tapes_are_the_padded() {
+        let padded = crate::compiled().expect("compiles");
+        let bare = crate::compile_padded(crate::GRAMMAR, rerail_compiler::bitlex_masks::Shape::Rules, 0).expect("compiles unpadded");
+        assert_eq!((padded.parser.tier1.pad, bare.parser.tier1.pad), (rerail_compiler::native_cpu_block::BACK, 0));
+        let mut differ = Vec::new();
+        for (i, f) in corpus().iter().enumerate() {
+            if padded.parser.image(f.as_bytes()).ok() != bare.parser.image(f.as_bytes()).ok() {
+                differ.push(i);
+            }
+        }
+        assert_eq!(differ, Vec::<usize>::new(), "files whose tapes differ");
     }
 
     /// The engine's bytes over the corpus, against the lean parser's: the interpreter's tape

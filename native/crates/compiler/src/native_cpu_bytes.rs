@@ -176,7 +176,7 @@ impl<'a> Bytewise<'a> {
     /// simdjson's padded input: a line comment's `\n`, a string's quote, no cut.
     pub fn padded(&self, o: u16) -> bool {
         let x = usize::from(self.native.outputs[usize::from(o)]);
-        crate::native_cpu_lanes::zero_kills(self.native, x, u32::from(self.native.output_delays[usize::from(o)]))
+        usize::from(self.native.pad) >= pad_reach(self.native) && crate::native_cpu_lanes::zero_kills(self.native, x, u32::from(self.native.output_delays[usize::from(o)]))
     }
 
     /// The cut of outputs `os`' window at `p` (`cut64`), where one of them needs it (`padded`);
@@ -1475,6 +1475,14 @@ fn by_offset(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Of
     n
 }
 
+/// The bytes past a file's end a window may read, kept on the safe side: its start up to 63
+/// and the program's delay past the end (a block of the file, or a token's bytes), its 64
+/// bytes, an output's delay, and a 16-byte load's over-read. A program's padding (`pad`) of
+/// this many lets a window go uncut (`Bytewise::padded`).
+pub fn pad_reach(native: &BlockNative) -> usize {
+    63 + 2 * usize::from(native.delay) + 64 + 16
+}
+
 /// Whether a set a body tests (`class_pack::Need`) is false on the zero byte, its answer there
 /// cared for: no bits on the padding past the file's end (`Bytewise::padded`).
 fn zero_free(n: &crate::class_pack::Need) -> bool {
@@ -1510,6 +1518,7 @@ mod tests {
             groups: Vec::new(),
             records: None,
             walks: Vec::new(),
+            pad: crate::native_cpu_block::BACK as u16,
         };
         let b = Bytewise::of(&native);
         let (quote, both) = ((0, set(b"\"")), (0, set(b"\"'")));
@@ -1567,6 +1576,7 @@ mod tests {
             groups: Vec::new(),
             records: None,
             walks: Vec::new(),
+            pad: crate::native_cpu_block::BACK as u16,
         };
         let space = crate::native_cpu_lanes::byte_set(&native, 0).expect("a class");
         let word = crate::native_cpu_lanes::byte_set(&native, 1).expect("a class");
@@ -1669,6 +1679,7 @@ mod tests {
             groups: Vec::new(),
             records: None,
             walks: Vec::new(),
+            pad: crate::native_cpu_block::BACK as u16,
         }
     }
 
@@ -1776,19 +1787,27 @@ mod tests {
     }
 
     /// An output false on a zero byte (`padded`) is not cut at all, as simdjson's padded
-    /// input: its window never reads the file's length, the bytes past it zeros
-    /// (`native_cpu_block::BACK`). One true there keeps its cut.
+    /// input: its window never reads the file's length, the bytes past it zeros. One true
+    /// there keeps its cut. The padding is the compiler's input (`BlockNative::pad`): with less
+    /// than a window reaches (`pad_reach`), every window is cut.
     #[test]
     fn a_padded_windows_word_is_not_cut() {
-        let native = padded_program();
-        let b = Bytewise::of(&native);
-        assert_eq!((0..5).map(|o| b.padded(o)).collect::<Vec<_>>(), vec![true, true, true, true, false]);
-        for o in 0..5u16 {
+        let reads_len = |b: &Bytewise<'_>, o: u16| {
             let func = b.window_function(o, 0);
             let entry = func.layout.entry_block().expect("an entry");
             let len = func.dfg.block_params(entry)[1];
-            let reads = func.layout.blocks().flat_map(|bl| func.layout.block_insts(bl)).any(|i| func.dfg.inst_values(i).any(|v| v == len));
-            assert_eq!(reads, !b.padded(o), "output {o}: {}", func.display());
+            func.layout.blocks().flat_map(|bl| func.layout.block_insts(bl)).any(|i| func.dfg.inst_values(i).any(|v| v == len))
+        };
+        let native = padded_program();
+        let reach = pad_reach(&native);
+        assert!(reach <= crate::native_cpu_block::BACK, "the default pads every window");
+        for (pad, want) in [(crate::native_cpu_block::BACK, [true, true, true, true, false]), (reach, [true, true, true, true, false]), (reach - 1, [false; 5]), (0, [false; 5])] {
+            let native = BlockNative { pad: pad as u16, ..native.clone() };
+            let b = Bytewise::of(&native);
+            assert_eq!((0..5).map(|o| b.padded(o)).collect::<Vec<_>>(), want, "padding {pad}");
+            for o in 0..5u16 {
+                assert_eq!(reads_len(&b, o), !b.padded(o), "padding {pad}, output {o}");
+            }
         }
     }
 
@@ -1808,7 +1827,6 @@ mod tests {
     /// bytes' alone, whatever lies past its padding.
     #[test]
     fn a_full_windows_word_is_not_cut() {
-        use cranelift_module::{Linkage, Module};
         let native = padded_program();
         let b = Bytewise::of(&native);
         // An output true on a zero byte (`padded` not): no `prev`'s cut of its own.
@@ -1827,7 +1845,17 @@ mod tests {
             }
         }
         assert_eq!(shifts, 1, "one cut: {}", func.display());
-        // Every output's word, whatever the bytes past the end.
+        // Every output's word, whatever the bytes past the program's padding: the default's,
+        // and none (the application's choice, every window cut on the rare branch).
+        windows_past_the_end(native.clone());
+        windows_past_the_end(BlockNative { pad: 0, ..native });
+    }
+
+    /// Each output's window of `native` (`window_function`) over a file whose `pad` bytes past
+    /// its end are zeros and the rest text: the file's bytes' bits alone.
+    fn windows_past_the_end(native: BlockNative) {
+        use cranelift_module::{Linkage, Module};
+        let b = Bytewise::of(&native);
         let mut module = cranelift_jit::JITModule::new(crate::native_cpu_codegen::tier1_builder().expect("a JIT"));
         let mut runs = Vec::new();
         for o in 0..5u16 {
@@ -1845,7 +1873,7 @@ mod tests {
         let mut x = 0x2545_f491_4f6c_dd1du64;
         for round in 0..300 {
             let n = 1 + (round % 150);
-            let pad = 16 + n + crate::native_cpu_block::BACK;
+            let pad = 16 + n + usize::from(native.pad);
             let (mut zeros, mut text) = (vec![0u8; pad + 160], vec![0u8; pad + 160]);
             for i in 16..zeros.len() {
                 x ^= x << 13;

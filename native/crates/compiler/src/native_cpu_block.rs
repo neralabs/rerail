@@ -64,6 +64,9 @@ pub struct CompiledBlock {
     slots: usize,
     pub outputs: usize,
     delay: u8,
+    /// The zero bytes the code counts on after every file (`BlockNative::pad`): `Batch` lays
+    /// them out.
+    pub pad: usize,
     pub extracts: Vec<usize>,
     totals: Vec<usize>,
     /// The outputs with a running count, extracts' and totals' together.
@@ -234,10 +237,10 @@ impl Batch {
             let row = Row { bytes: bytes.len() as u64, blocks: blocks as u64, len: file.len() as u64, out: words, positions, capacity, counts, scratch };
             scratch += (program.slots * blocks) as u64;
             // One copy, as simdjson's padded input: the file, then zeros to its last block's end
-            // and `BACK` past its last byte at least.
+            // and the program's padding past its last byte at least (`BlockNative::pad`).
             let at = bytes.len();
             bytes.extend_from_slice(file);
-            bytes.resize(at + (blocks * 64).max(file.len() + BACK), 0);
+            bytes.resize(at + (blocks * 64).max(file.len() + program.pad), 0);
             words += (program.outputs * blocks) as u64;
             // The extracts' positions, and with records a code a token after them.
             positions += (program.extracts.len() + usize::from(program.records.is_some())) as u64 * capacity;
@@ -377,11 +380,12 @@ pub fn thread_cpu() -> f64 {
 /// and the byte before the stream is 0x00.
 pub const FRONT: usize = 16;
 
-/// Zero bytes after every file's last byte, at least, wherever a compiled function reads it
-/// (`Batch`, a resident source's slab): as simdjson's padded input, a window that reads past
-/// the end reads zeros, so an output false on a zero byte has no bits there and needs no cut
-/// (`Bytewise::padded`). The widest window: 64 bits a lane times 32 lanes (Metal's), 256 bytes;
-/// a CPU window at a block before the end, its delay and its `prev`s reach less.
+/// The default padding (`BlockNative::pad`): zero bytes after every file's last byte, at least,
+/// wherever a compiled function reads it (`Batch`, a resident source's slab). As simdjson's
+/// padded input, a window that reads past the end reads zeros, so an output false on a zero
+/// byte has no bits there and needs no cut (`Bytewise::padded`). The widest window: 64 bits a
+/// lane times 32 lanes (Metal's), 256 bytes; a CPU window reaches less (`pad_reach`). An
+/// application may ask for less, its windows cut on a rare branch.
 pub const BACK: usize = 256;
 
 
@@ -1677,6 +1681,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         slots: usize::from(passes.slots),
         outputs: native.outputs.len(),
         delay: native.delay,
+        pad: usize::from(native.pad),
         extracts: native.extracts.clone(),
         totals: native.totals.clone(),
         counted: counted(native),
