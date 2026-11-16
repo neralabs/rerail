@@ -11,14 +11,16 @@
  * again only when their text changed.
  */
 import { lstatSync, readFileSync } from "node:fs";
-import { gitConfigFiles, gitExcludeFiles, type GitReads, gitUnmergedReader } from "../git.js";
+import { gitConfigFiles, gitExcludeFiles, type GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
 
 /** One walk's look at one worktree. `HEAD` and the worktree's own index are read for its findings (`WorktreeFindings`). */
 export interface WorktreeLook {
   /** The folder's device and file number; `""` once it is gone. */
   readonly folder: string;
-  /** By each checkout nested in the worktree, its unmerged entries (`gitUnmergedReader`: the same map while its index holds). */
+  /** By each checkout nested in the worktree, its unmerged entries (`gitUnmergedReader`: the same map while they hold). */
   readonly nested: ReadonlyMap<string, ReadonlyMap<string, string> | undefined>;
+  /** By each checkout nested in the worktree, the files its index tracks though Git ignores them (`gitTrackedIgnoredReader`). */
+  readonly forced: ReadonlyMap<string, string | undefined>;
   /** The ignore files' text, each after its path. */
   readonly ignores: string;
   /** The mount table's lines for filesystems mounted at or in the worktree (Linux); `""` elsewhere. */
@@ -28,8 +30,12 @@ export interface WorktreeLook {
 /** Whether anything `before` saw of a worktree moved by `now`. */
 export function lookMoved(before: WorktreeLook, now: WorktreeLook): boolean {
   if (before.folder !== now.folder || before.ignores !== now.ignores || before.mounts !== now.mounts) return true;
-  if (before.nested.size !== now.nested.size) return true;
-  return [...now.nested].some(([checkout, entries]) => before.nested.get(checkout) !== entries);
+  return mapMoved(before.nested, now.nested) || mapMoved(before.forced, now.forced);
+}
+
+/** Whether `now` names other keys than `before`, or another value for one. */
+function mapMoved<T>(before: ReadonlyMap<string, T>, now: ReadonlyMap<string, T>): boolean {
+  return before.size !== now.size || [...now].some(([key, value]) => !before.has(key) || before.get(key) !== value);
 }
 
 /** `/proc/self/mountinfo`, or undefined where there is none. */
@@ -83,6 +89,7 @@ interface WalkFiles {
  */
 export class WorktreeLooks {
   readonly #readUnmerged = gitUnmergedReader();
+  readonly #readTrackedIgnored = gitTrackedIgnoredReader();
   readonly #mountInfo: () => string | undefined;
   /** By worktree, the ignore files Git named for it, and their text then. */
   readonly #ignoreFiles = new Map<string, { readonly paths: readonly string[]; readonly text: string }>();
@@ -100,10 +107,13 @@ export class WorktreeLooks {
   /** The look at `root` (physical) now, with the nested `checkouts` its last read passed. */
   async look(git: GitReads, files: WalkFiles, root: string, checkouts: Iterable<string>): Promise<WorktreeLook> {
     const nested = new Map<string, ReadonlyMap<string, string> | undefined>();
+    const forced = new Map<string, string | undefined>();
     for (const checkout of checkouts) {
-      if (checkout !== root) nested.set(checkout, await git.run(signal => this.#readUnmerged(checkout, { signal })));
+      if (checkout === root) continue;
+      nested.set(checkout, await git.run(signal => this.#readUnmerged(checkout, { signal })));
+      forced.set(checkout, await git.run(signal => this.#readTrackedIgnored(checkout, { signal })));
     }
-    return { folder: folderIdentity(root), nested, ignores: await this.#ignores(git, files, root), mounts: this.#mountsIn(files, root) };
+    return { folder: folderIdentity(root), nested, forced, ignores: await this.#ignores(git, files, root), mounts: this.#mountsIn(files, root) };
   }
 
   /** Forgets each worktree not in `roots`. */

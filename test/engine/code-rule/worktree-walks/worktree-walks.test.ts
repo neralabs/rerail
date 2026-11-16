@@ -489,6 +489,8 @@ describe("a walk of the other worktrees with change notices", () => {
     const w3 = worktrees[2]!;
     const generated = join(w3, "src", "gen.py");
     await writeFile(generated, "x = 1\n");
+    // Git ignores it, by a rule of its own: the index tracking it is what tells a walk it counts.
+    await writeFile(join(w3, ".gitignore"), "src/gen.py\n");
     await awaitClockAfter(generated);
     // As Git answers: a path the index tracks is never ignored.
     let tracked = false;
@@ -759,7 +761,33 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
     expect(statsUnder(main, worktrees[1]!, w3)).toEqual([0, 0, 0]);
   });
 
-  it("reads a worktree whose nested checkout's index moved, though no notice counted", async () => {
+  it("reads a worktree whose nested checkout's merge stopped on a conflict that changed no file, though no notice counted", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const w3 = worktrees[2]!;
+    const nested = join(w3, "lib");
+    await mkdir(nested);
+    await writeFile(join(nested, "b.py"), "b = 1\n");
+    await writeFile(join(nested, "gone.py"), "gone = 1\n");
+    git(nested, "init", "--quiet", "--initial-branch=main");
+    git(nested, "add", ".");
+    git(nested, "commit", "--quiet", "-m", "vendor");
+    git(nested, "switch", "--quiet", "-c", "other");
+    git(nested, "rm", "--quiet", "gone.py");
+    git(nested, "commit", "--quiet", "-m", "other");
+    git(nested, "switch", "--quiet", "-c", "ours", "main");
+    await writeFile(join(nested, "gone.py"), "gone = 2\n");
+    git(nested, "commit", "--quiet", "-am", "ours");
+    const watching = await session(worktrees[0]!, checkouts, noticedWalks(), { nested: [nested] });
+    await turn(watching);
+    stats.length = 0;
+    // A modify/delete conflict keeps `gone.py` as it was: only the nested index's unmerged entries tell of it.
+    expect(() => git(nested, "merge", "--quiet", "other")).toThrow();
+    await turn(watching);
+    const [mainStats, w2Stats, w3Stats] = statsUnder(main, worktrees[1]!, w3);
+    expect({ mainStats, w2Stats, w3Read: w3Stats! > 0 }).toEqual({ mainStats: 0, w2Stats: 0, w3Read: true });
+  });
+
+  it("reads no worktree whose nested checkout's index was written again with nothing in it changed", async () => {
     const { main, worktrees, checkouts } = await repository();
     const w3 = worktrees[2]!;
     const nested = join(w3, "lib");
@@ -769,14 +797,13 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
     git(nested, "add", ".");
     git(nested, "commit", "--quiet", "-m", "vendor");
     const watching = await session(worktrees[0]!, checkouts, noticedWalks(), { nested: [nested] });
-    await writeFile(join(nested, "c.py"), "c = 1\n");
-    git(nested, "add", "c.py");
     await turn(watching);
     stats.length = 0;
-    git(nested, "rm", "--quiet", "--cached", "c.py");
+    // As an editor's `git status` does when it refreshes the files' stat data.
+    git(nested, "read-tree", "HEAD");
+    git(nested, "status", "--porcelain");
     await turn(watching);
-    // `w3`, `src`, `src/a.py`, `lib`, `lib/b.py` and `lib/c.py`.
-    expect(statsUnder(main, worktrees[1]!, w3)).toEqual([0, 0, 6]);
+    expect(statsUnder(main, worktrees[1]!, w3)).toEqual([0, 0, 0]);
   });
 });
 

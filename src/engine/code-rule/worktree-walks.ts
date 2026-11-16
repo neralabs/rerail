@@ -13,7 +13,7 @@
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
 import { sep } from "node:path";
-import { gitHead, gitModifiedOrUntrackedPaths, GitReads, gitUnmergedReader } from "../git.js";
+import { gitHead, gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 import type { TreeWatch } from "./tree-watch.js";
 import { lookMoved, type WorktreeLook, WorktreeLooks } from "./worktree-look.js";
@@ -176,25 +176,38 @@ interface Kept {
   readonly look: WorktreeLook | undefined;
   /** When the read began (`Date.now()`). */
   readonly readAt: number;
+  /** The files its index tracked though Git ignores them, as the read began (`gitTrackedIgnoredReader`). */
+  readonly trackedIgnored: string | undefined;
 }
 
+/** What Git said of a worktree as a walk began: its `HEAD`, its index's unmerged entries and its force-added files. */
+type CheckoutState = Pick<WorktreeFindings, "head" | "unmerged"> & Pick<Kept, "trackedIgnored">;
+
 /** What a walk saw of a worktree before deciding whether to read it. */
-type WorktreeState = Pick<WorktreeFindings, "head" | "unmerged"> & {
+type WorktreeState = CheckoutState & {
   readonly observedAt: number;
   readonly skipped: string;
   readonly look: WorktreeLook | undefined;
 };
 
 /**
- * Whether what no notice tells of moved since `kept` was read: the worktrees and sessions' checkouts inside it, its
- * `HEAD`, its index, or what its look saw. The index moved when the unmerged entries are a new map, since
- * `gitUnmergedReader` hands back the same one while the index file's stamp holds; a path the index tracks is never
- * ignored, so a file the last read left out as ignored may count now. An index that cannot be stamped is a new map each
- * walk, and the worktree is read on every walk, as before notices.
+ * Whether what no notice tells of moved since `kept` was read: the worktrees and sessions' checkouts inside it, what Git
+ * says of it (`gitMovedSince`), or what its look saw.
  */
 function movedSince(kept: Kept, state: WorktreeState): boolean {
-  if (kept.skipped !== state.skipped || kept.findings.head !== state.head || kept.findings.unmerged !== state.unmerged) return true;
+  if (kept.skipped !== state.skipped || gitMovedSince(kept, state)) return true;
   return kept.look === undefined || state.look === undefined || lookMoved(kept.look, state.look);
+}
+
+/**
+ * Whether `HEAD` moved, or the index changed what a read finds. Its readers hand back the same answer while the index
+ * says the same, so a `git status` that rewrote the index to refresh its files' stat data moves nothing. Its unmerged
+ * entries are a new map when a conflict began or ended; its force-added files are other text when a file Git ignores
+ * became tracked, and a path the index tracks is never ignored, so a file the last read left out may count now. An index
+ * that cannot be stamped is a new map each walk, and the worktree is read on every walk, as before notices.
+ */
+function gitMovedSince(kept: Kept, state: CheckoutState): boolean {
+  return kept.findings.head !== state.head || kept.findings.unmerged !== state.unmerged || kept.trackedIgnored !== state.trackedIgnored;
 }
 
 const OBSERVED_FIELDS = ["language", "stamp", "digest", "readError", "modifiedAt"] as const;
@@ -297,6 +310,7 @@ export class WorktreeWalks {
   /** Worktrees a walk began to read and has not kept findings of: the next walk reads them whatever the notices say. */
   readonly #owed = new Set<string>();
   readonly #readUnmerged = gitUnmergedReader();
+  readonly #readTrackedIgnored = gitTrackedIgnoredReader();
   /**
    * Every Git the walks start, stopped once no session watches: a walk is never waited for, and on Windows a Git it left
    * running would hold a worktree after the last session ended. A new one serves the next session.
@@ -643,7 +657,9 @@ export class WorktreeWalks {
     if (result === undefined) return undefined;
     const { texts: _texts, listed: _listed, ...findings } = result.findings;
     if (this.#watched(root)) {
-      this.#kept.set(root, { findings, retry: retried(result.scan), skipped: state.skipped, look: state.look, readAt });
+      this.#kept.set(root, {
+        findings, retry: retried(result.scan), skipped: state.skipped, look: state.look, readAt, trackedIgnored: state.trackedIgnored,
+      });
       this.#owed.delete(root);
     }
     return result.findings;
@@ -660,13 +676,18 @@ export class WorktreeWalks {
     return this.#watching.some(watching => watching.worktrees.has(root));
   }
 
-  async #readCheckouts(roots: ReadonlySet<string>): Promise<Map<string, Pick<WorktreeFindings, "head" | "unmerged">>> {
-    const checkouts = new Map<string, Pick<WorktreeFindings, "head" | "unmerged">>();
+  async #readCheckouts(roots: ReadonlySet<string>): Promise<Map<string, CheckoutState>> {
+    const checkouts = new Map<string, CheckoutState>();
     const git = this.#git;
     for (const root of roots) {
       const head = await git.run(signal => gitHead(root, { signal }));
-      const unmerged = head === undefined ? undefined : await git.run(signal => this.#readUnmerged(root, { signal }));
-      checkouts.set(root, { head, unmerged });
+      if (head === undefined) {
+        checkouts.set(root, { head, unmerged: undefined, trackedIgnored: undefined });
+        continue;
+      }
+      const unmerged = await git.run(signal => this.#readUnmerged(root, { signal }));
+      const trackedIgnored = await git.run(signal => this.#readTrackedIgnored(root, { signal }));
+      checkouts.set(root, { head, unmerged, trackedIgnored });
     }
     return checkouts;
   }
