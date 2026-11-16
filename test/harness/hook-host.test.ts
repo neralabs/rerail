@@ -1022,7 +1022,7 @@ interface KeptAnswerTraffic {
 /**
  * Records {@link KeptAnswerTraffic} of the hook host the test loads next (`startCheckHost`), through `node:fs` and
  * `node:fs/promises`. The hook opens a kept answer refusing a link at its name (`openNoFollowSync`) and reads it by its
- * descriptor, so an open that fails is a read that fails.
+ * descriptor with one `readSync`, so an open that fails is a read that fails.
  */
 function watchKeptAnswers(): KeptAnswerTraffic {
   const traffic: KeptAnswerTraffic = { reads: [], renames: [] };
@@ -1045,19 +1045,19 @@ function watchKeptAnswers(): KeptAnswerTraffic {
       descriptors.delete(descriptor);
       actual.closeSync(descriptor);
     };
-    const readFileSync = (...args: Parameters<typeof actual.readFileSync>): ReturnType<typeof actual.readFileSync> => {
-      const [from] = args;
-      if (!kept(from) && !(typeof from === "number" && descriptors.has(from))) return actual.readFileSync(...args);
+    const readSync = (...args: Parameters<typeof actual.readSync>): number => {
+      if (!descriptors.has(args[0])) return actual.readSync(...args);
       try {
-        const text = actual.readFileSync(...args);
-        traffic.reads.push({ text: String(text) });
-        return text;
+        const read = actual.readSync(...args);
+        // The hook reads a kept answer into the start of its buffer.
+        traffic.reads.push({ text: Buffer.from(args[1].buffer, args[1].byteOffset, read).toString("utf8") });
+        return read;
       } catch (error) {
         traffic.reads.push({ code: codeOf(error) });
         throw error;
       }
     };
-    const replaced = { openSync, closeSync, readFileSync };
+    const replaced = { openSync, closeSync, readSync };
     return { ...actual, default: { ...actual, ...replaced }, ...replaced };
   });
   vi.doMock("node:fs/promises", async () => {

@@ -159,12 +159,13 @@ const MAX_IDENTITY_BYTES = 128;
 
 /**
  * The identity file's id, read without following a symlink, only from a regular file, and at most
- * {@link MAX_IDENTITY_BYTES}; undefined when it does not exist. Throws on a symlink, a non-file or a malformed id.
+ * {@link MAX_IDENTITY_BYTES}; undefined when it does not exist. Throws on a symlink, a non-file or a malformed id. It
+ * opens the file with `flags`.
  */
-function readIdentityFile(identityPath: string): string | undefined {
+function readIdentityFile(identityPath: string, flags = fsConstants.O_RDONLY): string | undefined {
   let descriptor: number;
   try {
-    descriptor = openNoFollowSync(identityPath, fsConstants.O_RDONLY);
+    descriptor = openNoFollowSync(identityPath, flags);
   } catch (error) {
     if (errorCode(error) === "ENOENT") return undefined;
     throw new Error(`Rerail repository identity at ${identityPath} is not a regular file`);
@@ -181,10 +182,22 @@ function readIdentityFile(identityPath: string): string | undefined {
   }
 }
 
+/** `O_NONBLOCK` where the OS has it; Windows has none and no pipes in its folders. */
+const OPEN_AT_ONCE = fsConstants.O_NONBLOCK ?? 0;
+
+/** How {@link readCloneIdAt} opens the file. */
+export interface CloneIdReadOptions {
+  /**
+   * True opens it without waiting for a writer where the OS can, so a pipe at its name reads at once as no regular file:
+   * for a one-shot hook, which must not wait where the daemon would. False, the default, opens it as every reader does.
+   */
+  readonly atOnce?: boolean;
+}
+
 /** The clone id stored at `identityPath`, or undefined before one is created or when the file can't be trusted. */
-export function readCloneIdAt(identityPath: string): string | undefined {
+export function readCloneIdAt(identityPath: string, options: CloneIdReadOptions = {}): string | undefined {
   try {
-    return readIdentityFile(identityPath);
+    return readIdentityFile(identityPath, fsConstants.O_RDONLY | (options.atOnce === true ? OPEN_AT_ONCE : 0));
   } catch {
     return undefined;
   }

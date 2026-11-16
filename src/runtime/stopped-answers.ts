@@ -13,7 +13,9 @@
  * home. It holds no path: the repository key and the clone id the database records, how many folders up the checkout's
  * top is, the device and inode of the folder, the top and the top's `.git`, and when the daemon answered. A new daemon
  * places every folder again, so it removes the folders of the daemons before it once it runs (`removeEarlierAnswers`),
- * and no hook does. A link in place of the file or of either folder above it is never followed.
+ * and no hook does. A link in place of the file or of either folder above it is never followed. The hook reads the file,
+ * and the checkout's `.git`, `commondir` and clone id files, only as small plain files opened without waiting, so a pipe
+ * at one's name never holds it.
  */
 import { createHash } from "node:crypto";
 import {
@@ -53,7 +55,10 @@ const OUTSIDE_GIT_ID_FILE = "repository-id";
 /** The most a `.git` file or a `commondir` file may hold here: Git writes one short line in each. */
 const MAX_POINTER_BYTES = 4_096;
 
-/** Opens a file without waiting for a writer where the OS can, so a pipe planted at a `.git` file's name cannot hold the hook. */
+/** The most a kept answer may hold: one takes about 250 bytes, and only a repository key thousands of characters long comes near. */
+const MAX_KEPT_BYTES = 16_384;
+
+/** Opens a file without waiting for a writer where the OS can, so a pipe planted at the name of a file the hook reads cannot hold it. */
 const AT_ONCE = constants.O_NONBLOCK ?? 0;
 
 /** The daemon's answer to a hook's start check, with what it rests on (`readStartAnswer`). */
@@ -248,19 +253,20 @@ function outsideGitIdAgrees(top: string, cloneId: string): boolean {
   const folder = join(top, OUTSIDE_GIT_ID_FOLDER);
   const kind = entryKind(folder);
   if (kind !== "folder") return kind === "none";
-  const id = readCloneIdAt(join(folder, OUTSIDE_GIT_ID_FILE));
+  const id = readCloneIdAt(join(folder, OUTSIDE_GIT_ID_FILE), { atOnce: true });
   return id === undefined || id === cloneId;
 }
 
 /**
  * The clone id in the clone id file of the Git common folder that `top`'s own `.git` names, read as the daemon reads it
- * (`readCloneIdAt`) and found as Git finds it, without running Git: `.git` is that Git folder, or a file whose `gitdir:`
- * line names it, and the folder's `commondir` names the common folder where it has one. Undefined where a look fails, a
- * link or a path on a server is on the way, which is never followed, or the file holds no clone id.
+ * (`readCloneIdAt`) but never waiting on a pipe there, and found as Git finds it, without running Git: `.git` is that
+ * Git folder, or a file whose `gitdir:` line names it, and the folder's `commondir` names the common folder where it has
+ * one. Undefined where a look fails, a link or a path on a server is on the way, which is never followed, or the file
+ * holds no clone id.
  */
 function cloneIdAt(top: string): string | undefined {
   const common = commonFolderOf(gitFolderOf(top));
-  return common === undefined ? undefined : readCloneIdAt(join(common, CLONE_ID_FILE));
+  return common === undefined ? undefined : readCloneIdAt(join(common, CLONE_ID_FILE), { atOnce: true });
 }
 
 /** `top`'s Git folder: its `.git` folder, or the folder its `.git` file names (Git's `read_gitfile`). */
@@ -268,14 +274,14 @@ function gitFolderOf(top: string): string | undefined {
   const dotGit = join(top, ".git");
   const kind = entryKind(dotGit);
   if (kind === "folder") return dotGit;
-  const text = kind === "file" ? pointerText(dotGit) : undefined;
+  const text = kind === "file" ? smallFileText(dotGit, MAX_POINTER_BYTES) : undefined;
   return typeof text === "string" && text.startsWith("gitdir: ") ? namedFolder(top, text.slice("gitdir: ".length)) : undefined;
 }
 
 /** The common folder of the Git folder `git` (Git's `get_common_dir`): the folder its `commondir` file names, else `git`. */
 function commonFolderOf(git: string | undefined): string | undefined {
   if (git === undefined) return undefined;
-  const text = pointerText(join(git, "commondir"));
+  const text = smallFileText(join(git, "commondir"), MAX_POINTER_BYTES);
   if (text === null) return git;
   return text === undefined ? undefined : namedFolder(git, text);
 }
@@ -300,10 +306,11 @@ function foldersDownTo(path: string): string[] {
 }
 
 /**
- * The text of the small file at `path`, a `.git` file or a `commondir`, read without following a link at its name or
- * waiting on a pipe there: null where nothing is there, undefined where it cannot be opened or read whole.
+ * The text of the small file at `path` (a `.git` file, a `commondir`, a kept answer), read without following a link at
+ * its name or waiting on a pipe or a device there: null where nothing is there, undefined where it cannot be opened,
+ * is not a plain file, or holds more than `most` bytes.
  */
-function pointerText(path: string): string | null | undefined {
+function smallFileText(path: string, most: number): string | null | undefined {
   let descriptor: number;
   try {
     descriptor = openNoFollowSync(path, constants.O_RDONLY | AT_ONCE);
@@ -311,18 +318,18 @@ function pointerText(path: string): string | null | undefined {
     return error instanceof Error && "code" in error && error.code === "ENOENT" ? null : undefined;
   }
   try {
-    return plainFileText(descriptor);
+    return plainFileText(descriptor, most);
   } finally {
     closeSync(descriptor);
   }
 }
 
-/** The text of the open file `descriptor`, where it is a plain file of at most `MAX_POINTER_BYTES`; undefined otherwise. */
-function plainFileText(descriptor: number): string | undefined {
+/** The text of the open file `descriptor`, where it is a plain file of at most `most` bytes; undefined otherwise. */
+function plainFileText(descriptor: number, most: number): string | undefined {
   try {
-    const buffer = Buffer.alloc(MAX_POINTER_BYTES + 1);
+    const buffer = Buffer.alloc(most + 1);
     const length = fstatSync(descriptor).isFile() ? readSync(descriptor, buffer, 0, buffer.length, 0) : buffer.length;
-    return length > MAX_POINTER_BYTES ? undefined : buffer.subarray(0, length).toString("utf8");
+    return length > most ? undefined : buffer.subarray(0, length).toString("utf8");
   } catch {
     return undefined;
   }
@@ -339,15 +346,15 @@ function daemonFolder({ pid, startedAt }: DaemonIdentity): string {
   return `${pid}-${startedAt}`;
 }
 
-/** The answer kept at `file`; undefined where none is there whole, a look fails, or a link is at its name, which is never followed. */
+/**
+ * The answer kept at `file`; undefined where none is there whole, a look fails, or what is at its name is not a plain
+ * file of at most `MAX_KEPT_BYTES`: a link is never followed, and a pipe or a device is never waited on.
+ */
 function readKept(file: string): KeptAnswer | undefined {
+  const text = smallFileText(file, MAX_KEPT_BYTES);
+  if (typeof text !== "string") return undefined;
   try {
-    const descriptor = openNoFollowSync(file, constants.O_RDONLY);
-    try {
-      return keptSchema.safeParse(JSON.parse(readFileSync(descriptor, "utf8"))).data;
-    } finally {
-      closeSync(descriptor);
-    }
+    return keptSchema.safeParse(JSON.parse(text)).data;
   } catch {
     return undefined;
   }
