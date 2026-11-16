@@ -339,8 +339,11 @@ pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation
         let mut keyed: Vec<(u64, u32)> = order
             .iter()
             .map(|&id| {
-                let k: Vec<i64> = cols.iter().map(|&c| rel.own(id, c as usize)).collect();
-                (key_hash(&k), id)
+                let mut k = [0i64; MAX_KEY];
+                for (j, &c) in cols.iter().enumerate() {
+                    k[j] = rel.own(id, c as usize);
+                }
+                (key_hash(&k[..cols.len()]), id)
             })
             .collect();
         keyed.sort_by_key(|&(h, _)| h); // stable: canonical order within a key
@@ -463,11 +466,15 @@ impl<'a> View<'a> {
 
     /// Live ids in the canonical order: the base's (less what the delta killed) merged with the delta's.
     pub fn ordered(&self) -> Vec<u32> {
+        self.ordered_iter().collect()
+    }
+
+    /// `ordered`, read in place: no allocation.
+    pub fn ordered_iter(&self) -> impl Iterator<Item = u32> + '_ {
         assert!(self.top.is_frozen(), "an ordered read needs a frozen relation");
         let own = self.top.order.as_slice();
-        let Some(b) = self.base else { return own.to_vec() };
-        let based: Vec<u32> = b.order.as_slice().iter().copied().filter(|&id| self.live(id)).collect();
-        merge(self, &based, own)
+        let based: &[u32] = self.base.map_or(&[], |b| b.order.as_slice());
+        Merge::new(self, based.iter().copied().filter(|&id| self.live(id)), own.iter().copied())
     }
 
     pub fn live_len(&self) -> usize {
@@ -480,16 +487,18 @@ impl<'a> View<'a> {
 
     /// The live rows whose index-`i` columns equal `key`, in canonical order.
     pub fn probe(&self, i: usize, key: &[i64]) -> Vec<u32> {
+        self.probe_iter(i, key).collect()
+    }
+
+    /// `probe`, read in place: both hash groups filtered and merged as they are walked, no allocation.
+    pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> impl Iterator<Item = u32> + 'k {
         let h = key_hash(key);
-        let cols: Vec<usize> = {
-            let ix = self.top.index(i);
-            ix.key[..ix.ncols as usize].iter().map(|&c| c as usize).collect()
-        };
-        let matches = |id: u32| self.live(id) && cols.iter().zip(key).all(|(&c, &k)| self.get(id, c) == k);
-        let own: Vec<u32> = self.top.group(i, h).iter().copied().filter(|&id| matches(id)).collect();
-        let Some(b) = self.base else { return own };
-        let based: Vec<u32> = b.group(i, h).iter().copied().filter(|&id| matches(id)).collect();
-        merge(self, &based, &own)
+        let ix = self.top.index(i);
+        let cols = &ix.key[..ix.ncols as usize];
+        let matches = move |id: &u32| self.live(*id) && cols.iter().zip(key).all(|(&c, &k)| self.get(*id, c as usize) == k);
+        let own = self.top.group(i, h).iter().copied().filter(matches);
+        let based: &[u32] = self.base.map_or(&[], |b| b.group(i, h));
+        Merge::new(self, based.iter().copied().filter(matches), own)
     }
 
     /// A digest of the live rows in canonical order: the same for the same set, whatever wrote it, in any order.
@@ -506,19 +515,31 @@ impl<'a> View<'a> {
     }
 }
 
-fn merge(v: &View, a: &[u32], b: &[u32]) -> Vec<u32> {
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        if v.cmp(a[i], b[j]) != Ordering::Greater {
-            out.push(a[i]);
-            i += 1;
-        } else {
-            out.push(b[j]);
-            j += 1;
+/// Two id streams, each in canonical order, merged into one.
+struct Merge<'v, A: Iterator<Item = u32>, B: Iterator<Item = u32>> {
+    v: &'v View<'v>,
+    a: std::iter::Peekable<A>,
+    b: std::iter::Peekable<B>,
+}
+
+impl<'v, A: Iterator<Item = u32>, B: Iterator<Item = u32>> Merge<'v, A, B> {
+    fn new(v: &'v View<'v>, a: A, b: B) -> Self {
+        Merge { v, a: a.peekable(), b: b.peekable() }
+    }
+}
+
+impl<A: Iterator<Item = u32>, B: Iterator<Item = u32>> Iterator for Merge<'_, A, B> {
+    type Item = u32;
+
+    #[inline]
+    fn next(&mut self) -> Option<u32> {
+        match (self.a.peek(), self.b.peek()) {
+            (Some(&x), Some(&y)) => {
+                if self.v.cmp(x, y) != Ordering::Greater { self.a.next() } else { self.b.next() }
+            }
+            (Some(_), None) => self.a.next(),
+            _ => self.b.next(),
         }
     }
-    out.extend_from_slice(&a[i..]);
-    out.extend_from_slice(&b[j..]);
-    out
 }
+

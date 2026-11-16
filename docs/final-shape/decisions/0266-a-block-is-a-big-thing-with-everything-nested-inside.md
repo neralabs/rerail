@@ -464,6 +464,55 @@ The spike's ergonomics gaps, for step 1:
 - `View::ordered` and `probe` return `Vec`s. They become iterators over the merged order.
 - The carry step re-pushes a delta's rows. It becomes a range copy, like `copy_stratum`.
 
+### 12. Against the engine's relations, and GPU residency
+
+`setfix::blocks_compare_tests` puts the same 1M rows of 3 columns (about 10% repeats; 909,164 distinct) through
+setfix's `Rel`, closed into an `InRel` and started again by `Rel::based`, and through a block, with `freeze` and a
+delta. These are profiling-build instructions retired, with every malloc counted by libmalloc's logger hook:
+
+| Step | setfix | blocks |
+|---|---|---|
+| Build | 420 M insn, 39 mallocs (dedup at push) | 117 M insn, 1 malloc (one claim) |
+| Close / freeze | 746 M insn, 49 mallocs | 1,322 M insn, 25 mallocs (scratch, freed) |
+| Build + close together | 1,166 M insn | 1,439 M insn (+23%) |
+| Held after it | values in 8-byte `i64`s, 24 MB; about 34 MB live heap with its order | 28 MB in one block (4-byte columns), no heap |
+| 1M probes on column 1 | 752 M insn | 903 M insn (+20%), no allocation |
+| Scan of every live row | 32 M insn (id order) | 59 M insn (canonical order), 64 M (id order) |
+| One edit (kill 100, add 100) | 7.3 M insn, 52 mallocs, +12.8 MB heap | 0.2 M insn, 12 mallocs, a 144 KB delta block |
+
+- **Cold work costs blocks about 20% more.** The spike's freeze sorts whole rows and groups by hash with two
+  sorts, where setfix dedups at push and keeps sorted runs. A probe walks a hash group and checks liveness through
+  the merged view. Both are open to the usual tuning. Neither cost is in the shape.
+- **Memory and an edit's cost favour blocks by one to two orders of magnitude.** A block holds one allocation
+  where a relation holds Vecs, its columns are 4 bytes wide where `i64`s are 8, and it is the bytes a journal or a
+  GPU reads, with no encoding. A maintained edit writes a delta of its own size: 1/36 of setfix's instructions
+  and 1/88 of its memory.
+- **A freeze's scratch is transient heap:** the sort keys, ids and keyed pairs, about 45 MB at 1M rows.
+  Building them in a scratch region of the block's pool, not the heap, keeps a freeze inside the memory cap.
+
+`examples/pinning.rs` measures what the GPU pays to read a block:
+
+| Wrapped | Wrapping (no-copy) | A dispatch with a fresh wrap | The first dispatch with a kept buffer | Later dispatches with a kept buffer |
+|---|---|---|---|---|
+| 16 MiB | 0.02 ms | 0.6 ms | 0.6–1.0 ms | 0.2 ms |
+| 256 MiB | 0.04 ms | 4.9 ms | 7.9–11.4 ms | 0.2–0.5 ms |
+| 1 GiB | 0.1 ms | 20–23 ms | 24–42 ms | 0.2–0.4 ms |
+| 2 GiB | 0.2 ms | 39 ms | 49–87 ms | 0.3–0.7 ms |
+
+Wrapping is cheap. The cost is mapping a buffer into the GPU's address space the first time a command uses it:
+about 20 ms a GiB, and more for pages never touched. A buffer kept and used again pays nothing for its length.
+So blocks for the GPU come from a **pool of pinned slabs**:
+
+- slabs are made once, mapped once and kept;
+- a run takes a slab, resets its bump pointer and fills it;
+- a slab is given back when the last command buffer that reads it has completed, as `accel::gpu::shared` leases
+  are now.
+
+Four 256 MiB slabs recycled over 40 runs cost 2.2 ms a run, an 8 MiB write included. The pool is
+`accel::gpu::shared`'s, grown to hold blocks: its size classes become slab sizes, and a block whose base is a slab
+never needs a fresh wrap. A block outlives its slab only by being frozen to a file (the journal) or copied into a
+new full block (a roll-up), both `memcpy`.
+
 ## Path
 
 Each step leaves the engine working and is measured in retired instructions against the access it replaces:

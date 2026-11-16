@@ -74,6 +74,8 @@ mod survivor_tests;
 mod cut_tests;
 #[cfg(test)]
 mod inputs_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod blocks_compare_tests;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;
