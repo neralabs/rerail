@@ -1365,7 +1365,7 @@ export class CodeRuleBridge {
     const discovery = this.#discovery;
     if (discovery === undefined || discovery.cancelled) return undefined;
     const held = new Map<string, ObservedSource | undefined>();
-    for (const path of this.#heldPaths()) held.set(path, this.#observed.get(path));
+    for (const path of this.#heldPaths()) held.set(path, this.#observedSource(path));
     const { heads, unmerged, passedCheckouts } = discovery;
     return {
       since: Math.min(discovery.walkedFrom, discovery.worktrees.walkedFrom ?? discovery.walkedFrom),
@@ -1485,11 +1485,12 @@ export class CodeRuleBridge {
   }
 
   /**
-   * The SHA-256 of `path` (relative to the session's folder, `/`-separated) as this session last observed it, by a walk
-   * or a tool call's finish; undefined when it has observed no file there.
+   * The SHA-256 of `path` (relative to the session's folder, `/`-separated) as this session last observed it, by a walk,
+   * a tool call's finish or the snapshot of the worktree holding it (`#observedSource`); undefined when it has observed
+   * no file there.
    */
   observedDigest(path: string): string | undefined {
-    return this.#observed.get(path)?.digest;
+    return this.#observedSource(path)?.digest;
   }
 
   /**

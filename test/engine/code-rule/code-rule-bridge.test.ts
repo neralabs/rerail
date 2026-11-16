@@ -1888,6 +1888,45 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
   });
 
+  // Once a shared walk's snapshot agrees with what the session saw of a file in another worktree, the session keeps no
+  // observation of its own (`#observe`). A suspension read only the session's own, so it recorded each such held file as
+  // gone: the reopened session read back no text of it, and took another writer's change made meanwhile as its baseline.
+  it("holds the files it edited in another worktree across a suspension, once a shared snapshot agrees with them", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const [changed, kept] = [join(worktree, "src", "a.py"), join(worktree, "src", "b.py")];
+    const { bridge } = await opened(root, extra);
+    await shellInWorktree(bridge, async () => {
+      await writeFile(changed, "old\nviolation\nmine\n");
+      await writeFile(kept, "b = 1\n");
+    });
+    const resume = await bridge.walkResume();
+    await bridge.close();
+    const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+    expect([changed, kept].map(file => resume?.held.get(repositoryPath(root, file))?.digest)).toEqual([digest("old\nviolation\nmine\n"), digest("b = 1\n")]);
+    // Another writer, while the session is suspended: its change is recorded, though the suspension kept no text of it.
+    await writeFile(changed, "old\nviolation\nmine\ntheirs\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const second = createBridge(root, { ...auditor(auditGeneratedEdits), ...extra }, {
+      worktreeWalkGapMs: 0,
+      ...(resume === undefined ? {} : { resume }),
+    });
+    await second.openWorkspace("session-1");
+    await second.checkpoint("turn");
+    await second.settleWorktreeWalk();
+    // The unchanged file's text was read back as the session opened, so a later change to it is measured from it.
+    await writeFile(kept, "b = 1\ntheirs\n");
+    await second.checkpoint("turn");
+    await second.settleWorktreeWalk();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{
+        path: repositoryPath(root, changed), language: "python",
+        previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "old\nviolation\nmine\ntheirs\n",
+      }], "log"],
+      [[{ path: repositoryPath(root, kept), language: "python", previousText: "b = 1\n", generatedText: "b = 1\ntheirs\n" }], "log"],
+    ]);
+  });
+
   it("records a shell write in another worktree in Log, so it steers no session, and steers on one in its own folder", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
