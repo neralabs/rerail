@@ -441,6 +441,29 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
     );
 }
 
+/// The sources of contents a run took by their digests alone (`Content::Unstored`: in the waves the store is not
+/// read, so a file the stat index does not trust is named by its digest), for the run's manifest (`late`): found and
+/// pinned on the store's writer, behind the run, as `named_source` names a text the store holds.
+pub(super) fn named_contents(cache: &ContentStore, digests: Vec<[u8; 32]>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    if digests.is_empty() {
+        return;
+    }
+    let late = std::sync::Arc::clone(late);
+    cache.write_back_syms(
+        crate::content_store::write_back::Syms::None,
+        "the sources of contents the manifest names",
+        digests.len() * 32,
+        Vec::new(),
+        Box::new(move |s| {
+            let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+            let found: Vec<SourceId> = s.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
+            s.pin_held_sources(&found)?;
+            late.lock().expect("the late sources").extend(found);
+            Ok(())
+        }),
+    );
+}
+
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
 /// branches that take turns at a file keep theirs (decision 0146 §4); an edited file's earlier contents go.
 const MEMO_CONTENTS: usize = 4;
