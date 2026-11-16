@@ -1,4 +1,4 @@
-# 0296. The cross part's tail off the critical path: its kept part framed in jobs, the file-local part's writes sealed before the cross part, and its new atoms written while its kept part is framed
+# 0296. The cross part's tail off the critical path: its kept part framed in jobs, the file-local part's writes sealed before the cross part, and its new atoms written while its kept part is framed; collection keeps a watched root's answers
 
 Status: decided (2026-11-16). Builds on 0294 (the cross part's strata off one thread), 0102 and 0104 (writes behind
 the run, in waves), 0049 §4.3 (the run's atoms at its end), 0117 and 0212 (the kept part's frames, digests of
@@ -46,6 +46,23 @@ their own (`Boundary::CrossDerived`, `corpus::cross_atoms_ahead`): the writer ap
 kept part, not after the frames in the cross part's last wave. A warm run makes no atom: nothing is queued (checked
 with `RERAIL_WARM=list`: no pending-atoms or files'-stats write in a warm run).
 
+### 4. Collection keeps what is under a root this process watches
+
+`observe::collect` drops an answer, a canonical form or a Git file list under no root whose cursor the observer's
+store holds. A root first asked in a run has its cursor stored at the outermost run's end (`settle_roots`), but its
+answers are written at each inner run's end (phase 1's), and the store's collection runs between the two, after the
+manifest. So on a cold store, whose first run always collects, every answer and canonical form under the corpus
+root was dropped (PostHog: 38,940 answers, 29,772 records; `RERAIL_OBSERVE_TRACE` listed the five roots collect
+saw, the corpus's not among them), and the next, warm run read and recorded each again (2.8 s, against 1.2 s).
+`collect` now also keeps what is under the roots this process's observers watch (`observe::watched`).
+`observe::tests::collection_drops_what_no_run_asks_any_more` holds such a root, with no cursor, whose answer and
+canonical form are kept.
+
+### 5. A profiled warm run makes its profile's directory
+
+A run the whole-run cutoff answers writes no report, so nothing made `RERAIL_PROFILE`'s directory, and the run's
+lifecycle line (`profile.txt`) failed to open: the run failed after writing its outputs. The directory is made first.
+
 ## Measured
 
 All of PostHog, profiling build, the M3 Max (load about 3 at the start), the same 29,747 findings (the same set,
@@ -57,6 +74,14 @@ node ids included, fa0efeaed6ff) in every run:
 | `retain` on the main thread | 0.73 s | 0.11 s |
 | the cross part's evaluation done to the manifest written | 1.82 s | 1.00 s |
 
+A cold run, then a warm run on the same store and outputs (`reuse: true`, the command line's), all of PostHog,
+unprofiled, the M3 Max, the same findings in each:
+
+| | cold | warm | the warm run's observer |
+|---|---|---|---|
+| before §4 | 30.7 s | 2.83 s | every corpus answer recorded again |
+| after §4 | 31.0 s, 30.8 s | 1.21 s, 1.44 s | 38,956 answers read, none recorded |
+
 ## Open
 
 - The writer is the tail's critical path now: the cross part's 388 k atoms (0.55 s, mostly their keys, `atom_key`,
@@ -65,7 +90,9 @@ node ids included, fa0efeaed6ff) in every run:
   fewer of the kept part's relations (a supplementary relation is kept for maintenance), are tradeoffs of the
   store's format and of maintenance.
 - The store's collection runs after the manifest and the run waits for it (0.34 s on a cold store, whose first run
-  always decides). On the M3 it dropped 38,940 of the observer's answers and 29,772 records under the corpus root
-  it keeps; not reproduced here yet.
+  always decides).
+- A warm run still writes the observer's store once: phase 0's outputs are a directory of each process's
+  (`rerail-phase-0-<pid>-1`) under the temporary directory, a root the observer watches, so each warm run's journal
+  names the last process's as changed (4 paths) and the observer forgets them.
 - A profiled run's report (`profile::report::write`, the roofline's file digests) takes about 0.4 s of the end;
   an unprofiled run has none.

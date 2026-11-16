@@ -1927,7 +1927,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
             }
             // The observer's store, with what the passes left live (`observe::collect`).
             let live = store.live_plans()?;
-            let swept = crate::content_store::observe::collect(&crate::content_store::observe::store_beside(&path), |plan| live.contains(plan)).map_err(crate::content_store::StoreError::from)?;
+            let swept = crate::content_store::observe::collect(&crate::content_store::observe::store_beside(&path), &crate::content_store::observe::watched(), |plan| live.contains(plan)).map_err(crate::content_store::StoreError::from)?;
             let swept = format!("; the observer's store: {} cursors, {} answers and {} records dropped", swept.cursors, swept.answers, swept.records);
             Ok(match kept {
                 Some(k) => format!(
@@ -2384,7 +2384,9 @@ fn run_handed(
     {
         use std::io::Write as _;
         let cpu = |a: (f64,f64,f64), b: (f64,f64,f64)| b.0 + b.1 - a.0 - a.1;
-        // Made here when the run wrote none (a run the whole-run cutoff answered, `reuse::reused`).
+        // Made here when the run wrote none (a run the whole-run cutoff answered, `reuse::reused`): its directory too,
+        // which no report made (a profiled warm run failed, its outputs written, decision 0296).
+        std::fs::create_dir_all(&dir).map_err(|e| Error::Plan(format!("profile lifecycle: {e}")))?;
         let mut file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("profile.txt")).map_err(|e| Error::Plan(format!("profile lifecycle: {e}")))?;
         writeln!(file, "\n== Whole run lifecycle (process CPU, including workers)\nobserver {:.6} s; include graphs {:.6} s; execution {:.6} s; final observations {:.6} s\nThese intervals partition the run; do not add them to nested span totals.",
             cpu(lifecycle_start,lifecycle_observed),cpu(lifecycle_observed,lifecycle_seeded),

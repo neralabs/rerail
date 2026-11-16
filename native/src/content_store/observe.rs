@@ -1359,13 +1359,17 @@ pub struct Swept {
 ///
 /// - a root's cursor where the root's name has a `.` or `..`, or is gone, or lies under another root kept; of two
 ///   names of one directory (`/var/…`, `/private/var/…`), all but the one with the newest cursor;
-/// - an answer, a canonical form or a Git file list under no root kept: every path the observer reads is under a
-///   root (`watch_above`), so one under none is of a name no run uses;
+/// - an answer, a canonical form or a Git file list under no root kept and none of `watched`: every path the observer
+///   reads is under a root (`watch_above`), so one under none is of a name no run uses. `watched` are the roots this
+///   process's observers watch now (`watched`): a root first asked this run has no cursor stored until the outermost
+///   run's end (`settle_roots`), while its answers are written at each inner run's (phase 1's) end; collected before
+///   then, they were dropped as under no root, and the next (warm) run read and recorded every one again (decision
+///   0296);
 /// - a whole-run cutoff's record (`reuse::CUTOFF`) that names no plan `live` says is live (a run of another build,
 ///   whose manifests the content store no longer keeps), and one from before records named their plans.
 ///
 /// Then the WAL is folded into the database and truncated. Other records (`constants:`, `cone-rounds:`) stay.
-pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Result<Swept> {
+pub fn collect(path: &Path, watched: &[PathBuf], live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Result<Swept> {
     let mut swept = Swept::default();
     if !path.exists() {
         return Ok(swept);
@@ -1402,7 +1406,7 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
         let (volume, root, _) = kept.remove(i);
         dropped.push(cursor_key_text(&volume, &root));
     }
-    let held = |path: &Path| plain(path) && kept.iter().any(|(_, root, _)| path.starts_with(root));
+    let held = |path: &Path| plain(path) && (kept.iter().any(|(_, root, _)| path.starts_with(root)) || watched.iter().any(|root| path.starts_with(root)));
     let answers: Vec<String> = {
         let mut st = db.prepare("SELECT path FROM observed")?;
         st.query_map([], |r| r.get::<_, String>(0))?.flatten().filter(|p| !held(Path::new(p))).collect()
@@ -1427,6 +1431,17 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
             .map(|(key, _)| key)
             .collect()
     };
+    if std::env::var_os("RERAIL_OBSERVE_TRACE").is_some() {
+        eprintln!(
+            "rerail: observer collect: roots {:?}; kept {:?}; cursors dropped {dropped:?}; {} answers dropped (first {:?}); {} records dropped (first {:?})",
+            roots.iter().map(|r| (&r.2, r.3.is_some(), r.4)).collect::<Vec<_>>(),
+            kept.iter().map(|k| &k.1).collect::<Vec<_>>(),
+            answers.len(),
+            answers.iter().take(3).collect::<Vec<_>>(),
+            records.len(),
+            records.iter().take(3).collect::<Vec<_>>()
+        );
+    }
     let tx = db.transaction()?;
     for key in &dropped {
         swept.cursors += tx.execute("DELETE FROM observer_meta WHERE key = ?1", [key])?;
@@ -1562,6 +1577,17 @@ pub fn forget(store: &Path) {
     if let Some(observer) = gone {
         observer.written();
     }
+}
+
+/// The roots every observer of this process watches now (asked this run or before, stored or not): what is under
+/// them is a run's, whatever its store holds of their cursors yet (`collect`).
+pub fn watched() -> Vec<PathBuf> {
+    let Some(all) = OBSERVERS.get() else { return Vec::new() };
+    let all = all.lock().unwrap_or_else(|e| e.into_inner());
+    let mut roots: Vec<PathBuf> = all.values().flat_map(|o| o.roots.iter().map(|r| r.path.clone()).chain(o.stored_roots.iter().cloned())).collect();
+    roots.sort();
+    roots.dedup();
+    roots
 }
 
 /// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the process). One observer per
@@ -1988,7 +2014,8 @@ mod tests {
         assert_eq!(o.known(&paths[3]).map(|e| e.stat.size), Some(9), "memory wins");
     }
 
-    /// `collect` drops what no run asks any more, and keeps the rest.
+    /// `collect` drops what no run asks any more, and keeps the rest: what is under a root this process watches is
+    /// kept before the root's cursor is stored (decision 0296).
     #[test]
     fn collection_drops_what_no_run_asks_any_more() {
         let given = std::env::temp_dir().join(format!("rerail-observer-collect-{}", std::process::id()));
@@ -2015,6 +2042,9 @@ mod tests {
         answer(&root.join("a.py"));
         answer(&real.join("elsewhere/b.py"));
         answer(&gone.join("c.py"));
+        // A root first asked this run: its cursor is stored at the outermost run's end, its answers before.
+        let fresh = real.join("fresh");
+        answer(&fresh.join("d.py"));
         if let Some(a) = &alias {
             answer(&a.join("a.py"));
         }
@@ -2024,19 +2054,20 @@ mod tests {
         let cutoff = |key: &str, flat: &[&str]| db.execute("INSERT INTO run_record VALUES (?1, ?2, x'')", params![key, encode_lists(&[flat])]).unwrap();
         record(&format!("{CANONICAL}{}", s(&root.join("a.py"))), "");
         record(&format!("{CANONICAL}{}", s(&real.join("elsewhere"))), "");
+        record(&format!("{CANONICAL}{}", s(&fresh.join("d.py"))), "");
         cutoff("cutoff:kept", &["rule", "x.rr", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
         cutoff("cutoff:dead", &["plan", "", &hex(&dead)]);
         cutoff(&"ab".repeat(32), &["rule", "x.rr", "ab"]);
         record("constants:k", "");
         drop(db);
-        let swept = collect(&store, |plan| *plan == live).unwrap();
+        let swept = collect(&store, std::slice::from_ref(&fresh), |plan| *plan == live).unwrap();
         let db = Connection::open(&store).unwrap();
         let keys = |sql: &str| -> Vec<String> { db.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect() };
         assert_eq!(keys("SELECT key FROM observer_meta WHERE key LIKE 'journal:%'"), [cursor_key_text("aa", &root)], "one root: inner is under it, gone is gone, dotted and the alias are other names");
-        assert_eq!(keys("SELECT path FROM observed"), [s(&root.join("a.py"))]);
+        assert_eq!(keys("SELECT path FROM observed ORDER BY path"), [s(&fresh.join("d.py")), s(&root.join("a.py"))]);
         let mut records = keys("SELECT key FROM run_record");
         records.sort();
-        assert_eq!(records, [format!("{CANONICAL}{}", s(&root.join("a.py"))), "constants:k".to_owned(), "cutoff:kept".to_owned()]);
+        assert_eq!(records, [format!("{CANONICAL}{}", s(&fresh.join("d.py"))), format!("{CANONICAL}{}", s(&root.join("a.py"))), "constants:k".to_owned(), "cutoff:kept".to_owned()]);
         let n = usize::from(alias.is_some());
         assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 3 });
         assert_eq!(std::fs::metadata(real.join("store.files-wal")).map_or(0, |m| m.len()), 0, "the WAL folded in");
