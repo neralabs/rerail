@@ -7531,7 +7531,9 @@ fn run_observed(
                         totals.forget(rel);
                         let src = exports.borrow_mut().source(rel, decl.len());
                         totals.add_rows(rel, src.len(), src.as_ref(), &types);
-                        measured_held.push(rel.clone());
+                        // Why: the kept rows (or none kept) against those held.
+                        let why = kept.as_ref().and_then(|m| m.get(rel)).map_or_else(|| "none kept".to_owned(), |r| format!("{} kept", r.rows()));
+                        measured_held.push(format!("{rel} ({why}, {held} held)"));
                     }
                     None => {}
                 }

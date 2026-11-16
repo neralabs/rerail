@@ -572,9 +572,11 @@ pass.
       before): the collector's per-pass `incremental_vacuum(4096)` took 8.1 s behind every run (it walks the free
       list per page moved). A whole `VACUUM` took 10 s (8.2 GB to 704 MB). Now a store past 20% free is the upkeep
       job's whole vacuum, and the collector's pass leaves it.
-    - **Pending:** ep2 on the 0303 build (rows, an edit's cost). The build's first run is cold (864 G) and, at nice 19
-      under a load of 60 from other builds, did not finish in 115 or 300 s (2026-11-16 14:20–14:35): retry when the
-      machine is quieter.
+    - **Verified on the m3** (2026-11-16, a fresh ep2 store, the 0303 build): a cold run and eleven B101 edits, rc 0
+      each, rows identical to h1 (1,334); the frames sweep finishes in every run's process (50 ms an edit); no free
+      pages left behind. (Locally the build's cold run did not finish at nice 19 under a load of 60.) The m3's edits
+      cost 15.5 s CPU, against 5.6–6.1 s for local h4–h5 on the long-lived store; cold runs cost the same CPU on
+      both (85–93 s). Not traced; instruction counts do not compare between the two machines.
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 
@@ -644,6 +646,13 @@ pass.
     started on any branch) would read the inputs in place and replace `Lazy`.
 - **Open.** The exports read whole by `measure export` (their kept statistics' row count is not the rows held) are
   the next read of unchanged rows: their kept statistics should be taken.
+  - **Measured** (2026-11-16, m3, a fresh ep2 store, B101 edits): every edit measures three exports, about 1 s and
+    20 G of a 14.4 s edit. The decision line now says why: `alias_value (224236 kept, 224235 held)`, `type_bare
+    (463778 kept, 463777 held)`, `unparen (463778 kept, 463777 held)`. The keeper counts one row more than is held, in
+    each, from the run that counted every file in (a new build's).
+  - **Ruled out:** a row given to `Exports::add` twice (a counter of those read 0 for all three), and a value document
+    held by two files (`Keeper::holders`: none held by more than one). Not traced further: the next step is a
+    per-document comparison of the keeper's count-in against the rows held.
   - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 
 ### Q17. The hub's gate failures at 692cc9772
