@@ -119,6 +119,13 @@ impl World {
         self.allowed(asked)
     }
 
+    /// Each of `asked`'s paths, resolved as [`World::resolve`] does, their `realpath`s at once on the pool.
+    pub(super) fn resolve_all(&self, asked: &[String]) -> Vec<Option<PathBuf>> {
+        let paths: Vec<PathBuf> = asked.iter().map(|a| self.root.join(a)).collect();
+        let canon = crate::content_store::observe::Observer::canonical_all(|f| super::observe(|o| f(o)), &paths);
+        canon.into_iter().map(|c| c.filter(|path| self.roots.iter().any(|r| path.starts_with(r)))).collect()
+    }
+
     fn allowed(&self, asked: &str) -> Option<PathBuf> {
         let path = super::observe(|o| o.canonical(&self.root.join(asked)))?;
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
@@ -174,9 +181,12 @@ impl World {
     /// workspace.
     /// The corpus's documents as canonical paths, as `load` compares them, with their given names too.
     pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = &'a String>) -> BTreeSet<String> {
+        let paths: Vec<&String> = paths.into_iter().collect();
+        let joined: Vec<PathBuf> = paths.iter().map(|p| self.root.join(p)).collect();
+        let canon = crate::content_store::observe::Observer::canonical_all(|f| super::observe(|o| f(o)), &joined);
         let mut out = BTreeSet::new();
-        for p in paths {
-            if let Some(c) = super::observe(|o| o.canonical(&self.root.join(p))) {
+        for (p, c) in paths.into_iter().zip(canon) {
+            if let Some(c) = c {
                 out.insert(c.to_string_lossy().into_owned());
             }
             out.insert(p.clone());

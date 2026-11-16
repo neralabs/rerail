@@ -6407,13 +6407,18 @@ fn run_observed(
             let mut hold: Vec<Vec<i64>> = Vec::new();
             let mut now: Vec<Vec<i64>> = Vec::new();
             // Each request's path, resolved once (`World::resolve`), by its path's atom.
-            let mut resolved: HashMap<i64, Option<std::path::PathBuf>> = HashMap::new();
+            // Resolved together: their `realpath`s at once on the pool (notes/t40).
+            let mut resolved: HashMap<i64, Option<std::path::PathBuf>> = if no_loads {
+                HashMap::new()
+            } else {
+                let asked: Vec<String> = rows.iter().map(|r| text(r[0])).collect::<Result<_>>()?;
+                rows.iter().map(|r| r[0]).zip(world.resolve_all(&asked)).collect()
+            };
             if levels && !in_rounds && !no_loads {
                 let mut quiet = false;
                 for row in rows {
-                    let at = world.resolve(&text(row[0])?);
+                    let at = resolved.get(&row[0]).cloned().flatten();
                     let bounded = world.bounded(at.as_deref());
-                    resolved.insert(row[0], at);
                     if !bounded {
                         now.push(row.clone());
                     } else if held.remove(row) {

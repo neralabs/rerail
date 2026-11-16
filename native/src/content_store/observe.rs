@@ -524,6 +524,45 @@ impl Observer {
     /// there). Under a root the journal speaks for (decision 0105), the answer kept is used as it is: a symlink made,
     /// moved or retargeted under the root is an event that forgets it. Elsewhere, one `realpath`, kept for the next run.
     pub fn canonical(&mut self, path: &Path) -> Option<PathBuf> {
+        match self.canonical_kept(path) {
+            Ok(answer) => answer,
+            Err(path) => {
+                let c = std::fs::canonicalize(&path).ok()?;
+                Some(self.canonical_resolved(path, c))
+            }
+        }
+    }
+
+    /// Each of `paths`' canonical forms ([`Observer::canonical`]), the `realpath`s needed run at once on the pool: on
+    /// a cold store the journal vouches for no path, and one `realpath` after another was the main thread's for 29,885
+    /// files (notes/t40). `observe` reaches the observer (the process's, under its lock): the `realpath`s run with it
+    /// released, since a thread waiting on the pool may run another job, and that job may observe.
+    pub fn canonical_all(observe: impl Fn(&mut dyn FnMut(&mut Observer)), paths: &[PathBuf]) -> Vec<Option<PathBuf>> {
+        use rayon::prelude::*;
+        let mut out: Vec<Option<PathBuf>> = vec![None; paths.len()];
+        let mut todo: Vec<(usize, PathBuf)> = Vec::new();
+        observe(&mut |o| {
+            for (i, p) in paths.iter().enumerate() {
+                match o.canonical_kept(p) {
+                    Ok(answer) => out[i] = answer,
+                    Err(path) => todo.push((i, path)),
+                }
+            }
+        });
+        if todo.is_empty() {
+            return out;
+        }
+        let got: Vec<Option<PathBuf>> = todo.par_iter().with_min_len(64).map(|(_, p)| std::fs::canonicalize(p).ok()).collect();
+        observe(&mut |o| {
+            for ((i, path), c) in std::mem::take(&mut todo).into_iter().zip(&got) {
+                out[i] = c.clone().map(|c| o.canonical_resolved(path, c));
+            }
+        });
+        out
+    }
+
+    /// `path`'s canonical form where the observer can answer for it (`Ok`), else its absolute form, to resolve (`Err`).
+    fn canonical_kept(&mut self, path: &Path) -> std::result::Result<Option<PathBuf>, PathBuf> {
         let path = self.abs(path);
         self.ensure(&path);
         self.watch_above(&path);
@@ -533,17 +572,21 @@ impl Observer {
             // An answer through a symlink is trusted only where its target is watched too.
             if let Some(c) = self.kept_canonical(&path).filter(|c| trusted(c, &self.roots)) {
                 self.counts.trusted += 1;
-                return Some(c);
+                return Ok(Some(c));
             }
             if self.missing(&path) {
-                return None;
+                return Ok(None);
             }
         }
         if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && path.starts_with(&r.path)) {
             root.resolved.insert(path.clone());
         }
         self.counts.resolved += 1;
-        let c = std::fs::canonicalize(&path).ok()?;
+        Err(path)
+    }
+
+    /// Records `path`'s canonical form `c`, resolved: kept for the next run.
+    fn canonical_resolved(&mut self, path: PathBuf, c: PathBuf) -> PathBuf {
         if self.canon.get(&path) != Some(&c) {
             super::hazards::warm_fault("the observer resolved a canonical form it did not hold", || {
                 format!("{} -> {} (held {:?}; {} forms held, store {})", path.display(), c.display(), self.canon.get(&path), self.canon.len(), self.db.is_some())
@@ -551,7 +594,7 @@ impl Observer {
             self.canon.insert(path.clone(), c.clone());
             self.new_canon.push((path, c.clone()));
         }
-        Some(c)
+        c
     }
 
     /// The canonical form kept for `path` (its root's read from the store first, `ensure`).
