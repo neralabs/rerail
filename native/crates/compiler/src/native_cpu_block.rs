@@ -2377,13 +2377,64 @@ fn read_fused(bw: &crate::native_cpu_bytes::Bytewise<'_>, a: &crate::records::Re
     !tests.is_empty() && bw.can(a.closer) && tests.iter().all(|t| t.count && bw.can(t.o))
 }
 
+/// Whether a reader's arm makes its rule's count tests in its read loop (`read_fn`), as the
+/// lean lexer's `string_end` makes its escape test (`u |= esc & eq('u') & below(quote)`) in
+/// the scan that finds the quote: each window's test masks with its closer's. The loop reads
+/// from the byte after the opener, so no test's mask may hold where the opener does
+/// (`native_cpu_bytes::never_both`); and the token's last is the closer's (`off` 0), so the
+/// window that holds the closer holds the last too.
+fn tests_in_read(bw: &crate::native_cpu_bytes::Bytewise<'_>, a: &crate::records::ReadArm, tests: &[crate::records::TokenCheck]) -> bool {
+    a.off == 0 && tests.iter().all(|t| crate::native_cpu_bytes::never_both(bw.native, t.o, a.opener))
+}
+
+/// The outputs a reader's loop makes for its rule's count tests (`tests_in_read`), each once,
+/// and whether it counts them: a test of two bytes or more needs their number, one of one
+/// byte only whether one is there, so its words are ORed, as `string_end`'s `u`.
+fn read_test_outs(tests: &[crate::records::TokenCheck]) -> Vec<(u16, bool)> {
+    let mut outs: Vec<u16> = tests.iter().map(|t| t.o).collect();
+    outs.sort_unstable();
+    outs.dedup();
+    outs.into_iter().map(|o| (o, tests.iter().any(|t| t.o == o && t.least > 1))).collect()
+}
+
+/// A test output's window into its accumulator (`read_test_outs`): ORed, or its bits counted.
+fn read_test_acc(f: &mut FunctionBuilder<'_>, counted: bool, acc: Value, w: Value) -> Value {
+    if counted {
+        let n = f.ins().popcnt(w);
+        f.ins().iadd(acc, n)
+    } else {
+        f.ins().bor(acc, w)
+    }
+}
+
+/// The count tests' hits from their accumulators (`read_test_acc`), as `tests_fn` gives them:
+/// the refusal (`CheckThen::Escape`) as the sign bit, a mark's hit at its bit.
+fn read_test_hits(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], outs: &[(u16, bool)], accs: &[Value]) -> Value {
+    let mut result = f.ins().iconst(types::I64, 0);
+    for t in tests {
+        let i = outs.iter().position(|&(o, _)| o == t.o).expect("its output");
+        let hit = if outs[i].1 { f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, accs[i], i64::from(t.least)) } else { f.ins().icmp_imm(IntCC::NotEqual, accs[i], 0) };
+        let hit = f.ins().uextend(types::I64, hit);
+        let at = match t.then {
+            crate::records::CheckThen::Escape => 63,
+            crate::records::CheckThen::At(k) => i64::from(k),
+            crate::records::CheckThen::After(k) => i64::from(crate::records::AFTER_SHIFT) + i64::from(k),
+        };
+        let bit = f.ins().ishl_imm(hit, at);
+        result = f.ins().bor(result, bit);
+    }
+    result
+}
+
 /// A reader's arm, its end and its rule's count tests in one call, as a lexer's string reader
 /// finds the end and checks the bytes it reads: `(bytes, len, s)` to its closer's first bit
 /// after `s` (`-1`, none in the file) and the tests' hits at `s..=l` (`tests_fn`'s), `l` the
 /// closer's at `off`. The closer's words from `s + 1`, 64 bytes apart, an escape's carry
 /// passed from each to the next (`Bytewise::words_carried`), none after an opener that is no
-/// escape's (`Bytewise::apart`). Then the tests: none where the token's bytes have none of
-/// those they need (`needs_spans`), else their function (`tests_fn`), as rare as such bytes.
+/// escape's (`Bytewise::apart`). The tests' masks in the same windows where they can be
+/// (`tests_in_read`), as `string_end` makes its escape test as it scans: each window's ORed or
+/// counted in, the closer's up to the closer. Else, after the loop: none where the token's
+/// bytes have none of those they need (`needs_spans`), else their function (`tests_fn`).
 #[allow(clippy::too_many_arguments)]
 fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_bytes::Bytewise<'_>, a: &crate::records::ReadArm, tests: &[crate::records::TokenCheck], counts: &ByteCall, carries: &[cranelift_codegen::ir::UserExternalName]) -> Result<(), Error> {
     let mut builder_context = FunctionBuilderContext::new();
@@ -2396,23 +2447,28 @@ fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_by
     let k = Consts::make(&mut f);
     let file = crate::native_cpu_bytes::File { bytes, len, nibble: k.nibble, weights: k.weights, even: k.even };
     let mut heads = vec![];
-    let runs = bw.carried_runs(&[a.closer]);
+    // The tests in the loop (`tests_in_read`): their outputs' words with the closer's.
+    let inloop = tests_in_read(bw, a, tests);
+    let touts = if inloop { read_test_outs(tests) } else { Vec::new() };
+    let os: Vec<u16> = std::iter::once(a.closer).chain(touts.iter().map(|&(o, _)| o)).collect();
+    let runs = bw.carried_runs(&os);
     let zero = f.ins().iconst(types::I64, 0);
     let p0 = f.ins().iadd_imm(s, 1);
     let init: Vec<Value> = runs.iter().map(|&r| if bw.apart(a.opener, r) { zero } else { bw.carry_at(&mut f, &file, r, p0, &mut heads) }).collect();
     let (head, found, none) = (f.create_block(), f.create_block(), f.create_block());
     f.set_cold_block(none);
-    for _ in 0..1 + runs.len() {
+    for _ in 0..1 + runs.len() + touts.len() {
         f.append_block_param(head, types::I64);
     }
-    let args: Vec<BlockArg> = std::iter::once(p0).chain(init).map(BlockArg::from).collect();
+    let args: Vec<BlockArg> = std::iter::once(p0).chain(init).chain(touts.iter().map(|_| zero)).map(BlockArg::from).collect();
     f.ins().jump(head, &args);
     f.switch_to_block(head);
     heads.push((head, Step::Word));
     let hp = f.block_params(head).to_vec();
     let at = hp[0];
     let cins: Vec<(usize, Value)> = runs.iter().copied().zip(hp[1..].iter().copied()).collect();
-    let (ws, couts) = bw.words_carried(&mut f, &file, &[a.closer], at, &cins, &mut heads);
+    let accs = hp[1 + runs.len()..].to_vec();
+    let (ws, couts) = bw.words_carried(&mut f, &file, &os, at, &cins, &mut heads);
     let x = ws[0];
     // No closer in the word: the next, if in the file, with the carries out.
     let next = f.create_block();
@@ -2425,7 +2481,9 @@ fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_by
     f.ins().brif(inside, more, &[], none, &[]);
     f.switch_to_block(more);
     f.set_cold_block(more);
-    let back: Vec<BlockArg> = std::iter::once(at1).chain(couts).map(BlockArg::from).collect();
+    // A window with no closer is the token's: its test bits all in.
+    let accs1: Vec<Value> = touts.iter().zip(&accs).zip(&ws[1..]).map(|((&(_, n), &acc), &w)| read_test_acc(&mut f, n, acc, w)).collect();
+    let back: Vec<BlockArg> = std::iter::once(at1).chain(couts).chain(accs1).map(BlockArg::from).collect();
     f.ins().jump(head, &back);
     f.switch_to_block(none);
     let no = f.ins().iconst(types::I64, -1);
@@ -2434,6 +2492,20 @@ fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_by
     f.switch_to_block(found);
     let tz = f.ins().ctz(x);
     let close = f.ins().iadd(at, tz);
+    if inloop {
+        // The closer's window up to the closer, its last (`x ^ (x - 1)`), into the tests.
+        let x1 = f.ins().iadd_imm(x, -1);
+        let upto = f.ins().bxor(x, x1);
+        let fin: Vec<Value> = touts.iter().zip(&accs).zip(&ws[1..]).map(|((&(_, n), &acc), &w)| {
+            let w = f.ins().band(w, upto);
+            read_test_acc(&mut f, n, acc, w)
+        }).collect();
+        let got = read_test_hits(&mut f, tests, &touts, &fin);
+        f.ins().return_(&[close, got]);
+        f.seal_all_blocks();
+        f.finalize();
+        return crate::native_cpu_shape::check(func, &heads, carries).map_err(|r| Error::RefusedShape(format!("{r:?}")));
+    }
     let l = f.ins().iadd_imm(close, i64::from(a.off));
     let call = f.create_block();
     if let Some(ns) = counts_need_by_offset(bw.native, tests) {
@@ -3101,11 +3173,16 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
                         let long = f.create_block();
                         f.set_cold_block(long);
-                        let runs = b.carried_runs(&[a.closer]);
+                        // The tests' words with the closer's where `read_fn` makes them in its
+                        // loop (`tests_in_read`), as `string_end` reads a short string once.
+                        let inloop = tests_in_read(b, a, &counts);
+                        let touts = if inloop { read_test_outs(&counts) } else { Vec::new() };
+                        let os: Vec<u16> = std::iter::once(a.closer).chain(touts.iter().map(|&(o, _)| o)).collect();
+                        let runs = b.carried_runs(&os);
                         let zero = f.ins().iconst(types::I64, 0);
                         let p0 = f.ins().iadd_imm(s, 1);
                         let cins: Vec<(usize, Value)> = runs.iter().map(|&r| (r, if b.apart(a.opener, r) { zero } else { b.carry_at(f, &file, r, p0, heads) })).collect();
-                        let (ws, _) = b.words_carried(f, &file, &[a.closer], p0, &cins, heads);
+                        let (ws, _) = b.words_carried(f, &file, &os, p0, &cins, heads);
                         let found = f.create_block();
                         f.ins().brif(ws[0], found, &[], long, &[]);
                         f.switch_to_block(found);
@@ -3113,7 +3190,21 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         let close = f.ins().iadd(p0, tz);
                         let l = f.ins().iadd_imm(close, i64::from(a.off));
                         let (refuse0, hits0) = always_hits(counts.iter().chain(tests.iter().map(|(t, _)| t).filter(|t| t.always())));
-                        match counts_need_by_offset(b.native, &counts) {
+                        let gate = if inloop { None } else { counts_need_by_offset(b.native, &counts) };
+                        if inloop {
+                            let x1 = f.ins().iadd_imm(ws[0], -1);
+                            let upto = f.ins().bxor(ws[0], x1);
+                            let fin: Vec<Value> = touts.iter().zip(&ws[1..]).map(|(&(_, n), &w)| {
+                                let w = f.ins().band(w, upto);
+                                read_test_acc(f, n, zero, w)
+                            }).collect();
+                            let got = read_test_hits(f, &counts, &touts, &fin);
+                            let no = f.ins().sshr_imm(got, 63);
+                            let r = if refuse0 == 0 { no } else { f.ins().bor_imm(no, refuse0) };
+                            let marks = f.ins().band_imm(got, i64::MAX);
+                            let h = if hits0 == 0 { marks } else { f.ins().bor_imm(marks, hits0) };
+                            f.ins().jump(rest, &[l.into(), tag.into(), r.into(), h.into()]);
+                        } else { match gate {
                             Some(ns) => {
                                 let (vec, quiet) = (f.create_block(), f.create_block());
                                 let n1 = f.ins().isub(l, s);
@@ -3130,7 +3221,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                             None => {
                                 f.ins().jump(long, &[]);
                             }
-                        }
+                        } }
                         // No closer in the file: the whole function's, as any other long read.
                         f.switch_to_block(none);
                         f.ins().jump(long, &[]);

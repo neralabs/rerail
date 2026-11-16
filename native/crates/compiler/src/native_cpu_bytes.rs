@@ -767,6 +767,60 @@ pub fn output_byte_at(native: &BlockNative, o: u16, off: i32) -> Option<[u64; 4]
     inst_byte_at(native, x, off - d, 0)
 }
 
+/// Whether output `o` never holds where output `p` does, at the same place: each of `o`'s
+/// `Or` terms either needs a byte there that `p` never has (`inst_byte_at`), or needs a value
+/// (an `And`'s operand, an `AndNot`'s first) that `p` excludes (an `AndNot`'s second). A
+/// string's bad-escape test, `escaped(\) & !…`, so never holds at its opener, `" & !escaped(\)`.
+pub fn never_both(native: &BlockNative, o: u16, p: u16) -> bool {
+    let (Some(&x), Some(&y)) = (native.outputs.get(usize::from(o)), native.outputs.get(usize::from(p))) else { return false };
+    let d = native.output_delays[usize::from(o)];
+    if d != native.output_delays[usize::from(p)] {
+        return false;
+    }
+    fn needs(native: &BlockNative, x: usize, out: &mut Vec<usize>) {
+        out.push(x);
+        match native.insts[x] {
+            BlockInst::And(a, b) => {
+                needs(native, usize::from(a), out);
+                needs(native, usize::from(b), out);
+            }
+            BlockInst::AndNot(a, _) => needs(native, usize::from(a), out),
+            _ => {}
+        }
+    }
+    fn excludes(native: &BlockNative, x: usize, out: &mut Vec<usize>) {
+        match native.insts[x] {
+            BlockInst::And(a, b) => {
+                excludes(native, usize::from(a), out);
+                excludes(native, usize::from(b), out);
+            }
+            BlockInst::AndNot(a, b) => {
+                excludes(native, usize::from(a), out);
+                out.push(usize::from(b));
+            }
+            _ => {}
+        }
+    }
+    let mut not = Vec::new();
+    excludes(native, usize::from(y), &mut not);
+    let at = -i32::from(d);
+    let py = inst_byte_at(native, usize::from(y), at, 0);
+    let mut terms = Vec::new();
+    let mut todo = vec![usize::from(x)];
+    while let Some(t) = todo.pop() {
+        match native.insts[t] {
+            BlockInst::Or(a, b) => todo.extend([usize::from(a), usize::from(b)]),
+            _ => terms.push(t),
+        }
+    }
+    terms.iter().all(|&t| {
+        let bytes = py.zip(inst_byte_at(native, t, at, 0)).is_some_and(|(q, r)| (0..4).all(|k| q[k] & r[k] == 0));
+        let mut need = Vec::new();
+        needs(native, t, &mut need);
+        bytes || need.iter().any(|n| not.contains(n))
+    })
+}
+
 /// The bytes a run of output `o`'s bits (`EndRule::Run`) can end with: `output_byte_at`'s at
 /// the run's bytes, but an `Or`'s term whose byte after is surely one of the run's (a test of
 /// that byte alone, another term) ends none, as `dot & next(digit)` in `digit | …`.

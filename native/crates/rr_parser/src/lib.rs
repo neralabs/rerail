@@ -1770,6 +1770,13 @@ pub mod tests {
                 inputs.push(format!("a(\"{}{odd}{}\", 1).\n", "s".repeat(at), "x".repeat(80)).into_bytes());
             }
         }
+        // A byte the counts need right after the closer, in its window (`read_fn` makes the
+        // tests' masks with the closer's: the window's bits past the closer are not the
+        // token's), and the next string's `\u` in the same window.
+        for at in [0usize, 1, 30, 60, 61, 62, 63, 64, 65, 127] {
+            inputs.push(format!("a(\"{}\"\t, 1).\n", "s".repeat(at)).into_bytes());
+            inputs.push(format!("a(\"{}\", \"\\u12\").\n", "s".repeat(at)).into_bytes());
+        }
         // A token alone in its block, then spaces to and past the block's end (a spent block:
         // the refill reads the next one), after a word, a string, a comment and pairs.
         for gap in [1usize, 30, 61, 62, 63, 64, 65, 126, 127, 128] {

@@ -874,8 +874,9 @@ let (ws, couts) = bw.words_carried(f, &file, &[a.closer], at, &cins, heads);
 ```
 
 A first form made every test mask in the loop, for every string. It
-lost: tier 1 AOT went from 155 to 159 instructions a node. Short
-strings had skipped those masks before.
+was dropped on a count (155 to 159 instructions a node), which is not
+how a step is judged. It was lean's shape, and it is back: see "A
+string's tests in its read loop" below.
 
 Tier 1 AOT 155 to 147 instructions a node, JIT 239 to 222. The string
 reader is 153 lines of machine code, down from 460, and saves two
@@ -1977,3 +1978,64 @@ every rule call went back to four words through memory
 
 Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
 strings 287.6, numbers 164.6, comments 267.2.
+
+## A string's tests in its read loop
+
+**Intro.** The lean lexer's `string_end` makes its escape test in
+the scan that finds the closing quote. Each 64-byte window gives the
+quote, the escapes and the test's bits together:
+
+```rust
+// lean (micro.rs): one loop, the test ORed in a window at a time
+let (esc, out) = escaped(blk.eq(b'\\'), carry);
+let quote = blk.eq(b'"') & !esc;
+u |= esc & blk.eq(b'u') & below(quote);
+```
+
+Ours found the quote first. Then a gate read the token's bytes again
+for any byte the tests need, and a second function (`tests_fn`) read
+them a third time to count. That form was kept over the loop form
+on an instruction count. It is undone here because it is not lean's
+shape: three passes over a string's bytes where lean has one.
+
+**The change.** `read_fn` passes the tests' outputs to
+`words_carried` with the closer's, so each window makes them all.
+A window with no closer goes into the accumulators whole. The
+closer's window goes in up to the closer, `x ^ (x - 1)`. A test of
+one byte ORs its words, like lean's `u`. A test of two or more
+counts them (`popcnt`). The short reader's inline first window
+(`RuleMode::Short`) does the same, so there is no gate there either.
+
+```rust
+// generated (tier1_aot.rs, the string reader), a window:
+v73 = v72 & v21;              // the closer, unescaped
+v147 = (v93 | v145) & v21;    // the test: a control byte, or a bad escape
+if v73 != 0 {                 // the closer: its window's test bits to it
+    v157 = v11 | (v147 & (v73 ^ (v73 - 1)));
+    return (close, ((v157 != 0) as u64) << 28);
+}
+v150 = v11 | v147;            // no closer: all of it, the next window
+```
+
+**Its condition (`tests_in_read`).** The loop starts after the
+opener, so no test may hold at the opener's byte. The proof is
+`native_cpu_bytes::never_both`. Each `Or` term of the test needs a
+byte the opener never has there, or needs a value the opener
+excludes. `.rr`'s test is `control | (escaped(\) & !valid)`. Its
+opener is `" & !escaped(\)`. The byte sets alone can't show it,
+since an escaped byte can be any byte. The second term needs
+`escaped(\)`, and the opener excludes it. The token's last must also
+be the closer's (`off` 0). Otherwise the gate and `tests_fn` stay.
+
+**What is left.** The grammar's test is wider than lean's. Lean
+looks for `\u` only, one compare a block. `.rr` marks a string with
+any escape that needs unescaping, or a control byte (`After(12)`).
+That is a compare, a two-table nibble class, and one more movemask a
+window. The tape must be the engine's, so the predicate stays.
+
+Tests: `the_cpus_records_are_the_interpreters` gains a test byte
+right after the closer in its window, and the next string's `\u` in
+the same window.
+
+Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 323.3, numbers 164.6, comments 267.2.
