@@ -1,6 +1,6 @@
 # 0295. Deferred writes are an application WAL of mapped slabs, archived into SQLite as rows in bulk
 
-Status: decided (2026-11-16), by the user's two requirements and answers below. Path steps 2 (the tier) and 3 (Outputs on blocks) built. Converges 0266 (blocks)
+Status: decided (2026-11-16), by the user's two requirements and answers below. Path steps 2 (the tier), 3 (Outputs on blocks) and 4 (the memo in segments) built. Converges 0266 (blocks)
 with 0173/0241/0244/0276 (the program image and its versions), 0239 (the output image), 0240 §4 and 0280 (the
 memo's pack), 0259 §5 (the spool) and 0260 §8 (the journal block). Keeps 0008 (facts read through virtual tables)
 and 0024 §5 (work can be redone, so no `fsync`).
@@ -118,6 +118,14 @@ replaces 0240 §4's compaction of the pack, since a pack never outlives its arch
 When to archive (the writer's pace) is the writer's choice: at the run's end, when idle, or when the unarchived
 bytes pass a bound (0259 §5's disk and pace limits). Producers never wait for the archive while the disk has room.
 
+**The memo's entries are archived as pointers, not rows** (the user, 2026-11-16). An entry stays in its segment, in
+the mapped form (0239's image, uncompressed, framed in the segment's block): reading it back is a memory map. The
+archive inserts one row an entry, which finds it (space, part, path, content, document key) and points at it
+(segment, offset, length); the segment is not freed, and SQL reads the entries' facts through the virtual table
+(§5). Since a segment outlives its archive, the pack's compaction stays: once the bytes no row names are most of
+the segments, the named ones are copied to a new segment and the old are removed (never given back to the pool:
+another process may hold them mapped).
+
 ### 5. SQL over both: real tables and virtual tables
 
 A relation is queryable as **its archived rows (a real table) plus its unarchived rows (a virtual table over the
@@ -225,7 +233,17 @@ wrap, anonymous or file-backed, so the pool's own budget is what counts those.
    is a dependency of the logic crate on every target, so it builds without a mapping too (`blocks::mem`: a heap
    reservation on WASI; `deferrable` is Unix-only); the engine checks for `wasm32-wasip1` again, which it had not
    since `rerail-accel` took `rerail-blocks`.
-4. **The memo's entries in segments**: 0240's rows found by the archive, the pack retired.
+4. **The memo's entries in segments** (built; §4, archived as pointers): each batch the store's writer writes is one
+   segment, `<store>.memo/<n>.seg`, a journal block (`rerail_blocks::journal::put`, an entry table of its own) of
+   the entries' images uncompressed at 64 bytes, written through a host-only deferrable lease of the pool
+   (`lease_deferrable_host`: no device wrap, whose wire would hold the writeback ~200 ms), written back and frozen
+   before the write transaction, which numbers it, renames it into place and inserts the rows (`framed` 1). A
+   reader maps the segment (`journal::open`) and reads the image in place (`MemoBytes`, `Image::in_block`); no
+   zstd. Compaction copies the named entries to one new segment and removes the rest, with the packs of before
+   (`framed` 0, not read). On WASI the block is made in memory and written as one file. Measured: a segment write
+   is a few ms (store tests: nine writes and a compaction in 89 ms). Not yet: the entries are encoded on the
+   writer's thread, not by the wave into its lease, and a queued write's `pending` still holds the decoded entries
+   (step 5's change for frames); the virtual table (step 6).
 5. **Frames** (the largest writes), then tapes and sources; 0259's guard (no `write_back` queues a closure).
 6. **Facts as blocks** (0266 step 4) with the fold rule and kills by content decided; **the virtual-table module**.
 7. The program image, by Typing-support (Q26).

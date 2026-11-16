@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod memo_pack;
-pub use memo_pack::{MemoBlob, MemoPut};
+pub use memo_pack::{MemoBlob, MemoBytes, MemoPut};
 pub(super) use memo_pack::drop_memo_space;
 
 /// The run each space last counted in this process, by its token: a later program of that run puts under the same
@@ -1694,7 +1694,7 @@ mod tests {
         let source = store.put_source(text, &[]).unwrap();
         // A run of root /r, which read `source` and names `program` (a part's key) among its plans.
         store.record_corpus_run_naming("/r", &[source], 1, 1, plan, &[program], 1).unwrap();
-        let memo = |path: &str, content: &[u8]| MemoPut { part: path.len() as i64, path: path.into(), digest: Sha256::digest(content).into(), key: 1, bytes: vec![1, 2, 3], raw: 3, over: false };
+        let memo = |path: &str, content: &[u8]| MemoPut { part: path.len() as i64, path: path.into(), digest: Sha256::digest(content).into(), key: 1, bytes: vec![1, 2, 3], over: false };
         let space = local_space(&plan);
         store.put_memo_entries(&space, vec![memo("a.py", text), memo("old.py", b"y = 2\n")], 4).unwrap();
         let maintained = [9u8; 32];
@@ -1714,7 +1714,7 @@ mod tests {
         let found = store.memo_entries(&space, &["a.py".len() as i64, "old.py".len() as i64], true).unwrap();
         assert!(found.contains_key(&("a.py".len() as i64)), "a kept manifest's content");
         assert!(!found.contains_key(&("old.py".len() as i64)), "content no manifest names");
-        assert_eq!(&*found[&("a.py".len() as i64)].bytes, &[1, 2, 3], "its bytes, from the pack");
+        assert_eq!(found[&("a.py".len() as i64)].bytes.bytes(), &[1, 2, 3], "its bytes, from its segment");
         let got = store.frames(&maintained, &[kept.clone(), dropped.clone()], 0).unwrap();
         assert!(got.contains_key(&kept) && !got.contains_key(&dropped), "a live program's relation stays, a dead one's goes");
         let again = {
@@ -1761,7 +1761,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let space = local_space(&[5u8; 32]);
-        let put = |part: i64, path: &str| MemoPut { part, path: path.into(), digest: [part as u8; 32], key: 1, bytes: vec![part as u8; 100], raw: 100, over: false };
+        // Entries of 4000 bytes: a segment's header and entry table are small beside them.
+        const N: u64 = 4000;
+        let put = |part: i64, path: &str| MemoPut { part, path: path.into(), digest: [part as u8; 32], key: 1, bytes: vec![part as u8; N as usize], over: false };
+        let segments = || std::fs::read_dir(dir.path().join("store.sqlite.memo")).unwrap().count();
         // Six contents of a.py, one batch each, and one of b.py.
         for part in 0..6 {
             store.put_memo_entries(&space, vec![put(part, "a.py")], 4).unwrap();
@@ -1769,18 +1772,25 @@ mod tests {
         store.put_memo_entries(&space, vec![put(100, "b.py")], 4).unwrap();
         let parts: Vec<i64> = store.connection.lock().unwrap().prepare("SELECT part FROM memo_entries WHERE space = ?1 ORDER BY part").unwrap().query_map([&space[..]], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(parts, vec![2, 3, 4, 5, 100], "a.py's two oldest contents go");
-        assert_eq!(store.memo_pack_bytes().unwrap(), (700, 500));
-        assert_eq!(store.compact_memo_pack(1 << 20).unwrap(), 0, "below the floor");
+        let (held, named) = store.memo_pack_bytes().unwrap();
+        assert_eq!((named, segments()), (5 * N, 7), "one segment a write");
+        assert!(held > 7 * N && held < 7 * N + 7 * 1024, "each segment its entry and a little more: {held}");
+        assert_eq!(store.compact_memo_pack(1 << 40).unwrap(), 0, "below the floor");
         assert_eq!(store.compact_memo_pack(0).unwrap(), 0, "less than half unnamed");
         store.put_memo_entries(&space, (0..6).map(|i| put(200 + i, "c.py")).collect(), 1).unwrap();
-        assert_eq!(store.memo_pack_bytes().unwrap(), (1300, 600));
+        assert_eq!(store.memo_pack_bytes().unwrap().1, 6 * N);
         let before = store.memo_entries(&space, &[2, 5, 100, 205], true).unwrap();
-        assert_eq!(store.compact_memo_pack(0).unwrap(), 700);
+        let (held, _) = store.memo_pack_bytes().unwrap();
+        let freed = store.compact_memo_pack(0).unwrap();
+        let (now, named) = store.memo_pack_bytes().unwrap();
+        assert_eq!((freed, named, segments()), (held - now, 6 * N, 1), "one segment left, of the named entries");
+        assert!(now < 6 * N + 1024, "{now}");
         let after = store.memo_entries(&space, &[2, 5, 100, 205], true).unwrap();
         assert_eq!(after.len(), 4);
         for (part, blob) in &before {
-            assert_eq!(after[part].bytes, blob.bytes, "part {part} reads the same from the new pack");
+            assert_eq!(after[part].bytes.bytes(), blob.bytes.bytes(), "part {part} reads the same from the new segment");
         }
+        drop(before);
         let (frames, _) = store.preload_frames_live(None).unwrap();
         assert_eq!(frames, 0, "no memo entry is a frame");
     }
@@ -1830,19 +1840,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let space = local_space(&[6u8; 32]);
-        let put = |part: i64, bytes: Vec<u8>, over: bool| MemoPut { part, path: "a.py".into(), digest: [1; 32], key: 1, raw: bytes.len(), bytes, over };
+        let put = |part: i64, bytes: Vec<u8>, over: bool| MemoPut { part, path: "a.py".into(), digest: [1; 32], key: 1, bytes, over };
         // Written twice whole: the first copy's bytes are no row's.
-        store.put_memo_entries(&space, vec![put(1, vec![6; 50], false)], 4).unwrap();
+        store.put_memo_entries(&space, vec![put(1, vec![6; 4000], false)], 4).unwrap();
         store.put_memo_entries(&space, vec![put(1, vec![7; 50], false)], 4).unwrap();
         store.put_memo_entries(&space, vec![put(1, vec![8; 10], true), MemoPut { digest: [2; 32], ..put(2, vec![9; 10], true) }], 4).unwrap();
         let found = store.memo_entries(&space, &[1, 2], true).unwrap();
         assert_eq!(found.len(), 1, "an entry kept over nothing is no entry");
-        let (over, raw) = found[&1].over.clone().expect("kept over the entry");
-        assert_eq!((&*found[&1].bytes, &*over, raw), (&[7; 50][..], &[8; 10][..], 10));
-        assert_eq!(store.memo_pack_bytes().unwrap(), (120, 60), "what is kept over it is named; the other is not");
-        assert_eq!(store.compact_memo_pack(0).unwrap(), 60);
+        let over = found[&1].over.clone().expect("kept over the entry");
+        assert_eq!((found[&1].bytes.bytes(), over.bytes()), (&[7; 50][..], &[8; 10][..]));
+        assert_eq!(store.memo_pack_bytes().unwrap().1, 60, "what is kept over it is named; the other is not");
+        assert!(store.compact_memo_pack(0).unwrap() > 4000);
         let after = store.memo_entries(&space, &[1], true).unwrap();
-        assert_eq!((&*after[&1].bytes, after[&1].over.as_ref().map(|(o, _)| &**o)), (&[7; 50][..], Some(&[8; 10][..])), "moved together");
+        assert_eq!((after[&1].bytes.bytes(), after[&1].over.as_ref().map(|o| o.bytes())), (&[7; 50][..], Some(&[8; 10][..])), "moved together");
         store.put_memo_entries(&space, vec![put(1, vec![5; 20], false)], 4).unwrap();
         assert!(store.memo_entries(&space, &[1], true).unwrap()[&1].over.is_none(), "written again whole");
     }

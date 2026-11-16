@@ -78,6 +78,27 @@ pub fn add(journal: &Block, src: &Block, start: usize, end: usize, entry: usize,
     };
 }
 
+/// Copies `bytes` (one entry, its root at its start) into a journal block (`init`) at `align`, and records its place
+/// under `key` and `digest`. Returns its offset. Safe from many threads at once.
+pub fn put(journal: &Block, bytes: &[u8], align: usize, key: u32, digest: u64) -> usize {
+    let dst = journal.alloc(bytes.len(), align);
+    // SAFETY: `dst..dst + len` was just allocated in the block, for this copy alone.
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), journal.base_ptr().add(dst), bytes.len()) };
+    let root: &JournalRoot = journal.root();
+    let i = root.n.fetch_add(1, AcqRel) as usize;
+    assert!(i < root.entries.len(), "journal entries past its capacity");
+    let loc = unsafe { root.entries.as_ptr().add(i) as *mut EntryLoc };
+    let end = (dst + bytes.len()) as u64;
+    unsafe { *loc = EntryLoc { key, pad: 0, digest, start: dst as u64, end, entry: dst as u64 } };
+    dst
+}
+
+/// The bytes `init`, `cap` entries and `put`s of `lens` at `align` take, at most: a block's reservation for them.
+pub fn reserve_for(cap: usize, lens: impl Iterator<Item = usize>, align: usize) -> usize {
+    let head = size_of::<crate::block::Header>().next_multiple_of(8) + size_of::<JournalRoot>().next_multiple_of(8) + cap.max(1) * size_of::<EntryLoc>();
+    head + lens.map(|l| l + align).sum::<usize>() + align
+}
+
 pub fn entries(b: &Block) -> &[EntryLoc] {
     let r: &JournalRoot = b.root();
     &r.entries.as_slice()[..r.n.load(Acquire) as usize]

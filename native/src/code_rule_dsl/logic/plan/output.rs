@@ -633,10 +633,12 @@ impl<'a> Rel<'a> {
 }
 
 /// The bytes an image is read from: its file, mapped, or a copy in memory (an image a run just made; a file where
-/// mapping is not had, as on WASI). Either starts 16-byte aligned (a map at a page).
+/// mapping is not had, as on WASI), or a frozen block (a memo segment's, decision 0295 §4). Each starts 16-byte
+/// aligned (a map or a block at a page).
 enum Backing {
     Mapped(memmap2::Mmap),
     Owned(Vec<u128>, usize),
+    Block(rerail_blocks::block::Frozen),
 }
 
 impl Backing {
@@ -649,6 +651,7 @@ impl Backing {
     fn bytes(&self) -> &[u8] {
         match self {
             Backing::Mapped(m) => m,
+            Backing::Block(b) => b.bytes(0, b.used()),
             // SAFETY: the words hold `len` bytes.
             Backing::Owned(words, len) => unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), *len) },
         }
@@ -699,6 +702,11 @@ impl Image {
             return Err(bad("an image longer than its buffer"));
         }
         Image::at(&std::sync::Arc::new(Backing::Owned(words, len)), 0, len)
+    }
+    /// The image of `len` bytes at `at` in a frozen block (a memo entry in its segment), checked and read in place.
+    pub fn in_block(block: &rerail_blocks::block::Frozen, at: usize, len: usize) -> Result<Image, String> {
+        let end = at.checked_add(len).filter(|&e| e <= block.used()).ok_or_else(|| bad("an image past its block"))?;
+        Image::at(&std::sync::Arc::new(Backing::Block(block.clone())), at, end)
     }
     /// One image, base or overlay, read alone (the image a run just made).
     pub fn one(bytes: &[u8]) -> Result<Image, String> {

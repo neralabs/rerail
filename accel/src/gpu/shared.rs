@@ -304,6 +304,16 @@ const IDLE_FILES: usize = 16;
 /// (`return_deferrable`) in the same directory and of the same class is reused, renamed to `path`: its pages may
 /// still be cached, and the block zeroes what it allocates in it.
 pub fn lease_deferrable(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
+    lease_file(kind, bytes, path, true)
+}
+
+/// `lease_deferrable` for the host's writes alone (the store's writer): no wrap for the device, whose wire on the
+/// pages would hold their writeback some 200 ms (§7).
+pub fn lease_deferrable_host(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
+    lease_file(kind, bytes, path, false)
+}
+
+fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     let class = class(bytes.max(SLAB_MIN));
     let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
     let reused = {
@@ -318,7 +328,7 @@ pub fn lease_deferrable(kind: u32, bytes: usize, path: &std::path::Path) -> Resu
         Some(old) => std::fs::rename(&old, path).is_err(),
         None => true,
     };
-    let device = get().map(|s| s.device.as_ref());
+    let device = if for_device { get().map(|s| s.device.as_ref()) } else { None };
     let mut d = rerail_blocks::deferrable::Deferrable::create(path, kind, class, fresh, device).map_err(|e| format!("{}: {e}", path.display()))?;
     LIVE.fetch_add(class, std::sync::atomic::Ordering::Relaxed);
     d.on_release(move || {

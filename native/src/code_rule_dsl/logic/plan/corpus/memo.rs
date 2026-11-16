@@ -558,11 +558,11 @@ impl Frame {
     }
 
     fn projected(&self, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
-        let mut entry = Entry { key: self.key, ..image::decode(&self.blob.bytes, self.blob.raw, keep, &self.atoms)? };
+        let mut entry = Entry { key: self.key, ..image::decode(&self.blob.bytes, keep, &self.atoms)? };
         // The identities a later run found its rows hold (decision 0280), kept over it: with those it was made under,
         // all true while it stands. Bytes kept over it that do not decode add none: the relations are a partial hit's.
-        if let Some((bytes, raw)) = self.blob.over.as_ref().filter(|_| keep(COVERED))
-            && let Ok(more) = image::decode(bytes, *raw, &|k| k == COVERED, &self.atoms)
+        if let Some(bytes) = self.blob.over.as_ref().filter(|_| keep(COVERED))
+            && let Ok(more) = image::decode(bytes, &|k| k == COVERED, &self.atoms)
         {
             let held: Vec<[i64; 2]> = covered(&more).into_iter().collect();
             if !held.is_empty() {
@@ -578,7 +578,7 @@ impl Frame {
 
 /// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
 pub(super) fn hold(store: &ContentStore, blob: &crate::content_store::MemoBlob) -> StoreResult<()> {
-    image::hold(&blob.bytes, blob.raw, &store.atoms_handle())
+    image::hold(&blob.bytes, &store.atoms_handle())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
@@ -817,8 +817,8 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
                 // forked or not, and no other table of the store to misread it by. Of an entry whose rows stand, only
                 // the identities it now holds, kept over the stored entry (decision 0280).
                 let over = standing.contains(&(path.clone(), e.key));
-                let (bytes, raw) = if over { image::encode(&identities_of(e), &syms, &made_under)? } else { image::encode(e, &syms, &made_under)? };
-                puts.push(crate::content_store::MemoPut { part: part_of(&digest, path), path: path.clone(), digest, key: e.key, bytes, raw, over });
+                let bytes = if over { image::encode(&identities_of(e), &syms, &made_under)? } else { image::encode(e, &syms, &made_under)? };
+                puts.push(crate::content_store::MemoPut { part: part_of(&digest, path), path: path.clone(), digest, key: e.key, bytes, over });
             }
             // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for
             // one file of the 20, was kept 32 runs: 450 MB of one space).
