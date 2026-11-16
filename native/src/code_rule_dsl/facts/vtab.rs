@@ -208,8 +208,18 @@ pub struct Counters {
     pub columns: AtomicU64,
 }
 
+/// `source`'s columns as relation `rel`'s table names them: a derived relation named like a base one is read by the
+/// base names (`core::input_column_name`: `value`, handed on from the chunks as `c0`, `c1`, is read as `value(n, v)`).
+/// Its first binding names the table so; every later one is compared so (`Binding::set`), and a reader of the bound
+/// source finds a column so (`setfix::view`).
+pub fn named(rel: &str, source: &dyn Source) -> Vec<String> {
+    source.columns().into_iter().map(|c| crate::code_rule_dsl::facts::core::input_column_name(rel, &c).map_or(c, str::to_owned)).collect()
+}
+
 #[derive(Clone)]
 pub struct Binding {
+    /// The relation's name: its table's columns are its source's as `named` reads them.
+    name: Arc<str>,
     current: Arc<parking_lot::RwLock<Arc<dyn Source>>>,
     schema: Arc<Metadata>,
     stats: Arc<Counters>,
@@ -219,8 +229,8 @@ impl Binding {
         *self.current.write() = self.schema.clone();
     }
     pub fn set(&self, source: Arc<dyn Source>) -> Result<()> {
-        if self.schema.columns != source.columns() || self.schema.writable!=source.writable() || self.schema.text.iter().enumerate().any(|(c,t)| *t!=source.text_column(c)) {
-            return Err(failure("native binding schema changed"));
+        if self.schema.columns != named(&self.name, source.as_ref()) || self.schema.writable!=source.writable() || self.schema.text.iter().enumerate().any(|(c,t)| *t!=source.text_column(c)) {
+            return Err(failure(&format!("native binding schema changed: bound with columns {:?} (writable {}), now {:?} (writable {})", self.schema.columns, self.schema.writable, source.columns(), source.writable())));
         }
         *self.current.write() = source;
         Ok(())
@@ -311,8 +321,7 @@ impl Modules {
         }
         // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
         let at = connection_scope(db);
-        // A derived relation named like a base one is read by the base names (`core::input_column_name`).
-        let columns: Vec<String> = source.columns().into_iter().map(|c| crate::code_rule_dsl::facts::core::input_column_name(name, &c).map_or(c, str::to_owned)).collect();
+        let columns = named(name, source.as_ref());
         let shape = (columns.clone(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
         let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
         // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
@@ -324,6 +333,7 @@ impl Modules {
             return Ok(());
         }
         let binding = Binding {
+            name: name.into(),
             schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns, writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
