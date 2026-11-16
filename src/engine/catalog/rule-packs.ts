@@ -320,12 +320,26 @@ function packRuleOf(rule: RulePackFile["rules"][number], document: RuleDocument)
 }
 
 /** One listed rule read and checked: its document is named for its id, exists and carries that id, and its examples fit its kind. */
+/**
+ * The rule document `source`, read from `documentPath`. One the schema refuses is reported like a refused `pack.json`:
+ * the pack, the document and its first issue, in a sentence, where the schema's own error is every issue as JSON.
+ */
+function parsePackDocument(id: string, document: string, source: unknown, documentPath: string): RuleDocument {
+  try {
+    return parseRuleDocument(source, documentPath);
+  } catch (error) {
+    if (!(error instanceof z.ZodError)) throw error;
+    const issue = error.issues[0];
+    throw new Error(`Rule pack ${id}: ${document} ${issue?.path.join(".") ?? ""} ${issue?.message ?? "is invalid"}`.replace(/\s+/gu, " "));
+  }
+}
+
 function readPackRule(directory: string, id: string, rule: RulePackFile["rules"][number]): { rule: RulePackRule; document: RuleDocument; source: unknown } {
   const documentPath = join(directory, rule.document);
   if (basename(rule.document, ".json") !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document must be rules/${rule.id}.json, not ${rule.document}`);
   if (!existsSync(documentPath)) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document ${rule.document} does not exist`);
   const source = readJsonDocument(documentPath);
-  const document = parseRuleDocument(source, documentPath);
+  const document = parsePackDocument(id, rule.document, source, documentPath);
   if (document.rule.id !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, but ${rule.document} has id ${document.rule.id}`);
   checkExamples(id, rule.id, document.kind, rule.examples);
   return { rule: packRuleOf(rule, document), document, source };

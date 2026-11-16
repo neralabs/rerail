@@ -438,12 +438,37 @@ function nothingFits(scan: RepositoryScan | undefined, discovered: readonly Disc
   return { nothingFits: explainNoFit(scan, available.map(found => found.pack)) };
 }
 
+/** The catalog of the fetched packs in `fetched` and the installed ones in `standIns`, checked against the active core and the engine. */
+function checkedCatalog(home: string, fetched: readonly FetchedPack[], standIns: readonly string[]): RuleCatalog {
+  return readRuleCatalog([...fetched.map(pack => pack.directory), ...standIns], { coreVersion: activeCoreVersion(home), compile: true, localSources: localSources(home, standIns) });
+}
+
+/**
+ * The catalog set-up offers packs from: the fetched packs `fromNpm`, and every other installed package standing in, a
+ * third party's included (the catalog decides which of two holding one pack id loads, Rerail's own first). A fetched
+ * version the catalog leaves out, made for a newer Rerail say, does not take the place of the version installed: that
+ * one stands in for it, so the pack is still offered as it runs, and `leftOut` names the newer version with why.
+ */
+function discoveryCatalog(home: string, fromNpm: readonly FetchedPack[]): { catalog: RuleCatalog; leftOut: readonly SkippedRulePack[] } {
+  const installed = new Map(installedPackDirectories(home).map(directory => [installedPackageName(directory), directory]));
+  const fetchedPackages = new Set(fromNpm.map(pack => rulePackPackageName(pack.id)));
+  const standIns = [...installed].filter(([packageName]) => !fetchedPackages.has(packageName)).map(([, directory]) => directory);
+  const catalog = checkedCatalog(home, fromNpm, standIns);
+  const leftOut = catalog.skipped.filter(skipped => fromNpm.some(pack => pack.directory === skipped.path && installed.has(rulePackPackageName(pack.id))));
+  if (leftOut.length === 0) return { catalog, leftOut };
+  const kept = fromNpm.filter(pack => !leftOut.some(skipped => skipped.path === pack.directory));
+  const keptPackages = new Set(kept.map(pack => rulePackPackageName(pack.id)));
+  return { catalog: checkedCatalog(home, kept, [...installed].filter(([packageName]) => !keptPackages.has(packageName)).map(([, directory]) => directory)), leftOut };
+}
+
 /**
  * Every pack core lists, fetched under the update channel's tag, checked against the active core and the engine,
  * and matched against the repository at `repositoryRoot`; with none, nothing is read and no pack is recommended. The
  * installed version stands in for a pack npm cannot give (offline, no access, not published), and for one where the
  * version installed is newer than npm's under the tag (installed from `next` by hand), so set-up never offers to
  * replace a pack with an older one: when that newer version does not load, the pack is named with why, not offered.
+ * It stands in too for a pack whose fetched version does not load (`discoveryCatalog`): the newer version is named
+ * with why, and the installed one is still offered.
  * Installed packs are read from `store.home`. Discovery itself never fails on one pack.
  */
 export async function discoverPacks(repositoryRoot: string | undefined, store: PackStore): Promise<PackDiscovery> {
@@ -457,13 +482,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       return installed !== null && offered !== null && semver.valid(installed) !== null && semver.valid(offered) !== null && semver.gt(installed, offered);
     };
     const fromNpm = fetch.fetched.filter(fetched => !newerInstalled(fetched));
-    // Every other installed package stands in, a third party's included: the catalog decides which of two holding
-    // one pack id loads, Rerail's own first.
-    const fetchedPackages = new Set(fromNpm.map(pack => rulePackPackageName(pack.id)));
-    const standIns = installedPackDirectories(home).filter(directory => !fetchedPackages.has(installedPackageName(directory)));
-    const catalog = readRuleCatalog([...fromNpm.map(pack => pack.directory), ...standIns], {
-      coreVersion: activeCoreVersion(home), compile: true, localSources: localSources(home, standIns),
-    });
+    const { catalog, leftOut } = discoveryCatalog(home, fromNpm);
     const packs = [...catalog.packs.values()];
     const scan = repositoryRoot === undefined ? undefined : scanRepository(repositoryRoot);
     const matched = new Map((scan === undefined ? [] : rulePacksThatFit(scan, packs)).map(found => [found.pack.id, found]));
@@ -486,7 +505,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       recommended: available.filter(pack => pack.match !== undefined),
       available,
       withoutRules: ordered.filter(pack => pack.ruleCount === 0),
-      problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...catalog.skipped.map(skippedProblem)],
+      problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...leftOut.map(skippedProblem), ...catalog.skipped.map(skippedProblem)],
       ...(fetch.fetched.length === 0 && fetch.problems.length > 0 ? { downloadFailures: [...new Set(fetch.problems.map(problem => problem.reason))] } : {}),
       catalog,
       ...nothingFits(scan, discovered),
