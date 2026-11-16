@@ -1,6 +1,6 @@
 # 0295. Deferred writes are an application WAL of mapped slabs, archived into SQLite as rows in bulk
 
-Status: decided (2026-11-16), by the user's two requirements and answers below. Path steps 2 (the tier), 3 (Outputs on blocks) and 4 (the memo in segments) built. Converges 0266 (blocks)
+Status: decided (2026-11-16), by the user's two requirements and answers below. Path steps 2 (the tier), 3 (Outputs on blocks), 4 (the memo in segments) and 5's frames built. Converges 0266 (blocks)
 with 0173/0241/0244/0276 (the program image and its versions), 0239 (the output image), 0240 §4 and 0280 (the
 memo's pack), 0259 §5 (the spool) and 0260 §8 (the journal block). Keeps 0008 (facts read through virtual tables)
 and 0024 §5 (work can be redone, so no `fsync`).
@@ -238,20 +238,35 @@ wrap, anonymous or file-backed, so the pool's own budget is what counts those.
    the entries' images uncompressed at 64 bytes, written through a host-only deferrable lease of the pool
    (`lease_deferrable_host`: no device wrap, whose wire would hold the writeback ~200 ms), written back and frozen
    before the write transaction, which numbers it, renames it into place and inserts the rows (`framed` 1). A
-   reader maps the segment (`journal::open`) and reads the image in place (`MemoBytes`, `Image::in_block`); no
+   reader maps the segment (`journal::open`) and reads the image in place (`SegmentBytes`, `Image::in_block`); no
    zstd. Compaction copies the named entries to one new segment and removes the rest, with the packs of before
    (`framed` 0, not read). On WASI the block is made in memory and written as one file. Measured: a segment write
    is a few ms (store tests: nine writes and a compaction in 89 ms). Then the run writes them itself: it encodes
    each entry into its segment's mapped pages (`SegmentWriter`, the image's regions written there by
    `Finished::write`, no copy of it whole first), seals the segment, drops the decoded entries, and queues the
-   sealed segments (`MemoSegments`) with the rows; the writer's job writes them back and inserts the rows, and is
+   sealed segments (`SealedSegments`) with the rows; the writer's job writes them back and inserts the rows, and is
    run again whole after a busy store (`put_memo_segments`: written back once, renamed once the rows commit, its
    files removed if never named). A queued entry's readers in the run read its image there (`Found::Frame`), not a
    decoded copy; of an entry kept over the stored one, the stored entry with the new identities over it. A segment
    no device wrapped is written back in place (`Sealed::write_back`: one `MS_SYNC`, its mapping and readers stay),
    so a reader holding it never holds up the writer. The queue counts a job's rows, not its images: those are the
    OS's pages. Test: `a_queued_entry_is_read_from_the_segment_the_run_wrote`. Not yet: the virtual table (step 6).
-5. **Frames** (the largest writes), then tapes and sources; 0259's guard (no `write_back` queues a closure).
+5. **Frames** (the largest writes; built), then tapes and sources; 0259's guard (no `write_back` queues a closure).
+   Step 4's segments are now the store's, not the memo's (`content_store::segments`: `SegmentWriter`,
+   `SealedSegments`, `SegmentBytes`, `SegmentMaps`). A frame's encoded bytes are placed by the run, when it queues
+   them, into a segment of `<store>.frames/` (`place_frames`; one copy of the encoded bytes, the heap copy then
+   dropped), and the queued frame reads them there. The writer writes the segments back, numbers them
+   (`frame_segments`), writes each frame as a pointer row (`frames.seg`, `seg_at`, `seg_len`; `data` empty, `seg`
+   0 for a frame whose bytes are inline), and names the files once the rows commit. Every read of a frame (the
+   snapshot, cross-space reads, a part's frames, an admitted part) maps its segment (`Bytes::Mapped`); a frame
+   whose segment is gone is not found, and is derived again. A forked process writes its frames inline, as before:
+   the writer renumbers their symbols. Upkeep compacts the segments as it does the memo's
+   (`compact_frame_segments`). The queue counts what the job holds in memory (the frames not placed, and 64 bytes a
+   row), not the placed bytes, which are the OS's pages. Pointer rows
+   change what an older binary would read, so the store's floor is 5 (`content-v5.sqlite`): an older binary keeps
+   its own file. Test: `a_queued_frame_is_placed_in_a_segment_and_read_there`; `frames_are_queued_encoded` checks
+   that the queue counts under a hundredth of the bytes. Not yet: frames encoded straight into the segment (the
+   encoder writes to the heap today).
 6. **Facts as blocks** (0266 step 4) with the fold rule and kills by content decided; **the virtual-table module**.
 7. The program image, by Typing-support (Q26).
 

@@ -731,16 +731,23 @@ pass.
   adds none.
 - **Done when**: the test passes with fresh files, traced to which of the three sources the second run leaves out
   and why (the racy-mtime window is the lead).
-- **Record**: done (2026-11-16, b40d89145). The three left out were the three `.py` files (sources 26-28: 55, 39
-  and 0 bytes). In the waves the store is not asked, so a file the stat index does not trust yet (inside the racy
-  window) is read as `Content::Unstored(digest)`, which `Content::stored` dropped from the run's sources. A
-  process's first run named those sources anyway, through the tape writes that store them (`late_sources`). Its
-  second run found the tapes held in the process and wrote none, so nothing named them; older files the stat index
-  knows (`Content::Stored`) and the run names directly. Now the chunk builder keeps those digests
-  (`Cut::read_unstored`), and `memo::named_digests` looks them up together on the store's writer, behind the run's
-  queued writes and before the manifest's, pins them as `stored_source` does, and adds them to `late_sources`. A
-  warm run whose files the index knows has no such digest and queues nothing. Passes, as does
-  `the_run_after_a_cold_one_writes_nothing`.
+- **Traced** (2026-11-16, validating 0295 step 5): the run that adds the manifest is the two-run process's
+  *first* run, not its second, and it leaves out all three files' sources (26–28). The first process records their
+  stats 1.2–1.6 s after the files were written, inside `RACY_NS` (2 s), so the next process's stat index
+  (`corpus_stats`) drops them. Phase 0's waves do not read the store (`reading` false), so its memo hits name their
+  contents by digest (`Content::Unstored`), and `read_sources` (corpus.rs, `take`) keeps only stored ids. That
+  run's second phase, which reads the store, finds them by digest and names them, but phase 0's manifest is the one
+  short. The process's second run passes: the first re-recorded the stats outside the window. The test passed
+  before only when the first process took over 2 s to start (2.08 s measured at 1449681e9). Backdating the files
+  makes it pass, but hides the gap. Fix: name a hit's source by its digest when the manifest is recorded (the
+  writer resolves `Unstored` digests to source ids), so a run names what it read whatever the stat index knew.
+- **Record**: done (2026-11-16, b40d89145), the fix the trace above proposes. The chunk builder keeps the contents
+  it names by digest (`Cut::read_unstored`), and `memo::named_digests` looks them up together on the store's writer,
+  behind the run's queued writes and before the manifest's, pins them as `stored_source` does, and adds them to
+  `late_sources`: a run names what it read whatever the stat index knew. A warm run whose files the index knows has
+  no such digest and queues nothing. Passes, as does `the_run_after_a_cold_one_writes_nothing`. (The record first
+  written here put the short manifest on the second run; the trace above, from phased-facts, is right: it is the
+  second process's first run, its phase 0, as the manifests' `last_run` order shows.)
 
 ### Q25. `rrs_records_are_rows_on_the_cpu` expects no `/` among the punctuation bytes
 
@@ -905,6 +912,16 @@ pass.
   5, `chunks_exact` 4, precedence 3, and others). The binary's seven are fixed. `clippy --fix` applies none of its
   20 suggestions here. The lab is its own workspace, so CI does not see them.
 - **Done when**: the lab's library is clean under clippy, with its timing loops keeping what they time.
+
+### Q41. (Q28 on final-rerail-shape-phased-facts) Clippy 1.99 refuses `rerail-facts`: public functions that dereference raw pointers
+
+- **Found** (2026-11-16, validating 0295 step 5): `cargo clippy` over the engine stops in `rerail-facts`, with five
+  `not_unsafe_ptr_arg_deref` errors (deny by default) in `sql_admission/observer.rs` (lines 27, 34, 40, 65, 76).
+  Clippy is 1.99 here while this tree pins 1.95.0. `--no-deps` lints the engine without it. The same run's
+  `never_loop` errors in `sql_lean` (`set_statement`) and `csharp_lean` (`pp_attributes`) are fixed: those loops
+  only ever ran once.
+- **Done when**: the observer's functions take what they dereference safely, or are `unsafe` with their callers'
+  contract written down, and `cargo clippy -p rerail-engine --lib --tests` runs to the end.
 
 ## Questions for the user
 

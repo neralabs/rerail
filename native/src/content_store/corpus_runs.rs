@@ -860,6 +860,8 @@ impl ContentStore {
         pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
         // The memo's pack, once the entries collected left most of it unnamed (decision 0240 §4).
         pass.plan_rows += usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR)? > 0);
+        // The frames' segments, once frames written again or collected left most of them unnamed (decision 0295 §4).
+        pass.plan_rows += usize::from(self.compact_frame_segments(MEMO_PACK_FLOOR)? > 0);
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }

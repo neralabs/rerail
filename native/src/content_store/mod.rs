@@ -23,6 +23,7 @@ pub use connection::sqlite_on_jemalloc;
 mod cross_rows;
 mod derivation;
 mod frames;
+mod segments;
 mod facts_memo;
 mod objects;
 pub mod journal;
@@ -68,7 +69,8 @@ pub mod hazards;
 
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
-pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoBytes, MemoPut, MemoRow, MemoSegments, SegmentWriter, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
+pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
