@@ -646,6 +646,9 @@ impl P<'_> {
         }
         if self.self_type_ahead() {
             self.self_type()?;
+            if self.layout(v::SEMI | v::OUTDENT)? == Some(Ext::Semi) {
+                self.take();
+            }
         }
         self.statements(Region::Indent, f::NONE)?;
         match self.layout(v::OUTDENT | v::COMMA_OUTDENT)? {
@@ -676,6 +679,10 @@ impl P<'_> {
             self.self_type()?;
             if !indent {
                 indent = self.braced_indent()?;
+            }
+            // `_block` may open with semicolons: the line's end after the self type.
+            if self.peek() != T::RBrace && self.layout(v::SEMI)? == Some(Ext::Semi) {
+                self.take();
             }
         }
         self.statements(if indent { Region::Indent } else { Region::Brace }, f::NONE)?;
@@ -749,24 +756,28 @@ impl P<'_> {
     }
 
     /// `(a: A, val b: B = 1)` (`class_parameters`).
+    /// The rest of `(using A, B)` in node `n`: types alone, each `type`, their commas stored.
+    fn using_types(&mut self, n: crate::tw::Node) -> R<()> {
+        loop {
+            self.param_type(f::TYPE)?;
+            if self.peek() == T::Comma {
+                self.tk(K::TComma)?;
+            } else {
+                break;
+            }
+        }
+        self.expect(T::RParen)?;
+        self.close(n);
+        Ok(())
+    }
+
     fn class_parameters(&mut self) -> R<()> {
         let n = self.open_field(K::ClassParameters, f::CLASS_PARAMETERS);
         self.tk(K::TLParen)?;
         if self.is_word(w::USING) {
             self.tk(K::TUsing)?;
             if !(Self::is_name(self.tok()) && self.is_op_at(1, op::COLON)) {
-                // `(using A, B)`: types alone, each `type`, their commas stored.
-                loop {
-                    self.param_type(f::TYPE)?;
-                    if self.peek() == T::Comma {
-                        self.tk(K::TComma)?;
-                    } else {
-                        break;
-                    }
-                }
-                self.expect(T::RParen)?;
-                self.close(n);
-                return Ok(());
+                return self.using_types(n);
             }
         } else if self.is_word(w::IMPLICIT) {
             self.tk(K::TImplicit)?;
@@ -852,11 +863,11 @@ impl P<'_> {
         let n = self.open_field(K::Parameters, f::PARAMETERS);
         self.tk(K::TLParen)?;
         if self.is_word(w::USING) {
-            // `(using c: C)`; `(using C)` (types alone) is refused.
-            if !(Self::is_name(self.peek_at(1)) && self.is_op_at(2, op::COLON)) {
-                return self.refuse();
-            }
             self.tk(K::TUsing)?;
+            if !(Self::is_name(self.tok()) && self.is_op_at(1, op::COLON)) {
+                // `(using A, B)`: types alone, each `type`, their commas stored.
+                return self.using_types(n);
+            }
         } else if self.is_word(w::IMPLICIT) {
             self.tk(K::TImplicit)?;
         }

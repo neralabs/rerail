@@ -1152,7 +1152,18 @@ impl P<'_> {
             return Ok(self.close(n));
         }
         let m = self.mark();
-        let b = self.annotated_type()?;
+        let mut b = self.annotated_type()?;
+        if self.peek() == T::LParen && !self.tok().nl && {
+            let c = self.matching(0);
+            let t = self.peek_at(c + 1);
+            t.kind == T::Id && t.code == w::WITH && !t.nl
+        } {
+            // `new A(x) with B`: the base an `applied_constructor_type` (type, arguments; no fields).
+            self.t.refield(b, f::NONE);
+            let a = self.t.wrap(m, K::AppliedConstructorType, f::NONE);
+            self.arguments(f::NONE)?;
+            b = self.close(a);
+        }
         if self.is_word(w::WITH) && !self.tok().nl {
             // `new A with B { … }`: a compound type (`base`, `extra`), its `with`s left out.
             self.t.refield(b, f::BASE);

@@ -247,6 +247,8 @@ impl P<'_> {
             }
             T::Id | T::BackId if !w::is_reserved(t.code) || matches!(t.code, w::THIS | w::SUPER) => self.type_path()?,
             T::Op if t.code == op::QUESTION || t.code == op::NONE && !t.nl => self.leaf(K::TypeIdentifier, f::NONE)?,
+            // A kind projector's `*` (`Map[K, *]`): a type identifier.
+            T::Op if t.code == op::STAR && matches!(self.kind_at(1), T::Comma | T::RBracket) => self.leaf(K::TypeIdentifier, f::NONE)?,
             T::LParen => self.tuple_type()?,
             T::Int | T::Float | T::Char | T::Str => {
                 // A literal type: refused.
