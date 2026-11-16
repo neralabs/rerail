@@ -28,6 +28,9 @@ import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot
 import { installPack, uninstallPack } from "../support/installed-packs.js";
 import { stubUserHome } from "../support/user-home.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES");
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
@@ -436,6 +439,25 @@ describe("Rerail API over HTTP", () => {
 
     expect((await put("\\bgit\\s+push\\b[^\\n]*--force\\b")).status).toBe(200);
     expect((await getJson<{ rule: { rule: unknown } }>(`/api/library-rules/${id}`)).rule.rule).toEqual(rule("\\bgit\\s+push\\b[^\\n]*--force\\b"));
+  });
+
+  it("refuses a conversation rule while conversation rules are off, and answers full-repository scanning 404 while it is off", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "0");
+    const rule = {
+      id: "no-force-push",
+      mode: "steer",
+      match: { field: "input.command", regex: "--force" },
+      sample: { source: "tool:Bash", boundary: "tool-call" },
+      action: { content: "Do not force-push." },
+    };
+    const refused = await putJson("/api/library-rules/no-force-push", { kind: "conversation", rule });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: "experimental-off", message: expect.stringContaining("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1") });
+    expect((await app.request("/api/library-rules/no-force-push")).status).toBe(404);
+
+    const audits = await app.request("/api/repository-audits");
+    expect(audits.status).toBe(404);
+    expect(await audits.json()).toMatchObject({ error: "experimental-off", message: expect.stringContaining("RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1") });
   });
 
   it("dates activity, violations, and sessions by their own result", async () => {

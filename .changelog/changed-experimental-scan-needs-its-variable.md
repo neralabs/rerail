@@ -1,0 +1,1 @@
+`rerail scan` without `--session`, as a CI job runs it, now refuses unless `RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1` is set for it; `rerail scan --session` needs the daemon running with `RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1`. A job that ran `rerail scan` sets the variable in its environment to keep working.

@@ -76,8 +76,8 @@ pack that fits is shown.
 
 - Each fit shows its rule count, why it matched and the folder it would be added in.
 - The agents to connect ("Will connect to: …"; `--agents` names others).
-- Pack rules that start off or take options from the repository's own lint config
-  ([The repository's own lint config](rule-scoping.md#the-repositorys-own-lint-config)).
+- Pack rules that start on, start off or take options from the repository's own lint config, so the packs run the
+  rules its linters run ([The repository's own lint config](rule-scoping.md#the-repositorys-own-lint-config)).
 - With no match, no pack is offered; the repository can still start and add packs in the dashboard later.
 
 </details>
@@ -423,7 +423,7 @@ rerail status            # whether Rerail is started here, otherwise daemon/data
 rerail version           # the installed version
 rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
-rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
+rerail scan --session ID --scope repository --wait  # internal testing, experimental (RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1 for the daemon): findings at /api/audits?auditId=<run>, not in the dashboard
 rerail settings --session ID --mode log             # save this workspace's default
 rerail update check      # is a newer version on the channel?
 rerail update            # install it

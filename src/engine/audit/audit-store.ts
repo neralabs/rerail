@@ -16,6 +16,7 @@ import {
   type AuditResult,
   type AuditSummary,
   type AuditMode,
+  type AuditOrigin,
   type AuditScope,
   type AuditStatus,
   type AuditRuleProvenance,
@@ -122,6 +123,7 @@ export interface AuditQuery {
   status?: AuditStatus;
   scope?: AuditScope;
   mode?: AuditMode;
+  origin?: AuditOrigin;
   limit?: number;
   offset?: number;
 }
@@ -254,14 +256,17 @@ function scopedSessions(column: SQLiteColumn, repositoryId: Repository): SQL {
   return repositoryId === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(repositoryId)})`;
 }
 
+/** The column each `AuditQuery` filter matches exactly. */
+const EXACT_FILTER_COLUMNS = {
+  auditId: audits.auditId, sessionId: audits.sessionId, status: audits.status,
+  scope: audits.scope, mode: audits.mode, origin: audits.origin,
+} as const;
+const EXACT_FILTERS = Object.keys(EXACT_FILTER_COLUMNS) as Array<keyof typeof EXACT_FILTER_COLUMNS>;
+
 function conditions(query: AuditQuery, repositoryId: Repository): SQL | undefined {
   return and(
     repositoryId === undefined ? undefined : scopedSessions(audits.sessionId, repositoryId),
-    query.auditId === undefined ? undefined : eq(audits.auditId, query.auditId),
-    query.sessionId === undefined ? undefined : eq(audits.sessionId, query.sessionId),
-    query.status === undefined ? undefined : eq(audits.status, query.status),
-    query.scope === undefined ? undefined : eq(audits.scope, query.scope),
-    query.mode === undefined ? undefined : eq(audits.mode, query.mode),
+    ...EXACT_FILTERS.map(filter => (query[filter] === undefined ? undefined : eq(EXACT_FILTER_COLUMNS[filter], query[filter]))),
   );
 }
 
@@ -280,6 +285,7 @@ function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
     workspaceRoot: row.workspaceRoot,
     scope: row.scope,
     mode: row.mode,
+    origin: row.origin,
     revision: row.revision,
     catalogRevision: row.catalogRevision,
     ruleRevisions: row.ruleRevisions,
@@ -662,6 +668,7 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
           workspaceRoot: input.workspaceRoot,
           scope: input.scope,
           mode: input.mode,
+          origin: input.origin ?? "ongoing",
           revision: input.revision,
           catalogRevision: input.catalogRevision,
           ruleRevisions: input.ruleRevisions,
