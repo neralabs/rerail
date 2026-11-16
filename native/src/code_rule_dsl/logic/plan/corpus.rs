@@ -8792,14 +8792,16 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     // Watched before the status is read: a change while it reads is named to the next run.
     let places = crate::git_workspace::locations(&real);
     let cursors = places.as_ref().and_then(|(work, own, common)| observe(|o| o.mark(&[real.clone(), work.clone(), own.clone(), common.clone()])));
-    let found = observe(|o| o.git(root)).and_then(|g| {
+    // Kept when Git sees no file under the root too (a corpus in an ignored directory): unkept, every run read the
+    // work tree's whole status again to find none (decision 0260).
+    let found = observe(|o| o.git(root)).map(|g| {
         let prefix = real.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         let under: Vec<String> = g
             .worktree_files()
             .into_iter()
             .filter_map(|file| if prefix.is_empty() { Some(file) } else { file.strip_prefix(prefix.as_str()).and_then(|f| f.strip_prefix('/')).map(str::to_owned) })
             .collect();
-        (!under.is_empty()).then(|| (under, g.overlays.len()))
+        (under, g.overlays.len())
     });
     if let (Some((work, own, common)), Some(cursors), Some((under, overlays))) = (&places, cursors, &found) {
         let mut read: Vec<PathBuf> = vec![real.clone(), work.join(".git"), own.join("HEAD"), own.join("index")];
@@ -8810,7 +8812,7 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
         let text = std::iter::once(overlays.to_string()).chain(under.iter().cloned()).collect::<Vec<_>>().join("\n");
         observe(|o| o.put_run_record(&key, &read, text.as_bytes()));
     }
-    found
+    found.filter(|(under, _)| !under.is_empty())
 }
 
 /// The Python files among `paths` (relative to `root`) whose module, as Python imports it, is not their path's name
@@ -9206,6 +9208,46 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
+    /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
+    /// unkept, every run read the work tree's whole status again to find none. In a process of its own, whose store
+    /// is named (`RERAIL_TAPE_CACHE`), so the observer asks the journal, as a run's does.
+    #[test]
+    fn git_seeing_no_file_under_the_root_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(work.join("ignored/pkg")).unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&work).args(args).output().unwrap().status.success(), "git {args:?}");
+        git(&["init", "-q"]);
+        std::fs::write(work.join(".gitignore"), "/ignored/\n").unwrap();
+        std::fs::write(work.join("ignored/pkg/a.py"), "x = 1\n").unwrap();
+        git(&["add", ".gitignore"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a work tree with a head"]);
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::git_seeing_no_file_under_the_root_is_kept_child", "--ignored", "--test-threads", "1", "--nocapture"])
+            .env("RERAIL_TAPE_CACHE", dir.path().join("store.sqlite"))
+            .env("RERAIL_GIT_FILES_CHILD", work.join("ignored"))
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && stdout.contains("1 passed"), "{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test]
+    #[ignore = "run by git_seeing_no_file_under_the_root_is_kept"]
+    fn git_seeing_no_file_under_the_root_is_kept_child() {
+        let Some(root) = std::env::var_os("RERAIL_GIT_FILES_CHILD").map(std::path::PathBuf::from) else { return };
+        // Each in a run of its own (`ObservedBatch`): the observer asks the journal for a run under way.
+        {
+            let _run = super::ObservedBatch::begin();
+            assert_eq!(super::git_files(&root), None, "Git sees no file under an ignored directory");
+        }
+        let real = std::fs::canonicalize(&root).unwrap();
+        let record = super::observe(|o| o.run_record(&format!("git-files:{}", real.display())));
+        assert_eq!(record.map(|(_, files)| files), Some(b"0".to_vec()), "the empty answer is kept, with no overlay and no file");
+        let _run = super::ObservedBatch::begin();
+        assert_eq!(super::git_files(&root), None, "and answered from the record");
+    }
+
     /// A string's test rows (`strtest_<k>`, `memo::Owner::Text`) are held once by each file whose text holds the
     /// string: a changed file that holds it still keeps the other files' copies, though the string's id is also a
     /// number the evaluated documents may hold (O-text-owner-evaluated).

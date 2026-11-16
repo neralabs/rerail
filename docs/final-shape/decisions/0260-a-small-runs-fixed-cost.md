@@ -91,6 +91,18 @@ nothing prices nothing.
 Measured on `dl1` (warm, cutoff off): 2.6 G instructions became 2.06 to 2.35 G, and user CPU went from 0.22 to
 0.18 s. Sampled time was 311 ms and is now 230 ms; the main thread's run went from 99 to 76 ms.
 
+## Git seeing no file is an answer kept too
+
+A corpus's files, inside a Git work tree, are the files Git sees (`git_files`), kept as the observer's record and
+answered from it while the journal names no change to what Git read (decision 0105). The record was kept only when
+Git saw some file under the root. `dl1` is under the worktree's ignored `tmp/`, so Git sees none, and every run
+discovered the repository and read the whole work tree's status again (21 ms of CPU on Git's status thread, 5 ms of
+the main thread) to find none. The empty answer is kept now, like any other.
+
+Measured on `dl1` (warm, cutoff off): 2.06 to 2.35 G instructions became 1.5 to 1.7 G. On `dl1g`, the same corpus as
+a repository of its own, it is 1.4 to 1.5 G. Both read no document: the policy's `.scope` selects none of the
+corpus's files, so these runs measure a run's fixed cost alone.
+
 ## Open
 
 - Phase 0 in every process (~27 ms of main-thread samples): its nested run of `bootstrap.rr` for the texts' include
@@ -113,6 +125,8 @@ Measured on `dl1` (warm, cutoff off): 2.6 G instructions became 2.06 to 2.35 G, 
   address no image holds finds none.
 - `the_automata_built_with_the_build_are_the_grammars` (engine): for every grammar, the automata and the census the
   build wrote agree with those built from its JSON in process.
+- `git_seeing_no_file_under_the_root_is_kept` (logic): in a process of its own, a root under an ignored directory
+  gives no files, its record is kept with none, and the next run answers from it.
 - `a_run_with_no_work_reads_no_cost_statistics` (logic): in a process of its own, starting the statistics reads
   nothing, and `ready` reads them.
 - `the_run_after_a_cold_one_writes_nothing` (engine) failed before this, for causes of its own. A job was handed the
