@@ -13,8 +13,8 @@ The pack's rule for Java (`.java`), with the shipped rules' limit, message and c
 finding spans the whole method and names it (a constructor takes its class's name), and a `switch` counts once however
 many cases it has. It reads syntax only, so it needs none of the capabilities Java does not have yet.
 
-**Waits on** its corpus (`upstream/lizard/fixtures/java/`) and lizard's scores on it being published as pack test
-data, then on the conformance check's verdict on that data and a reviewer's.
+**Waits on** a reviewer's verdict. Its corpus (`upstream/lizard/fixtures/java/`) and lizard's scores on it are published
+as pack test data, and the conformance check passes it on that data.
 
 **What counts.** Per method with a body, constructor and record compact constructor, in classes, interfaces (`default`
 and `static` methods), enums, records, and local and anonymous classes:
