@@ -102,14 +102,8 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
   } catch {
     return undefined;
   }
-  const deadline = Date.now() + ACQUIRE_WAIT_MS;
-  while (lock === null) {
-    if (Date.now() >= deadline) throw new HomeDaemonConflictError(home, homeDaemonHolder(home));
-    await sleep(ACQUIRE_POLL_MS);
-    lock = tryLockAgain(tryLock);
-  }
+  const taken = lock ?? await waitForLock(home, tryLock);
   recordHolder(home);
-  const taken = lock;
   held = taken;
   // The file this process locked, read by path just after: only a home moved in that instant could give another.
   const locked = fileAt(path);
@@ -136,14 +130,23 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
 }
 
 /**
- * A later try for the lock, once a first one found it held: a try that throws, as one can on Windows while another
- * program has the lock file open, finds it held too, and the wait goes on.
+ * Tries for the lock another process held at the first try until {@link ACQUIRE_WAIT_MS} runs out. A try that throws,
+ * as one can on Windows while another program has the lock file open, does not end the wait; when the last try threw,
+ * its error is what the wait ends with, since nothing then says another daemon holds the home.
  */
-function tryLockAgain(tryLock: () => NativeExclusiveFileLock | null): NativeExclusiveFileLock | null {
-  try {
-    return tryLock();
-  } catch {
-    return null;
+async function waitForLock(home: string, tryLock: () => NativeExclusiveFileLock | null): Promise<NativeExclusiveFileLock> {
+  const deadline = Date.now() + ACQUIRE_WAIT_MS;
+  let failure: { readonly error: unknown } | undefined;
+  for (;;) {
+    if (Date.now() >= deadline) throw failure === undefined ? new HomeDaemonConflictError(home, homeDaemonHolder(home)) : failure.error;
+    await sleep(ACQUIRE_POLL_MS);
+    try {
+      const lock = tryLock();
+      if (lock !== null) return lock;
+      failure = undefined;
+    } catch (error) {
+      failure = { error };
+    }
   }
 }
 

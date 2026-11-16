@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -66,7 +66,7 @@ it("lets a write of daemon.json its record check has in flight land before its c
   expect(existsSync(stateFile)).toBe(false);
 }, 20_000);
 
-it("stops writing daemon.json, saying why once, when it no longer holds its home, and keeps it while it does", async () => {
+it("stops writing daemon.json, saying why once, when it no longer holds its home, keeps it while it does, and leaves another daemon's at its close", async () => {
   const home = await mkdtemp(join(tmpdir(), "rerail-record-"));
   homes.push(home);
   process.env.RERAIL_HOME = home;
@@ -74,6 +74,7 @@ it("stops writing daemon.json, saying why once, when it no longer holds its home
   let holds = true;
   let checks = 0;
   const said: string[] = [];
+  const othersRecord = `${JSON.stringify({ pid: process.pid + 1, url: "http://127.0.0.1:1/" })}\n`;
   const write = vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
     said.push(String(chunk));
     return true;
@@ -100,10 +101,13 @@ it("stops writing daemon.json, saying why once, when it no longer holds its home
     // The check ended for good: it asks no more and says so once.
     expect(checks).toBe(asked);
     expect(said.filter(line => line.includes("no longer holds"))).toHaveLength(1);
+    // The daemon of the home made again at the path records itself there.
+    await writeFile(stateFile, othersRecord);
   } finally {
     write.mockRestore();
     await daemon.close();
   }
+  expect(await readFile(stateFile, "utf8")).toBe(othersRecord);
 }, 20_000);
 
 it("keeps writing daemon.json when it cannot tell whether it holds its home, and still closes", async () => {

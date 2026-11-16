@@ -862,8 +862,7 @@ async function main(): Promise<number> {
   const args = managedChild ? rawArgs.slice(1) : rawArgs;
   const answered = await runBeforeDispatch(args, manifest);
   if (answered !== undefined) return answered;
-  // The claim names the launcher an autostart started, never the active version's CLI it hands the start to.
-  if (!managedChild) keepClaimOfLauncher(args, home);
+  keepClaimOfLauncher(rawArgs, home);
 
   if (!managedChild && !isVersionIndependentCommand(args)) {
     const exit = await dispatchToManagedVersion(args, updater);
@@ -897,10 +896,12 @@ async function runBeforeDispatch(args: readonly string[], manifest: PackageManif
 
 /**
  * A `rerail daemon start` an autostart launched keeps its claim held while it runs, a hand-off to the active version
- * included, so the processes that find the daemon down leave the start to it (`keepAutostartClaim`).
+ * included, so the processes that find the daemon down leave the start to it (`keepAutostartClaim`). `rawArgs` are the
+ * process's own: the active version's CLI it hands the start to starts with {@link MANAGED_CHILD_ARGUMENT}, and the
+ * claim never names it, so it renews none.
  */
-function keepClaimOfLauncher(args: readonly string[], home: string): void {
-  const commandArgs = takeOption(args, "--profile").args;
+function keepClaimOfLauncher(rawArgs: readonly string[], home: string): void {
+  const commandArgs = takeOption(rawArgs, "--profile").args;
   if (commandArgs[0] === "daemon" && commandArgs[1] === "start") keepAutostartClaim(home);
 }
 

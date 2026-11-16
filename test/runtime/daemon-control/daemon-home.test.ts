@@ -31,7 +31,6 @@ import {
   olderDaemon,
   packageRoot,
   recordedPid,
-  startedDaemons,
   until,
   watchedEnvironment,
 } from "../../support/processes/daemon-home.js";
@@ -43,12 +42,12 @@ const HOME_TAKEN = /rerail daemon: Another Rerail daemon(?: \(pid \d+\))? runs i
 
 /** The daemons started in `home` that still run. */
 function liveDaemons(home: string): number[] {
-  return notExited(home, startedDaemons(home)).filter(pid => processAlive(pid));
+  return notExited(home, "daemons").filter(pid => processAlive(pid));
 }
 
 /** Whether every `rerail daemon start` launched in `home` has ended. */
 function launchersEnded(home: string): boolean {
-  return notExited(home, launchers(home)).every(pid => !processAlive(pid));
+  return notExited(home, "launchers").every(pid => !processAlive(pid));
 }
 
 /** Ends `child` if it still runs, and waits until it has exited, so the folder it ran in can go. */
@@ -92,7 +91,7 @@ describe("the daemons of a Rerail home", () => {
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
     await Promise.all(others.splice(0).map(async child => await ended(child)));
-    const running = (): number[] => notExited(home, [...startedDaemons(home), ...launchers(home)]).filter(pid => processAlive(pid));
+    const running = (): number[] => [...notExited(home, "daemons"), ...notExited(home, "launchers")].filter(pid => processAlive(pid));
     for (const pid of running()) killGone(pid);
     // Node marks a child it started as exited a moment after the OS has ended it.
     await until(() => running().length === 0 && runningIn(home).length === 0, 10_000, "every daemon and start of the test ended");

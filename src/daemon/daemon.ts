@@ -622,8 +622,8 @@ export class RerailDaemon {
    */
   async #record(stateFile: string): Promise<void> {
     const text = `${JSON.stringify(this.state(), null, 2)}\n`;
-    this.#recordText = text;
     await replaceFile(stateFile, text, { mode: 0o600 });
+    this.#recordText = text;
     const check = this.#options.recordCheck;
     if (check === undefined) return;
     this.#recordCheck = setInterval(() => {
