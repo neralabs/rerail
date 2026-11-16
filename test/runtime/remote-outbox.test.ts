@@ -101,6 +101,49 @@ describe("remote sink outbox", () => {
     expect(order.indexOf("audit")).toBeLessThan(order.indexOf("violation"));
   });
 
+  // A scan's violations stay out of the dashboard's history, not out of a remote's: its audit says it is a scan.
+  it("sends a scan's audit with its origin, and its violations keyed as an ongoing audit's", async () => {
+    const { sessionId, auditId } = seed();
+    const audits = new SqliteAuditStore(databasePath());
+    const violation = {
+      id: "v1", ruleId: "no-todo", clauseId: "c", code: "TODO", mode: "steer", message: "No TODO", path: "a.ts",
+      span: { startByte: 0, endByte: 4, startLine: 0, startColumn: 0, endLine: 0, endColumn: 4 }, captures: {}, variables: {},
+    } as const;
+    const scanId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", origin: "scan", revision: 1, catalogRevision: "c1", ruleRevisions: [{ ruleId: "no-todo", revision: 1 }], paths: [] });
+    // The same violation twice: only its first copy is a finding.
+    audits.finish(scanId, { status: "completed", violations: [violation, { ...violation, id: "v2" }] });
+    audits.close();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const records = sink.requests.flatMap(request => request.records);
+    const of = (type: string, id: string) => records.filter(item => item.type === type && String(item.id).startsWith(id));
+    expect([...of("audit", auditId), ...of("audit", scanId)].map(item => item.origin)).toEqual(["ongoing", "scan"]);
+    const [ongoing, scanned] = [of("violation", auditId), of("violation", scanId)];
+    expect([ongoing.map(item => [item.id, item.logged]), scanned.map(item => [item.id, item.logged])])
+      .toEqual([[[`${auditId}:0`, true]], [[`${scanId}:0`, true]]]);
+    expect(scanned[0]!.violationKey).toBe(ongoing[0]!.violationKey);
+  });
+
+  // The update that adds `origin` marks the scans a database already holds, some of them sent already.
+  it("sends again an audit marked a scan after it was sent, and no audit that stays ongoing", async () => {
+    const { sessionId, auditId } = seed();
+    const audits = new SqliteAuditStore(databasePath());
+    const otherId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "touched-files", mode: "steer", revision: 1, catalogRevision: "c1", ruleRevisions: [], paths: ["b.ts"] });
+    audits.finish(otherId, { status: "completed", violations: [] });
+    audits.close();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+
+    const database = new Database(databasePath());
+    database.prepare("UPDATE audits SET origin = 'scan' WHERE audit_id = ?").run(auditId);
+    database.close();
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    // Its violation is keyed and logged as before, so the remote holds it already.
+    expect(sink.requests[1]!.records.map(item => [item.type, item.id, item.origin])).toEqual([["audit", auditId, "scan"]]);
+  });
+
   it("names this machine by the remote's --label when it has one", async () => {
     seed();
     addRemote({ url: sink.url, token: "test-token", content: true, label: "Jeff's laptop" }, home);

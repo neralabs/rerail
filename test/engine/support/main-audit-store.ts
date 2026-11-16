@@ -14,6 +14,9 @@ import { holdsTable } from "../../../src/engine/storage/table-probe.js";
 import { blindFilePaths, type AuditRecord } from "../../../src/engine/audit/audit.js";
 import { audits, type AuditRow } from "../../../src/engine/storage/schema.js";
 
+/** An audit as `main` read it then: its `AuditRecord` had no `origin` yet. */
+export type MainAuditRecord = Omit<AuditRecord, "origin">;
+
 /**
  * Databases known to hold `audit_unlisted_failures`. A read-only open applies no DDL, so a file only an earlier build
  * wrote lacks the table: its audits list every failure they kept, and none is counted beyond them.
@@ -41,7 +44,7 @@ function auditColumns(database: RerailDatabase) {
   return { ...getTableColumns(audits), unlistedFailureCount: unlistedFailures(database) };
 }
 
-function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
+function record(row: AuditRow & { unlistedFailureCount: number }): MainAuditRecord {
   const blindFiles = blindFilePaths(row.failures);
   return {
     auditId: row.auditId,
@@ -76,7 +79,7 @@ export class SqliteAuditStore {
     this.#database = database ?? openRerailDatabase(path);
   }
 
-  get(auditId: string): AuditRecord | undefined {
+  get(auditId: string): MainAuditRecord | undefined {
     const row = this.#database.select(auditColumns(this.#database)).from(audits).where(eq(audits.auditId, auditId)).get();
     return row === undefined ? undefined : record(row);
   }
