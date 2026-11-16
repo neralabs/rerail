@@ -692,6 +692,11 @@ pass.
   "a `/` alone" step (its code is its kind, no word looked up); the test's expected set is the fused pair rule's
   bytes. Red with that branch's own binary at its head (23:01), green at 19:32. Theirs to settle, their area.
 - **Done when**: the test states the set the token loop reads codes for, and passes.
+- **Record**: done (2026-11-16). The expected set was stale, not the code: `punct_codes` gives a byte its codes from
+  its own pair rule or from its reader's other rule (`/`: reader 1's other, rule 3, reads `Next(0)`, the fused pair
+  rule's table), and the rare `/` arm writes its punctuation from them. The test now states that set: the fused
+  pair rule's first bytes and those whose reader's other reads the same pair table, `<` aside, and checks `/` is
+  among them. Passes.
 
 ### Q26. The tape lab's clippy warnings
 
