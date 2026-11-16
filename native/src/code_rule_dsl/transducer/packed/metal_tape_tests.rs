@@ -49,7 +49,7 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
         // The device reads full images in place; a tree-sitter tape is stored named-only
         // (RER-131), so the store holds the document's restored image here.
         let (tape, _stored) = document(source, lang);
-        let bytes = tape.resident_parts().unwrap().0;
+        let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
         store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
         digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));

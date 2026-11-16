@@ -110,13 +110,14 @@ pub fn admit(
 /// The documents of in-memory tapes, resident, in order: hits from the residency, misses copied
 /// from each document's image and source (a batch whose tapes were restored before it ran).
 pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
-    let digests = docs.iter().map(|doc| doc.tape_digest().map_err(invalid)).collect::<Result<Vec<_>, _>>()?;
+    // A digest not known yet serializes the image: a miss's admission copies those bytes.
+    let (digests, mut images): (Vec<_>, Vec<_>) = docs.iter().map(|doc| doc.tape_digest_and_image().map_err(invalid)).collect::<Result<Vec<_>, _>>()?.into_iter().unzip();
     let missing = misses(&digests)?;
     if !missing.is_empty() {
         let mut owned = Vec::with_capacity(missing.len());
         for digest in &missing {
-            let doc = &docs[digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests")];
-            let (image, source, grammar) = doc.resident_parts().map_err(invalid)?;
+            let at = digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests");
+            let (image, source, grammar) = docs[at].resident_parts(images[at].take()).map_err(invalid)?;
             if image.len() < resident::HEADER_LEN {
                 return Err(invalid("a tape image shorter than its header"));
             }
@@ -125,6 +126,8 @@ pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Ar
             let plan = Plan { tape: image.len(), source: source.len(), nodes, codes, lines };
             owned.push((*digest, plan, Arc::clone(grammar), image, source));
         }
+        // The hits' images, serialized for their digests, are not copied.
+        drop(images);
         insert_parts(&digests, owned.iter().map(|(digest, plan, grammar, image, source)| (*digest, plan, &**grammar, Parts::Bytes(image, source.as_bytes()))).collect())?;
     }
     resident(&digests)

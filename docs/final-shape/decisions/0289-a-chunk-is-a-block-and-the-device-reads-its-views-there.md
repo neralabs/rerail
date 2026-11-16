@@ -233,6 +233,18 @@ lane gave the label passes fewer documents again, and fewer of them hits:
 
 Per document it is higher because more of them were misses. What is left of an admission is as in step A.
 
+Then the image is serialized once. A document whose digest is not known yet (parsed in this run, not restored from
+the store) serialized its image to hash it and again to copy it. `TapeDoc::tape_digest_and_image` now returns the
+bytes it hashed, and admission copies those (`resident_parts` takes them). The hits' bytes are dropped unread.
+Measured cold on hogql, the same findings:
+
+| | Batches | Documents (hits) | `residency.docs` | Of which not admission |
+|---|---|---|---|---|
+| Step B | 10 | 308 (33) | 16.5 ms, 54 µs a document | 4.9 ms, 15.9 µs a document |
+| Serialized once | 16 | 553 (191) | 20.1 ms, 36 µs a document | 7.0 ms, 12.7 µs a document |
+
+Admission itself was 0.88 µs a KB (13.1 ms for 14.5 MB).
+
 ## Order, and why
 
 §2 first: it removes the measured cost (the views' 22.4 ms), and needs only §1's copy of each array, made once per
