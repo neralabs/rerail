@@ -425,7 +425,7 @@ impl<'a> Run<'a, '_> {
                 Lit::Cmp { l: TermRef::Call(fl, xl), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Call(fr, xr) }
                     if b.v.text(fl) == "doc" && b.v.text(fr) == "doc" && xl.clone().count() == 1 && xr.clone().count() == 1 =>
                 {
-                    // `@doc($a) = @doc($b)` (cross_rounds' hops): both nodes bound.
+                    // `@doc($a) = @doc($b)` (the split's same-document join): both nodes bound.
                     let (x, y) = (xl.clone().next().expect("one"), xr.clone().next().expect("one"));
                     if !slots.bound(x) || !slots.bound(y) {
                         return None;

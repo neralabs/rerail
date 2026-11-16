@@ -1,4 +1,4 @@
-use crate::code_rule_dsl::{logic::{front, plan}, typing::file_local::Binding};
+use crate::code_rule_dsl::{logic::plan, typing::file_local::Binding};
 use std::collections::BTreeMap;
 
 #[test]
@@ -63,13 +63,15 @@ fn prepared_identity_child() {
     let mut programs = BTreeMap::new();
     super::super::with_prepared(|kept| for (key, all) in kept.iter() {
         for p in all {
-            let (sccs, _) = front::strata(&p.split.cross).unwrap();
-            let by = front::rules_by_stratum(&p.split.cross, &sccs);
-            let identities: BTreeMap<_, _> = plan::identities_of(&p.split.cross, &sccs, &by).unwrap().into_iter().collect();
+            // Read from the cross part's version (its rules by their handles), as the run reads it.
+            let placed = plan::body::Placed::whole(p.split.versions.cross.clone());
+            let sccs = placed.components().unwrap();
+            let by = plan::keys_by_stratum(&placed, &sccs);
+            let identities: BTreeMap<_, _> = plan::identities(placed.fields().unwrap(), &plan::body::Versions::of_placed(placed.clone()), &sccs, &by).into_iter().collect();
             let label = key.iter().map(|b| format!("{b:02x}")).collect::<String>();
             assert!(!programs.contains_key(&label), "one store must have one prepared variant per key");
             programs.insert(label, serde_json::json!({"outputs":p.prog.outputs,"front":format!("{:?}",p.prog),
-                "local":format!("{:?}",p.split.local), "cross":format!("{:?}",p.split.cross),
+                "local":p.split.versions.local.show(), "cross":p.split.versions.cross.show(),
                 "identities":identities}));
         }
     });

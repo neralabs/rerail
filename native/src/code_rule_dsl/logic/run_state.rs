@@ -133,7 +133,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/demand.rs", "WHOLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/lower.rs", "TREE_READS", Thread, "this thread's counts of trees decoded and copied, and of reads of a version's tree"),
+    ("src/code_rule_dsl/logic/program_image/version.rs", "DECODED", Thread, "this thread's count of trees decoded from versions (`Version::program`), and the place of the last"),
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "DECIDING", Call, "the decisions of the step open on this thread (decision 0269): a pool job's are the profile's alone"),
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),

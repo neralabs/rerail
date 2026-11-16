@@ -391,7 +391,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
-    ("code_rule_dsl/logic/plan/corpus/recursive_spike.rs", "CARRY", "4"),
     ("code_rule_dsl/logic/plan.rs", "PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),

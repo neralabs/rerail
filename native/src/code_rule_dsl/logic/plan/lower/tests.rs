@@ -21,7 +21,7 @@ fn kinds_flow_through_derived_columns_and_facts() {
     let python = dialect_by_label("python").unwrap();
     let mut next = 100;
     let mut interned = Vec::new();
-    let l = lower(&p, python, &mut |s| {
+    let l = super::lower_tree(&p, python, &mut |s| {
         interned.extend(s.iter().map(|s| (*s).to_owned()));
         Ok(s.iter().map(|_| {
             next += 1;
@@ -61,7 +61,7 @@ fn a_kind_membership_compares_kind_atoms() {
     .unwrap();
     let python = dialect_by_label("python").unwrap();
     let mut next = 100;
-    let l = lower(&p, python, &mut |s| {
+    let l = super::lower_tree(&p, python, &mut |s| {
         Ok(s.iter()
             .map(|_| {
                 next += 1;
@@ -92,7 +92,7 @@ fn a_program_lowered_for_one_store_moves_to_another() {
     let python = dialect_by_label("python").unwrap();
     let lowered = |base: u32| {
         let mut names = Vec::new();
-        let l = lower(&p, python, &mut |s| {
+        let l = lower_tree(&p, python, &mut |s| {
             names.extend(s.iter().map(|s| (*s).to_owned()));
             Ok((0..s.len() as u32).map(|i| base + 3 * i).collect())
         })

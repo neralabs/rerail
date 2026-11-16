@@ -1806,8 +1806,6 @@ pub(crate) mod logic {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::rr::WORLD;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::typing::cross_rounds;
-            #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::plan::corpus::hiding::qualified;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::plan::corpus::inputs::parameters as input_parameters;
@@ -3963,6 +3961,7 @@ mod transducer {
 // Typing's rounds run over T's facts in tests only until Phase 10 wires them.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "typing")]
 mod typing {
+    #[allow(unused_imports)]
     pub use rerail_logic::code_rule_dsl::typing::*;
     // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
     #[cfg(test)]

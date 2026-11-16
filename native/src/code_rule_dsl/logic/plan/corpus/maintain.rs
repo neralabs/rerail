@@ -92,31 +92,38 @@ pub(in crate::code_rule_dsl) fn views_on() -> bool {
 /// each run, as itself and as its old rows (`kind__sup0` and `kind__sup0__old` each a scan of `node`'s 243,092
 /// rows, 0.8 s of an O125 step for four such views). Kept and maintained as other relations, a view costs its
 /// delta, and its rows' memory (about 10 MB each there).
-pub(in crate::code_rule_dsl) fn input_views(prog: &front::Program) -> BTreeMap<String, Rule> {
+///
+/// Read from the program's version by its handles: each such relation, with the input its rule reads.
+pub(in crate::code_rule_dsl) fn input_views(p: &Placed) -> Result<BTreeMap<String, String>> {
     if !views_on() {
-        return BTreeMap::new();
+        return Ok(BTreeMap::new());
     }
-    let mut by: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
-    for r in &prog.rules {
-        by.entry(r.head.rel.as_str()).or_default().push(r);
+    let (v, f) = (&p.v, p.fields()?);
+    let mut by: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+    for r in v.rules() {
+        by.entry(v.rel_name(r.head().rel())).or_default().push(r);
     }
-    by.into_iter()
+    Ok(by
+        .into_iter()
         .filter_map(|(rel, rules)| {
             let [rule] = rules.as_slice() else { return None };
-            let [Literal::Atom(a)] = rule.body.as_slice() else { return None };
-            if a.neg || a.gated || !prog.inputs.iter().any(|x| x == &a.rel) || prog.lattice.contains_key(rel) || prog.natives.contains_key(rel) || prog.facts.contains_key(rel) || prog.outputs.iter().any(|o| o == rel) {
+            let mut body = rule.body();
+            let (Some(l), None) = (body.next(), body.next()) else { return None };
+            let PLit::Atom(a) = l.view() else { return None };
+            let input = v.rel_name(a.rel());
+            if a.neg() || a.gated() || !f.is_input(input) || f.lattice(rel) || f.native(rel).is_some() || f.facts(rel).is_some() || f.is_output(rel) {
                 return None;
             }
-            let head: BTreeSet<&str> = rule.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
-            let terms_ok = rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Branded(_) | Term::Str(_)));
-            let one_to_one = a.args.iter().all(|t| match t {
-                Term::Var(v) => head.contains(v.as_str()),
-                Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
+            let head: BTreeSet<_> = rule.head().args().filter_map(|t| t.var()).collect();
+            let terms_ok = rule.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_)));
+            let one_to_one = a.args().all(|t| match t {
+                TermRef::Var(s) => head.contains(&s),
+                TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
                 _ => false,
             });
-            (terms_ok && one_to_one).then(|| (rel.to_owned(), (*rule).clone()))
+            (terms_ok && one_to_one).then(|| (rel.to_owned(), input.to_owned()))
         })
-        .collect()
+        .collect())
 }
 
 fn named(rel: &str, suffix: &str) -> String {
@@ -158,74 +165,55 @@ pub(in crate::code_rule_dsl) struct One<'m> {
 
 /// `rewrite`'s `sccs`: `cross`'s strata, computed once by the caller (as `retain::cut` was given them).
 pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
-    let part = cut.program(cross);
-    // The cut program's version where it has one (a part of the cross part's, decision 0244), else its image.
-    // Read from it, its tree is decoded by no reader here (`lower::Tree`).
-    let of_version = part.version.as_ref().filter(|_| !part.tree_maintained());
-    let p = match of_version {
-        Some(v) => Placed::new(v.clone(), v.rules().map(|r| r.id()).collect(), true),
-        None => Placed::of_program(&part.program)?,
-    };
+    let part = cut.program(cross)?;
+    // The cut program's version (a part of the cross part's, decision 0244).
+    let cut_v = &part.version;
+    let p = Placed::new(cut_v.clone(), cut_v.rules().map(|r| r.id()).collect(), true);
     let f = Fields::of(&p).ok_or_else(|| Error::Plan("the cut program has no image".into()))?;
-    let gates = match &cross.version {
-        Some(v) if !cross.tree_maintained() => crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(v).map_err(Error::Plan)?.gates > 0,
-        _ => !cross.program.gates.is_empty(),
-    };
-    let src = match of_version {
-        Some(_) => {
-            let mut answers: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for &(q, by) in f.answers() {
-                answers.entry(f.rel_name(q).to_owned()).or_default().push(f.rel_name(by).to_owned());
-            }
-            Part {
-                p: &p,
-                f,
-                rules: (0..p.v.rules().count()).collect(),
-                inputs: f.inputs().map(str::to_owned).collect(),
-                outputs: f.outputs().map(str::to_owned).collect(),
-                gates,
-                natives: f.natives().iter().map(|n| (f.rel_name(n.rel).to_owned(), n.reads.iter().map(|r| f.rel_name(*r).to_owned()).collect())).collect(),
-                answers: answers.into_iter().collect(),
-                domains: part.domains.clone(),
-            }
+    let cross_placed = cross.placed()?;
+    let gates = !cross_placed.fields()?.gates().is_empty();
+    let src = {
+        let mut answers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for &(q, by) in f.answers() {
+            answers.entry(f.rel_name(q).to_owned()).or_default().push(f.rel_name(by).to_owned());
         }
-        None => Part {
+        Part {
             p: &p,
             f,
-            rules: (0..part.program.rules.len()).collect(),
-            inputs: part.program.inputs.clone(),
-            outputs: part.program.outputs.clone(),
+            rules: (0..p.v.rules().count()).collect(),
+            inputs: f.inputs().map(str::to_owned).collect(),
+            outputs: f.outputs().map(str::to_owned).collect(),
             gates,
-            natives: part.program.natives.iter().map(|(r, n)| (r.clone(), n.reads().into_iter().map(str::to_owned).collect())).collect(),
-            answers: part.program.answers.iter().map(|(q, by)| (q.clone(), by.clone())).collect(),
+            natives: f.natives().iter().map(|n| (f.rel_name(n.rel).to_owned(), n.reads.iter().map(|r| f.rel_name(*r).to_owned()).collect())).collect(),
+            answers: answers.into_iter().collect(),
             domains: part.domains.clone(),
-        },
+        }
     };
     let mut over = rewrite_over(&src, Builder::derive(&p.v), cut, kept, sccs, given, None)?;
     over.b.set_inputs(&over.inputs);
     let (v, _) = over.b.finish().map_err(Error::Plan)?;
-    // The run reads `v` and its `Maint`; a reader of the tree decodes it (`lower::Tree`), none on the run path.
+    // The run reads `v` and its `Maint`.
     let maint = match over.groups.is_empty() && over.together.is_empty() {
         true => None,
         false => Some(Arc::new(Maint::written(&v, &p.v, &over.groups, &over.together)?)),
     };
-    let program = lower::Tree::maintained(v.clone(), maint.clone());
     if let Ok(show) = std::env::var("O125_RULES") {
-        for r in program.rules.iter().filter(|r| r.head.rel.starts_with(show.as_str())) {
-            eprintln!("O125_RULES {r}");
+        for r in v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with(show.as_str())) {
+            eprintln!("O125_RULES {}", v.show_rule(r));
         }
-        for r in cross.program.rules.iter().filter(|r| r.head.rel == show) {
-            eprintln!("O125_RULES given {r}");
+        let given = &cross_placed.v;
+        for r in given.rules().filter(|r| given.rel_name(r.head().rel()) == show) {
+            eprintln!("O125_RULES given {}", given.show_rule(r));
         }
     }
     // The views of one input (`input_views`), over the whole program: where the part is maintained, those whose
     // input's old rows are kept.
     let views = match kept.filter(|_| !gates) {
         _ if !views_on() => BTreeSet::new(),
-        None => input_views(&cross.program).into_keys().collect(),
-        Some(k) => input_views(&cross.program).into_iter().filter(|(_, r)| r.body[0].atom().is_some_and(|a| k.has_old(&a.rel))).map(|(rel, _)| rel).collect(),
+        None => input_views(&cross_placed)?.into_keys().collect(),
+        Some(k) => input_views(&cross_placed)?.into_iter().filter(|(_, input)| k.has_old(input)).map(|(rel, _)| rel).collect(),
     };
-    Ok(Maintained { program: lower::Lowered { program, version: Some(v), maint, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
+    Ok(Maintained { program: lower::Lowered { version: v, maint, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
 }
 
 // -- The rewrite over a version (decision 0241) --

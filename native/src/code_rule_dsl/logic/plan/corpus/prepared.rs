@@ -260,12 +260,12 @@ fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Valu
         .collect())
 }
 
-/// The prepared program of `facts` (what preparing found, `rest_of`) and its two programs, for `dialect`.
+/// The prepared program of `facts` (what preparing found, `rest_of`), its front program `prog` and its lowered
+/// program's version, for `dialect`.
 pub fn prepared_of(
     facts: &Facts,
     prog: crate::code_rule_dsl::logic::front::Program,
-    program: crate::code_rule_dsl::logic::front::Program,
-    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     dialect: GrammarDialect,
 ) -> Result<Prepared, String> {
     let mut by_rel: BTreeMap<String, Vec<(i64, lower::Domain)>> = BTreeMap::new();
@@ -334,20 +334,6 @@ pub fn prepared_of(
         vocabulary.markers = list("prepared_marker")?;
         vocabulary
     };
-    // The stored image, which the lowered program's readers read: checked, in a debug build, to be its text's program.
-    // A program stored as text has it made here.
-    let version = match version {
-        Some(v) => {
-            #[cfg(debug_assertions)]
-            {
-                let of = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&program).map_err(|e| e.to_string())?;
-                assert_eq!(of.digest(), crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone()).digest(), "a stored program's image is not its text's program");
-            }
-            v
-        }
-        None => crate::code_rule_dsl::logic::program_image::Builder::of_program(&program)?.finish()?.0,
-    };
-    let version_kept = version.clone();
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
@@ -365,11 +351,11 @@ pub fn prepared_of(
                 }).collect())
             };
             let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
-            crate::code_rule_dsl::typing::file_local::assemble(&program, version, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
+            crate::code_rule_dsl::typing::file_local::assemble(version.clone(), set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
-            crate::code_rule_dsl::typing::file_local::programs_over(&program, version)?
+            crate::code_rule_dsl::typing::file_local::programs_of(version.clone())?
         }
     };
     // The memo's strata, when the program was kept with them; else the first run makes them.
@@ -393,8 +379,8 @@ pub fn prepared_of(
     Ok(Prepared {
         prog,
         vocabulary: Arc::new(vocabulary),
-        // Held beside its stored image, which its readers read (`Lowered::placed`).
-        lowered: lower::Lowered { program: lower::Tree::beside(version_kept, program), version: None, maint: None, domains, ops, dialect },
+        // Its stored image alone: the tree read is the split's, made above, and dropped.
+        lowered: lower::Lowered { version, maint: None, domains, ops, dialect },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
@@ -481,32 +467,35 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     }
     let (Some(front), Some(lowered)) = (texts.get("front"), texts.get("lowered")) else { return Ok(None) };
     let mut documents = Vec::new();
-    let mut programs = Vec::new();
-    for digest in [front, lowered] {
+    // The front program, as a tree (its readers read one still); the lowered program, its version opened from its
+    // image, no tree decoded (decision 0281's path, step 5): the split's parts are views of it.
+    let front = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read a program's text".into());
-        let Some((program, version, sources)) = program_text::load_version(store, digest, lists)? else { return Ok(None) };
-        programs.push((program, version));
+        let Some((program, sources)) = program_text::load(store, front, lists)? else { return Ok(None) };
         documents.extend(sources);
-    }
+        program
+    };
+    let version = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "open the lowered program's image".into());
+        let Some((version, sources)) = program_text::load_image(store, lowered, lists)? else { return Ok(None) };
+        documents.extend(sources);
+        version
+    };
     let read = start.elapsed();
     let at = std::time::Instant::now();
-    // The lowered program's version, where it is kept as an image: the split's parts are views of it.
-    let (mut lowered, mut version) = programs.pop().expect("two");
-    let (front, _) = programs.pop().expect("two");
-    let found = match relocate(store, &mut facts, &mut lowered) {
-        Some(false) => Found::Kept,
-        Some(true) => {
-            // Its image made again of the moved program: the run reads it in place.
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "the moved program's image".into());
-            let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(&lowered) else { return Ok(None) };
-            let Ok(v) = crate::code_rule_dsl::logic::program_image::Version::open(&bytes) else { return Ok(None) };
-            version = Some(v);
+    // Its atoms this store's, the version is read as opened; another store's (decision 0270), its tree is decoded
+    // once to move them and imaged again (the one tree a lookup reads, and only on a move: work queue Q43).
+    let mut version = version;
+    let found = match relocate(store, &mut facts, &version, lists) {
+        Some(None) => Found::Kept,
+        Some(Some(moved)) => {
+            version = moved;
             crate::code_rule_dsl::prof::count("corpus.prepared_moved", 1);
             Found::Moved
         }
         None => return Ok(None),
     };
-    let got = prepared_of(&facts, front, lowered, version, dialect);
+    let got = prepared_of(&facts, front, version, dialect);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
@@ -516,21 +505,34 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
 }
 
 /// Moves the lowered program's name atoms, and the pointer's (`prepared_op`, `prepared_interned_atom`), to `store`'s
-/// (decision 0270): its strings interned here in one call. `Some(false)` when they are already this store's,
-/// `Some(true)` when they moved; `None` when the program holds a name atom no intern call made, or the store refuses.
-fn relocate(store: &ContentStore, facts: &mut Facts, lowered: &mut crate::code_rule_dsl::logic::front::Program) -> Option<bool> {
+/// (decision 0270): its strings interned here in one call. `Some(None)` when they are already this store's,
+/// `Some(version)` of the moved program when they moved; `None` when the program holds a name atom no intern call
+/// made, or the store refuses.
+pub fn relocate(
+    store: &ContentStore,
+    facts: &mut Facts,
+    version: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    lists: &crate::code_rule_dsl::logic::front::Lists,
+) -> Option<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's atoms, in this store".into());
     let rows = facts.get_mut("prepared_interned_atom")?;
     let strings: Vec<&str> = rows.iter().map(|r| match r.get(2) { Some(Value::Str(x)) => Some(x.as_str()), _ => None }).collect::<Option<_>>()?;
     let old: Vec<u32> = rows.iter().map(|r| r.get(3).and_then(Value::integer).and_then(|a| u32::try_from(a).ok())).collect::<Option<_>>()?;
     let new: Vec<u32> = store.intern_atoms(&strings).ok()?.into_iter().map(u32::from).collect();
     if new == old {
-        return Some(false);
+        return Some(None);
     }
     let to: rustc_hash::FxHashMap<u32, u32> = old.iter().copied().zip(new.iter().copied()).collect();
-    if !lower::relocate(lowered, &to) {
+    let mut lowered = version.program(lists).ok()?;
+    if !lower::relocate(&mut lowered, &to) {
         return None;
     }
+    // Its image made again of the moved program: the run reads it in place.
+    let moved = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the moved program's image".into());
+        let bytes = crate::code_rule_dsl::logic::program_image::encode(&lowered).ok()?;
+        crate::code_rule_dsl::logic::program_image::Version::open(&bytes).ok()?
+    };
     crate::code_rule_dsl::logic::profile::decision("the prepared program's atoms (decision 0270)", || format!("prepared by another store: its {} names moved to this store's atoms", strings.len()));
     for (row, &a) in rows.iter_mut().zip(&new) {
         let mut cells: Vec<Value> = row.to_vec();
@@ -543,7 +545,7 @@ fn relocate(store: &ContentStore, facts: &mut Facts, lowered: &mut crate::code_r
         cells[1] = Value::Int(i64::from(*to.get(&a)?));
         *row = cells.into();
     }
-    Some(true)
+    Some(Some(moved))
 }
 
 /// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), with neither program read:
@@ -578,15 +580,13 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     let mut facts = rest_of(prepared);
     let mut documents = Vec::new();
     for (name, prog) in [("front", Some(&prepared.prog)), ("lowered", None)] {
-        // The lowered program's image is its version's, stored as it is (no encode of its tree); its tree where it
-        // has none.
-        let stored = match (prog, prepared.lowered.program.version()) {
-            (Some(p), _) => program_text::store(store, p)?,
-            (None, Some(v)) => match program_text::store_version(store, v)? {
-                Some(s) => Some(s),
-                None => program_text::store(store, &prepared.lowered.program)?,
-            },
-            (None, None) => program_text::store(store, &prepared.lowered.program)?,
+        // The lowered program's image is its version's, stored as it is (no encode of its tree). With images off
+        // (`RERAIL_PROGRAM_IMAGE=off`) it is not kept, as a version has no text form: the program is prepared again.
+        let stored = match prog {
+            Some(p) => program_text::store(store, p)?,
+            None => {
+                program_text::store_version(store, &prepared.lowered.version)?
+            }
         };
         let Some((digest, sources)) = stored else { return Ok(None) };
         facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&digest).into())].into());
