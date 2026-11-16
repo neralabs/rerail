@@ -645,7 +645,9 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     // `.tsx` and `.js` files, which main's TypeScript reads) runs once per dialect, lowered for each, as
     // `run_program` runs one. The first run writes `out`; each other dialect's writes `out/<dialect>`, and its
     // findings are added to `out`'s.
+    let dialects = crate::code_rule_dsl::logic::profile::span(|| "the dialects in the corpus".into());
     let runs = if t_facts.is_some() { vec![(None, programs.iter().map(|p| (*p).to_owned()).collect())] } else { dialect_runs(&programs, root, &options)? };
+    drop(dialects);
     let mut report = None;
     for (i, (label, texts)) in runs.iter().enumerate() {
         let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
@@ -697,6 +699,21 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
         text += &format!(
             "  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB; {statements} SQLite statements\n"
         );
+    }
+    // Decision 0288: the run's thread per phase, at the phase's bounds: what of its wall it ran, helped the pool or
+    // spent off a core, and how parallel the process was meanwhile.
+    for (phase, c) in &report.phase_clock {
+        text += &format!(
+            "  {phase:<6} {:.2} s wall: the run's thread {:.2} s own, {:.2} s helping, {:.2} s off a core; the other threads {:.2} s; parallel {:.2}; ready with no core {:.2} s; {} involuntary switches\n",
+            c.wall, c.own, c.helped, c.off_core(), c.others(), c.process_cpu / c.wall.max(1e-9), c.no_core(), c.involuntary
+        );
+    }
+    if !report.phase_clock.is_empty() {
+        let run: f64 = report.phase_clock.iter().map(|(_, c)| c.wall).sum();
+        let age = crate::code_rule_dsl::logic::profile::process_age();
+        if age > 0.0 {
+            text += &format!("  the phases above {run:.2} s of the process's {age:.2} s so far\n");
+        }
     }
     // Retired instructions and cycles of the whole process: steadier than CPU time on a loaded machine, so a change
     // is compared by them (macOS; nothing elsewhere).
@@ -776,7 +793,20 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
     // them to the idle job.
     crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
-    cli_in(args, &mut Default::default())
+    // Decision 0288: the command's clocks, for its time before its run and after it.
+    crate::code_rule_dsl::logic::profile::command_begins();
+    let out = cli_in(args, &mut Default::default());
+    let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
+    match (out, after) {
+        (Ok(mut text), Some(c)) => {
+            text += &format!(
+                "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
+                c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
+            );
+            Ok(text)
+        }
+        (out, _) => out,
+    }
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
@@ -1068,6 +1098,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     };
     // A directory: every `.rr` in it, run as one program (each file parsed once for all of them); each file's
     // `#include`s are read in.
+    let reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
     let programs = if Path::new(program.as_str()).is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
@@ -1094,6 +1125,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };
+    drop(reading);
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }
