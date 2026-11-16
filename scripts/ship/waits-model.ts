@@ -384,7 +384,7 @@ export function buildWaitsSection(runs: readonly WaitRun[], config: WaitsConfig)
   const items = SCENARIOS.filter((spec) => config.requested.includes(scenarioId(spec))).map((spec) => waitItem(spec, runs, config));
   const measured = items.filter((i) => i.runs.baseline + i.runs.candidate > 0);
   const notMeasured = [
-    ...items.filter((i) => i.runs.baseline + i.runs.candidate === 0).map((i) => ({ id: i.id, reason: config.skipped[i.id] ?? "not run" })),
+    ...items.filter((i) => i.runs.baseline + i.runs.candidate === 0).map((i) => ({ id: i.id, reason: config.skipped[i.id] ?? (i.runs.failed.length > 0 ? `every run failed on both sides: ${i.runs.failed[0]!.reason}` : "not run") })),
     ...Object.entries(config.skipped).filter(([id]) => !items.some((i) => i.id === id)).map(([id, reason]) => ({ id, reason })),
   ];
   const counted = measured.filter((i) => i.gated);
