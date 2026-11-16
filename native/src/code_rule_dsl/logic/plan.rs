@@ -7827,6 +7827,16 @@ impl<'a> Run<'a, '_> {
                 }
                 // The line's work: its counts, and a whole plan's work as its cut reported it.
                 let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64 + if whole { c.work as f64 } else { 0.0 };
+                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
+                // orders run over a sample of the rows left, each cut at `trial_cutoff` times the least work measured
+                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
+                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
+                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
+                // under `TRIAL_LEAST` rows, the trials wait for a later check.
+                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
+                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
+                const TRIAL_LEAST: usize = 8;
+                let joined = positive_atoms(&b) >= 2;
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
@@ -7841,22 +7851,19 @@ impl<'a> Run<'a, '_> {
                         self.heavy_for([r], true, Some(key));
                         joins::take_forced(&key);
                         self.request_search(r, None, rule, key, work, Some((&name, line, &running)))?;
-                        // With trials (decision 0207) the orders are measured below instead.
-                        if !joins::trials_on() && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                        // With trials (decision 0207) the orders are measured below instead, where they can be. Decision
+                        // 0271: a line no trial measures is planned again now, with the exact statistics just taken,
+                        // and its replacement runs under the handoff's limit. That is a line whose sample is under
+                        // `TRIAL_LEAST` (its few lead rows each cost more than its check's budget: `pre_570` did 0 of
+                        // 423 in 201,431 rows of work, then ran 22 s unbounded). A line in a handoff is judged by it.
+                        if !joins::measured_below(sample >= TRIAL_LEAST, handoff[line].is_some()) && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                            if joins::trials_on() {
+                                joins::log(|| format!("slow {}: {} of its lead rows done, under a trial's {TRIAL_LEAST}: planned again now", b.head_text(), c.done));
+                            }
                             place!(new);
                         }
                     }
                 }
-                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
-                // orders run over a sample of the rows left, each cut at `trial_cutoff` times the least work measured
-                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
-                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
-                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
-                // under `TRIAL_LEAST` rows, the trials wait for a later check.
-                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
-                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
-                const TRIAL_LEAST: usize = 8;
-                let joined = positive_atoms(&b) >= 2;
                 if let Some(key) = keys.get(line).copied().flatten() && joins::trials_on() && joined && sample >= TRIAL_LEAST && handoff[line].is_none() && joins::take_trial(key) {
                     // Decision 0209: the candidates are priced with the line's skewed join columns' heavy values.
                     self.heavy_for([r], true, Some(key));
@@ -8160,11 +8167,16 @@ impl<'a> Run<'a, '_> {
                     Some(h) => {
                         let ran = per_row(c.work, c.done);
                         let back = ran > h.per_row;
-                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
                         joins::count_handoff(back);
+                        let (other, other_rate) = if back { (now.clone(), ran) } else { (h.old.clone(), h.per_row) };
                         if back && !place!(h.old) {
                             return Err(Error::Plan(format!("a join of {} has no native step", b.head_text())));
                         }
+                        // Decision 0271: the order that goes on keeps a limit, and the two are compared again at it.
+                        let base = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
+                        let limit = joins::limit_again(if back { h.per_row } else { ran }, base, c.left as f64, c.work as f64);
+                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on, limit {limit:.0}", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
+                        handoff[line] = Some(joins::Handoff { old: other, per_row: other_rate, limit });
                     }
                 }
             }

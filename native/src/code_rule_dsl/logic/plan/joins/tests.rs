@@ -233,6 +233,25 @@ fn a_requested_search_proposes_its_orders() {
     clear();
 }
 
+/// Decision 0272 (O167): a one-shot process serves its waiting searches at its run's end, so their proposals are
+/// written with the memo; without `drain_at_end` (a long-lived process) they wait for the idle job.
+#[test]
+fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
+    let _serial = SERIAL.lock();
+    clear();
+    drain_at_end(false);
+    noted_mut(&mut MEMO.write(), 410, 1).wants_search = true;
+    request(410, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0)], walked: None }));
+    drain();
+    assert_eq!(requests(), 1, "a long-lived process leaves the search to the idle job");
+    drain_at_end(true);
+    drain();
+    drain_at_end(false);
+    assert_eq!(requests(), 0, "a one-shot run serves it at its end");
+    assert_eq!(note(&410).unwrap().proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![5.0]);
+    clear();
+}
+
 /// Decision 0207: a line's orders are trialled once in a process, and once more after a flag; each trial's ratio is
 /// kept as an order tried, as a run's is.
 #[test]
@@ -309,6 +328,28 @@ fn a_cut_trial_is_a_floor_of_its_ratio() {
     let t = n.tried.iter().find(|t| t.order == steps(&cheap)).unwrap();
     assert!((t.ratio - 3.0).abs() < 1e-9 && t.runs == 1, "a floor raises the ratio, never lowers it: {t:?}");
     clear();
+}
+
+/// Decision 0271: a slow line is bounded on every path. One a trial cannot sample (pre_570: 0 of 423 lead rows done
+/// in 201,431 rows of work) is planned again at its check; a line in a handoff is judged by it. At a replacement's
+/// second cut, the order that goes on keeps a finite limit, from its own measured rate, or twice its work where it
+/// has done no row.
+#[test]
+fn a_slow_line_is_bounded_on_every_path() {
+    assert!(trials_on(), "the tests run with trials on");
+    assert!(!measured_below(false, false), "a slow line no trial samples is planned again now");
+    assert!(measured_below(true, false) && measured_below(false, true));
+    let f = slow_factor();
+    // The replacement goes on at 2 rows of work a row, having done 100, with 50 rows left.
+    assert_eq!(limit_again(2.0, 100.0, 50.0, 300.0), 100.0 + f * 2.0 * 50.0);
+    // The old order placed back starts again from no work.
+    assert_eq!(limit_again(1.5, 0.0, 50.0, 300.0), f * 1.5 * 50.0);
+    // Neither order has done a row: the one that goes on may double its work before the next comparison.
+    assert_eq!(limit_again(f64::INFINITY, 201_431.0, 423.0, 201_431.0), 2.0 * 201_431.0);
+    assert_eq!(limit_again(f64::INFINITY, 0.0, 423.0, 0.0), 1.0);
+    for (rate, base, left, work) in [(0.0, 0.0, 0.0, 0.0), (f64::INFINITY, 0.0, 0.0, 7.0), (1e9, 1e9, 1e9, 1e9)] {
+        assert!(limit_again(rate, base, left, work).is_finite(), "no order goes on unlimited: {rate} {base} {left} {work}");
+    }
 }
 
 /// Decision 0208: the path as the strata ran. s1 does the most work but ran as a job beside s2, which took longer:

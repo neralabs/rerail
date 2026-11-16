@@ -4880,6 +4880,11 @@ search's.
 
 ## O167. Wider searches asked for by a one-shot process are lost at its exit
 
+Status: closed (2026-11-15) by decision 0272. Every CLI command serves its waiting searches at its run's end,
+within 5% of its CPU, before the memo is written. Over 50 files, the python pack served all 64 in 21 ms, and none
+were left. The searches the budget leaves keep `wants_search`, and are asked again by the next run. The text below
+is as opened.
+
 Decision 0203 §5: the `join-search` job runs at idle; a command exits first, and only `wants_search` survives (the
 next run searches inline where the line's work pays). **Closure:** the queued requests kept in the store as the
 line and rule, and run by `rerail-engine upkeep` or a daemon, which rebuild the model from the stored statistics.
@@ -5263,7 +5268,10 @@ rows, and check that a program alone and in a pack read its exports the same way
 
 ## O-adaptive-worst-case. A slow line with few lead rows done runs unbounded (2026-11-15)
 
-Status: open. The adaptive planner (0203, 0206, 0207) exists to bound the worst case: a join that runs far over its
+Status: closed (2026-11-15) by decision 0271. A slow line that no trial can sample is planned again at its check,
+and its replacement runs under the handoff's limit. The order that goes on at a second cut keeps a limit, and the
+two are compared again. On the data-layer candidates over 50 files, `q4_la_vis` takes both paths, and gives the
+same 75 rows. The text below is as opened. The adaptive planner (0203, 0206, 0207) exists to bound the worst case: a join that runs far over its
 price is cut and replaced. Two paths leave a line with no bound.
 
 - **No trial, and no replan.** At a seed's or whole plan's check, a line flagged slow is replanned inline only with
@@ -5278,3 +5286,37 @@ price is cut and replaced. Two paths leave a line with no bound.
 Next: where a slow line cannot be trialled, replan it inline under the handoff's limit, as with trials off. Or
 trial it over at least `TRIAL_LEAST` of its rows left whatever their work so far, each trial still cut at `cap`.
 And decide whether a replacement cut twice keeps a limit.
+
+## O-post-merge-cpu. Where the hub merge's extra CPU came from (2026-11-15)
+
+Status: measured, and two items follow. The merge of the hub (713beb9f7) and of the cost-classifier work (46740959f)
+added 7–9% to the python pack's cold run over 50 files of corpus0, with the same 63 rows. Instructions retired, in
+billions; two or three runs each, strict, node attributes eager, under load (load average 35–55):
+
+| build | G instructions | peak MB |
+|---|---|---|
+| before (efe2a50dd) | 159.9–160.1 | 806–814 |
+| after (d005f301e) | 170.9–173.8 | 844–937 |
+| after, trials off (`RERAIL_JOIN_TRIALS=off`) | 169.5–169.9 | 909–922 |
+| after, semijoin keys inlined again (2ff9ffe8e undone) | 164.0–165.1 | 822–890 |
+| after, both | 155.4–159.9 | 833–849 |
+
+The profiles' spans say the same (the profiled runs: own CPU 14.9 → 15.7 s):
+
+- **Semijoin keys are now stored (≈7 G).** rr-align's 2ff9ffe8e marks a factorized part's key (`fzk…`, 0099) and
+  an export-demand key (`xk_…`) `no_inline`. It guards against a key inlined into its reader that enumerates
+  its document's nodes again for every row (7.9 M rows, and a run that never finished). Here the keys' strata
+  went from 210 runs and 1.95 M rows of work to 332 runs and 8.09 M rows (0.10 → 0.49 s in the joins). More
+  relations are stored too: the store writer's frames and memo entries went from 0.53 to 0.69 s. The guard is a
+  worst-case one. Its cost is each part's body evaluated twice, once for its key and once for the reduced part.
+  **Next:** make a key the projection of its unreduced part (each body once), or store it only where its
+  reader's join would enumerate (the guard's case). This belongs to the factorizing code's owners.
+- **Trials at every line's first check (≈3–5 G).** Decision 0207 trials a line at its first check whether or
+  not it is slow, and the hub's trials walk each candidate (0233, 0236, 0245). On the python pack over 50
+  files, 119 lines were trialled or walked. 11 of them were slow, and one trial won: `rr_agg287`, 11,096 rows of
+  work against 15,461. The trials' cost shows as the strata's own CPU (0.47 → 1.03 s; 0.29 s with trials off).
+  `ruff_safe_operand` alone went from 0.12 to 0.26 s, with the same plan. **Open, for the user:** trialling only
+  lines flagged slow would fit the planner's aim (bounding the worst case), and would save most of this. But 0207 was
+  asked for so that proposed orders are "actually tested ... in order to properly price them" (2026-11-14), and
+  that would then hold for slow lines only.
+- The rest (≈1 G) is spread out: the `pre_` strata (+1 M rows of work), and the store writer.

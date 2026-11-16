@@ -405,6 +405,20 @@ pub(super) fn next_due(key: PlanKey) -> Option<f64> {
 /// `limit`, the work its replacement may do over the rows left before the two are compared.
 pub(in crate::code_rule_dsl::logic) struct Handoff { pub old: Vec<Step>, pub per_row: f64, pub limit: f64 }
 
+/// Decision 0271: whether a slow seed's or whole plan's orders are measured after its check, by a trial (its sample has
+/// `TRIAL_LEAST` rows: `sampled`) or by the handoff it is in. Where not, it is planned again at the check.
+pub(super) fn measured_below(sampled: bool, in_handoff: bool) -> bool {
+    trials_on() && (sampled || in_handoff)
+}
+
+/// Decision 0271: the limit of the order that goes on at a replacement's cut, before the two are compared again: past
+/// the work `base` it has done (none, for the old order placed back), `slow_factor` times its work per row `rate`
+/// over the `left` rows left. An order that has done no row (`rate` infinite) may double the work, at least the cut's
+/// `work`, before the next comparison. Always finite: no order goes on unlimited.
+pub(super) fn limit_again(rate: f64, base: f64, left: f64, work: f64) -> f64 {
+    base + if rate.is_finite() { slow_factor() * rate * left.max(1.0) } else { base.max(work).max(1.0) }
+}
+
 /// A handoff made, or ended with the old order going on (`back`).
 pub(super) fn count_handoff(back: bool) {
     COUNTS[if back { HANDBACKS } else { HANDOFFS }].fetch_add(1, Relaxed);
@@ -855,8 +869,9 @@ pub fn search_one(over: &dyn Fn() -> bool) -> bool {
     true
 }
 
-/// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process (the CLI's
-/// `run-policies`) ends before the machine is idle, and its requests, with the relations they hold, end with it.
+/// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process ends before the
+/// machine is idle, and its requests, with the relations they hold, end with it. Decision 0272: every command of the
+/// CLI (`tools::cli`) sets it; a long-lived caller (the reactor) leaves the searches to the idle job.
 static DRAIN: AtomicBool = AtomicBool::new(false);
 /// The share of the process's CPU a run's end may spend on them.
 const DRAIN_SHARE: f64 = 0.05;
