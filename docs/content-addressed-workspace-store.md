@@ -7,7 +7,7 @@ Losing it costs reuse, never results.
 <details>
 <summary>What it holds and where the code lives</summary>
 
-It holds compressed sources and syntax tapes, per-file rule results, Git tree and snapshot metadata,
+It holds sources and syntax tapes, per-file rule results, Git tree and snapshot metadata,
 workspace overlays of changed files, and a kind search index.
 
 Code: `native/src/content_store/`, plus `native/src/code_rule_dsl/workspace/` (`storage.rs`,
@@ -135,7 +135,9 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once, as an independent compressed frame checked on every read.
+Each source and tape is stored once. A scan's sources and tapes are kept uncompressed in segment files beside the
+store (`content-v5.sqlite.objects/`), read in place; the row points at its range and holds no bytes. Other writes keep
+an independent compressed frame in the row, checked on every read.
 
 - **`source_objects`:** each source under its SHA-256.
 - **`tape_objects`:** one syntax tape per source and grammar.

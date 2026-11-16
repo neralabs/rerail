@@ -646,8 +646,8 @@ impl ContentStore {
             let mut live = HashSet::new();
             {
                 let mut rows = tx.prepare(
-                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(length(s.frame), 0), \
-                     coalesce((SELECT length(t.frame) FROM tape_objects t WHERE t.source_id=l.source_id \
+                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(CASE WHEN s.seg != 0 THEN s.seg_len ELSE length(s.frame) END, 0), \
+                     coalesce((SELECT CASE WHEN t.seg != 0 THEN t.seg_len ELSE length(t.frame) END FROM tape_objects t WHERE t.source_id=l.source_id \
                                AND t.grammar_version=l.grammar_version AND t.tape_format_version=l.tape_format), 0) \
                      FROM corpus_live l LEFT JOIN source_objects s ON s.source_id=l.source_id",
                 )?;
@@ -873,6 +873,8 @@ impl ContentStore {
         pass.plan_rows += usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR)? > 0);
         // The frames' segments, once frames written again or collected left most of them unnamed (decision 0295 §4).
         pass.plan_rows += usize::from(self.compact_frame_segments(MEMO_PACK_FLOOR)? > 0);
+        // The tapes' and sources' segments, once files stored again or collected left most of them unnamed (0295 step 5).
+        pass.plan_rows += usize::from(self.compact_object_segments(MEMO_PACK_FLOOR)? > 0);
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }

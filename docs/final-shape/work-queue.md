@@ -1003,6 +1003,18 @@ pass.
   declarations and facts of an overlay of the input whose own layer states none (0298, "A selection's own cost");
   the program image's 26 tests, which check carried analyses in a debug build, pass.
 
+### Q46. (Q29 at 64e416c9b) A rule reading `value` sends SQL inside the waves
+
+- **Found** (2026-11-16, measuring the write path for 0259's guard): bench step-vs-main's 317 rules (`B-now`, with
+  `docs/rule-syntax/lib`) over 10 of corpus0's files stop under `RERAIL_SQL_STRICT` ("SQL inside the waves", rc 134):
+  `run: SELECT n, v FROM main.value`, from `native::setfix::input_of` (`join_rule_with`, `open_spec`, a native
+  stratum). `value(n: node, v: symbol)` is a base relation with a text column in the run's database, which
+  `input_of` reads by SQL where `view` serves only integer columns of `main.`. Five rules read it (ruff-pyi062,
+  pyi064, ruf051, up032, up036); without them the run passes strict at 10 and 50 files. One file passes with them.
+  The same class as Q12 (a native step that falls back to SQL).
+- **Keep**: decision 0104 (no SQL inside the waves).
+- **Done when**: the five rules run under strict on 50 corpus0 files, `value` served from the run's memory.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

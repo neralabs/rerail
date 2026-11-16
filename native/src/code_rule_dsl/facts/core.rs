@@ -246,16 +246,14 @@ pub fn build_in_wave_with_tape(
     };
     let key = queued_tape(&digest, tag, gv, fv);
     let grammar = Arc::new(tape::Grammar::new(language)?);
-    let kept: Option<std::sync::Arc<Vec<u8>>> = match found {
+    let kept: Option<crate::content_store::ObjectBytes> = match found {
+        // Stored: read in its segment, or (an older row) decompressed.
         Some(frame) => {
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decompress".into());
-            Some(std::sync::Arc::new(frame.bytes().map_err(|e| e.to_string())?))
+            Some(frame.bytes().map_err(|e| e.to_string())?)
         }
-        // Still queued for the writer: its compressed frame, decompressed.
-        None => match cache.pending::<crate::content_store::SourceAndTapeFrames>(&key) {
-            Some(frames) => Some(std::sync::Arc::new(frames.tape_bytes().map_err(|e| e.to_string())?)),
-            None => None,
-        },
+        // Still queued for the writer: read where it is (gathered, placed, or a compressed frame).
+        None => cache.queued_tape(&key).transpose().map_err(|e| e.to_string())?,
     };
     let primary = match kept {
         Some(stored) => {
@@ -274,26 +272,11 @@ pub fn build_in_wave_with_tape(
             drop(parse);
             let tape = std::sync::Arc::new(image.primary.to_bytes()?);
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
-            // Compressed here, on the parse's worker; the store's one writer only inserts the frames. The queue holds
-            // the frames and the tape (read from memory until written), not the source.
+            // The run's gather takes the source and tape as they are (no copy), placed in a segment of the store's
+            // when it is full or the wave ends, and read there until written (decision 0295 step 5). No wave waits for
+            // the writer (decision 0104).
             let canonical = HashKey::from_sha256_digest(digest);
-            let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
-            let (held, stored) = (std::sync::Arc::clone(&frames), stored.cloned());
-            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
-            // the file again (decision 0104: no wave waits for the writer).
-            cache.write_back_unless_full(
-                crate::content_store::write_back::Syms::None,
-                "a tape and its source",
-                frames.bytes(),
-                vec![(key, Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
-                Box::new(move |store| {
-                    let (id, _) = store.put_source_and_tape_framed(canonical, tag, gv, fv, &held)?;
-                    if let Some(stored) = &stored {
-                        stored.lock().expect("the stored sources").push(id);
-                    }
-                    Ok(())
-                }),
-            );
+            cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, stored.cloned()).map_err(|e| e.to_string())?;
             image.primary
         }
     };
@@ -334,8 +317,8 @@ pub(crate) fn build_cached_with_tape(
     {
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-        if let Some(frames) = cache.pending::<crate::content_store::SourceAndTapeFrames>(&queued_tape(&digest, tag, gv, fv)) {
-            let held = frames.tape_bytes().map_err(|e| e.to_string())?;
+        if let Some(held) = cache.queued_tape(&queued_tape(&digest, tag, gv, fv)) {
+            let held = held.map_err(|e| e.to_string())?;
             let grammar = Arc::new(tape::Grammar::new(language)?);
             let primary = TapeImage::from_bytes(&held, &grammar)?;
             let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
@@ -380,19 +363,9 @@ pub(crate) fn build_cached_with_tape(
             // (`pending`, above): the source's id is the writer's, so none is returned for a source not stored yet.
             use sha2::Digest as _;
             let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-            // Compressed here, on the parse's worker; the writer only inserts (as above).
+            // Queued as `build_in_wave` queues it: gathered in a run's waves, else compressed here and queued alone.
             let canonical = HashKey::from_sha256_digest(digest);
-            let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
-            let held = std::sync::Arc::clone(&frames);
-            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
-            // the file again (decision 0104: no wave waits for the writer).
-            cache.write_back_unless_full(
-                crate::content_store::write_back::Syms::None,
-                "a tape and its source",
-                frames.bytes(),
-                vec![(queued_tape(&digest, tag, gv, fv), Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
-                Box::new(move |store| store.put_source_and_tape_framed(canonical, tag, gv, fv, &held).map(|_| ())),
-            );
+            cache.queue_source_and_tape(queued_tape(&digest, tag, gv, fv), canonical, tag, gv, fv, file.source(), tape, None).map_err(|e| e.to_string())?;
             image.primary
         }
     };

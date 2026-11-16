@@ -68,7 +68,10 @@ CREATE TABLE IF NOT EXISTS source_objects (
     raw_length INTEGER NOT NULL,
     codec_id INTEGER NOT NULL,
     frame BLOB NOT NULL,
-    created_generation INTEGER NOT NULL
+    created_generation INTEGER NOT NULL,
+    seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0,
+    seg_len INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE TABLE IF NOT EXISTS source_aliases (
     alias_hash_id INTEGER PRIMARY KEY REFERENCES hashes(hash_id),
@@ -86,8 +89,15 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     raw_length INTEGER NOT NULL,
     frame BLOB NOT NULL,
     created_generation INTEGER NOT NULL,
+    seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0,
+    seg_len INTEGER NOT NULL DEFAULT 0,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
+-- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): a
+-- row of codec 0 names its range (`seg`, `seg_at`, `seg_len`) and holds no frame; `seg` 0 is a row whose bytes are its
+-- `frame` (zstd), and -1 one whose segment went missing (absent until stored again).
+CREATE TABLE IF NOT EXISTS object_segments(seg INTEGER PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
 -- The documents a file derives from its own (an embedded program, a generated one), keyed by the
 -- primary document's tape: documents are a function of source, grammar version and tape format,
@@ -853,6 +863,12 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("memo_entries", "over_len", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_raw", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "framed", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).

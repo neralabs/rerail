@@ -1,6 +1,6 @@
 # 0295. Deferred writes are an application WAL of mapped slabs, archived into SQLite as rows in bulk
 
-Status: decided (2026-11-16), by the user's two requirements and answers below. Path steps 2 (the tier), 3 (Outputs on blocks), 4 (the memo in segments) and 5's frames built. Converges 0266 (blocks)
+Status: decided (2026-11-16), by the user's two requirements and answers below. Path steps 2 (the tier), 3 (Outputs on blocks), 4 (the memo in segments) and 5's frames, tapes and sources built. Converges 0266 (blocks)
 with 0173/0241/0244/0276 (the program image and its versions), 0239 (the output image), 0240 §4 and 0280 (the
 memo's pack), 0259 §5 (the spool) and 0260 §8 (the journal block). Keeps 0008 (facts read through virtual tables)
 and 0024 §5 (work can be redone, so no `fsync`).
@@ -267,6 +267,20 @@ wrap, anonymous or file-backed, so the pool's own budget is what counts those.
    its own file. Test: `a_queued_frame_is_placed_in_a_segment_and_read_there`; `frames_are_queued_encoded` checks
    that the queue counts under a hundredth of the bytes. Not yet: frames encoded straight into the segment (the
    encoder writes to the heap today).
+   **Tapes and sources** (built; the user's answer: raw, read in place): a run's parse workers add each parsed
+   file's source and tape (held as the run holds them, no copy) to the run's gather (`write_back::Gather`, one per
+   run and kind, kept beside its wave still being written). Once it holds 16 MB of the budget (`gather_cap`), or the
+   wave is sealed, it is placed in one segment of `<store>.objects/` and queued as one job of that wave; a read of a
+   queued tape (`ContentStore::queued_tape`) finds it gathered, then placed, by its key, and `settle` seals the wave
+   that holds it. The writer writes the segment back, numbers it (`object_segments`), and writes each source and tape
+   as a row of codec 0 pointing at its range (`seg`, `seg_at`, `seg_len`; no frame), moving a stored row there
+   (upsert), so a row whose segment went missing is whole again once its file is parsed again. Every read of either
+   (the corpus's tapes before the first wave, residency, the bulk reads, search indexing, the prefilter's tapes) maps
+   the segment; a row of `seg` 0 is an older or lone write's zstd frame, decompressed as before. Outside a run's
+   waves (a standalone build, a publication) a file is still compressed and written in its own rows. Upkeep compacts
+   the segments; a row whose segment is gone is marked `seg` -1 (never a segment's number) rather than deleted, as
+   other rows name it. The store's disk budget (`capacity`) counts the three segment directories, which it did not.
+   Test: `a_runs_tapes_and_sources_are_gathered_into_a_segment_and_read_there`.
 6. **Facts as blocks** (0266 step 4) with the fold rule and kills by content decided; **the virtual-table module**.
 7. The program image, by Typing-support (Q26).
 
