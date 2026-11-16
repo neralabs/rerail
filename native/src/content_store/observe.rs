@@ -1762,8 +1762,22 @@ pub struct DigestRead {
 impl DigestRead {
     /// The file's length and bytes' digest; `None` when it cannot be read.
     pub fn hash(&self) -> Option<(u64, [u8; 32])> {
-        let bytes = std::fs::read(&self.path).ok()?;
-        Some((bytes.len() as u64, Sha256::digest(&bytes).into()))
+        self.read().map(|bytes| Self::hashed(&bytes))
+    }
+
+    /// The file's bytes, for a caller that keeps them (a run's one read of its sources, decision 0300).
+    pub fn read(&self) -> Option<Vec<u8>> {
+        std::fs::read(&self.path).ok()
+    }
+
+    /// `bytes`' length and digest, as `hash` gives a file's.
+    pub fn hashed(bytes: &[u8]) -> (u64, [u8; 32]) {
+        (bytes.len() as u64, Sha256::digest(bytes).into())
+    }
+
+    /// The file's stat as it was before the read: the bytes are its content while the file's stat is this.
+    pub fn stat(&self) -> &Stat {
+        &self.stat
     }
 }
 

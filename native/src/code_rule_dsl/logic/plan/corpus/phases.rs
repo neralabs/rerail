@@ -462,6 +462,8 @@ pub(super) fn sources_path() -> PathBuf {
 /// the later phases' documents.
 pub(super) fn sources(
     files: &[(String, String, String, String)],
+    // The texts the run read for `files`' digests, which this phase's builder borrows (decision 0300).
+    texts: &super::texts::Sources,
     label: &str,
     root: &Path,
     scratch: &Path,
@@ -516,7 +518,7 @@ pub(super) fn sources(
     let out = scratch.join(format!("phase-{NAME}"));
     let report = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
-        super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, &options)?
+        super::run_read_handing(&handed, Some(texts), root, &out, modes, binding, chunk_nodes, typing, &options)?
     };
     let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
     let text = |v: &Value| match v {
