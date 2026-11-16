@@ -550,7 +550,7 @@ pass.
       ep2 all 357 plans are live and 31 live programs hold the cross space (`frame_program_used`): each edit is a new
       lane, so the 64 protected lanes keep up to 64 edits' predecessors. The space's size is the policy's, not a
       missing collector.
-    - **Built, decision 0301** (the user chose: a lane names its policy set). A set's newer lane supersedes its
+    - **Built, decision 0302** (the user chose: a lane names its policy set). A set's newer lane supersedes its
       older, which keeps no protection; the program that reuses frames and puts nothing holds them (`hold_frames`:
       without it, the sweep dropped the space after each edit and every other edit ran its cross part cold, seen on
       the PYI062 repro). Tests: `a_policy_sets_newer_lane_supersedes_its_older`,
@@ -560,9 +560,21 @@ pass.
       collected 66,155 frames. After it: 131,371 frames, 36,777 identities left out, an edit 52.8–54.9 G (67.8–69.9
       before). Each process now sweeps the decision before its own (the decision is the writer's, after
       `finish_soon`).
-    - **Open:** why the backlog's sweep never finished in a run's process (interrupted, or waiting on the writer):
-      a big backlog would stall again. And lanes of no set (older binaries' manifests, sessions, batches) stay
-      protected: ep2's 36,777 left-out identities leave only when 64 newer lanes of other sets push them out.
+    - **Found and fixed, decision 0303:** the backlog's sweep never finished because the process's end
+      (`finish_soon`) did not wait for a step the upkeep thread was in (its job is out of the list while it steps):
+      the process exited under the sweep, which rolled back, 31 runs in a row. `finish_soon` now holds `STEPPING`.
+      The progress handler was not it (`a_run_that_begins_stops_a_sweep_of_many_small_deletes`).
+    - **Found and fixed, decision 0302 §4:** lanes recorded with no set are an older binary's (this one names every
+      lane's set: `.policy` names, else the lane's own); over a root with named sets they keep no protection. On
+      ep2 the sweep then took 33.7 s (105,291 frames); the cross space fell to 41,045 frames, 9,161 identities, 5,444
+      left out (36,777 before), 3 programs holding it; rows identical (1,334).
+    - **Found after, decision 0303 §2:** with the store 91% free (1.8M free pages), edits cost 101–119 G (53–58 G
+      before): the collector's per-pass `incremental_vacuum(4096)` took 8.1 s behind every run (it walks the free
+      list per page moved). A whole `VACUUM` took 10 s (8.2 GB to 704 MB). Now a store past 20% free is the upkeep
+      job's whole vacuum, and the collector's pass leaves it.
+    - **Pending:** ep2 on the 0303 build (rows, an edit's cost). The build's first run is cold (864 G) and, at nice 19
+      under a load of 60 from other builds, did not finish in 115 or 300 s (2026-11-16 14:20–14:35): retry when the
+      machine is quieter.
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 

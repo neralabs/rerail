@@ -177,7 +177,7 @@ struct Manifest {
 /// Which manifests, met newest first, are among their lane's last `protected_runs` and their lane among the root's
 /// newest `protected_lanes`.
 ///
-/// A lane of a policy set (decision 0301) is protected only while it is its set's newest: an older one (the set's
+/// A lane of a policy set (decision 0302) is protected only while it is its set's newest: an older one (the set's
 /// programs before an edit) holds no protection and takes no place among the root's lanes.
 #[derive(Default)]
 struct Protection<'m> {
@@ -185,11 +185,22 @@ struct Protection<'m> {
     lanes: HashMap<i64, Vec<Option<&'m [u8]>>>,
     /// Each root's policy sets' newest lanes.
     newest: HashMap<(i64, &'m [u8]), Option<&'m [u8]>>,
+    /// The roots with a manifest that names its set: there, a lane with none is an older binary's (§4).
+    named: HashSet<i64>,
 }
 
 impl<'m> Protection<'m> {
+    fn over(manifests: &[Manifest]) -> Self {
+        Protection { named: manifests.iter().filter(|m| m.policy.is_some()).map(|m| m.root).collect(), ..Protection::default() }
+    }
+
     fn protects(&mut self, m: &'m Manifest, runs: usize, lanes: usize) -> bool {
         let lane = m.lane.as_deref();
+        // Decision 0302 §4: this binary names every lane's set (a lane of no set is its own), so a lane with none
+        // over a root it ran is an older binary's, which no newer lane of its set can supersede.
+        if lane.is_some() && m.policy.is_none() && self.named.contains(&m.root) {
+            return false;
+        }
         if let Some(policy) = m.policy.as_deref()
             && *self.newest.entry((m.root, policy)).or_insert(lane) != lane
         {
@@ -409,7 +420,7 @@ impl ContentStore {
         self.record_corpus_run_policy(root, sources, grammar_version, tape_format, plan, also, lane, None, now)
     }
 
-    /// `record_corpus_run_lane`, the lane of policy set `policy` (decision 0301): a newer lane of the set supersedes
+    /// `record_corpus_run_lane`, the lane of policy set `policy` (decision 0302): a newer lane of the set supersedes
     /// its older ones, which keep no protection (`Protection`). `None`: a lane of no set, protected as before.
     #[allow(clippy::too_many_arguments)]
     pub fn record_corpus_run_policy(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, policy: Option<[u8; 32]>, now: i64) -> StoreResult<bool> {
@@ -576,7 +587,7 @@ impl ContentStore {
         if displaced.is_some() {
             return Ok(true);
         }
-        // A policy set's newer lane (decision 0301): its older lanes lose their protection.
+        // A policy set's newer lane (decision 0302): its older lanes lose their protection.
         let superseded: Option<i64> = connection
             .query_row_cached(
                 "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 AND m.policy IS NOT NULL \
@@ -682,7 +693,7 @@ impl ContentStore {
             // build and the program, and its memo (decision 0146: a space of frames, the size of every file's
             // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
             // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
-            let mut protection = Protection::default();
+            let mut protection = Protection::over(&manifests);
             let protected_ids: HashSet<i64> = manifests
                 .iter()
                 .filter(|m| kept_ids.contains(&m.id))
@@ -894,7 +905,7 @@ struct Decided {
 /// The manifests to keep, `manifests` newest first (the module's rules).
 fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64) -> Decided {
     let walk = |cap: Option<u64>| -> Decided {
-        let mut protection = Protection::default();
+        let mut protection = Protection::over(manifests);
         let (mut seen_sources, mut seen_tapes) = (HashSet::new(), HashSet::new());
         let mut out = Decided { kept: Vec::new(), protected: 0, history: 0 };
         for m in manifests {

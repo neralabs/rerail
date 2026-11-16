@@ -16,8 +16,8 @@ const WAL_BYTES: u64 = 64 << 20;
 /// Free pages past this share of the file (and past `FREE_BYTES`) are given back to the disk.
 const FREE_SHARE: f64 = 0.10;
 const FREE_BYTES: u64 = 16 << 20;
-/// A file with no incremental vacuum is vacuumed whole only past this share free, only up to `VACUUM_BYTES`, and
-/// only with this many times its size free on the disk (the copy VACUUM writes).
+/// A file is vacuumed whole past this share free (either vacuum mode: [`give_back`]), only while its live pages are
+/// within `VACUUM_BYTES`, and only with this many times their size free on the disk (the copy VACUUM writes).
 const VACUUM_SHARE: f64 = 0.20;
 const VACUUM_BYTES: u64 = 1 << 30;
 const VACUUM_DISK: u64 = 3;
@@ -94,15 +94,8 @@ impl SqliteFile {
         db.busy_timeout(Duration::from_millis(50))?;
         let get = |p: &str| db.query_row(&format!("PRAGMA {p}"), [], |r| r.get::<_, i64>(0)).map(|v| v.max(0) as u64);
         let (pages, free, page, auto) = (get("page_count")?, get("freelist_count")?, get("page_size")?, get("auto_vacuum")?);
-        let bytes = pages * page;
-        let much_free = free * page > FREE_BYTES;
         let mut work = Work { checkpoint: self.wal_bytes() > WAL_BYTES, ..Default::default() };
-        if auto == 2 && much_free && free as f64 > FREE_SHARE * pages as f64 {
-            work.free_pages = free;
-        }
-        if auto == 0 && much_free && free as f64 > VACUUM_SHARE * pages as f64 && bytes <= VACUUM_BYTES && disk_free(&self.path).is_some_and(|d| d > VACUUM_DISK * bytes) {
-            work.vacuum = true;
-        }
+        (work.free_pages, work.vacuum) = give_back(pages, free, page, auto, || disk_free(&self.path));
         if self.analyzed.is_none_or(|t| t.elapsed() >= ANALYZE_EVERY) {
             let has = |sql: &str, t: &str| db.query_row(sql, [t], |_| Ok(())).optional().map(|r| r.is_some());
             let stat1 = has("SELECT 1 FROM sqlite_schema WHERE name = ?1", "sqlite_stat1")?;
@@ -128,6 +121,30 @@ impl SqliteFile {
         }
         Ok(work)
     }
+}
+
+/// How a file's free pages go back to the disk: (pages an incremental vacuum gives back, whether a whole `VACUUM`
+/// does instead). Past `VACUUM_SHARE` free a whole `VACUUM` is chosen in either mode, when the live pages are within
+/// `VACUUM_BYTES` and the disk has room for their copy: its cost is the live pages', where an incremental vacuum's
+/// grows with the free list (each page it moves walks the list's trunks: 8.1 s for 4,096 pages with 1.8M free, where
+/// a whole `VACUUM` of the same file took 10 s).
+fn give_back(pages: u64, free: u64, page: u64, auto: u64, disk: impl FnOnce() -> Option<u64>) -> (u64, bool) {
+    if free * page <= FREE_BYTES || (auto != 0 && auto != 2) {
+        return (0, false);
+    }
+    let live = (pages - free.min(pages)) * page;
+    if free as f64 > VACUUM_SHARE * pages as f64 && live <= VACUUM_BYTES && disk().is_some_and(|d| d > VACUUM_DISK * live) {
+        return (0, true);
+    }
+    (if auto == 2 && free as f64 > FREE_SHARE * pages as f64 { free } else { 0 }, false)
+}
+
+/// Whether the file `connection` has open is free enough that a whole `VACUUM` gives its pages back ([`give_back`]):
+/// the collector's own incremental vacuum after a pass leaves it to the upkeep job (ep2: 8.1 s a pass, behind every run).
+pub(super) fn leaves_to_whole_vacuum(connection: &Connection, path: &Path) -> rusqlite::Result<bool> {
+    let get = |p: &str| connection.query_row(&format!("PRAGMA {p}"), [], |r| r.get::<_, i64>(0)).map(|v| v.max(0) as u64);
+    let (pages, free, page, auto) = (get("page_count")?, get("freelist_count")?, get("page_size")?, get("auto_vacuum")?);
+    Ok(give_back(pages, free, page, auto, || disk_free(path)).1)
 }
 
 /// The bytes free on the disk holding `path` (unknown where the system has no `statvfs`: WASI).
@@ -384,6 +401,25 @@ mod tests {
     }
 
     #[test]
+    fn a_file_mostly_free_is_vacuumed_whole_in_either_mode() {
+        const GB: u64 = 1 << 30;
+        let disk = || Some(100 * GB);
+        // ep2's store after its frames backlog went: 1,818,329 of 1,993,536 pages free (91%), 718 MB live.
+        assert_eq!(give_back(1_993_536, 1_818_329, 4096, 2, disk), (0, true));
+        assert_eq!(give_back(1_993_536, 1_818_329, 4096, 0, disk), (0, true));
+        // A share between `FREE_SHARE` and `VACUUM_SHARE`: incrementally, and not at all without incremental mode.
+        assert_eq!(give_back(1_000_000, 150_000, 4096, 2, disk), (150_000, false));
+        assert_eq!(give_back(1_000_000, 150_000, 4096, 0, disk), (0, false));
+        // Live pages past `VACUUM_BYTES`, or no room for their copy: incrementally where the file can.
+        assert_eq!(give_back(1_000_000, 500_000, 4096, 2, disk), (500_000, false));
+        assert_eq!(give_back(1_993_536, 1_818_329, 4096, 2, || Some(GB)), (1_818_329, false));
+        assert_eq!(give_back(1_993_536, 1_818_329, 4096, 0, || None), (0, false));
+        // Few free bytes, or full vacuum mode: nothing.
+        assert_eq!(give_back(10_000, 3_000, 4096, 2, disk), (0, false));
+        assert_eq!(give_back(1_993_536, 1_818_329, 4096, 1, disk), (0, false));
+    }
+
+    #[test]
     fn free_pages_go_back_and_own_tables_are_analyzed() {
         let dir = tempfile::tempdir().unwrap();
         for auto in ["INCREMENTAL", "NONE"] {
@@ -394,7 +430,8 @@ mod tests {
             let mut job = SqliteFile::new(&p, Tables::All);
             let work = job.probe().unwrap();
             assert_eq!(work.analyze, vec!["fact_stats".to_string(), "rows".to_string()], "{auto}");
-            assert_eq!((work.free_pages > 0, work.vacuum), (auto == "INCREMENTAL", auto == "NONE"), "{auto}: {work:?}");
+            // Three quarters free: a whole vacuum in either mode.
+            assert_eq!((work.free_pages, work.vacuum), (0, true), "{auto}: {work:?}");
             assert!(run(&mut job) > 0);
             let after = std::fs::metadata(&p).unwrap().len();
             assert!(after * 2 < before, "{auto}: {before} -> {after}");

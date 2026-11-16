@@ -634,22 +634,12 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
 }
 
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
-    logic_of_set(programs, None, root, t_facts, out, modes, metal, chunk_nodes, settings)
-}
-
-/// `logic`, its programs read from `policy_set` (the rules' path): its runs' lanes are the set's (decision 0301), and
-/// a run of its programs edited supersedes the set's older lanes over the root.
-#[allow(clippy::too_many_arguments)]
-pub fn logic_of_set(programs: &[String], policy_set: Option<&str>, root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
     if programs.len() > 1 && t_facts.is_some() {
         return Err("T facts reproduce one program's run, not several".into());
     }
-    let mut options = serde_json::json!({ "env": settings, "reuse": true });
-    if let Some(set) = policy_set {
-        options["policy_set"] = serde_json::json!(set);
-    }
+    let options = serde_json::json!({ "env": settings, "reuse": true });
     let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
     // A program whose language has several dialects with files in its scope (`.language typescript` over `.ts`,
     // `.tsx` and `.js` files, which main's TypeScript reads) runs once per dialect, lowered for each, as
@@ -1148,9 +1138,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }
-    // The rules' path names the runs' policy set (decision 0301).
-    let set = std::fs::canonicalize(program.as_str()).map_or_else(|_| program.clone(), |p| p.to_string_lossy().into_owned());
-    let run = || crate::tools::logic_of_set(&programs, Some(&set), Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
+    let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
     if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
 }
 
