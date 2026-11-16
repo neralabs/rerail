@@ -1,6 +1,6 @@
 # Audits: recorded audits move to the shared rule provenance after a week
 
-For [pull request #648](https://github.com/neralabs/rerail/pull/648), head e111a35b1. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #648](https://github.com/neralabs/rerail/pull/648), head 601c8dadc. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -14,7 +14,7 @@ For [pull request #648](https://github.com/neralabs/rerail/pull/648), head e111a
 
 | Size | Lane | Waits on | Not verified |
 |---|---|---|---|
-| 1,643 lines in 11 files: 586 ship, 1,057 are tests and text | Careful. A code owner approves. | #646, question 1. No maintainer has answered. CI passed, 08:16 UTC. | 5 |
+| 2,174 lines in 11 files: 708 ship, 1,466 are tests and text | Careful. A code owner approves. | #646, question 1. No maintainer has answered. CI passed at 601c8dadc. | 6 |
 
 ## 2. Intent, and the gap
 
@@ -22,7 +22,7 @@ For [pull request #648](https://github.com/neralabs/rerail/pull/648), head e111a
 |---|---|---|---|
 | A. Recorded audits' own copy | Recorded audits keep their own copy _(docs)_ | 1,279 of 1,438 MB are copies _(one file, Linux x64)_ | **CHANGES THE INTENT: ANSWER 1.** Moves them after a 7-day wait. A maintainer must agree. |
 | A. Other writers keep writing | No long write lock on the file _(code comment)_ | No move: the file grows on _(run, Linux x64)_ | Closes the gap. |
-| B. The null id | Null id: inline or empty _(code comment)_ | Older Rerail's rule-less audits unseen _(our check, 0.1.4)_ | Closes the gap, changes answer 2. |
+| B. The null id | Null id: inline or empty _(code comment)_ | Older Rerail's rule-less audits unseen _(run with 0.1.4)_ | Closes the gap, changes answer 2. |
 | C. The daemon's own thread | Daemon answers a hook within 2 s _(our reading)_ | A move there holds each batch _(test, move inlined)_ | Closes the gap, changes answer 3. |
 
 One 4,000-audit file, 767 rules on, Linux x64, 13 November 2026.
@@ -40,9 +40,9 @@ One 4,000-audit file, 767 rules on, Linux x64, 13 November 2026.
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, The move, after a week&#x27;s wait, high risk, 544 lines; B, Every audit names a stored copy, medium risk, 16 lines; C, The daemon starts and stops it, medium risk, 26 lines. Read first: rule-provenance-move.ts, audit-store.ts, daemon.ts. To skim: 1,021 lines of tests and 36 lines of docs paragraphs and one release note.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, The move, after a week&#x27;s wait, high risk, 666 lines; B, Every audit names a stored copy, medium risk, 16 lines; C, The daemon starts and stops it, medium risk, 26 lines. Read first: rule-provenance-move.ts, audit-store.ts, daemon.ts. To skim: 1,416 lines of tests and 50 lines of docs paragraphs and one release note.">
 
-1. **Read first**, 20 min: `rule-provenance-move.ts`: `moveBatch`, `stateAt`, `lastOlderWrite`, `whenFree`. Can a batch lose a provenance, or the wait miss an older Rerail's audit?
+1. **Read first**, 20 min: `rule-provenance-move.ts`: `moveBatch`, `takes`, `lastOlderWrite`, `timedBatch`. Can a batch lose a provenance, or the wait miss an older Rerail's audit?
 2. **Read first**, 3 min: `audit-store.ts`: `start`, `storedRuleProvenanceId`. Does every audit of this version name a stored copy?
 3. **Read first**, 4 min: `daemon.ts`: `#startProvenanceMove`, `close`. Can the move hold the hooks' thread, or keep a stop waiting?
 4. 3 min: A: `rule-provenance-move-worker.ts`, `migrations.ts`. B: `schema.ts`.
@@ -59,12 +59,12 @@ Start at A: it rewrites recorded rows. No person has reviewed: check 2's half ma
 
 | Change | Check | It holds with this limit |
 |---|---|---|
-| A. The move | independent review | Our independent check verified 768027db1, after three rounds that each found a blocker, all fixed. The automated reviewer read e111a35b1: 0 blockers, 0 follow-ups, 0 nits. It does not approve a high-risk path. No person on the team has reviewed. |
-| A. The move | users lose nothing | This version reads 4,000 of 4,000 audits as main does before, during and after the move, and after 10 kills. An older Rerail that records weekly reads them in full. On purpose, one started again after the move, or silent for 7 days, reads `[]`: 0.1.4 did for all 4,000 (Linux x64, 768027db1). |
-| A. The move | Windows 11: no new failure | The 22 test files of the change and of the modules that import it, at 2f9ea64e0: 479 passed, 17 skipped, 0 failed, nothing new against main's baseline. No Windows run had a real 0.1.4 beside the daemon; the tests that write audits as 0.1.4 does pass there. |
-| B. Names a copy | independent review | Our independent check proposed this mark after it measured the loss at d57eee7f3, and verified it at 768027db1. The automated reviewer counts its blocker fixed with it. No person on the team has reviewed. |
-| C. Daemon wiring | independent review | The automated reviewer found two nits here at e322936d3, a stop logged as a failure and a failure logged without its stack, and counts both fixed at 2f9ea64e0. Our independent check last read this file at 768027db1, before those two fixes. No person on the team has reviewed. |
-| C. Daemon wiring | users lose nothing | A stop ends the move before its next batch and logs nothing, and the next start moves the rest: 20 runs of 20 on Linux x64, 10 of 10 on Windows 11. One limit: the move thread's writable open waits up to 5 s inside SQLite for the write lock, where a stop does not reach it. |
+| A. The move | independent review | A second run from a separate checkout verified 4d1aec2c8, after it found defects at e111a35b1, de93ffdc1 and e5b858333, all fixed. The automated reviewer read 601c8dadc: 0 blockers, 2 follow-ups and 1 nit. One follow-up, a clock set back before the update, and the nit are open. It does not approve a high-risk path. No person on the team has reviewed. |
+| A. The move | users lose nothing | This version reads 4,000 of 4,000 audits as main does through the move and after 10 kills (768027db1); at 4d1aec2c8, 600 of 600 through a 12 s lock, a stop and kills, on Linux x64 and Windows 11. On purpose, an older Rerail started again after the move, or silent for 7 days, reads `[]`: 0.1.4 did for all 4,000. |
+| A. The move | Windows 11: no new failure | The 22 test files of the change and of the modules that import it, at 4d1aec2c8: 487 passed, 17 skipped, 0 failed, nothing new against main's baseline. No Windows run had a real 0.1.4 beside the daemon; the tests that write audits as 0.1.4 does pass there. |
+| B. Names a copy | independent review | A second run from a separate checkout measured the loss at d57eee7f3, and verified this mark at 768027db1 and again at 4d1aec2c8. The automated reviewer counts its blocker fixed with it. No person on the team has reviewed. |
+| C. Daemon wiring | independent review | The automated reviewer found two nits here at e322936d3, a stop logged as a failure and a failure logged without its stack, and counts both fixed at 2f9ea64e0; `daemon.ts` is unchanged since. A second run from a separate checkout drove the real daemon at 4d1aec2c8. No person on the team has reviewed. |
+| C. Daemon wiring | users lose nothing | A stop ends the move before its next batch, logging nothing; the next start moves the rest. While the move opens its writer behind another process's lock, a stop takes 262 ms against 261 at main on Linux x64, 352 against 324 on Windows 11 (4d1aec2c8). One limit: each start reads on the hooks' thread, 1.3 to 5.3 ms. |
 
 </details>
 
@@ -74,31 +74,31 @@ Start at A: it rewrites recorded rows. No person has reviewed: check 2's half ma
 
 - **Problem:** A database that grew before #530 keeps its size, and each recorded audit keeps its own copy of the rule provenance. At main `rerail scrub` gives nothing back while each audit keeps its copy.
 - **Who meets it:** Everyone whose database grew under 0.1.3 or 0.1.4 and who updates: once, for as long as they keep the history. How many hold such a file is not known.
-- **What it does:** `moveState` reads whether audits are left and whether to wait. `lastOlderWrite` finds the last audit of the past 7 days that names no stored copy. `moveBatch` moves up to 100 audits in one immediate transaction, and `moveInBatches` sizes each batch to hold the lock about 100 ms. `whenFree` tries again past another connection's lock. `olderPass` sleeps at most an hour.
+- **What it does:** `moveState` reads whether to move or wait. `takes` and `lastOlderWrite` each read one audit row: the first and the last that name no stored copy. `moveBatch` moves up to 100 audits in one transaction. `moveInBatches` sizes each batch to hold the lock about 100 ms, and tries again while another connection holds it. `olderPass` sleeps at most an hour.
 - **Risk:** High. It rewrites every recorded audit row on a high-risk storage path, and it decides when an older Rerail starts reading `[]`, which its remote sink then sends. A wrong batch loses a provenance.
-- **Check:** `moveBatch`: the insert stores the text the digest was taken of, and the update empties the row in the same transaction. `TAKEN` leaves rows that hold `[]` and audits an older Rerail wrote after the step. `lastOlderWrite` counts any audit with a null id in the window, those before the step included, and `postponed` runs it before each batch. `whenFree` gives up after 34 tries, about 5 s. `olderPass` rethrows a timer error that is no stop.
+- **Check:** `moveBatch`: the insert stores the text the digest was taken of, and the update empties the row in that transaction; text that is no JSON array stays in its row. `takes` and `takenAfter` stop at the first audit that began after the step: the reviewer's follow-up is an older audit a clock set back dated past it. `lastOlderWrite` reads the last audit with a null id; `postponed` runs it before each batch. `timedBatch` retries a busy batch with no bound.
 - **Picture:** One 4,000-audit file after `rerail scrub`: 1,437.2 MB at main, 158.2 MB with this change once the move has run. After 2,000 more audits and no scrub: main's file grows from 1,438.2 to 1,515.8 MB, and the moved file stays at 1,438.3 MB.
 - **Method:** one file of 4,000 audits that a Rerail from before #530 wrote with 767 rules on, 1,438.2 MB, on Linux x64 machines of 16 and 32 cores, one run each. Main's scrub of it: main at 383fc99aa. This change's scrub and the 2,000 audits: d57eee7f3 against main at 6cf7e5663. The scrub code is main's, byte for byte.
 
 **B. Every audit names a stored copy**, medium risk. An audit without rules: 410 bytes at main, 414.04 here.
 
 - **Problem:** The wait must tell an older Rerail's audits from this version's. At main an audit without rules has a null id whoever wrote it, so an older Rerail that records only such audits could not hold the move back.
-- **Who meets it:** Anyone who runs an older Rerail beside this version in a checkout with no rules on, or whose rule catalog could not be prepared. Found by our independent check with 0.1.4 from npm, on Linux x64.
+- **Who meets it:** Anyone who runs an older Rerail beside this version in a checkout with no rules on, or whose rule catalog could not be prepared. Found with 0.1.4 from npm beside the real daemon, on Linux x64.
 - **What it does:** `start` calls `storedRuleProvenanceId` for every audit, an empty provenance included, so all audits without rules name one row of `audit_rule_provenances` that holds `[]`. The audit's own row still holds `[]`. The column's comment in `schema.ts` now says a null id marks a row an older Rerail wrote.
 - **Risk:** Medium. One line on the path every audit takes. A wrong mark makes the wait miss an older Rerail, or count this version's own audits and never move.
 - **Check:** The lookup and the insert run inside `start`'s immediate transaction, as for any provenance. Every reader takes the stored copy or the row's own through `coalesce`, so `[]` reads the same from either. The delete trigger drops the shared `[]` row with the last audit that names it. The package root exports `AuditRow`: a null `ruleProvenanceId` there no longer means an empty provenance.
 - **Picture:** The payload of one audit that ran no rules: 410 bytes at main, 414.04 bytes with this change, when the shared copy of `[]` has id 301.
 - **Method:** 4,000 audits without rules written after 300 audits with distinct rules, through each side's store, then read from SQLite's `dbstat`: 768027db1 against main at c89f068ed, Linux x64, 16 cores, one run. The shared row adds 72 bytes once, and 72 in its digest index. With the copy at id 0 or 1 an audit adds 0 bytes.
 
-**C. The daemon starts and stops it**, medium risk. While the move waits, the daemon's thread reads hourly: none at main, 30.7 ms at 20,000 audits.
+**C. The daemon starts and stops it**, medium risk. Each start reads on the daemon's thread: none at main, 1.3 to 5.3 ms.
 
 - **Problem:** The move must start without holding the thread that answers hooks, stop with the daemon, and leave a trace when it fails. Main's daemon starts no work of this kind.
-- **Who meets it:** Every daemon start on a database that still holds recorded audits to move, and every hour while the move waits. Once nothing is left, a start finds that with one read and takes no write lock.
+- **Who meets it:** Every daemon start, and every hour while the move waits. Once nothing is left, a start finds that with one audit row read, and one more for each damaged audit the move left, and takes no write lock.
 - **What it does:** `#startProvenanceMove` calls `moveRuleProvenancesInWorker` once the daemon has announced itself, and keeps its abort controller and its promise. `close` aborts the move and awaits it before the remote sink and the HTTP server stop. A failure goes to `daemon.log` through `errorStack`, with the worker's stack. A stop logs nothing.
 - **Risk:** Medium. The daemon is on every hook's path. A move that held its thread, or a stop that waited on the move, would delay hooks or a restart.
-- **Check:** The call comes after `#announce`, so the daemon serves before it reads for the move. `close` awaits the move first: its writable open can wait up to 5 s inside SQLite, where a stop does not reach it. The rejection handler writes to stderr and ends there, so a failed move never fails the daemon. #657 adds code at the same three places of this file.
-- **Picture:** The read the daemon's thread makes each hour while the move waits. Main has none. With this change its median is 1.4 ms with no audit in the week, 9.7 ms with 5,000 and 30.7 ms with 20,000, each audit holding the revisions of 767 rules.
-- **Method:** `moveRuleProvenancesInWorker` from the built package on a probe's main thread with a test timer, 6 to 8 passes each, on Linux x64 at the lowest CPU priority, 768027db1. With 100,000 audits without rules in the week, on a 16-core Linux machine: 224.4 ms. A hook's health probe waits 2 s.
+- **Check:** The call comes after `#announce`, so the daemon serves before it reads for the move. `close` awaits the move first: since 6272d2583 its writer opens without waiting inside SQLite, so a stop is not held. The rejection handler writes to stderr and ends there, so a failed move never fails the daemon. #657 adds code at the same three places of this file.
+- **Picture:** The reads the daemon's thread makes at each start, each hourly pass of the wait and the end of a move. Main has none. With this change they take 1.3 to 5.3 ms with the read-only open, whatever the history, and 58 to 260 ms when the move left 600 damaged audits of 189 KB, on Linux x64.
+- **Method:** The real daemon on Linux x64. The 1.3 to 5.3 ms: files of 600 and 10,000 moved audits and of 800 and 2,400 audits an older Rerail recorded after the update, warm and cold, 0c8edbd3a. The 600 damaged audits: three starts each at e5b858333 and 4d1aec2c8; Windows 11 took 146 to 163 ms. A hook's health probe waits 2 s.
 
 </details>
 
@@ -115,7 +115,7 @@ Start at A: it rewrites recorded rows. No person has reviewed: check 2's half ma
 | Move only when a person runs `rerail scrub` | A person chooses when recorded audits move | Not built, not measured. Until then the file grows as main's does | By the code, an older Rerail reads `[]` for moved audits from then on. Not measured |
 | Never move, as main | Every Rerail reads every audit in full | The file keeps its size: `rerail scrub` gives back 1 MB, and 2,000 more audits add 77.6 MB | Nothing |
 
-Before: At main the daemon serves and each recorded audit keeps its rule provenance in its own row. This version and an older Rerail both read it in full. The file keeps its size. After: With this change the daemon serves, finds recorded audits left to move, and asks whether an audit that names no stored copy began in the last 7 days. If so it waits and looks again within an hour. If not it moves them in batches of about 100 ms.
+Before: At main the daemon serves and each recorded audit keeps its rule provenance in its own row. This version and an older Rerail both read it in full. The file keeps its size. After: With this change the daemon serves, finds recorded audits left to move, and asks whether the last audit that names no stored copy began in the last 7 days. If so it waits and looks again within an hour. If not it moves them in batches of about 100 ms.
 
 **Evidence.** The real daemon and Rerail 0.1.4 from npm on one 4,000-audit file, on one clock moved by a preload (Linux x64, 768027db1). 0.1.4 recording audits with rules every 15 s across the week's end: 0 moved, 4,000 of 4,000 at every read. The same without rules every 2 s: 0 moved. Started again after the move: `[]` for 4,000 of 4,000. Silent for 7 days and 28 s: the same (d57eee7f3).
 
@@ -137,28 +137,29 @@ Before: At main the daemon serves and each recorded audit keeps its rule provena
 
 It stands on main alone; no open pull request needs it. Our #657 conflicts in `src/daemon/daemon.ts`; the team's release, #631, deletes the release note this edits.
 
-Pull request #648 is based on main at c89f068ed, which holds #530 and is merged in. Its merge waits for a maintainer's answer to question 1 on #646. No pull request needs it. In trial merges it conflicts with #657 at three places of one source file, and merges clean with ten others, three of which share a file. The team's release, #631, deletes the release note it edits.
+Pull request #648 is based on main at c89f068ed, which holds #530 and is merged in. Its merge waits for a maintainer's answer to question 1 on #646. No pull request needs it. In trial merges it conflicts with #657 at three places of one source file, and merges clean with eleven others, four of which share a file. The team's release, #631, deletes the release note it edits.
 
-**Trial merges, and shared files.** Trial merges of e111a35b1 with the heads of our open pull requests and of the others that share a file, 14 November 2026. #657 (cf986a055): three conflicts in `src/daemon/daemon.ts`; the second to merge takes main and keeps both sides. Clean: #672, #656 and #562, which share a file, and #652, #658, #673, #674, #677, #678 and #679. #676, #680, #665, #640 and #667 do not merge with main today; #676 and #640 conflict in `migrations.ts`. Of #508, `docs/how-setup-works.md` merges clean. Not tried: #631.
+**Trial merges, and shared files.** Trial merges of 601c8dadc with the heads of our open pull requests and of the others that share a file, 16 November 2026. #657 (cf986a055): three conflicts in `src/daemon/daemon.ts`; the second to merge takes main and keeps both sides. Clean: #672, #680, #656 and #562, which share a file, and #652, #658, #673, #674, #677, #678 and #679. #676, #665, #640 and #667 do not merge with main today; #676 and #640 conflict in `migrations.ts`. Of #508, `docs/how-setup-works.md` merges clean. Not tried: #631.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 5 not verified, 6 smaller gaps, 5 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 6 not verified, 6 smaller gaps, 8 limits that stay</summary>
 
 1. **Question 1 on #646:** no maintainer has answered.
 2. **No person on the team** has reviewed or commented.
-3. **Histories far larger than 4,000 audits:** the check before each batch was not timed.
-4. **On Windows 11** no real 0.1.4 ran beside the daemon.
-5. **macOS** never ran.
+3. **The automated reviewer's follow-up and nit:** open at 601c8dadc.
+4. **Past 4,000 audits of 767 rules:** the move never ran.
+5. **On Windows 11** no real 0.1.4 ran beside the daemon.
+6. **macOS** never ran.
 
 **Smaller gaps**
 
-- **Where the numbers were measured.** The move, the writes during it and the kills ran at 768027db1 and d57eee7f3. Of the five commits since 768027db1, two change code, a stop during a busy retry and the failure's log line, and three change docs and comments only.
-- **Windows 11.** The tests that write audits as 0.1.4 does, with rules and without, pass there. The run with 0.1.4 from npm beside the real daemon was made on Linux x64 only.
-- **The move thread's writable open** still waits up to 5 s inside SQLite for the write lock, so a stop cannot reach it there. Not changed; a possible follow-up.
+- **Where the numbers were measured.** The move, the writes during it and the kills ran at 768027db1 and d57eee7f3, on the 4,000-audit file. The runs since e111a35b1 use a file of 600 audits. Of the 17 commits since 768027db1, six change code, four tests only, seven docs and comments only.
+- **Windows 11.** The tests that write audits as 0.1.4 does, with rules and without, pass there. The run with 0.1.4 from npm beside the real daemon was made on Linux x64 only, and so was the run that recorded audits without rules through Claude Code's hook.
+- **The automated reviewer's open follow-up at 601c8dadc.** An audit recorded before the update and dated after it, as when the clock was set back, stops the move there: it and the audits after it keep their own copy and read in full. Read in the code, not run.
+- **Its open nit.** A busy read in the check before a batch ends the move with a failure line, where a busy batch pauses it; the next start goes on. Read in the code, not run.
 - **Read in the code, not run:** the move starts at most an hour late after the computer sleeps; `rerail.sqlite.pre-update` holds each audit in full until a later version change replaces it; a start time past year 275,760 makes the wait line throw, and the daemon logs that failure once.
-- **One Linux run failed one test of main:** among the 22 files at 2f9ea64e0, `database-baseline`'s "leaves adopting a file stamped 1 to the writer while a step that raises the floor is pending" timed out at 5 s. That file alone passed 32 of 32.
-- **The first CI attempt at 2f9ea64e0** failed on `test/cli/scrub-cli.test.ts`, "loses no line a process appends to daemon.log or a ledger while it scrubs them", a test of main this change does not touch. It failed the same way on #657's CI. The second attempt passed.
+- **One of two Linux runs failed one test of main:** among the 22 files at 4d1aec2c8, main's own audit-cli test timed out at 5 s in the run that gave 502 passed; the other gave 503. Run alone, that test times out at both commits.
 
 **Limits that stay**
 
@@ -167,6 +168,9 @@ Pull request #648 is based on main at c89f068ed, which holds #530 and is merged 
 - An older Rerail reads `[]` for each audit this version records, as at main since #530. The audits it writes itself keep their provenance in their own row, and the move leaves them there.
 - While an older Rerail keeps recording, `daemon.log` gets the wait line again, at most once an hour: about 390 bytes a line, up to 24 lines a day.
 - A daemon killed during the move loses at most one batch's work and no audit: 10 kills each on Linux x64 and Windows 11 lost, doubled or left dangling none, and the next start moved the rest.
+- While another process holds the write lock, the move waits and tries again every 150 ms, with no bound; a stop ends that wait.
+- An audit whose provenance is not a JSON array stays as it is; each start reads it in full. When its text does not parse, every `/api/audits` page holding it fails with 500, as in 0.1.4 and at main (#697).
+- To copy the database while the daemon runs, copy `rerail.sqlite-wal` with it or stop the daemon: a copy of `rerail.sqlite` alone, taken during the move, came out damaged on Windows 11 (de93ffdc1).
 
 </details>
 
@@ -184,28 +188,28 @@ Answer 3 asks no ruling. Card C has its cost; main has no such read.
 
 <details><summary><b>10. Evidence</b></summary>
 
-The description on GitHub is the record: "How you tested it" holds the runs, our checks' findings and the measurements, and "The decisions" the options of each choice.
+The description on GitHub is the record: "How you tested it" holds the runs, their findings and the measurements, and "The decisions" the options of each choice.
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | The run at e111a35b1, read at 08:21 UTC on 14 November 2026 | Passed on its first attempt: 28 checks passed, 3 skipped, none failed. |
-| CI on GitHub | The run at 2f9ea64e0, the commit before the head | Passed on its second attempt. The first failed only on `test/cli/scrub-cli.test.ts`, "loses no line a process appends to daemon.log or a ledger while it scrubs them", a test of main this change does not touch. |
-| Linux x64 | The 22 test files of the change and of the modules that import what it changes, at 2f9ea64e0 | 494 passed, 1 skipped, 1 failed: a test of main in `database-baseline` timed out at 5 s. That file alone passed 32 of 32. |
-| Windows 11 | The same 22 files at 2f9ea64e0, compared with main's baseline | 479 passed, 17 skipped, 0 failed, nothing new. |
-| Linux x64, Windows 11 | The change's two test files, 27 cases, repeated at 2f9ea64e0 | 20 runs of 20 passed on Linux x64, 10 of 10 on Windows 11. The four tests added for the automated review's nits fail on e322936d3's source. |
+| CI on GitHub | The run at 601c8dadc, read at 00:28 UTC on 16 November 2026 | Passed on its first attempt: 28 checks passed, 3 skipped, none failed. |
+| Linux x64, Windows 11 | The CI jobs that need none of the repository's secrets, at 601c8dadc | No failure of the change's own. 10 tests fail as they do on main at c89f068ed on the same machines: 3 in `Unit tests (1/2)`, 7 in `Unit tests (Windows, 1/2)`. |
+| Linux x64, Windows 11 | The 22 test files of the change and of the modules that import what it changes, at 4d1aec2c8 | Linux x64, on tmpfs and on ext4: 503 passed and 1 skipped; an earlier run gave 502, with main's own audit-cli test timing out at 5 s; run alone, that test times out at both commits. Windows 11: 487 passed, 17 skipped, 0 failed, nothing new against main's baseline. |
+| Linux x64, Windows 11 | The change's two test files, 35 cases, at 4d1aec2c8 | 35 of 35 passed on tmpfs and on ext4. The daemon test of a left audit passed 20 runs of 20 on tmpfs, on ext4 and on Windows 11. The six tests added in 6272d2583, af7ef9e79 and a3a4b54bc fail on e111a35b1; the four added for the automated review's nits fail on e322936d3's source. |
 | Linux x64, 16 cores | The real daemon and Rerail 0.1.4 from npm on the 4,000-audit file, on one clock moved by a preload, at 768027db1 | Only this version: the first audit moved 507 ms after the week's end, all 4,000 within 15.9 s more. 0.1.4 recording across the week's end, with rules and without: 0 moved, 4,000 of 4,000 read in full. Started again after the move: `[]` for 4,000 of 4,000. |
 | Linux x64, Windows 11 | Writes by another process and kills of the daemon during the move, at d57eee7f3, and on Linux again at 768027db1 | 0 of 14 writes failed at 660, 1,160 and 2,162 MB in use, on both systems. 10 kills on each: 0 audits lost, doubled or dangling, the integrity check passes, 4,000 of 4,000 read as main. Windows 11 moved 4,000 audits in 23.1 to 33.6 s beside 3 other test runs. |
-| Linux x64 | The automated reviewer's rules scan over the diff against main, at 2f9ea64e0 | 0 new findings. Every function the change adds or edits is at complexity 6 or under. |
+| Linux x64, Windows 11 | The real daemon at 4d1aec2c8 on a file of 600 audits: a 12 s write lock, a stop, kills, damaged audits, and Claude Code's hook | 600 of 600 read as main. The move ended 3.0 and 2.0 s after the lock's release; a stop took 262 ms against 261 at main, and 352 against 324. With one damaged audit, 599 moved and `daemon.log` named it once. Through the hook, 12 new audits left the moved file at 28,983 pages and grew main's by about 150 pages (148 on Linux x64, 150 on Windows 11). |
+| Linux x64 | The automated reviewer's rules scan over the diff against main, at 4d1aec2c8 | 0 new findings. Every function the change adds or edits is at complexity 6 or under. |
 
 **What this report adds to the description**
 
-- **The head is e111a35b1, a comments-only commit after 2f9ea64e0.** It re-wraps comments in five files and changes no code line. The automated reviewer counts its nit of 2f9ea64e0 fixed at e111a35b1. The pull request holds 57 commits not on main, 5 of them merges, and 1,615 added and 28 removed lines in 11 files. The branch carries history from before #530 was cut and an automatic `VACUUM` it later removed: review the squashed diff.
+- **The head is 601c8dadc, twelve commits after e111a35b1.** Four change code: each check reads one audit row (a3a4b54bc), the writer opens without waiting for another process's lock (6272d2583), a held lock pauses the move (af7ef9e79), and a damaged audit stays as it is (05c8faadb). Four change tests only, four docs and comments only. It holds 69 commits not on main, 5 of them merges, and 2,144 added and 30 removed lines in 11 files: review the squashed diff.
 - **Trial merges at today's heads.** #657 conflicts at three places of `src/daemon/daemon.ts`. The team's release, #631, removes `.changelog/fixed-audit-history-size.md`, which this edits: seen in its list of files, not merged on trial. If it merges first, this pull request's sentence needs a new entry file. Of #508 only `docs/how-setup-works.md` was merged on trial: clean.
 - **The cost of an audit without rules.** The measure is 4.04 bytes at copy id 301, 2 bytes at ids 2 to 127 and 0 at ids 0 and 1. By SQLite's integer sizes a copy id past 32,767 takes one byte more in the row and one in the index entry, 6 bytes in all: our reading, not measured. So "at most 4 bytes" holds up to that id.
 - **Asks 2 and 3 are this report's.** The description asks nothing itself and points at #646 for both questions. Ask 2, the length of the wait, is new here. Ask 3 is question 2 of #646, on which this head follows the recommendation of our latest comment there. The automated reviewer's first review named decision 1's floor option, and main's docs describe the floor.
-- **Where the review stands on GitHub.** The review decision still shows the automated reviewer's change request on 42bb8f6da. Its reviews of e322936d3, 2f9ea64e0 and e111a35b1 count every blocker, follow-up and nit fixed or no longer applying: the last found 0 blockers, 0 follow-ups and 0 nits. It escalated to three maintainers for the storage path and the decision on #646. All five comments on #646 are ours.
+- **Where the review stands on GitHub.** The review decision still shows the automated reviewer's change request on 42bb8f6da. Its review of 601c8dadc, on 16 November, found 0 blockers, 2 follow-ups and 1 nit: the description described e111a35b1; an audit dated after the update by a clock set back stops the move; a busy read before a batch ends it. It escalated the storage path and #646 to three maintainers. All five comments on #646 are ours.
 - **The exported `AuditRow` type changes meaning.** The package root exports `AuditRow`. A null `ruleProvenanceId` there meant a provenance held inline or an empty one; it now marks a row an older Rerail wrote. The column came with #530 and is in no release.
 
-**Sources.** The pull request, its reviews, comments, diff and CI on GitHub, and issue #646, read on 14 November 2026. Rerail at main (c89f068ed) for each quoted intent. The automated reviewer's reviews of e322936d3, 2f9ea64e0 and e111a35b1. Our run records and the decision record of the change: each number names its system and its commit.
+**Sources.** The pull request, its reviews, comments, diff and CI on GitHub, and issue #646, read on 16 November 2026. Rerail at main (c89f068ed) for each quoted intent. The automated reviewer's reviews of e322936d3, 2f9ea64e0, e111a35b1 and 601c8dadc. Our run records and the decision record of the change: each number names its system and its commit.
 
 </details>
