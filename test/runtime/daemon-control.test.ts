@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -29,6 +29,7 @@ import {
   daemonUsesPackageRoot,
   findRunningDaemon,
   isUsableEngineSocketPath,
+  keepAutostartClaim,
   launchDetached,
   lookupDaemon,
   openDashboard,
@@ -1231,14 +1232,16 @@ describe("autostartDaemon", () => {
     }
   }, 60_000);
 
-  it("leaves the start to a launcher that runs, and launches past a claim whose launcher is gone or that is more than 30 s from now", async () => {
+  it("leaves the start to a launcher that runs, and launches past a claim whose launcher is gone or no longer renews it", async () => {
     const claims: Array<{ content: string; at?: Date }> = [
       { content: String(process.pid) },
       // Just created, its launcher's pid not written yet.
       { content: "" },
       // Its launcher died, or was killed, without a daemon.
       { content: String(DEAD_PID) },
-      // A pid alive now can be another process Windows gave a dead launcher's pid to.
+      // A launcher renews its claim every second while it runs (`keepAutostartClaim`): one killed 10 s ago renews it no
+      // more, and the pid it names, alive now, can be another process the system gave a dead launcher's pid to.
+      { content: String(process.pid), at: new Date(Date.now() - 10_000) },
       { content: String(process.pid), at: new Date(Date.now() - 60_000) },
       // Made before the clock moved back a minute: without the distance both ways it would hold until the clock caught up.
       { content: String(process.pid), at: new Date(Date.now() + 60_000) },
@@ -1253,12 +1256,34 @@ describe("autostartDaemon", () => {
     try {
       await Promise.all(hooks.map(async hook => await hook.ready));
       for (const hook of hooks) hook.go();
-      expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 0, 1, 1, 1]);
+      expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 0, 1, 1, 1, 1]);
     } finally {
       for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await Promise.all(homes.map(async home => await removeFolder(home)));
     }
   }, 60_000);
+
+  it("renews the claim that names this process, its launcher, for the life of a start, and no other launcher's", async () => {
+    const [own, other, hung] = await Promise.all([1, 2, 3].map(async () => await mkdtemp(join(tmpdir(), "rerail-autostart-"))));
+    const long = new Date(Date.now() - 4_000);
+    const claims = { own: join(own!, AUTOSTART_CLAIM_FILE), other: join(other!, AUTOSTART_CLAIM_FILE), hung: join(hung!, AUTOSTART_CLAIM_FILE) };
+    await writeFile(claims.own, String(process.pid));
+    await writeFile(claims.other, String(DEAD_PID));
+    await writeFile(claims.hung, String(process.pid));
+    for (const claim of Object.values(claims)) await utimes(claim, long, long);
+    const renewed = async (claim: string): Promise<boolean> => (await stat(claim)).mtimeMs > long.getTime() + 1_000;
+    // A launcher that started 31 s ago has outlived any start's waits: it no longer keeps its claim.
+    const stops = [keepAutostartClaim(own!, Date.now()), keepAutostartClaim(other!, Date.now()), keepAutostartClaim(hung!, Date.now() - 31_000)];
+    try {
+      await until(async () => await renewed(claims.own), 5_000);
+      await delay(1_500);
+      expect(await renewed(claims.other)).toBe(false);
+      expect(await renewed(claims.hung)).toBe(false);
+    } finally {
+      for (const stop of stops) stop();
+      await Promise.all([own, other, hung].map(async home => await removeFolder(home!)));
+    }
+  }, 30_000);
 
   it("launches at a later session start once the launch it left the start to has ended without a daemon", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));

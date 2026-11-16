@@ -567,8 +567,9 @@ Everything else goes through the daemon, not in-process evaluation. The Claude C
 Pi sessions, and `rerail events` streams (in internal testing) send events to it, starting it when it is not running,
 after a reboot too (unless `RERAIL_AUTOSTART=0`). When several of them find it down at once, one starts it: a start
 in the background first creates `autostart.claim` in the Rerail home, naming the process it launches, and the others
-leave the start to that one. The claim ends when that start ends, whether the daemon came up or not, and holds no
-longer than its launcher runs, 30 s at most. CLI commands such as `rerail settings` and `rerail scan` (in internal
+leave the start to that one. The claim ends when that start ends, whether the daemon came up or not. Its launcher
+renews it every second while it runs, for 30 s at most, and a claim nothing renewed for 5 s no longer holds, so a
+launcher that was killed holds no start back, whatever process gets its pid. CLI commands such as `rerail settings` and `rerail scan` (in internal
 testing) use its API.
 
 Any other process opening the machine-wide store gets an error and a failed policy run, not a second writer.

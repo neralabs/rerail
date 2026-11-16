@@ -1,6 +1,6 @@
 import type { SpawnOptions } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
@@ -287,10 +287,20 @@ export const AUTOSTART_CLAIM_FILE = "autostart.claim";
 
 const START_TIMEOUT_MS = 15_000;
 /**
- * The longest an autostart claim holds, even while the pid it names is alive: a launcher's whole life, its wait for the
- * start lock and then for the daemon. Past it that pid can be another process, which Windows gave a dead launcher's pid.
+ * The longest a launcher keeps its autostart claim (`keepAutostartClaim`): its whole life, its wait for the start lock
+ * and then for the daemon. A launcher that hangs past it no longer keeps the processes that find the daemon down from
+ * launching.
  */
 const AUTOSTART_CLAIM_MS = 2 * START_TIMEOUT_MS;
+/**
+ * How long an autostart claim holds once nothing renews it, even while the pid it names is alive: a launcher renews it
+ * every {@link AUTOSTART_CLAIM_RENEW_MS} while it runs, so past this its launcher was killed or hung, and the pid can be
+ * another process the system gave a dead launcher's pid to. It also covers a launcher's start, from the claim naming it
+ * to its first renewal; a launch slower than that lets the next process to find the daemon down launch too, and the
+ * start lock still lets one start a daemon.
+ */
+const AUTOSTART_CLAIM_LEASE_MS = 5_000;
+const AUTOSTART_CLAIM_RENEW_MS = 1_000;
 const STOP_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
@@ -763,7 +773,7 @@ async function startUnderLock(home: string, start: () => Promise<StartDaemonResu
 /**
  * Removes the autostart claim in `home` when it names this process. A launcher that hands its start to the active
  * version's CLI leaves the claim to end with its own exit (`claimHolds`), and a claim that cannot be read or removed
- * holds only while its launcher runs, and 30 s at most.
+ * holds only while its launcher runs and renews it (`keepAutostartClaim`).
  */
 async function endOwnClaim(home: string): Promise<void> {
   const claim = join(home, AUTOSTART_CLAIM_FILE);
@@ -1171,9 +1181,9 @@ function createClaim(path: string): boolean {
 }
 
 /**
- * Whether the claim at `path` still holds: it is under `AUTOSTART_CLAIM_MS` from now, either way, so a claim made before
- * the clock moved back expires too, and the process it names runs (`kill`'s signal 0). A claim with no pid in it yet is
- * being written by the process that created it, and holds.
+ * Whether the claim at `path` still holds: it was made or renewed under `AUTOSTART_CLAIM_LEASE_MS` from now, either way,
+ * so a claim made before the clock moved back expires too, and the process it names runs (`kill`'s signal 0). A claim
+ * with no pid in it yet is being written by the process that created it, and holds.
  */
 function claimHolds(path: string, kill: ProcessSignal): boolean {
   let made: number;
@@ -1186,7 +1196,7 @@ function claimHolds(path: string, kill: ProcessSignal): boolean {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
-  if (Math.abs(Date.now() - made) >= AUTOSTART_CLAIM_MS) return false;
+  if (Math.abs(Date.now() - made) >= AUTOSTART_CLAIM_LEASE_MS) return false;
   return text === "" || (/^[1-9]\d*$/u.test(text) && processAlive(Number(text), kill));
 }
 
@@ -1203,6 +1213,37 @@ function claimAutostart(home: string, kill: ProcessSignal): boolean {
   if (claimHolds(claim, kill)) return false;
   rmSync(claim, { force: true });
   return createClaim(claim);
+}
+
+/**
+ * Keeps the autostart claim in `home` held while it names this process, the `rerail daemon start` an autostart launched:
+ * every {@link AUTOSTART_CLAIM_RENEW_MS} it renews the claim's time, so the claim holds while this launcher runs and
+ * lapses within {@link AUTOSTART_CLAIM_LEASE_MS} of its end however it ends, a kill included, whatever process gets its
+ * pid. It renews for {@link AUTOSTART_CLAIM_MS} of this process's life (`startedAt`) at most. The claim may name the
+ * autostart that launched this process for a moment, until the autostart hands it over (`handOverClaim`), so each turn
+ * looks again. A claim that is gone or unreadable is left to lapse. Returns what stops the renewal; it never keeps the
+ * process alive.
+ */
+export function keepAutostartClaim(home: string, startedAt = Date.now() - process.uptime() * 1_000): () => void {
+  const claim = join(home, AUTOSTART_CLAIM_FILE);
+  const renew = (): void => {
+    if (Date.now() - startedAt >= AUTOSTART_CLAIM_MS) {
+      clearInterval(renewal);
+      return;
+    }
+    try {
+      if (readFileSync(claim, "utf8").trim() !== String(process.pid)) return;
+      const now = new Date();
+      utimesSync(claim, now, now);
+    } catch {
+      // Gone, ended by this launcher's start, or unreadable: it lapses.
+    }
+  };
+  const renewal = setInterval(renew, AUTOSTART_CLAIM_RENEW_MS);
+  renewal.unref();
+  // At once too, so the lease runs from this launcher's start, not a second after it.
+  renew();
+  return () => clearInterval(renewal);
 }
 
 /**

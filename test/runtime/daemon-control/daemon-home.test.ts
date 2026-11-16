@@ -18,6 +18,7 @@ import {
   readDaemonState,
   startDaemon,
   stopDaemon,
+  withStartLock,
 } from "../../../src/runtime/daemon-control.js";
 import {
   daemonProcess,
@@ -126,6 +127,27 @@ describe("the daemons of a Rerail home", () => {
     for (const hook of hooks) hook.go();
     await Promise.all(hooks.map(async hook => await hook.exited));
     await until(async () => await findRunningDaemon(home) !== undefined && launchers(home).every(pid => !processAlive(pid)), 90_000);
+    expect(launchers(home)).toHaveLength(1);
+    expect(liveDaemons(home)).toEqual([await recordedPid(home)]);
+  }, 120_000);
+
+  it("keeps the claim of a launcher whose start waits past the claim's lease, so a hook after it launches nothing", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const first = hookFindingNoDaemon();
+    const later = hookFindingNoDaemon();
+    await Promise.all([first.ready, later.ready]);
+    // A start the test holds the start lock against waits for it, as a launcher behind a slow start does.
+    await withStartLock(home, async () => {
+      first.go();
+      await first.exited;
+      await until(() => launchers(home).length === 1, 20_000);
+      // Past the 5 s a claim holds unrenewed, within the 15 s a start waits for the start lock.
+      await delay(7_000);
+      later.go();
+      await later.exited;
+      expect(launchers(home)).toHaveLength(1);
+    });
+    await until(async () => await findRunningDaemon(home) !== undefined && launchers(home).every(pid => !processAlive(pid)), 60_000);
     expect(launchers(home)).toHaveLength(1);
     expect(liveDaemons(home)).toEqual([await recordedPid(home)]);
   }, 120_000);

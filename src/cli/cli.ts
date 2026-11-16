@@ -53,6 +53,7 @@ import {
   openDashboard,
   startDaemon,
   stopDaemon,
+  keepAutostartClaim,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   type DaemonLaunchOptions,
@@ -873,6 +874,10 @@ async function main(): Promise<number> {
     process.stdout.write(`${manifest.name.split("/").pop()} ${manifest.version}\n`);
     return 0;
   }
+
+  // A `rerail daemon start` an autostart launched keeps its claim held while it runs, a hand-off to the active version
+  // included, so the processes that find the daemon down leave the start to it (`keepAutostartClaim`).
+  if (versionArgs[0] === "daemon" && versionArgs[1] === "start") keepAutostartClaim(home);
 
   if (!managedChild && !isVersionIndependentCommand(args)) {
     const exit = await dispatchToManagedVersion(args, updater);
