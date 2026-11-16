@@ -14,9 +14,9 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { heldOffRangeFailure, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
-import { HELD_OFF_SINCE } from "../../../src/engine/index.js";
+import { HELD_OFF_SINCE, LANGUAGE_SINCE } from "../../../src/engine/index.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -864,6 +864,30 @@ describe("heldOffRangeFailure", () => {
   it("names the held-off rules and the range to raise to", () => {
     expect(heldOffRangeFailure(">=0.1.0-0", held, HELD_OFF_SINCE)).toBe(
       `package.json: the core range >=0.1.0-0 admits Rerail older than ${HELD_OFF_SINCE}, which refuses heldOff (ruff-b009-get-attr-with-constant); raise it to >=${HELD_OFF_SINCE}-0`,
+    );
+  });
+});
+
+// A language core first reads in a later release is the same hazard as heldOff: an older core refuses the rule document
+// and drops the pack whole, so from that release on the pack's core range leaves older cores out.
+describe("languageRangeFailure", () => {
+  const since = LANGUAGE_SINCE.get("java")!;
+
+  it.each([
+    ["a core before the release that reads Java passes the old range", ">=0.1.0-0", ["python", "java"], "0.1.4", false],
+    ["the release that reads it fails a range admitting older cores", ">=0.1.0-0", ["python", "java"], since, true],
+    ["a prerelease of it fails it too", ">=0.1.0-0", ["java"], `${since}-next.0`, true],
+    ["a later release fails it too", ">=0.1.0-0", ["java"], "1.0.0", true],
+    ["a range starting at its prereleases passes", `>=${since}-0`, ["java"], since, false],
+    ["a range starting at the release passes", `>=${since}`, ["java"], since, false],
+    ["a pack whose rules are all in languages every core reads passes", ">=0.1.0-0", ["python", "typescript", "vue"], since, false],
+  ])("%s", (_, range, languages, core, fails) => {
+    expect(languageRangeFailure(range, languages, core) !== undefined).toBe(fails);
+  });
+
+  it("names the language and the range to raise to", () => {
+    expect(languageRangeFailure(">=0.1.0-0", ["java", "python"], since)).toBe(
+      `package.json: the core range >=0.1.0-0 admits Rerail older than ${since}, which reads no java rule; raise it to >=${since}-0`,
     );
   });
 });

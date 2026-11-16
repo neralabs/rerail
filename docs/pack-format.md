@@ -88,7 +88,11 @@ packs/<id>/
 }
 ```
 
-- **`peerDependencies`**: the core range. A pack has no `dependencies`.
+- **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
+  reads in a later release (`LANGUAGE_SINCE` in `src/engine/catalog/rule-packs.ts`: Java, 0.1.5) leaves older cores out
+  from that release on, as for `heldOff` below: they refuse the document and would drop the whole pack, so once core is
+  at that release the pack validation fails a range that admits them, and the Release pull request that bumps core
+  raises it.
 - **`files`**: the pack and its licence records. Validation material never reaches npm.
 - **`repository`**: this repository and the pack's directory. `publishConfig.access` is `public`, like core.
 - **`private`**: `true` makes a pack that is never published. It needs no `publishConfig`; `false` is refused (a
