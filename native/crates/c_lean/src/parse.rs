@@ -162,6 +162,14 @@ struct P<'a> {
     top: bool,
     /// In a template's argument list outside brackets: a `>` closes it, no operator.
     no_gt: bool,
+    /// The next unary is an expression's first operand (`expr_prec`'s), not another unary's.
+    prefix_top: bool,
+    /// In a pointer's or a reference's declarator: tree-sitter's parse forks at a `(` after the
+    /// name (parameters or an initializer's arguments), so each fork lexes the next word.
+    in_pointer: bool,
+    /// The next expression is the whole of a parentheses' content (C++: any expression may be
+    /// assigned to there).
+    paren_top: bool,
     /// The `>>` tokens split into two `>` (a template's closer): their tokens before, for a
     /// rewind.
     splits: Vec<(usize, Tok)>,
@@ -183,6 +191,7 @@ struct Mark {
     relexes: u32,
     no_gt: bool,
     top: bool,
+    in_pointer: bool,
 }
 
 /// `src` parsed.
@@ -210,6 +219,9 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             far: 0,
             top: true,
             no_gt: false,
+            prefix_top: false,
+            in_pointer: false,
+            paren_top: false,
             splits: Vec::new(),
             relexes: 0,
         };
@@ -693,6 +705,7 @@ impl<'a> P<'a> {
             relexes: self.relexes,
             no_gt: self.no_gt,
             top: self.top,
+            in_pointer: self.in_pointer,
         }
     }
 
@@ -722,6 +735,7 @@ impl<'a> P<'a> {
         self.depth = m.depth;
         self.no_gt = m.no_gt;
         self.top = m.top;
+        self.in_pointer = m.in_pointer;
     }
 
     /// The next token, a `>>`, read as two `>`: the first left as the next token.

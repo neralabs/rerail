@@ -68,6 +68,12 @@ pub(super) fn is_qualifier(code: u8) -> bool {
     )
 }
 
+/// Whether a word is a C++ literal's or an operator's that a later parameter reads as a type's
+/// name (`f(a, nullptr)` declares a function).
+pub(super) fn is_literal_word(code: u8) -> bool {
+    matches!(code, w::TRUE | w::FALSE | w::NULLPTR | w::NULL | w::THIS | w::SIZEOF)
+}
+
 pub(super) fn is_sized_word(code: u8) -> bool {
     is_sized(code)
 }
@@ -136,6 +142,10 @@ impl<'a> P<'a> {
             let Some(e) = self.paren_end(1) else { return false };
             return self.kind_at(e + 1) == T::Name || self.kind_at(e + 1) == T::ColonColon && self.cpp_type_declaration_ahead();
         }
+        if self.cpp && is_primitive(t.word) && self.kind_at(1) == T::LParen && !top {
+            // `void (*f)() = g;` in a block: a call's reading wins where both read.
+            return self.paren_declarator_ahead(1, top);
+        }
         if t.word == w::EXTERN || self.specifier_word(t.word) {
             return true;
         }
@@ -152,6 +162,12 @@ impl<'a> P<'a> {
             T::Star => self.pointer_declarator_ahead(1),
             T::Amp | T::AmpAmp if self.cpp => self.reference_declarator_ahead(1),
             T::LParen => self.macro_type_ahead(top) || self.paren_declarator_ahead(1, top),
+            // `T [a](b, c);`: a function declarator named by a structured binding (its reading
+            // wins where its parameters read).
+            T::LBracket if self.cpp => {
+                let Some(e) = self.paren_end(1) else { return false };
+                (2..e).all(|i| if i % 2 == 0 { self.is_ident_at(i) } else { self.kind_at(i) == T::Comma }) && self.kind_at(e + 1) == T::LParen && self.params_at(e + 1)
+            }
             _ => false,
         }
     }
@@ -280,6 +296,10 @@ impl<'a> P<'a> {
         if self.is_ident_at(k + 1) && self.kind_at(k + 2) == T::RParen {
             return top && matches!(self.kind_at(k + 3), T::LBrace | T::Eq);
         }
+        // C++: `T (A::*p)(…)`, a pointer to a member.
+        if self.cpp && self.is_ident_at(k + 1) && self.kind_at(k + 2) == T::ColonColon && self.kind_at(k + 3) == T::Star {
+            return true;
+        }
         if self.kind_at(k + 1) != T::Star {
             return false;
         }
@@ -305,7 +325,8 @@ impl<'a> P<'a> {
             i += 1;
         }
         // In a block: empty brackets, or parameters only a type reads (`(T *)`, `(int)`).
-        let typed = self.kind_at(e + 1) == T::LParen && self.is_ident_at(e + 2) && self.kind_at(e + 3) == T::Star && {
+        let typed = self.kind_at(e + 1) == T::LParen && self.cpp && self.peek_at(e + 2).kind == T::Name && { let c = self.peek_at(e + 2).word; self.specifier_word(c) && !is_storage(c) }
+            || self.kind_at(e + 1) == T::LParen && self.is_ident_at(e + 2) && self.kind_at(e + 3) == T::Star && {
             let mut i = e + 3;
             while self.kind_at(i) == T::Star {
                 i += 1;
@@ -377,7 +398,7 @@ impl<'a> P<'a> {
             let d = self.declarator(Fam::Decl, slot(f::DECLARATOR, ctx))?;
             // A function's definition: its declarator (a function declarator, or one around it:
             // `char *f(…)`) and a body.
-            if first && body && d.kind == K::FunctionDeclarator && self.peek() == T::Name && !self.is_attribute() && !self.is_asm() {
+            if first && body && !self.cpp && d.kind == K::FunctionDeclarator && self.peek() == T::Name && !self.is_attribute() && !self.is_asm() {
                 // An old-style definition: its parameters' declarations, then the body.
                 self.rekind_keep(n.at, K::FunctionDefinition);
                 self.rekey(d.at, slot(f::DECLARATOR, Ctx::Bare));
@@ -673,6 +694,9 @@ impl<'a> P<'a> {
             }
             if is_sized(t.word) {
                 self.kw_any(K::SizedTypeSpecifier)?;
+            } else if self.cpp && !ty && self.is_qualifier_word(t.word) && self.kind_at(1) == T::Name && is_primitive(self.peek_at(1).word) {
+                // `unsigned const char`: the qualifier inside.
+                self.qualifier()?;
             } else if !ty && is_primitive(t.word) {
                 self.leaf(K::PrimitiveType, f::TYPE, C_NONE)?;
                 ty = true;
@@ -988,9 +1012,6 @@ impl<'a> P<'a> {
         self.bump()?;
         loop {
             let at = self.open(K::Attribute, f::NONE, C_NONE);
-            if !self.is_ident() {
-                return self.refuse();
-            }
             // C++: any word names an attribute (`noreturn`, `fallthrough`).
             if self.cpp && self.peek() == T::Name && self.kind_at(1) == T::ColonColon {
                 self.leaf(K::Identifier, f::PREFIX, C_NONE)?;
@@ -1050,7 +1071,9 @@ impl<'a> P<'a> {
                 if variadic {
                     self.variadic_declarator()?;
                 } else if fam != Fam::Abstract || self.abstract_continues() {
+                    let p = std::mem::replace(&mut self.in_pointer, true);
                     self.declarator(fam, slot(f::NONE, fam.ctx()))?;
+                    self.in_pointer = p;
                 }
                 self.close(n);
                 return Ok(n);
@@ -1097,7 +1120,12 @@ impl<'a> P<'a> {
                             _ => K::MsUnalignedPtrModifier,
                         };
                         let k2 = self.open(k, f::NONE, C_NONE);
-                        self.kw_any(k)?;
+                        // C++'s tapes imply `__restrict` (its node's one word).
+                        if self.cpp && k == K::MsRestrictModifier {
+                            self.bump()?;
+                        } else {
+                            self.kw_any(k)?;
+                        }
                         self.close(k2);
                         self.close(m);
                     } else if self.is_qualifier_word(t.word) {
@@ -1107,7 +1135,9 @@ impl<'a> P<'a> {
                     }
                 }
                 if fam != Fam::Abstract || self.abstract_continues() {
+                    let p = std::mem::replace(&mut self.in_pointer, true);
                     self.declarator(fam, inner)?;
+                    self.in_pointer = p;
                 }
                 self.close(n);
                 return Ok(n);
@@ -1252,11 +1282,18 @@ impl<'a> P<'a> {
     /// initializer's arguments: each item starts as a type does and holds no operator or literal
     /// outside brackets (before a default's `=`).
     fn params_ahead(&mut self) -> bool {
-        self.params_at(0)
+        let split = self.in_pointer;
+        self.params_at_with(0, split)
     }
 
     /// `params_ahead` for the parentheses at token `k`.
     pub(super) fn params_at(&mut self, k: usize) -> bool {
+        self.params_at_with(k, false)
+    }
+
+    /// `params_at`, where `split` says the parse has forked before the first word (so a literal's
+    /// word reads as a type's name there too).
+    fn params_at_with(&mut self, k: usize, split: bool) -> bool {
         let Some(e) = self.paren_end(k) else { return false };
         if e == k + 1 {
             return true;
@@ -1268,14 +1305,21 @@ impl<'a> P<'a> {
         // The item's names (a qualified name's parts as one): a `*` or `&` after two is an
         // operator's (`a * b`).
         let mut names = 0usize;
+        // Whether the item's first word is a type's keyword: no expression reads it (`void (*f)()`).
+        let mut hard = false;
+        // Whether an initializer's reading survives to the end (a `;` or `,` after): a tie.
+        let tie = matches!(self.kind_at(e + 1), T::Semi | T::Comma);
         while j < e {
             let t = self.peek_at(j);
             if item_start {
                 item_start = false;
+                hard = t.kind == T::Name && { let c = t.word; self.specifier_word(c) && !is_storage(c) };
                 let ok = match t.kind {
-                    // `true`/`false` first: an initializer's (tree-sitter's lexing); later, a type's
-                    // name where the other items are parameters.
-                    T::Name if matches!(t.word, w::TRUE | w::FALSE) => j > k + 1,
+                    // A literal's word (`true`, `nullptr`, `this`, `sizeof` …) first: an
+                    // initializer's (tree-sitter lexes the first token once, as the keyword); later,
+                    // a type's name where the other items are parameters (its parameter reading
+                    // lexes it as a name, and wins the tie).
+                    T::Name if is_literal_word(t.word) => split || j > k + 1,
                     T::Name => {
                         let c = t.word;
                         !self.reserved(c) || self.specifier_word(c) || is_primitive(c) || is_sized(c) || matches!(c, w::AUTO | w::DECLTYPE | w::TYPENAME | w::CONST | w::VOLATILE)
@@ -1290,12 +1334,20 @@ impl<'a> P<'a> {
             }
             // A parenthesized group after a type's name at the parameters' depth: a function
             // type's parameters (`T(U, V)`), themselves parameters; `(*f)` is a declarator.
-            if depth == 0 && t.kind == T::LParen && j > k + 1 && matches!(self.kind_at(j - 1), T::Name | T::Gt) && !self.paren_declarator_group(j) {
-                if !self.params_at(j) {
+            // A parenthesized declarator (`T (&x)`) loses tree-sitter's tie (its precedence -10).
+            if depth == 0 && !default && !hard && tie && t.kind == T::LParen && j > k + 1 && matches!(self.kind_at(j - 1), T::Name | T::Gt) && self.paren_declarator_group(j) {
+                return false;
+            }
+            if depth == 0 && !default && t.kind == T::LParen && j > k + 1 && matches!(self.kind_at(j - 1), T::Name | T::Gt) && !self.paren_declarator_group(j) {
+                if !self.params_at_with(j, true) {
                     return false;
                 }
                 j = self.paren_end(j).expect("balanced") + 1;
                 continue;
+            }
+            // `{` at the parameters' depth is an initializer's (`T x(U{})`).
+            if t.kind == T::LBrace && depth == 0 && !default {
+                return false;
             }
             match t.kind {
                 T::LParen | T::LBracket | T::LBrace => depth += 1,
@@ -1323,7 +1375,7 @@ impl<'a> P<'a> {
                     let bad = matches!(
                         t.kind,
                         T::Number | T::Str | T::Char | T::RawStr | T::Dot | T::Arrow | T::Plus | T::Minus | T::Slash | T::Percent | T::Bang | T::Question | T::Pipe | T::PipePipe | T::Caret | T::EqEq | T::Ne | T::Gt | T::Ge | T::Le | T::LtLt | T::GtGt | T::PlusPlus | T::MinusMinus | T::Tilde
-                    ) || t.kind == T::Name && matches!(t.word, w::NULLPTR | w::THIS | w::NEW | w::SIZEOF);
+                    );
                     if bad {
                         return false;
                     }
@@ -1385,13 +1437,13 @@ impl<'a> P<'a> {
 
     /// Whether an abstract pointer's declarator goes on: `*` then `*`, `(`, `[`.
     fn abstract_continues(&mut self) -> bool {
-        matches!(self.peek(), T::Star | T::LBracket) || self.peek() == T::LParen
+        matches!(self.peek(), T::Star | T::LBracket) || self.peek() == T::LParen || self.cpp && matches!(self.peek(), T::Amp | T::AmpAmp)
     }
 
     /// Whether `(` ahead opens an abstract parenthesized declarator (`(*)`, `(*)[…]`, `([…])`), not
     /// parameters.
     fn abstract_paren_ahead(&mut self) -> bool {
-        matches!(self.kind_at(1), T::Star | T::LBracket) || self.kind_at(1) == T::LParen && self.kind_at(2) != T::RParen && !self.type_in_parens_ahead(1)
+        matches!(self.kind_at(1), T::Star | T::LBracket) || self.cpp && matches!(self.kind_at(1), T::Amp | T::AmpAmp) || self.kind_at(1) == T::LParen && self.kind_at(2) != T::RParen && !self.type_in_parens_ahead(1)
     }
 
     /// `(` parameters `)`.
@@ -1459,7 +1511,9 @@ impl<'a> P<'a> {
 
     pub(super) fn parameter_declaration(&mut self) -> R<()> {
         let n = self.open(K::ParameterDeclaration, f::NONE, C_NONE);
-        if self.specifiers(K::ParameterDeclaration)?.is_none() {
+        if self.cpp && self.peek() == T::Name && is_literal_word(self.tok().word) {
+            self.leaf(K::TypeIdentifier, f::TYPE, class(K::TypeIdentifier, Ctx::Type))?;
+        } else if self.specifiers(K::ParameterDeclaration)?.is_none() {
             return self.refuse();
         }
         let closers = |p: &mut Self| matches!(p.peek(), T::Comma | T::RParen) || p.cpp && matches!(p.peek(), T::Eq | T::Gt | T::GtGt);
@@ -1520,7 +1574,7 @@ impl<'a> P<'a> {
                 // `(name)`: a parameter list holding a type (tree-sitter's choice).
                 T::LParen if self.is_ident_at(k + 1) && self.kind_at(k + 2) == T::RParen => return false,
                 // C++: `(a, b)`, `(A::b …`, `(T<U> …`: parameters.
-                T::LParen if self.cpp && self.is_ident_at(k + 1) && matches!(self.kind_at(k + 2), T::Comma | T::ColonColon | T::Lt | T::Name | T::Amp | T::AmpAmp) => return false,
+                T::LParen if self.cpp && self.is_ident_at(k + 1) && matches!(self.kind_at(k + 2), T::Comma | T::ColonColon | T::Lt | T::Name | T::Amp | T::AmpAmp | T::LParen) => return false,
                 T::Amp | T::AmpAmp if self.cpp => k += 1,
                 T::Name if self.cpp && t.word == w::OPERATOR => return true,
                 T::ColonColon if self.cpp => return true,
@@ -1591,6 +1645,14 @@ impl<'a> P<'a> {
         }
         if j > k + 2 {
             return self.kind_at(j) == T::RParen;
+        }
+        // C++: `(T&)x`, `(T&&)x`.
+        if self.cpp && matches!(self.kind_at(k + 2), T::Amp | T::AmpAmp) && self.kind_at(k + 3) == T::RParen {
+            return true;
+        }
+        // `(T(CALL *)(…))`: a function pointer's type, a calling convention's name inside.
+        if self.kind_at(k + 2) == T::LParen && self.is_ident_at(k + 3) && matches!(self.kind_at(k + 4), T::Star | T::Caret) && self.kind_at(k + 5) == T::RParen && self.kind_at(k + 6) == T::LParen {
+            return true;
         }
         // `(T)`: a type or an expression; the caller decides by what follows.
         false

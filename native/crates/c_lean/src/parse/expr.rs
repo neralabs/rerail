@@ -74,6 +74,8 @@ impl<'a> P<'a> {
 
     fn expr_prec(&mut self, s: Slot, min: u8) -> R<N> {
         self.deeper()?;
+        let paren = std::mem::replace(&mut self.paren_top, false);
+        self.prefix_top = true;
         let mut left = self.unary(s)?;
         loop {
             let t = self.tok();
@@ -110,6 +112,10 @@ impl<'a> P<'a> {
                     break;
                 }
                 if !Self::assignable(left.kind) {
+                    // C++: alone in parentheses, any expression's assignment (the caller's).
+                    if paren {
+                        break;
+                    }
                     return self.refuse();
                 }
                 // `_assignment_left_expression` is inlined: the left is in no supertype.
@@ -190,6 +196,8 @@ impl<'a> P<'a> {
     }
 
     fn unary_inner(&mut self, s: Slot) -> R<N> {
+        // Whether this unary is an expression's first operand (not another unary's).
+        let top = std::mem::replace(&mut self.prefix_top, false);
         let t = self.tok();
         if self.cpp && t.kind == T::Name {
             match t.word {
@@ -224,7 +232,14 @@ impl<'a> P<'a> {
         match t.kind {
             T::Bang | T::Tilde | T::Minus | T::Plus => {
                 if matches!(t.kind, T::Minus | T::Plus) && self.kind_at(1) == T::Number && self.peek_at(1).start == t.end {
-                    let n = self.signed_number(s)?;
+                    let mut n = self.signed_number(s)?;
+                    // C++: `-1_x`, a user-defined literal of the signed number.
+                    if self.cpp && self.peek() == T::Name && self.tok().start == self.last_end {
+                        let l = self.wrap(n, K::UserDefinedLiteral, s, BARE);
+                        self.leaf(K::LiteralSuffix, f::NONE, C_NONE)?;
+                        self.close(l);
+                        n = l;
+                    }
                     return self.postfix(n, s, true);
                 }
                 let n = self.open_in(K::UnaryExpression, s);
@@ -246,7 +261,18 @@ impl<'a> P<'a> {
             T::PlusPlus | T::MinusMinus => {
                 let n = self.open_in(K::UpdateExpression, s);
                 self.leaf(punct(t.kind).expect("an operator"), f::OPERATOR, C_NONE)?;
-                self.unary(slot(f::ARGUMENT, Ctx::Expr))?;
+                let a = self.unary(slot(f::ARGUMENT, Ctx::Expr))?;
+                // C++: `++a %= b` updates the assignment (tree-sitter-cpp's reading), where the
+                // update is no other unary's operand (`*--p = x` assigns to `*--p`).
+                if self.cpp && top {
+                    let u = self.tok();
+                    if let Some(op) = assignment(u.kind) {
+                        let m = self.wrap(a, K::AssignmentExpression, slot(f::ARGUMENT, Ctx::Expr), slot(f::LEFT, Ctx::Bare));
+                        self.leaf(op, f::OPERATOR, C_NONE)?;
+                        self.expr_prec(slot(f::RIGHT, Ctx::Expr), ASSIGN)?;
+                        self.close(m);
+                    }
+                }
                 self.close(n);
                 Ok(n)
             }
@@ -516,12 +542,23 @@ impl<'a> P<'a> {
         if self.peek() == T::LBrace {
             self.compound(BARE)?;
         } else {
+            self.paren_top = self.cpp;
             let e = self.comma_expr(EXPR)?;
             // C++: an assignment alone in parentheses is `_assignment_expression_lhs` (no
             // supertype; its left any expression).
             if self.cpp && e.kind == K::AssignmentExpression && self.peek() == T::RParen {
                 self.rekey(e.at, BARE);
                 self.rekey(e.at + 1, slot(f::LEFT, Ctx::Expr));
+            } else if let Some(op) = assignment(self.peek()).filter(|_| self.cpp && e.kind != K::CommaExpression) {
+                // Any expression's assignment, alone in the parentheses (`((int&)a |= b)`).
+                let a = self.wrap(e, K::AssignmentExpression, BARE, slot(f::LEFT, Ctx::Expr));
+                self.leaf(op, f::OPERATOR, C_NONE)?;
+                if self.peek() == T::LBrace {
+                    self.initializer_list(slot(f::RIGHT, Ctx::Bare))?;
+                } else {
+                    self.expr(slot(f::RIGHT, Ctx::Expr))?;
+                }
+                self.close(a);
             }
         }
         self.no_gt = no_gt;
@@ -542,7 +579,8 @@ impl<'a> P<'a> {
         let n = self.open_in(K::ArgumentList, s);
         self.list(K::ArgumentList, T::RParen, true, false, |p| {
             match p.peek() {
-                T::LBrace if p.cpp => {
+                // C++: a block of statements (a `;` in it), else an initializer list.
+                T::LBrace if p.cpp && !p.semi_in_braces() => {
                     p.initializer_list(BARE)?;
                 }
                 T::LBrace => {
@@ -584,7 +622,12 @@ impl<'a> P<'a> {
             if t.kind == T::LBrace {
                 self.initializer_list(BARE)?;
             } else {
-                self.expr(EXPR)?;
+                let e = self.expr(EXPR)?;
+                if self.cpp && self.peek() == T::DotDotDot {
+                    let x = self.wrap(e, K::ParameterPackExpansion, EXPR, slot(f::PATTERN, Ctx::Expr));
+                    self.tk(K::ParameterPackExpansion, K::TDotDotDot)?;
+                    self.close(x);
+                }
             }
             return Ok(());
         }

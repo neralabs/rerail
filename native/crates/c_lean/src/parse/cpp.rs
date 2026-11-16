@@ -544,8 +544,10 @@ impl<'a> P<'a> {
         // Outside a class, a constructor's name repeats its class's: `A::A(`, `A::~A(`.
         // Outside a class, a typeless `M(a, b) {` is a function's definition (a macro's), its
         // arguments read as parameters.
+        // Outside blocks, a constructor's initializer list may follow (`X(T a) : b(a) {}`).
         if level != Level::Field && !qualified {
-            return k == j - 1 && self.paren_end(j).is_some_and(|e| self.kind_at(e + 1) == T::LBrace) && self.params_at(j);
+            let colon = level != Level::Block || self.top;
+            return k == j - 1 && self.paren_end(j).is_some_and(|e| self.kind_at(e + 1) == T::LBrace || colon && self.kind_at(e + 1) == T::Colon && self.kind_at(e + 2) != T::Colon) && self.params_at(j);
         }
         if qualified && !destructor {
             let (Some(a), Some(b)) = (prev, last) else { return false };
@@ -877,9 +879,6 @@ impl<'a> P<'a> {
                     depth -= 1;
                 }
                 T::Semi | T::LBrace | T::RBrace | T::Eof | T::Directive => return None,
-                // `&&` in a type (`T&&>`, `T&&,`) or between conditions.
-                T::AmpAmp if depth == 0 && !matches!(self.kind_at(j + 1), T::Gt | T::GtGt | T::Comma | T::DotDotDot) => return None,
-                T::PipePipe if depth == 0 => return None,
                 _ => {}
             }
             j += 1;
@@ -893,6 +892,14 @@ impl<'a> P<'a> {
         if self.kind_at(e) == T::GtGt {
             // A `>>` closing this list and an outer one.
             return true;
+        }
+        // A call's arguments then an operand (`a < b > (c) d`): comparisons.
+        if self.kind_at(e + 1) == T::LParen {
+            if let Some(p) = self.paren_end(e + 1) {
+                if matches!(self.kind_at(p + 1), T::Number | T::Str | T::Char) || self.is_ident_at(p + 1) {
+                    return false;
+                }
+            }
         }
         matches!(
             self.kind_at(e + 1),
@@ -997,6 +1004,15 @@ impl<'a> P<'a> {
                 self.kw(K::DependentName, w::TEMPLATE)?;
                 self.simple_name(role, BARE)?;
                 self.close(d);
+            } else if role == Role::Decl && self.peek() == T::Star {
+                // `A::*p`: a pointer to a member, its name a pointer type declarator.
+                let p = self.open(K::PointerTypeDeclarator, f::NAME, C_NONE);
+                self.tk(K::PointerTypeDeclarator, K::TStar)?;
+                if !self.is_ident() {
+                    return self.refuse();
+                }
+                self.leaf(K::TypeIdentifier, f::DECLARATOR, class(K::TypeIdentifier, Ctx::TDecl))?;
+                self.close(p);
             } else {
                 self.qname(role, slot(f::NAME, Ctx::Bare))?;
             }
@@ -1584,6 +1600,8 @@ impl<'a> P<'a> {
             T::Number | T::Char if adjacent_suffix(self) => self.user_literal(s)?,
             T::Name => match t.word {
                 w::THIS => self.leaf_in(K::This, s)?,
+                // `static_assert(…)` where no declaration is: a call.
+                w::STATIC_ASSERT => self.leaf_in(K::Identifier, s)?,
                 w::NEW => self.new_expression(s)?,
                 w::DELETE => self.delete_expression(s)?,
                 w::OPERATOR => self.qname(Role::Expr, s)?,
@@ -1746,6 +1764,27 @@ impl<'a> P<'a> {
         }
         self.close(i);
         Ok(())
+    }
+
+    /// Whether the braces at the next token hold a `;` at their depth: a block's.
+    pub(super) fn semi_in_braces(&mut self) -> bool {
+        let mut depth = 0usize;
+        let mut j = 1;
+        loop {
+            match self.kind_at(j) {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                }
+                T::Semi if depth == 0 => return true,
+                T::Eof => return false,
+                _ => {}
+            }
+            j += 1;
+        }
     }
 
     /// Whether the parentheses ahead (the next token is their `(`… already passed) hold a `;` at
