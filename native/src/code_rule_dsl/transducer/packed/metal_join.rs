@@ -237,6 +237,89 @@ impl Stage {
     }
 }
 
+/// The chunk views' kernel (decision 0289 §2): the chunk's structures as `rerail-blocks` generates them, then
+/// `view_expand`, which makes each row as `Viewed::value_at` does.
+fn chunk_views_source() -> String {
+    let mut s = String::from("#include <metal_stdlib>\nusing namespace metal;\n");
+    s += &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::msl();
+    s += CHUNK_VIEWS;
+    s
+}
+
+const CHUNK_VIEWS: &str = r#"
+constant uint CH_NONE = 0xffffffffu;
+// A span's items: its own address plus its offset (`rerail_blocks::Span`).
+template <typename T> inline device const T* items(device const Span& s) { return (device const T*)((device const char*)&s + s.off); }
+
+inline uint view_start(device const ChunkDoc& d, uint view) {
+    return view == 1u ? d.child_row : (view == 2u ? d.field_row : d.node_row);
+}
+inline long global_of(device const ChunkDoc& d, uint l) {
+    uint low = d.preorder != 0u ? l : items<uint>(d.low)[l];
+    return long(ulong(d.key) << 32 | ulong(low));
+}
+// The projection's parent (`Projected::parent`): a node left out of it has the root for parent.
+inline uint parent_of(device const ChunkDoc& d, uint l) {
+    uint id = items<uint>(d.core)[l];
+    uint p = items<uint>(d.parent)[id];
+    uint q = p == CH_NONE ? CH_NONE : items<uint>(d.local)[p];
+    return (q == CH_NONE && l != 0u) ? 0u : q;
+}
+// The kind column (`Dialect::kind`): the canonical code's atom.
+inline long kind_of(device const ChunkDoc& d, uint id) {
+    uint code = items<uint>(d.kind)[id] % 1024u;
+    if (code == 0u) return long(d.tag * 1024u);
+    uint c = code < uint(d.canonical.len) ? uint(items<ushort>(d.canonical)[code]) : code;
+    return long(d.tag * 1024u + (c == 0xffffu ? 0u : c));
+}
+
+// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, then each column's index.
+kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[buffer(1)]], constant uint* p [[buffer(2)]],
+                        uint r [[thread_position_in_grid]]) {
+    uint n = p[2];
+    if (r >= n) return;
+    device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
+    device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
+    uint view = p[1];
+    // The last document whose rows start at or before `r` holds it (an empty one starts where the next does).
+    uint lo = 0u, hi = root->ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (view_start(docs[m], view) <= r) lo = m; else hi = m;
+    }
+    device const ChunkDoc& d = docs[lo];
+    uint i = r - view_start(d, view);
+    uint l = view == 1u ? i + 1u : (view == 2u ? items<uint>(d.fielded)[i] : i);
+    uint id = items<uint>(d.core)[l];
+    for (uint c = 0u; c < p[3]; c++) {
+        uint col = p[4 + c];
+        long v;
+        if ((view == 0u || view == 3u) && col == 0u) {
+            v = long(d.key);
+        } else if (view == 3u && col == 1u) {
+            v = long(id);
+        } else if (view == 0u && col == 2u) {
+            v = kind_of(d, id);
+        } else if (view == 0u && col == 3u) {
+            v = long(items<uint>(d.start)[id]);
+        } else if (view == 0u && col == 4u) {
+            v = long(items<uint>(d.end)[id]);
+        } else if ((view == 1u || view == 2u) && col == 0u) {
+            uint q = parent_of(d, l);
+            v = q == CH_NONE ? -1 : global_of(d, q);
+        } else if (view == 1u && col == 2u) {
+            // `child`'s columns are parent, child, index (`Viewed::columns`).
+            v = long(items<uint>(d.ord)[l]);
+        } else if (view == 2u && col == 1u) {
+            v = long(d.tag << 16 | uint(items<ushort>(d.field)[id]));
+        } else {
+            v = global_of(d, l);
+        }
+        out[ulong(c) * n + r] = v;
+    }
+}
+"#;
+
 const SOURCE: &str = r#"#include <metal_stdlib>
 using namespace metal;
 
@@ -1954,6 +2037,19 @@ impl Batch {
         let parts = encode_sort(pass, &words.buffer, Width::W32, bits, n)?;
         self.keep.push(words);
         Ok(DevIndex { parts, mask, rows: n })
+    }
+
+    /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
+    /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
+    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, cols: &[usize], out: &DevRel) -> Result<(), Error> {
+        let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
+        let pass = self.pass(1)?;
+        let mut p = vec![u32::try_from(root).map_err(|_| Error::BackendCapacity)?, view, out.rows as u32, cols.len() as u32];
+        p.extend(cols.iter().map(|&c| c as u32));
+        if out.rows > 0 {
+            pass.run(&expand, &[block, &out.buffer.buffer], &p, &[], groups(out.rows));
+        }
+        Ok(())
     }
 
     /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index): count, scan,

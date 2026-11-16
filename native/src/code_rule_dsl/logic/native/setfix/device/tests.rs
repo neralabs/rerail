@@ -573,3 +573,57 @@
             assert_eq!(got[0], got[1], "{case}: the device's rows are the CPU's");
         }
     }
+
+    /// Decision 0289 §2: a view made on the device from the batch's chunk block is the host's rows (`Source::value`),
+    /// for each view the device makes, over documents with fields, nesting and a broken one.
+    #[test]
+    fn views_made_on_the_device_are_the_hosts_rows() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use std::sync::Arc;
+        if !mj::available() {
+            return;
+        }
+        {
+            use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
+            use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
+            register(Family::Python, &Pack::<Python>::NEW);
+            language::register_base(Family::Python, &Pack::<Python>::NEW);
+        }
+        let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "def f(a, b:\n    return [a for\n", "", "@d\ndef g():\n    try:\n        pass\n    except E as e:\n        raise\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-chunk-views-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let all = sources(&store, docs).unwrap();
+        let device = rerail_accel::gpu::join::device().expect("the device");
+        let mut seen = 0;
+        for name in ["node", "child", "field", "core_node"] {
+            let src = &all.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+            let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
+            let (n, k) = (src.len(), src.columns().len());
+            assert_eq!(d.rows, n, "{name}");
+            assert!(n > 0, "{name}: rows");
+            // Every column, and a subset out of order, as a stratum asks for.
+            for cols in [(0..k).collect::<Vec<_>>(), vec![k - 1, 0]] {
+                let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                let mut batch = mj::Batch::new().expect("the device");
+                batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, &cols, &out).unwrap();
+                batch.finish().unwrap();
+                for (j, &c) in cols.iter().enumerate() {
+                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                    assert_eq!(out.column(j), &host[..], "{name}: column {c}");
+                }
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 8);
+        let _ = std::fs::remove_file(&store_path);
+    }

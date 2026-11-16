@@ -52,6 +52,8 @@ pub mod normalized;
 use core_rr::Family;
 pub mod guests;
 pub mod granules;
+#[cfg(target_os = "macos")]
+pub mod device_chunk;
 use guests::GuestRows;
 
 /// Which projection of the tree a batch serves.
@@ -1974,6 +1976,9 @@ pub struct Batch {
     /// The relations made as rows for what the program reads (`Extra` and those beside it), bound in place of a view
     /// of the same name (`line`, `end_line`, `col`, `docof`: their spans have places too).
     made: BTreeSet<&'static str>,
+    /// The batch's chunk block (decision 0289): its views' arrays, made on the device's first read of a view.
+    #[cfg(target_os = "macos")]
+    chunk: OnceLock<device_chunk::Chunk>,
 }
 
 /// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
@@ -3303,12 +3308,30 @@ impl Batch {
         } else {
             Vec::new()
         };
-        let batch = Arc::new(Batch { docs, valued, dialects, nodes, children, fields, locs, shape, families: bound, made });
+        let batch = Arc::new(Batch {
+            docs,
+            valued,
+            dialects,
+            nodes,
+            children,
+            fields,
+            locs,
+            shape,
+            families: bound,
+            made,
+            #[cfg(target_os = "macos")]
+            chunk: OnceLock::new(),
+        });
         #[cfg(any(test, feature = "test-hooks"))]
         BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
         Ok((batch, relations, matched, (strings, atoms)))
     }
 
+    /// The batch's chunk block (decision 0289), made on first use.
+    #[cfg(target_os = "macos")]
+    pub fn chunk(&self) -> &device_chunk::Chunk {
+        self.chunk.get_or_init(|| device_chunk::build(self))
+    }
     fn offsets(&self, view: View) -> &[usize] {
         match view {
             View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => &self.nodes,
@@ -3443,6 +3466,12 @@ impl Viewed {
 }
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
+    #[cfg(target_os = "macos")]
+    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
+        let view = device_chunk::device_view(self.view)?;
+        let chunk = self.batch.chunk();
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view, rows: self.len() })
+    }
     fn columns(&self) -> Vec<String> {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()
     }

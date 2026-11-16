@@ -1281,6 +1281,27 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     res.bytes = 0;
                     mj::give_back();
                 }
+                // A whole view its batch's chunk block makes (decision 0289 §2): its columns made on the device.
+                let made = match (&owner, &rel.view) {
+                    (Owner::Src(_), Some(view)) if ids.is_none() && view.whole() => view.src.device_view().filter(|d| d.rows == n),
+                    _ => None,
+                };
+                if let Some(d) = made {
+                    let device = rerail_accel::gpu::join::device()?;
+                    let block = d.block.gpu_buffer(device);
+                    let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
+                    batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
+                    rep.uploads += 1;
+                    rep.upload_cpu += thread_cpu() - c0;
+                    let by = &mut rep.upload_by[profile::UPLOAD_MADE];
+                    by.0 += dev.bytes() as u64;
+                    by.1 += thread_cpu() - c0;
+                    let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                    res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.bytes = res.bytes();
+                    res.entries.len() - 1
+                } else {
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
                     match (&owner, &rel.view) {
@@ -1324,6 +1345,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
                 res.bytes = res.bytes();
                 res.entries.len() - 1
+                }
             }
         };
         let e = &mut res.entries[at];
