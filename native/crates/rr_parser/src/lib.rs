@@ -1841,6 +1841,7 @@ pub mod tests {
 
     /// Each of `short`'s position lists a prefix of `long`'s: a refused file's records, cut at
     /// the token that refused.
+    #[cfg(target_os = "macos")]
     fn prefix_of(short: &[Vec<u32>], long: &[Vec<u32>]) -> bool {
         short.len() == long.len() && short.iter().zip(long).all(|(s, l)| l.starts_with(s))
     }
