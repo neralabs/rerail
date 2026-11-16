@@ -19,6 +19,8 @@ import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
+import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
+import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import {
   endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
@@ -243,6 +245,12 @@ interface EngineRoutingState {
   ownerLockId: string | undefined;
   /** The service's own database: the one its start and its idle sweeps end a dead daemon's sessions in. */
   databasePath: string;
+  /**
+   * The walk of each repository's other worktrees, shared by the sessions of every runtime: hooks name the session's
+   * folder, so sessions in different worktrees of one repository run in different runtimes, and each walking every
+   * worktree for itself held every file of every worktree once per session.
+   */
+  worktreeWalks: RepositoryWorktreeWalks;
 }
 
 /**
@@ -399,8 +407,8 @@ function runtimeFor(
   if (open !== undefined) return open;
   if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
   const runtime = new RerailRuntime({
-    ...runtimeOptions, autostart: false, startGate: true, suspendedSessions: suspendedSessions(state, runtimeKey),
-    ownerLockId: ownerLockFor(state, runtimeOptions.databasePath),
+    ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks,
+    suspendedSessions: suspendedSessions(state, runtimeKey), ownerLockId: ownerLockFor(state, runtimeOptions.databasePath),
   });
   state.runtimes.set(runtimeKey, runtime);
   state.runtimeOptions.set(runtimeKey, runtimeOptions);
@@ -857,6 +865,25 @@ async function listenOnSocket(
   }
 }
 
+/**
+ * The walks of the repositories' other worktrees, which read only those the engine's file-system watch says may have
+ * changed. An engine built before that watch has none: every walk then reads every worktree, and the log says so once.
+ * `close` releases the watch.
+ */
+export function engineWorktreeWalks(): RepositoryWorktreeWalks {
+  let treeWatch: TreeWatch | undefined;
+  try {
+    treeWatch = nativeTreeWatch();
+  } catch (error) {
+    process.stderr.write(`rerail: the engine's file-system watch failed to start: ${error instanceof Error ? error.message : String(error)}\n`);
+    return new RepositoryWorktreeWalks();
+  }
+  if (treeWatch === undefined) {
+    process.stderr.write("rerail: the engine is older than Rerail and has no file-system watch: every walk reads every other worktree\n");
+  }
+  return new RepositoryWorktreeWalks({ treeWatch });
+}
+
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
@@ -875,7 +902,10 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     suspended: new Map(),
     ownerLockId: ownerLock.id,
     databasePath,
+    worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
   };
+  // Walks a caller gave are the caller's to close.
+  const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
   const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
@@ -941,11 +971,16 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       } finally {
         // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
         // daemon. Its lock goes once its sessions have ended, and its file stays, so a later sweep ends any session a
-        // failed close left open (`OwnerLock.release`).
+        // failed close left open (`OwnerLock.release`). The engine's watch thread and its handles go however the sessions'
+        // close went.
         try {
           endSuspended(routing);
         } finally {
-          ownerLock.release();
+          try {
+            closeWalks();
+          } finally {
+            ownerLock.release();
+          }
         }
       }
     },
@@ -959,8 +994,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   } catch (error) {
     clearInterval(idleSweep);
     server.close();
-    await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
-    ownerLock.release();
+    try {
+      await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+    } finally {
+      closeWalks();
+      ownerLock.release();
+    }
     throw error;
   }
   // In the same turn as the listen, before any request is read: a session this service opens is its own.

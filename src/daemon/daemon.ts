@@ -18,11 +18,12 @@ import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, 
 import { daemonExit } from "./daemon-exit.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
-import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
+import type { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -421,6 +422,7 @@ interface StartedServices {
   engineService?: EngineService;
   nativeServer?: NativeSessionServer;
   server?: DaemonServer;
+  worktreeWalks?: RepositoryWorktreeWalks;
 }
 
 /**
@@ -428,7 +430,7 @@ interface StartedServices {
  * database last, once nothing uses it. The start's own error is the one thrown; a close that failed too is written to
  * stderr, so a later EADDRINUSE has its cause on record.
  */
-async function closeAfterFailedStart({ engineService, nativeServer, server }: StartedServices, stores: DatabaseApiStores): Promise<void> {
+async function closeAfterFailedStart({ engineService, nativeServer, server, worktreeWalks }: StartedServices, stores: DatabaseApiStores): Promise<void> {
   const failed = (what: string, reason: unknown): void => {
     process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
   };
@@ -441,6 +443,8 @@ async function closeAfterFailedStart({ engineService, nativeServer, server }: St
   settled.forEach((outcome, index) => {
     if (outcome.status === "rejected") failed(closing[index]![0], outcome.reason);
   });
+  // After both servers: their sessions have let go of the worktrees.
+  worktreeWalks?.close();
   try {
     stores.close();
   } catch (reason) {
@@ -471,6 +475,8 @@ export class RerailDaemon {
   readonly #workspaceRoot: string;
   readonly kernelSocketPath: string;
   readonly #nativeServer: NativeSessionServer;
+  /** The walks of the repositories' other worktrees, shared by the sessions of both servers; closed after both. */
+  readonly #worktreeWalks: RepositoryWorktreeWalks;
   readonly #nativeToken: string;
   readonly #accessToken: string;
   readonly #tlsFingerprint256: string | undefined;
@@ -487,7 +493,7 @@ export class RerailDaemon {
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
-    tlsFingerprint256,
+    worktreeWalks, tlsFingerprint256,
   }: {
     server: DaemonServer;
     engineService: EngineService;
@@ -499,6 +505,7 @@ export class RerailDaemon {
     ui: DaemonState["ui"];
     workspaceRoot: string;
     nativeServer: NativeSessionServer;
+    worktreeWalks: RepositoryWorktreeWalks;
     nativeToken: string;
     accessToken: string;
     mergeAssist?: MergeAssistRuntime;
@@ -519,6 +526,7 @@ export class RerailDaemon {
     this.#ui = ui;
     this.#workspaceRoot = workspaceRoot;
     this.#nativeServer = nativeServer;
+    this.#worktreeWalks = worktreeWalks;
     this.#nativeToken = nativeToken;
     this.#accessToken = accessToken;
     this.#mergeAssist = mergeAssist;
@@ -559,6 +567,10 @@ export class RerailDaemon {
       ...sharedMergeAssist,
     });
     try {
+      // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and
+      // Pi sessions in worktrees of one repository read them once, through the engine's one watch.
+      const worktreeWalks = engineWorktreeWalks();
+      started.worktreeWalks = worktreeWalks;
       const engineService = await startEngineService({
         socketPath: kernelSocketPath,
         storageRoot,
@@ -566,6 +578,7 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
+        worktreeWalks,
         ...sharedMergeAssist,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
@@ -574,7 +587,7 @@ export class RerailDaemon {
       });
       started.engineService = engineService;
       const nativeToken = randomBytes(32).toString("hex");
-      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath, ...sharedMergeAssist });
+      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath, worktreeWalks, ...sharedMergeAssist });
       started.nativeServer = sessions;
       const app = daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health: () => daemon!.health() });
       const server = createDaemonServer(options, app);
@@ -583,7 +596,7 @@ export class RerailDaemon {
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath: engineService.socketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, ...sharedMergeAssist,
+        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
       daemon.#startProvenanceMove();
@@ -737,6 +750,7 @@ export class RerailDaemon {
         await this.#nativeServer.close();
         await this.#engineService.close();
       } finally {
+        this.#worktreeWalks.close();
         await this.#mergeAssist?.stop();
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await this.#removeOwnRecord(this.#options.stateFile);

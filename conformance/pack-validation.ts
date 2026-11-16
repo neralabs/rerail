@@ -10,6 +10,7 @@ import semver from "semver";
 import { z } from "zod";
 import {
   HELD_OFF_SINCE,
+  LANGUAGE_SINCE,
   languageFor,
   languageNotSupportedOf,
   codeRuleSchema,
@@ -87,6 +88,11 @@ export interface ValidatePackOptions {
    * scored once, in the conformance job.
    */
   fixtures?: boolean;
+  /**
+   * The core version check 5 holds the pack's core range to (`heldOff`, and a language core first reads after 0.1.0).
+   * Default: the repository's package.json version.
+   */
+  coreVersion?: string;
 }
 
 /** Validation material: kept in the repository, never published. */
@@ -496,6 +502,44 @@ export function heldOffRangeFailure(range: string, heldOff: readonly string[], c
   const floor = `${HELD_OFF_SINCE}-0`;
   if (heldOff.length === 0 || semver.lt(coreVersion, floor) || !semver.intersects(range, `<${floor}`, { includePrerelease: true })) return undefined;
   return `package.json: the core range ${range} admits Rerail older than ${HELD_OFF_SINCE}, which refuses heldOff (${heldOff.join(", ")}); raise it to >=${floor}`;
+}
+
+/**
+ * Why a pack's core range `range` admits a core that refuses one of its rule documents, or undefined. `languages` are
+ * the ones its shipped documents name. As for `heldOff`: once core is at the release that first reads one of them
+ * (`LANGUAGE_SINCE`), the pack must leave out every older core, which refuses the document and would drop the whole
+ * pack as invalid; before then the range stays, so this checkout's core still loads the pack.
+ */
+export function languageRangeFailure(range: string, languages: readonly string[], coreVersion: string): string | undefined {
+  const refused = languages.flatMap(language => {
+    const since = LANGUAGE_SINCE.get(language);
+    const floor = `${since}-0`;
+    return since === undefined || semver.lt(coreVersion, floor) || !semver.intersects(range, `<${floor}`, { includePrerelease: true }) ? [] : [{ language, since }];
+  });
+  if (refused.length === 0) return undefined;
+  const since = refused.map(entry => entry.since).sort(semver.rcompare)[0];
+  return `package.json: the core range ${range} admits Rerail older than ${since}, which reads no ${refused.map(entry => entry.language).join(" or ")} rule; raise it to >=${since}-0`;
+}
+
+/** Every language the pack's shipped rule documents name: a query's, a define's or a transform's `language`, sorted. */
+function shippedLanguages(directory: string): string[] {
+  const named = new Set<string>();
+  // An array's entries are its values too, so one walk over Object.entries covers arrays and objects.
+  const collect = (value: unknown): void => {
+    if (typeof value !== "object" || value === null) return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "language" && typeof child === "string") named.add(child);
+      else collect(child);
+    }
+  };
+  for (const file of filesUnder(directory, join(directory, "rules")).filter(file => file.endsWith(".json"))) {
+    try {
+      collect(JSON.parse(readFileSync(join(directory, file), "utf8")));
+    } catch {
+      // Check 1 reports a document that is not JSON; it names no language here.
+    }
+  }
+  return [...named].sort(compareDeterministicStrings);
 }
 
 /** The SPDX ids an SPDX expression names. */
@@ -1103,10 +1147,14 @@ function checkPublishedFiles({ directory, fail }: Validation, manifest: PackPack
 }
 
 /** Check 5 on the core range (`peerDependencies["@neralabs/rerail"]`): it admits no core that refuses the pack. */
-function checkCoreRange({ fail }: Validation, manifest: PackPackage, pack: RulePackFile | undefined): void {
+function checkCoreRange({ directory, options, fail }: Validation, manifest: PackPackage, pack: RulePackFile | undefined): void {
+  const range = manifest.peerDependencies["@neralabs/rerail"];
+  const coreVersion = options.coreVersion ?? rootPackage().version;
   const heldOff = (pack?.rules ?? []).filter(rule => rule.heldOff !== undefined).map(rule => rule.id);
-  const range = heldOffRangeFailure(manifest.peerDependencies["@neralabs/rerail"], heldOff, rootPackage().version);
-  if (range !== undefined) fail("package", range);
+  const heldOffRange = heldOffRangeFailure(range, heldOff, coreVersion);
+  if (heldOffRange !== undefined) fail("package", heldOffRange);
+  const languageRange = languageRangeFailure(range, shippedLanguages(directory), coreVersion);
+  if (languageRange !== undefined) fail("package", languageRange);
 }
 
 /**

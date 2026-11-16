@@ -371,7 +371,8 @@ describe("the complexity pack's match", () => {
     [{ "app/Grade.php": "<?php\n", "resources/views/grade.blade.php": "<p></p>\n" }, "matches *.php files in app and *.blade.php files in resources/views", ""],
     [{ "crates/core/src/lib.rs": "pub fn f() {}\n" }, "matches *.rs files in crates/core/src", "crates/core/src"],
     [{ "web/src/App.vue": "<template></template>\n" }, "matches *.vue files in web/src", "web/src"],
-  ])("fits Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue source: %j", async (files, reason, folder) => {
+    [{ "service/src/main/java/com/example/Plan.java": "class Plan {}\n" }, "matches *.java files in service/src/main/java/com/example", "service/src/main/java/com/example"],
+  ])("fits Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java source: %j", async (files, reason, folder) => {
     const root = await temporaryDirectory("rerail-complexity-match-");
     writeFiles(root, files);
     expect(recommendRulePacks(root, [complexity!]).map(found => [found.reason, found.folder])).toEqual([[reason, folder]]);
@@ -387,6 +388,8 @@ describe("the complexity pack's match", () => {
       "tests/views/grade.blade.php": "<p></p>\n",
       "tests/grade.rs": "fn f() {}\n",
       "src/__tests__/Grade.vue": "<template></template>\n",
+      "src/test/java/com/example/Grades.java": "class Grades {}\n",
+      "src/main/java/com/example/GradeTest.java": "class GradeTest {}\n",
       "main.go": "package main\n",
     });
     expect(recommendRulePacks(root, [complexity!])).toEqual([]);
