@@ -788,6 +788,13 @@ mod tests {
         assert!(backend.watch(&root, &[String::new()]));
         let notice = notice_of(&notices, &root);
         assert!(notice.lost && !notice.ended, "{notice:?}");
+
+        // The old root's events, handled now, end nothing; the new root is watched.
+        scratch.write("c.ts", "c");
+        deliver(&backend);
+        let notice = notice_of(&notices, &root);
+        assert!(names(&notice, "c.ts") && !notice.ended, "{notice:?}");
+        assert_eq!(backend.roots(), 1);
         backend.close();
     }
 
