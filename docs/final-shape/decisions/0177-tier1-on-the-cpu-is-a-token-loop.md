@@ -2686,3 +2686,59 @@ Tests:
 
 Counts, reported: words 99.2, punctuation 54.3, mixed 56.1,
 strings 264.0, numbers 133.5, comments 233.4.
+
+## A short window's mask is one narrowing shift
+
+simdjson's arm64 code makes a 16-byte compare into a mask with one
+narrowing shift (`shrn #4`): four bits a lane, in a 64-bit register.
+
+Ours made a 16-lane mask the way it makes a 64-lane one. It took an
+`and` with the lane weights, three pairwise adds, a lane move and an
+`and` with `0xffff`. The number's arm builds two such masks a token.
+
+**The change.**
+
+- **The nibble mask** (`short_mask`). On NEON it is a bitcast to
+  16-bit lanes, a shift right by four, an `and` with `0xff` (so the
+  narrowing never saturates) and an unsigned narrowing.
+  - The JIT compiles that sequence as it stands.
+  - `clif_rust` finds the sequence (`narrowing_shift`) and writes it
+    as one `vshrn_n_u16::<4>`. The steps it covers are not printed.
+  - On other targets the mask stays one bit a lane (a movemask):
+    `SHORT_STRIDE` is 4 on aarch64 and 1 elsewhere.
+- **Where it applies** (`short_stride`). A short window's masks are
+  nibble masks only where every output is made of lanes, their
+  lane-wise logic and `prev`s.
+  - A `prev`'s cut shifts by four bits a lane.
+  - A constant's pattern or an escape's run sums read bit positions,
+    so a window with one of those keeps one bit a lane.
+- **The consumers count in lanes.**
+  - The run's end is `lanes_set`: `ctz(!m)`, divided by the stride.
+  - The cut at the file's end and at the token's length is
+    `lanes_below`: `n` lanes, all 64 bits at 16 lanes of four.
+  - A count that asks for more than one keeps one bit a lane first
+    (`& 0x1111…`), then `m & (m - 1)` or the popcount.
+  - The vector count of a token's bytes (`needs_lanes`) is the same.
+
+Found on the way: a complement taken twice (`!!m`, where a negated
+lane value met a `bnot`). `clif_fold` now folds a complement's
+complement to its value.
+
+```rust
+// generated (tier1_aot.rs), the number's arm:
+v1005 = { let d = vshrn_n_u16::<4>(vreinterpretq_u16_u8(v999)); vcombine_u8(d, d) };
+v1007 = vgetq_lane_u64::<0>(vreinterpretq_u64_u8(v1005));   // the run, 4 bits a lane
+v1089 = (!v1007).trailing_zeros() >> 2;                      // its lanes
+```
+
+Tests:
+- `a_short_windows_lanes_are_its_words_bits` (JIT): every lane of
+  each short mask is its word's bit; a lane's four bits are alike; the
+  lanes set and the first five lanes agree. Outputs are a class, a
+  `prev`'s logic, and an escape's (one bit a lane).
+- `a_narrowing_shift_is_one_shrn`: one `vshrn_n_u16`, with no 16-bit
+  `and`, shift or pairwise add beside it.
+- `a_complements_complement_is_its_value`.
+
+Counts, reported: words 99.1, punctuation 54.4, mixed 56.1,
+strings 263.6, numbers 129.6, comments 233.1.

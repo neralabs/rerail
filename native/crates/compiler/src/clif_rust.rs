@@ -34,6 +34,7 @@ fn local(t: ir::Type) -> Result<(&'static str, &'static str), String> {
     Ok(match t {
         types::I8X16 => ("uint8x16_t", "unsafe { core::mem::zeroed() }"),
         types::I64X2 => ("uint64x2_t", "unsafe { core::mem::zeroed() }"),
+        types::I16X8 => ("uint16x8_t", "unsafe { core::mem::zeroed() }"),
         t => (ty(t)?.0, "0"),
     })
 }
@@ -782,7 +783,72 @@ fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
         }
     }
     tested.retain(|d| !other.contains(d));
+    // A narrowing shift's steps (`shrn`): written as one, where each is read by the next alone.
+    let mut uses: std::collections::HashMap<ir::Inst, usize> = std::collections::HashMap::new();
+    for &inst in &insts {
+        for &v in dfg.inst_args(inst) {
+            if let ir::ValueDef::Result(d, _) = dfg.value_def(dfg.resolve_aliases(v)) {
+                *uses.entry(d).or_default() += 1;
+            }
+        }
+        for c in dfg.insts[inst].branch_destination(&dfg.jump_tables, &dfg.exception_tables) {
+            for v in c.args(&dfg.value_lists).filter_map(|a| a.as_value()) {
+                if let ir::ValueDef::Result(d, _) = dfg.value_def(dfg.resolve_aliases(v)) {
+                    *uses.entry(d).or_default() += 1;
+                }
+            }
+        }
+    }
+    for &inst in &insts {
+        if let Some((_, steps)) = narrowing_shift(f, inst) {
+            // The `and`'s two reads by the narrowing (both its halves), the others one.
+            let alone = steps.iter().enumerate().all(|(k, d)| uses.get(d).copied().unwrap_or(0) <= if k == 0 { 2 } else { 1 });
+            if alone {
+                tested.extend(steps);
+            }
+        }
+    }
     tested
+}
+
+/// `uunarrow(k, k)` with `k = band(ushr_imm(bitcast.i16x8(v), 4), splat(0xff))`: NEON's
+/// narrowing shift of `v`'s 16-bit halves by four (`shrn`, `native_cpu_block::short_mask`),
+/// its halves both the result's. `v`, and the steps (`and`, shift, cast) it is written over.
+fn narrowing_shift(f: &ir::Function, inst: ir::Inst) -> Option<(ir::Value, Vec<ir::Inst>)> {
+    let dfg = &f.dfg;
+    let def = |v: ir::Value| match dfg.value_def(dfg.resolve_aliases(v)) {
+        ir::ValueDef::Result(i, _) => Some(i),
+        _ => None,
+    };
+    let ir::InstructionData::Binary { opcode: Opcode::Uunarrow, args: [a, b] } = dfg.insts[inst] else { return None };
+    if dfg.resolve_aliases(a) != dfg.resolve_aliases(b) {
+        return None;
+    }
+    let band = def(a)?;
+    let ir::InstructionData::Binary { opcode: Opcode::Band, args: [x, y] } = dfg.insts[band] else { return None };
+    // The splat of 0xff and its constant.
+    let is_ff = |v: ir::Value| -> Option<(ir::Inst, ir::Inst)> {
+        let sp = def(v)?;
+        let ir::InstructionData::Unary { opcode: Opcode::Splat, arg } = dfg.insts[sp] else { return None };
+        let c = def(arg)?;
+        matches!(dfg.insts[c], ir::InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } if imm.bits() & 0xffff == 0xff).then_some((sp, c))
+    };
+    let (shifted, (sp, c)) = match (is_ff(y), is_ff(x)) {
+        (Some(k), _) => (x, k),
+        (_, Some(k)) => (y, k),
+        _ => return None,
+    };
+    let shift = def(shifted)?;
+    let ir::InstructionData::BinaryImm64 { opcode: Opcode::UshrImm, arg, imm } = dfg.insts[shift] else { return None };
+    if imm.bits() != 4 {
+        return None;
+    }
+    let cast = def(arg)?;
+    let ir::InstructionData::LoadNoOffset { opcode: Opcode::Bitcast, arg: v, .. } = dfg.insts[cast] else { return None };
+    if dfg.value_type(v) != types::I8X16 {
+        return None;
+    }
+    Some((dfg.resolve_aliases(v), vec![band, shift, cast, sp, c]))
 }
 
 /// A vector compare `band(x, y) != 0` (either side the zero): `x` and `y`, for NEON's `vtst`.
@@ -876,6 +942,23 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
         Opcode::Store if is(at, types::I8X16) => format!("unsafe {{ vst1q_u8({} as *mut u8, {}) }};", addr(&args[1]), args[0]),
         Opcode::Bitcast if is(rt, types::I64X2) && is(at, types::I8X16) => u(format!("vreinterpretq_u64_u8({})", args[0])),
         Opcode::Bitcast if is(rt, types::I8X16) && is(at, types::I64X2) => u(format!("vreinterpretq_u8_u64({})", args[0])),
+        Opcode::Bitcast if is(rt, types::I16X8) && is(at, types::I8X16) => u(format!("vreinterpretq_u16_u8({})", args[0])),
+        Opcode::Bitcast if is(rt, types::I8X16) && is(at, types::I16X8) => u(format!("vreinterpretq_u8_u16({})", args[0])),
+        Opcode::Band if is(rt, types::I16X8) => u(format!("vandq_u16({}, {})", args[0], args[1])),
+        Opcode::Splat if is(rt, types::I16X8) => u(format!("vdupq_n_u16({} as u16)", args[0])),
+        Opcode::UshrImm if is(rt, types::I16X8) => {
+            let InstructionData::BinaryImm64 { imm, .. } = data else { return Err("a shift by nothing".into()) };
+            match imm.bits() & 15 {
+                0 => set(args[0].clone()),
+                n => u(format!("vshrq_n_u16::<{n}>({})", args[0])),
+            }
+        }
+        // A narrowing shift (`narrowing_shift`): `shrn`, one instruction; else each half
+        // narrowed.
+        Opcode::Uunarrow if is(rt, types::I8X16) => match narrowing_shift(f, inst) {
+            Some((v, _)) => u(format!("{{ let d = vshrn_n_u16::<4>(vreinterpretq_u16_u8(v{})); vcombine_u8(d, d) }}", v.as_u32())),
+            None => u(format!("vcombine_u8(vqmovn_u16({}), vqmovn_u16({}))", args[0], args[1])),
+        },
         Opcode::Extractlane if is(at, types::I64X2) => {
             let InstructionData::BinaryImm8 { imm, .. } = data else { return Err("a lane of nothing".into()) };
             u(format!("vgetq_lane_u64::<{imm}>({})", args[0]))
@@ -938,6 +1021,42 @@ mod tests {
         assert!(src.contains("STRUCTURED: (usize, usize) = (1, 1)"), "{src}");
         assert!(!src.contains("match b {"), "no loop over the blocks: {src}");
         assert!(src.contains("loop {"), "{src}");
+    }
+
+    /// A 16-byte compare's mask by NEON's narrowing shift (`native_cpu_block::short_mask`) is
+    /// written as one `vshrn_n_u16`, its shift, `and` and casts not besides; and the lanes'
+    /// count after it reads the nibbles (`lanes_set`).
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn a_narrowing_shift_is_one_shrn() {
+        use cranelift_codegen::ir::types::{I8, I8X16};
+        use cranelift_codegen::ir::{MemFlags, condcodes::IntCC};
+        let mut sig = Signature::new(CallConv::Tail);
+        sig.params.push(AbiParam::new(I64));
+        sig.returns.push(AbiParam::new(I64));
+        let mut f = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, 0), sig);
+        let mut ctx = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let p = b.block_params(entry)[0];
+        let k = crate::native_cpu_block::Consts::make(&mut b);
+        let x = b.ins().load(I8X16, MemFlags::trusted(), p, 0);
+        let dot = b.ins().iconst(I8, i64::from(b'.'));
+        let dot = b.ins().splat(I8X16, dot);
+        let eq = b.ins().icmp(IntCC::Equal, x, dot);
+        let m = crate::native_cpu_block::short_mask(&mut b, eq, k.weights);
+        let n = crate::native_cpu_block::lanes_set(&mut b, m, crate::native_cpu_block::SHORT_STRIDE);
+        b.ins().return_(&[n]);
+        b.seal_all_blocks();
+        b.finalize();
+        let src = super::translate(&[(0, f)], &[(0, "short")], &[]).expect("translates");
+        assert_eq!(src.matches("vshrn_n_u16::<4>").count(), 1, "{src}");
+        for not in ["vandq_u16", "vshrq_n_u16", "vqmovn_u16", "vpaddq_u8", "vpadd_u8"] {
+            assert!(!src.contains(not), "{not}: {src}");
+        }
+        assert!(src.contains(".trailing_zeros()") && src.contains(".wrapping_shr(2)"), "{src}");
     }
 
     /// A vector's bits against a mask, compared with zero for any set (`(x & m) != 0`), is

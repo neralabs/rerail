@@ -458,6 +458,14 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
                         Some(op) => decided(op, arg, kb(arg), Bits::exact(imm.bits() as u64, w), true, w),
                     },
                     InstructionData::Unary { opcode: Opcode::Uextend | Opcode::Ireduce, .. } => None,
+                    // A complement's complement: the value.
+                    InstructionData::Unary { opcode: Opcode::Bnot, arg } => match dfg.value_def(dfg.resolve_aliases(arg)) {
+                        cranelift_codegen::ir::ValueDef::Result(d, _) => match dfg.insts[d] {
+                            InstructionData::Unary { opcode: Opcode::Bnot, arg: x } => Some(Folded::Same(x)),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
                     InstructionData::Ternary { opcode: Opcode::Select, args: [c, x, y] } => {
                         let cw = width(dfg.value_type(c)).unwrap_or(8);
                         match kb(c).value(cw) {
@@ -799,6 +807,23 @@ mod tests {
             InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } => assert_eq!(imm.bits() as u64, expect),
             ref other => panic!("{other:?}"),
         }
+    }
+
+    /// A complement's complement is the value: both `bnot`s go, where the inner one has no
+    /// other reader; one complement stays one.
+    #[test]
+    fn a_complements_complement_is_its_value() {
+        let mut func = function(2, |f, p| {
+            let a = f.ins().bnot(p[0]);
+            let b = f.ins().bnot(a);
+            let c = f.ins().bnot(p[1]);
+            let r = f.ins().band(b, c);
+            f.ins().return_(&[r]);
+        });
+        fold(&mut func);
+        verified(&func);
+        let ops: Vec<Opcode> = func.layout.blocks().flat_map(|b| func.layout.block_insts(b)).map(|i| func.dfg.insts[i].opcode()).collect();
+        assert_eq!(ops, vec![Opcode::Bnot, Opcode::Band, Opcode::Return], "{}", func.display());
     }
 
     /// One constant that decides an operation: `x & 0`, `x | 0`, `x + 0`, a `select` on a

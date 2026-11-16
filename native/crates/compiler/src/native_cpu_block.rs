@@ -3060,7 +3060,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(fdone, &[l_sel.into(), nohits.into(), untag.into(), nohits.into()]);
         } else {
-            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], heads);
+            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], 1, heads);
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(to, &[l_sel.into(), untag.into(), nohits.into()]);
         }
@@ -3171,7 +3171,12 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             _ => None,
         };
         let pre: Vec<(u16, Value)> = window.as_ref().map(|w| run_outs.iter().copied().zip(w[1..].iter().copied()).collect()).unwrap_or_default();
-        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, heads) };
+        // The window's bits a lane (`short_stride`).
+        let pre_stride = match (rule, rd.bytes) {
+            (EndRule::Run(o), Some((b, _))) if window.is_some() => b.short_stride(&std::iter::once(o).chain(run_outs.iter().copied()).collect::<Vec<_>>()),
+            _ => 1,
+        };
+        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, heads) };
         match rule {
             // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
             // `pair P`: the first byte's row (its entry's), then the next byte's bit in the
@@ -3248,8 +3253,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                 Some(w) => w[0],
                                 None => b.short_word(f, &file, o, i, heads),
                             };
-                            let y = f.ins().bnot(x);
-                            let ones = f.ins().ctz(y);
+                            let stride = b.short_stride(&std::iter::once(o).chain(run_outs.iter().copied()).collect::<Vec<_>>());
+                            let ones = lanes_set(f, x, stride);
                             let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
                             let l = f.ins().iadd(s, ones);
                             let long = f.create_block();
@@ -3323,8 +3328,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     f.set_cold_block(cont);
                     let p = f.block_params(cont)[0];
                     let x = b.short_word(f, &file, o, p, heads);
-                    let y = f.ins().bnot(x);
-                    let ones = f.ins().ctz(y);
+                    let ones = lanes_set(f, x, b.short_stride(&[o]));
                     let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
                     let l = f.ins().iadd(p, ones);
                     let l = f.ins().iadd_imm(l, -1);
@@ -4203,7 +4207,7 @@ fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) 
 /// length, as the lean lexer asks of a number's `.` in its digits' pass. The output is never
 /// set at the token's first byte.
 #[allow(clippy::too_many_arguments)]
-fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, pre: &[(u16, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, pre: &[(u16, Value)], pre_stride: u32, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
     let here = f.current_block().expect("a rule's block");
     let ended = f.create_block();
     f.append_block_param(ended, types::I64);
@@ -4267,10 +4271,8 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             let weights = rd.bytes.map(|(_, file)| file.weights);
             // The token's bytes after its first in `pre`'s bits: `len - 1` of them.
             let below = (!pre.is_empty()).then(|| {
-                let one = f.ins().iconst(types::I64, 1);
                 let n = f.ins().iadd_imm(len, -1);
-                let b = f.ins().ishl(one, n);
-                f.ins().iadd_imm(b, -1)
+                lanes_below(f, n, pre_stride)
             });
             for (t, n) in counts.iter().zip(&ex) {
                 let most = counts.iter().zip(&ex).filter(|(_, m)| *m == n).map(|(t, _)| t.least).max().unwrap_or(0);
@@ -4283,12 +4285,15 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
                             // its count.
                             (Some(m), Some(b), _, _) => {
                                 let k = f.ins().band(m, b);
+                                // A bit a lane where the count asks more than one.
+                                let k = if most > 1 && pre_stride > 1 { f.ins().band_imm(k, lane_bits(pre_stride)) } else { k };
                                 if most <= 1 || (most == 2 && weights.is_some()) { k } else { f.ins().popcnt(k) }
                             }
                             (_, _, 0..=1, _) => needs_some(f, n, c.bytes, s, len),
                             (_, _, 2, Some(w)) => {
                                 let lanes = needs_lanes(f, n, c.bytes, s, len);
-                                bitmask(f, &[lanes], w)
+                                let m = short_mask(f, lanes, w);
+                                if SHORT_STRIDE > 1 { f.ins().band_imm(m, lane_bits(SHORT_STRIDE)) } else { m }
                             }
                             _ => needs_count(f, n, c.bytes, s, len),
                         };
@@ -7003,6 +7008,61 @@ fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>]
     };
     values[x] = Some(v);
     v
+}
+
+/// The bits a short window's mask has a lane (`nibbles`): four on NEON, whose narrowing shift
+/// (`shrn`) makes a 16-lane compare a 64-bit mask in one instruction, as simdjson's arm64
+/// `to_bitmask` for 16 bytes; one elsewhere (a movemask). The compiler's choice by the target.
+pub const SHORT_STRIDE: u32 = if cfg!(target_arch = "aarch64") { 4 } else { 1 };
+
+/// One bit a lane of a mask of `SHORT_STRIDE` bits a lane: its lowest each.
+pub const fn lane_bits(stride: u32) -> i64 {
+    match stride {
+        4 => 0x1111_1111_1111_1111,
+        _ => -1,
+    }
+}
+
+/// A 16-byte compare result (each byte 0 or 0xff) as a mask of `SHORT_STRIDE` bits a lane:
+/// on NEON its 16-bit halves shifted right by four and narrowed (`shrn #4`), lane `i` the
+/// nibble at bit `4 i`; `clif_rust` writes it `vshrn_n_u16`. Else the 16 bits of `bitmask`.
+pub fn short_mask(f: &mut FunctionBuilder<'_>, part: Value, weights: Value) -> Value {
+    if SHORT_STRIDE != 4 {
+        return bitmask(f, &[part], weights);
+    }
+    let le = MemFlags::new().with_endianness(Endianness::Little);
+    let h = f.ins().bitcast(types::I16X8, le, part);
+    let s = f.ins().ushr_imm(h, 4);
+    let ff = f.ins().iconst(types::I16, 0xff);
+    let ff = f.ins().splat(types::I16X8, ff);
+    // At most 0xff a lane: the narrowing's saturation never clips.
+    let k = f.ins().band(s, ff);
+    let n = f.ins().uunarrow(k, k);
+    let lanes = f.ins().bitcast(types::I64X2, le, n);
+    f.ins().extractlane(lanes, 0)
+}
+
+/// The mask of a short window's first `n` lanes (`n` at most 16), `stride` bits a lane: `n *
+/// stride` low bits, all 64 at 16 lanes of four.
+pub fn lanes_below(f: &mut FunctionBuilder<'_>, n: Value, stride: u32) -> Value {
+    let one = f.ins().iconst(types::I64, 1);
+    if stride * 16 < 64 {
+        let b = f.ins().ishl(one, n);
+        return f.ins().iadd_imm(b, -1);
+    }
+    let bits = f.ins().imul_imm(n, i64::from(stride));
+    let b = f.ins().ishl(one, bits);
+    let b = f.ins().iadd_imm(b, -1);
+    let all = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, bits, 64);
+    let ones = f.ins().iconst(types::I64, -1);
+    f.ins().select(all, ones, b)
+}
+
+/// A short window's lanes from its first to its first unset one: `ctz(!m)` in lanes.
+pub fn lanes_set(f: &mut FunctionBuilder<'_>, m: Value, stride: u32) -> Value {
+    let y = f.ins().bnot(m);
+    let z = f.ins().ctz(y);
+    if stride > 1 { f.ins().ushr_imm(z, i64::from(stride.trailing_zeros())) } else { z }
 }
 
 /// Four 16-byte compare results (each byte 0 or 0xff) as one 64-bit mask.

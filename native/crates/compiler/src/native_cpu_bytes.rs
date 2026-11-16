@@ -53,6 +53,8 @@ struct Carry {
     ins: Vec<(usize, Value)>,
     outs: Vec<(usize, Value)>,
     short: bool,
+    /// A short window's bits a lane (`short_stride`): its masks' positions are `stride` apart.
+    stride: u32,
     /// The body's classes packed: its windows' lookups.
     pack: Option<Rc<BodyPack>>,
     /// Values known all through the window at the start (`known_if_zero`), on a gate's quick
@@ -453,8 +455,11 @@ impl<'a> Bytewise<'a> {
 
     /// `short_word` for each of outputs `os`, from one window's vectors shared among them, as
     /// a lexer reads a number's digits and asks of its `.` in one pass.
+    ///
+    /// Each mask has `short_stride(os)` bits a lane: lane `i` at bit `stride * i`.
     pub fn short_words(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
-        let mut carry = Carry { short: true, pack: Some(self.pack_for(&self.roots(os), &[])), ..Carry::default() };
+        let stride = self.short_stride(os);
+        let mut carry = Carry { short: true, stride, pack: Some(self.pack_for(&self.roots(os), &[])), ..Carry::default() };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
         let Some((&first, rest)) = os.split_first() else { return Vec::new() };
@@ -470,7 +475,7 @@ impl<'a> Bytewise<'a> {
             let m = if shared {
                 let lanes = windows.get_mut(&-d0).expect("the first output's window");
                 let part = lanes.get_lagged(f, x, 1, lag as u8);
-                match lanes.mask(f, &[part], at.weights) {
+                match lanes.mask_short(f, part, at.weights, stride) {
                     Sym::Known(k) => f.ins().iconst(types::I64, k as i64),
                     Sym::Value(v, false) => v,
                     Sym::Value(v, true) => f.ins().bnot(v),
@@ -479,16 +484,35 @@ impl<'a> Bytewise<'a> {
             } else {
                 self.short_in(f, at, o, p, &mut windows, &mut memo, &mut carry, heads)
             };
-            got.push(if shared { self.short_cut(f, at, x, d, p, m) } else { m });
+            got.push(if shared { self.short_cut(f, at, x, d, p, m, stride) } else { m });
         }
         got
+    }
+
+    /// The bits a lane of `short_words(os)`' masks: `native_cpu_block::SHORT_STRIDE`, where
+    /// every output is made of its lanes and of their lane-wise logic and `prev`s (a shift by
+    /// the stride); one where a constant's pattern or an escape's run reads bit positions.
+    pub fn short_stride(&self, os: &[u16]) -> u32 {
+        fn lanewise(b: &Bytewise<'_>, x: usize, seen: &mut Vec<bool>) -> bool {
+            if b.plan.lanes[x] || std::mem::replace(&mut seen[x], true) {
+                return true;
+            }
+            match b.native.insts[x] {
+                BlockInst::Not(a) | BlockInst::Prev(a, _) => lanewise(b, usize::from(a), seen),
+                BlockInst::And(a, c) | BlockInst::Or(a, c) | BlockInst::Xor(a, c) | BlockInst::AndNot(a, c) => lanewise(b, usize::from(a), seen) && lanewise(b, usize::from(c), seen),
+                _ => false,
+            }
+        }
+        let mut seen = vec![false; self.native.insts.len()];
+        let all = os.iter().all(|&o| lanewise(self, usize::from(self.native.outputs[usize::from(o)]), &mut seen));
+        if all { crate::native_cpu_block::SHORT_STRIDE } else { 1 }
     }
 
     /// `short_in`'s cut of mask `m` (output instruction `x`, delay `d`, from `p`): none past the
     /// file's end. Where the output is false on a zero byte (`zero_kills`), none past it
     /// already: the bytes there are zeros, more than the 16 and its delay
     /// (`native_cpu_block::Batch`). Else the file's bytes' bits: `len - p`, at most 16.
-    fn short_cut(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, d: i64, p: Value, m: Value) -> Value {
+    fn short_cut(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, d: i64, p: Value, m: Value, stride: u32) -> Value {
         if crate::native_cpu_lanes::zero_kills(self.native, x, d as u32) {
             return m;
         }
@@ -497,9 +521,7 @@ impl<'a> Bytewise<'a> {
         let sixteen = f.ins().iconst(types::I64, 16);
         let rem = f.ins().smax(rem, zero);
         let rem = f.ins().smin(rem, sixteen);
-        let one = f.ins().iconst(types::I64, 1);
-        let low = f.ins().ishl(one, rem);
-        let low = f.ins().iadd_imm(low, -1);
+        let low = crate::native_cpu_block::lanes_below(f, rem, stride);
         f.ins().band(m, low)
     }
 
@@ -508,7 +530,8 @@ impl<'a> Bytewise<'a> {
         let x = usize::from(self.native.outputs[usize::from(o)]);
         let d = i64::from(self.native.output_delays[usize::from(o)]);
         let m = self.mask_at(f, at, x, p, -d, windows, memo, carry, heads);
-        self.short_cut(f, at, x, d, p, m)
+        let stride = carry.stride;
+        self.short_cut(f, at, x, d, p, m, stride)
     }
 
     /// The runs whose `escaped` outputs `os` read at their window's start, no `prev` or delay
@@ -619,8 +642,13 @@ impl<'a> Bytewise<'a> {
                 let base = f.ins().iadd(at.bytes, pos);
                 Lanes::window(f, self.native, &self.plan, base, pos, at.len, at.nibble).packed(carry.pack.clone())
             });
-            let parts: Vec<_> = (1..=if carry.short { 1 } else { 4 }).map(|c| lanes.get(f, x, c)).collect();
-            let m = lanes.mask(f, &parts, at.weights);
+            let m = if carry.short {
+                let part = lanes.get(f, x, 1);
+                lanes.mask_short(f, part, at.weights, carry.stride)
+            } else {
+                let parts: Vec<_> = (1..=4).map(|c| lanes.get(f, x, c)).collect();
+                lanes.mask(f, &parts, at.weights)
+            };
             sym_value(f, m)
         } else {
             match self.native.insts[x] {
@@ -652,6 +680,8 @@ impl<'a> Bytewise<'a> {
                     let need = f.ins().irsub_imm(pos, i64::from(k));
                     let zero = f.ins().iconst(types::I64, 0);
                     let need = f.ins().smax(need, zero);
+                    // A short window's positions `stride` bits apart (`short_stride`).
+                    let need = if carry.stride > 1 { f.ins().imul_imm(need, i64::from(carry.stride)) } else { need };
                     let ones = f.ins().iconst(types::I64, -1);
                     let cut = f.ins().ishl(ones, need);
                     let past = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, need, 64);
@@ -1629,6 +1659,90 @@ mod tests {
         assert_eq!((k.get(&2), k.get(&4), k.get(&8)), (Some(&false), Some(&false), Some(&false)));
         assert_eq!(k.get(&3), None, "the closer, `|` where it is: not known");
         assert_eq!(known_if_zero(&native, &[1], &[]).get(&2), None, "an escape whose carry in may be one");
+    }
+
+    /// A short window's masks (`short_words`) are the window's words' first 16 bits, a lane
+    /// `short_stride` bits apart (NEON's narrowing shift: four), its lanes counted by
+    /// `lanes_set` and cut by `lanes_below`: on a lane output, `prev`s and their logic (four
+    /// on NEON), and on an escape's (one: its run's sums read bit positions).
+    #[test]
+    fn a_short_windows_lanes_are_its_words_bits() {
+        use cranelift_codegen::ir::AbiParam;
+        use cranelift_module::{Linkage, Module};
+        let native = gated_program();
+        let b = Bytewise::of(&native);
+        let os = [0u16, 1, 2, 3];
+        let wide = crate::native_cpu_block::SHORT_STRIDE;
+        assert_eq!(b.short_stride(&[1]), wide, "a class's lanes");
+        assert_eq!(b.short_stride(&[2, 3]), wide, "`prev`s and their logic");
+        assert_eq!(b.short_stride(&[0]), 1, "an escape's run");
+        assert_eq!(b.short_stride(&[1, 0]), 1, "a window with an escape's");
+        let mut module = cranelift_jit::JITModule::new(crate::native_cpu_codegen::tier1_builder().expect("a JIT"));
+        let mut sig = module.make_signature();
+        sig.params.extend([AbiParam::new(types::I64); 4]);
+        let id = module.declare_function("short", Linkage::Local, &sig).expect("declared");
+        let mut ctx = module.make_context();
+        ctx.func.signature = sig;
+        let mut fctx = cranelift_frontend::FunctionBuilderContext::new();
+        {
+            let mut f = FunctionBuilder::new(&mut ctx.func, &mut fctx);
+            let entry = f.create_block();
+            f.append_block_params_for_function_params(entry);
+            f.switch_to_block(entry);
+            let p = f.block_params(entry).to_vec();
+            let k = crate::native_cpu_block::Consts::make(&mut f);
+            let file = File { bytes: p[0], len: p[1], nibble: k.nibble, weights: k.weights, even: k.even };
+            let (at, out) = (p[2], p[3]);
+            let mut heads = Vec::new();
+            // Each output: its short mask, its word, its lanes set, its first five lanes.
+            for (i, &o) in os.iter().enumerate() {
+                let st = b.short_stride(&[o]);
+                let m = b.short_word(&mut f, &file, o, at, &mut heads);
+                let w = b.word(&mut f, &file, o, at, &mut heads);
+                let set = crate::native_cpu_block::lanes_set(&mut f, m, st);
+                let five = f.ins().iconst(types::I64, 5);
+                let below = crate::native_cpu_block::lanes_below(&mut f, five, st);
+                let below = f.ins().band(m, below);
+                for (j, v) in [m, w, set, below].into_iter().enumerate() {
+                    f.ins().store(MemFlags::trusted(), v, out, 8 * (4 * i + j) as i32);
+                }
+            }
+            f.ins().return_(&[]);
+            f.seal_all_blocks();
+            f.finalize();
+        }
+        module.define_function(id, &mut ctx).expect("defined");
+        module.finalize_definitions().expect("finalized");
+        let run: extern "C" fn(*const u8, i64, i64, *mut u64) = unsafe { std::mem::transmute(module.get_finalized_function(id)) };
+        let alphabet = b"ab|^5@~#|9";
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for round in 0..300 {
+            let n = 1 + (round % 90);
+            let mut buf = vec![0u8; 16 + n + 80];
+            for byte in &mut buf[16..16 + n] {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                *byte = alphabet[(x >> 8) as usize % alphabet.len()];
+            }
+            let at = (x % n as u64) as i64;
+            let mut got = [0u64; 16];
+            run(buf[16..].as_ptr(), n as i64, at, got.as_mut_ptr());
+            for (i, &o) in os.iter().enumerate() {
+                let st = b.short_stride(&[o]);
+                let [m, w, set, below] = [got[4 * i], got[4 * i + 1], got[4 * i + 2], got[4 * i + 3]];
+                let lane = |v: u64, j: u32| v >> (st * j) & 1;
+                for j in 0..16 {
+                    assert_eq!(lane(m, j), w >> j & 1, "round {round}, output {o}, lane {j}");
+                    if st > 1 {
+                        let nib = m >> (st * j) & ((1 << st) - 1);
+                        assert!(nib == 0 || nib == (1 << st) - 1, "a lane's bits all alike");
+                    }
+                }
+                assert_eq!(set, u64::from((!w).trailing_zeros().min(16)), "round {round}, output {o}: the lanes set");
+                assert_eq!((0..16).filter(|&j| lane(below, j) == 1).count(), (0..5).filter(|&j| w >> j & 1 == 1).count(), "the first five lanes");
+            }
+        }
     }
 
     /// A window's words gated on its rare bytes (`words_gated`) are its words: on each path,

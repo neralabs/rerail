@@ -1258,6 +1258,21 @@ impl<'a> Lanes<'a> {
         Lane::V(f.ins().band(from, to), false)
     }
 
+    /// A short window's one chunk of a value as a mask of `stride` bits a lane
+    /// (`native_cpu_block::short_mask`), complemented as it is.
+    pub fn mask_short(&mut self, f: &mut FunctionBuilder<'_>, part: Lane, weights: Value, stride: u32) -> Sym {
+        if stride == 1 {
+            return self.mask(f, &[part], weights);
+        }
+        match part {
+            Lane::Known(b) => Sym::Known(if b { u64::MAX } else { 0 }),
+            Lane::V(_, neg) => {
+                let v = self.polar(f, part, neg);
+                Sym::Value(crate::native_cpu_block::short_mask(f, v, weights), neg)
+            }
+        }
+    }
+
     /// The block's four chunks of a value as a 64-bit mask, complemented as they are.
     pub fn mask(&mut self, f: &mut FunctionBuilder<'_>, parts: &[Lane], weights: Value) -> Sym {
         if let Some(Lane::Known(b)) = parts.first().copied()
