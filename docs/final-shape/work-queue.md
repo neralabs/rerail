@@ -529,6 +529,37 @@ pass.
     times the fallback.
 - **Done when**: every edit after the first finds its kept inputs, and taking them costs less than decoding the
   hits whole.
+- **Missing inputs: not reproduced.** Ten consecutive edits on one build (qq30–qq44, across three builds, each
+  after its cold run) all took the kept inputs. The misses came right after a build's cold run, after a run that
+  read the cross space whole, and after a run killed at the memory cap. `RERAIL_FRAMES_TRACE` names each relation
+  collection removes (`collected:`); none were collected in the clean runs.
+- **Cost, built** (2026-11-15). A stack sample put the expensive runs' time in `patch_owners`, run for every owner
+  this run evaluated in every input (1208), whether its rows changed or not.
+  - **An unchanged owner's kept rows are not read.** For a real document no changed file's old entry names, this
+    run's rows are compared with the kept digest `(sum, n)`. The digest is order-independent, so no sort is
+    needed. An export's held document (`holders`) is compared by its distinct rows. Only a changed owner's kept
+    rows are read, copied and sorted.
+  - **`evaluated` is deduplicated as it is read.** It was a `BTreeSet` collected from one owner a row (millions,
+    sorted). Each input probes the smaller side: its ranges or the evaluated documents.
+  - Test: `an_unchanged_evaluated_owners_kept_rows_are_not_read`. Its kept source contradicts the digest, so any
+    read of it fails; a changed owner is still patched.
+  - ep2, B101 edits after a cold run, each step three runs:
+
+    | Step | `stats` | Total |
+    |---|---|---|
+    | Merged | 84 G | 140–149 G |
+    | Unchanged owner unread | 63 G | 120 G |
+    | An export's documents too | 37 G | 94 G |
+    | `evaluated` deduplicated | 32 G | 90 G |
+
+    - The outputs (`outputs.rro`) are identical across every step.
+    - The span's own time went from 9.7 s to 1.35 s.
+- **Open.** `the kept inputs, from the frames` (2.26 s) decodes every granule of all 1208 inputs into full
+  column sources before the cross part runs, with 3 changed. The fallback reads the 300 hits' projected rows, and
+  its `stats` is 2.1 G.
+  - Taking the kept inputs still costs more than the fallback, so the done-when is not met.
+  - Reading an input's granules where reached (a source that decodes a granule on first read, with its count from
+    the documents' table) is the shape 0266's blocks give: "base + delta read as one".
 
 ## Questions for the user
 

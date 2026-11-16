@@ -6912,12 +6912,12 @@ fn run_observed(
                 // the keeper counted as changed. Each such document's rows are this run's (`patch_owners`).
                 let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
                 // Of the relations owned by a node: a string's owner (`memo::Owner::Text`) is no document.
-                let evaluated: BTreeSet<i64> = staged
-                    .iter()
-                    .filter(|(rel, ..)| matches!(memo::owner(rel), memo::Owner::Node(_)))
-                    .flat_map(|(_, g, _, _, old, new)| old.iter().flatten().chain(new.iter()).map(move |r| retain::owner_of(r, *g)))
-                    .filter(|o| *o < values)
-                    .collect();
+                // One owner a row, deduplicated as read: a set of every row's owner sorted millions (Q20).
+                let mut owners: rustc_hash::FxHashSet<i64> = rustc_hash::FxHashSet::default();
+                for (_, g, _, _, old, new) in staged.iter().filter(|(rel, ..)| matches!(memo::owner(rel), memo::Owner::Node(_))) {
+                    owners.extend(old.iter().flatten().chain(new.iter()).map(|r| retain::owner_of(r, *g)).filter(|o| *o < values));
+                }
+                let evaluated: BTreeSet<i64> = owners.into_iter().collect();
                 for (rel, g, base, names, old, new) in staged {
                     let k = &kept[rel];
                     let width = fields.width(rel);
@@ -10465,6 +10465,39 @@ pub mod tests {
         assert!(patch.minus.is_empty() && patch.plus.is_empty(), "the string is still held: no row gone from the set");
     }
 
+    /// Q20: an evaluated document no old entry names, whose rows this run are its kept digest's, is unchanged without
+    /// its kept rows read (`no-reads-of-unchanged`): here the kept source holds other rows than the digest says, so a
+    /// read of them is an error. A document whose rows changed is patched from its kept rows as before.
+    #[test]
+    fn an_unchanged_evaluated_owners_kept_rows_are_not_read() {
+        use super::*;
+        let doc = 7i64;
+        let rows = vec![vec![doc, 1], vec![doc, 2]];
+        let sum = rows.iter().map(|r| super::super::row_digest(r)).fold(0u64, u64::wrapping_add);
+        let docs: retain::DocDigests = [(doc, (sum, 2))].into_iter().collect();
+        let ranges: retain::Ranges = [(doc, (0u32, 2u32))].into_iter().collect();
+        let kept_of = |c1: Vec<i64>| retain::KeptInput {
+            source: crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![doc; 2]), Some(c1)]),
+            digest: retain::digest_of_docs(&docs),
+            docs: Arc::new(docs.clone()),
+            ranges: Arc::new(ranges.clone()),
+        };
+        let evaluated: BTreeSet<i64> = [doc].into_iter().collect();
+        let cells = super::super::Cells::plain(2);
+        let other = kept_of(vec![9, 9]);
+        let patch = patch_owners("defs", &other, 0, None, &evaluated, &[], rows.clone(), &cells).unwrap();
+        assert!(patch.changed.is_empty() && patch.docs.is_none(), "its rows are its kept digest's: {:?}", patch.changed);
+        // An export's document (`holders`), held once: this run's rows, a row twice among them, are its kept set.
+        let holders = rustc_hash::FxHashMap::default();
+        let twice = vec![vec![doc, 2], vec![doc, 1], vec![doc, 2]];
+        let patch = patch_owners("defs", &other, 0, Some(&holders), &evaluated, &[], twice, &cells).unwrap();
+        assert!(patch.changed.is_empty() && patch.docs.is_none(), "an export's rows are its kept set: {:?}", patch.changed);
+        let kept = kept_of(vec![1, 2]);
+        let patch = patch_owners("defs", &kept, 0, None, &evaluated, &[], vec![vec![doc, 1], vec![doc, 3]], &cells).unwrap();
+        assert_eq!(patch.changed, vec![(doc, vec![vec![doc, 1], vec![doc, 3]])]);
+        assert_eq!((patch.plus, patch.minus), (vec![vec![doc, 3]], vec![vec![doc, 2]]));
+    }
+
     #[test]
     fn constant_demands_reach_projected_input_columns() {
         let p=crate::code_rule_dsl::logic::rr::parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
@@ -10874,7 +10907,13 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     }
     // Every owner a changed file's old rows or this run's name, and every evaluated document the kept rows hold: an
     // evaluated file that has no rows of this input now has its kept ones removed.
-    let touched: BTreeSet<i64> = by_old.keys().chain(by_new.keys()).copied().chain(evaluated.iter().copied().filter(|o| kept.ranges.contains_key(o))).collect();
+    // The evaluated documents the kept rows hold: from the smaller side (an input keeps a few owners, or many).
+    let mut touched: BTreeSet<i64> = by_old.keys().chain(by_new.keys()).copied().collect();
+    if kept.ranges.len() < evaluated.len() {
+        touched.extend(kept.ranges.keys().copied().filter(|o| evaluated.contains(o)));
+    } else {
+        touched.extend(evaluated.iter().copied().filter(|o| kept.ranges.contains_key(o)));
+    }
     let all: Vec<usize> = (0..width).collect();
     let mut docs: Option<retain::DocDigests> = None;
     let (mut changed, mut plus, mut minus) = (Vec::new(), Vec::new(), Vec::new());
@@ -10884,6 +10923,25 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     };
     let set = |rows: &[Vec<i64>]| rows.iter().cloned().collect::<BTreeSet<Vec<i64>>>();
     for o in touched {
+        // A real document evaluated this run, which no changed file's old entry names: its rows are this run's
+        // (below), so when they are its kept digest's it is unchanged, and its kept rows are not read (Q20: read,
+        // copied and sorted for every evaluated owner of every input, 84 G of an edit on ep2).
+        // An export's real document (`holders`) is held once: its rows are the set of this run's, so the same test
+        // reads their distinct rows.
+        let real = o < values && !text && !by_old.contains_key(&o);
+        if real && (holders.is_some() || evaluated.contains(&o)) {
+            let rows = by_new.get(&o).map_or(&[][..], Vec::as_slice);
+            let (sum, n) = if holders.is_some() {
+                let distinct: rustc_hash::FxHashSet<&[i64]> = rows.iter().map(Vec::as_slice).collect();
+                (distinct.iter().map(|r| cells.row(r)).fold(0u64, u64::wrapping_add), distinct.len())
+            } else {
+                (cells.rows(&rows.concat()).into_iter().fold(0u64, u64::wrapping_add), rows.len())
+            };
+            if kept.docs.get(&o).copied() == (n > 0).then_some((sum, n as u64)) {
+                by_new.remove(&o);
+                continue;
+            }
+        }
         // The owner's kept rows, checked against its digest: the only kept rows the edit reads.
         let was: Vec<Vec<i64>> = match kept.ranges.get(&o) {
             Some(&(start, n)) => {
