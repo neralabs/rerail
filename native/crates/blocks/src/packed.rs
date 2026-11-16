@@ -18,6 +18,16 @@ use crate::refs::Span;
 use crate::relation::{Spec, View, canonical_cols, same_row, sort_canonical};
 use crate::scratch::Scratch;
 use crate::structure;
+use rayon::prelude::*;
+
+/// Values (rows times columns) a relation holds before its columns are read, chosen and packed in parallel: under
+/// it, handing work to other threads costs more than the work.
+const PAR_MIN: usize = 1 << 16;
+
+/// `f` for each of `0..k`, in parallel when `par`.
+fn each<T: Send>(par: bool, k: usize, f: impl Fn(usize) -> T + Sync + Send) -> Vec<T> {
+    if par { (0..k).into_par_iter().map(f).collect() } else { (0..k).map(f).collect() }
+}
 
 structure! {
     /// A permutation index on one column that does not lead the order.
@@ -83,12 +93,6 @@ impl Plan<'_> {
         let ix: usize = self.indexes.iter().flat_map(|x| x.parts.iter()).map(|(_, c)| c.bytes() + 2 * 64).sum();
         descr + cols + ix + 512
     }
-
-    /// The most values a column's packing needs room for.
-    fn tmp(&self) -> usize {
-        let runs = self.choices.iter().chain(self.indexes.iter().flat_map(|x| x.parts.iter().map(|p| &p.1))).map(|c| 2 * c.nruns as usize);
-        runs.max().unwrap_or(0).max(self.n + 1)
-    }
 }
 
 fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, cols: &'s [i64], n: usize) -> Plan<'s> {
@@ -129,19 +133,22 @@ fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, cols: &'s [i64], n:
             *o = p as i64;
         }
         let (kv, st, pm) = (&*kv, &*st, &*pm);
-        indexes.push(IxPlan { col: c as u32, parts: [(kv, choose(kv)), (st, choose(st)), (pm, choose(pm))] });
+        let [ck, cs, cp]: [Choice; 3] = each(n >= PAR_MIN, 3, |j| choose([kv, st, pm][j])).try_into().unwrap();
+        indexes.push(IxPlan { col: c as u32, parts: [(kv, ck), (st, cs), (pm, cp)] });
     }
-    let choices = (0..arity).map(|c| choose(&cols[c * n..(c + 1) * n])).collect();
+    let choices = each(n * arity >= PAR_MIN, arity, |c| choose(&cols[c * n..(c + 1) * n]));
     Plan { arity, n, cols, choices, indexes }
 }
 
-fn place(scratch: &Scratch, plan: &Plan, spec: &Spec, kind: u32) -> (Block, PackStats) {
+/// Lays out the block (descriptors, and every column's words, zero), then packs the columns into it in
+/// parallel: each column into its own words.
+fn place(plan: &Plan, spec: &Spec, kind: u32) -> (Block, PackStats) {
     let block = Block::anon(kind, plan.bytes());
-    let tmp: &mut [u64] = scratch.take(plan.tmp());
     let p: *mut Packed = block.alloc_t(1);
     let cp: *mut IntCol = block.alloc_t(plan.arity);
     let ip: *mut PIndex = block.alloc_t(plan.indexes.len().max(1));
     let n = plan.n;
+    let mut jobs: Vec<(&Choice, &[i64], &mut [u64], &mut [u64])> = Vec::new();
     unsafe {
         (*p).arity = plan.arity as u32;
         (*p).n = n as u32;
@@ -151,20 +158,24 @@ fn place(scratch: &Scratch, plan: &Plan, spec: &Spec, kind: u32) -> (Block, Pack
         }
         // Columns are placed in schema order, their rows in canonical order.
         for (c, ch) in plan.choices.iter().enumerate() {
-            IntCol::place_chosen(cp.add(c), &block, ch, &plan.cols[c * n..(c + 1) * n], tmp);
+            let (d, r) = IntCol::lay_out(cp.add(c), &block, ch);
+            jobs.push((ch, &plan.cols[c * n..(c + 1) * n], d, r));
         }
         for (x, ixp) in plan.indexes.iter().enumerate() {
             let ix = ip.add(x);
             (*ix).col = ixp.col;
             let [(k, kc), (s, sc), (m, mc)] = &ixp.parts;
-            IntCol::place_chosen(&raw mut (*ix).keys, &block, kc, k, tmp);
-            IntCol::place_chosen(&raw mut (*ix).starts, &block, sc, s, tmp);
-            IntCol::place_chosen(&raw mut (*ix).perm, &block, mc, m, tmp);
+            for (at, v, ch) in [(&raw mut (*ix).keys, k, kc), (&raw mut (*ix).starts, s, sc), (&raw mut (*ix).perm, m, mc)] {
+                let (d, r) = IntCol::lay_out(at, &block, ch);
+                jobs.push((ch, v, d, r));
+            }
         }
         (*p).nindex = plan.indexes.len() as u32;
         Span::set(&raw mut (*p).cols, cp, plan.arity);
         Span::set(&raw mut (*p).indexes, ip, plan.indexes.len());
     }
+    let write = |(ch, v, d, r): (&Choice, &[i64], &mut [u64], &mut [u64])| crate::col::write(ch, v, d, r);
+    if n * plan.arity >= PAR_MIN { jobs.into_par_iter().for_each(write) } else { jobs.into_iter().for_each(write) }
     block.set_root(p);
     let stats = PackStats {
         rows: n,
@@ -185,9 +196,9 @@ pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
             None if view.top.is_frozen() => {
                 let n = view.top.rows.len() as usize;
                 let cols: &mut [i64] = s.take(n * a);
-                for c in 0..a {
-                    view.top.rows.read_col(c, n as u32, &mut cols[c * n..(c + 1) * n]);
-                }
+                let rows = &view.top.rows;
+                let read = |(c, out): (usize, &mut [i64])| rows.read_col(c, n as u32, out);
+                if n * a >= PAR_MIN { cols.par_chunks_mut(n.max(1)).enumerate().for_each(read) } else { cols.chunks_mut(n.max(1)).enumerate().for_each(read) }
                 (cols, n)
             }
             _ => {
@@ -201,7 +212,7 @@ pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
                 (cols, n)
             }
         };
-        place(s, &plan(s, a, spec, cols, n), spec, kind)
+        place(&plan(s, a, spec, cols, n), spec, kind)
     })
 }
 
@@ -213,15 +224,17 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
         let a = rel.arity as usize;
         let n = rel.rows.len() as usize;
         let raw: &mut [i64] = s.take(n * a);
-        let (mut lo, mut hi) = (vec![i64::MAX; a], vec![i64::MIN; a]);
-        for c in 0..a {
-            let col = &mut raw[c * n..(c + 1) * n];
-            rel.rows.read_col(c, n as u32, col);
-            for &v in col.iter() {
-                lo[c] = lo[c].min(v);
-                hi[c] = hi[c].max(v);
-            }
-        }
+        let rows = &rel.rows;
+        let read = |(c, col): (usize, &mut [i64])| {
+            rows.read_col(c, n as u32, col);
+            col.iter().fold((i64::MAX, i64::MIN), |(a, b), &v| (a.min(v), b.max(v)))
+        };
+        let range: Vec<(i64, i64)> = if n * a >= PAR_MIN {
+            raw.par_chunks_mut(n.max(1)).enumerate().map(read).collect()
+        } else {
+            raw.chunks_mut(n.max(1)).enumerate().map(read).collect()
+        };
+        let (lo, hi): (Vec<i64>, Vec<i64>) = (0..a).map(|c| range.get(c).copied().unwrap_or((i64::MAX, i64::MIN))).unzip();
         let key = canonical_cols(spec, a);
         let ids: &mut [u32] = s.take(n);
         for (i, id) in ids.iter_mut().enumerate() {
@@ -237,12 +250,18 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
             }
         }
         let cols: &mut [i64] = s.take(m * a);
-        for c in 0..a {
-            for (d, &i) in cols[c * m..(c + 1) * m].iter_mut().zip(&order[..m]) {
+        let (raw, order) = (&*raw, &order[..m]);
+        let gather = |(c, out): (usize, &mut [i64])| {
+            for (d, &i) in out.iter_mut().zip(order) {
                 *d = raw[c * n + i as usize];
             }
+        };
+        if m * a >= PAR_MIN {
+            cols.par_chunks_mut(m.max(1)).enumerate().for_each(gather)
+        } else {
+            cols.chunks_mut(m.max(1)).enumerate().for_each(gather)
         }
-        place(s, &plan(s, a, spec, cols, m), spec, kind)
+        place(&plan(s, a, spec, cols, m), spec, kind)
     })
 }
 
@@ -274,20 +293,19 @@ impl Packed {
             let (mut lo, mut hi) = (0usize, self.len());
             for &oc in &ok[..cols.len()] {
                 let k = key[cols.iter().position(|&c| c == oc).unwrap()];
-                let col = self.col(oc as usize);
-                let a = col.lower_bound(lo, hi, k);
-                let b = if k == i64::MAX { hi } else { col.lower_bound(a, hi, k + 1) };
-                (lo, hi) = (a, b);
+                (lo, hi) = self.col(oc as usize).dec().equal_range(lo, hi, k);
             }
             return Probe::Range(lo..hi);
         }
         assert_eq!(cols.len(), 1);
         let ix = self.indexes.as_slice().iter().find(|ix| ix.col == cols[0] as u32).expect("an index on the column");
-        let k = ix.keys.lower_bound(0, ix.keys.len(), key[0]);
-        if k >= ix.keys.len() || ix.keys.get(k) != key[0] {
+        let keys = ix.keys.dec();
+        let k = keys.lower_bound(0, keys.len(), key[0]);
+        if k >= keys.len() || keys.get(k) != key[0] {
             return Probe::Range(0..0);
         }
-        Probe::Perm(&ix.perm, ix.starts.get(k) as usize..ix.starts.get(k + 1) as usize)
+        let starts = ix.starts.dec();
+        Probe::Perm(ix.perm.dec(), starts.get(k) as usize..starts.get(k + 1) as usize)
     }
 
     /// A digest of the rows in order: the same as the view's it was packed from.
@@ -304,7 +322,7 @@ impl Packed {
 
 pub enum Probe<'a> {
     Range(std::ops::Range<usize>),
-    Perm(&'a IntCol, std::ops::Range<usize>),
+    Perm(crate::col::Dec<'a>, std::ops::Range<usize>),
 }
 
 impl Iterator for Probe<'_> {

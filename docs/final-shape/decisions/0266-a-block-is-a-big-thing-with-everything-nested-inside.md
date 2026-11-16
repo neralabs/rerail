@@ -794,8 +794,112 @@ That is about 1.7 ms with the range against about 125 ms on one CPU thread, and 
 plain scan reads 256 MB in 0.74 ms. Coalescing the loads through threadgroup memory gains nothing, because a
 thread's 32 values are one 128-byte line, which L1 serves. So a block bound for the GPU (a slab of later reads)
 can be packed there in its interleaved layout, which its scans read at 0.52–0.78 ms against 0.74 for plain. The
-CPU packs what leaves for disk. RUNS and LINE on the GPU need a run count (a prefix sum) and a second reduction;
-they come with the first kernel that wants them.
+CPU packs what leaves for disk. RUNS and LINE on the GPU are in §19.
+
+### 19. Packed probes, packing on every thread, RUNS and LINE on the GPU
+
+The three items §17–§18 left open.
+
+**Packed probes.** They were about twice the cost of in-place probes, because in-place probes got faster and
+packed probes did not. A packed probe made about four full binary searches, and every read went through the
+column's descriptor: its spans are atomics, which the compiler reloads, and each read checked bounds and
+dispatched on the encoding. Now:
+
+- **A column is resolved once a probe** (`IntCol::dec` → `Dec`): its fields, mask and word slices in registers.
+  A read is two loads and two shifts with no branch (`rd`; the spare word at each column's end makes the second
+  load safe).
+- **Searches guess by interpolation, then gallop** (`col::search`). A packed block's sorted columns are near
+  linear: an index's keys, the run values, the starts, a leading column. So one guess between the ends lands
+  within a few positions, a gallop brackets the answer, and a binary search of the bracket finishes it. That is
+  about six reads, where a binary search reads `log2 n`. A skewed column costs at most about twice the binary
+  search.
+- **A leading key's range is one search** (`Dec::equal_range`). RUNS takes the run's end; the others gallop over
+  the key's few rows. It replaces two lower bounds, each with two run lookups.
+- **`IntCol::get` reads PACK without a branch** (at least one bit); the other encodings go through `Dec`.
+
+On 1M rows (`encodings`), in instructions retired:
+
+| | In place | Packed, before | Packed, now |
+|---|---|---|---|
+| 1M probes on col 1, with a read per hit | 0.79 G | 1.51 G | 1.00 G |
+| 1M probes on col 0 (leading), with a read per hit | 0.98 G | 2.01 G | 1.09 G |
+
+Packed probes now cost 11–27% more instructions than in place. In wall time they took less in every run (in
+one, 133 against 194 ms on col 1 and 127 against 285 ms on col 0), likely because a packed block is 2.4 times
+smaller and misses cache less. The test checks both searches against a scan, for each encoding
+and over sub-ranges.
+
+**Packing on every thread.** A relation's packing ran on one thread. Now each of its steps runs on every thread
+once a relation holds 64K values (rows times columns); under that, handing work to other threads costs more than
+the work:
+
+- **Reading** the columns, and gathering them into canonical order, a column a task.
+- **Choosing** each column in parallel, and each column in pieces of 64K values (`over_pieces`): the range, the
+  run count and LINE's sample (the residuals at every 64th row) in one read a piece, folded, and LINE's full
+  residual pass the same way when the sample leaves it a chance. The slope needs only the first and last values,
+  so the sample needs no read of its own. It had one, strided and on one thread, which took a third of the
+  choice's time on one thread and most of it on 18.
+- **Writing** after laying out: the block, its descriptors and every column's words are allocated first
+  (`IntCol::lay_out`), then the columns are written in parallel, each into its own words. Within a column, a
+  piece of 64K values is `64K * bits / 64` whole words, so pieces are packed in parallel and share no word.
+  PACK and LINE now subtract while packing (`pack_resid`, a packer per width and per whether there is a line),
+  with no pass to a temporary. RUNS counts each piece's runs, so each piece knows its first run index, and
+  writes its runs from there. A piece's first and last words may be shared with its neighbours, so a run's bits
+  are ORed in atomically, one atomic per full word.
+- **Sorting** (`sort::split_par`) at 256K keys or more. The top bits split the keys into buckets of about 32K:
+  each piece counts its top digits, and the offsets run bucket by bucket and, within a bucket, piece by piece,
+  so the split is stable. Each bucket is then sorted by the rest of its bits on its own, in cache. When the low
+  bits are a whole number of digits, that is as many passes as one thread's sort, otherwise one more. Recounting
+  every pass of a parallel LSD sort was tried first: it cost 182 M instructions to the split's 138 M, against
+  124 M on one thread, for 1M 49-bit keys.
+
+Two runs, at loads of 38 and 41 (nice 19), in instructions and wall time:
+
+| 1M rows | One thread, before | One thread, now | 18 threads, now |
+|---|---|---|---|
+| Pack from the frozen view | 0.19 G, 14 ms | 0.21 G, 14–19 ms | 0.21 G, 3.5–4.9 ms |
+| Pack from open rows | 0.47 G, 38 ms | 0.46 G, 33–43 ms | 0.52 G, 12–22 ms |
+| 64M values, choose + write | 1.68 G, 43 + 83 ms | 1.60 G, 19–29 + 46–75 ms | 1.56 G, 2.8–31 + 3.5–14 ms |
+
+On one thread, the split sort and the parallel plumbing cost about 10% more instructions packing 1M rows from
+the frozen view, and none from open rows. On every thread, packing 1M rows took 2 to 4 times less wall time.
+Wall times on a loaded machine vary by run: a fork-join waits for its slowest piece, and at nice 19 some worker
+is often descheduled. In earlier runs at loads of 17 to 27, a pool of 18 packed slower than one thread, and a
+pool of 4 took 9.0 ms against 23. On 64M values, the write took 5 to 13 times less wall time on
+18 threads, and the choice up to 7 times less. In `paces` (300 documents), packing 123 mostly small blocks took
+25.6 ms. With no size threshold it took 421 ms, because a small relation's handoff to other threads cost more
+than its packing.
+
+**RUNS and LINE on the GPU** (`encodings`, 32M values, best of 6, warm). Each is checked word for word against
+the CPU's encoder.
+
+- **The choice in one read** (`stats`): the range, the runs that start (a value unlike the one before it) and
+  the line's residual range, as threadgroup partials (simdgroup reductions, then the threadgroup's 8) that the
+  host folds. The line through the first and last values needs only those two, so its residuals come in the
+  same read. The host chooses by exact size, as `col::choose` does.
+- **32-bit arithmetic.** Every residual is within the column's range of 0, because the line runs between the
+  first and last values. So below a range of 2^31, the line and the residuals are exact modulo 2^32. The slope
+  goes in as its high 32 bits (signed) and its low 32 bits, and `j * slope / 2^16` is formed from 32-bit
+  products and `mulhi`. A first version in 64-bit arithmetic, with a threadgroup tree to reduce the residuals,
+  took 1.0–1.4 ms for the choice; emulated 64-bit operations made it bound by arithmetic, not memory. A column
+  with a wider range does not try LINE on the GPU. That is a valid encoding, and LINE cannot win on such columns
+  in practice.
+- **LINE write** (`pack_line`): a thread packs a group of 32 residuals into `B` words, as PACK does.
+- **RUNS write**, three steps. Each threadgroup (8,192 values) counts the runs that start in it. One threadgroup
+  of 1,024 threads turns the counts into an exclusive prefix sum. Then each thread finds its first run index
+  (its threadgroup's offset, plus a simdgroup prefix sum and the earlier simdgroups' totals) and writes each of
+  its runs: the value and the start, ORed in atomically, since a run's bits may share a word with another
+  thread's.
+
+| 32M values | GPU choose | GPU write | CPU `encode`, 1 thread | CPU, 18 threads |
+|---|---|---|---|---|
+| RUNS (1.03M runs; 29 + 26 bits) | 0.64–0.72 ms | 0.99–1.93 ms (two fills, three kernels) | 42–67 ms | 5.6–21 ms |
+| LINE (3 bits) | 0.68–0.71 ms | 0.75–0.82 ms | 48–81 ms | 5.8–22 ms |
+
+So the GPU now packs every encoding: 3 to 15 times faster than the CPU on every thread, and 25 to 55 times faster
+than one. The RUNS write's
+second read could be folded into the count (the count's threadgroups would then take the write's layout); it
+has not been, as 1.9 ms is already small next to the CPU's figures.
 
 ## Path
 
