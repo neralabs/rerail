@@ -930,7 +930,8 @@ mod tests {
         let c = read_conditions(&mut last);
         assert!((0.0..=1.0).contains(&c.busy), "{c:?}");
         assert!(c.charge.is_none_or(|ch| (0.0..=100.5).contains(&ch)), "{c:?}");
-        assert!(c.footprint > 0, "{c:?}");
+        // The footprint is macOS's figure (`proc_pid_rusage`); elsewhere it is not read and is 0.
+        assert!(c.footprint > 0 || cfg!(not(target_os = "macos")), "{c:?}");
         eprintln!("CONDITIONS {c:?}");
     }
 
