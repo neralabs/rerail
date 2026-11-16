@@ -115,6 +115,8 @@ describe("ancestry", () => {
 describe("githubRepositoryOf", () => {
   it("reads github.com and GitHub Enterprise keys, and nothing else", () => {
     expect(githubRepositoryOf("remote:github.com/neralabs/rerail")).toEqual({ host: "github.com", owner: "neralabs", name: "rerail" });
+    // GitHub's SSH over port 443 (`ssh://git@ssh.github.com:443/neralabs/rerail.git`) is github.com.
+    expect(githubRepositoryOf("remote:ssh.github.com/neralabs/rerail")).toEqual({ host: "github.com", owner: "neralabs", name: "rerail" });
     expect(githubRepositoryOf("remote:github.example.com/team/app.web")).toEqual({ host: "github.example.com", owner: "team", name: "app.web" });
     expect(githubRepositoryOf("remote:gitlab.com/neralabs/rerail")).toBeNull();
     expect(githubRepositoryOf("remote:git.example.com/team/app")).toBeNull();

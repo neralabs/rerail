@@ -90,6 +90,13 @@ function plain(text: string): string {
   return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ").trim();
 }
 
+/** A line of a hunk as {@link plain} text, its tabs expanded first to the line's own 8-column stops, so indentation survives. */
+function hunkLine(line: string): string {
+  let expanded = "";
+  for (const char of line) expanded += char === "\t" ? " ".repeat(8 - (expanded.length % 8)) : char;
+  return plain(expanded);
+}
+
 function quoted(text: string): string {
   return `"${plain(text)}"`;
 }
@@ -127,7 +134,7 @@ function hookLines(conflict: Conflict): string[] {
 
 /** One open conflict: what, whether it is quiet, both sides, why it is a conflict, and how to dismiss it. */
 function openConflictEntry(conflict: Conflict, hunks: boolean): string[] {
-  const hunk = (side: Conflict["mine"]): string[] => (hunks && side.hunk !== null ? side.hunk.split("\n").map(line => `      ${plain(line)}`) : []);
+  const hunk = (side: Conflict["mine"]): string[] => (hunks && side.hunk !== null ? side.hunk.split("\n").map(line => `      ${hunkLine(line)}`) : []);
   return [
     `${conflict.id}  #${plain(conflict.shortId)}  ${quoted(conflict.title)}${conflict.quiet ? "  (quiet)" : ""}`,
     `  Summary: ${plain(conflict.summary)}`,

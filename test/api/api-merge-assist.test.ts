@@ -13,11 +13,10 @@ import { CALLER_CWD_HEADER, mergeAssistStatusSchema, recordCheckout } from "../.
 import { MERGE_ASSIST_ERROR_CODES, MergeAssistError } from "../../src/runtime/index.js";
 import { git } from "../support/merge-assist/git.js";
 import { RecordingMergeAssistService } from "../support/merge-assist/status.js";
+import { withExperiments } from "../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const CONFLICT = "conflict:overlap:0123456789abcdef01234567:89abcdef";
 
@@ -210,6 +209,14 @@ describe("the Merge Assist operations", () => {
       { method: "settings", checkout },
       { method: "status", checkout: worktree },
     ]);
+  });
+
+  it("tells a coding agent that scans another checkout, in its repository or another, that it scans only its own", async () => {
+    const refused = "agent-not-permitted: a coding agent scans only its own checkout and the checkouts inside it; a person scans any other on the dashboard's Merge Assist page or with rerail merge-assist scan";
+    expect(await call("merge_assist_scan", { checkout: worktree }, checkout)).toBe(refused);
+    expect(await call("merge_assist_scan", { checkout: other }, checkout)).toBe(refused);
+    expect(await call("merge_assist_scan", { repository: "remote:github.com/acme/lib" }, checkout)).toBe(refused);
+    expect(service.calls).toEqual([]);
   });
 
   it("lists every operation as an internal-testing MCP tool, the settings read and change on one OpenAPI path", async () => {

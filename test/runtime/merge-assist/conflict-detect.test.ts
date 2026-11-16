@@ -1,9 +1,20 @@
+import { execFileSync } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { lookupCheckout } from "../../../src/engine/index.js";
-import { detectConflicts, UNLISTED_BRANCHES_PROBLEM, type DetectContext } from "../../../src/runtime/merge-assist/conflict-detect.js";
+import {
+  detectConflicts,
+  NO_BASE_PROBLEM,
+  REMOTE_LIMIT_PROBLEM,
+  UNCOMPARED_KEPT_PROBLEM,
+  UNLISTED_BRANCHES_PROBLEM,
+  type DetectContext,
+} from "../../../src/runtime/merge-assist/conflict-detect.js";
 import { readConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
-import { commit, git } from "../../support/merge-assist/git.js";
+import type { PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
+import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistWorkspaces, type Workspace } from "../../support/merge-assist/workspace.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 
 /** `gitReadAsync`'s shape, as the tests stand in for it. */
 type GitRead = (root: string, args: readonly string[], options?: never) => Promise<string | undefined>;
@@ -16,9 +27,15 @@ vi.mock("../../../src/engine/merge-assist/branch-git.js", async () => {
   return { ...actual, gitReadAsync: (root: string, args: readonly string[], options?: object) => (reads.use ?? reads.real)(root, args, options as never) };
 });
 
+// A pull request listing, and so the remote-tracking branches a pass compares, holds one: a test needs two branches, not 201.
+vi.mock("../../../src/runtime/merge-assist/github.js", async () => ({
+  ...await vi.importActual<typeof import("../../../src/runtime/merge-assist/github.js")>("../../../src/runtime/merge-assist/github.js"),
+  PULL_REQUEST_LIMIT: 1,
+}));
+
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
+withExperiments("MERGE_ASSIST");
 beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
   reads.use = undefined;
 });
 
@@ -32,6 +49,25 @@ async function enabled(): Promise<{ ws: Workspace; context: (pulls: DetectContex
   const checkout = lookupCheckout(ws.database, ws.repo)!;
   return { ws, context: pulls => ({ database: ws.database, checkout, pulls, now: Date.now }) };
 }
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/** Amend the checkout's tip, unchanged but for its committer date: `days` ago. */
+function committedDaysAgo(checkout: string, days: number): void {
+  execFileSync("git", ["commit", "-q", "--amend", "--no-edit"], {
+    cwd: checkout,
+    env: {
+      ...process.env, GIT_COMMITTER_NAME: "Tim Belanger", GIT_COMMITTER_EMAIL: "tim@example.com", GIT_COMMITTER_DATE: new Date(Date.now() - days * DAY).toISOString(),
+      GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
+    },
+  });
+}
+
+/** An open pull request from a fork owned by `owner`, from its branch `mine`, at `head`. */
+const forkPull = (number: number, owner: string, head: string): PullRequestSummary => ({
+  number, title: "Orders", url: `https://github.com/acme/app/pull/${number}`, headRefName: "mine", headCommit: head, baseRefName: "main", author: owner,
+  isDraft: false, updatedAt: "2026-11-03T14:00:00Z", crossRepository: true, headOwner: owner,
+});
 
 const open = (ws: Workspace): string[] =>
   readConflicts(ws.database, ws.repo).filter(entry => entry.conflict.status === "open").map(entry => entry.conflict.theirs.ref).sort();
@@ -92,5 +128,60 @@ describe("a detection pass", { timeout: 30_000 }, () => {
 
     expect(detected?.problems).toEqual([expect.stringMatching(/^Could not compare kchen-orders: git diff \S+ \S+ failed in /u)]);
     expect(open(ws)).toEqual(["jbarnes-orders", "kchen-orders"]);
+  });
+
+  it("compares only the most recently committed remote-tracking branches while pull requests are unread, and says so", async () => {
+    const { ws, context } = await enabled();
+    for (const [branch, days] of [["older-orders", 2], ["newer-orders", 0]] as const) {
+      const theirs = ws.worktree(branch);
+      commit(theirs, THEIR_ORDERS, "Version the orders path");
+      committedDaysAgo(theirs, days);
+      ws.push(theirs, branch);
+      git(ws.repo, "worktree", "remove", "--force", theirs);
+    }
+    const detected = await detectConflicts(context(null));
+    expect(detected?.problems).toEqual([REMOTE_LIMIT_PROBLEM]);
+    expect(open(ws)).toEqual(["origin/newer-orders"]);
+  });
+
+  it("compares a branch a worktree is rebasing, and none whose worktree folder is gone", async () => {
+    const { ws, context } = await enabled();
+    const rebasing = ws.worktree("rebasing-orders");
+    commit(rebasing, THEIR_ORDERS, "Version the orders path");
+    // A rebase stopped partway: the worktree's HEAD is detached, its branch named only in `rebase-merge/head-name`.
+    expect(() => git(rebasing, "rebase", "--exec", "exit 1", "main")).toThrow();
+    const gone = ws.worktree("gone-orders");
+    commit(gone, { "src/api/orders.ts": "export const orders = () => client.get(\"/v3/orders\");\n" }, "Move orders");
+    // Removed without Git: the worktree is prunable, its branch no longer checked out anywhere.
+    await removeFolder(gone);
+
+    await detectConflicts(context([]));
+    expect(open(ws)).toEqual(["rebasing-orders"]);
+  });
+
+  it("leaves out this checkout's own pull request from a fork after an amend, and compares another's of the same branch name", async () => {
+    const { ws, context } = await enabled();
+    // Pushed to the person's fork and opened as a pull request, then amended here.
+    const pushed = git(ws.repo, "rev-parse", "HEAD");
+    writeFiles(ws.repo, { "src/api/orders.ts": "export const orders = () => client.get(\"/orders?page=1\");\n" });
+    git(ws.repo, "commit", "-q", "--amend", "-am", "orders, second take");
+    // Another person's fork, with a branch of the same name that was never this branch.
+    const theirs = commit(ws.worktree("jbarnes-orders"), THEIR_ORDERS, "Version the orders path");
+
+    await detectConflicts(context([forkPull(5, "tbelanger", pushed), forkPull(6, "jbarnes", theirs)]));
+    expect(open(ws)).toEqual(["refs/pull/6/head"]);
+  });
+
+  it("keeps the open conflicts, and says so, when there is no base branch to compare with", async () => {
+    const { ws, context } = await enabled();
+    commit(ws.worktree("jbarnes-orders"), THEIR_ORDERS, "Version the orders path");
+    await detectConflicts(context([]));
+    expect(open(ws)).toEqual(["jbarnes-orders"]);
+
+    git(ws.repo, "branch", "-m", "main", "trunk");
+    const detected = await detectConflicts(context([]));
+    expect(detected?.problems).toEqual([NO_BASE_PROBLEM, UNCOMPARED_KEPT_PROBLEM]);
+    expect(detected?.after.map(entry => entry.conflict.theirs.ref)).toEqual(["jbarnes-orders"]);
+    expect(open(ws)).toEqual(["jbarnes-orders"]);
   });
 });

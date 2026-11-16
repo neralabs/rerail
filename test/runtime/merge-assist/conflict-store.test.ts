@@ -2,10 +2,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/index.js";
 import { readConflicts, writeConflicts, type StoredConflict } from "../../../src/runtime/merge-assist/conflict-store.js";
-import { STATE_KEYS, writeState } from "../../../src/runtime/merge-assist/state.js";
+import { STATE_KEYS, readState, writeState } from "../../../src/runtime/merge-assist/state.js";
 import { sampleConflict } from "../../support/merge-assist/status.js";
 
 const roots: string[] = [];
@@ -36,6 +37,16 @@ describe("Merge Assist's conflict store", () => {
     const dismissed = stored(DISMISSED);
     writeState(db, STATE_KEYS.conflicts("/work/app"), [open, { conflict: { id: "from another version" } }, dismissed], 1);
     expect(readConflicts(db, "/work/app").map(entry => entry.conflict.id)).toEqual([open.conflict.id, dismissed.conflict.id]);
+  });
+
+  it("keeps the entries it cannot read as they are when it writes the store", async () => {
+    const db = await database();
+    const open = stored();
+    const newer = { conflict: { id: "conflict:from-a-newer-build", status: "dismissed", kind: "semantic" } };
+    writeState(db, STATE_KEYS.conflicts("/work/app"), [open, newer], 1);
+    writeConflicts(db, "/work/app", [stored(DISMISSED)], 2);
+    expect(readConflicts(db, "/work/app").map(entry => entry.conflict.id)).toEqual([DISMISSED.id]);
+    expect(readState(db, STATE_KEYS.conflicts("/work/app"), z.array(z.unknown()))).toContainEqual(newer);
   });
 
   it("keeps a dismissed conflict without its hunks and evidence, and an open one whole", async () => {

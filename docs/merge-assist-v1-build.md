@@ -23,7 +23,8 @@ pull requests in flight and tells the person and their coding agent when the two
 
 A person turns it on in the dashboard's **Merge Assist** page or with `rerail merge-assist on`; a coding agent cannot
 through the MCP tools. Turning it off fires `closed` for every open conflict, then clears every checkout's conflicts,
-last scan and `gh` readiness, dismissals included; the settings stay. While it is off Rerail runs no `gh`.
+last scan and `gh` readiness, dismissals included, and which sessions were handed those conflicts' notes (one found
+again is told again); the settings stay. While it is off Rerail runs no `gh`.
 
 Not in this version: resolving or rebasing, posting to pull requests, blocking pushes or merges, a hosted service, Git
 hosts other than GitHub for pull requests.
@@ -36,17 +37,22 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
 
 - **Mine** is the checkout's work, committed and not, against the merge base of HEAD with the base branch
   (`origin/HEAD`, else `main` or `master`). With no base branch, or one that shares no history with HEAD, the scan
-  says so and finds nothing.
+  says so and compares nothing; the open conflicts an earlier pass found stay as they were, and the scan says that too.
 - **Theirs** is the work in flight: open pull requests whose head the repository holds, and branches checked out in
-  another worktree of this repository. Other local branches and remote-tracking branches are not compared, except as a
-  fallback: when open pull requests cannot be read (the repository is not on GitHub, or `gh` is missing, signed out,
-  unreadable or its listing failed), remote-tracking branches stand in for them, and the scan says so unless the
-  repository is not on GitHub. A branch (not an open pull request) whose tip was committed more than 14 days ago
-  (`STALE_BRANCH_DAYS`) is left out. Each branch counts once however it arrives (a pull request, its worktree branch
+  another worktree of this repository, or being rebased there (a worktree whose folder is gone is not). Other local
+  branches and remote-tracking branches are not compared, except as a fallback: when open pull requests cannot be read
+  (the repository is not on GitHub, or `gh` is missing, signed out, unreadable or its listing failed), the 200 most
+  recently committed remote-tracking branches stand in for them, and the scan says so unless the repository is not on
+  GitHub; when there are more, it says that too. A branch (not an open pull request) whose tip was committed more
+  than 14 days ago (`STALE_BRANCH_DAYS`) is left out. Each branch counts once however it arrives (a pull request, its worktree branch
   and `origin/<branch>` are one peer, shown as the pull request). Also left out: this checkout's own branch, its local
   and remote copies and its upstream, its own pull request, the branch being rebased, and branches the base or HEAD
-  already contains. Pull requests are listed through `gh`, read-only and with the person's own sign-in: afresh by a
-  scan, else at most every five minutes, the 200 newest open ones; when more are open, the scan says so.
+  already contains. Its own pull request from a fork is one whose head branch is this checkout's branch (or its
+  upstream's) and whose head commit this branch once pointed at (its reflog holds it), so it stays left out after an
+  amend or a rebase; once Git expires that reflog entry, it is compared. Pull requests are listed through `gh`,
+  read-only and with the person's own sign-in: afresh by a scan, else at most every five minutes, the 200 newest open
+  ones; when more are open, the scan says so. `gh` is signed out only when `gh auth status` says it holds no login for
+  the host; any other failure of it (a token it could not check, offline) is `unavailable`, and is not reused.
 - A branch's own change is its diff from where it left its base branch, so mainline work it merged in does not count,
   and a change of its that the base tip already holds (a squash merge, a cherry-pick) is not live work.
 - **Overlap**: two `git diff --unified=0` hunks in the same file that touch the same base lines or leave at most 3

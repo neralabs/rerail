@@ -99,13 +99,14 @@ const GITHUB_NAME = /^[a-z0-9._-]{1,100}$/u;
 
 /**
  * The GitHub repository a repository key (`remote:<host>/<owner>/<name>`, see `normalizeRemoteAddress`) names, for
- * github.com and GitHub Enterprise hosts (a host whose first label is `github`, as `github.example.com`); null for any
- * other key.
+ * github.com (`ssh.github.com`, GitHub's SSH over port 443, is github.com) and GitHub Enterprise hosts (a host whose
+ * first label is `github`, as `github.example.com`); null for any other key.
  */
 export function githubRepositoryOf(repositoryKey: string): { host: string; owner: string; name: string } | null {
   if (!repositoryKey.startsWith("remote:")) return null;
-  const [host, owner, name, ...rest] = repositoryKey.slice("remote:".length).toLowerCase().split("/");
-  if (host === undefined || owner === undefined || name === undefined || rest.length > 0) return null;
+  const [remoteHost, owner, name, ...rest] = repositoryKey.slice("remote:".length).toLowerCase().split("/");
+  if (remoteHost === undefined || owner === undefined || name === undefined || rest.length > 0) return null;
+  const host = remoteHost === "ssh.github.com" ? "github.com" : remoteHost;
   const labels = host.split(".");
   if (labels.length < 2 || !labels.every(label => GITHUB_HOST_LABEL.test(label))) return null;
   if (host !== "github.com" && labels[0] !== "github") return null;

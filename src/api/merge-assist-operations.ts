@@ -1,9 +1,10 @@
 /**
  * Merge Assist's operations (docs/merge-assist-v1-build.md): the checkout's state and in-flight conflicts, a scan,
  * the settings, and dismissing a conflict. Each acts on one checkout, which the target names as every repository
- * operation's does. Changing the settings (on or off, the hook command) and dismissing a conflict are
- * people's; a coding agent may read and scan, in its own checkout only. The people-only guarantee holds for this
- * surface; `rerail merge-assist` runs as the person, so an agent with a shell can run it as it can any Rerail command.
+ * operation's does. Changing the settings (on or off, the hook command) and dismissing a conflict are people's; a
+ * coding agent may read in its own repository, and scan only its own checkout and the checkouts inside it. The
+ * people-only guarantee holds for this surface; `rerail merge-assist` runs as the person, so an agent with a shell can
+ * run it as it can any Rerail command.
  * Internal testing: every operation here. Experimental (`experiment: "MERGE_ASSIST"`): each answers
  * `404 experimental-off`, and is no MCP tool, unless the daemon runs with RERAIL_EXPERIMENTAL_MERGE_ASSIST=1.
  */
@@ -20,7 +21,7 @@ import {
   mergeAssistTargetSchema,
 } from "./merge-assist-contracts.js";
 import { ApiError, defineOperation, experimentalSummary, type Operation, type RerailApiStores } from "./operation.js";
-import { checkoutOnDisk, resolveTarget, within } from "./repository-operations.js";
+import { checkoutOnDisk, resolveTarget, within, type Target } from "./repository-operations.js";
 
 /** An operation's description after the internal-testing tag: how it answers while the experiment is off, then `description`. */
 const experimental = (description: string): string => experimentalSummary("MERGE_ASSIST", description);
@@ -42,17 +43,32 @@ async function answer<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+interface TargetInput { repository?: string | undefined; checkout?: string | undefined }
+
+/** A coding agent's scan of a checkout that is neither its own nor inside it. */
+const agentScanRefused = (): ApiError => new ApiError(403, "agent-not-permitted",
+  "a coding agent scans only its own checkout and the checkouts inside it; a person scans any other on the dashboard's Merge Assist page or with rerail merge-assist scan");
+
+/** A change's target; the repository guard's refusal of another repository, which speaks of rules and settings, said as a scan's. */
+function changeTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCaller): Target {
+  try {
+    return resolveTarget(stores, input, caller, true);
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "agent-not-permitted") throw agentScanRefused();
+    throw error;
+  }
+}
+
 /**
  * The checkout on disk the target names: `checkout`, else the repository's main checkout (or, with none on disk, the one
  * seen last), else the calling agent's.
- * A coding agent's change stays in its own checkout and the checkouts inside it: a scan changes what the sessions there
- * are told.
+ * A scan is the only change a coding agent reaches here (the others are people's), and it stays in the agent's own
+ * checkout and the checkouts inside it: a scan changes what the sessions there are told.
  */
-function checkoutOf(stores: RerailApiStores, input: { repository?: string | undefined; checkout?: string | undefined }, caller: ApiCaller, write: boolean): string {
-  const checkout = checkoutOnDisk(resolveTarget(stores, input, caller, write));
-  if (write && caller.kind === "agent" && (caller.checkout === undefined || within(caller.checkout, checkout) === undefined)) {
-    throw new ApiError(403, "agent-not-permitted", "a coding agent changes Merge Assist only in its own checkout and the checkouts inside it");
-  }
+function checkoutOf(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): string {
+  if (!write) return checkoutOnDisk(resolveTarget(stores, input, caller, false));
+  const checkout = checkoutOnDisk(changeTarget(stores, input, caller));
+  if (caller.kind === "agent" && (caller.checkout === undefined || within(caller.checkout, checkout) === undefined)) throw agentScanRefused();
   return checkout;
 }
 
@@ -94,7 +110,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     method: "POST",
     path: "/api/merge-assist/scan",
     experiment: "MERGE_ASSIST",
-    summary: internalTesting(experimental("Find the checkout's in-flight conflicts now: overlapping changes with open pull requests and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). Runs the person's gh (read-only) to list pull requests. A coding agent may scan only its own checkout.")),
+    summary: internalTesting(experimental("Find the checkout's in-flight conflicts now: overlapping changes with open pull requests and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). Runs the person's gh (read-only) to list pull requests. A coding agent may scan only its own checkout and the checkouts inside it.")),
     body: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {

@@ -17,6 +17,7 @@ vi.mock("../../../src/runtime/daemon-control.js", async () => ({
 import Database from "better-sqlite3";
 import {
   RULE_MESSAGE_TYPE,
+  conflictNote,
   defaultRerailDatabasePath,
   messageSteer,
   steerBlock,
@@ -363,6 +364,25 @@ describe("Pi conversation-rules extension", () => {
           options: { deliverAs: "steer" },
         }]);
         expect(receiptCount(harness)).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("sends a Merge Assist note as it is, which already says once that it is Rerail's, not the user's", async () => {
+      const harness = createHarness();
+      await install(harness);
+      const content = conflictNote({ file: "src/model.ts", peer: "jbarnes-1", author: "Tim", summary: "Share matchers", pullRequest: false });
+      const conflict = { id: "conflict:a", text: "your edit overlaps jbarnes-1 (Tim): model.ts" };
+      const note: AdapterDelivery = { sessionId: "pi-test-session", requested: "steer", mechanism: "native-queue", content, ruleIds: [], rules: [], strategy: "message", conflict };
+      const spy = withDeliveries(event => event.kind === "result" ? [note] : []);
+      try {
+        await harness.handlers.get("tool_result")!(result, harness.context);
+        expect(harness.messages).toEqual([{
+          message: { customType: RULE_MESSAGE_TYPE, content, display: true, details: expect.objectContaining({ conflict }) },
+          options: { deliverAs: "steer" },
+        }]);
+        expect(receiptCount(harness)).toBe(0);
       } finally {
         spy.mockRestore();
       }

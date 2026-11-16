@@ -4,18 +4,17 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistState, openRerailDatabase } from "../../../src/engine/index.js";
 import { PULL_REQUEST_LIMIT, type PullRequestListing, type PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, type Workspace } from "../../support/merge-assist/workspace.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const workspace = mergeAssistWorkspaces();
 

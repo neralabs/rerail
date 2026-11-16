@@ -28,7 +28,7 @@ import { ConflictHook, conflictEvents, type ConflictFire, type ConflictHandlerCo
 import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict, type StoredConflict } from "./conflict-store.js";
 import { createGithubClient, PULL_REQUEST_LIMIT, type GithubClient, type GithubRepository, type PullRequestSummary } from "./github.js";
 import { commandHandler, RunningCommands } from "./hook-command.js";
-import { currentNotice, markNotesDelivered, pendingNotes, type ConflictNoteOptions, type PendingNote } from "./notes.js";
+import { currentNotice, forgetDelivered, markNotesDelivered, pendingNotes, type ConflictNoteOptions, type PendingNote } from "./notes.js";
 import { personName } from "./people.js";
 import { STATE_KEYS, deleteState, isoSeconds, readState, writeState, type StateQueries } from "./state.js";
 
@@ -48,7 +48,7 @@ export interface MergeAssistService {
   status(checkoutPath: string): Promise<MergeAssistStatus>;
   /**
    * Turn Merge Assist on or off for the checkout's repository. Off fires `closed` for every open conflict, then clears
-   * every checkout's conflicts and scans and the repository's `gh` readiness.
+   * every checkout's conflicts and scans, which sessions were handed their notes, and the repository's `gh` readiness.
    */
   setEnabled(checkoutPath: string, enabled: boolean): Promise<MergeAssistStatus>;
   /** Find the checkout's in-flight conflicts now, with the open pull requests listed afresh. */
@@ -436,17 +436,20 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * Clear what Merge Assist found in every checkout of the repository, dismissals included, and its `gh` readiness;
-   * the person's settings stay. Returns each checkout's conflicts that were open.
+   * Clear what Merge Assist found in every checkout of the repository, dismissals included, which sessions were handed
+   * those conflicts' notes (so one found again is told again), and its `gh` readiness; the person's settings stay.
+   * Returns each checkout's conflicts that were open.
    */
   #clearRepository(tx: StateQueries, repositoryKey: string): Array<{ path: string; open: StoredConflict[] }> {
     deleteState(tx, STATE_KEYS.github(repositoryKey));
-    return tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all().map(({ path }) => {
-      const open = readConflicts(tx, path).filter(entry => entry.conflict.status === "open");
+    const cleared = tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all().map(({ path }) => {
+      const stored = readConflicts(tx, path);
       deleteState(tx, STATE_KEYS.scan(path));
       deleteState(tx, STATE_KEYS.conflicts(path));
-      return { path, open };
+      return { path, stored };
     });
+    forgetDelivered(tx, new Set(cleared.flatMap(({ stored }) => stored.map(entry => entry.conflict.id))), this.#now());
+    return cleared.map(({ path, stored }) => ({ path, open: stored.filter(entry => entry.conflict.status === "open") }));
   }
 
   async setEnabled(checkoutPath: string, enabled: boolean): Promise<MergeAssistStatus> {

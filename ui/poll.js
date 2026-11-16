@@ -282,10 +282,28 @@ let mergeAssistRead = { at: 0, loading: null, generation: -1 };
  * answers last cannot put back what a later one changed.
  */
 const mergeAssistWrites = { sent: 0, answered: 0 };
+/**
+ * Merge Assist requests sent, reads and writes alike, numbered in order (`asked`), and the number of the one whose
+ * answer `data.mergeAssist` holds (`held`): a conflict link is looked up only in a status asked for after it.
+ */
+const mergeAssistRequests = { asked: 0, held: 0 };
 
-/** A Merge Assist read answered: `body`, or nothing new on `undefined` (304). Whether anything shown changed. */
-function takeMergeAssist(body) {
+/** The number of the last Merge Assist request sent, for `mergeAssistReadAfter`. */
+export const mergeAssistMark = () => mergeAssistRequests.asked;
+
+/**
+ * Whether `data.mergeAssist` answers a request sent after `mark` (`mergeAssistMark()`): not one read before it, which
+ * the sidebar's count may have read half a minute ago, nor one already out then.
+ */
+export const mergeAssistReadAfter = mark => data.mergeAssist !== null && mergeAssistRequests.held > mark;
+
+/**
+ * Merge Assist read `request` answered: `body`, or nothing new on `undefined` (304), which confirms the status held.
+ * Whether anything shown changed.
+ */
+function takeMergeAssist(body, request) {
   mergeAssistRead.at = Date.now();
+  mergeAssistRequests.held = request;
   const changed = data.mergeAssistError !== null || data.mergeAssistExperiment !== true;
   Object.assign(data, { mergeAssistError: null, mergeAssistExperiment: true });
   if (body === undefined) return changed;
@@ -299,8 +317,10 @@ function takeMergeAssist(body) {
  */
 function takeMergeAssistFailure(error) {
   mergeAssistRead.at = Date.now();
-  const changed = data.mergeAssistError !== error.message;
-  data.mergeAssistError = error.message;
+  // The API's own reason when it answered one ("Rerail does not know the checkout …"), else the status line.
+  const why = error.apiMessage ?? error.message;
+  const changed = data.mergeAssistError !== why;
+  data.mergeAssistError = why;
   return changed;
 }
 
@@ -320,9 +340,10 @@ function skipMergeAssist(maxAge) {
 
 /** Read Merge Assist and take the answer while `current()` says it still lands. Whether anything shown changed. */
 async function readMergeAssist(current) {
+  const request = ++mergeAssistRequests.asked;
   try {
     const body = await fetchFresh(`/api/merge-assist?${scopeQuery()}`, "mergeAssist", current);
-    return current() && takeMergeAssist(body);
+    return current() && takeMergeAssist(body, request);
   } catch (error) {
     if (error.name === "AccessRequired") throw error;
     return experimentOff(error) || (current() && takeMergeAssistFailure(error));
@@ -348,9 +369,13 @@ function loadMergeAssist(maxAge = 0) {
   return loading;
 }
 
-/** A write's answered status replaces `data.mergeAssist`, unless a later write was sent meanwhile (`write` is its count). */
-function keepWriteStatus(write, status) {
+/**
+ * A write's answered status replaces `data.mergeAssist`, unless a later write was sent meanwhile (`write` is its count;
+ * `request` its number among all Merge Assist requests).
+ */
+function keepWriteStatus(write, request, status) {
   if (status === undefined || write !== mergeAssistWrites.sent) return;
+  mergeAssistRequests.held = request;
   data.mergeAssist = status;
   data.mergeAssistError = null;
   mergeAssistRead.at = Date.now();
@@ -363,11 +388,11 @@ function keepWriteStatus(write, status) {
  * write's error only while the page still shows the scope.
  */
 export async function writeMergeAssist(scope, method, path, body) {
-  const write = ++mergeAssistWrites.sent;
+  const write = ++mergeAssistWrites.sent, request = ++mergeAssistRequests.asked;
   try {
     const { body: status } = await send(method, path, { ...scope.target, ...body });
     if (!inScope(scope)) return null;
-    keepWriteStatus(write, status);
+    keepWriteStatus(write, request, status);
     return status ?? null;
   } catch (error) {
     if (inScope(scope)) throw error;

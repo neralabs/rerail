@@ -1,14 +1,13 @@
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PullRequestListing } from "../../../src/runtime/merge-assist/github.js";
 import { commit, writeFiles } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 import { sessionRuntime } from "./support/conflict-sessions.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const workspace = mergeAssistWorkspaces();
 
@@ -75,7 +74,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
 
       const [conflict] = (await service.status(ws.repo)).conflicts;
       expect(deliveries.filter(delivery => delivery.conflict !== undefined)).toEqual([expect.objectContaining({
-        content: expect.stringContaining("Your edit to src/api/model.ts overlaps open work: jbarnes-model (Tim Belanger), described on their side as \"Share compiled matchers\"."),
+        content: expect.stringContaining("Your edit to src/api/model.ts overlaps open work: \"jbarnes-model\" (\"Tim Belanger\"), described on their side as \"Share compiled matchers\"."),
         conflict: { id: conflict!.id, text: "your edit overlaps jbarnes-model (Tim Belanger): model.ts" },
         rules: [],
       })]);
@@ -112,6 +111,72 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
       expect(await service.detectAfterEdit(ws.repo, sessionId, "claude-code")).toBe(true);
       expect((await service.status(ws.repo)).conflicts).toEqual([expect.objectContaining({ id: conflict!.id, status: "dismissed" })]);
       expect(await runtime.ingest({ kind: "user-prompt", eventId: "third", sessionId, text: "Thanks." })).toEqual([]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("lets a quiet session close while its note waits, and gives the note once the session opens again", async () => {
+    const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
+    const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
+    const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
+    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
+    writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    const queued = Promise.withResolvers<void>();
+    const pendingNotes = service.pendingNotes.bind(service);
+    service.pendingNotes = (...args) => {
+      const notes = pendingNotes(...args);
+      if (notes.length > 0) queued.resolve();
+      return notes;
+    };
+    const scans: Array<Promise<void>> = [];
+    const openSession = service.openSession.bind(service);
+    service.openSession = (...args) => {
+      const scan = openSession(...args);
+      scans.push(scan);
+      return scan;
+    };
+    const runtime = sessionRuntime(ws, service);
+    const session = { host: "claude-code" as const, sessionId: "quiet-session", cwd: ws.repo };
+    const { sessionId } = session;
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      // The scan's note waits for the session's next boundary, and the session sends nothing.
+      await queued.promise;
+      expect(await runtime.closeIdleSession(sessionId)).toBe(true);
+      const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, session, text: "Go on." });
+      expect(next.map(delivery => delivery.content)).toEqual([expect.stringContaining("overlaps open work")]);
+      // The session opened again scans its checkout again.
+      await vi.waitFor(() => expect(scans).toHaveLength(2));
+      await Promise.all(scans);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("finds no conflicts at the late result of an edit its turn's end already settled", async () => {
+    const ws = await workspace({ files: { "src/api/model.ts": "export {};\n" } });
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    let detections = 0;
+    const detectAfterEdit = service.detectAfterEdit.bind(service);
+    service.detectAfterEdit = (...args) => {
+      detections += 1;
+      return detectAfterEdit(...args);
+    };
+    const runtime = sessionRuntime(ws, service);
+    const sessionId = "settled-session";
+    const file = join(ws.repo, "src/api/model.ts");
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: ws.repo } });
+      await vi.waitFor(async () => expect((await service.status(ws.repo)).lastScan).not.toBeNull(), { timeout: 10_000 });
+      await runtime.ingest({ kind: "call", eventId: "edit", sessionId, toolCallId: "1", toolName: "Write", input: { file_path: file, content: "export const a = 1;\n" } });
+      // The person refused the write: the turn ends with no result, which settles the call.
+      await runtime.ingest({ kind: "turn-end", eventId: "stop", sessionId, text: "" });
+      await runtime.ingest({ kind: "result", eventId: "late", sessionId, toolCallId: "1", toolName: "Write", output: "ok" });
+      expect(detections).toBe(0);
     } finally {
       await runtime.dispose();
     }

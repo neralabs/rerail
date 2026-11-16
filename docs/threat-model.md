@@ -886,7 +886,7 @@ first, except in an auto-approve mode.
   for its own `rerail merge-assist` command and may be able to restart the daemon with it set.
 - **People only on MCP:** `merge_assist_settings_set` (turning it on, setting the command) and
   `merge_assist_conflict_dismiss` answer an `agent` `403 agent-not-permitted`. An agent may read the status and the
-  settings of its own repository and scan only its own checkout.
+  settings of its own repository, and scan only its own checkout and the checkouts inside it.
 - **No shell:** the command is an argv array of 1–64 strings run with `shell: false` from the checkout's root; the
   conflict reaches it on stdin only, never in argv, with `RERAIL_CONFLICT_EVENT` and `RERAIL_CONFLICT_ID` added to the
   person's environment. A 1–60 second timeout ends its process tree (a POSIX process group, `taskkill /T` on Windows),

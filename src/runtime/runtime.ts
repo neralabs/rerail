@@ -519,6 +519,8 @@ interface PendingSteer {
   scope: string[];
   /** Called once the steer leaves the queue, with whether a delivery took it (a Merge Assist note records itself then). */
   settled?: (delivered: boolean) => void;
+  /** A Merge Assist note: the conflict store keeps it until a delivery takes it, so closing the session loses nothing. */
+  mergeAssistNote?: true;
 }
 
 /**
@@ -1104,7 +1106,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const calls = takeUnanswered(state.pendingCodeRuleCalls, sessionEnds);
     if (calls.length === 0) return;
     await state.codeRuleBridge?.finishUnanswered(calls.map(call => call.id));
-    for (const call of calls) await this.#append(state, { type: "policy-result", toolCallId: call.id });
+    for (const call of calls) {
+      state.mergeAssistEdits.delete(call.id);
+      await this.#append(state, { type: "policy-result", toolCallId: call.id });
+    }
   }
 
   /** Runs `wait` as a boundary waiting for the session's edit checks: the steers they produce meanwhile ride its answer. */
@@ -1838,10 +1843,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Whether the session still owes its agent something that closing it would lose, since its ledger does not hold it: a
    * tool call of its turn waiting for its result (a session opened again checks no edit the call makes), an edit check
-   * still running, a steer or held finding not yet delivered, or a scan the dashboard asked for.
+   * still running, a steer or held finding not yet delivered, or a scan the dashboard asked for. A Merge Assist note
+   * waiting is not owed: the session opened again is offered it at its first boundary.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
+    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+      || state.pendingSteers.some(pending => pending.mergeAssistNote !== true)
       || state.missedFindings.length > 0 || state.auditRequestWork !== undefined;
   }
 
@@ -2189,6 +2196,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         // A note speaks for no source: no edit makes it stale.
         revision: Number.POSITIVE_INFINITY,
         scope: [],
+        mergeAssistNote: true,
         settled: delivered => {
           for (const mark of note.marks) state.mergeAssistNotesInFlight.delete(mark);
           if (!delivered) return;

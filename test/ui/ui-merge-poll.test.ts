@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MergeAssistStatus } from "../../src/engine/index.js";
-import { captureScope, changeScope, refresh, setNeeds, writeMergeAssist } from "../../ui/poll.js";
+import { captureScope, changeScope, mergeAssistMark, mergeAssistReadAfter, refresh, setNeeds, writeMergeAssist } from "../../ui/poll.js";
 import { data, setScope, ui } from "../../ui/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
 import { sampleStatus } from "../support/merge-assist/status.js";
@@ -166,7 +166,49 @@ describe("Merge Assist reads and writes", () => {
     await refresh();
 
     expect(data.mergeAssistExperiment).toBeNull();
-    expect(data.mergeAssistError).toMatch(/answered 404$/u);
+    expect(data.mergeAssistError).not.toBeNull();
+  });
+
+  it("keeps the API's own message of a failed read for the page to say why", async () => {
+    mergeRead = () => json({ error: "checkout-not-found", message: "Rerail does not know the checkout /work/a." }, 404);
+
+    await refresh();
+
+    expect(data.mergeAssistError).toBe("Rerail does not know the checkout /work/a.");
+  });
+});
+
+describe("whether the status shown was read after a conflict link was followed", () => {
+  it("is not for a status read before the link, and is once a read sent after it answers", async () => {
+    await refresh();
+    const mark = mergeAssistMark();
+    expect(mergeAssistReadAfter(mark)).toBe(false);
+
+    await refresh();
+    expect(mergeAssistReadAfter(mark)).toBe(true);
+  });
+
+  it("is not for a read already out when the link was followed, though it answers after", async () => {
+    holding = true;
+    const polling = refresh();
+    await vi.waitFor(() => expect(reads()).toHaveLength(1));
+    const mark = mergeAssistMark();
+
+    reads()[0]!.resolve(json(status("open")));
+    await polling;
+    expect(data.mergeAssist).not.toBeNull();
+    expect(mergeAssistReadAfter(mark)).toBe(false);
+  });
+
+  it("is once a write sent after the link answers the status", async () => {
+    await refresh();
+    const mark = mergeAssistMark();
+    const dismissing = dismiss();
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    writes()[0]!.resolve(json(status("dismissed")));
+    await dismissing;
+
+    expect(mergeAssistReadAfter(mark)).toBe(true);
   });
 });
 
