@@ -148,13 +148,21 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     crate::code_rule_dsl::prof::count("phase0.graph_kept", seeds.len() - found.iter().filter(|g| g.is_none()).count());
     if !wanted.is_empty() {
         let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
-        let mut map = kept.lock().expect("phase 0's graphs");
-        for (k, seed) in wanted.iter().enumerate() {
-            map.insert(seed.clone(), Arc::new(whole.of(seed, k)));
+        let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
+        // A test store's template is filled in whichever test process asks first (`test_store`): its graphs are not
+        // kept for the process, whose own runs then derived none, and prepared one program fewer than a process that
+        // found the template made (the identity test's first child after a rebuild).
+        #[cfg(any(test, feature = "test-hooks"))]
+        let keep = !super::test_store::filling();
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let keep = true;
+        if keep {
+            let mut map = kept.lock().expect("phase 0's graphs");
+            map.extend(made.iter().map(|(s, g)| (s.clone(), Arc::clone(g))));
         }
         for (g, seed) in found.iter_mut().zip(seeds) {
             if g.is_none() {
-                *g = map.get(seed).cloned();
+                *g = made.get(seed).cloned();
             }
         }
     }
