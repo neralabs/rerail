@@ -2042,11 +2042,11 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
 /// once it is.
-pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
+pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], digests: &[[u8; 32]], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
+    let (root, sources, digests, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), digests.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
     let batch = phases::batch_plans(&root, plan, &also);
     // A batch collects at its first run alone: the last batch's final manifest names all that batch's plans then. Later,
@@ -2080,6 +2080,10 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
             // The sources of the writes queued before this one, written now (run again if the store was busy).
             let mut sources = sources.clone();
             sources.extend(late.lock().expect("the late sources").iter().copied());
+            // The contents the run named by their digests: their sources are stored by now (a hit's were already).
+            for d in &digests {
+                sources.extend(memo::Content::Unstored(*d).resolve(store)?);
+            }
             let recorded = store
                 .record_corpus_run_lane(&root, &sources, crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), plan, &also, lane, now)
                 .and_then(|new| {
@@ -5113,7 +5117,9 @@ fn run_observed(
         ended: bool,
         /// A chunk or the memo's hits have been handed on: a corpus with no document hands on one empty chunk.
         sent: bool,
-        read_sources: Vec<crate::content_store::SourceId>,
+        /// The contents the run read, which its manifest names: a content named by its digest alone (a file the stat
+        /// index does not know, read in the waves, where the store is not asked) is resolved as the manifest is written.
+        read_sources: Vec<memo::Content>,
         parse: (f64, f64),
         batch: (f64, f64),
     }
@@ -5377,14 +5383,15 @@ fn run_observed(
             let (d, path, _) = &docs.asked[i];
             match made {
                 Ok(Some((source_id, Ok(entry)))) => {
-                    c.read_sources.extend(source_id.and_then(memo::Content::stored));
+                    c.read_sources.extend(source_id);
                     if let Some(content) = source_id {
                         self.run_docs.lock().expect("the run's documents").insert(path.clone(), (content, *d));
                     }
                     c.hits.push((path.clone(), entry, source_id));
                 }
                 Ok(Some((source_id, Err(doc)))) => {
-                    c.read_sources.extend(source_id.and_then(memo::Content::stored));
+                    // A document built: a content new to the store is named as its source is written (`late_sources`).
+                    c.read_sources.extend(source_id.filter(|c| matches!(c, memo::Content::Stored(_))));
                     if let Some(content) = source_id {
                         self.run_docs.lock().expect("the run's documents").insert(path.clone(), (content, *d));
                     }
@@ -5762,7 +5769,7 @@ fn run_observed(
     let worker_conns: parking_lot::Mutex<Vec<(Connection, Modules)>> = parking_lot::Mutex::new(Vec::new());
     // What the run wrote before its waves is a wave: the combined program, the prepared sources, the plan holds.
     crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Before);
-    let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, memo::Content)>)> {
+    let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<memo::Content>, Vec<(String, crate::content_store::FileStat, memo::Content)>)> {
     // The main thread's error or end stops the builder: no job it starts after is left running.
     let _stop = Stopper(&builder.stopped);
     // A chunk's file-local part: its memo hits replayed, its documents evaluated, its exports written to `x`.
@@ -7163,8 +7170,12 @@ fn run_observed(
     }
     docs.extend(loaded_docs.iter().cloned());
     // The run's manifest, then collection in the background while the cross-file part runs (decision 0053).
-    let mut run_sources = worker_cpu.2.clone();
+    let mut run_sources: Vec<crate::content_store::SourceId> = worker_cpu.2.iter().filter_map(|c| c.stored()).collect();
     run_sources.extend(program_sources.iter().copied());
+    // A memo hit on a content named by its digest alone writes no source: its stored source is found as
+    // the manifest is written. Left out, a file read again because the stat index did not trust its stat (one written
+    // as the run that recorded it started) was named by no manifest of a warm run.
+    let run_digests: Vec<[u8; 32]> = worker_cpu.2.iter().filter_map(|c| match c { memo::Content::Unstored(d) => Some(*d), _ => None }).collect();
     // A run that read no file anew (every one known by its stat) has no stat to record.
     if recording && !worker_cpu.3.is_empty() {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
@@ -7205,7 +7216,7 @@ fn run_observed(
     // before it, a phase's or phase 0's cross part was named by no manifest, and collected after every cold run.
     let mut publish_later = None;
     let mut collecting = if recording && cross_plan.is_none() && durable.is_none() {
-        record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
+        record_run(store, root, &run_sources, &run_digests, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
     } else if recording {
         publish_later = Some((relations, reading));
         None
@@ -8909,7 +8920,7 @@ fn run_observed(
     }
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
-        collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
+        collecting = record_run(store, root, &run_sources, &run_digests, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
     }
     // The cross part's writes are one wave: its kept strata's frames, retained rows, rounds and statistics.
     crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Cross);
@@ -10918,10 +10929,10 @@ pub mod tests {
         let program = [7; 32];
         // Simulate another active run deferring the first run's background collection.
         let reader = store.hold_collection().unwrap();
-        super::record_run(&store, &root, &[source], &program, &[], None, &[], &Default::default(), None, true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &[], &program, &[], None, &[], &Default::default(), None, true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
         assert!(store.corpus_collection_due().unwrap());
         // Same files and plan: the manifest is unchanged, but pending collection must still run.
-        super::record_run(&store, &root, &[source], &program, &[], None, &[], &Default::default(), Some(reader), true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &[], &program, &[], None, &[], &Default::default(), Some(reader), true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
         assert!(!store.corpus_collection_due().unwrap());
         assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
     }
