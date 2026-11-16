@@ -435,6 +435,18 @@ pass.
   `run_observed`'s native strata. An unprofiled cold run shows no such excess.
 - **Done when**: a profiled cold run costs within a few percent of an unprofiled one, or the excess is named in the
   profile (its span) and kept out of measurements.
+- **Record**: done. The excess was the report's writing, after the profile's CPU reading: three of its sections
+  scanned every span (or plan) once per stratum or per node printed, quadratic in a cold run's ~113k spans and
+  ~4,200 strata. Samples at 45 s and 90 s had the main thread in `profile::executors`' per-stratum filter. Now
+  `executors` and `fallbacks` charge each span once to the strata its path names (`stratum_tails`), the span tree
+  groups the spans under their parents once (`report::span_tree`), and `explain` reads a stratum's plans as a range of
+  the plan map. Tests: `executors_charge_each_stratum_its_own_spans`, `fallbacks_charge_each_stratum_its_own_spans_and_sql`
+  (rerail-prof), `the_span_tree_nests_children_by_cpu` (rerail-logic); a stratum with no spans now reads `0.000`,
+  not `-0.000` (an empty `f64` sum). dl30 cold, fresh store: profiled 812 G / 92 s CPU / 151 s wall before,
+  205–242 G / 19.5–21.5 s CPU / 11.5–33 s wall after; unprofiled 218 G / 15.4 s CPU (load average 24–50). The
+  profile now sees all but about 1 s of the process CPU (18.5 s of 19.5 s). The rest, about 4–6 s over an
+  unprofiled run, is the profile's own recording, under named spans: `explain record` (EXPLAIN ANALYZE per plan),
+  the memory sampler (`profile memory`, 0.36 s), and 514k span entries' clock reads.
 
 ### Q18. An edit combines and prepares all 317 programs again
 
