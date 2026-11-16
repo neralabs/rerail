@@ -1023,6 +1023,36 @@ mod tests {
         assert!(src.contains("loop {"), "{src}");
     }
 
+    /// A call whose results are returned as they are is the return's (`returned_call`):
+    /// `return f(…)`, so rustc hands its caller's result on, a tail call, where a copy through
+    /// a temporary kept the caller's frame. (Moved from `rr_aot`'s generated source, where no
+    /// function returns a call since the short forms are the loop's arms.)
+    #[test]
+    fn a_returned_call_is_the_return() {
+        let callee = two_entries();
+        let mut sig = Signature::new(CallConv::Tail);
+        sig.params.push(AbiParam::new(I64));
+        sig.returns.push(AbiParam::new(I64));
+        let mut f = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, 1), sig.clone());
+        let mut ctx = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let n = b.block_params(entry)[0];
+        let name = b.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, 0));
+        let signature = b.import_signature(sig);
+        let r = b.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+        let call = b.ins().call(r, &[n]);
+        let got = b.inst_results(call).to_vec();
+        b.ins().return_(&got);
+        b.seal_all_blocks();
+        b.finalize();
+        let src = super::translate(&[(0, callee), (1, f)], &[(1, "outer")], &[]).expect("translates");
+        assert!(src.contains("return unsafe { f0("), "no call returned as it is: {src}");
+        assert!(!src.contains("let t = unsafe { f0("), "a call's results copied into a return: {src}");
+    }
+
     /// A 16-byte compare's mask by NEON's narrowing shift (`native_cpu_block::short_mask`) is
     /// written as one `vshrn_n_u16`, its shift, `and` and casts not besides; and the lanes'
     /// count after it reads the nibbles (`lanes_set`).

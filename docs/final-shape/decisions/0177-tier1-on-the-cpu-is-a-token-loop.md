@@ -2945,3 +2945,171 @@ then unpacked a (last, tag, hits) word to learn what had been read.
 
 Test: `a_readers_short_form_is_the_loops_arm` (`PassShape::arms`).
 Functions 21 to 19.
+
+## A refusal leaves the loop
+
+**Intro.** A refused file goes to the fallback parser. Tier 2 never
+reads its records; the only thing anyone acts on is its refusal flag.
+The lean lexer, on a refusal, writes its `BAD` token and leaves its
+loop (`break 'read`). Ours set the file's flag and read on to the end.
+
+**The contract (the user's, 2026-11-16).** A refused file's flag is
+set. Its records are the same on every backend up to its first
+refusal; past it they are unspecified.
+
+**The CPU.** A refusal jumps out of the loop to its end (`finish`)
+with the refusal set, which sets the file's flag (`record_end`):
+
+```rust
+// in outline, the refusal (a cold block), after:
+if wrong < 0 { cold_path(); break 'loop /* to finish, refused */ }
+// before: if wrong < 0 { counts[x] |= 1 } /* and on to the next token */
+```
+
+**Metal** cannot leave a loop mid-file, but it stops what it can,
+with no wait and nothing done on the host:
+
+- **The record pass** (one file over 64 lanes) stops at the first
+  token refused. The lane that finds it publishes `~n` (the tokens
+  coded) with an atomic max, and each lane reads that word before
+  each token and stops past it. A file already refused by a mask
+  total (`serial_prefix`'s flag) codes no token. The codes read back
+  end there.
+- **The runs again.** Each check (`serial_check`) also records, per
+  file, its first segment listed and its first segment agreeing
+  with a total set, by the check's parity. A total before the first
+  listed is in a final segment, so the runs again (`lanes_again`)
+  find the file refused and run none of its segments. Later checks
+  list none of them. `SerialRun::dropped` counts them. With the
+  scans' carries exact (the default), Metal's first pass is already
+  right on this grammar and lists nothing; with them speculated
+  (`RERAIL_SERIAL_CONE=0`) the drop holds.
+
+**Tests.**
+
+- `the_cpus_records_are_the_interpreters`: on a refused file, the
+  flags agree and the CPU's records are a prefix of the
+  interpreter's.
+- `tier1_on_metal_equals_cranelift`: the same between Metal and the
+  CPU, before the first total's bit.
+- `a_refused_files_records_stop_on_metal`: refused by a mask total
+  (no code), by a token (codes to it, the CPU's), and strings over
+  many segments refused in the first (dropped, with the carries
+  speculated).
+
+## The string, `/` and number arms read like lean's
+
+**Intro.** Side by side with the lean lexer, three arms still did
+work lean's do not:
+
+- the string arm tested the byte before its quote (`b[s-1] == '\\'`)
+  and on a `\` called the escape carry's function, before its window;
+- the `/` arm, on a `/` alone, called a function for its pair test,
+  then hashed the token into the word table;
+- every rare arm's tail took `max(last, start)`.
+
+**The changes.**
+
+- **What can be before a token** (`before_start`). With the loop's
+  starts, the byte before a token's first byte is a gap byte or the
+  last byte of the token before. Each rule says what its last byte
+  can be: a run's run, a pair's second, a reader's closer at `off`
+  (`bytes_at`, the bytes at an offset of an output, through `prev`s
+  and delays). A reader whose closer starts right after its last (a
+  line comment's `\n`) is before a token only that closer's byte
+  starts. A byte with no rule refuses and leaves the loop. The first
+  byte's fold (`Bytewise::fold`) uses it: `escaped(a)` at a `"` is
+  none, since no `\` can be right before one. The opener's carry
+  folds away.
+- **A pair rule is read in its arm.** A pair rule with no tests
+  (`EndRule::Next`) gets no function of its own; the loop reads its
+  row and the next byte's bit inline, as lean's `TOKEN` table.
+- **A pair rule's class is punctuation.** Its code comes from the
+  punctuation table by length, with no word hash, as lean's
+  `tok!(SLASH)`.
+- **No `max` where the last is never below the start**
+  (`last_below_start`). Only a reader arm that ends with no closer
+  at `s - 1`, or a `Last` rule without the loop's starts, gives a
+  last below the start. A refusal leaves the loop.
+
+```rust
+// generated, the string arm's head, after:
+34 => { /* the window from s + 1, cut where past the file */ … }
+// before:
+34 => { if b[s - 1] == b'\\' { cold_path(); carry = f3(…) } if carry == 0 { /* window */ } … }
+```
+
+Tests: `a_strings_arm_reads_nothing_before_its_quote`,
+`a_slashs_arm_is_leans` (the generated Rust, `rr_aot`). Functions 19
+to 18.
+
+
+## A number's run ends as lean's
+
+**Intro.** Lean's number arm runs the digits, then asks the two
+bytes at the run's end:
+
+```rust
+// lean.rs, the number arm
+while end < n && CLASS[b[end] as usize] & DIGIT != 0 { end += 1; }
+if end + 1 < n && b[end] == b'.' && b[end + 1].is_ascii_digit() {
+    end += 2;
+    while end < n && CLASS[b[end] as usize] & DIGIT != 0 { end += 1; }
+}
+```
+
+The rule says the same thing as one run: a byte of the number is
+`digit | (. & prev(digit) & next(digit))`. Our arm computed that for
+all 16 bytes at once. It loaded three windows (the bytes from `s`,
+`s + 1` and `s + 2`) so that every byte had a `prev` and a next.
+
+**The change** (`Bytewise::run_split`). A run's output that is an
+`Or` with exactly one term that tests its own byte (the digits) is
+split:
+
+- **The term's run** comes from one window, as lean's `while digit`.
+- **The other terms** are asked only where that run ends
+  (`rest_after`), by scalar loads. The term itself is known false
+  there and is not asked. The byte before is known to be in the
+  term's set or the token's first byte, so the rest's
+  `prev(digit)` folds away. What is left is lean's
+  `b[end] == b'.' && digit(b[end + 1])`.
+- **On past it**, the term's run continues from the same window's
+  mask: one shift and one `ctz`, lean's second `while`. The rest's
+  next byte is always one of the term's (`split_before_again`), so
+  the byte before the second end is known too.
+- **A token past the window**, or a second `.`, takes the whole
+  rule's way, as before.
+- **The count tests** (the `.` count) read the same window. The
+  token's lanes cut them, as before.
+
+Two scalar helpers changed with it:
+
+- **A test of a byte range** is now a subtract and a compare, as
+  `is_ascii_digit` is. The set's word was kept before because of an
+  instruction count, not because lean's source reads that way. That
+  decision is reversed on shape.
+- **Each byte is read once** among one scalar test's terms
+  (`byte_once`).
+
+```rust
+// generated, the number arm, after: one window from s + 1
+let w = vld1q_u8(b + s + 1); let digits = mask(w - b'0' <= 9); let dots = mask(w == b'.');
+let n = ctz(!digits) / 4; let e = s + 1 + n;
+if b[e] == b'.' && b[e + 1] - b'0' <= 9 { let n2 = n + 1 + ctz(!digits >> 4 * (n + 1)) / 4; … }
+// before: three windows
+let w0 = vld1q_u8(b + s); let w1 = vld1q_u8(b + s + 1); let w2 = vld1q_u8(b + s + 2);
+let run = d(w1) | (w1 == b'.') & d(w0) & d(w2); …
+```
+
+Test: `a_numbers_arm_reads_one_window` (the generated Rust, `rr_aot`).
+
+Two older `rr_aot` tests checked the short functions' shape. Those
+functions are the loop's arms since "A reader's short form is read in
+its arm", and the tests have failed since then:
+
+- **`a_returned_call_is_the_return`** moved to `clif_rust`'s own
+  tests, on a two-function module.
+- **`a_short_tokens_function_calls_only_its_whole`** became
+  `a_short_tokens_arm_calls_only_its_whole`. It checks the string's
+  and the `/` arms instead.

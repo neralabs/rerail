@@ -777,6 +777,11 @@ pass.
   steps. Ignored, each naming this item.
 - **Done when**: Parser-generators states what each should check now (`a_readers_short_form_is_the_loops_arm` may
   hold the first's intent), or removes it.
+- **Record**: done (2026-11-16, at the hub's merge of Parser-generators). Their branch restated them: `a_returned_call_is_the_return`
+  is `clif_rust`'s own test now, and `a_short_tokens_function_calls_only_its_whole` is
+  `a_short_tokens_arm_calls_only_its_whole` (the string's and `/`'s arms call nothing but their rule's whole
+  function). Taken, reading the generated file from `OUT_DIR` as the hub's others do; with `--features generated`,
+  8 pass and the 5 by-hand runs stay ignored.
 
 ## Questions for the user
 

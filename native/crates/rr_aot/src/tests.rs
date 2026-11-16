@@ -134,35 +134,22 @@ fn a_bitmask_is_pairwise_adds() {
     assert!(src.contains("vcombine_u8(d, d)"), "no bitmask reduced by halves");
 }
 
-/// A call whose results are returned as they are is the return's (`clif_rust::returned_call`):
-/// `return f(…)`, so rustc hands its caller's result on, a tail call, where a copy through a
-/// temporary kept a short function's frame.
+/// A short token's form (`native_cpu_block::RuleMode::Short`) is the loop's arm: the number's,
+/// the string's and the `/` arm call nothing but their rule's whole function (a number's run
+/// past 16 bytes, a comment or a string past its first window), as the lean lexer reads a few
+/// digits, a line comment or a plain string in its `match` arm. (The returned call these short
+/// functions made is `clif_rust`'s `a_returned_call_is_the_return`.)
 #[test]
-#[ignore = "0177's short functions are gone (\"A reader's short form is read in its arm\"): no call is returned as it is in tier 1 now; work queue Q29"]
-fn a_returned_call_is_the_return() {
+fn a_short_tokens_arm_calls_only_its_whole() {
     let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
-    assert!(src.contains("return unsafe { f"), "no call returned as it is");
-    assert!(!src.contains("v0, v1, v2, v3, v4, v5) }; return ("), "a call's results copied into a return");
-}
-
-/// A short token's function (`native_cpu_block::RuleMode::Short`): a rule's function whose
-/// calls are all its whole function's, of its own signature (a number's run past 16 bytes, a
-/// comment or a string past its first 64 bytes, a string whose bytes its counts need), so its
-/// way for a short token calls nothing, as a lexer reads a few digits, a line comment or a
-/// plain string. A number's, a comment's and a string's at least.
-#[test]
-#[ignore = "0177 makes no short functions (\"A short run is read in its arm\", \"A reader's short form is read in its arm\"); work queue Q29"]
-fn a_short_tokens_function_calls_only_its_whole() {
-    use rerail_compiler::native_cpu_stream;
-    native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
-    let c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules).expect("compiles");
-    let ir = &c.parser.tier1.ir;
-    let calls = rerail_compiler::native_cpu_block::calls_of;
-    let short = ir.iter().filter(|(_, f)| f.signature.params.len() == 6 && matches!(f.signature.returns.len(), 2 | 4)).filter(|(_, f)| {
-        let made = calls(f);
-        made.first().is_some_and(|&one| made.iter().all(|&x| x == one) && ir.iter().any(|(id, g)| *id == one && g.signature == f.signature))
-    });
-    assert!(short.count() >= 3, "a number's, a comment's and a string's short functions");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    for b in ["34", "47"] {
+        let arm = arm_of(f0, b);
+        let mut called: Vec<&str> = arm.match_indices("(pin, ").map(|(at, _)| &arm[arm[..at].rfind(' ').expect("a callee") + 1..at]).collect();
+        called.sort();
+        called.dedup();
+        assert!(called.len() <= 1, "the {b} arm calls more than its whole function: {called:?}");
+    }
 }
 
 /// A rule's function returns its token in two words (`native_cpu_block::pack_rule`): two
@@ -416,4 +403,83 @@ fn tier1_by_kind() {
         }
         eprintln!("  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions a token, lean lexer {:6.1}", ours as f64 / tokens as f64, lean as f64 / tokens as f64);
     }
+}
+
+/// The loop's arm of a first byte `b` in the generated Rust: from `b => {` in the rules'
+/// `match` to the next arm's pattern.
+fn arm_of<'s>(f0: &'s str, b: &str) -> &'s str {
+    let m = f0.find(" { 34 => {").expect("the rules' match");
+    let body = &f0[m..];
+    let at = body.find(&format!("{b} => {{")).expect("the arm");
+    let rest = &body[at + b.len() + 5..];
+    let end = [" 35 => {", " 47 => {", " 48..=57 => {", " 96 => {", " _ => {"].iter().filter_map(|p| rest.find(p)).min().expect("the next arm");
+    &rest[..end]
+}
+
+/// The string's arm reads like lean's `string_end` from the byte after the quote, its carry
+/// none: no byte before its quote read, nothing called before its window
+/// (`native_cpu_block::before_start`: no token ends with a `\` before a `"` the loop starts).
+#[test]
+fn a_strings_arm_reads_nothing_before_its_quote() {
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let arm = arm_of(f0, "34");
+    let window = arm.find("vld1q_u8").expect("the string's first window");
+    assert!(!arm[..window].contains("(pin, "), "a call before the string's window: {}", &arm[..window]);
+    assert!(!arm[..window].contains("-1i64 as u64);\nv"), "a read before the quote: {}", &arm[..window]);
+}
+
+/// The `/` arm reads like lean's: `//` and `/*` scanned in place, their long reads the whole
+/// reader's one call; `/` alone its pair test inline (no rule function), its code the
+/// punctuation's (no word hash), its next start the token's end (no `max`).
+#[test]
+fn a_slashs_arm_is_leans() {
+    let c = rerail_rr_parser::compiled().expect("compiles");
+    let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult as i64;
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let arm = arm_of(f0, "47");
+    let mut called: Vec<&str> = arm.match_indices("(pin, ").map(|(at, _)| &arm[arm[..at].rfind(' ').expect("a callee") + 1..at]).collect();
+    called.sort();
+    called.dedup();
+    assert_eq!(called.len(), 1, "the arm calls the whole reader alone: {called:?}");
+    assert!(!arm.contains(&format!("{mult}i64")), "a word hash in the `/` arm");
+    assert!(!arm.contains("as i64).max("), "a `max` in the `/` arm");
+}
+
+/// The number arm reads like lean's: its digits' run from one window of the bytes after the
+/// first, and `.` and a digit asked at the run's end (`Bytewise::run_split`), not a window of
+/// the bytes before and one after for the `prev` and the next of every byte; its end's tests
+/// lean's, no digit asked again where the run ended.
+#[test]
+fn a_numbers_arm_reads_one_window() {
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let m = f0.find(" { 34 => {").expect("the rules' match");
+    let body = &f0[m..];
+    let at = body.find("48..=57 => { break '").expect("the digits' arm") + "48..=57 => { break '".len();
+    let label = &body[at..at + body[at..].find(';').expect("its label")];
+    // The arm's code after its label's block.
+    let open = f0.find(&format!("'{label}: {{")).expect("the label's block");
+    let mut depth = 0;
+    let mut close = open;
+    for (i, ch) in f0[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = open + i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let rest = &f0[close..];
+    let arm = &rest[..rest.find("core::ptr::write_unaligned").expect("the record's write")];
+    assert_eq!(arm.matches("vld1q_u8").count(), 1, "the number arm's windows: {arm}");
+    // A digit asked as lean's `is_ascii_digit`, a subtract and a compare, not a set's word.
+    let digits: u64 = (b'0'..=b'9').fold(0, |m, b| m | 1 << b);
+    assert!(!arm.contains(&format!("{}i64", digits as i64)), "a digit set's word in the number arm: {arm}");
 }

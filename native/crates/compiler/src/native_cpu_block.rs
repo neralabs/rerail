@@ -2427,6 +2427,75 @@ struct RareClass {
     rule: usize,
 }
 
+/// Whether rule `k` can give a last below its token's start, with the loop's starts
+/// (`records::walk`): a reader's arm that ends with no closer at `s - 1` (`ReadNone::Bytes(0)`),
+/// or a reader's other rule that can. A search with no last gives the first byte; a refusal
+/// leaves the loop (`record_tokens`).
+fn last_below_start(r: &crate::records::Records, k: usize) -> bool {
+    match r.rules.get(k) {
+        Some(&crate::records::EndRule::Read(i)) => {
+            let rd = &r.readers[usize::from(i)];
+            rd.arms.iter().any(|a| matches!(a.none, crate::records::ReadNone::Bytes(0))) || (usize::from(rd.other) != k && last_below_start(r, usize::from(rd.other)))
+        }
+        Some(crate::records::EndRule::Last(_)) => r.skip.is_none(),
+        _ => false,
+    }
+}
+
+/// The bytes that can be right before a token's first byte, with the loop's starts
+/// (`records::walk`), for `Bytewise::before_start`: each `(next, bytes)`, `bytes` where the
+/// token's first byte can be in `next`. A gap's byte (`skip`); a token's last, by its rule: a
+/// run's holds its run or is its first byte, a pair's is its first byte or a pair's second, a
+/// reader's is its closer's byte at `off`. A reader whose closer begins right after its last
+/// (`off` -1, a line comment's `\n`): the next byte is the closer's, so its last is right
+/// before a token only one of the closer's bytes starts. All bytes where a rule's last is
+/// not so known; none without the loop's starts.
+pub(crate) fn before_start(r: &crate::records::Records, native: &BlockNative) -> Option<Vec<([u64; 4], [u64; 4])>> {
+    use crate::records::{EndRule, ReadNone};
+    let skip = r.skip?;
+    let all = [u64::MAX; 4];
+    // Where output `o` can hold, at offset `at` from its position: by its needs.
+    let held = |o: u16, at: i32| crate::native_cpu_bytes::bytes_at(native, o, at);
+    let or = |a: [u64; 4], b: [u64; 4]| -> [u64; 4] { std::array::from_fn(|k| a[k] | b[k]) };
+    let mut any = held(skip, 0);
+    // A byte with no rule is a token alone, where the loop does not refuse it (`rule_last`'s
+    // no-rule arm: refused with untaken outputs).
+    for b in (0..256usize).filter(|_| r.untaken.is_empty()) {
+        if r.ends.get(b).is_none_or(|&e| usize::from(e) >= r.rules.len()) {
+            any[b / 64] |= 1 << (b % 64);
+        }
+    }
+    let mut after = Vec::new();
+    for k in 0..r.rules.len() {
+        let first = first_bytes(r, k);
+        let last = match r.rules[k] {
+            EndRule::Run(o) => or(held(o, 0), first),
+            EndRule::Next(i) => r.nexts.get(usize::from(i)).map_or(all, |t| t.sets.iter().fold(first, |a, &s| or(a, s))),
+            EndRule::Pair(_) | EndRule::Last(_) => all,
+            EndRule::Read(i) => {
+                let mut x = [0u64; 4];
+                for a in &r.readers[usize::from(i)].arms {
+                    if a.off == -1 {
+                        after.push((held(a.closer, 0), all));
+                    } else {
+                        x = or(x, held(a.closer, i32::from(a.off)));
+                    }
+                    x = or(x, match a.none {
+                        // The opener's first `m` bytes: its `m`th byte where it holds.
+                        ReadNone::Bytes(0) => all,
+                        ReadNone::Bytes(m) => held(a.opener, i32::from(m) - 1),
+                        ReadNone::End | ReadNone::Refuse => [0; 4],
+                    });
+                }
+                x
+            }
+        };
+        any = or(any, last);
+    }
+    after.push((all, any));
+    Some(after)
+}
+
 /// `RareClass::rule` of the rare bytes with no rule.
 const NO_RULE: usize = usize::MAX;
 
@@ -3240,11 +3309,23 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => run_tests(r, b, k, &tests),
             _ => Vec::new(),
         };
+        // A run of a byte set with a rarer way on (`Bytewise::run_split`): the set's run from
+        // the window, the rest asked at its end, as the lean lexer's number arm runs its digits
+        // and then asks for `.` and a digit.
+        let split = match (rule, rd.bytes) {
+            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => b.run_split(o),
+            _ => None,
+        };
+        // The window's terms: the run's (its split's byte term, else its output), its tests'.
+        let run_terms = |b: &crate::native_cpu_bytes::Bytewise<'_>, o: u16| -> Vec<(usize, i64)> {
+            let term = |o: u16| (usize::from(b.native.outputs[usize::from(o)]), i64::from(b.native.output_delays[usize::from(o)]));
+            let first = split.map_or_else(|| term(o), |(y, d, _)| (y, d));
+            std::iter::once(first).chain(run_outs.iter().map(|&o| term(o))).collect()
+        };
         let window: Option<Vec<Value>> = match (rule, rd.bytes) {
             (EndRule::Run(o), Some((b, file))) if !run_outs.is_empty() => {
                 let i = f.ins().iadd_imm(s, 1);
-                let os: Vec<u16> = std::iter::once(o).chain(run_outs.iter().copied()).collect();
-                let w = b.short_words(f, &file, &os, i, heads);
+                let w = b.short_terms(f, &file, &run_terms(b, o), i, heads);
                 // `tested` from a block of its own, empty (its blocks first).
                 let after = f.create_block();
                 f.ins().jump(after, &[]);
@@ -3256,7 +3337,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let pre: Vec<(u16, Value)> = window.as_ref().map(|w| run_outs.iter().copied().zip(w[1..].iter().copied()).collect()).unwrap_or_default();
         // The window's bits a lane (`short_stride`).
         let pre_stride = match (rule, rd.bytes) {
-            (EndRule::Run(o), Some((b, _))) if window.is_some() => b.short_stride(&std::iter::once(o).chain(run_outs.iter().copied()).collect::<Vec<_>>()),
+            (EndRule::Run(o), Some((b, _))) if window.is_some() => b.short_stride_x(&run_terms(b, o).iter().map(|t| t.0).collect::<Vec<_>>()),
             _ => 1,
         };
         let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, heads) };
@@ -3332,16 +3413,58 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         // (`Bytewise::short_word`), as a lexer reads a number's few digits;
                         // the run on past them, the word's way below (cold).
                         if let Some((b, file)) = rd.bytes.filter(|(b, _)| b.can(o)) {
+                            let terms = run_terms(b, o);
                             let x = match &window {
                                 Some(w) => w[0],
-                                None => b.short_word(f, &file, o, i, heads),
+                                None => b.short_terms(f, &file, &terms[..1], i, heads)[0],
                             };
-                            let stride = b.short_stride(&std::iter::once(o).chain(run_outs.iter().copied()).collect::<Vec<_>>());
+                            let stride = b.short_stride_x(&terms.iter().map(|t| t.0).collect::<Vec<_>>());
                             let ones = lanes_set(f, x, stride);
                             let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
                             let l = f.ins().iadd(s, ones);
                             let long = f.create_block();
-                            f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], long, &[]);
+                            match split {
+                                None => {
+                                    f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], long, &[]);
+                                }
+                                Some((a, _, set)) => {
+                                    // The byte term's run ended inside the window: the rest asked
+                                    // at its end (lean's `b[end] == b'.' && digit(b[end + 1])`),
+                                    // the byte before it the term's or the token's first.
+                                    let (at_end, on, end2) = (f.create_block(), f.create_block(), f.create_block());
+                                    f.ins().brif(short, at_end, &[], long, &[]);
+                                    f.switch_to_block(at_end);
+                                    let e = f.ins().iadd(i, ones);
+                                    let firsts = first_bytes(r, k);
+                                    let before: [u64; 4] = std::array::from_fn(|w| set[w] | firsts[w]);
+                                    let more = b.rest_after(f, &file, o, a, e, before, heads);
+                                    f.ins().brif(more, on, &[], ended, &[l.into(), untag.into(), nohits.into()]);
+                                    // On past it: the term's run from the byte after, in the same
+                                    // window's mask (lean's second `while digit`), the token in
+                                    // the window, else the whole rule's way.
+                                    f.switch_to_block(on);
+                                    let n1 = f.ins().iadd_imm(ones, 1);
+                                    let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, n1, 16);
+                                    let rest = f.create_block();
+                                    f.ins().brif(inside, rest, &[], long, &[]);
+                                    f.switch_to_block(rest);
+                                    let sh = f.ins().imul_imm(n1, i64::from(stride));
+                                    let gone = f.ins().bnot(x);
+                                    let gone = f.ins().ushr(gone, sh);
+                                    let z = f.ins().ctz(gone);
+                                    let ones2 = if stride > 1 { f.ins().ushr_imm(z, i64::from(stride.trailing_zeros())) } else { z };
+                                    let total = f.ins().iadd(n1, ones2);
+                                    let fits = f.ins().icmp_imm(IntCC::UnsignedLessThan, total, 16);
+                                    f.ins().brif(fits, end2, &[], long, &[]);
+                                    // Its end: where the rest holds again, the whole rule's way.
+                                    f.switch_to_block(end2);
+                                    let e2 = f.ins().iadd(i, total);
+                                    let before2 = b.split_before_again(o, a, set);
+                                    let again = b.rest_after(f, &file, o, a, e2, before2, heads);
+                                    let l2 = f.ins().iadd(s, total);
+                                    f.ins().brif(again, long, &[], ended, &[l2.into(), untag.into(), nohits.into()]);
+                                }
+                            }
                             f.switch_to_block(long);
                             f.set_cold_block(long);
                             // The short function's long run: its whole function's, returned.
@@ -5360,23 +5483,24 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             None => wrong,
         }
     };
-    // A refusal is rare: a branch to a cold block that sets the file's flag (the count after
-    // the extracts', as `record_end`), not a value the loop carries, as the lean lexer
-    // returns its error at once.
+    // A refusal is rare: a branch out of the loop, to its end (`finish`) with the refusal set,
+    // which sets the file's flag (`record_end`), as the lean lexer writes its `BAD` token and
+    // leaves its loop (`break 'read`). The file goes to the fallback: nothing after it is read.
     let (refuse, on) = (f.create_block(), f.create_block());
     let no = f.ins().icmp_imm(IntCC::SignedLessThan, wrong, 0);
     f.ins().brif(no, refuse, &[], on, &[]);
     f.switch_to_block(refuse);
     f.set_cold_block(refuse);
-    let flag = f.ins().load(types::I64, fl, c.counts, 8 * extracts as i32);
-    let flag = f.ins().bor_imm(flag, 1);
-    f.ins().store(stores, flag, c.counts, 8 * extracts as i32);
-    f.ins().jump(on, &[]);
+    let all = f.ins().iconst(types::I64, -1);
+    f.ins().jump(finish, &[all.into(), k.into(), pending.into(), from_in.into()]);
     f.switch_to_block(on);
     // The loop goes on past the token's first byte at least, whatever its rule found: a
     // search that found no last gives `s - 1`, below zero at `s = 0`, so the max is signed.
     // A fused rule's last is at its start at least (`rule_last`): no max.
-    let next_after = if walked.is_some() && common {
+    // A rare class whose rule never gives a last below its start (`last_below_start`): no
+    // max, as the lean lexer's arms go on from the token's end.
+    let floored = matches!(side, Side::Rare(Some(x)) if x.rule < r.rules.len() && !last_below_start(r, x.rule));
+    let next_after = if walked.is_some() && (common || floored) {
         f.ins().iadd_imm(l, 1)
     } else if walked.is_some() {
         let past = f.ins().smax(l, s);
@@ -5453,7 +5577,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // alone, the comment reader's other): their code bits by the first byte and the length,
     // no word looked up, as the lean lexer's `/` arm writes its punctuation. A tagged class's
     // alone, where a token not tagged is its reader's other rule's.
-    let punct = matches!(side, Side::Rare(Some(RareClass { tagged: true, .. }))) && !class_bytes.is_empty() && class_bytes.iter().all(|&b| entry_of(b) >> TOKEN_PUNCT & 1 == 1);
+    // A class of a pair rule (`EndRule::Next`, the `/` alone a reader goes on to) is that too:
+    // its tokens are its pairs', as the lean lexer's `b'/' => tok!(SLASH)`.
+    let pair_class = matches!(side, Side::Rare(Some(RareClass { rule, .. })) if matches!(r.rules.get(rule), Some(crate::records::EndRule::Next(_))));
+    let punct = (matches!(side, Side::Rare(Some(RareClass { tagged: true, .. }))) || pair_class) && !class_bytes.is_empty() && class_bytes.iter().all(|&b| entry_of(b) >> TOKEN_PUNCT & 1 == 1);
     if punct {
         let two = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
         let pc = f.ins().load(types::I64, ro, ea, t.punct as i32);
@@ -6370,6 +6497,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     // The outputs the token loop makes from the bytes (`native_cpu_bytes`), from the program
     // before its CPU form.
     let mut bytewise = crate::native_cpu_bytes::Bytewise::of(made);
+    bytewise.before_start = made.records.as_ref().and_then(|r| before_start(r, made));
     let mut builder_context = FunctionBuilderContext::new();
     let counted = counted(native);
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
@@ -6485,7 +6613,11 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // loop calls those of its rare tokens (`RuleMode::Calls`).
         let ids: Vec<ByteCall> = byte_calls.iter().map(|(o, id, sig, _)| (*o, *id, sig.clone())).collect();
         let t = records.map(|(_, t, _)| t).expect("records");
-        for k in (0..rec.rules.len()).filter(|&k| k < 0xff && rule_bytewise(rec, &bytewise, k)) {
+        // A pair rule with no tests (`EndRule::Next`: a row load, the next byte's bit) is
+        // straight-line: read in its arm, no function, as the lean lexer reads a pair from its
+        // `TOKEN` table in the arm. A function is for a rule that reads on past a window.
+        let straight = |k: usize| matches!(rec.rules[k], crate::records::EndRule::Next(_)) && rec.checks.iter().all(|c| usize::from(c.rule) != k);
+        for k in (0..rec.rules.len()).filter(|&k| k < 0xff && rule_bytewise(rec, &bytewise, k) && !straight(k)) {
             // Its signature, the arguments it reads (`rule_reads`): built with all of them, then
             // again with those.
             let empty = module.make_signature();
