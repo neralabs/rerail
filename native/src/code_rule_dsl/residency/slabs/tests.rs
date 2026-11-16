@@ -74,7 +74,7 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     assert!(again.iter().zip(&documents).all(|(a, b)| Arc::ptr_eq(a, b)));
     // One table over them: one slab, the documents numbered one after another.
     let table = DocTable::new(again).unwrap();
-    assert_eq!(table.slabs.len(), 1);
+    assert!(table.block.is_some());
     assert_eq!(table.views.iter().map(|view| view.node_base).collect::<Vec<_>>(), {
         let mut base = 0;
         tapes
@@ -147,9 +147,9 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
     assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
     let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
     let table = DocTable::one_block(documents.clone()).unwrap();
-    assert_eq!(table.slabs.len(), 1, "one block bound");
+    let block = table.block.as_ref().expect("one block bound");
     for (document, gathered) in documents.iter().zip(&table.documents) {
-        assert_eq!(gathered.slab.id, table.slabs[0].id);
+        assert_eq!(gathered.slab.id, block.id);
         assert_eq!(gathered.image(), document.image());
         let v = &gathered.view;
         assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
@@ -162,7 +162,7 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
     }
     // Asked again, the residency gives the gathered documents: one slab already, nothing copied.
     let again = admit_docs(&docs).unwrap();
-    assert!(again.iter().all(|document| document.slab.id == table.slabs[0].id));
+    assert!(again.iter().all(|document| document.slab.id == block.id));
     let twice = gather(again.clone()).unwrap();
     assert!(twice.iter().zip(&again).all(|(a, b)| Arc::ptr_eq(a, b)));
     drop((table, held_big, twice, again));

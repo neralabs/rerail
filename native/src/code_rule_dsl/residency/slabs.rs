@@ -264,9 +264,11 @@ fn place(
         fill[usize::from(code)] += 1;
     }
     let widths = u32::from(layout.widths[0]) | u32::from(layout.widths[1]) << 4 | u32::from(layout.widths[2]) << 8 | u32::from(layout.from_start) << 12;
-    let at = |offset: usize| u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"));
-    let view = DocView {
-        slab: 0,
+    let count = |n: usize| u32::try_from(n).map_err(|_| invalid("a count past u32"));
+    // Parts as offsets from the document's start (`ChunkTape`, decision 0289 §4).
+    let at = |part: usize| u32::try_from(part - offset).map_err(|_| invalid("a part past 4 GiB of its document"));
+    let view = ChunkTape {
+        at: u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"))?,
         nodes: layout.nodes,
         node_base: 0,
         widths,
@@ -278,13 +280,13 @@ fn place(
         parent: at(parent_at)?,
         codes: at(codes_at)?,
         source: at(source_at)?,
-        source_len: at(plan.source)?,
+        source_len: count(plan.source)?,
         lines: at(lines_at)?,
-        line_count: at(plan.lines)?,
-        code_count: at(plan.codes)?,
+        line_count: count(plan.lines)?,
+        code_count: count(plan.codes)?,
         kid_start: at(kid_start_at)?,
         kids: at(kids_at)?,
-        kid_count: at(kid_count)?,
+        kid_count: count(kid_count)?,
         child_base: 0,
         source_base: 0,
         line_base: 0,

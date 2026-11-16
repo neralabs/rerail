@@ -15,14 +15,14 @@ const COMMON: &str = r#"#include <metal_stdlib>
 using namespace metal;
 // A binding: mode 1 one node `a`, mode 2 the `n` children of node `a` from its child `from`.
 struct Var { uint mode,a,from,n,multi; };
-// The item's document (decision 0032): nodes are the batch's numbering, read at `node - d.nodeBase`.
-struct Ctx { Slabs s; DocView d; constant uchar* text; device atomic_uint* flags; };
+// The item's document (decision 0032): nodes are the batch's numbering, read at `node - d.node_base`.
+struct Ctx { device const uchar* s; ChunkTape d; constant uchar* text; device atomic_uint* flags; };
 // A pattern pass (its roots: segments at `root` in `segs`, decision 0033) or a fact's root (`root`,
 // one thread); its threads from `threadStart`.
 struct Item { uint pattern,target,root,constraintStart,constraintCount,threadStart; };
 struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps; };
-inline uint c_local(Ctx c,uint node){return node-c.d.nodeBase;}
-inline uint c_global(Ctx c,uint local){return local==TAPE_NONE?TAPE_NONE:local+c.d.nodeBase;}
+inline uint c_local(Ctx c,uint node){return node-c.d.node_base;}
+inline uint c_global(Ctx c,uint local){return local==TAPE_NONE?TAPE_NONE:local+c.d.node_base;}
 inline uint c_kind(Ctx c,uint node){return tape_kind(c.s,c.d,c_local(c,node));}
 inline uint c_flags(Ctx c,uint node){return tape_flags(c.s,c.d,c_local(c,node));}
 inline uint c_count(Ctx c,uint node){return tape_child_count(c.s,c.d,c_local(c,node));}
@@ -47,7 +47,7 @@ static bool bind_multi(Ctx c,thread Var& v,uint mode,uint a,uint from,uint n){
   Var w;w.mode=mode;w.a=a;w.from=from;w.n=n;w.multi=1u;uint i=0u,j=0u;
   while(true){while(i<v.n&&(c_flags(c,var_at(c,v,i))&1u)==0u)i++;while(j<w.n&&(c_flags(c,var_at(c,w,j))&1u)==0u)j++;if(i==v.n||j==w.n)return i==v.n&&j==w.n;if(!exact(c,var_at(c,v,i),var_at(c,w,j)))return false;i++;j++;}
 }
-static DocView doc_of(device const DocView* docs,uint count,uint node){uint first=0u,last=count;while(last-first>1u){uint middle=(first+last)/2u;if(docs[middle].nodeBase<=node)first=middle;else last=middle;}return docs[first];}
+static ChunkTape doc_of(device const ChunkTape* docs,uint count,uint node){uint first=0u,last=count;while(last-first>1u){uint middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return docs[first];}
 "#;
 
 /// Patterns a pattern kernel holds (`source`). A kernel's thread memory is the driver's scratch,
@@ -59,7 +59,7 @@ pub(super) const GROUP: usize = 8;
 /// carry), with each pattern's metavariable names in index order. Every group's kernel answers
 /// the fact case.
 pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<Vec<String>>) {
-    let mut out = format!("{}{COMMON}", super::TAPE_VIEW);
+    let mut out = format!("{}{COMMON}", *super::TAPE_VIEW);
     let mut text = Vec::<u8>::new();
     let mut names = Vec::new();
     let mut bodies = String::new();
@@ -84,7 +84,7 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<
     out.push_str(&bodies);
     let _ = write!(
         out,
-        "kernel void {KERNEL}(device const DocView* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint4* segs [[buffer(6)]],constant Shape& shape [[buffer(7)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];Ctx c;c.s=Slabs{{s0,s1,s2,s3}};c.text=TEXT;c.flags=flags;\n  if(item.pattern=={FACT}u)c.d=doc_of(docs,shape.fileCount,item.root);\n  else{{uint i=tid-item.threadStart;uint4 seg=segs[root_segment(segs,item.root,i)];c.d=docs[seg.x];item.root=c.d.nodeBase+root_local(c.s,c.d,segs,seg,i-seg.w);}}\n  switch(item.pattern){{\n"
+        "kernel void {KERNEL}(device const ChunkTape* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint4* segs [[buffer(6)]],constant Shape& shape [[buffer(7)]],device const uchar* chunk [[buffer(27)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];Ctx c;c.s=chunk;c.text=TEXT;c.flags=flags;\n  if(item.pattern=={FACT}u)c.d=doc_of(docs,shape.fileCount,item.root);\n  else{{uint i=tid-item.threadStart;uint4 seg=segs[root_segment(segs,item.root,i)];c.d=docs[seg.x];item.root=c.d.node_base+root_local(c.s,c.d,segs,seg,i-seg.w);}}\n  switch(item.pattern){{\n"
     );
     for (index, vars) in names.iter().enumerate() {
         let index = first + index;

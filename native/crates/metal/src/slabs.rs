@@ -56,14 +56,16 @@ pub fn aligned(length: usize) -> usize {
     length.div_ceil(ALIGN) * ALIGN
 }
 
-/// A document as the device reads it: byte offsets into its slab, as `DocView` in
-/// `metal_tape.metal`. `node_base` is the document's first node in a batch's numbering, set by
-/// the batch's document table (`DocTable`).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct DocView {
-    /// The batch's slab binding the document is in (`DocTable::slabs`).
-    pub slab: u32,
+rerail_blocks::structure! {
+    /// A document as the device reads it (decision 0289 §4): its first byte in the batch's chunk
+    /// block, and its parts as byte offsets from there, so a copy into another block changes `at`
+    /// alone. `node_base` is the document's first node in a batch's numbering, set by the batch's
+    /// document table (`DocTable`). Its MSL is generated (`msl`), with layout assertions. It is
+    /// `Copy`, unlike a block's own structures: it holds no span, so a copy reads the same.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub struct ChunkTape {
+    /// The document's first byte in its block: every part below is an offset from it.
+    pub at: u32,
     pub nodes: u32,
     pub node_base: u32,
     /// `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails measured
@@ -102,7 +104,13 @@ pub struct DocView {
     pub code_start: u32,
     pub by_code: u32,
 }
-const _: () = assert!(std::mem::size_of::<DocView>() == 96);
+}
+const _: () = assert!(std::mem::size_of::<ChunkTape>() == 96);
+
+/// The MSL of `ChunkTape`, for the kernels that read documents in place (`metal_tape.metal`).
+pub fn msl() -> String {
+    rerail_blocks::msl_of::<ChunkTape>()
+}
 
 /// A slab: a chunk block over a lease of the pool, and its identity. Its rooms are the block's
 /// allocations.
@@ -146,8 +154,8 @@ impl Slab {
 pub struct Resident {
     pub digest: [u8; 32],
     pub slab: Arc<Slab>,
-    /// Its view with `slab` and `node_base` 0.
-    pub view: DocView,
+    /// Its view, `at` its range's start in `slab`, `node_base` 0.
+    pub view: ChunkTape,
     /// Its range in the slab, every part inside it: what `gather` copies.
     pub at: usize,
     pub len: usize,
@@ -159,39 +167,23 @@ pub struct Resident {
 
 impl Resident {
     /// This document copied into `slab` at `to` (its `len` bytes of room there, 16-byte aligned):
-    /// its view's offsets moved with it.
+    /// its view's `at` moved with it, its parts being offsets from there.
     fn copied(&self, slab: &Arc<Slab>, to: usize) -> Resident {
         // SAFETY: `to..to + len` is a room of `slab` given to this copy alone; the source range is
         // this document's, written at admission and never again.
         unsafe { std::ptr::copy_nonoverlapping(self.slab.host().add(self.at), slab.host().add(to), self.len) };
-        let moved = |offset: u32| (offset as usize - self.at + to) as u32;
-        let v = self.view;
-        let view = DocView {
-            code: moved(v.code),
-            size: moved(v.size),
-            base: moved(v.base),
-            off: moved(v.off),
-            tail: moved(v.tail),
-            parent: moved(v.parent),
-            codes: moved(v.codes),
-            source: moved(v.source),
-            lines: moved(v.lines),
-            kid_start: moved(v.kid_start),
-            kids: moved(v.kids),
-            code_start: moved(v.code_start),
-            by_code: moved(v.by_code),
-            ..v
-        };
+        let view = ChunkTape { at: to as u32, ..self.view };
         Resident { digest: self.digest, slab: Arc::clone(slab), view, at: to, len: self.len, bytes: self.bytes, tape_length: self.tape_length }
     }
 
-    /// The bytes at `offset..offset + length` of its slab.
+    /// The bytes at `offset..offset + length` of the document (an offset of its view).
     pub fn bytes_at(&self, offset: u32, length: usize) -> &[u8] {
         let slab = &self.slab;
-        assert!(offset as usize + length <= slab.byte_length(), "a resident part inside its slab");
+        let offset = self.at + offset as usize;
+        assert!(offset + length <= self.at + self.len && offset + length <= slab.byte_length(), "a resident part inside its range");
         // SAFETY: admission wrote these bytes before publishing the document, and nothing writes
         // them again: a slab is append-only and the document's range is its own.
-        unsafe { std::slice::from_raw_parts(slab.host().add(offset as usize), length) }
+        unsafe { std::slice::from_raw_parts(slab.host().add(offset), length) }
     }
 
     /// Each code's first entry in the nodes by code, `code_count + 1` of them.
@@ -243,18 +235,18 @@ pub fn source_slabs(sources: &[Arc<ResidentSource>]) -> Option<(Vec<Arc<Slab>>, 
     Some((slabs, at))
 }
 
-/// A batch's document table (`batch.doctable`): each document's view with its slab binding and
-/// first node in the batch's numbering, and the slabs bound, at most `MAX_SLABS`.
+/// A batch's document table (`batch.doctable`): each document's view with its first node in the
+/// batch's numbering, and the one block they are in (decision 0289 §4), `None` for no documents.
 pub struct DocTable {
-    pub views: Vec<DocView>,
-    pub slabs: Vec<Arc<Slab>>,
+    pub views: Vec<ChunkTape>,
+    pub block: Option<Arc<Slab>>,
     pub nodes: usize,
     /// The documents, held for the batch's life.
     pub documents: Vec<Arc<Resident>>,
 }
 
-/// The slabs a batch binds (PIAT §20.4.5, Q-R3): kernels take this many slab buffers; a batch
-/// over more is split by the wave.
+/// The slabs a batch of sources binds (PIAT §20.4.5, Q-R3): block programs take this many slab
+/// buffers; a batch over more is split by the wave. A batch of documents binds one (`DocTable`).
 pub const MAX_SLABS: usize = 4;
 
 impl DocTable {
@@ -263,23 +255,17 @@ impl DocTable {
         Self::new(gather(documents).ok()?)
     }
 
-    /// The table of `documents`, in order, or `None` when they span more than `MAX_SLABS` slabs.
+    /// The table of `documents`, in order, or `None` when they are not all in one slab.
     pub fn new(documents: Vec<Arc<Resident>>) -> Option<Self> {
-        let mut slabs: Vec<Arc<Slab>> = Vec::new();
+        let block = documents.first().map(|document| Arc::clone(&document.slab));
+        if documents.iter().any(|document| Some(document.slab.id) != block.as_ref().map(|block| block.id)) {
+            return None;
+        }
         let mut views = Vec::with_capacity(documents.len());
         let mut nodes = 0usize;
         let (mut children, mut source, mut lines) = (0usize, 0usize, 0usize);
         for document in &documents {
-            let slab = match slabs.iter().position(|slab| slab.id == document.slab.id) {
-                Some(at) => at,
-                None if slabs.len() < MAX_SLABS => {
-                    slabs.push(Arc::clone(&document.slab));
-                    slabs.len() - 1
-                }
-                None => return None,
-            };
-            views.push(DocView {
-                slab: slab as u32,
+            views.push(ChunkTape {
                 node_base: u32::try_from(nodes).ok()?,
                 child_base: u32::try_from(children).ok()?,
                 source_base: u32::try_from(source).ok()?,
@@ -293,7 +279,7 @@ impl DocTable {
         }
         u32::try_from(nodes).ok()?;
         u32::try_from(source).ok()?;
-        Some(Self { views, slabs, nodes, documents })
+        Some(Self { views, block, nodes, documents })
     }
 }
 

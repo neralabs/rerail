@@ -204,8 +204,34 @@ lane varies), so per document and per byte:
 The machine's load was lower in the second run. What is left of an admission is the image serialized twice (once for
 its digest, once to copy) and the derived parts.
 
-**Step B: `DocView` and `Slabs` go.** A kernel binds the block and reads its document table, a `structure!` with
-spans, as `ChunkDoc` is read.
+**Step B: `DocView` and `Slabs` go.** Kernels bind the batch's one block, and read each document through its entry
+in the batch's document table.
+
+- The entry is a `structure!` (`slabs::ChunkTape`), whose MSL is generated with its size and offset assertions
+  (`slabs::msl`), in place of `DocView` and its hand-written MSL copy. The tape view's sources (the label passes', the
+  pattern kernels', the resident interpreter's) are built once, with the generated entry first.
+- The entry holds the document's first byte in the block (`at`), and each part as an offset from there. Copying a
+  document into another block (`gather`) changes `at` alone. The entry is not made of spans: spans are relative to
+  their own address, and the table is its own buffer, apart from the block.
+- `Slabs { s0..s3 }` and `tape_slab` go: every tape accessor takes the block's pointer (`tape_doc` is `chunk + at`).
+  A label kernel binds the block at one slot (27), not four; the resident interpreter reads it at its `nodes` slot.
+- `DocTable` holds one block (`block`), and refuses documents that are not all in it. `MAX_SLABS` now bounds only a
+  batch of sources (block programs, 0067).
+
+Checks: the device's tape test (`the_device_reads_resident_tapes_as_the_packed_batch_records_them`, no longer
+ignored: it is hosted in the engine, where the languages are registered), the residency's three slab tests and the
+matcher wave on Metal, as in step A.
+
+Measured cold on hogql: the same 1,629 findings, and nothing gathered (every batch's documents were in one block
+already). Step B changes what kernels bind, not what admission does, so the costs stay where step A left them. The
+lane gave the label passes fewer documents again, and fewer of them hits:
+
+| | Batches | Documents (hits) | `residency.docs` | Admission |
+|---|---|---|---|---|
+| Step A | 17 | 434 (200) | 20.3 ms, 47 µs a document | 13.1 ms for 11.9 MB, 1.10 µs a KB |
+| Step B | 10 | 308 (33) | 16.5 ms, 54 µs a document | 11.6 ms for 12.1 MB, 0.94 µs a KB |
+
+Per document it is higher because more of them were misses. What is left of an admission is as in step A.
 
 ## Order, and why
 
