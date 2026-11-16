@@ -15,12 +15,15 @@
 //! The kind a view holds is the dialect's canonical code's atom (`Dialect::kind`): each tag's canonical table is in
 //! the block once, and an entry points at its own.
 //!
-//! The arrays are copied in once per batch, on the device's first read. §3 of 0289 makes them the projection's and
-//! the facts' own storage, and the copy goes.
+//! The projection's arrays are made in the batch's block (0289 §3): the entry points at them, and nothing is copied.
+//! The facts' arrays and the canonical tables are copied in once per batch, on the device's first read: `Facts` is
+//! shared by every batch and memo hit that reads a document, so its arrays move into the block when a memo entry is a
+//! document range copied into the chunk (0266 path, steps 4 and 5).
 
 use super::{Batch, Place, View};
 use crate::code_rule_dsl::facts::core::NONE;
-use rerail_blocks::{Block, Span, block::kind, structure};
+use rerail_blocks::{Block, Cells, Span, structure};
+use std::sync::Arc;
 use std::collections::HashMap;
 
 structure! {
@@ -106,7 +109,8 @@ pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
 
 /// A batch's chunk block, and its root's offset in it.
 pub struct Chunk {
-    pub block: Block,
+    /// The batch's block (`Batch::block`), which its projections are in.
+    pub block: Arc<Block>,
     pub root: usize,
     /// Whether the `Loc` views' arrays are in the block (`fill_locs`), once asked.
     locs: std::sync::OnceLock<bool>,
@@ -122,15 +126,21 @@ fn put<T: Copy>(b: &Block, span: *const Span<T>, src: &[T]) {
     }
 }
 
-/// The batch's chunk: every document's arrays the views read.
+/// Points `span` at `cells`, which are in `b` (a projection's, made in its batch's block); copied in when they are
+/// not (a projection made apart from the batch).
+fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cells: &Cells<T>) {
+    if Arc::ptr_eq(cells.block(), b) {
+        // SAFETY: `cells` are in `b`, as `span` is, and live as long as the batch, which holds both.
+        unsafe { Span::set(span, cells.as_ptr(), cells.len()) }
+    } else {
+        put(b, span, cells);
+    }
+}
+
+/// The batch's chunk, in the batch's block: every document's arrays the views read.
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
-    // What the arrays take, with room for alignment, and for the axes' pairs read whole (`put_pairs`, up to 1 GB):
-    // the block reserves address space, not memory.
-    let bytes: usize = batch.docs.iter().map(|p| 4 * (6 * p.facts.len() + 4 * p.core.len()) + 2 * p.facts.len() + 4096).sum::<usize>()
-        + batch.dialects.values().map(|d| 2 * d.canonical.len() + 64).sum::<usize>()
-        + (1 << 30);
-    let b = Block::anon(kind::CHUNK, bytes.next_power_of_two());
+    let b = Arc::clone(&batch.block);
     let root: *mut ChunkRoot = b.alloc_t(1);
     let docs: *mut ChunkDoc = b.alloc_t(batch.docs.len().max(1));
     // Each dialect's canonical codes, once.
@@ -155,12 +165,15 @@ pub fn build(batch: &Batch) -> Chunk {
             let fielded = p.fielded();
             (*d).nfielded = fielded.len() as u32;
             (*d).preorder = u32::from(p.defs.is_none());
-            put(&b, &raw const (*d).core, &p.core);
+            point(&b, &raw const (*d).core, &p.core);
             // Every local's, past the nodes too: a token's id is by definition as well (`Projected::global`).
-            put(&b, &raw const (*d).low, p.defs.as_ref().map_or(&[][..], |x| &x.low[..]));
-            put(&b, &raw const (*d).ord, p.ordinals());
-            put(&b, &raw const (*d).fielded, fielded);
-            put(&b, &raw const (*d).local, &p.local);
+            match p.defs.as_ref() {
+                Some(x) => point(&b, &raw const (*d).low, &x.low),
+                None => put(&b, &raw const (*d).low, &[]),
+            }
+            point(&b, &raw const (*d).ord, p.ordinals());
+            point(&b, &raw const (*d).fielded, fielded);
+            point(&b, &raw const (*d).local, &p.local);
             put(&b, &raw const (*d).parent, &f.parent[..]);
             put(&b, &raw const (*d).start, &f.start[..]);
             put(&b, &raw const (*d).end, &f.end[..]);

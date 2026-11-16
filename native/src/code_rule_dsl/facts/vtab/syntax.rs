@@ -35,6 +35,7 @@ use rusqlite::Connection;
 use crate::code_rule_dsl::logic::front::ast::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
+use cells::{Block, Cells};
 
 pub mod within;
 
@@ -52,6 +53,7 @@ pub mod normalized;
 use core_rr::Family;
 pub mod guests;
 pub mod granules;
+mod cells;
 #[cfg(target_os = "macos")]
 pub mod device_chunk;
 use guests::GuestRows;
@@ -1605,15 +1607,16 @@ pub struct Projected {
     pub key: u32,
     pub tag: u8,
     pub facts: Arc<Facts>,
+    /// The projection's arrays are in its batch's block (decision 0289 §3), which the device reads them in.
     /// The core id of each node.
-    pub core: Vec<u32>,
+    pub core: Cells<u32>,
     /// The node of each core id, `NONE` for one left out.
-    pub local: Vec<u32>,
-    pub idx: OnceLock<Vec<u32>>,
+    pub local: Cells<u32>,
+    pub idx: OnceLock<Cells<u32>>,
     pub size: OnceLock<Vec<u32>>,
     pub depth: OnceLock<Vec<u32>>,
     /// The nodes hanging from their parent under a field, ascending.
-    pub fielded: OnceLock<Vec<u32>>,
+    pub fielded: OnceLock<Cells<u32>>,
     /// `core.rr`'s lines and spans; `None` in T's shape.
     pub extra: Option<Box<Locs>>,
     /// Node ids numbered per definition (`DefIds`), when the run asks for them; else a node's id is its preorder.
@@ -1626,8 +1629,8 @@ pub struct Projected {
 /// in the slots below them (`granules::ExtraSpan`), so a node by definition is never read as one of those spans, nor
 /// one of them as a node.
 struct DefIds {
-    /// The low 32 bits of each node's and token's id, by local id.
-    low: Vec<u32>,
+    /// The low 32 bits of each node's and token's id, by local id, in the batch's block.
+    low: Cells<u32>,
     /// `(low, local)`, ascending: the way back, made on first use (`back`): most runs never look a node up by id.
     back: OnceLock<Vec<(u32, u32)>>,
     /// Each node's order key, by local id (`granules::order`): `node_order`'s low 32 bits.
@@ -1657,10 +1660,13 @@ pub fn shown_local(low: i64) -> String {
 impl DefIds {
     /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition.
     fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Self {
-        let (low, order) = {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "granules".into());
-            granules::number(p, dialect, tokens)
-        };
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "granules".into());
+        let mut order = Vec::new();
+        let low = Cells::build(p.core.block(), p.core.len() + tokens.len(), |low| {
+            order = granules::number(p, dialect, tokens, low);
+            low.len()
+        })
+        .expect("a batch's block holds its projection");
         DefIds { low, back: OnceLock::new(), order }
     }
 
@@ -1730,31 +1736,26 @@ impl Projected {
     /// Document `key`'s projection in `shape`; `dialect` is its facts' (`None` for a text-only document, which has no
     /// node). A `withheld` document (`core.rr`: one that does not parse) has no nodes and no spans: no facts. A guest's
     /// nodes are its root's subtree, placed in its host's lines (`host`).
+    /// Its arrays are in a block of its own; a batch's documents' are in the batch's (`narrowed`).
     pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
-        Self::narrowed(key, facts, dialect, shape, withheld, guest, None)
+        let block = cells::block(Self::bytes(&facts));
+        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, &block)
+    }
+
+    /// What a projection's arrays can take in a block: `core`, `local`, `low`, the ordinals and the fielded nodes,
+    /// none longer than the tape, with room for alignment.
+    pub fn bytes(facts: &Facts) -> usize {
+        5 * 4 * facts.len() + 5 * 16
     }
 
     /// As `new`, but with `anchors` (`Projection::node_anchors`) a file's nodes are its root and the subtrees of the
     /// nodes of those kinds, found by the kind postings: no other node is walked. An anchor below no other is its
     /// root's child here; the program reads no node outside the subtrees, nor an anchor's parent or place among its
     /// siblings, and its node ids stay inside its phase.
-    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, anchors: Option<&BTreeSet<String>>) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
-        let mut p = Projected {
-            module:None,
-            key,
-            tag: f.tag,
-            core: Vec::new(),
-            local: vec![NONE; f.len()],
-            idx: OnceLock::new(),
-            size: OnceLock::new(),
-            depth: OnceLock::new(),
-            fielded: OnceLock::new(),
-            extra: None,
-            defs: None,
-            facts: Arc::clone(&facts),
-        };
         let mut tokens = 0;
         let (first, last) = match guest {
             Some((g, _)) => (g.root, f.subtree_end.get(g.root as usize).copied().unwrap_or(g.root + 1).max(g.root + 1)),
@@ -1778,10 +1779,12 @@ impl Projected {
             }
             _ => vec![(first, end)],
         };
-        if !withheld {
-            let count = ranges.iter().flat_map(|&(a, b)| a..b).filter(|&id| f.named(id) && dialect.is_some_and(|d| shape != Shape::T || d.class(f, id) != Class::Comment)).count();
-            p.core.reserve_exact(count);
-        }
+        // At most the nodes the walk below keeps.
+        let count = if withheld {
+            0
+        } else {
+            ranges.iter().flat_map(|&(a, b)| a..b).filter(|&id| f.named(id) && dialect.is_some_and(|d| shape != Shape::T || d.class(f, id) != Class::Comment)).count()
+        };
         // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a `;`
         // between two statements) are in no range, yet are tokens of an included node, as `Projected::span` reads
         // them. Counted here, so the tokens' ids are the spans'.
@@ -1789,32 +1792,59 @@ impl Projected {
             let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
             tokens += f.children(first).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize] && outside(c)).count() as u32;
         }
-        for id in ranges.iter().flat_map(|&(a, b)| a..b) {
-            if !f.named(id) {
-                // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
-                if shape == Shape::Core && dialect.is_some() && f.end[id as usize] > f.start[id as usize]
-                    && f.parent(id).is_some_and(|q| p.local[q as usize] != NONE) { tokens += 1; }
-                continue;
-            }
-            if dialect.is_none_or(|dialect| shape == Shape::T && dialect.class(f, id) == Class::Comment) {
-                continue;
-            }
-            // T walks named children from the root: a node under one left out is not reached.
-            let parent = match f.parent(id) {
-                _ if id == first => NONE,
-                None => NONE,
-                Some(q) if p.local[q as usize] != NONE => p.local[q as usize],
-                // An outermost anchor's parent is left out: it hangs from the root.
-                Some(_) if ranges.len() > 1 && ranges.iter().any(|&(a, _)| a == id) => 0,
-                Some(_) => continue,
-            };
-            if parent == NONE && !p.core.is_empty() {
-                continue;
-            }
-            let local = p.core.len() as u32;
-            p.local[id as usize] = local;
-            p.core.push(id);
-        }
+        // The walk: `local` filled as `core` grows, both in the block.
+        let mut core = None;
+        let local = Cells::build(block, f.len(), |local| {
+            local.fill(NONE);
+            core = Some(Cells::build(block, count, |core| {
+                let mut n = 0usize;
+                for id in ranges.iter().flat_map(|&(a, b)| a..b) {
+                    if !f.named(id) {
+                        // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
+                        if shape == Shape::Core && dialect.is_some() && f.end[id as usize] > f.start[id as usize]
+                            && f.parent(id).is_some_and(|q| local[q as usize] != NONE) { tokens += 1; }
+                        continue;
+                    }
+                    if dialect.is_none_or(|dialect| shape == Shape::T && dialect.class(f, id) == Class::Comment) {
+                        continue;
+                    }
+                    // T walks named children from the root: a node under one left out is not reached.
+                    let parent = match f.parent(id) {
+                        _ if id == first => NONE,
+                        None => NONE,
+                        Some(q) if local[q as usize] != NONE => local[q as usize],
+                        // An outermost anchor's parent is left out: it hangs from the root.
+                        Some(_) if ranges.len() > 1 && ranges.iter().any(|&(a, _)| a == id) => 0,
+                        Some(_) => continue,
+                    };
+                    if parent == NONE && n != 0 {
+                        continue;
+                    }
+                    local[id as usize] = n as u32;
+                    core[n] = id;
+                    n += 1;
+                }
+                n
+            }));
+            local.len()
+        });
+        let (Some(local), Some(Some(core))) = (local, core) else {
+            panic!("a batch's block holds its projection");
+        };
+        let mut p = Projected {
+            module: None,
+            key,
+            tag: f.tag,
+            core,
+            local,
+            idx: OnceLock::new(),
+            size: OnceLock::new(),
+            depth: OnceLock::new(),
+            fielded: OnceLock::new(),
+            extra: None,
+            defs: None,
+            facts: Arc::clone(&facts),
+        };
         drop(identity_span);
         if shape == Shape::Core {
             let lines_span = crate::code_rule_dsl::logic::profile::span(|| "line index".into());
@@ -1848,16 +1878,18 @@ impl Projected {
     #[inline]
     pub fn idx(&self, local: usize) -> u32 { self.ordinals()[local] }
     #[inline]
-    fn ordinals(&self) -> &[u32] {
+    fn ordinals(&self) -> &Cells<u32> {
         self.idx.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection ordinals".into());
             let mut next = vec![0; self.core.len()];
-            let mut out = vec![0; self.core.len()];
-            for (l, slot) in out.iter_mut().enumerate().skip(1) {
-                let p = self.parent(l) as usize;
-                *slot = next[p]; next[p] += 1;
-            }
-            out
+            Cells::build(self.core.block(), self.core.len(), |out| {
+                for (l, slot) in out.iter_mut().enumerate().skip(1) {
+                    let p = self.parent(l) as usize;
+                    *slot = next[p]; next[p] += 1;
+                }
+                out.len()
+            })
+            .expect("a batch's block holds its projection")
         })
     }
     #[inline]
@@ -1882,13 +1914,17 @@ impl Projected {
             out
         })
     }
-    fn fielded(&self) -> &[u32] {
+    fn fielded(&self) -> &Cells<u32> {
         self.fielded.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection fields".into());
             let count = self.core.iter().skip(1).filter(|&&id| self.facts.field[id as usize] != 0).count();
-            let mut out = Vec::with_capacity(count);
-            out.extend(self.core.iter().enumerate().skip(1).filter_map(|(l, &id)| (self.facts.field[id as usize] != 0).then_some(l as u32)));
-            out
+            Cells::build(self.core.block(), count, |out| {
+                for (slot, l) in out.iter_mut().zip(self.core.iter().enumerate().skip(1).filter_map(|(l, &id)| (self.facts.field[id as usize] != 0).then_some(l as u32))) {
+                    *slot = l;
+                }
+                count
+            })
+            .expect("a batch's block holds its projection")
         })
     }
     /// Nodes and spans: the ids `text`, `line` and `docof` take.
@@ -1908,7 +1944,7 @@ impl Projected {
                         let _span = crate::code_rule_dsl::logic::profile::span(|| "token spans".into());
                         let f = &self.facts;
                         let mut spans = Vec::with_capacity(x.tokens as usize);
-                        for &id in &self.core {
+                        for &id in self.core.iter() {
                             for &c in f.children(id) {
                                 if !f.named(c) && f.end[c as usize] > f.start[c as usize] {
                                     spans.push([f.start[c as usize], f.end[c as usize]]);
@@ -1988,7 +2024,10 @@ pub struct Batch {
     /// The relations made as rows for what the program reads (`Extra` and those beside it), bound in place of a view
     /// of the same name (`line`, `end_line`, `col`, `docof`: their spans have places too).
     made: BTreeSet<&'static str>,
-    /// The batch's chunk block (decision 0289): its views' arrays, made on the device's first read of a view.
+    /// The batch's block (decision 0289 §3): its documents' projections are made in it, and its chunk
+    /// (`device_chunk`) is nested in it, so the device reads the projections where the host does.
+    block: Arc<Block>,
+    /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
     #[cfg(target_os = "macos")]
     chunk: OnceLock<device_chunk::Chunk>,
 }
@@ -3044,6 +3083,10 @@ impl Batch {
             out
         };
         let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
+        // The batch's block: what the projections can take, the chunk's copies of the facts' arrays (4 bytes a node for
+        // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the axes' pairs
+        // read whole (`put_pairs`, up to 1 GB). The block reserves address space, not memory.
+        let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
         let mut g = GuestRows::default();
@@ -3088,7 +3131,7 @@ impl Batch {
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines)))));
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
-            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core));
+            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &block);
             drop(new_span);
             // A program that reads `end_point` has each node's end point among the positions, after the lines.
             if core && projection.wants("end_point")
@@ -3233,7 +3276,7 @@ impl Batch {
             })
             .collect();
         crate::code_rule_dsl::logic::profile::decision("input payload", || {
-            let identities: usize = docs.iter().map(|p| (p.core.capacity() + p.local.capacity() + [&p.idx, &p.size, &p.depth, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.capacity())).sum::<usize>()) * 4).sum();
+            let identities: usize = docs.iter().map(|p| (p.core.len() + p.local.len() + [&p.idx, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.len())).sum::<usize>() + [&p.size, &p.depth].iter().map(|v| v.get().map_or(0, |v| v.capacity())).sum::<usize>()) * 4).sum();
             let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.token_spans.get().map_or(0, |v| v.capacity()) * 8).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities, "extraSpanCapacityBytes": extras}).to_string()
         });
@@ -3331,6 +3374,7 @@ impl Batch {
             shape,
             families: bound,
             made,
+            block,
             #[cfg(target_os = "macos")]
             chunk: OnceLock::new(),
         });

@@ -359,3 +359,60 @@ impl Deref for Frozen {
         &self.0
     }
 }
+
+/// A run of `T`s in a shared block, read as a slice by the host: an array the host builds once and the device then
+/// reads in the same block (decision 0289 §3). The block lives as long as any of its `Cells`.
+pub struct Cells<T: crate::Pod> {
+    block: Arc<Block>,
+    at: usize,
+    len: usize,
+    _t: std::marker::PhantomData<T>,
+}
+
+impl<T: crate::Pod> Cells<T> {
+    /// Up to `capacity` `T`s, zero, filled by `fill`, which returns how many it used: the rest is given back to the
+    /// block when nothing was allocated after it. `None` when the block cannot hold `capacity`.
+    pub fn build(block: &Arc<Block>, capacity: usize, fill: impl FnOnce(&mut [T]) -> usize) -> Option<Self> {
+        let size = capacity * size_of::<T>();
+        let at = block.try_alloc(size, align_of::<T>().max(8))?;
+        // SAFETY: `at..at + size` was just allocated to this call alone, zero (a dirty block zeroes it), and zero
+        // is a `T` (`Pod`).
+        let cells = unsafe { std::slice::from_raw_parts_mut(block.ptr::<T>(at), capacity) };
+        let len = fill(cells);
+        assert!(len <= capacity, "cells filled past their capacity");
+        block.shrink_last(at, size, len * size_of::<T>());
+        Some(Cells { block: Arc::clone(block), at, len, _t: std::marker::PhantomData })
+    }
+
+    /// `src` copied into `block`.
+    pub fn copied(block: &Arc<Block>, src: &[T]) -> Option<Self> {
+        Self::build(block, src.len(), |cells| {
+            // SAFETY: `cells` holds `src.len()` `T`s, apart from `src`.
+            unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), cells.as_mut_ptr(), src.len()) };
+            src.len()
+        })
+    }
+
+    /// The block it is in.
+    pub fn block(&self) -> &Arc<Block> {
+        &self.block
+    }
+
+    pub fn as_ptr(&self) -> *const T {
+        self.block.ptr(self.at)
+    }
+}
+
+impl<T: crate::Pod> Deref for Cells<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: `build` filled `len` `T`s at `at`, and nothing writes them after it returns.
+        unsafe { std::slice::from_raw_parts(self.block.ptr::<T>(self.at), self.len) }
+    }
+}
+
+impl<T: crate::Pod + std::fmt::Debug> std::fmt::Debug for Cells<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}

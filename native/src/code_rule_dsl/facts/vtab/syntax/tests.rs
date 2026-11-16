@@ -770,12 +770,13 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     let f = facts("a.py", "f(a + 1)\ng(b)\n");
     let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
     let p = Projected::new(7, Arc::clone(&f), Some(&dialect), Shape::Core, false, None);
-    assert_eq!(p.core.capacity(),p.core.len());
+    // `core` is exactly its nodes: the walk's spare room was given back to the block (`Cells::build`).
+    assert_eq!(p.core.len(), p.local.iter().filter(|&&l| l != NONE).count());
     assert!(p.idx.get().is_none() && p.size.get().is_none() && p.depth.get().is_none() && p.fielded.get().is_none());
     assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     // Independent eager reference: tokens grouped by the named parent's preorder, then source and lines.
     let mut expected = Vec::new();
-    for &id in &p.core {
+    for &id in p.core.iter() {
         for &c in f.children(id) {
             if !f.named(c) && f.end[c as usize] > f.start[c as usize] { expected.push([f.start[c as usize], f.end[c as usize]]); }
         }
@@ -1082,7 +1083,7 @@ fn definition_ids_census() {
                         let f = &*facts;
                         let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)).collect();
                         let t0 = cpu_now();
-                        let _ = granules::number(&p, &dialect, &tokens).0;
+                        let _ = granules::number(&p, &dialect, &tokens, &mut vec![0; p.core.len() + tokens.len()]);
                         row.cpu += cpu_now() - t0;
                         let (g, cont, biggest, fold) = granules::census(&p, &dialect, &tokens);
                         row.nodes += p.core.len() + tokens.len();

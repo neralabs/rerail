@@ -202,9 +202,9 @@ enum Fold {
     All,
 }
 
-/// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits; and each node's order key
-/// (`order`).
-pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (Vec<u32>, Vec<u32>) {
+/// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits, written to `low` (as many
+/// as nodes and tokens); and each node's order key (`order`), returned.
+pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], low: &mut [u32]) -> Vec<u32> {
     let mut fold = Fold::None;
     loop {
         let cut = cut(p, dialect, fold);
@@ -223,7 +223,8 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (Vec<u32>, Ve
             continue;
         }
         let _span = crate::code_rule_dsl::logic::profile::span(|| "granule slots".into());
-        return (place(&cut, &nodes, tokens), order(&cut.of));
+        place(&cut, &nodes, tokens, low);
+        return order(&cut.of);
     }
 }
 
@@ -435,7 +436,7 @@ fn settle(keys: &[(usize, String)], taken: &mut [bool], out: &mut HashMap<usize,
 }
 
 /// The low bits of every node and token: granules placed, then their continuations.
-fn place(cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Vec<u32> {
+fn place(cut: &Cut, nodes: &[u32], tokens: &[u32], low: &mut [u32]) {
     let g = cut.starts.len();
     let mut ntok = vec![0u32; g];
     for &t in tokens {
@@ -472,13 +473,12 @@ fn place(cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Vec<u32> {
     }
     let mut next = vec![0u32; g];
     let owners = cut.of.iter().copied().chain(tokens.iter().map(|&t| cut.of[t as usize]));
-    owners
-        .map(|o| {
-            let i = next[o as usize];
-            next[o as usize] += 1;
-            slots[o as usize][(i / INDEX) as usize] << INDEX_BITS | (i % INDEX)
-        })
-        .collect()
+    assert_eq!(low.len(), cut.of.len() + tokens.len(), "a low id for each node and token");
+    for (slot, o) in low.iter_mut().zip(owners) {
+        let i = next[o as usize];
+        next[o as usize] += 1;
+        *slot = slots[o as usize][(i / INDEX) as usize] << INDEX_BITS | (i % INDEX);
+    }
 }
 
 /// The low bits of span `i` (past the nodes and tokens): the top slots, down from the last.

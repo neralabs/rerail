@@ -159,6 +159,45 @@ the facts' `Vec`s move into the block, and the copy of §1 goes. This touches `F
 share (`Arc<Facts>`). It waits until a memo entry is a document subtree that a hit copies into the chunk
 (0266 §1, `chunk::add_hit`).
 
+Built in two halves, as their storage allows.
+
+**The projection's arrays are made in the batch's block.** A batch (`Batch::build`) opens its block before it projects
+its documents, and each projection (`Projected`) writes its arrays there as it makes them: `core` and `local` in the
+walk, `low` in the granules' numbering (`granules::number` writes into the block), the ordinals and the fielded nodes
+on first read. The host reads them as slices (`rerail_blocks::Cells`, a run of a shared block). The chunk is nested
+in the same block: its entries point at those arrays (`device_chunk::point`), and their copy goes. A projection made
+apart from a batch (`Projected::new`: one document's numbering, its definitions) has a block of its own. A batch's
+block is made whether or not the device reads it: it reserves address space, and holds only what was written.
+
+**The facts' arrays wait.** `parent`, `start`, `end`, `kind` and `field` are `Facts`', which every batch and memo hit
+reading the document shares (`Arc<Facts>`). They can be in a batch's block only once a memo entry is a document range
+that a hit copies into the chunk: 0266's path, steps 4 (`Facts` in blocks) and 5 (the journal's entries). In the engine
+`chunk::add_hit` has no caller yet. Until then they are copied into the chunk on the device's first read, as before.
+
+Checks: `views_made_on_the_device_are_the_hosts_rows` (every view's columns, read through the arrays in place);
+`definition_ids_are_pinned` (every id as it was); the projection's tests (`facts::vtab::syntax::tests`); the axes'
+oracle; the matcher wave on Metal.
+
+Measured on hogql, an A/B of the two builds, each run cold twice, alternating, the same 1,629 findings. The load was
+about 30, so time is CPU and instructions retired, not wall:
+
+| | Instructions retired | User, system CPU | Chunk block's build | Projection (`projected`) |
+|---|---|---|---|---|
+| Before, run 1 | 90.7 G | 6.61 s, 1.87 s | 4 ms, 10 batches | 98 ms |
+| §3, run 1 | 78.3 G | 6.22 s, 1.19 s | 2 ms, 10 batches | 110 ms |
+| Before, run 2 | 89.7 G | 6.40 s, 1.74 s | none built | 105 ms |
+| §3, run 2 | 76.3 G | 6.29 s, 1.14 s | 3 ms, 14 batches | 103 ms |
+
+The chunk's build lost the projection's copy (about 1 ms of its 3 to 4). The projection itself is within the runs'
+spread; its first writes into a fresh block are page faults where a `Vec` reused freed memory (`identity maps` and
+`projection fields`, a few ms higher). The 12 to 13 G fewer instructions are far more than either: most of the
+difference is not the copy, and is not explained here (system CPU fell 0.6 s in both pairs; placement differed,
+the second run before §3 read no view on the device).
+
+No device reads the arrays on targets without Metal: there `cells` is a heap array with the same
+API (no address space to reserve on WASM). `rerail-accel`'s dependency on `rerail-blocks` is Metal's only (its
+`gpu` module is), so the WASM build no longer compiles `rerail-blocks`, whose blocks are `mmap`s.
+
 ### 4. Tapes and sources in the chunk
 
 The residency's slabs become chunk blocks:
