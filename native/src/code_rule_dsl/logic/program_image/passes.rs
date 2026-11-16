@@ -271,3 +271,59 @@ impl ProgramPass for StatedApart {
         Ok(())
     }
 }
+
+/// The rules whose head's name the predicate takes, the rest removed: a view, or the version itself where every rule
+/// is taken.
+pub struct Retain<F>(pub F);
+
+impl<F: Fn(&str) -> bool> ProgramPass for Retain<F> {
+    const NAME: &'static str = "retain";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        if v.rules().all(|r| (self.0)(v.rel_name(r.head().rel()))) {
+            return Ok(());
+        }
+        w.keep(|r| (self.0)(v.rel_name(r.head().rel())))
+    }
+}
+
+/// A part's own fields (decision 0244, `Version::part`): its inputs and outputs, and the natives, lattices and gates
+/// of the relations `fields` takes. An overlay, never folded, so the part costs its range list and its fields.
+pub struct PartOf<'f, S> {
+    pub inputs: &'f [S],
+    pub outputs: &'f [S],
+    pub fields: super::build::PartFields<'f>,
+}
+
+impl<S: AsRef<str>> ProgramPass for PartOf<'_, S> {
+    const NAME: &'static str = "part's fields";
+    fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let b = w.overlay()?;
+        b.set_inputs(self.inputs);
+        b.set_outputs(self.outputs);
+        b.keep_relation_fields(self.fields.natives, self.fields.lattice, self.fields.gates);
+        Ok(())
+    }
+}
+
+/// The program's answers stated as `.0` gives them (`Program::answers`): an overlay, never folded.
+pub struct SetAnswers<'a>(pub &'a BTreeMap<String, Vec<String>>);
+
+impl ProgramPass for SetAnswers<'_> {
+    const NAME: &'static str = "answers";
+    fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        w.overlay()?.set_answers(self.0);
+        Ok(())
+    }
+}
+
+/// Each relation's qualifiers stated as `.0` gives them, (relation, word) pairs: an overlay, never folded.
+pub struct SetQualifiers<'a>(pub &'a [(&'a str, &'a str)]);
+
+impl ProgramPass for SetQualifiers<'_> {
+    const NAME: &'static str = "qualifiers";
+    fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        w.overlay()?.set_qualifiers(self.0);
+        Ok(())
+    }
+}

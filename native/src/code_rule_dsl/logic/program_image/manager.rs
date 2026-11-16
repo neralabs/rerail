@@ -517,11 +517,22 @@ pub trait ProgramPass {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()>;
 }
 
-/// The writer a program pass states its edit through (0276 §3): an edit of its input (`on`), or a derivation of it
-/// (`derive`), never both. Nothing stated, the input is the output.
+/// The forms a program pass's writer takes (`ProgramW`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Mode {
+    /// An edit: a view, an overlay, or folded, as its size says.
+    Edit,
+    /// An overlay, never folded: a version whose cost must stay its own size (a part's fields, decision 0244).
+    Overlay,
+    /// A derivation: a new base under the input's ids.
+    Derive,
+}
+
+/// The writer a program pass states its edit through (0276 §3): an edit of its input (`on`), an overlay of it never
+/// folded (`overlay`), or a derivation of it (`derive`), one of the three. Nothing stated, the input is the output.
 pub struct ProgramW<'p> {
     input: &'p Arc<Version>,
-    b: Option<(Builder<'p>, bool)>,
+    b: Option<(Builder<'p>, Mode)>,
     visited: usize,
 }
 
@@ -529,11 +540,11 @@ impl<'p> ProgramW<'p> {
     fn new(input: &'p Arc<Version>) -> Self {
         ProgramW { input, b: None, visited: 0 }
     }
-    fn builder(&mut self, derive: bool) -> Result<&mut Builder<'p>> {
+    fn builder(&mut self, mode: Mode) -> Result<&mut Builder<'p>> {
         let input = self.input;
-        let (b, d) = self.b.get_or_insert_with(|| (if derive { Builder::derive(input) } else { Builder::on(input) }, derive));
-        if *d != derive {
-            return Err(format!("an edit of {} rules stated both as an edit and as a derivation", input.size()));
+        let (b, m) = self.b.get_or_insert_with(|| (if mode == Mode::Derive { Builder::derive(input) } else { Builder::on(input) }, mode));
+        if *m != mode {
+            return Err(format!("an edit of {} rules stated in two forms ({m:?}, {mode:?})", input.size()));
         }
         Ok(b)
     }
@@ -543,11 +554,15 @@ impl<'p> ProgramW<'p> {
     }
     /// An edit of the input: removals make a view; additions and fields an overlay, folded when it reaches half.
     pub fn on(&mut self) -> Result<&mut Builder<'p>> {
-        self.builder(false)
+        self.builder(Mode::Edit)
+    }
+    /// An overlay of the input, never folded.
+    pub fn overlay(&mut self) -> Result<&mut Builder<'p>> {
+        self.builder(Mode::Overlay)
     }
     /// A derivation of the input: a new base under its ids, holding its fields and none of its rules.
     pub fn derive(&mut self) -> Result<&mut Builder<'p>> {
-        self.builder(true)
+        self.builder(Mode::Derive)
     }
     /// The input's rules `keep` refuses removed.
     pub fn keep(&mut self, keep: impl FnMut(RuleRef<'_>) -> bool) -> Result<()> {
@@ -556,32 +571,34 @@ impl<'p> ProgramW<'p> {
     }
     /// Rule pass `pass` over the rules `select` picks, in this writer's form (a derivation keeps the rest in order).
     pub fn apply<P: RulePass>(&mut self, cx: &Cx<'_>, pass: &mut P, select: &Select) -> Result<()> {
-        let derive = self.b.as_ref().is_some_and(|(_, d)| *d);
+        let mode = self.b.as_ref().map_or(Mode::Edit, |(_, m)| *m);
         let input = self.input;
-        let b = self.builder(derive)?;
-        let n = drive(pass, cx, input, b, select, derive)?;
+        let b = self.builder(mode)?;
+        let n = drive(pass, cx, input, b, select, mode == Mode::Derive)?;
         pass.finish(cx, b)?;
         self.visited += n;
         Ok(())
     }
     fn finish(self) -> Result<(Arc<Version>, Form, usize)> {
-        match self.b {
-            None => Ok((self.input.clone(), Form::Unchanged, self.visited)),
-            Some((b, derive)) => {
+        // Nothing stated (or an edit or overlay that states nothing): the input is the output.
+        let Some((b, mode)) = self.b.filter(|(b, m)| *m == Mode::Derive || !b.is_empty()) else { return Ok((self.input.clone(), Form::Unchanged, self.visited)) };
+        let (v, form) = match mode {
+            Mode::Overlay => (b.finish_overlay()?, Form::Overlay),
+            Mode::Derive => (b.finish()?.0, Form::Derived),
+            Mode::Edit => {
                 let (v, made) = b.finish()?;
-                // A derivation that changed nothing is its input: its analyses carry, and no new base is kept.
-                if derive && v.digest() == self.input.digest() && v.size() == self.input.size() {
-                    return Ok((self.input.clone(), Form::Unchanged, self.visited));
-                }
-                let form = match (derive, made) {
-                    (true, _) => Form::Derived,
-                    (false, Made::View) => Form::View,
-                    (false, Made::Overlay) => Form::Overlay,
-                    (false, Made::Folded) => Form::Folded,
-                };
-                Ok((v, form, self.visited))
+                (v, match made {
+                    Made::View => Form::View,
+                    Made::Overlay => Form::Overlay,
+                    Made::Folded => Form::Folded,
+                })
             }
+        };
+        // A derivation that changed nothing is its input: its analyses carry, and no new base is kept.
+        if mode == Mode::Derive && v.digest() == self.input.digest() && v.size() == self.input.size() {
+            return Ok((self.input.clone(), Form::Unchanged, self.visited));
         }
+        Ok((v, form, self.visited))
     }
 }
 

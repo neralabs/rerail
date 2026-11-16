@@ -149,6 +149,11 @@ impl<'p> Builder<'p> {
         self.removed.len() + self.enc.rules() as usize + self.parts.decls.len() + self.parts.decls_gone.len() + self.rows + self.parts.facts_gone.len()
     }
 
+    /// Whether the edit states nothing: no rule removed or added, no part stated.
+    pub fn is_empty(&self) -> bool {
+        self.removed.is_empty() && self.enc.rules() == 0 && !self.parts_changed
+    }
+
     // -- names --
 
     /// The atom of `text`: the parent's, or a new one.
@@ -617,14 +622,11 @@ impl Version {
     /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
     /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
     pub fn part<S: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
-        let mut b = Builder::on(self);
-        b.retain(|r| rules(self.rel_name(r.head().rel())));
-        let (rules, _) = b.finish()?;
-        let mut b = Builder::on(&rules);
-        b.set_inputs(inputs);
-        b.set_outputs(outputs);
-        b.keep_relation_fields(fields.natives, fields.lattice, fields.gates);
-        b.finish_overlay()
+        use super::manager::Pipeline;
+        use super::passes::{PartOf, Retain};
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut Retain(rules)).program(&mut PartOf { inputs, outputs, fields });
+        Ok(p.finish()?.0)
     }
 
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds

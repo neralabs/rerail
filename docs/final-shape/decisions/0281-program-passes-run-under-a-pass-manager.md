@@ -288,16 +288,21 @@ step 3 replaces what is under the writer.
    supports, `answers::gate`, the split, `RoundProgram::of`, `qualify` and the cut. Check: their tests, plus a
    driver test that a pass costs its selection.
    - Done: `program_image::manager` (the traits, `Select`, the driver, `Delta`, the analysis store, `Pipeline`, the
-     dense `IdSet`/`IdMap` columns); `About`, `Strata`, `Needed` and `FieldsData` as analyses; `normalize` and
-     supports as rule passes, `stated_apart` as a program pass. Tests: `a_rule_pass_costs_the_rules_it_selects`,
-     `analyses_carry_over_edits_that_miss_what_they_read`, `a_pass_that_writes_for_a_kept_rule_fails`, and the
-     passes' own.
-   - As built: `RulePass::finish` takes the `Builder` itself (no separate `FieldsW`); `Delta` is read off the
-     version the writer made (an overlay is its delta, a view its ranges; fields by their hashes); a derivation that
-     changes nothing returns its input, so its analyses carry. A rule pass selecting all rules runs as a derivation
-     (the program's order kept); one selecting fewer, as an edit.
-   - Not yet: the gate, the split, `RoundProgram::of`, `qualify` and the cut; morsels (§3); re-running a rule pass
-     on a delta alone (§3), which needs a stored step to re-run from (step 6).
+     dense `IdSet`/`IdMap` columns); `About`, `Strata`, `Needed` and `FieldsData` as analyses. Rule passes:
+     `Normalize`, `Supports`, `GateRules` (the gate's rewrite) and `Rounds` (`RoundProgram::of`). Program passes:
+     `StatedApart`, `GateFields`, and the parts' `Retain`, `PartOf`, `SetAnswers` and `SetQualifiers`, which
+     `Version::part`, the split's `Loading::parts` and the cross part's `qualify` run. Tests:
+     `a_rule_pass_costs_the_rules_it_selects`, `analyses_carry_over_edits_that_miss_what_they_read`,
+     `a_pass_that_writes_for_a_kept_rule_fails`, and the passes' own.
+   - As built: `RulePass::finish` takes the `Builder` itself (no separate `FieldsW`); `ProgramW` has three forms, an
+     edit (`on`), an overlay never folded (`overlay`, a part's fields) and a derivation (`derive`); `Delta` is read
+     off the version the writer made (an overlay is its delta, a view its ranges; fields by their hashes); a
+     derivation that changes nothing, and an edit that states nothing, return their input, so its analyses carry. A
+     rule pass selecting all rules runs as a derivation (the program's order kept); one selecting fewer, as an edit.
+   - The cut (`retain::cut`) writes no version: it is an analysis (which strata a run skips, given its inputs'
+     digests), and moves with step 2.
+   - Not yet: morsels (§3); re-running a rule pass on a delta alone (§3), which needs a stored step to re-run from
+     (step 6).
 2. **The analyses** behind the trait: `Fields`, `Heads`, `Readers`, `Strata`, `Components`, `Needed`, `Domains`, and
    the split's columns. Each is checked by the debug build's recompute-and-compare.
 3. **0276 step 3's preparation passes** as `ProgramPass`es: `locate`, the merges, `demand_exports`,

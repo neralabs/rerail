@@ -10617,9 +10617,7 @@ fn qualify(part: &mut lower::Lowered, edit: impl FnOnce(&BTreeSet<String>, &mut 
         let heads: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
         edit(&heads, &mut qualifiers);
         let words: Vec<(&str, &str)> = qualifiers.iter().flat_map(|(r, ws)| ws.iter().map(move |w| (r.as_str(), w.as_str()))).collect();
-        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
-        b.set_qualifiers(&words);
-        let made = made_from(true, b.finish_overlay().ok(), "the qualifiers");
+        let made = made_from(true, set_qualifiers(&v, &words).ok(), "the qualifiers");
         part.program = lower::Tree::maintained(made.clone().expect("an overlay of the qualifiers"), part.maint.clone());
         part.version = made;
         return;
@@ -10633,10 +10631,16 @@ fn requalified(part: &mut lower::Lowered) {
     let had = part.version.is_some();
     part.version = made_from(had, part.version.take().and_then(|v| {
         let words: Vec<(&str, &str)> = part.program.qualifiers.iter().flat_map(|(r, ws)| ws.iter().map(move |w| (r.as_str(), w.as_str()))).collect();
-        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
-        b.set_qualifiers(&words);
-        b.finish_overlay().ok()
+        set_qualifiers(&v, &words).ok()
     }), "the qualifiers");
+}
+
+/// `v` with its qualifiers `words` (`passes::SetQualifiers`): an overlay of that field, never folded.
+fn set_qualifiers(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>, words: &[(&str, &str)]) -> std::result::Result<Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
+    use crate::code_rule_dsl::logic::program_image::{manager::Pipeline, passes::SetQualifiers};
+    let mut p = Pipeline::new("qualify", v.clone());
+    p.program(&mut SetQualifiers(words));
+    Ok(p.finish()?.0)
 }
 
 /// `maintained_cross(cross)`, made once for a prepared program (`Prepared::maintained`) and shared: made again only

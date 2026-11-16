@@ -23,7 +23,9 @@
 use super::{Result, lower, maintained, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source};
 use crate::code_rule_dsl::logic::plan::body::Placed;
-use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Rewrite, T, Version};
+use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, RuleOut, RulePass, Select, Step};
+use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Rewrite, RuleRef, T, Version};
 use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -70,44 +72,56 @@ impl Rewrite for Ungated<'_> {
     }
 }
 
-impl RoundProgram {
-    /// The round program of `load` (the gated cone's version, `answers::split`), when it stratifies with its answers
-    /// and gates as inputs; `per_file` the per-file relations a load adds rows to (inputs already), `domains` the
-    /// prepared program's. A derivation of `load` (decision 0241's form): its rules less the gates', each gated atom
-    /// ungated, and each answer of the file system a join; no tree is read.
-    pub(in crate::code_rule_dsl) fn of(load: &Arc<Version>, per_file: &[String], domains: &lower::Domains) -> Option<RoundProgram> {
-        let whole = Placed::whole(load.clone());
-        let f = whole.fields().ok()?;
-        let v: &Version = load;
-        let gates: Vec<(String, Option<String>)> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()))).collect();
-        let names: BTreeSet<&str> = gates.iter().map(|(d, _)| d.as_str()).collect();
-        let mut b = Builder::derive(v);
-        let mut heads: BTreeSet<&str> = BTreeSet::new();
-        for r in v.rules() {
-            let head = v.rel_name(r.head().rel());
-            if names.contains(head) {
-                continue;
-            }
-            heads.insert(head);
-            if r.reads().any(|a| a.gated()) {
-                b.rewrite(v, r, &mut Ungated(v)).finish().ok()?;
-            } else {
-                b.copy(v, r);
-            }
+/// `RoundProgram::of` as a rule pass: each gate's rule dropped, each other rule kept or ungated, then the file
+/// system's joins and the fields (`finish`). `refused` where an answer's relation is derived by rules too.
+struct Rounds<'a> {
+    per_file: &'a [String],
+    fields: Option<Arc<FieldsData>>,
+    gates: Vec<(String, Option<String>)>,
+    /// The relations the rules kept derive.
+    heads: BTreeSet<String>,
+    refused: bool,
+    inputs: Vec<String>,
+    requests: Vec<(String, usize)>,
+    produced: Vec<(String, usize)>,
+    fs: Vec<(String, String)>,
+}
+
+impl RulePass for Rounds<'_> {
+    const NAME: &'static str = "round program";
+    fn begin(&mut self, cx: &Cx<'_>) -> std::result::Result<Select, String> {
+        let d = cx.get::<FieldsData>()?;
+        let f = Fields::over(cx.v(), &d);
+        self.gates = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()))).collect();
+        self.fields = Some(d.clone());
+        Ok(Select::All)
+    }
+    fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> std::result::Result<Step, String> {
+        let v: &Version = cx.v();
+        let head = v.rel_name(r.head().rel());
+        if self.gates.iter().any(|(d, _)| d == head) {
+            return Ok(Step::Drop);
         }
+        self.heads.insert(head.to_owned());
+        if r.reads().any(|a| a.gated()) { out.rewrite(&mut Ungated(v)) } else { Ok(Step::Keep) }
+    }
+    fn finish(&mut self, cx: &Cx<'_>, b: &mut Builder<'_>) -> std::result::Result<(), String> {
+        let f = Fields::over(cx.v(), self.fields.as_ref().expect("begun"));
         // Each request and what answers it, by request (`Program::answers`).
         let mut answers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for &(q, a) in f.answers() {
             answers.entry(f.rel_name(q)).or_default().push(f.rel_name(a));
         }
-        let produced: Vec<(String, usize)> = answers.values().flatten().filter(|r| !per_file.iter().any(|p| p == *r)).filter_map(|r| Some(((*r).to_owned(), f.arity(r)?))).collect::<BTreeSet<_>>().into_iter().collect();
+        let per_file = self.per_file;
+        let mut produced: Vec<(String, usize)> = answers.values().flatten().filter(|r| !per_file.iter().any(|p| p == *r)).filter_map(|r| Some(((*r).to_owned(), f.arity(r)?))).collect::<BTreeSet<_>>().into_iter().collect();
         // An answer's relation that rules derive too is not an input.
-        if produced.iter().any(|(r, _)| heads.contains(r.as_str())) {
-            return None;
+        if produced.iter().any(|(r, _)| self.heads.contains(r.as_str())) {
+            self.refused = true;
+            cx.decide("refused", || "an answer's relation is derived by rules too".into());
+            return Ok(());
         }
         // The file system's answers as joins: each request with a relation of the file system, the input.
         let mut inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
-        let mut fs = Vec::new();
         let mut kept = Vec::new();
         for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
             let Some(width) = produced.iter().find(|(r, _)| r == answer).map(|(_, w)| *w) else { continue };
@@ -115,43 +129,61 @@ impl RoundProgram {
                 continue;
             }
             let input = fs_input(answer);
-            b.declare(&input, &f.columns(answer)?);
+            b.declare(&input, &f.columns(answer).ok_or_else(|| format!("{answer} has no declaration"))?);
             let vars: Vec<String> = (0..width).map(|c| format!("rr_c{c}")).collect();
             let vars: Vec<T<'_>> = vars.iter().map(|x| T::Var(x.as_str())).collect();
-            b.rule().head(answer, &vars).atom(req, &vars[..1]).atom(input.as_str(), &vars).finish().ok()?;
+            b.rule().head(answer, &vars).atom(req, &vars[..1]).atom(input.as_str(), &vars).finish()?;
             // Read back by the rest of the cross part: kept, not inlined.
             kept.push(((*answer).to_owned(), "no_inline".to_owned()));
             inputs.retain(|r| r != answer);
-            fs.push(((*answer).to_owned(), input));
+            self.fs.push(((*answer).to_owned(), input));
         }
         b.add_qualifiers(&kept);
-        let mut produced = produced;
-        for (answer, input) in &fs {
+        for (answer, input) in &self.fs {
             for p in produced.iter_mut().filter(|(r, _)| r == answer) {
                 p.0 = input.clone();
             }
         }
-        for rel in gates.iter().map(|(d, _)| d.clone()).chain(produced.iter().map(|(r, _)| r.clone())) {
+        for rel in self.gates.iter().map(|(d, _)| d.clone()).chain(produced.iter().map(|(r, _)| r.clone())) {
             if !inputs.contains(&rel) {
                 inputs.push(rel);
             }
         }
-        let requests = answers.keys().filter_map(|r| Some(((*r).to_owned(), f.arity(r)?))).collect();
+        self.requests = answers.keys().filter_map(|r| Some(((*r).to_owned(), f.arity(r)?))).collect();
         b.set_inputs(&inputs);
         b.set_answers(&BTreeMap::new());
         b.keep_relation_fields(&|_| true, &|_| true, &|_| false);
         // The rounds hand on rows (requests to the driver, the cone's relations to the rest), never output lines: so
         // each is kept in the frames as any derived relation, with its rows.
         b.set_outputs::<&str>(&[]);
-        let (rv, _) = b.finish().ok()?;
+        self.inputs = inputs;
+        self.produced = produced;
+        Ok(())
+    }
+}
+
+impl RoundProgram {
+    /// The round program of `load` (the gated cone's version, `answers::split`), when it stratifies with its answers
+    /// and gates as inputs; `per_file` the per-file relations a load adds rows to (inputs already), `domains` the
+    /// prepared program's. A rule pass over `load` (`Rounds`, decision 0281): a derivation (decision 0241's form), its
+    /// rules less the gates', each gated atom ungated, and each answer of the file system a join; no tree is read.
+    pub(in crate::code_rule_dsl) fn of(load: &Arc<Version>, per_file: &[String], domains: &lower::Domains) -> Option<RoundProgram> {
+        let mut pass = Rounds { per_file, fields: None, gates: Vec::new(), heads: BTreeSet::new(), refused: false, inputs: Vec::new(), requests: Vec::new(), produced: Vec::new(), fs: Vec::new() };
+        let mut p = Pipeline::new("round program", load.clone());
+        p.rules(&mut pass);
+        let (rv, _) = p.finish().ok()?;
+        if pass.refused {
+            return None;
+        }
         let placed = Placed::whole(rv);
         let sccs = placed.components().ok()?;
         let mut domains = domains.clone();
-        for (answer, input) in &fs {
+        for (answer, input) in &pass.fs {
             if let Some(d) = domains.get(answer).cloned() {
                 domains.insert(input.clone(), d);
             }
         }
+        let Rounds { inputs, gates, requests, produced, fs, .. } = pass;
         Some(RoundProgram { placed, domains, inputs, sccs, gates, requests, produced, fs })
     }
 
