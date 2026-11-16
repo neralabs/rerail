@@ -162,7 +162,6 @@ fn fixture(
 
 #[test]
 fn known_field_edges_match_native_first_child_without_larger_records() {
-    assert_eq!(std::mem::size_of::<Rec>(), 40);
     for (lang, source) in [
         (
             GrammarDialect::Python,
@@ -1086,9 +1085,9 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
     // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
     let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    assert_eq!(doc.data.len(), doc.image.node_count());
-    assert_eq!(image.primary.node_count(), doc.data.len());
-    assert!(doc.data.len() < nodes);
+    assert_eq!(doc.transducer_len(), doc.image.node_count());
+    assert_eq!(image.primary.node_count(), doc.transducer_len());
+    assert!(doc.transducer_len() < nodes);
 }
 
 #[test]
@@ -1112,7 +1111,7 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    assert_eq!(doc.data.len(), doc.image.node_count());
+    assert_eq!(doc.transducer_len(), doc.image.node_count());
 }
 
 #[test]

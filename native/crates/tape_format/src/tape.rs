@@ -129,6 +129,32 @@ pub trait Tape {
             f(base, m);
         }
     }
+    /// `i`'s ancestors, the root first, into `out`: one descent from the root, a step a sibling it passes (read
+    /// from the subtree ends), so no parent is read. A climb's whole path at the cost of one.
+    fn path(&self, i: usize, out: &mut Vec<usize>) {
+        out.clear();
+        if i == 0 || i >= self.len() {
+            return;
+        }
+        let mut at = 0;
+        loop {
+            out.push(at);
+            let end = self.subtree_end(at);
+            let mut c = at + 1;
+            loop {
+                let e = self.subtree_end(c);
+                if i < e {
+                    break;
+                }
+                debug_assert!(e < end, "node {i} is in {at}'s subtree");
+                c = e;
+            }
+            if c == i {
+                return;
+            }
+            at = c;
+        }
+    }
     /// Every node's span, in preorder.
     fn spans(&self, out: &mut Vec<(u64, u64)>) {
         out.clear();
@@ -237,9 +263,28 @@ impl Tape for F15<'_> {
     fn subtree_end(&self, i: usize) -> usize {
         i + self.size(i)
     }
-    /// Not stored: the nearest node before `i` whose subtree holds it.
+    /// Not stored: the nearest node before `i` whose subtree holds it, searched back over at most `BACK` nodes,
+    /// else found by descending from the root over the siblings' subtree ends (`Tape::path`): a search is never
+    /// longer than the path's siblings.
     fn parent(&self, i: usize) -> Option<usize> {
-        (0..i).rev().find(|&j| j + self.size(j) > i)
+        const BACK: usize = 64;
+        if let Some(p) = (i.saturating_sub(BACK)..i).rev().find(|&j| j + self.size(j) > i) {
+            return Some(p);
+        }
+        if i == 0 {
+            return None;
+        }
+        let mut at = 0;
+        loop {
+            let mut c = at + 1;
+            while c + self.size(c) <= i {
+                c += self.size(c);
+            }
+            if c == i {
+                return Some(at);
+            }
+            at = c;
+        }
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
@@ -347,7 +392,7 @@ pub fn nearest_all<T: Tape>(t: &T, set: &CodeSet, keep: impl Fn(usize) -> bool, 
 
 /// A document's tape in whichever format it is held. A 16z reader keeps the blocks it decoded, so it is one
 /// thread's.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum AnyTape<'a> {
     F15(F15<'a>),
     F16(crate::f16::F16<'a>),
@@ -365,6 +410,64 @@ macro_rules! with_tape {
             $crate::tape::AnyTape::F16Z($t) => $body,
         }
     };
+}
+
+/// A read at a time, dispatched on the format: for a caller that reads a node here and there (a matcher's node).
+/// A pass over many nodes dispatches once (`with_tape!`).
+impl Tape for AnyTape<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        with_tape!(self, |t| t.len())
+    }
+    #[inline]
+    fn table(&self) -> &CodeTable {
+        with_tape!(self, |t| t.table())
+    }
+    #[inline]
+    fn code(&self, i: usize) -> u32 {
+        with_tape!(self, |t| t.code(i))
+    }
+    #[inline]
+    fn subtree_end(&self, i: usize) -> usize {
+        with_tape!(self, |t| t.subtree_end(i))
+    }
+    #[inline]
+    fn first_child(&self, i: usize) -> Option<usize> {
+        with_tape!(self, |t| t.first_child(i))
+    }
+    #[inline]
+    fn next_sibling(&self, i: usize, parent_end: usize) -> Option<usize> {
+        with_tape!(self, |t| t.next_sibling(i, parent_end))
+    }
+    #[inline]
+    fn parent(&self, i: usize) -> Option<usize> {
+        with_tape!(self, |t| t.parent(i))
+    }
+    #[inline]
+    fn start(&self, i: usize) -> u64 {
+        with_tape!(self, |t| t.start(i))
+    }
+    #[inline]
+    fn end(&self, i: usize) -> u64 {
+        with_tape!(self, |t| t.end(i))
+    }
+    #[inline]
+    fn start_next(&self, i: usize, prev_start: u64) -> u64 {
+        with_tape!(self, |t| t.start_next(i, prev_start))
+    }
+    #[inline]
+    fn end_with_start(&self, i: usize, start: u64) -> u64 {
+        with_tape!(self, |t| t.end_with_start(i, start))
+    }
+    fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
+        with_tape!(self, |t| t.match_groups(set, f))
+    }
+    fn path(&self, i: usize, out: &mut Vec<usize>) {
+        with_tape!(self, |t| t.path(i, out))
+    }
+    fn spans(&self, out: &mut Vec<(u64, u64)>) {
+        with_tape!(self, |t| t.spans(out))
+    }
 }
 
 impl AnyTape<'_> {
@@ -422,6 +525,43 @@ pub(crate) mod tests {
         }
     }
 
+    /// Format 15's parent past its back search (`BACK`): a root of 300 statements of two leaves each and one of 100
+    /// leaves, every parent found by the descent, as the tree has it, and every path the climb.
+    #[test]
+    fn format_15_parent_descends_past_its_back_search() {
+        let src = vec![b' '; 10_000];
+        let mut nodes = vec![(key(1, 0, 0), 0, 9_000, 0)];
+        for i in 0..300u32 {
+            nodes.push((key(2, 0, 0), i * 20, i * 20 + 15, 3));
+            nodes.push((key(3, 0, 0), i * 20, i * 20 + 5, 1));
+            nodes.push((key(3, 0, 0), i * 20 + 6, i * 20 + 15, 1));
+        }
+        nodes.push((key(2, 0, 0), 6_000, 8_000, 101));
+        for i in 0..100u32 {
+            nodes.push((key(3, 0, 0), 6_000 + i * 20, 6_000 + i * 20 + 10, 1));
+        }
+        nodes[0].3 = nodes.len() as u32;
+        let image = preorder_image(1, &src, &nodes);
+        let (columns, table) = f15_columns(&image).unwrap();
+        let t = F15::new(columns, &table).unwrap();
+        let mut parents = vec![None; nodes.len()];
+        let mut open: Vec<(usize, usize)> = Vec::new();
+        for (i, &(.., size)) in nodes.iter().enumerate() {
+            while open.last().is_some_and(|&(_, end)| end <= i) {
+                open.pop();
+            }
+            parents[i] = open.last().map(|&(p, _)| p);
+            open.push((i, i + size as usize));
+        }
+        let mut path = Vec::new();
+        for (i, &p) in parents.iter().enumerate() {
+            assert_eq!(t.parent(i), p, "parent of {i}");
+            t.path(i, &mut path);
+            assert_eq!(path.last().copied(), p, "path to {i}");
+            assert!(path.windows(2).all(|w| parents[w[1]] == Some(w[0])), "path to {i}");
+        }
+    }
+
     #[test]
     fn format_15_in_place_answers_as_its_tree() {
         let (image, nodes) = sample();
@@ -443,6 +583,16 @@ pub(crate) mod tests {
         }
         for (i, &p) in parents.iter().enumerate() {
             assert_eq!(t.parent(i), p, "parent of {i}");
+            let mut path = Vec::new();
+            t.path(i, &mut path);
+            let mut climbed = Vec::new();
+            let mut q = p;
+            while let Some(a) = q {
+                climbed.push(a);
+                q = parents[a];
+            }
+            climbed.reverse();
+            assert_eq!(path, climbed, "path to {i}");
         }
         assert_eq!(children(&t, 0).count(), 8);
         assert_eq!(children(&t, 1).collect::<Vec<_>>(), vec![2, 3, 4, 5]);

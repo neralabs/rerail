@@ -289,13 +289,26 @@ impl FileImage {
 /// A document's tape as held (its image), shared by the document (`TapeDoc`) and the facts read off it
 /// (`Facts::tape`). A test may read it in another format (`tape_in`): written from format 15 once.
 pub struct DocTape {
+    /// The image's reader, made once (`reader`). It borrows `image`, so it is declared first: dropped before it.
+    reader: AnyTape<'static>,
     image: Arc<TapeImage>,
     other: [OnceLock<TapeImage>; 3],
 }
 
 impl DocTape {
     pub fn new(image: Arc<TapeImage>) -> Self {
-        DocTape { image, other: Default::default() }
+        let reader = image.tape();
+        // SAFETY: the reader borrows the image's bytes and code table, and the language tables (static). The image
+        // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
+        // for as long as the reader, and `reader` lends it at the borrow of `self` only.
+        let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
+        DocTape { reader, image, other: Default::default() }
+    }
+
+    /// The tape's reader, made once: a node's reads dispatch on the format, and nothing is built a read.
+    #[inline]
+    pub fn reader(&self) -> &AnyTape<'_> {
+        &self.reader
     }
 
     pub fn image(&self) -> &TapeImage {
@@ -309,7 +322,7 @@ impl DocTape {
 
     /// The tape, read in place in the format it is held in.
     pub fn tape(&self) -> AnyTape<'_> {
-        self.image.tape()
+        self.reader
     }
 
     /// The tape in `format`: as held, or (a test's comparison of formats) written from format 15 once.

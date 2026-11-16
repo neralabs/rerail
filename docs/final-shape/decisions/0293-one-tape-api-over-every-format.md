@@ -143,6 +143,10 @@ This record is steps 2, 3 and 4, and the API they need.
    format 16's bounds, keeps format 15 and says so once a language. `f16::write_from` (a tape of any format, read
    through the API) is the same pass, for tree-sitter's tapes (§4).
 
+   An embedded program a lean parser writes may so be held in format 16 when its placeholders are cut out
+   (`TapeImage::omitting`), which reads it through the API (it read format 15's columns at first, and stopped
+   every Blade and Vue file in a run of 16).
+
    Checked (2026-11-16): for every lean parser whose language has a table (Python, JavaScript, TypeScript, TSX,
    Rust, PHP, SQL, Vue and `.rr`), the tape written directly in 16 and in 16z is byte for byte what format 15's
    image converts to, and answers every node's code, span, subtree and parent alike
@@ -150,14 +154,42 @@ This record is steps 2, 3 and 4, and the API they need.
    byte-identical outputs in the three formats, cold and warm from each store; the stores hold 835 tapes in 1.20 MB
    (15), 727 KB (16) and 448 KB (16z).
 
+8. **The matcher reads the tape** (step 5, its CPU half; built). A document (`TapeDoc`) holds no node record: the
+   per-node `Rec` (42 bytes: kind, field, span, size, parent, first child, next and previous sibling, child count,
+   flags), the alias overrides and the supertype list are gone. Its tape's reader is made once beside the image
+   (`DocTape::reader`), and `AnyTape` answers a read at a time, dispatched on the format. A node's kind, field,
+   flags, alias and classes are its code's entry in the table; its span, subtree and children are the tape's.
+
+   - **ast-grep's node** (`TapeNode`, what the matchers walk) carries its parent where the step that reached it
+     knew it: a child's, a walk's (`dfs`: the subtrees open around it), an ancestor's. A climb (`ancestors`) past
+     the parent is one descent from the root (`Tape::path`: a step a sibling it passes, read from the subtree
+     ends), the whole path at the cost of one. A previous sibling is read forward from the parent's first child;
+     `prev_all` reads them once.
+   - **A pass over every node** that wanted each node's parent takes it from the subtrees open around it
+     (`TapeDoc::transducer_parents`): the transducer's packed batch (each node's children set their parent and
+     next siblings), the relational syntax columns, the prefilter's statistics, the label passes' nesting, the
+     set compiler's child and ancestor sets, a guest's extents (`node_extents`) and the anchors' index
+     (`index_image`).
+   - **Format 15's parent** searches back at most 64 nodes, then descends from the root over the siblings' subtree
+     ends: never longer than the path's siblings, where the search back alone read every node of the earlier
+     siblings' subtrees.
+
+   Checked (2026-11-16): the tape, embedding, Vue, Blade, prefilter, anchor, facts, syntax, matcher, transducer,
+   workspace, findings, wave, residency and statistics tests (1,065) pass in 15, 16 and 16z, but for four that need
+   the packs' test data (the two pinned-capture tests and `definition_ids_are_pinned` pass with their fixtures
+   restored from history) and, in 16 and 16z, the format 15 tape tests. The CLI under strict SQL gives
+   byte-identical outputs in the three formats, cold and warm: the 23 Vue rules over 14 Blade, 9 Vue and 7
+   TypeScript files (their programs embedded), and 178 ruff rules over 10 Python files.
+
 ## Interim, until step 5
 
 - **What reads the image's tape through the API** in whichever format it is held: the checks a restore makes
   (`tape::validated`), the embedders' reading of the host (`embed::host`), the axes (§5), and the image's node
   counts and subtree sizes.
-- **What still copies it into nodes:** a document's records (`TapeDoc`'s `Rec`), built from it at restore,
-  through the API, in every format, for the matcher. Step 5 removes them. So nothing is measured before then: a
-  restore's copy would be counted as a read.
+- **What still copies it into nodes:** the transducer's packed batch (`PackedBatch::nodes`, the CPU and Metal
+  interpreters' node records, built from the tape in one pass), and what the residency derives for the device
+  beside a format 15 image (each node's parent, its child lists, the nodes by code). The device's half of step 5
+  replaces them.
 - **The core facts' digest** serializes a format 15 image to hash it (format 16's bytes are hashed as held).
 - **The device's kernels read format 15 only** (`facts::nearest`'s Metal solve, the matcher's Metal runs): a
   Metal run over a store of format 16 stops at the residency with the reason (`resident::header_counts`). The
