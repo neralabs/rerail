@@ -172,7 +172,7 @@ const DEVICE_UPLOAD_PER_VALUE: f64 = 2.2e-9;
 /// scan's row now costs a view's row read in place (Q36's 150–300 instructions a row), not the stored copy's 30 ns
 /// measured before (decision 0277). A run's floor holds its plans and replans (0297: about 1.2 ms a plan, loaded),
 /// not only its open and close (0.13 ms on 2026-11-09).
-const CPU_PER_WORK: f64 = 50e-9;
+pub(in crate::code_rule_dsl) const CPU_PER_WORK: f64 = 50e-9;
 const CPU_PER_SCANNED: f64 = 117e-9;
 const CPU_PER_STRATUM: f64 = 0.7e-3;
 /// CPU: a join step's index lookup, per probe (a row in) and per row out: 0297's fit of the executor's CPU.

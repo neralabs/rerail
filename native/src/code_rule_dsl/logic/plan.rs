@@ -4566,6 +4566,14 @@ impl Fx<'_> {
             .map(|line| line.split(',').filter_map(|x| { let (i, o) = x.split_once(':')?; Some((i.parse().ok()?, o.parse().ok()?)) }).collect())
             .collect())
     }
+    /// Profiled: per probe, its steps' CPU seconds since the last call, and last its head's rows made. T's extension
+    /// engine does not time its steps: none.
+    fn step_cpu(&self, name: &str) -> Result<Vec<Vec<f64>>> {
+        if !self.direct {
+            return Ok(Vec::new());
+        }
+        Ok(super::native::component::step_cpu(self.db, name)?)
+    }
     /// Each relation's live statistics, in spec order.
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
         let _span = super::profile::span(|| "engine live statistics".into());
@@ -4664,6 +4672,9 @@ struct Driving {
     /// holds the current order's alone, so a step's counts are never another order's step at the same place.
     earlier: Vec<Vec<(Vec<Step>, Vec<(u64, u64)>)>>,
     timed: Vec<f64>,
+    /// Profiled: per probe line, its current order's CPU seconds per step and last its head's rows made, over the
+    /// walks `counted` counts (both start again when a replan changes the order).
+    stepped: Vec<Vec<f64>>,
     chunk: i64,
     /// Relation/column versions and their dependent probe plans.
     replanned_at: replanning::Watch,
@@ -7701,6 +7712,7 @@ impl<'a> Run<'a, '_> {
             counted,
             earlier: Vec::new(),
             timed,
+            stepped: Vec::new(),
             chunk: 1,
             replanned_at,
             searched: Vec::new(),
@@ -7751,7 +7763,7 @@ impl<'a> Run<'a, '_> {
         let versions = Arc::clone(&self.versions);
         let pf = versions.whole(self.version);
         let fields = vs.whole(self.version);
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut walled, mut wholes } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut stepped, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut walled, mut wholes } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         // Each line's rule as the planner reads it: the seeds' orders, then the probes' (their rules fixed, their
@@ -7816,7 +7828,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, walled, wholes,
+                        explained, counted, earlier, timed, stepped, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, walled, wholes,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -7839,6 +7851,13 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Waiting(suspended!()));
             }
             let steps = self.fx().steps(&name)?;
+            if profiling {
+                for (k, line) in self.fx().step_cpu(&name)?.into_iter().enumerate() {
+                    if stepped.len() <= k { stepped.resize(k + 1, Vec::new()); }
+                    if stepped[k].len() < line.len() { stepped[k].resize(line.len(), 0.0); }
+                    for (a, b) in stepped[k].iter_mut().zip(line) { *a += b; }
+                }
+            }
             // A line that did nothing this chunk observed nothing (decision 0122: no planning work for it).
             let idle = |line: &[(i64, i64)]| line.iter().all(|&(a, b)| a == 0 && b == 0);
             for ((o, &rule), line) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).zip(&order_rules).zip(&steps) {
@@ -8060,6 +8079,8 @@ impl<'a> Run<'a, '_> {
                 let line = nseeds + k;
                 if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
                 let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
+                // Its CPU by step went with the old order (`native`'s earlier orders are shown without it).
+                if let Some(c) = stepped.get_mut(line) { c.clear(); }
                 if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(&mut probes[k].2, new), ran)); }
                 else { probes[k].2 = new; }
             }
@@ -8095,6 +8116,7 @@ impl<'a> Run<'a, '_> {
                                 } else {
                                     if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
                                     let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
+                                    if let Some(c) = stepped.get_mut(line) { c.clear(); }
                                     let slot = if seed { &mut orders[line].1 } else { &mut probes[k].2 };
                                     if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(slot, new), ran)); }
                                     else { *slot = new; }
@@ -8500,9 +8522,9 @@ impl<'a> Run<'a, '_> {
             for ((k, o), kind) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).enumerate().zip(kinds) {
                 // Each earlier order with its own counts (its time is in the current order's).
                 for (was, c) in earlier.get(k).into_iter().flatten() {
-                    super::profile::native(format!("{kind}: {}", shown(Order::new(o.b, was)).join(" , ")), c, 0.0);
+                    super::profile::native(format!("{kind}: {}", shown(Order::new(o.b, was)).join(" , ")), c, 0.0, &[]);
                 }
-                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0));
+                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0), stepped.get(k).map_or(&[][..], Vec::as_slice));
             }
             // After the native plans: they are charged to this stratum's `engine run (joins)` by the current span.
             let _record = super::profile::span(|| "profile record".into());
@@ -8518,6 +8540,7 @@ impl<'a> Run<'a, '_> {
             for (k, (kind, rule, x, took, replans)) in explained.iter().enumerate() {
                 if let Some(x) = x {
                     super::profile::planned(&key, kind, *rule, x, *took, *replans, Some(counted.get(k).unwrap_or(&empty)), None);
+                    super::profile::planned_cpu(&key, kind, x, stepped.get(k).map_or(&[][..], Vec::as_slice));
                 }
             }
         }

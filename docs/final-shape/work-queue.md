@@ -760,6 +760,30 @@ pass.
 - **Still priced under their CPU**: `attr_of` (113 ms against 20 ms priced), `rdefn` (76 against 15), `ann_root` (112
   against 57), and `fzk287` (56 against 11, unchanged by either fix: 790 rows over 18 runs, a cost per run that no
   span names yet). A per-view price needs each step's CPU, which the profile does not split by step.
+- **Each join step's CPU, profiled** (2026-11-16): a profiled walk times every step it enters and leaves with the
+  processor's tick counter, scaled to the walk's thread CPU (`setfix::StepClock`), the source's lookups in the step
+  that made them. The explain shows each step's CPU and its ns a row in, and the report and `sources.tsv` sum them by
+  the relation a step reads, its access and source. On the hogql run the steps hold 89% of the native plans' CPU; the
+  rest is the probes' setup outside the walk. A view lookup on the CPU binding (load 60–67, so read the ratios, not
+  the times), in units of 50 ns:
+
+  | Relation, access | ns a row in | units |
+  |---|---|---|
+  | `within` by `n` | 8,785 (994 a row out) | 176 |
+  | `rr_nearest_scope` by `n`, `docof` by `n`, `col` by `n` | 1,200–1,360 | 24–27 |
+  | `rr_nearest_lscope` by `n` | 985 | 20 |
+  | `field` by `(p, f)`, `text` by `n` | 500–690 | 10–14 |
+  | `kind` by `c0`, `line` by `n`, `node` by `n` | 220–350 | 4–7 |
+  | a derived relation's membership or anti-join | 60–220 | 1–4 |
+
+  So a view's lookup costs 4 to 27 units where placement prices it at 1, and `within`'s at 176. The next step is
+  placement's price per relation from these, or cheaper reads of `within`, `rr_nearest_scope`, `docof` and `col`.
+- **The engine's steps were not the plan's** (found by the above, fixed 2026-11-16): a literal can make several
+  engine steps (`$k = @sub(@strlen($dots), 1)` makes two; a head's computed term makes more), and the engine's
+  counts were zipped against the plan's steps by place. From such a literal on, every step's counts were its
+  neighbour's: in the explain, in the observed fanouts the planner replans by (`observe`), and in the histograms of
+  0203 (`step_histograms`). `rel_base`'s `docof` lookup showed as its filter's 170 µs a row. The spec now says which
+  plan step made each of its items (`JoinSpec::from`), and the engine reports counts, CPU and histograms by plan step.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
@@ -823,6 +847,27 @@ pass.
 - **Whose**: the planner's statistics: the containment of a lookup after a `nearest` relation, and a lookup on two
   derived columns (0299's line of work).
 - **Done when**: these strata's planned work is within 2× of their work.
+
+### Q46. Under load, a Metal run loses findings (Native-and-GPU-strata's)
+
+- **Found** (2026-11-16, the light run over PostHog's `posthog/hogql`, cold, `RERAIL_DEVICE=metal`, at load 65–85):
+  1,629 findings in 6 runs, but 1,562, 1,626, 1,432, 1,432, 1,426 and 1,432 in the others, with the engines of
+  0da96155f and before as with this branch's latest. Every lost finding is `probe-len`'s, `sym_of(f,
+  "builtins.len")` (symbol resolution), in `printer/`. At load 30–60, earlier the same day, every run gave 1,629.
+  On the CPU binding at the same load: 1,629 in 3 runs of 3.
+- **Not yet tied to one stratum**: no single difference marks the bad runs. `xk_fz286_fl279_violation_3` ran on the
+  GPU in four of them but also in two good runs; the device's head rows outnumber their distinct rows in some good
+  runs and some bad ones; the matcher wave's fallback to the CPU (`BackendCapacity`) is in only two.
+- **Next**: dump `sym_of` and the relations it reads at the end of a good and a bad run, find the first relation
+  that differs, and the chunk and placement that made it.
+- **Done when**: ten loaded Metal runs give the CPU binding's findings.
+
+### Q47. `keeps::observed_selectivities_price_a_copy_that_never_ran` fails (cost-classifier's to take)
+
+- **Found** (2026-11-16, Native-and-GPU-strata): it fails at 871d6d684 (cost-classifier's merge of phased-facts),
+  and so at this branch's merge of it and after: "estimated, the copy is priced above the stored side": the copy
+  65,156 against the build's 302,500. Nothing this branch changed reaches it.
+- **Done when**: it passes, or its expectation is restated with the decision that changed it.
 
 ## Questions for the user
 
