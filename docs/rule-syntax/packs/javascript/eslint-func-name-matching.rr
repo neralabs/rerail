@@ -19,8 +19,10 @@
 .violation func_name_matching(at: node, msg: symbol) code "func-name-matching" "{msg}"
     suppress eslint "func-name-matching"
     suppress oxlint "func-name-matching"
+// `match` "always" wants equal names, "never" different ones. The test stays in the rule: a relation of names only
+// (`warn(x, g)`, as it was) has no file, and the engine then evaluates the rule across files.
 func_name_matching(at, cat(cat("Function name `", g), cat(cat("` ", w), cat(cat(" name `", x), "`.")))) :-
-    stored(at, x, g, p), warn(x, g), says(p, w).
+    stored(at, x, g, p), (!never(), x != g ; never(), x = g), says(p, w).
 
 // stored(at, x, g, p): function g is stored under name x at `at`; p = 1 for a property, 0 for a variable.
 .decl stored(at: node, x: symbol, g: symbol, p: number)
@@ -29,7 +31,8 @@ stored(v, x, g, 0) :- kind(v, "variable_declarator"), field(v, "name", n), kind(
     field(v, "value", e), named_fn(e, g).
 // foo = …, obj.foo = …, obj["foo"] += …; not obj[k] = …, and not module.exports unless asked.
 stored(a, x, g, 0) :- assignment(a, l, e), kind(l, "identifier"), text(l, x), named_fn(e, g).
-stored(a, x, g, 1) :- assignment(a, l, e), static_prop(l, _, x), identifier_name(x), named_fn(e, g),
+stored(a, x, g, 1) :- assignment(a, l, e), static_prop(l, _, x), match("[\\p{ID_Start}$_][\\p{ID_Continue}$\\x{200C}\\x{200D}]*", x),
+    !reserved(x), named_fn(e, g),
     !computed_nonliteral(l), (option("includeCommonJSModuleExports", "true") ; !module_exports(l)).
 // ESLint names a computed key only when it is a literal: obj["foo"], not obj[`foo`].
 .decl computed_nonliteral(l: node)
@@ -51,21 +54,15 @@ assignment(a, l, e) :- (kind(a, "assignment_expression") ; kind(a, "augmented_as
 module_exports(l) :- static_prop(l, o, "exports"), kind(o, "identifier"), text(o, "module").
 // property(p, x): an object property or class field named by an identifier, or by a string that could be one,
 // computed or not: ({ "foo": … }), ({ ["foo"]: … }).
+// "Could be one" is esutils' ES6 identifier test, reserved words out: an ID_Start character, `$` or `_`, then
+// ID_Continue characters, `$`, ZWNJ or ZWJ. 'ᢅ' is one (ID_Start), '❤' is not. The test is written where the name
+// is bound (here and in stored): a relation of names only has no file (see func_name_matching).
 .decl property(p: node, x: symbol)
 property(p, x) :- (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "public_field_definition")),
     holder_key(p, k), kind(k, "property_identifier"), text(k, x).
 property(p, x) :- (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "public_field_definition")),
-    estree_key(p, k), kind(k, "string"), value(k, x), identifier_name(x).
-// identifier_name(x): x could be written as a plain identifier (esutils' ES6 test, reserved words out): an ID_Start
-// character, `$` or `_`, then ID_Continue characters, `$`, ZWNJ or ZWJ. 'ᢅ' is one (ID_Start), '❤' is not.
-.decl identifier_name(x: symbol)
-identifier_name(x) :- (stored_name(x) ; property_key_name(x)),
-    match("[\\p{ID_Start}$_][\\p{ID_Continue}$\\x{200C}\\x{200D}]*", x), !reserved(x).
-.decl stored_name(x: symbol)
-stored_name(x) :- assignment(_, l, _), static_prop(l, _, x).
-.decl property_key_name(x: symbol)
-property_key_name(x) :- estree_key(p, k), kind(k, "string"), value(k, x),
-    (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "public_field_definition")).
+    estree_key(p, k), kind(k, "string"), value(k, x), match("[\\p{ID_Start}$_][\\p{ID_Continue}$\\x{200C}\\x{200D}]*", x),
+    !reserved(x).
 .decl reserved(x: symbol)
 reserved("break"). reserved("case"). reserved("catch"). reserved("class"). reserved("const"). reserved("continue").
 reserved("debugger"). reserved("default"). reserved("delete"). reserved("do"). reserved("else"). reserved("export").
@@ -91,10 +88,7 @@ descriptor_name(p, x) :- described(p), child(o, p, _), descriptor_call(o, c, "de
 descriptor_name(p, x) :- described(p), child(o, p, _), descriptor_call(o, _, "keyed"), field(q, "value", o),
     field(q, "key", k), kind(k, "property_identifier"), text(k, x).
 
-// warn(x, g): `match` "always" wants equal names, "never" different ones.
-.decl warn(x: symbol, g: symbol)
-warn(x, g) :- stored(_, x, g, _), !never(), x != g.
-warn(x, x) :- stored(_, x, x, _), never().
+// never(): the `match` option is "never".
 .decl never()
 never() :- (option("match", "never") ; option("option", "never")).
 .decl says(p: number, w: symbol)
