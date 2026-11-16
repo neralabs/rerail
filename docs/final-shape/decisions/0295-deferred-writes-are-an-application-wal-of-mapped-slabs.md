@@ -45,18 +45,30 @@ mapping (`MAP_SHARED`) in the store's WAL directory, not anonymous memory. Every
 - blocks are made in it by `lease_block` (a `deferrable` variant), grow by `grow_block`, and are frozen as any block;
 - while it is open it counts in the one budget, as any live lease.
 
-It differs in one thing, measured (§7): **the GPU never writes a deferrable slab.** A kernel's output is written to
-an anonymous pooled slab, as today, and the host copies the frozen range into the deferrable slab at the wave's end
-(one `memcpy`, about 0.1 s a GiB on one thread, split across threads for large ranges). The GPU may read a
-deferrable slab through a no-copy wrap; reading is not affected.
+The GPU writes it through a no-copy wrap, as any slab. What the OS does with pages a kernel wrote (§7) sets how a
+slab is given back:
 
-At a wave's end each deferrable slab the wave wrote is frozen (truncated to its length, its header written last)
-and **released to the OS**: it leaves the budget, and the mapping goes to the store's writer thread. Dirty pages of a
-file mapping are not charged to the process (`phys_footprint`, measured §7), so the release is the hand-off; the
-OS writes them back and drops them under pressure. No `msync` and no `munmap` on the wave's thread: on macOS both
-write the dirty pages back before they return (§7). The writer unmaps a segment after archiving it. Nothing is
-`fsync`ed: a segment that did not reach the disk whole does not check when read, and its wave is made again
-(0024 §5).
+- A kernel's writes are marked dirty when the driver wires the pages for the device, not by the writes. While the
+  driver holds them wired, no writeback takes them, and it holds them until the process **unmaps the range**: not
+  when the buffer is released or its deallocator runs.
+- Only an `msync` of the range writes them back once unwired; a `sync`, the OS's periodic flush and the process's
+  exit do not.
+
+So at a wave's end, once the wave's command buffers have completed:
+
+1. **The wave's thread** drops the slab's wrap, writes the block's length, and hands the slab to the store's writer
+   thread. It leaves the budget. It does not `msync` or `munmap` (on macOS both wait for the host's dirty pages to be
+   written, §7). Readers in the process keep reading it in place (0260 §8.5).
+2. **The writer** `msync`s the slab (`MS_ASYNC`: the host's dirty pages), unmaps it once its readers let go (the
+   driver lets go of the GPU's pages; 0.1 ms, nothing is written then), maps the file again read-only, and
+   `msync`s it with `MS_SYNC` (the GPU's pages; the writer waits, no one else does). Then it writes the header's
+   state, frozen, last: a segment whose state says frozen has every page written back before it.
+3. Readers and the archive read the read-only mapping. Dirty and written-back pages of a file mapping are not
+   charged to the process (`phys_footprint`, §7); the OS drops them under pressure.
+
+Nothing is `fsync`ed. A segment whose header does not say frozen (the process ended first) is not trusted: it is
+removed, and its wave is made again (0024 §5). The state written last is what makes the GPU's pages safe, since
+nothing else would write them back.
 
 The pool keeps archived segments' files as idle buffers of their class, as it keeps idle anonymous slabs, so a new
 wave's lease reuses a file whose pages may still be cached instead of making one.
@@ -142,9 +154,19 @@ sparse, so blocks on disk are bytes written back). M5 Max, macOS 26.4, under loa
 | GPU, wrap released, host touch | yes | 100% | at 1 GiB all; at 64 and 256 MiB none | as host / as GPU | |
 
 Neither releasing the wrap, an autorelease pool around the dispatch, nor the host touching each page while the wrap
-lives made the GPU's writes reach the disk. Touching after the release did at 1 GiB only: when Metal lets go of the
-pages is not the engine's to know. A page the OS takes as clean is dropped under pressure, and a later read gets the
-file's old bytes, so GPU writes through a wrap of file pages could be lost. Hence §1's copy.
+lives made the GPU's writes reach the disk. Touching after the release did at 1 GiB only. The deallocator of the
+wrap (`DEALLOC=1`) runs at once (0.0 ms), and still no page is written back. After the process ended, a `sync`
+left the files at 0 MiB on disk with their bytes in the cache; a new process's read-only map and `msync` then wrote
+them back (64 and 256 MiB), with no store to any page.
+
+In the process: **unmapping the range, then mapping the file again and `msync`ing it** (`REMSYNC=1`) wrote back every
+page the GPU wrote, 64 MiB to 1 GiB, with or without the wrap released or a deallocator; the unmap took 0.1 ms. §1's
+protocol is this.
+
+From XNU's source: a wire for a device to write (`vm_object_iopl_request` without `UPL_COPYOUT_FROM`) marks each
+page dirty; a pageout (`vm_object_upl_request` with `UPL_COPYOUT_FROM`) skips wired pages. So the pages are dirty
+from the start and cannot be written while wired, and the GPU driver's wire lasts as long as the range is mapped.
+A host touch adds nothing (a load does not set the modified bit, and the page is dirty already).
 
 A bounce buffer (`PWRITE=1`): the block is anonymous, filled by the kernel or the host, frozen, and written to the
 file by `pwrite`. Every size reached the disk whole (64 MiB to 1 GiB, all pages clean 1–24 ms after the check), the
@@ -183,9 +205,9 @@ wrap, anonymous or file-backed, so the pool's own budget is what counts those.
 
 ## Path
 
-1. **Measured** (§7): the GPU does not write file pages; the release hands the mapping to the writer.
-2. **The tier**: deferrable leases in the pool, the host copy of GPU output at freeze, release at a wave's end to
-   the writer thread, the files reused as idle buffers, `blocks::journal` as its first user.
+1. **Measured** (§7): the GPU's writes to file pages are written back once the range is unmapped and `msync`ed.
+2. **The tier**: deferrable leases in the pool, §1's hand-off and the writer's unmap, remap and `msync`, the state
+   written last, the files reused as idle buffers, `blocks::journal` as its first user.
 3. **Outputs on blocks** (0266 path step 1), 0239's tests unchanged.
 4. **The memo's entries in segments**: 0240's rows found by the archive, the pack retired.
 5. **Frames** (the largest writes), then tapes and sources; 0259's guard (no `write_back` queues a closure).

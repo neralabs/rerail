@@ -3,7 +3,10 @@
 //! from the file equal? And what does the process's footprint (`phys_footprint`, what the OS charges it) count of
 //! those pages: while mapped and dirty, and once unmapped?
 //!
-//! For comparison, the same with an anonymous block (pages that only swap can take away).
+//! For comparison, the same with an anonymous block (pages that only swap can take away), and the switches that
+//! found 0295 §1's protocol: `REMSYNC=1` (the range unmapped, the file mapped again and `msync`ed: the GPU's pages
+//! written back), `DEALLOC=1` (a wrap with a deallocator), `PWRITE=1` (a bounce buffer), `TOUCH`, `KEEP`, `MSYNC`,
+//! `RELEASE`, `POOL`, `WAIT`.
 //!
 //! ```text
 //! cargo run -p rerail-blocks --profile profiling --example deferrable -- DIR
@@ -32,6 +35,9 @@ fn main() {
     let touch = std::env::var("TOUCH").is_ok_and(|v| v == "1");
     let touch_after = std::env::var("TOUCH_AFTER").is_ok_and(|v| v == "1");
     let pwrite = std::env::var("PWRITE").is_ok_and(|v| v == "1");
+    let remsync = std::env::var("REMSYNC").is_ok_and(|v| v == "1");
+    let dealloc = std::env::var("DEALLOC").is_ok_and(|v| v == "1");
+    let keep = std::env::var("KEEP").is_ok_and(|v| v == "1");
     let wait_s: u64 = std::env::var("WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
     let pool = std::env::var("POOL").map_or(true, |v| v != "0");
     println!("msync {msync}, wrap released before freeze {release}, dispatch in an autorelease pool {pool}, pages touched by the host {touch}");
@@ -47,8 +53,8 @@ fn main() {
     let expect = |i: u32, seed: u32| i.wrapping_mul(2654435761) ^ seed;
 
     println!(
-        "{:>6} {:>5} {:>4} {:>8} {:>11} {:>10} {:>9} {:>9} {:>11} {:>9} {:>11} {:>6} {:>6} {:>30} {:>10}",
-        "MiB", "kind", "by", "fill ms", "fill fp/rss", "freeze ms", "msync ms", "unmap ms", "unmap fp/rss", "check ms", "check fp/rss", "equal", "dirty", "written back", "pwrite ms"
+        "{:>6} {:>5} {:>4} {:>8} {:>11} {:>10} {:>9} {:>9} {:>11} {:>9} {:>11} {:>6} {:>6} {:>30} {:>10} {:>9}",
+        "MiB", "kind", "by", "fill ms", "fill fp/rss", "freeze ms", "msync ms", "unmap ms", "unmap fp/rss", "check ms", "check fp/rss", "equal", "dirty", "written back", "pwrite ms", "freed ms"
     );
     println!("(fp/rss: MiB more than before the block was made: phys_footprint / resident size)");
     // Warm the pipeline and the driver once, so the first row does not carry their memory.
@@ -71,7 +77,7 @@ fn main() {
         for (file, gpu) in if pwrite { vec![(false, true), (false, false)] } else { vec![(true, true), (true, false)] } {
             let seed = 0x9e37_79b9u32 ^ mib as u32;
             let len = mib << 20;
-            let path = dir.join(format!("seg-{mib}.blk"));
+            let path = dir.join(format!("seg-{mib}-{}.blk", if gpu { "gpu" } else { "cpu" }));
             let f0 = footprint();
             let b = if file { Block::file(&path, kind::JOURNAL, len + (1 << 16)).unwrap() } else { Block::anon(kind::JOURNAL, len + (1 << 16)) };
             let off = b.alloc(len, 64);
@@ -83,8 +89,20 @@ fn main() {
                     unsafe { *p.add(i as usize) = expect(i, seed) };
                 }
             }
-            // The wrap covers the used extent, so allocate first, then bind at the range's offset.
-            let buf = b.gpu_buffer(&device);
+            // The wrap covers the used extent, so allocate first, then bind at the range's offset. DEALLOC=1: the wrap is
+            // made here with a deallocator, which Metal calls once it is done with the memory.
+            let freed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let buf = if dealloc {
+                let f = freed.clone();
+                let d = block::ConcreteBlock::new(move |_p: *const std::ffi::c_void, _n: u64| {
+                    f.store(true, std::sync::atomic::Ordering::Release);
+                })
+                .copy();
+                let wrap_len = b.used().div_ceil(16384) * 16384;
+                device.new_buffer_with_bytes_no_copy(b.base_ptr().cast(), wrap_len as u64, MTLResourceOptions::StorageModeShared, Some(&d))
+            } else {
+                b.gpu_buffer(&device)
+            };
             // The command buffer is autoreleased, and it retains the buffers it binds: without a pool around it, the
             // wrap (and the pages it holds) outlives every handle the block lets go of.
             if gpu && pool {
@@ -137,6 +155,15 @@ fn main() {
             if release {
                 b.release_gpu_buffer();
             }
+            // With a deallocator: wait (5 s at most) until Metal has let go of the memory.
+            let mut freed_ms = String::from("-");
+            if dealloc && gpu {
+                let w = Instant::now();
+                while !freed.load(std::sync::atomic::Ordering::Acquire) && w.elapsed().as_secs() < 5 {
+                    std::thread::sleep(std::time::Duration::from_micros(200));
+                }
+                freed_ms = if freed.load(std::sync::atomic::Ordering::Acquire) { format!("{:.1}", ms(w)) } else { "never".into() };
+            }
             // TOUCH_AFTER=1: the touch is made once the wrap is gone.
             if gpu && touch && touch_after {
                 let p = b.ptr::<u8>(off & !16383);
@@ -187,6 +214,10 @@ fn main() {
                     let mut v = vec![0 as libc::c_char; pages];
                     let w = Instant::now();
                     loop {
+                        // REMSYNC=1: the fresh mapping (the first was unmapped) is msync'd each round.
+                        if remsync {
+                            unsafe { libc::msync(back.base_ptr().cast(), back.used(), libc::MS_ASYNC) };
+                        }
                         let r = unsafe { libc::mincore(back.base_ptr() as *const libc::c_void, back.used(), v.as_mut_ptr()) };
                         assert_eq!(r, 0, "mincore");
                         let left = v.iter().filter(|&&c| c as i32 & (libc::MINCORE_MODIFIED | libc::MINCORE_MODIFIED_OTHER) != 0).count();
@@ -203,14 +234,17 @@ fn main() {
             let check = ms(t);
             let f3 = footprint();
             println!(
-                "{mib:>6} {:>5} {:>4} {fill:>8.1} {:>11} {freeze:>10.1} {sync:>9.1} {unmap:>9.1} {:>11} {check:>9.1} {:>11} {equal:>6} {dirty:>6} {clean:>30} {pw:>10}",
+                "{mib:>6} {:>5} {:>4} {fill:>8.1} {:>11} {freeze:>10.1} {sync:>9.1} {unmap:>9.1} {:>11} {check:>9.1} {:>11} {equal:>6} {dirty:>6} {clean:>30} {pw:>10} {freed_ms:>9}",
                 if file { "file" } else { "anon" },
                 if gpu { "gpu" } else { "cpu" },
                 mb(f1, f0),
                 mb(f2, f0),
                 mb(f3, f0),
             );
-            let _ = std::fs::remove_file(&path);
+            // KEEP=1: the files stay, for a look at what reached the disk after the process ends.
+            if !keep {
+                let _ = std::fs::remove_file(&path);
+            }
         }
     }
 }

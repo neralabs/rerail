@@ -151,9 +151,9 @@ impl Block {
         b
     }
 
-    /// Lets go of the no-copy wrap `gpu_buffer` kept; the device must be done with it. A file block's pages that a
-    /// kernel wrote through a wrap are not written back by the OS (decision 0295, measured by `examples/deferrable`),
-    /// with or without this, so the GPU never writes a file block.
+    /// Lets go of the no-copy wrap `gpu_buffer` kept; the device must be done with it. It does not let the OS write
+    /// back a file block's pages a kernel wrote: the driver holds them wired until the range is unmapped (decision
+    /// 0295 §1 and §7, measured by `examples/deferrable`).
     #[cfg(target_os = "macos")]
     pub fn release_gpu_buffer(&self) {
         self.gpu.lock().unwrap().take();
