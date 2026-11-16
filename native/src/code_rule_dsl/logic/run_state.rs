@@ -191,6 +191,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/content_store/atoms/map.rs", "MAPPED", Call, "a write in progress whose symbols are mapped (`atoms::map::mapped`)"),
     ("src/content_store/compression.rs", "DECODERS", Thread, "this thread's codecs"),
     ("src/content_store/compression.rs", "DICT_ENCODERS", Thread, "this thread's codecs"),
+    ("src/content_store/compression.rs", "ENCODED", Thread, "the bytes of frames this thread made, read around a writer's job"),
     ("src/content_store/compression.rs", "ENCODER", Thread, "this thread's codecs"),
     ("src/content_store/connection.rs", "ATTEMPT_WAITED", Thread, "this thread's SQLite connections and their waits"),
     ("src/content_store/connection.rs", "BATCH", Thread, "this thread's SQLite connections and their waits"),

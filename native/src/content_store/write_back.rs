@@ -126,8 +126,9 @@ struct State {
     batches: usize,
     /// Whether the writer holds a batch's transaction open now.
     open: bool,
-    /// By what a job writes: jobs queued, their bytes, and the writer's CPU running them.
-    by_what: HashMap<&'static str, (usize, usize, f64)>,
+    /// By what a job writes: jobs queued, the bytes they hold until written, the writer's CPU running them, and the
+    /// bytes of the frames they encoded (`compression::encoded_here`; rows not framed are not in it).
+    by_what: HashMap<&'static str, (usize, usize, f64, usize)>,
     /// The most bytes queued at once, and the queue's back-pressure: how often it held a producer, and how long.
     peak: usize,
     held: (usize, f64),
@@ -260,12 +261,14 @@ pub fn hold(path: &Path) -> Hold {
     Hold(path.to_path_buf(), register(path))
 }
 
-/// Each kind of job's count, bytes and CPU on the writer's thread, in this process (the profile's write-back).
-static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64)>>> = std::sync::LazyLock::new(Default::default);
+/// Each kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it
+/// encoded, in this process (the profile's write-back).
+static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64, usize)>>> = std::sync::LazyLock::new(Default::default);
 
-/// Each kind of job written so far in this process: count, bytes and the writer's CPU, costliest first.
-pub fn written_by_kind() -> Vec<(&'static str, usize, usize, f64)> {
-    let mut v: Vec<_> = BY_KIND.lock().expect("the writer's account").iter().map(|(k, (n, b, c))| (*k, *n, *b, *c)).collect();
+/// Each kind of job written so far in this process: count, bytes held, the writer's CPU and the bytes of the frames
+/// it encoded, costliest first.
+pub fn written_by_kind() -> Vec<(&'static str, usize, usize, f64, usize)> {
+    let mut v: Vec<_> = BY_KIND.lock().expect("the writer's account").iter().map(|(k, (n, b, c, e))| (*k, *n, *b, *c, *e)).collect();
     v.sort_by(|a, b| b.3.total_cmp(&a.3));
     v
 }
@@ -343,13 +346,14 @@ impl ContentStore {
         let mut job: Job = Box::new(move |store| {
             // In the writer's transaction (`warm_scope`): whether its commit is one a warm run may make.
             super::hazards::warm_job(what);
-            let t0 = thread_cpu();
+            let (t0, e0) = (thread_cpu(), super::compression::encoded_here());
             let out = retried(store, what, &mut job);
             let mut by = BY_KIND.lock().expect("the writer's account");
             let e = by.entry(what).or_default();
             e.0 += 1;
             e.1 += bytes;
             e.2 += thread_cpu() - t0;
+            e.3 += super::compression::encoded_here() - e0;
             out
         });
         {
@@ -367,7 +371,7 @@ impl ContentStore {
             // The first hold says what fills the queue (a strict run ends at it).
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if t.is_some() && !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c))| (*w, *j, *b, *c)).collect();
+                let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c, _))| (*w, *j, *b, *c)).collect();
                 rows.sort_by(|a, b| b.2.cmp(&a.2));
                 let rows: Vec<String> = rows.iter().map(|(w, j, b, c)| format!("{w}: {j} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect();
                 eprintln!("rerail: the writer's queue is full ({:.1} MB in {} jobs; {what} brings {:.1} MB): queued so far, by what: {}", s.bytes as f64 / 1048576.0, s.jobs, bytes as f64 / 1048576.0, rows.join("; "));
@@ -445,7 +449,7 @@ impl ContentStore {
                 loop {
                     // The queue closed (the last handle's drop): the checkpointer ends with the writer (below).
                     let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
-                    let before = thread_cpu();
+                    let (before, encoded) = (thread_cpu(), super::compression::encoded_here());
                     if first.4 != Run::Batched {
                         let (mut job, bytes, keys, holder, run, what) = first;
                         *store.holder.lock() = holder;
@@ -453,7 +457,11 @@ impl ContentStore {
                         let _scope = super::hazards::warm_scope();
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                             .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
-                        w.shared.state.lock().expect("the writer's state").by_what.entry(what).or_default().2 += thread_cpu() - before;
+                        let mut s = w.shared.state.lock().expect("the writer's state");
+                        let e = s.by_what.entry(what).or_default();
+                        e.2 += thread_cpu() - before;
+                        e.3 += super::compression::encoded_here() - encoded;
+                        drop(s);
                         let _ = told.send(());
                         finish(&w.shared, bytes, &keys, outcome, thread_cpu() - before, run != Run::Commit);
                         continue;
@@ -468,13 +476,17 @@ impl ContentStore {
                             for (job, b, _, holder, _, what) in &mut batch[outcomes.len()..] {
                                 *store.holder.lock() = holder.clone();
                                 bytes += *b;
-                                let c0 = thread_cpu();
+                                let (c0, e0) = (thread_cpu(), super::compression::encoded_here());
                                 let _span = super::hazards::span(*what);
                                 outcomes.push(
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                                         .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
                                 );
-                                w.shared.state.lock().expect("the writer's state").by_what.entry(*what).or_default().2 += thread_cpu() - c0;
+                                let mut s = w.shared.state.lock().expect("the writer's state");
+                                let e = s.by_what.entry(*what).or_default();
+                                e.2 += thread_cpu() - c0;
+                                e.3 += super::compression::encoded_here() - e0;
+                                drop(s);
                             }
                             // A batch run again (rolled back below) whose first run took the job after it ends there
                             // too: taking another would drop that one, and its count with it (`written` then waits for
@@ -607,12 +619,12 @@ impl ContentStore {
         Written { jobs: s.done.0, bytes: s.done.1, cpu: s.done.2, batches: s.batches }
     }
 
-    /// The writer's work by what each job writes, `(what, jobs, bytes, writer CPU)`, costliest first; the most bytes
-    /// queued at once; and the back-pressure's holds of a producer, `(count, seconds)`.
-    pub fn written_by_what(&self) -> (Vec<(&'static str, usize, usize, f64)>, usize, (usize, f64)) {
+    /// The writer's work by what each job writes, `(what, jobs, bytes held, writer CPU, bytes of frames encoded)`,
+    /// costliest first; the most bytes queued at once; and the back-pressure's holds of a producer, `(count, seconds)`.
+    pub fn written_by_what(&self) -> (Vec<(&'static str, usize, usize, f64, usize)>, usize, (usize, f64)) {
         let Some(w) = self.writer() else { return (Vec::new(), 0, (0, 0.0)) };
         let s = w.shared.state.lock().expect("the writer's state");
-        let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c))| (*w, *j, *b, *c)).collect();
+        let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c, e))| (*w, *j, *b, *c, *e)).collect();
         rows.sort_by(|a, b| b.3.total_cmp(&a.3));
         (rows, s.peak, s.held)
     }
