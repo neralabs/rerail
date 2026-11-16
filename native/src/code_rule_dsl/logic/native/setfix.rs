@@ -4675,7 +4675,10 @@ fn view(conn: impl Scoped, table: &str, cols: &str) -> Option<View> {
         stored_table(conn.sql().ok()?, schema, name, &need)?
     };
     let src=src.frozen().unwrap_or(src);
-    let names = src.columns();
+    // Named as its virtual table names them (`vtab::bind`): a derived relation named like a base one (an export such
+    // as `value`, answered on request since 0174) by the base names, so the select's columns are found here, read in
+    // place, and not by a statement (SQL inside the waves, decision 0104).
+    let names: Vec<String> = src.columns().into_iter().map(|c| crate::code_rule_dsl::facts::core::input_column_name(name, &c).map_or(c, str::to_owned)).collect();
     let column = |c: &str| names.iter().position(|n| n == c.trim());
     // `SELECT 1`: whether rows are there (a gate's `done_N(0)`), no columns read.
     let cols: Vec<usize> = if cols.trim() == "1" { Vec::new() } else { cols.split(',').map(column).collect::<Option<_>>()? };

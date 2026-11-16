@@ -26,3 +26,20 @@ fn unquote_reads_back_an_identifier() {
         assert_eq!(unquote(&ident(name)), name, "{}", ident(name));
     }
 }
+
+/// An export named like a base relation is held with positional columns (`c0`, `c1`) and read by the base names
+/// (`value(n, v)`), as its virtual table names them (`core::input_column_name`). Since 0174 answers `value` on
+/// request, it reaches the cross-file part as an export, and `view` looked for `n` among `c0, c1`: the cross part read
+/// it with `SELECT n, v FROM main.value`, which strict mode refuses inside the waves (0104), so a cold run aborted
+/// and the next run had nothing kept to be warm over.
+#[test]
+fn an_export_named_like_a_base_relation_is_read_in_place_by_the_base_names() {
+    let db = Connection::open_in_memory().unwrap();
+    let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![3, 9]), Some(vec![11, 12])]);
+    modules.bind(&db, "value", source).unwrap();
+    let all = view(&db, "main.value", "n, v").expect("read in place");
+    assert_eq!((all.src.len(), all.cols.as_slice()), (2, &[0usize, 1][..]));
+    let some = view(&db, "main.value WHERE n = 9", "v").expect("read in place, filtered");
+    assert_eq!(some.ids.as_deref(), Some(&[1u32][..]));
+}
