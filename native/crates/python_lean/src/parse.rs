@@ -894,11 +894,10 @@ impl<'a> P<'a> {
             match self.toks[k].kind {
                 T::LParen | T::LBracket if after(&[T::Name, T::RParen, T::RBracket, T::StrEnd]) => open.push(CALL),
                 T::LParen | T::LBracket | T::LBrace => open.push(0),
-                T::RParen | T::RBracket | T::RBrace => {
-                    if open.pop() == Some(SPLAT | COMMA) {
+                T::RParen | T::RBracket | T::RBrace
+                    if open.pop() == Some(SPLAT | COMMA) => {
                         return true;
                     }
-                }
                 T::Star if after(&[T::LParen, T::LBracket, T::Comma]) => {
                     if let Some(b) = open.last_mut().filter(|b| **b & CALL == 0) {
                         *b |= SPLAT;

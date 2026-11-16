@@ -837,7 +837,7 @@ impl<'a> P<'a> {
                 Some(e) => return Err(Refusal::Parse(e.start as u32)),
                 None => {
                     let Some((lexed, end)) = self.line_token() else { return self.refuse() };
-                    if !(first && lexed == Lexed::Space) && !inline {
+                    if !(inline || (first && lexed == Lexed::Space)) {
                         self.open(K::Inline, f::HEADING_CONTENT, self.at);
                         inline = true;
                     }

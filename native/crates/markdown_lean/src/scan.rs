@@ -1111,12 +1111,11 @@ impl<'s> Scanner<'s> {
                 return true;
             }
             match self.la() {
-                b'\r' | b'\n' => {
-                    if has(valid, BLANK_LINE_START) {
+                b'\r' | b'\n'
+                    if has(valid, BLANK_LINE_START) => {
                         self.result = BLANK_LINE_START;
                         return true;
                     }
-                }
                 b'`' => return self.parse_fenced_code_block(b'`', valid),
                 b'~' => return self.parse_fenced_code_block(b'~', valid),
                 b'*' => return self.parse_star(valid),

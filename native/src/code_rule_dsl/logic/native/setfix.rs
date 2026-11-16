@@ -1012,7 +1012,7 @@ impl Fresh {
                 out.extend_from_slice(data.row(s as u32, k));
                 (s, kept) = (s + 1, kept + 1);
             }
-            if !h && !(s < settled && cmp(s as u32, q).is_eq()) {
+            if !(h || (s < settled && cmp(s as u32, q).is_eq())) {
                 out.extend_from_slice(data.row(q, k));
                 kept += 1;
             }

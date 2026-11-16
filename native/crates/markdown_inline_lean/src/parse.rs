@@ -877,11 +877,10 @@ impl<'a> P<'a> {
         let parent = if n >= 2 { Some(v.f[n - 2]) } else { None };
         let (s, e) = (t.s, t.e);
         match t.t {
-            T::Eof => {
-                if n == 1 && any {
+            T::Eof
+                if n == 1 && any => {
                     self.done.push(v.clone());
                 }
-            }
             T::Word | T::Digits | T::Ws | T::Nl | T::X(Ext::Unclosed) => {
                 let mut w = Self::next(v, t);
                 self.elem(&mut w, s);
@@ -935,8 +934,8 @@ impl<'a> P<'a> {
                 w.last = x::LTP;
                 out.push(w);
             }
-            T::X(Ext::Close(d)) => {
-                if any && matches!(parent, Some(F::Emph { d: pd, .. }) if pd == d) {
+            T::X(Ext::Close(d))
+                if any && matches!(parent, Some(F::Emph { d: pd, .. }) if pd == d) => {
                     let mut w = Self::next(v, t);
                     w.f.pop();
                     self.leaf(&mut w, K::EmphasisDelimiter, s, e);
@@ -951,7 +950,6 @@ impl<'a> P<'a> {
                     }
                     out.push(w);
                 }
-            }
             T::X(Ext::CodeStart) | T::X(Ext::LatexStart) => {
                 let latex = t.t == T::X(Ext::LatexStart);
                 let mut w = Self::next(v, t);
@@ -997,15 +995,14 @@ impl<'a> P<'a> {
                 *Self::top(&mut w) = F::After { image };
                 out.push(w);
             }
-            T::P(b']') => {
-                if !no_link {
+            T::P(b']')
+                if !no_link => {
                     let mut w = Self::next(v, t);
                     self.elem(&mut w, s);
                     self.leaf(&mut w, K::TRBracket, s, e);
                     w.last = x::LTP;
                     out.push(w);
                 }
-            }
             T::P(c @ (b'!' | b'<')) => {
                 // Text, or an image's or a tag's start.
                 let mut w = Self::next(v, t);
@@ -1123,14 +1120,13 @@ impl<'a> P<'a> {
                     w.score += 10;
                     self.tail_end(w, t, image, out);
                 }
-                T::Ws | T::Nl => {
-                    if depth == 0 {
+                T::Ws | T::Nl
+                    if depth == 0 => {
                         self.close(&mut w, K::LinkDestination, s);
                         w.score += 10;
                         set(&mut w, true, Tl::AfterDest { ws: true });
                         out.push(w);
                     }
-                }
                 T::Esc | T::Ent | T::Num | T::P(_) => {
                     let k = leaf_kind(t.t).expect("a leaf");
                     self.leaf(&mut w, k, s, e);
@@ -1160,12 +1156,11 @@ impl<'a> P<'a> {
                     out.push(w);
                 }
                 T::P(b'(') if q == b')' => {}
-                T::Nl => {
-                    if !nl {
+                T::Nl
+                    if !nl => {
                         set(&mut w, dest, Tl::Title { q, nl: true });
                         out.push(w);
                     }
-                }
                 T::Word | T::Digits | T::Ws => {
                     set(&mut w, dest, Tl::Title { q, nl: false });
                     out.push(w);

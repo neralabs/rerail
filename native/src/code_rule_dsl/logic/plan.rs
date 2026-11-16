@@ -2722,7 +2722,7 @@ impl Model {
         let mut waits = Vec::new();
         for shape in self.shapes_for(b.rel(b.head())) {
             for (i, &bi) in joins.iter().enumerate() {
-                if first == Some(bi) || !b.atom(bi).is_some_and(|a| shape_base(b.rel(a)) == shape.lit) {
+                if first == Some(bi) || b.atom(bi).is_none_or(|a| shape_base(b.rel(a)) != shape.lit) {
                     continue;
                 }
                 match &shape.wait {
@@ -7824,11 +7824,11 @@ impl<'a> Run<'a, '_> {
                 let wants_whole = |k: usize, this: &Self| {
                     let b = &line_bodies[nseeds + k];
                     let delta = b.atom(probes[k].1).map(|a| b.rel(a));
-                    !sql_probe[k]
-                        && !delta.is_some_and(small_batches)
-                        // A whole plan runs over its relation's delta, all its rows: searched again only where that
-                        // delta costs more than the search (decision 0122).
-                        && !(plan_budget() && delta.is_some_and(|a| this.model.stats.delta_rows.get(a).is_none_or(|&d| d < SEARCH_WORK)))
+                    // A whole plan runs over its relation's delta, all its rows: searched again only where that delta
+                    // costs more than the search (decision 0122).
+                    !(sql_probe[k]
+                        || delta.is_some_and(small_batches)
+                        || (plan_budget() && delta.is_some_and(|a| this.model.stats.delta_rows.get(a).is_none_or(|&d| d < SEARCH_WORK))))
                 };
                 // A round (decision 0123): the whole plans' statistics in one batch, then the plans.
                 // Searched whatever was kept (`plan_rule_live`): every deferred relation they read.
@@ -9990,7 +9990,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // relations, with the indexes they have.
     let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| f0.is_input(r)).collect();
     // A run that is not native runs SQL from its start: the connection's deferred set-up first (`vtab::setup_now`).
-    if !(atoms && !native.is_empty()) {
+    if !atoms || native.is_empty() {
         crate::code_rule_dsl::facts::vtab::setup_now(db)?;
     }
     // The maintained run's driver (decision 0117 step 3).
@@ -12044,7 +12044,7 @@ impl Readiness {
         // The pattern's bits packed in the order of the literal's variables.
         let (mut at, mut rest, mut k) = (0usize, own, 0);
         while rest != 0 {
-            let low = rest.isolate_lowest_one();
+            let low = rest & rest.wrapping_neg();
             if pattern & low != 0 {
                 at |= 1 << k;
             }

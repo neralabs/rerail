@@ -358,7 +358,6 @@ pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
             dependencies,
         );
     }
-    drop(add);
     defs.extend(frame_defs);
     if defs.iter().any(|d| d.contains("rdl_int")) {
         defs.insert(

@@ -1206,7 +1206,7 @@ impl<'a> P<'a> {
             T::LBracket => true,
             T::LBrace => !n.nl,
             // `let` then an operator is a name's (`let in x`); TypeScript's `as` and `satisfies` too.
-            T::Name => !n.nl && !(matches!(n.word, w::IN | w::INSTANCEOF) || (self.ts && matches!(n.word, w::AS | w::SATISFIES))),
+            T::Name => !(n.nl || matches!(n.word, w::IN | w::INSTANCEOF) || (self.ts && matches!(n.word, w::AS | w::SATISFIES))),
             _ => false,
         }
     }
@@ -1413,7 +1413,7 @@ impl<'a> P<'a> {
     }
 
     fn case_body(&mut self) -> R<()> {
-        while !matches!(self.peek(), T::RBrace | T::Eof) && !self.is_word(w::CASE) && !(self.is_word(w::DEFAULT) && self.peek_at(1).kind == T::Colon) {
+        while !(matches!(self.peek(), T::RBrace | T::Eof) || self.is_word(w::CASE) || (self.is_word(w::DEFAULT) && self.peek_at(1).kind == T::Colon)) {
             self.statement(slot(f::BODY, Ctx::Stmt))?;
         }
         Ok(())
@@ -2395,7 +2395,7 @@ impl<'a> P<'a> {
                     return Ok(());
                 }
                 let declares = t.kind == T::Name
-                    && (t.word == w::FUNCTION && true || t.word == w::CLASS || (t.word == w::ASYNC && self.is_word_at(1, w::FUNCTION) && !self.peek_at(1).nl));
+                    && (t.word == w::FUNCTION || t.word == w::CLASS || (t.word == w::ASYNC && self.is_word_at(1, w::FUNCTION) && !self.peek_at(1).nl));
                 if declares {
                     // `export default function () {}`: a declaration whose name is optional is
                     // the grammar's `function_expression`? tree-sitter reads a named one as a
