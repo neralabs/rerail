@@ -167,9 +167,9 @@ function isLink(path: string): boolean {
 
 /**
  * Moves the log this hook took as `taken` from the live name `path` on to `movedAside` when it is full, and gives it
- * back otherwise. A link there is one a person made at the live name between this hook's look and its take: it goes
- * back as it was and moves as `main` moves it ({@link putBackLink}), so a give-back holds only a regular file. For a
- * regular file `lstat` gives what `stat` gives, in the one call.
+ * back otherwise. A link there is one a person made at the live name between this hook's look and its take: it moves
+ * as `main` moves it ({@link moveTakenLink}), so a give-back holds only a regular file. For a regular file `lstat` gives
+ * what `stat` gives, in the one call.
  */
 function moveTaken(taken: string, path: string, movedAside: string): boolean {
   let stats: Stats;
@@ -179,7 +179,7 @@ function moveTaken(taken: string, path: string, movedAside: string): boolean {
     // Moved on by another hook, which moves it aside or gives it back.
     return false;
   }
-  if (stats.isSymbolicLink()) return putBackLink(taken, path, movedAside);
+  if (stats.isSymbolicLink()) return moveTakenLink(taken, path, movedAside);
   try {
     // No wait for a `.1` another program holds: the log goes back at once and a later hook moves it, so it stays under
     // this hook's name for the moment of one rename, not for the 2 s of retries.
@@ -196,12 +196,21 @@ function moveTaken(taken: string, path: string, movedAside: string): boolean {
 }
 
 /**
- * Puts the link a person made at the live name `path`, which this hook took as `taken`, back as it was, by one rename
- * with no retries, then moves it as `main` moves the log ({@link moveLink}). The rename replaces a log another hook
- * began at the live name in that moment. When it fails, this throws: the hook writes nothing, and the link stays under
- * the hook's name, where no hook reads or removes it ({@link removeStrandedLogs}).
+ * Moves the link a person made at the live name `path`, which this hook took as `taken`, on to `movedAside` by one
+ * rename, as `main`'s rename right after its size check moves it from the live name. A log another hook began at the
+ * free live name since stays there, and this hook writes into it. When `.1` refuses that rename (a folder there, or on
+ * Windows a `.1` another program holds), the link goes back to the live name by one rename, replacing such a log, and
+ * moves as `main` moves it, with `main`'s retries ({@link moveLink}): so it waits at the live name, where status reads
+ * it, as on `main`. When that rename back fails, this throws: the hook writes nothing, and the link stays under the
+ * hook's name, where no hook reads or removes it ({@link removeStrandedLogs}).
  */
-function putBackLink(taken: string, path: string, movedAside: string): true {
+function moveTakenLink(taken: string, path: string, movedAside: string): true {
+  try {
+    renameWithRetrySync(taken, movedAside, { retryMs: 0 });
+    return true;
+  } catch {
+    // `.1` refused it: the link goes back and moves as `main` moves it.
+  }
   renameWithRetrySync(taken, path, { retryMs: 0 });
   return moveLink(path, movedAside);
 }

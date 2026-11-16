@@ -551,9 +551,10 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
   });
 
   // A person who keeps the log elsewhere makes the live name a link to it at the moment a hook, which found the Rerail
-  // home's own log full there, takes that name, so the hook takes the link. It puts the link back as it was and moves it
-  // as `main` moves a link; with a folder at `.1` that move fails, and the hook writes nothing, as `main`'s does. Given
-  // back as a log is and written through, the link would take the hook's failure into the person's file.
+  // home's own log full there, takes that name, so the hook takes the link. It moves the link on to `.1` as `main`'s
+  // rename moves it; with a folder at `.1` that move fails, the link goes back to the live name, and the hook writes
+  // nothing, as `main`'s does. Given back as a log is and written through, the link would take the hook's failure into
+  // the person's file.
   it("puts back a link a person makes at the live name as a hook takes the log, and writes nothing through it", async context => {
     const rerailHome = await home();
     const live = join(rerailHome, HOOK_FAILURES_FILE);
@@ -572,6 +573,30 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
     expect({ opened, ...leftInPlace(rerailHome, elsewhere, text) }).toEqual({
       opened: "", live: "link", leadsTo: elsewhere, files: [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`], counted: full, leftAsItWas: true,
+    });
+  });
+
+  // As above with `.1` free, and another hook, which finds no live log while this one holds the link, begins one. The
+  // hook moves the link on to `.1` from its own name, as `main`'s rename moves it from the live name, and the log the
+  // other hook began stays, with both hooks' failures. Put back to the live name first, the link would replace that log
+  // and the other hook's failure with it, which `main`'s hook, writing after its rename, keeps.
+  it("moves a link a person makes at the live name as a hook takes the log on to .1, keeping the log another hook began", async context => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFullLog(rerailHome);
+    const { elsewhere, text, made } = await linkMadeLater(context, rerailHome, full);
+    const opened = await recordWithWrapped(rerailHome, 2, {
+      ...refusedThrough(elsewhere),
+      renameSync: `rename => (from, to) => {
+        if (from !== ${JSON.stringify(live)} || !to.endsWith(".old") || globalThis.made) return rename(from, to);
+        globalThis.made = true;
+        rename(${JSON.stringify(made)}, from);
+        rename(from, to);
+        fs.appendFileSync(from, ${lineSource(3, "began a live log")});
+      }`,
+    });
+    expect({ opened, ...afterTheMove(rerailHome), leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({
+      opened: "", ...movedAsTheLink(2), leftAsItWas: true,
     });
   });
 
