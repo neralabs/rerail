@@ -782,8 +782,14 @@ pub struct Parts {
 }
 
 pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
+    programs_over(prog, None)
+}
+
+/// `programs`, with `prog`'s version where the caller made it (the prepared program's, made once: decision 0281's
+/// path, step 4): the parts are views of it, and no other image of the program is made.
+pub fn programs_over(prog: &crate::code_rule_dsl::logic::front::Program, version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Programs {
     let (local, constants, locations, same_doc) = found(prog);
-    assemble(prog, None, local, constants, locations, same_doc)
+    assemble(prog, version, local, constants, locations, same_doc)
 }
 
 /// What `programs` splits `prog` by: its file-local relations, its relations of constants (derived in both parts),

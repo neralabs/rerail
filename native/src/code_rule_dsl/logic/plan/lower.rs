@@ -421,6 +421,14 @@ impl Tree {
             None => super::body::Placed::of_program(self.get()),
         }
     }
+    /// The version it is held beside or decoded from, where it has no maintained parts: what a reader reads in place
+    /// of the tree.
+    pub fn version(&self) -> Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+        match &self.of {
+            Some((v, None)) => Some(v),
+            _ => None,
+        }
+    }
     /// The tree, where it was given rather than decoded from a version: what a check against the version reads.
     pub fn given_tree(&self) -> Option<&Program> {
         if self.of.is_some() { None } else { self.tree.get() }
@@ -520,7 +528,8 @@ impl Lowered {
         let placed = match &self.version {
             Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()),
             Some(v) if !self.tree_maintained() => super::body::Placed::whole(v.clone()),
-            _ => return super::body::Placed::of_program(&self.program),
+            // The tree's version where it is held beside one (the prepared program's), else an image made of it.
+            _ => return self.program.placed(),
         };
         // A version made from another's is stated beside the tree until the run reads no tree (t36 item 7): in a debug
         // build (every test's), it is checked to be the tree's program, so the two statements cannot drift apart unseen.
@@ -566,7 +575,7 @@ impl Lowered {
         Ok(match &self.version {
             Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()).digest(),
             Some(v) if !self.tree_maintained() => super::body::Placed::whole(v.clone()).digest(),
-            _ => super::body::Placed::of_program(&self.program)?.digest(),
+            _ => self.program.placed()?.digest(),
         })
     }
 

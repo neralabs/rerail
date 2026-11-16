@@ -504,6 +504,13 @@ impl Stats {
     /// No statistics but the program's kindsets: the caller measures every input (`measured`, `tree`), as the
     /// typing programs' own ingestion does (`corpus::run` without T's facts, list step 29).
     pub fn empty(prog: &Program) -> Self {
+        Stats::with_kindsets(prog.kindsets.clone())
+    }
+    /// `empty`, of a program read through its fields (`Fields::kindsets`).
+    pub fn empty_of(f: &fields::Fields<'_>) -> Self {
+        Stats::with_kindsets(f.kindsets().iter().map(|(k, ks)| (f.text(*k).to_owned(), ks.iter().map(|&a| f.text(a).to_owned()).collect())).collect())
+    }
+    fn with_kindsets(kindsets: BTreeMap<String, Vec<String>>) -> Self {
         Stats {
             col: ColStats::default(),
             kfreq: Default::default(),
@@ -524,7 +531,7 @@ impl Stats {
             docs: None,
             memo: HashMap::new(),
             steps_cache: StepsCache::default(),
-            kindsets: Arc::new(prog.kindsets.clone()),
+            kindsets: Arc::new(kindsets),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         }
@@ -11666,9 +11673,11 @@ pub fn decode_kept(
     for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
         super::native::component::hold_as(db, &rel, held);
     }
-    let prog = &lowered.program;
+    // The program's inputs and declarations, read from its version.
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
-    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
+    decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
 /// The program's outputs as rows (decision 0239: symbols, kinds and fields as their text, every other value as it
