@@ -104,23 +104,20 @@ fn hasher() -> impl Hasher {
 }
 
 /// Each rule's body as the run holds it (`Body`), in program order: the run's own for a list it has read, else made
-/// now and kept. Each thread of the pool takes the map's lock once for its share of the rules, not once per rule.
+/// now and kept. The map's lock is taken once, not once per rule.
 pub(super) fn bodies_of(prog: &Program) -> Vec<Arc<Body>> {
     bodies_held(prog, kept_splits().as_deref())
 }
 
 fn bodies_held(prog: &Program, held: Option<&Held>) -> Vec<Arc<Body>> {
-    use rayon::prelude::*;
     let at = |body: &List<Literal>| (body.as_slice().as_ptr() as usize, body.len());
-    let Some(held) = held else { return prog.rules.par_iter().map(|r| Arc::new(Body::new(&r.body))).collect() };
-    let found: Vec<Option<Arc<Body>>> = prog
-        .rules
-        .par_iter()
-        .with_min_len(256)
-        .map_init(|| held.bodies.read(), |map, r| if r.body.is_empty() { None } else { map.get(&at(&r.body)).cloned() })
-        .collect();
+    let Some(held) = held else { return prog.rules.iter().map(|r| Arc::new(Body::new(&r.body))).collect() };
+    let found: Vec<Option<Arc<Body>>> = {
+        let map = held.bodies.read();
+        prog.rules.iter().map(|r| if r.body.is_empty() { None } else { map.get(&at(&r.body)).cloned() }).collect()
+    };
     let made: Vec<(usize, Arc<Body>)> = found
-        .par_iter()
+        .iter()
         .enumerate()
         .filter(|(_, b)| b.is_none())
         .map(|(i, _)| (i, Arc::new(Body::new(&prog.rules[i].body))))
@@ -151,13 +148,12 @@ fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>, bodies:
     prog.facts.keys().for_each(|k| k.hash(&mut g));
     prog.lattice.keys().for_each(|k| k.hash(&mut g));
     format!("{:?}", prog.natives).hash(&mut g);
-    // Each relation's digest on the pool's threads (a pack's program has thousands).
-    use rayon::prelude::*;
+    // Each relation's digest (a pack's program has thousands).
     let heads_new = derived
         .iter()
         .copied()
         .collect::<Vec<&str>>()
-        .par_iter()
+        .iter()
         .map(|rel| {
             let mut h = hasher();
             prog.decls.get(*rel).hash(&mut h);

@@ -51,7 +51,7 @@ fn image() -> Option<PathBuf> {
 
 /// The image whose segments hold `address`, by the loader's list of images. `dladdr` answers the same, but finds the
 /// symbol nearest the address too: a search of the 415 MB debug engine's symbols, 84 ms of a run's 350 on its main
-/// thread (decision 0260).
+/// thread (decision 0285).
 #[cfg(target_os = "macos")]
 fn loaded_from(address: usize) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStrExt;

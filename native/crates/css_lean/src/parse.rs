@@ -610,7 +610,12 @@ impl<'a> P<'a> {
             _ => {
                 let n = self.open(K::AtRule, at);
                 self.leaf(K::AtKeyword, at, e);
-                let _ = in_block;
+                if in_block && self.postcss_ahead()? {
+                    // In a block, the at-keyword may start a `postcss_statement` too, whose values
+                    // the lexer reads where a `plain_value` is longer than a query's name
+                    // (`(min-width:` is one): tree-sitter then reads no query, and errs at the `{`.
+                    return self.refuse();
+                }
                 if !matches!(self.peek()?, b';' | b'{') {
                     self.queries(K::AtRule)?;
                 }
@@ -623,6 +628,19 @@ impl<'a> P<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Whether the next word, or the word after a `(` next, is a `plain_value` longer than a name.
+    fn postcss_ahead(&mut self) -> R<bool> {
+        let mut a = self.skip()?;
+        if self.byte(a) == b'(' {
+            a += 1;
+            while is_blank(self.byte(a)) {
+                a += 1;
+            }
+        }
+        let word = self.identifier_end(a)?;
+        Ok(self.plain_value_end(a)?.is_some_and(|p| word.is_none_or(|w| p > w)))
     }
 
     fn keyframe_block_list(&mut self) -> R<()> {
@@ -1024,11 +1042,16 @@ impl<'a> P<'a> {
             loop {
                 let a = self.skip()?;
                 let c = self.byte(a);
-                let values = c.is_ascii_digit()
+                // Both a selector's name and a value may start here: the lexer takes the longer
+                // token, a `plain_value` where it goes on past the name (`cr-button:hover`, `a.b`).
+                let word = self.identifier_end(a)?;
+                let plain = self.plain_value_end(a)?;
+                let values = plain.is_some_and(|p| word.is_none_or(|w| p > w))
+                    || c.is_ascii_digit()
                     || (matches!(c, b'+' | b'-') && (self.byte(a + 1).is_ascii_digit() || self.byte(a + 1) == b'.'))
                     || (c == b'.' && self.byte(a + 1).is_ascii_digit())
                     || matches!(c, b'(' | b'!')
-                    || self.identifier_end(a)?.is_some_and(|e| self.byte(e) == b'(');
+                    || word.is_some_and(|e| self.byte(e) == b'(');
                 if values {
                     self.value()?;
                     while !matches!(self.peek()?, b',' | b')') {
@@ -1066,7 +1089,7 @@ impl<'a> P<'a> {
         }
         let o = self.skip()?;
         if self.is_word(o, b"of") {
-            self.tok(rule, K::TOf, 2)?;
+            self.stored(K::TOf, 2)?;
             self.selector()?;
         }
         self.expect(rule, b')', K::TRParen)?;
@@ -1087,7 +1110,6 @@ impl<'a> P<'a> {
             return None;
         }
         e += 1;
-        let after_n = e;
         let mut q = e;
         while is_blank(self.byte(q)) {
             q += 1;
@@ -1104,9 +1126,9 @@ impl<'a> P<'a> {
                 return Some(r);
             }
         }
-        // The regex's `\s*` after `n` is taken only with a `+` and digits after it.
-        let _ = q;
-        Some(after_n)
+        // Without a `+` and digits the group is left out, but the white space before it is the
+        // token's (`2n ` before `of` or `)`).
+        Some(q)
     }
 
     // ---- Values.
@@ -1318,10 +1340,11 @@ impl<'a> P<'a> {
         let q = self.byte(s);
         let qk = if q == b'"' { K::TDQuote } else { K::TQuote };
         let n = self.open(K::StringValue, s);
-        // The automata keep the opening quote, and the closing one only right after it (an empty
-        // string): the gap's state decides, not the kinds.
+        // The automata keep the opening quote, and the closing one only in the state right after
+        // it (no content or escape between, comments aside): the gap's state decides, not the
+        // kinds.
         self.stored(qk, 1)?;
-        let empty = self.byte(s + 1) == q;
+        let mut empty = true;
         loop {
             let a = self.at;
             match self.byte(a) {
@@ -1330,13 +1353,32 @@ impl<'a> P<'a> {
                 // extra) and the string goes on past it.
                 b'\n' => self.at = a + 1,
                 0 if a >= self.src.len() => return Err(Refusal::Parse(a as u32)),
-                b'\\' => self.escape()?,
+                b'\\' => {
+                    self.escape()?;
+                    empty = false;
+                }
                 _ => {
                     let e = self.b.string_stop(a, q);
                     if e >= self.src.len() {
                         return Err(Refusal::Parse(a as u32));
                     }
+                    // A comment (an extra) may start a token here too, and the lexer takes the
+                    // longer: one that ends past the content's end (in `"/* "}b{content:" */"`, the
+                    // next string's `*/`), the content where it ends there or before.
+                    if self.byte(a) == b'/'
+                        && self.byte(a + 1) == b'*'
+                        && let Some(c) = self.b.comment_end(a + 2)
+                        && c > e
+                    {
+                        if a >= self.seen {
+                            self.pending.push((a as u32, c as u32, false));
+                            self.seen = c;
+                        }
+                        self.at = c;
+                        continue;
+                    }
                     self.leaf(K::StringContent, a, e);
+                    empty = false;
                 }
             }
         }

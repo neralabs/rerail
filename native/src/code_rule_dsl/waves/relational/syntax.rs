@@ -19,14 +19,14 @@ use std::{
 
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Owner {
+pub struct Owner {
     pub kind: String,
     #[serde(default)]
     pub outermost: bool,
 }
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Spec {
+pub struct Spec {
     pub name: String,
     pub gate: String,
     #[serde(default)]
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub owners: BTreeMap<String, Owner>,
 }
 
-pub(in crate::code_rule_dsl) trait Source: Send + Sync {
+pub trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;

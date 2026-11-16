@@ -50,7 +50,7 @@ INSERT INTO node_order VALUES(100,0),(101,1),(102,262144),(103,262145),(104,5242
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
-    let model = make_plan(&p, &db, inputs).unwrap();
+    let model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
     for (name, expected) in [
         ("seen", vec![(100, 101), (100, 102), (100, 104), (102, 103)]),
         ("wanted", vec![(100, 104), (102, 103)]),
@@ -67,7 +67,7 @@ INSERT INTO node_order VALUES(100,0),(101,1),(102,262144),(103,262145),(104,5242
             .collect::<Vec<_>>();
         let vs = body::Versions::of(&p).unwrap();
         let query = model
-            .checked_query(&p, &vs.body(rule).unwrap(), &order, None, None)
+            .checked_query(body::Placed::of_program(&p).unwrap().fields().unwrap(), &vs.body(rule).unwrap(), &order, None, None)
             .unwrap();
         let sql = query.render();
         let mut rows = db
@@ -96,11 +96,11 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
         super::super::native::register_symbols(&db).unwrap();
         let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
         if !modes.is_empty() {assert!(got.native.contains("result"),"scalar result must execute natively");}
-        outputs.push(got.outputs.clone());
+        outputs.push(got.shown().clone());
     }
     assert_eq!(outputs[0],outputs[1]);
-    assert_eq!(outputs[1]["repeated"],vec!["1\t0","2\t0","3\t0","4\t0"]);
-    assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
+    assert_eq!(outputs[1]["repeated"],[["1","0"],["2","0"],["3","0"],["4","0"]]);
+    assert_eq!(outputs[1]["result"],[["1","99","3","17","3","7"],["2","99","1","-2","-2","-2"],["4","99","3","9223372036854775807","-1","9223372036854775807"]]);
 }
 
 /// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
@@ -118,8 +118,8 @@ fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
         let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
-        assert_eq!(got.outputs["a"],vec!["1","2","3","4"],"modes {modes:?}");
-        assert_eq!(got.outputs["b"],vec!["2","3","4"],"modes {modes:?}");
+        assert_eq!(got.shown()["a"],vec![["1"], ["2"], ["3"], ["4"]],"modes {modes:?}");
+        assert_eq!(got.shown()["b"],vec![["2"], ["3"], ["4"]],"modes {modes:?}");
     }
 }
 
@@ -153,7 +153,7 @@ fn a_head_that_qualifies_by_a_constant_scope_runs_natively() {
         if !modes.is_empty() {
             assert!(got.native.contains("q"), "q runs natively: {:?}", got.native);
         }
-        let mut o = got.outputs["q"].clone();
+        let mut o = got.shown()["q"].clone();
         o.sort();
         outputs.push(o);
     }
@@ -193,7 +193,7 @@ fn closures_of_one_level_launch_in_one_wave() {
             }
             assert_eq!((after.0 - before.0, after.1 - before.1), (1, 3), "the level's three closures in one wave of three launches");
         }
-        let mut o = got.outputs["o"].clone();
+        let mut o = got.shown()["o"].clone();
         o.sort();
         outputs.push(o);
     }
@@ -240,7 +240,7 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
             }
             assert_eq!((after.0 - before.0, after.1 - before.1), (1, N as u64), "the level's closures in one wave of {N} launches");
         }
-        let mut o = got.outputs["o"].clone();
+        let mut o = got.shown()["o"].clone();
         o.sort();
         outputs.push(o);
     }
@@ -281,7 +281,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
             assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
             assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
         }
-        let mut o = got.outputs["o"].clone();
+        let mut o = got.shown()["o"].clone();
         o.sort();
         outputs.push(o);
     }
@@ -292,6 +292,18 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+}
+
+/// T's expected rows of `rel` (its golden `<rel>.csv`, a fixture T wrote): its lines, as T shows its rows. A fixture
+/// read to compare against, never a run's outputs (those are read through `output::Outputs`).
+/// Rows of shown values as T's goldens show rows: tab-separated (a rendering to compare against them, never read).
+fn golden_form(rows: &[Vec<String>]) -> Vec<String> {
+    rows.iter().map(|r| r.join("\t")).collect()
+}
+
+fn golden_rows(golden: &std::path::Path, rel: &str) -> Vec<String> {
+    let file = golden.join(format!("{rel}.csv"));
+    std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display())).lines().map(str::to_owned).collect()
 }
 
 /// The facts T's exporter and `stats.py` built for nine CPython 3.13 modules (`json/`, `ftplib`, `shlex`,
@@ -339,12 +351,12 @@ fn t_programs_plan_and_run_like_t() {
             .filter_map(|e| e.unwrap().file_name().to_str()?.strip_suffix(".csv").map(str::to_owned))
             .collect();
         files.sort();
-        assert_eq!(got.outputs.keys().cloned().collect::<Vec<_>>(), files, "{name}");
-        assert!(!lines.is_empty() && got.outputs.values().any(|r| !r.is_empty()), "{name}");
-        for (rel, rows) in &got.outputs {
-            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
-            let expected: Vec<&str> = expected.lines().collect();
-            if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
+        assert_eq!(got.shown().keys().cloned().collect::<Vec<_>>(), files, "{name}");
+        assert!(!lines.is_empty() && got.shown().values().any(|r| !r.is_empty()), "{name}");
+        for (rel, rows) in &got.shown() {
+            let expected = golden_rows(&golden, rel);
+            let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
+            if golden_form(rows) != expected {
                 failures.push(format!("{name} {rel}: {} rows, expected {}", rows.len(), expected.len()));
             }
         }
@@ -373,10 +385,10 @@ fn t_programs_run_natively_like_t() {
         };
         let got = run_sql_native(&program(name), &facts(), modes, load).unwrap_or_else(|e| panic!("{case}: {e}"));
         let golden = root().join(format!("plan/golden/{name}"));
-        for (rel, rows) in &got.outputs {
-            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
-            let expected: Vec<&str> = expected.lines().collect();
-            assert_eq!(rows.iter().map(String::as_str).collect::<Vec<_>>(), expected, "{case} {rel}");
+        for (rel, rows) in &got.shown() {
+            let expected = golden_rows(&golden, rel);
+            let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
+            assert_eq!(golden_form(rows), expected, "{case} {rel}");
         }
         println!("NATIVE {}", got.native.iter().cloned().collect::<Vec<_>>().join(" "));
         return;
@@ -430,25 +442,27 @@ fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore, fi
 /// `got`'s outputs, node ids as T's (`first`: each document's first node in T's facts), against T's goldens.
 fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures: &mut Vec<String>) {
     let golden = root().join(format!("plan/golden/{name}"));
-    assert!(!got.outputs.is_empty() && got.outputs.values().any(|r| !r.is_empty()), "{name}");
+    assert!(!got.shown().is_empty() && got.shown().values().any(|r| !r.is_empty()), "{name}");
     for (rel, rows) in &got.outputs {
         let nodes = &got.nodes[rel];
-        let mut rows: Vec<String> = rows
-            .iter()
-            .map(|row| {
-                row.split('\t')
-                    .enumerate()
-                    .map(|(i, v)| match v.parse::<i64>() {
-                        Ok(v) if nodes.contains(&i) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
-                        _ => v.to_owned(),
+        // Each row in T's numbering (a node by its document's first node in T's facts), as T's golden shows it.
+        let mut rows: Vec<String> = (0..rows.len())
+            .map(|i| {
+                (0..rows.width())
+                    .map(|c| match rows.cell(i, c) {
+                        output::Cell::Int(v) if nodes.contains(&c) && v != output::NULL => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
+                        output::Cell::Int(output::NULL) => "None".to_owned(),
+                        output::Cell::Int(v) => v.to_string(),
+                        output::Cell::Text(t) => t.to_owned(),
                     })
                     .collect::<Vec<_>>()
                     .join("\t")
             })
             .collect();
         rows.sort();
-        let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
-        let expected: Vec<&str> = expected.lines().collect();
+        rows.dedup();
+        let expected = golden_rows(&golden, rel);
+        let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
         if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
             let i = (0..rows.len().max(expected.len())).find(|&i| rows.get(i).map(String::as_str) != expected.get(i).copied());
             failures.push(format!(
@@ -581,7 +595,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
                 outcome.waves,
                 got.len()
             );
-            for (rel, rows) in &expected.outputs {
+            for (rel, rows) in &expected.shown() {
                 if got.get(rel) != Some(rows) {
                     failures.push(format!("{name} {pass} {rel}: {} rows, run_atoms {}", got.get(rel).map_or(0, Vec::len), rows.len()));
                 }
@@ -741,10 +755,11 @@ fn product_programs_derive_t_outputs() {
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
         // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
-        for (rel, rows) in got.outputs.iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
-            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
-            let expected: Vec<&str> = expected.lines().collect();
-            if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
+        for (rel, rows) in got.shown().iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
+            let expected = golden_rows(&golden, rel);
+            let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
+            let rows = golden_form(rows);
+            if rows != expected {
                 let got: BTreeSet<&str> = rows.iter().map(String::as_str).collect();
                 let want: BTreeSet<&str> = expected.iter().copied().collect();
                 let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&got).take(3).collect(), got.difference(&want).take(3).collect());
@@ -776,16 +791,16 @@ fn own_ingestion_derives_what_t_facts_do() {
     let t = Connection::open(&facts).unwrap();
     let first: HashMap<String, i64> =
         t.prepare("SELECT path, min(n) FROM doc JOIN node USING (d) GROUP BY d").unwrap().query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap().map(|row| row.unwrap()).collect();
-    let to_t = |line: &str| -> String {
-        line.split('\t')
-            .map(|field| match field.rsplit_once(':') {
-                Some((path, index)) if first.contains_key(path) => (first[path] + index.parse::<i64>().unwrap()).to_string(),
-                _ => field.to_owned(),
+    // An own run's row in T's numbering: each node of a document T numbers, T's id for it; any other value as shown.
+    let to_t = |row: output::Row<'_>| -> Vec<String> {
+        row.values()
+            .map(|v| match v.node().and_then(|n| n.at()) {
+                Some((path, local)) if first.contains_key(path) => (first[path] + local).to_string(),
+                _ => v.to_string(),
             })
-            .collect::<Vec<_>>()
-            .join("\t")
+            .collect()
     };
-    let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_else(|e| panic!("{}: {rel}: {e}", out.display()));
+    let read = |out: &std::path::Path| output::Outputs::open(out).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
     for name in ["workload", "calls"] {
         let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
@@ -800,9 +815,10 @@ fn own_ingestion_derives_what_t_facts_do() {
             let got = corpus::run(&src, &dir, None, &own, "program", Binding::Cpu, chunk).unwrap();
             assert_eq!(got.files, corpus.len(), "{name}");
             for rel in report.rows.keys() {
-                let mut mapped: Vec<String> = read(&own, rel).lines().map(to_t).collect();
+                let mut mapped: Vec<Vec<String>> = read(&own).rows(rel).into_iter().map(to_t).collect();
                 mapped.sort();
-                let expected: Vec<String> = read(&with_t, rel).lines().map(str::to_owned).collect();
+                mapped.dedup();
+                let expected = output::shown(&with_t, rel).unwrap_or_else(|e| panic!("{}: {rel}: {e}", with_t.display()));
                 assert_eq!(mapped.len(), expected.len(), "{name} {rel} at {chunk}-node chunks: rows");
                 assert!(mapped == expected, "{name} {rel} at {chunk}-node chunks: rows differ");
             }
@@ -844,7 +860,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     println!("{:?}", r.typing);
     assert!(r.typing.pending.is_empty(), "{:?}", r.typing);
     assert_eq!(r.typing.declared, 4, "version: str, make: int, thing: bytes | None");
-    let types: BTreeSet<String> = std::fs::read_to_string(dir.join("out-app/type_of.csv")).unwrap().lines().map(|l| l.rsplit('\t').next().unwrap().to_owned()).collect();
+    let types: BTreeSet<String> = crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out-app"), "type_of").unwrap().into_iter().map(|r| r.last().unwrap().clone()).collect();
     assert_eq!(types, BTreeSet::from(["str", "int", "bytes", "None"].map(String::from)));
     // One term per typed node (the three calls and the three names they are assigned to): other.thing()'s, and
     // `c`'s through it, are the closed union bytes | None.
@@ -858,7 +874,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let cold = Typing { site: Some((dir.join("site"), dir.join("empty-cache"))), ..Default::default() };
     let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
     assert_eq!(r.typing.pending, vec!["vendor".to_owned(), "vendor.core".to_owned()]);
-    assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out-cold"), "type_of").unwrap(), Vec::<Vec<String>>::new());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -889,15 +905,43 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         super::corpus::run(program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let mut names = [a, b];
         names.sort_unstable();
-        assert_eq!(std::fs::read_to_string(out.join("name.csv")).unwrap(), format!("{}\n{}\n", names[0], names[1]));
-        #[cfg(target_os = "linux")]
-        {
-            let open: Vec<std::path::PathBuf> = std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect();
-            let held: Vec<_> = open.iter().filter(|file| file.to_string_lossy().starts_with(&*store.to_string_lossy())).collect();
-            assert!(held.is_empty(), "run {i} left its store open: {held:?}");
-        }
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "name").unwrap(), [[names[0]], [names[1]]]);
+        // The run's connections close beside it (`close_beside`): once they are closed, nothing holds the store.
+        super::corpus::closes_done();
+        assert_eq!(crate::content_store::holding(&store), (0, 0), "run {i} left store handles or connections open (handles, connections)");
+        // The kernel names files by their real path (macOS's /var is /private/var).
+        let real = out.canonicalize().unwrap().join(store.file_name().unwrap());
+        let held: Vec<_> = open_files().into_iter().filter(|file| file.to_string_lossy().starts_with(&*real.to_string_lossy())).collect();
+        assert!(held.is_empty(), "run {i} left its store open: {held:?}");
     }
     std::fs::write(dir.join("done"), "").unwrap();
+}
+
+/// The files this process holds open.
+fn open_files() -> Vec<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        // SAFETY: getdtablesize reads the limit; F_GETPATH writes at most PATH_MAX bytes into the buffer.
+        let fds = unsafe { libc::getdtablesize() };
+        (0..fds)
+            .filter_map(|fd| {
+                let mut buf = [0u8; libc::PATH_MAX as usize];
+                (unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == 0).then(|| {
+                    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                    std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len]))
+                })
+            })
+            .collect()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        Vec::new()
+    }
 }
 
 /// A process runs the corpus twice over its own store (`corpus_store_child`).
@@ -945,9 +989,9 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
     let out = dir.join("out");
     let r = super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(r.files, 3);
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("private_in_impl"), "impl/base.py\t_also\t1\nimpl/sqlite/fts/manager.py\t_hidden\t2\n");
-    assert_eq!(read("async_in_fts"), "fetch_async\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("private_in_impl"), [["impl/base.py", "_also", "1"], ["impl/sqlite/fts/manager.py", "_hidden", "2"]]);
+    assert_eq!(read("async_in_fts"), [["fetch_async"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -990,12 +1034,12 @@ top(c) :- callee(n, c), !inside(n, _, fn).
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("call_in"), "f\touter\ng\tinner\ng\touter\n");
-    assert_eq!(read("calls_g"), "inner\nouter\n");
-    assert_eq!(read("top"), "h\n");
-    assert_eq!(read("nests"), "outer\n");
-    assert_eq!(read("flat"), "inner\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("call_in"), [["f", "outer"], ["g", "inner"], ["g", "outer"]]);
+    assert_eq!(read("calls_g"), [["inner"], ["outer"]]);
+    assert_eq!(read("top"), [["h"]]);
+    assert_eq!(read("nests"), [["outer"]]);
+    assert_eq!(read("flat"), [["inner"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1084,23 +1128,25 @@ more(f) :- callee(c, f), 1 + count : { arg(c, _, _) } > 3.
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
     let a = |order: &mut dyn Iterator<Item = i32>, sep: &str| order.map(|i| format!("a{i}")).collect::<Vec<_>>().join(sep);
     let mut text_order: Vec<String> = (0..=10).map(|i| format!("a{i}")).collect();
     text_order.sort();
-    assert_eq!(read("in_order"), format!("f\tbb, a, cc\ng\t\nh\té, z, B\nm\t{}\n", a(&mut (0..=10), ", ")));
+    // Each call's row: its callee and the aggregate, a text.
+    let calls = |m: String, [f, h]: [&str; 2]| vec![vec!["f".to_owned(), f.to_owned()], vec!["g".to_owned(), String::new()], vec!["h".to_owned(), h.to_owned()], vec!["m".to_owned(), m]];
+    assert_eq!(read("in_order"), calls(a(&mut (0..=10), ", "), ["bb, a, cc", "é, z, B"]));
     // An input read without its constant column (`kind`), which comes before x and k.
     assert_eq!(read("call_end_joined"), read("call_end"));
-    assert_eq!(read("by_text"), format!("f\ta|bb|cc\ng\t\nh\tB|z|é\nm\t{}\n", text_order.join("|")));
-    assert_eq!(read("reversed"), format!("f\tccabb\ng\t\nh\tBzé\nm\t{}\n", a(&mut (0..=10).rev(), "")));
+    assert_eq!(read("by_text"), calls(text_order.join("|"), ["a|bb|cc", "B|z|é"]));
+    assert_eq!(read("reversed"), calls(a(&mut (0..=10).rev(), ""), ["ccabb", "Bzé"]));
     let numbers = (0..=10).map(|i| i.to_string()).collect::<Vec<_>>().join("+");
-    assert_eq!(read("numbers"), format!("f\t0+1+2\ng\t\nh\t0+1+2\nm\t{numbers}\n"));
+    assert_eq!(read("numbers"), calls(numbers, ["0+1+2", "0+1+2"]));
     // By length, then by position from the end: a (1), cc (2, -2), bb (2, 0); a9 … a0 (2), a10 (3).
-    assert_eq!(read("tuple"), format!("f\ta,cc,bb\ng\t\nh\tB,z,é\nm\t{},a10\n", a(&mut (0..=9).rev(), ",")));
+    assert_eq!(read("tuple"), calls(format!("{},a10", a(&mut (0..=9).rev(), ",")), ["a,cc,bb", "B,z,é"]));
     // bb and cc have one length: both count in w.
-    assert_eq!(read("total"), "f\t3\t5\t2\ng\t0\t0\t0\nh\t3\t3\t0\nm\t55\t23\t12\n");
-    assert_eq!(read("ccn"), "f\t33\ng\t0\nh\t33\nm\t165\n");
-    assert_eq!(read("more"), "f\nh\nm\n");
+    assert_eq!(read("total"), [["f", "3", "5", "2"], ["g", "0", "0", "0"], ["h", "3", "3", "0"], ["m", "55", "23", "12"]]);
+    assert_eq!(read("ccn"), [["f", "33"], ["g", "0"], ["h", "33"], ["m", "165"]]);
+    assert_eq!(read("more"), [["f"], ["h"], ["m"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1108,7 +1154,7 @@ more(f) :- callee(c, f), 1 + count : { arg(c, _, _) } > 3.
 
 /// Runs `program` over one Python file, pure SQL (`""`) and on the native set engine (`"program"`): the outputs
 /// `rels`, which both must give alike, and how many components the native run solved natively.
-fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, String>, usize) {
+fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, Vec<Vec<String>>>, usize) {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
@@ -1119,9 +1165,14 @@ fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, Strin
     let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
     for modes in ["", "program"] {
         let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
+        // Each run a store of its own: in one, the second run found the first's strata kept (decision 0117 step 3,
+        // "quiet: no read changed") and the native set engine solved nothing.
+        let store = super::corpus::test_store::copy();
+        super::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.path().to_owned()));
         let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));
+        super::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
         native = r.native;
-        got.push(rels.iter().map(|rel| (rel.to_string(), std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap())).collect::<BTreeMap<_, _>>());
+        got.push(rels.iter().map(|rel| (rel.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap())).collect::<BTreeMap<_, _>>());
     }
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(got[0], got[1], "SQL and native");
@@ -1158,12 +1209,12 @@ low(@lower(cat(a, " ", b))) :- w(a, b).
 .output num, unlisted, ar, md, c, low
 "#;
     let (got, _) = run_both("functions", program, &["num", "unlisted", "ar", "md", "c", "low"]);
-    assert_eq!(got["num"], " -7px\t-7\n-0b101\t-5\n0x1F\t31\n12\t12\n");
-    assert_eq!(got["unlisted"], " -7px\n-0b101\n0x1F\n");
-    assert_eq!(got["ar"], "-7\t3\t3\t-7\n3\t0\t3\t0\n7\t3\t7\t3\n");
-    assert_eq!(got["md"], "-7\t3\t-1\n7\t3\t1\n");
-    assert_eq!(got["c"], "x-y-x\nÀÉ İ-ΑΣ-ÀÉ İ\n");
-    assert_eq!(got["low"], "x y\nàé i\u{307} ας\n");
+    assert_eq!(got["num"], [[" -7px", "-7"], ["-0b101", "-5"], ["0x1F", "31"], ["12", "12"]]);
+    assert_eq!(got["unlisted"], [[" -7px"], ["-0b101"], ["0x1F"]]);
+    assert_eq!(got["ar"], [["-7", "3", "3", "-7"], ["3", "0", "3", "0"], ["7", "3", "7", "3"]]);
+    assert_eq!(got["md"], [["-7", "3", "-1"], ["7", "3", "1"]]);
+    assert_eq!(got["c"], [["x-y-x"], ["ÀÉ İ-ΑΣ-ÀÉ İ"]]);
+    assert_eq!(got["low"], [["x y"], ["àé i\u{307} ας"]]);
 }
 
 /// `@dot("", b)` is `b` (`core.rr`), built and split: a split of a bound whole gives `""` and the whole, and each
@@ -1192,11 +1243,88 @@ pre(m) :- pre(q), q = @dot(m, x), x != "".
 "#;
     let (got, native) = run_both("dot", program, &["joined", "split", "after", "before", "pre"]);
     assert!(native > 0, "the native set engine solved a component");
-    assert_eq!(got["joined"], "\t\t\n\ta\ta\n\tb.c\tb.c\na\t\ta.\na\ta\ta.a\na\tb.c\ta.b.c\nb.c\t\tb.c.\nb.c\ta\tb.c.a\nb.c\tb.c\tb.c.b.c\n");
-    assert_eq!(got["split"], ".y\t\t.y\na.b.c\t\ta.b.c\na.b.c\ta\tb.c\na.b.c\ta.b\tc\nx\t\tx\n");
-    assert_eq!(got["after"], ".y\t\t.y\na.b.c\t\ta.b.c\na.b.c\ta\tb.c\nx\t\tx\n");
-    assert_eq!(got["before"], "a.b.c\ta\tb.c\nx\t\tx\n");
-    assert_eq!(got["pre"], "\n.y\na\na.b\na.b.c\nx\n");
+    assert_eq!(got["joined"], [["", "", ""], ["", "a", "a"], ["", "b.c", "b.c"], ["a", "", "a."], ["a", "a", "a.a"], ["a", "b.c", "a.b.c"], ["b.c", "", "b.c."], ["b.c", "a", "b.c.a"], ["b.c", "b.c", "b.c.b.c"]]);
+    assert_eq!(got["split"], [[".y", "", ".y"], ["a.b.c", "", "a.b.c"], ["a.b.c", "a", "b.c"], ["a.b.c", "a.b", "c"], ["x", "", "x"]]);
+    assert_eq!(got["after"], [[".y", "", ".y"], ["a.b.c", "", "a.b.c"], ["a.b.c", "a", "b.c"], ["x", "", "x"]]);
+    assert_eq!(got["before"], [["a.b.c", "a", "b.c"], ["x", "", "x"]]);
+    assert_eq!(got["pre"], [[""], [".y"], ["a"], ["a.b"], ["a.b.c"], ["x"]]);
+}
+
+/// `dfs_first`, `dfs_first_memo` and `match_all` over relations a native stratum made (held, not tables), on
+/// both paths: the native engine makes their rows from the held relations, the SQL path from tables.
+#[test]
+fn native_operators_over_held_relations_match_the_sql_path() {
+    let program = r#"
+.decl e0(a: number, b: number, o: number)
+e0(10, 20, 1). e0(20, 30, 5). e0(10, 40, 0). e0(40, 10, 2). e0(50, 60, 0).
+.decl e(a: number, b: number, o: number)
+e(a, b, o) :- e0(a, b, o), a > 0.
+.decl t(x: number)
+t(x) :- e0(_, x, _), x = 30.
+.decl roots(r: number, k: symbol)
+roots(r, k) :- e0(r, _, _), (r = 40, k = "a" ; r = 10, k = "b" ; r = 50, k = "c").
+.decl hit(r: number, h: number, f: number)
+hit(r, h, f) :- dfs_first(r, h, f, e, t).
+.decl hm(r: number, h: number, f: number)
+hm(r, h, f) :- dfs_first_memo(r, h, f, e, t, roots).
+.decl s0(s: symbol)
+s0("é xx xx"). s0("x"). s0("none").
+.decl s(s: symbol)
+s(x) :- s0(x), x != "".
+.decl found(s: symbol, i: number, a: number, b: number, c: symbol)
+found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
+.output hit, hm, found
+"#;
+    let (got, native) = run_both("held_operators", program, &["hit", "hm", "found"]);
+    assert!(native > 0, "the native set engine solved a component");
+    // And natively: no stratum of theirs fell back to SQL (strict runs refuse one inside the waves).
+    let declined = {
+        use crate::code_rule_dsl::logic::profile;
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held_operators_native");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+        let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
+        // The run holds the profile (`one_run`) and resets it as it starts.
+        profile::set(true);
+        let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let declined = profile::declined();
+        profile::set(false);
+        let _ = std::fs::remove_dir_all(&dir);
+        ran.unwrap();
+        declined
+    };
+    assert!(!declined.keys().any(|k| ["rr_dfs", "rr_mall", "hit", "hm", "found"].iter().any(|r| k.contains(r))), "{declined:?}");
+    assert_eq!(got["hit"], [["10", "30", "1"], ["20", "30", "5"], ["40", "30", "2"]]);
+    assert_eq!(got["hm"], [["10", "30", "1"], ["40", "30", "2"]]);
+    let found = |row: [&str; 5]| got["found"].contains(&row.map(str::to_owned).to_vec());
+    assert!(found(["é xx xx", "1", "5", "7", "xx"]) && found(["x", "0", "0", "1", "x"]), "{:?}", got["found"]);
+}
+
+/// A head's `@dot` with a computed part (`walk_qualname(f, @dot(p, @nfkc(x)))`, data-layer `purity-ast.rr`), and an
+/// ordered comparison with an extremum's value (`k < v`, `v = min l : {…}`, `post-op-side-effects.rr`), on both
+/// paths. The native engine declined both: the head's part was not a slot, and `v` had no type.
+#[test]
+fn a_heads_computed_part_and_an_extremums_comparison_run_natively() {
+    let program = r#"
+.decl nm(f: number, p: symbol, x: symbol)
+nm(1, "a", "ﬁ"). nm(2, "", "b").
+.decl q(f: number, s: symbol)
+q(f, @dot(p, @nfkc(x))) :- nm(f, p, x).
+.decl l(f: number, x: number)
+l(1, 5). l(1, 3). l(2, 7).
+.decl r(f: number, k: number)
+r(1, 2). r(1, 4). r(2, 9). r(2, 1).
+.decl early(f: number, k: number)
+early(f, k) :- r(f, k), v = min x : { l(f, x) }, k < v.
+.decl late(f: number, k: number)
+late(f, k) :- r(f, k), v = max x : { l(f, x) }, k >= v.
+.output q, early, late
+"#;
+    let (got, native) = run_both("head_part", program, &["q", "early", "late"]);
+    assert!(native > 0, "the native set engine solved a component");
+    assert_eq!(got["q"], [["1", "a.fi"], ["2", "b"]]);
+    assert_eq!(got["early"], [["1", "2"], ["2", "1"]]);
+    assert_eq!(got["late"], [["2", "9"]]);
 }
 
 // ---- violations ----
@@ -1227,14 +1355,20 @@ PIN(s) :- spot(_, s).
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
     assert_eq!(
         read("violation"),
         // The sixth column is the finding's (0165): a call's 0-based byte column, 0 for a place.
-        "t:places\tLONG\tFILE_LENGTH\ta.py\t0\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t1\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t3\t0\nt:places\tLONG\tFILE_LENGTH\tmissing.json\t3\t0\nt:places\tPIN\tPIN\ta.py\t7\t0\n"
+        [
+            ["t:places", "LONG", "FILE_LENGTH", "a.py", "0", "0"],
+            ["t:places", "LONG", "FILE_LENGTH", "a.py", "1", "0"],
+            ["t:places", "LONG", "FILE_LENGTH", "a.py", "3", "0"],
+            ["t:places", "LONG", "FILE_LENGTH", "missing.json", "3", "0"],
+            ["t:places", "PIN", "PIN", "a.py", "7", "0"],
+        ]
     );
     // The violation's own rows show a place as one.
-    assert_eq!(read("PIN"), "@place(\"a.py\", 7)\n");
+    assert_eq!(read("PIN"), [["@place(\"a.py\", 7)"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1333,36 +1467,36 @@ not_split2(s) :- q(s), !split_dot(s, "os", "path.join").
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
     let expected = [
         // g's nearest function is inner, which fnode leaves out.
-        ("near_d", "f\tb\ng\tb\nk\tdeep\n"),
-        ("in_d", "f\tb\ng\tb\nk\tdeep\nk\tskip\n"),
-        ("any_d", "f\ng\nk\n"),
-        ("top_d", "h\nz\n"),
+        ("near_d", vec![vec!["f", "b"], vec!["g", "b"], vec!["k", "deep"]]),
+        ("in_d", vec![vec!["f", "b"], vec!["g", "b"], vec!["k", "deep"], vec!["k", "skip"]]),
+        ("any_d", vec![vec!["f"], vec!["g"], vec!["k"]]),
+        ("top_d", vec![vec!["h"], vec!["z"]]),
         // `has` tests the set on the node below: b has only inner below it.
-        ("has_d", "skip\tdeep\n"),
-        ("hasany_d", "skip\n"),
-        ("nohas_d", "a\nb\ndeep\ninner\n"),
-        ("near_k", "f\tb\ng\tinner\nk\tdeep\n"),
-        ("has_k", "b\nskip\n"),
-        ("has_s", "b\tinner\nskip\tdeep\n"),
-        ("stmts_in", "b\tf\nb\tg\nskip\tk\n"),
-        ("not_near_b", "g\nh\nk\nz\n"),
-        ("not_near_b_d", "h\nk\nz\n"),
-        ("not_own_b", "g\nh\nk\nz\n"),
-        ("not_own_b_d", "h\nk\nz\n"),
-        ("after_a", "b\n"),
-        ("after_a_skip", "b\nskip\n"),
-        ("after_b", "h\nskip\n"),
-        ("not_after_a", "a\ndeep\nf\ng\nh\ninner\nk\nskip\nz\n"),
-        ("nxt", "a\tb\nb\tskip\ninner\tf\nskip\th\n"),
-        ("not_before", "f\tf\nf\tg\nf\tz\ng\tg\ng\tz\nh\tf\nh\tg\nh\th\nh\tk\nh\tz\nk\tf\nk\tg\nk\tk\nk\tz\nz\tf\nz\tg\nz\th\nz\tk\nz\tz\n"),
-        ("parts", "os\tpath\nos.path\tjoin\n"),
-        ("in_os", "path\n"),
-        ("of_join", "os.path\n"),
-        ("not_split", "os.path.join\n"),
-        ("not_split2", "os.path\nos.path.join\n"),
+        ("has_d", vec![vec!["skip", "deep"]]),
+        ("hasany_d", vec![vec!["skip"]]),
+        ("nohas_d", vec![vec!["a"], vec!["b"], vec!["deep"], vec!["inner"]]),
+        ("near_k", vec![vec!["f", "b"], vec!["g", "inner"], vec!["k", "deep"]]),
+        ("has_k", vec![vec!["b"], vec!["skip"]]),
+        ("has_s", vec![vec!["b", "inner"], vec!["skip", "deep"]]),
+        ("stmts_in", vec![vec!["b", "f"], vec!["b", "g"], vec!["skip", "k"]]),
+        ("not_near_b", vec![vec!["g"], vec!["h"], vec!["k"], vec!["z"]]),
+        ("not_near_b_d", vec![vec!["h"], vec!["k"], vec!["z"]]),
+        ("not_own_b", vec![vec!["g"], vec!["h"], vec!["k"], vec!["z"]]),
+        ("not_own_b_d", vec![vec!["h"], vec!["k"], vec!["z"]]),
+        ("after_a", vec![vec!["b"]]),
+        ("after_a_skip", vec![vec!["b"], vec!["skip"]]),
+        ("after_b", vec![vec!["h"], vec!["skip"]]),
+        ("not_after_a", vec![vec!["a"], vec!["deep"], vec!["f"], vec!["g"], vec!["h"], vec!["inner"], vec!["k"], vec!["skip"], vec!["z"]]),
+        ("nxt", vec![vec!["a", "b"], vec!["b", "skip"], vec!["inner", "f"], vec!["skip", "h"]]),
+        ("not_before", vec![vec!["f", "f"], vec!["f", "g"], vec!["f", "z"], vec!["g", "g"], vec!["g", "z"], vec!["h", "f"], vec!["h", "g"], vec!["h", "h"], vec!["h", "k"], vec!["h", "z"], vec!["k", "f"], vec!["k", "g"], vec!["k", "k"], vec!["k", "z"], vec!["z", "f"], vec!["z", "g"], vec!["z", "h"], vec!["z", "k"], vec!["z", "z"]]),
+        ("parts", vec![vec!["os", "path"], vec!["os.path", "join"]]),
+        ("in_os", vec![vec!["path"]]),
+        ("of_join", vec![vec!["os.path"]]),
+        ("not_split", vec![vec!["os.path.join"]]),
+        ("not_split2", vec![vec!["os.path"], vec!["os.path.join"]]),
     ];
     let wrong: Vec<String> = expected.iter().filter(|(rel, rows)| read(rel) != *rows).map(|(rel, rows)| format!("{rel}: {:?}, expected {rows:?}", read(rel))).collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
@@ -1393,13 +1527,14 @@ after(s, k) :- fname(f, s), k = count : { earlier(f, n) }.
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    let rows = |rel: &str| read(rel).lines().map(|l| l.split('\t').map(str::to_owned).collect::<Vec<_>>()).collect::<Vec<_>>();
-    let count = |rel: &str, s: &str| rows(rel).iter().find(|r| r[0] == s).map(|r| r[1].parse::<u32>().unwrap());
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    let outputs = output::Outputs::open(&out).unwrap();
+    let count = |rel: &str, s: &str| outputs.rows(rel).iter().find(|r| r.get(0).text() == Some(s)).and_then(|r| r.get(1).int());
     // f's subtree has more nodes than e's, and e comes after f, so fewer nodes follow it.
-    assert!(count("below", "f").unwrap() > count("below", "e").unwrap(), "{}", read("below"));
-    assert!(count("after", "f").unwrap() > count("after", "e").unwrap(), "{}", read("after"));
-    assert!(count("below", "e").unwrap() > 0, "{}", read("below"));
+    assert!(count("below", "f").unwrap() > count("below", "e").unwrap(), "{:?}", read("below"));
+    assert!(count("after", "f").unwrap() > count("after", "e").unwrap(), "{:?}", read("after"));
+    assert!(count("below", "e").unwrap() > 0, "{:?}", read("below"));
+    drop(outputs);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1451,15 +1586,15 @@ gone(s) :- arg_pos(s, 0), !(arg_pos(_, 2)).
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("pos"), "x\t0\ny\t1\nz\t2\n");
-    assert_eq!(read("whole"), "xyz\n");
-    assert_eq!(read("up"), "1\n2\n3\n4\n");
-    assert_eq!(read("rest"), "join\t2\nos.path.join\t0\npath.join\t1\n");
-    assert_eq!(read("first"), "x\n");
-    assert_eq!(read("mid"), "y\n");
-    assert_eq!(read("none"), "x\n");
-    assert_eq!(read("gone"), "");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("pos"), [["x", "0"], ["y", "1"], ["z", "2"]]);
+    assert_eq!(read("whole"), [["xyz"]]);
+    assert_eq!(read("up"), [["1"], ["2"], ["3"], ["4"]]);
+    assert_eq!(read("rest"), [["join", "2"], ["os.path.join", "0"], ["path.join", "1"]]);
+    assert_eq!(read("first"), [["x"]]);
+    assert_eq!(read("mid"), [["y"]]);
+    assert_eq!(read("none"), [["x"]]);
+    assert_eq!(read("gone"), Vec::<Vec<String>>::new());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1502,17 +1637,17 @@ tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$"
     for modes in ["", "program"] {
         let out = dir.join(format!("out{modes}"));
         super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-        assert_eq!(read("short"), "g\n", "{modes}");
-        assert_eq!(read("plain"), "os.path\nos.path.join\n", "{modes}");
-        assert_eq!(read("untailed"), "", "{modes}");
-        assert_eq!(read("tailless"), "", "{modes}");
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+        assert_eq!(read("short"), [["g"]], "{modes}");
+        assert_eq!(read("plain"), [["os.path"], ["os.path.join"]], "{modes}");
+        assert_eq!(read("untailed"), Vec::<Vec<String>>::new(), "{modes}");
+        assert_eq!(read("tailless"), Vec::<Vec<String>>::new(), "{modes}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `program` over `files` (path, source) by the corpus runner; each of `outputs` as written.
-fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<String> {
+fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<Vec<Vec<String>>> {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
     for (path, source) in files {
@@ -1522,7 +1657,7 @@ fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[
     }
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let got = outputs.iter().map(|rel| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default()).collect();
+    let got = outputs.iter().map(|rel| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default()).collect();
     let _ = std::fs::remove_dir_all(&dir);
     got
 }
@@ -1549,8 +1684,8 @@ joined(y, x) :- pair(y, x), text(_, y).
 .output hit, joined
 "#;
     let got = corpus_outputs("facts-and-rules", &[("a.py", "def f(a: \"Sequence\", b: \"SyncX\"):\n    legacy = lemon\n")], program, &["hit", "joined"]);
-    assert_eq!(got[0], "Sequence\nSyncX\n");
-    assert_eq!(got[1], "legacy\ta\nlegacy\tlegacy\nlemon\tlemon\n");
+    assert_eq!(got[0], [["Sequence"], ["SyncX"]]);
+    assert_eq!(got[1], [["legacy", "a"], ["legacy", "legacy"], ["lemon", "lemon"]]);
 }
 
 /// `max t : { r(d, x, t, _, _) }` groups by the variables bound outside it (`d`, `x`), not by the wildcards.
@@ -1569,8 +1704,8 @@ first(x, s, k) :- def(d, x, s, k, _), s = min t : { def(d, x, t, _, _) }.
 .output last, first
 "#;
     let got = corpus_outputs("aggregate-wildcards", &[("a.py", "def f():\n    pass\nf = 1\n")], program, &["last", "first"]);
-    assert_eq!(got[0], "f\t18\tassign\n");
-    assert_eq!(got[1], "f\t0\tfunction\n");
+    assert_eq!(got[0], [["f", "18", "assign"]]);
+    assert_eq!(got[1], [["f", "0", "function"]]);
 }
 
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
@@ -1638,10 +1773,10 @@ fn w_value(rows: &[&str], sql: &str, params: &[&str]) -> String {
 }
 
 /// `rels` of `src` by plain SQL over text symbols (`run_sql`) and by the corpus runner over atoms (`plan::lower`, its
-/// `sym_text`/`sym_atom`), as the runner writes them (tab-separated rows).
-fn on_both_paths(name: &str, src: &str, rels: &[&str]) -> [Vec<String>; 2] {
+/// `sym_text`/`sym_atom`), each relation's rows of values as shown.
+fn on_both_paths(name: &str, src: &str, rels: &[&str]) -> [Vec<Vec<Vec<String>>>; 2] {
     let text = run_sql(&parse(src).unwrap_or_else(|e| panic!("{e}")), &facts()).unwrap_or_else(|e| panic!("{e}"));
-    let text = rels.iter().map(|r| text.outputs.get(*r).map(|rows| rows.iter().map(|row| row.clone() + "\n").collect()).unwrap_or_default()).collect();
+    let text = rels.iter().map(|r| text.outputs.get(*r).map(|rows| rows.shown()).unwrap_or_default()).collect();
     [text, corpus_outputs(name, &[("a.py", "x = 1\n")], src, rels)]
 }
 
@@ -1691,8 +1826,8 @@ by_number(s) :- unit(0), s = join x by k sep " " : {{ num(k, x) }}.
         rr_str(&w(&[], "none")),
     );
     for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("join-json", &src, &["same", "msg", "by_number"])) {
-        assert_eq!(got[0], "none\nruntime\nsurface\n", "{path}: {}", got[1]);
-        assert_eq!(got[2], "neuf nine ten hundred\n", "{path}");
+        assert_eq!(got[0], [["none"], ["runtime"], ["surface"]], "{path}: {:?}", got[1]);
+        assert_eq!(got[2], [["neuf nine ten hundred"]], "{path}");
     }
 }
 
@@ -1722,8 +1857,8 @@ repro(v) :- m = join q by e sep "," : {{ e = "a", q = @json_str(e) }},
         sig.trim_end_matches('='),
     );
     for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("ed25519", &src, &["ok", "repro"])) {
-        assert_eq!(got[0], "changed\t0\ninvalid\t0\nrfc\t1\nunpadded\t0\n", "{path}");
-        assert_eq!(got[1], "0\n", "{path}");
+        assert_eq!(got[0], [["changed", "0"], ["invalid", "0"], ["rfc", "1"], ["unpadded", "0"]], "{path}");
+        assert_eq!(got[1], [["0"]], "{path}");
     }
 }
 
@@ -1751,8 +1886,8 @@ fn rx_replace_is_ws_rx_replace() {
     src += ".decl differs(i: number)\ndiffers(i) :- got(i, v), !w(i, v).\ndiffers(i) :- w(i, v), !got(i, v).\n";
     src += ".decl cases(k: number)\ncases(k) :- replacing(0, _, _, _), k = count : { got(_, _) }.\n.output differs, cases\n";
     for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("rx-replace", &src, &["differs", "cases"])) {
-        assert_eq!(got[0], "", "{path}");
-        assert_eq!(got[1], format!("{}\n", cases.len()), "{path}");
+        assert_eq!(got[0], Vec::<Vec<String>>::new(), "{path}");
+        assert_eq!(got[1], [[cases.len().to_string()]], "{path}");
     }
 }
 
@@ -1785,8 +1920,8 @@ fn nfkc_is_cpythons_identifier_normalization() {
     src += ".decl differs(i: number)\ndiffers(i) :- got(i, v), !cpython(i, v).\ndiffers(i) :- cpython(i, v), !got(i, v).\n";
     src += ".decl cases(k: number)\ncases(k) :- written(0, _), k = count : { got(_, _) }.\n.output differs, cases\n";
     for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("nfkc", &src, &["differs", "cases"])) {
-        assert_eq!(got[0], "", "{path}");
-        assert_eq!(got[1], format!("{}\n", cases.len()), "{path}");
+        assert_eq!(got[0], Vec::<Vec<String>>::new(), "{path}");
+        assert_eq!(got[1], [[cases.len().to_string()]], "{path}");
     }
 }
 
@@ -1820,9 +1955,9 @@ shown(g, s) :- total(g, s).
     // `shown`, not `total`: the corpus runner writes an empty file for an output another rule reads (`total` read
     // by `differs` came out empty whatever derived it, `total(g, s) :- w(g, s)` too).
     for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("sum", &src, &["shown", "differs", "doubled"])) {
-        assert_eq!(got[0], "a\t17\nb\t-2\nc\t0\n", "{path}: {got:?}");
-        assert_eq!(got[1], "", "{path}");
-        assert_eq!(got[2], "24\n", "{path}");
+        assert_eq!(got[0], [["a", "17"], ["b", "-2"], ["c", "0"]], "{path}: {got:?}");
+        assert_eq!(got[1], Vec::<Vec<String>>::new(), "{path}");
+        assert_eq!(got[2], [["24"]], "{path}");
     }
 }
 
@@ -1849,10 +1984,10 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
-    let result = run(&p, &db, inputs, None, Hooks::default());
+    let result = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default());
     unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), 0, None, std::ptr::null_mut()); }
     let result = result.unwrap();
-    assert_eq!(result.outputs["captured"].len(), 1000);
+    assert_eq!(result.shown()["captured"].len(), 1000);
     assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
 }
 
@@ -1870,7 +2005,7 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     model.stats.nodes = 450_000.0;
     // Live counts, as a wave leaves them: rows, then distinct values by column.
     for (rel, rows, ndv) in [
@@ -1888,7 +2023,7 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     }
     model.stats.solve(["pv", "fcall", "tfix", "fgp", "fbind"].into_iter().map(str::to_owned).collect());
     let r = &p.rules[0];
-    let ((order, _, _), _) = model.plan_rule_explained(&p, &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
+    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
     let order: Vec<&str> = order.iter().filter_map(|s| r.body[s.at].atom()).map(|a| a.rel.as_str()).collect();
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
@@ -1900,7 +2035,7 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     let p = parse(".decl delta(k:number,a:number,t:number,f:number)\n.decl expand(o:number,t:number,k:number)\n.decl restrict(c:number,o:number,a:number)\n.input restrict\n.decl result(c:number,f:number)\nresult(c,f) :- restrict(c,o,a), expand(o,1,k), delta(k,a,2,f).\n.output result\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     for (rel, rows, ndv, fan) in [
         ("delta",526.0,vec![526.0,173.0,1.0,526.0],vec![1.0,5.0,526.0,1.0]),
         ("expand",201_000.0,vec![10000.0,4.0,1878.0],vec![30.0,100000.0,200.0]),
@@ -1914,7 +2049,7 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     }
     model.stats.solve(["delta","expand","result"].into_iter().map(str::to_owned).collect());
     let r=&p.rules[0];
-    let ((order,work,_),_)=model.plan_rule_explained(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    let ((order,work,_),_)=model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     let order:Vec<_>=order.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect();
     assert_eq!(order, ["delta","restrict","expand"], "restrict the delta before its high-fanout probe: {order:?}, work={work}");
     assert!(work<10_000.0, "price misses as well as hits: {work}");
@@ -1922,24 +2057,24 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     // A cached live plan must notice a new value distribution even when every relation's size is unchanged.
     let _plans=KeepPlans::start(None);
     model.ndv.insert(("delta",1),1.0);
-    let ((before,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    let ((before,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     let before:Vec<_>=before.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect();
     assert_eq!(before,["delta","expand","restrict"],"the initial narrow-domain estimate makes expansion cheaper");
     model.ndv.insert(("delta",1),173.0);
-    let ((after,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    let ((after,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     let after:Vec<_>=after.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect();
     assert_eq!(after,["delta","restrict","expand"],"a size-only cache must not keep the obsolete order");
 
     // A tiny delta can have fewer names than the input yet no matching names. Distinct counts alone cannot
     // detect this. Changing only the values must invalidate the plan even at fixed counts and fanouts.
     model.ndv.insert(("delta",1),1.0);
-    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(10),526)])));
-    model.stats.dfreq.insert(("restrict",2),std::sync::Arc::new(HashMap::from([(Constant::Int(10),450)])));
-    let ((overlap,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(10),526)]));
+    model.stats.dfreq.insert(("restrict",2),HashMap::from([(Constant::Int(10),450)]));
+    let ((overlap,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(overlap.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","expand","restrict"]);
-    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(11),526)])));
+    model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(11),526)]));
     assert_eq!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),Some(2)),[0]);
-    let ((disjoint,work,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    let ((disjoint,work,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(disjoint.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","restrict","expand"]);
     assert!(work<2000.0,"disjoint key values must avoid expansion: {work}");
     assert!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),None).is_empty(),"a later predicate is not an already-applied demand");
@@ -1960,7 +2095,7 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     let p = parse(".decl kind(n:number,k:number)\n.decl scope(n:number,f:number)\n.decl child(p:number,c:number,i:number)\n.input kind\n.input scope\n.input child\n.decl result(f:number,r:number)\nresult(f,r) :- kind(rs,1), child(rs,r,0), scope(rs,f), kind(f,2).\n.output result\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     for (rel, rows, ndv, fan) in [
         ("kind",300_000.0,vec![300_000.0,100.0],vec![1.0,6000.0]),
         ("scope",160_836.0,vec![160_836.0,2181.0],vec![1.0,100.0]),
@@ -1974,13 +2109,13 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     }
     Arc::make_mut(&mut model.stats.kfreq).insert("1".into(),2063);
     Arc::make_mut(&mut model.stats.kfreq).insert("2".into(),2181);
-    model.stats.dfreq.insert(("child",2),std::sync::Arc::new(HashMap::from([(Constant::Int(0),60_000)])));
+    model.stats.dfreq.insert(("child",2),HashMap::from([(Constant::Int(0),60_000)]));
     // The stated rule (the parse may give others first).
     let rule = p.rules.iter().find(|r| r.head.rel == "result").expect("the result rule");
     let made = body::alone(rule).unwrap();
     let b = body::nth(&made, 0);
     assert_eq!(model.binding_domains(&b,3)[0],Some(2181.0));
-    let ((order,work,_),_)=model.plan_rule_explained(&p, &body::nth(&body::alone(&rule).unwrap(), 0),None).unwrap();
+    let ((order,work,_),_)=model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&rule).unwrap(), 0),None).unwrap();
     let first=order.iter().find_map(|s|rule.body[s.at].atom()).unwrap();
     assert_eq!(first,&rule.body[0].atom().unwrap().clone(),"return statements must precede scope expansion: {order:?}");
     assert!(work<20_000.0,"avoid the 160,836-row function-body expansion: {work}");
@@ -2005,7 +2140,7 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     model.stats.nodes = 450_000.0;
     // Live counts, as the replay's step left them: rows, then by column distinct values and skew-weighted fanout.
     for (rel, rows, cols) in [
@@ -2021,11 +2156,11 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
         }
     }
     let values = |v: &[(i64, i64)]| v.iter().map(|&(k, n)| (Constant::Int(k), n)).collect::<HashMap<_, _>>();
-    model.stats.dfreq.insert(("pv".to_owned(), 1), std::sync::Arc::new(values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)])));
-    model.stats.dfreq.insert(("fv".to_owned(), 2), std::sync::Arc::new(values(&[(193, 570), (1, 100), (2, 25)])));
+    model.stats.dfreq.insert(("pv".to_owned(), 1), values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)]));
+    model.stats.dfreq.insert(("fv".to_owned(), 2), values(&[(193, 570), (1, 100), (2, 25)]));
     model.stats.solve(["pv", "fv", "ifn"].into_iter().map(str::to_owned).collect());
     let r = &p.rules[0];
-    let ((order, _, _), _) = model.plan_rule_explained(&p, &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
+    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
     let order: Vec<&str> = order.iter().filter_map(|s| r.body[s.at].atom()).map(|a| a.rel.as_str()).collect();
     assert_eq!(order, ["fv", "icall", "pv"], "{order:?}");
 }
@@ -2048,20 +2183,20 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(stats);
-    let model = make_plan(&p, &db, inputs).unwrap();
+    let model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
     let r = &p.rules.iter().find(|r| r.head.rel == "o").unwrap();
-    let (order, work, _) = model.plan_rule(&p, &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (order, work, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
     let shown: Vec<String> = order.iter().map(|s| r.body[s.at].to_string()).collect();
     assert_eq!(shown[1], "$s = $a", "the equality between the joins: {shown:?}, work {work}");
     assert!(work < 100_000.0, "a cross product priced: {work}");
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
-    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
-    let mut o: Vec<String> = out.outputs["o"].iter().map(|r| format!("{r:?}")).collect();
+    let out = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default()).unwrap();
+    let mut o: Vec<String> = out.shown()["o"].iter().map(|r| format!("{r:?}")).collect();
     o.sort();
     assert_eq!(o.len(), 2, "{o:?}");
-    assert_eq!(out.outputs["o2"].len(), 1);
+    assert_eq!(out.shown()["o2"].len(), 1);
 }
 
 /// A concatenation given its inverse and a function made a join key (`simplify::concat_inverses`, `function_keys`)
@@ -2102,7 +2237,8 @@ fn join_keys_from_functions_derive_the_rules_rows() {
         if modes.is_some() {
             assert!(got.native.contains("hit") && got.native.contains("rest"), "native: {:?}", got.native);
         }
-        let mut out: Vec<Vec<String>> = ["hit", "rest"].iter().flat_map(|o| got.outputs[*o].iter().map(move |r| vec![o.to_string(), format!("{r:?}")])).collect();
+        let text = got.shown();
+        let mut out: Vec<Vec<String>> = ["hit", "rest"].iter().flat_map(|o| text[*o].iter().map(move |r| vec![o.to_string(), format!("{r:?}")])).collect();
         out.sort();
         out
     };
@@ -2131,12 +2267,12 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     }
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     for (rel, rows) in [("dir", 400.0), ("done_n_b", 1.0), ("n", 10.0), ("k", 10_000.0)] {
         model.stats.card.insert(rel.to_owned(), rows);
     }
     let r = &p.rules[0];
-    let ((order, _, _), _) = model.plan_rule_explained(&p, &body::nth(&body::alone(&r).unwrap(), 0), Some(0)).unwrap();
+    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), Some(0)).unwrap();
     let atoms: Vec<&str> = order.iter().filter_map(|s| r.body[s.at].atom()).filter(|a| !a.neg).map(|a| a.rel.as_str()).collect();
     assert_eq!(atoms, ["dir", "k", "done_n_b"], "{:?}", order.iter().map(|s| r.body[s.at].to_string()).collect::<Vec<_>>());
 }
@@ -2147,7 +2283,7 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let p = parse(".decl walk(n:number,x:number,s:number)\n.decl bound(s:number,x:number)\n.decl changed__plus(s:number,k:number)\n.decl out(n:number,x:number,s:number)\nout(n,x,s) :- walk(n,x,s), !bound(s,x), changed__plus(s,1).\n.output out\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     for (rel, rows, ndv) in [("walk",71976.0,vec![50000.0,10000.0,1000.0]),("bound",40000.0,vec![1000.0,10000.0]),("changed__plus",7000.0,vec![7000.0,20.0])] {
         model.stats.card.insert(rel,rows);
         for (c,n) in ndv.into_iter().enumerate() {
@@ -2161,20 +2297,20 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let r=&p.rules[0];
     let _plans=KeepPlans::start(None);
     // Unknown delta distribution first, then an exact zero for the constant, at identical row counts.
-    let _ = model.plan_rule_reused(&p, &body::nth(&body::alone(&r).unwrap(), 0),None).unwrap();
+    let _ = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),None).unwrap();
     model.stats.memo.insert("changed__plus".into(),HashMap::from([(("c1".into(),Constant::Int(1)),0)]));
-    let ((order,work,_),_)=model.plan_rule_reused(&p, &body::nth(&body::alone(&r).unwrap(), 0),None).unwrap();
+    let ((order,work,_),_)=model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),None).unwrap();
     assert_eq!(r.body[order[0].at].atom().unwrap().rel,"changed__plus", "the seed must not retain the old full-walk scan");
     assert!(work < 10.0, "zero constant postings precede all walk/binding work: {work}");
     model.stats.solve(["walk","out"].into_iter().map(str::to_owned).collect());
     model.stats.memo.get_mut("changed__plus").unwrap().insert(("c1".into(),Constant::Int(1)),12);
-    let ((order,work,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(0)).unwrap();
+    let ((order,work,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(0)).unwrap();
     assert_eq!(r.body[order[0].at].atom().unwrap().rel,"changed__plus", "a changed-input demand can precede a delta read");
     assert!(order.iter().position(|s|s.at==0).unwrap()>0);
     assert!(work<5000.0,"probe walk by the demanded scopes: {work}");
     // The same rule later has one new walk row. Rescanning the full changed-input demand each wave is worse.
     model.stats.delta_rows.insert("walk",1.0);
-    let ((small,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(0)).unwrap();
+    let ((small,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(0)).unwrap();
     assert_eq!(small[0].at,0,"a one-row delta drives its own probe");
 
 }
@@ -2188,7 +2324,7 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
     let p = parse(".decl e(x:number)\n.decl big(y:number)\n.decl link(x:number,y:number)\n.decl out(x:number,y:number)\nout(x,y) :- e(x), big(y), link(x,y).\n.output out\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     // `rel_base`'s sizes: `rr_ast_1_1` empty (no rows, so no fanout), `pkg` 40 rows, `docof` 90,100 keyed by its node.
     for (rel, rows, ndv) in [("e", 0.0, vec![1.0]), ("big", 40.0, vec![40.0]), ("link", 90_100.0, vec![90_100.0, 40.0])] {
         model.stats.card.insert(rel, rows);
@@ -2200,7 +2336,7 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
     let r = &p.rules[0];
     let _plans = KeepPlans::start(None);
     let was = explaining(true);
-    let (_, explained) = model.plan_rule_reused(&p, &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (_, explained) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
     explaining(was);
     let steps = explained.expect("explained").steps;
     let zero: Vec<&str> = steps.iter().filter(|s| s.rows <= 0.0).map(|s| s.literal.as_str()).collect();
@@ -2218,7 +2354,7 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     let p = parse(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     let size = |model: &mut Model, roles: f64, fragments: i64| {
         for (rel, rows, ndv) in [("ann_str", 100_000.0, vec![100_000.0]), ("doc_role", roles, vec![roles, 4.0])] {
             model.stats.card.insert(rel, rows);
@@ -2236,12 +2372,12 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     // Planned before the guest round: about no fragment yet (production's estimate was 0.01 rows), and the line
     // ran over none.
     size(&mut model, 300.0, 1);
-    let ((order, work, _), _) = model.plan_rule_reused(&p, &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let ((order, work, _), _) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
     assert_eq!(lead(&order).as_deref(), Some("doc_role"), "with about no fragment, `doc_role` leads: {work} {:?}", order.iter().map(|s| r.body[s.at].to_string()).collect::<Vec<_>>());
     model.ran_as_planned(&body::nth(&body::alone(&r).unwrap(), 0), None, 1.0);
     // The guest round made 2,455 fragment documents.
     size(&mut model, 2_755.0, 2_455);
-    let ((order, _, _), _) = model.plan_rule_reused(&p, &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let ((order, _, _), _) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
     assert_eq!(lead(&order).as_deref(), Some("ann_str"), "2,455 fragments, each scanning every string, are searched again");
 }
 
@@ -2254,7 +2390,7 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
     let p = parse(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     for (rel, rows, ndv) in [("ann_str", 100_000.0, vec![100_000.0]), ("doc_role", 0.0, vec![0.0, 0.0])] {
         model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {
@@ -2264,7 +2400,7 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
     }
     model.stats.nodes = 300_000.0;
     let r = &p.rules[0];
-    let (order, work, _) = model.plan_rule(&p, &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (order, work, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
     let lead = r.body[order[0].at].atom().map(|a| a.rel.to_string());
     assert_eq!(lead.as_deref(), Some("ann_str"), "`doc_role`, empty when planned, does not lead a cross product: {work} {:?}", order.iter().map(|s| r.body[s.at].to_string()).collect::<Vec<_>>());
 }
@@ -2272,7 +2408,7 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
 #[test]
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse(".decl a(x:number,y:number)\n").unwrap();
-    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
+    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
     let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))]};
     assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
     assert!(live_stats(&mut model,"a",sample(1)).is_empty());
@@ -2282,13 +2418,13 @@ fn live_statistics_invalidate_only_changed_distribution_slots() {
 #[test]
 fn projection_statistics_keep_demanded_constants_only_when_rows_are_preserved() {
     let p=parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl filtered(n:number,k:number)\nfiltered(n,k) :- raw(1,n,k).\n.decl kinds(k:number)\nkinds(k) :- raw(_,_,k).\n").unwrap();
-    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Arc::new(p.rules.iter().map(|r|r.head.rel.to_string()).collect::<HashSet<String>>())};
+    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Arc::new(p.rules.iter().map(|r|r.head.rel.to_string()).collect::<HashSet<String>>())};
     model.stats.card.insert("raw",7000.0);
     for (c,n) in [10.0,7000.0,20.0].into_iter().enumerate() {
         model.ndv.insert(("raw",c),n); model.stats.fan.insert(("raw",c),7000.0/n);
     }
     model.stats.memo.insert("raw".into(),HashMap::from([(("c0".into(),Constant::Int(1)),100),(("c2".into(),Constant::Int(9)),12)]));
-    for r in &p.rules { model.view_stats(&r.head.rel,&r.head,r.body[0].atom().unwrap()); }
+    for r in &p.rules { let v = body::alone(r).unwrap(); model.view_stats(&r.head.rel, &body::nth(&v, 0)); }
     assert_eq!(model.stats.const_freq("tags","c1",&Constant::Int(9)),Some(12));
     assert_eq!(model.stats.const_freq("filtered","c1",&Constant::Int(9)),None,"filtered marginal counts are not exact");
     assert_eq!(model.stats.const_freq("kinds","c0",&Constant::Int(9)),None,"deduplicating projection changes frequencies");
@@ -2297,7 +2433,7 @@ fn projection_statistics_keep_demanded_constants_only_when_rows_are_preserved() 
 #[test]
 fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     let p=parse(".decl a(x:number,y:number)\n.decl b(x:number)\n.decl p(x:number)\np(x) :- a(x,_), b(x).\n").unwrap();
-    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
+    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
     let made=body::made(&p.rules).unwrap();
     let mut watch=replanning::Watch::new(&BTreeMap::from([("a".into(),0)]),&[(body::nth(&made,0),0)]);
     watch.delta(0,5);
@@ -2308,7 +2444,7 @@ fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     model.stats.card.insert("a",210.0); watch.record(0,0,&model,"a");
     assert!(watch.take(0),"small changes accumulate against the last published size");
     for key in [1,2] {
-        model.stats.dfreq.insert(("a",0),std::sync::Arc::new(HashMap::from([(Constant::Int(key),210)])));
+        model.stats.dfreq.insert(("a",0),HashMap::from([(Constant::Int(key),210)]));
         watch.record(0,1,&model,"a");
         assert!(watch.take(0),"new key domains publish even at identical row counts");
     }
@@ -2347,8 +2483,7 @@ fn a_plan_priced_on_an_empty_relation_is_not_kept_once_it_fills() {
 #[test]
 fn child_ordinal_lookup_is_unique_despite_hot_marginal_statistics() {
     let p = parse(".decl parents(p:number)\n.input parents\n.decl child(p:number,c:number,idx:number)\n.input child\n.decl out(c:number)\nout(c) :- parents(p), child(p,c,0).\n").unwrap();
-    let mut model = Model { shapes: Default::default(), docs_by_shift:false, analysis:Default::default(), input_set:Default::default(),
-        stats:Stats::empty(&p), ndv: Default::default(), docof:Default::default(), view_src:Default::default(),
+    let mut model = Model { shapes: Default::default(), docs_by_shift:false, analysis:Default::default(),         stats:Stats::empty(&p), ndv: Default::default(), docof:Default::default(), view_src:Default::default(),
         inputs:Inputs::file().into(), derived:Default::default() };
     model.stats.card.insert("parents",100.0);
     model.ndv.insert(("parents",0),100.0);
@@ -2358,7 +2493,7 @@ fn child_ordinal_lookup_is_unique_despite_hot_marginal_statistics() {
     model.ndv.insert(("child",2),100.0);
     model.stats.fan.insert(("child",0),100.0);
     model.stats.memo.insert("child".into(),HashMap::from([(("idx".into(),Constant::Int(0)),9000)]));
-    let (order,work,rows) = model.plan_rule(&p, &body::nth(&body::alone(&p.rules[0]).unwrap(), 0),None).unwrap();
+    let (order,work,rows) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&p.rules[0]).unwrap(), 0),None).unwrap();
     assert_eq!(p.rules[0].body[order[0].at].atom().unwrap().rel,"parents");
     assert!(rows<=100.0 && work<=400.0,"a parent/ordinal lookup has at most one result: {rows} rows, {work} work");
 }
@@ -2395,13 +2530,13 @@ fn o148_plans_and_their_work() {
         // SAFETY: the connection outlives the run; the callback reads only its arguments.
         unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
         COSTS.lock().unwrap().clear();
-        let got = super::run(&program(name), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let got = super::run(&body::Placed::of_program(&program(name)).unwrap(), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
         for c in &got.chosen {
             lines.push(format!("PLAN\t{name}\t{}", chosen_line(c)));
         }
-        for (rel, rows) in &got.outputs {
+        for (rel, rows) in &got.shown() {
             let expected = std::fs::read_to_string(root().join(format!("plan/golden/{name}/{rel}.csv"))).unwrap();
-            let same = rows.iter().map(String::as_str).collect::<Vec<_>>() == expected.lines().collect::<Vec<_>>();
+            let same = golden_form(rows) == expected.lines().collect::<Vec<_>>();
             lines.push(format!("OUT\t{name}\t{rel}\t{}\t{same}", rows.len()));
         }
         for (text, vm, ns) in COSTS.lock().unwrap().drain(..) {
@@ -2450,7 +2585,7 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
     let model_for = |p: &Program, sized: &[(&str, f64, Vec<f64>)]| {
         let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
         let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: std::sync::Arc::new(p.shapes.clone()), docs_by_shift:false, analysis:Default::default(), input_set:Default::default(), stats:Stats::empty(p), ndv: Default::default(), docof:Default::default(), view_src:Default::default(), inputs:inputs.into(), derived:derived.into() };
+        let mut model = Model { shapes: std::sync::Arc::new(p.shapes.clone()), docs_by_shift:false, analysis:Default::default(), stats:Stats::empty(p), ndv: Default::default(), docof:Default::default(), view_src:Default::default(), inputs:inputs.into(), derived:derived.into() };
         for (rel, rows, ndv) in sized {
             model.stats.card.insert(*rel, *rows);
             for (c, n) in ndv.iter().enumerate() {
@@ -2471,7 +2606,7 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
         let model = model_for(&p, sized);
         let _plans = KeepPlans::start(None);
         let r = &p.rules[0];
-        let (order, _, _) = model.plan_rule(&p, &body::nth(&body::alone(&r).unwrap(), 0), first).unwrap();
+        let (order, _, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), first).unwrap();
         order.iter().filter_map(|s| r.body[s.at].atom().map(|a| a.rel.to_string())).collect()
     };
     let at = |o: &[String], r: &str| o.iter().position(|x| x == r).unwrap();
@@ -2491,6 +2626,9 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
                 crate::code_rule_dsl::logic::profile::set(false);
             }
         }
+        // The profile is the process's: held for this test (`one_run`), so a run in another test cannot reset the
+        // decisions it reads (`no longer needed` went missing when one ran beside it). Dropped after `Off`.
+        let _one = crate::code_rule_dsl::logic::profile::one_run();
         let _off = Off;
         crate::code_rule_dsl::logic::profile::set(true);
         crate::code_rule_dsl::logic::profile::reset();
@@ -2501,7 +2639,7 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
             let model = model_for(&p, &sizes);
             let _plans = KeepPlans::start(None);
             let r = &p.rules[0];
-            let (_, x) = model.plan_rule_explained(&p, &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+            let (_, x) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
             assert_eq!(x.map(|x| x.shaped), Some(vec!["retparam bound f".to_owned()]));
         }
         let _ = order_of(&format!("{rule}.shape pv after posarg\n"), &sizes, None, None);
@@ -2542,9 +2680,9 @@ fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(stats);
-    let model = make_plan(&p, &db, inputs).unwrap();
+    let model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
     let r = &p.rules[0];
-    let (order, _, _) = model.plan_rule(&p, &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
+    let (order, _, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     let shown: Vec<String> = order.iter().map(|s| r.body[s.at].to_string()).collect();
     let at = |prefix: &str| shown.iter().position(|s| s.starts_with(prefix)).unwrap_or_else(|| panic!("{prefix} in {shown:?}"));
     assert_eq!(at("p("), 0, "{shown:?}");
@@ -2552,6 +2690,6 @@ fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
-    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
-    assert_eq!(out.outputs["o"].len(), 1, "{:?}", out.outputs["o"]);
+    let out = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default()).unwrap();
+    assert_eq!(out.shown()["o"].len(), 1, "{:?}", out.shown()["o"]);
 }

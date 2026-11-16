@@ -42,6 +42,9 @@ pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<St
         let mut next = Vec::with_capacity(seq.len());
         let mut changed = false;
         let (mut removed, mut added) = (Vec::new(), Vec::new());
+        // Each rule of the program's copies so far (`RULE_COPIES` bounds them over every pass).
+        let mut of_rule: BTreeMap<RuleId, usize> = BTreeMap::new();
+        seq.iter().for_each(|(_, o, _)| *of_rule.entry(*o).or_default() += 1);
         for (id, origin, into) in std::mem::take(&mut seq) {
             let Some((at, read)) = self::first_read(&cur, id, &inline_ids) else {
                 next.push((id, origin, into));
@@ -49,8 +52,11 @@ pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<St
             };
             let reader = cur.rule(id).expect("a rule of the pass");
             let ds: Vec<RuleRef<'_>> = defs[&read.rel()].iter().map(|&d| cur.rule(d).expect("a def")).collect();
-            match unfold(&mut b, &cur, reader, at, read, &ds, pass)? {
+            let room = (super::RULE_COPIES + 1).saturating_sub(of_rule[&origin]);
+            match unfold(&mut b, &cur, reader, at, read, &ds, pass, room)? {
                 Some(copies) => {
+                    let n = of_rule.get_mut(&origin).expect("its origin's count");
+                    *n = (*n + copies.len()).saturating_sub(1);
                     b.remove(id);
                     removed.push(id);
                     added.extend(copies.iter().copied());
@@ -126,7 +132,8 @@ pub(super) fn copies(base: &Arc<Version>, reads: &[(RuleId, usize)], defs: &[Rul
     for &(id, at) in reads {
         let reader = base.rule(id).expect("a reader");
         let read = reader.body().nth(at).and_then(|l| l.atom()).expect("a read");
-        let made = unfold(&mut b, base, reader, at, read, &ds, 0)?.unwrap_or_default();
+        // Each read's copies within the bound a rule copied once has left in `inline` (`RULE_COPIES`).
+        let made = unfold(&mut b, base, reader, at, read, &ds, 0, super::RULE_COPIES)?.unwrap_or_default();
         added.extend(made.iter().copied());
         out.push(made);
     }
@@ -166,12 +173,16 @@ fn first_read<'v>(v: &'v Version, id: RuleId, inline: &BTreeSet<RelId>) -> Optio
 }
 
 /// `reader` with its read at `at` (`read`) of a relation whose rules are `defs` unfolded into `b`: the copies' ids,
-/// or `None` where a negated read is not a negation of plain literals (`keeps::unfold`). `fresh` names the copies'
-/// variables apart.
-fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read: AtomRef<'_>, defs: &[RuleRef<'_>], fresh: usize) -> Result<Option<Vec<RuleId>>, String> {
+/// or `None` where a negated read is not a negation of plain literals (`keeps::unfold`), or where it would make more
+/// than `room` copies (`RULE_COPIES`: the rule then keeps its read). `fresh` names the copies' variables apart.
+#[allow(clippy::too_many_arguments)]
+fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read: AtomRef<'_>, defs: &[RuleRef<'_>], fresh: usize, room: usize) -> Result<Option<Vec<RuleId>>, String> {
     let read_args: Vec<TermRef<'_>> = read.args().collect();
     let mut out = Vec::new();
     if !read.neg() {
+        if defs.len() > room {
+            return Ok(None);
+        }
         for (n, def) in defs.iter().enumerate() {
             let n = n + 1;
             // Each of the def's variables named apart, but a head variable read as a variable: the reader's, once.
@@ -214,7 +225,7 @@ fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read
             c.push(k);
             c
         })).collect();
-        if copies.len() > COPIES * 4 {
+        if copies.len() > (COPIES * 4).min(room) {
             return Ok(None);
         }
     }
@@ -414,7 +425,7 @@ pub(super) fn unfold_rules(reader: &crate::code_rule_dsl::logic::front::Rule, at
     let r = v.rule(RuleId(0)).expect("the reader");
     let Lit::Atom(read) = r.body().nth(at)?.view() else { return None };
     let mut b = Builder::on(&v);
-    let made = unfold(&mut b, &v, r, at, read, &ds, fresh).ok()??;
+    let made = unfold(&mut b, &v, r, at, read, &ds, fresh, super::RULE_COPIES).ok()??;
     let (out, m) = b.finish().ok()?;
     let order = renumbered(&v, &[], &made, m);
     let lists = crate::code_rule_dsl::logic::front::Lists::default();

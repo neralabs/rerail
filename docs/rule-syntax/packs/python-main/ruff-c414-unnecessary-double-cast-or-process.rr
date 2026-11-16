@@ -49,7 +49,7 @@ c414_nested_call(n, I, IA, O, OA) :- kind(n, "call"), field(n, "function", c1),
 .decl c414_kw(n: node, n_mv: node, v: node, s: node)
 c414_kw(n, N, V, S) :-
     ( kind(n, "keyword_argument"), field(n, "name", c1_1), node(_, c1_1, _, _, _), N = c1_1, field(n, "value", c2_1), node(_, c2_1, _, _, _), V = c2_1, unset(S)
-    ; kind(n, "dictionary_splat"), child(n, c3_2, _), !c414_alt_2(c3_2), node(_, c3_2, _, _, _), S = c3_2, unset(N), unset(V)
+    ; kind(n, "dictionary_splat"), child(n, c3_2, _), !c414_alt_2(c3_2), node(_, c3_2, _, _, _), S = c3_2, unset(N), unset(V), count : { kind(n, "keyword_argument"),field(n, "name", c1_1_E0),c1_1_E0 ~ `$N_E0`,field(n, "value", c2_1_E0),c2_1_E0 ~ `$V_E0` } = 0
     ).
 
 

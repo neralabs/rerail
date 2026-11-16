@@ -189,6 +189,12 @@ impl<'s> Blocks<'s> {
         self.next(at, BLANK, false)
     }
 
+    /// The end of a run of line ends (`\n`, `\r`) from `at`.
+    #[inline]
+    pub fn eol_end(&self, at: usize) -> usize {
+        self.next(at, EOL, false)
+    }
+
     /// The first `\n` or `\r` from `at` (or the text's length): a line comment's end.
     #[inline]
     pub fn eol(&self, at: usize) -> usize {
@@ -286,6 +292,7 @@ mod tests {
         let long = [b'a'; 200];
         assert_eq!(Blocks::of(&long).word_end(3), 200);
         assert_eq!(Blocks::of(b"// x\r\n").eol(0), 4);
+        assert_eq!(Blocks::of(b"// x\r\n\ny").eol_end(4), 7);
         assert_eq!(Blocks::of(b"ab\\c\"").string_stop(0), 2);
         assert_eq!(Blocks::of(b"ab$c").string_stop(0), 2);
         assert_eq!(Blocks::of(b"ab'c").quote_stop(0), 2);

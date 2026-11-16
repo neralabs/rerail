@@ -143,6 +143,141 @@ pub struct State {
     pub blocked: BTreeMap<String, Blocked>,
 }
 
+fn add_steps(into: &mut Vec<(u64, u64)>, from: &[(u64, u64)]) {
+    if into.len() < from.len() {
+        into.resize(from.len(), (0, 0));
+    }
+    for (a, b) in into.iter_mut().zip(from) {
+        a.0 += b.0;
+        a.1 += b.1;
+    }
+}
+
+impl State {
+    /// Adds a thread's records (`merged`) as its calls would have added them here: sums summed, the first note,
+    /// reason and refusal kept, a stratum's loops under its key (or its key with another engine, as `stratum` keeps).
+    fn absorb(&mut self, o: State) {
+        for (k, t) in o.spans {
+            let s = self.spans.entry(k).or_default();
+            s.calls += t.calls;
+            s.total += t.total;
+            s.own += t.own;
+            s.alloc += t.alloc;
+            s.own_alloc += t.own_alloc;
+            s.freed += t.freed;
+            s.rise += t.rise;
+            s.own_rise += t.own_rise;
+        }
+        for (k, t) in o.sql {
+            let s = self.sql.entry(k).or_default();
+            s.runs += t.runs;
+            s.ns += t.ns;
+            s.vm += t.vm;
+            s.scan += t.scan;
+            s.sort += t.sort;
+            s.autoindex += t.autoindex;
+        }
+        for (k, t) in o.native {
+            add_steps(self.native.entry(k).or_default(), &t);
+        }
+        for (k, t) in o.native_cpu {
+            *self.native_cpu.entry(k).or_default() += t;
+        }
+        for (k, t) in o.notes {
+            self.notes.entry(k).or_insert(t);
+        }
+        for (k, n) in o.decisions {
+            *self.decisions.entry(k).or_default() += n;
+        }
+        for s in o.strata {
+            let other = format!("{} (chunk with {})", s.key, s.engine);
+            let key = match self.strata.iter().find(|t| t.key == s.key) {
+                Some(t) if t.engine != s.engine => other,
+                _ => s.key.clone(),
+            };
+            match self.strata.iter_mut().find(|t| t.key == key) {
+                Some(t) => t.loops += s.loops,
+                None => self.strata.push(Stratum { key, ..s }),
+            }
+        }
+        for (k, t) in o.fallbacks {
+            self.fallbacks.insert(k, t);
+        }
+        for (k, t) in o.plans {
+            let s = self.plans.entry(k).or_default();
+            s.rule = t.rule;
+            s.plan = t.plan;
+            s.loops += t.loops;
+            s.planning += t.planning;
+            s.replans += t.replans;
+            s.measured |= t.measured;
+            add_steps(&mut s.actual, &t.actual);
+            if let Some(n) = t.produced {
+                *s.produced.get_or_insert(0) += n;
+            }
+        }
+        for (k, t) in o.devices {
+            let s = self.devices.entry(k).or_default();
+            s.runs += t.runs;
+            s.launches += t.launches;
+            s.gpu += t.gpu;
+            s.wall += t.wall;
+            s.cells += t.cells;
+            for (a, b) in s.phases.iter_mut().zip(t.phases) {
+                *a += b;
+            }
+            s.made += t.made;
+            s.reused += t.reused;
+        }
+        for (k, n) in o.work {
+            *self.work.entry(k).or_default() += n;
+        }
+        for (k, t) in o.waits {
+            let s = self.waits.entry(k).or_default();
+            s.count += t.count;
+            s.wall += t.wall;
+            s.cpu += t.cpu;
+        }
+        for (k, t) in o.placements {
+            let s = self.placements.entry(k).or_default();
+            s.runs += t.runs;
+            s.on_gpu += t.on_gpu;
+            s.gpu_cheaper += t.gpu_cheaper;
+            s.device |= t.device;
+            s.forms = t.forms;
+            s.missing = t.missing;
+            s.planned_work += t.planned_work;
+            s.work += t.work;
+            s.cpu_estimate += t.cpu_estimate;
+            s.gpu_estimate += t.gpu_estimate;
+            s.cpu += t.cpu;
+            for (a, b) in s.joins.iter_mut().zip(t.joins) {
+                a.0 += b.0;
+                a.1 += b.1;
+                a.2 += b.2;
+                a.3 += b.3;
+            }
+            s.gpu.add(&t.gpu);
+            if t.refused.is_some() {
+                s.refused = t.refused;
+            }
+        }
+        for (k, t) in o.hazards {
+            let s = self.hazards.entry(k).or_default();
+            s.0 += t.0;
+            s.1 += t.1;
+        }
+        for (k, t) in o.blocked {
+            let s = self.blocked.entry(k).or_default();
+            for (r, n) in t.ran {
+                *s.ran.entry(r).or_default() += n;
+            }
+            s.native.extend(t.native);
+            s.device.extend(t.device);
+        }
+    }
+}
+
 /// A stratum's executors: where it ran, the native engine's reason to decline it, what kept it off the device.
 #[derive(Default)]
 pub struct Blocked {
@@ -308,6 +443,9 @@ pub struct StepPlan {
     pub access: String,
     pub source: String,
     pub rows: f64,
+    /// Its rows when every row is walked: past the step that binds the head the walk keeps one witness (decision
+    /// 0229) and `rows` counts that; the device's stages make them all (decision 0277).
+    pub all: f64,
     pub passed: Vec<(String, f64, String)>,
     /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
     /// absence proof, membership, and the containment share applied, so a misprediction names its rule.
@@ -363,29 +501,54 @@ pub const PHASES: [&str; 7] = [
     "wake (GPUEndTime to wait returning)",
 ];
 
+/// The profile's records, merged: every thread's shard (`SHARDS`) is added in when they are read (`merged`).
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// One thread's records: what its spans, decisions, work and plans add, under a lock only its own thread takes
+/// while it records. One lock for every thread's records was a run's hottest lock: sixteen threads ending spans and
+/// stating decisions took turns at it (about a tenth of a full corpus run's yields and blocked waits, 2026-11-15).
+type Shard = std::sync::Arc<parking_lot::Mutex<State>>;
+
+/// Every thread's shard, an ended thread's too until its records are merged.
+static SHARDS: Mutex<Vec<Shard>> = Mutex::new(Vec::new());
+
 thread_local! {
-    /// Whether this thread holds the profile's state (`state`).
+    /// Whether this thread holds the profile's state (`state`, `merged`).
     static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// This thread's shard, made and listed when it first records.
+    static SHARD: Shard = {
+        let s = Shard::default();
+        SHARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(s.clone());
+        s
+    };
 }
 
-/// The profile's state, held: the only way to it. Its lock is not reentrant, so a profile call made while this
-/// thread holds it (from a closure run under the lock: a decision's text that splits a program, which opens a span)
-/// would wait on itself forever. Every closure a profile function takes is run before the lock, and a call that would
-/// wait on itself panics here instead, naming the cause.
-pub struct Held(std::sync::MutexGuard<'static, State>);
+/// The profile's state, held: this thread's shard to record into (`state`), or every record merged to read
+/// (`merged`). Its locks are not reentrant, so a profile call made while this thread holds one (from a closure run
+/// under it: a decision's text that splits a program, which opens a span) would wait on itself forever. Every
+/// closure a profile function takes is run before the lock, and a call that would wait on itself panics here
+/// instead, naming the cause.
+pub enum Held {
+    Own(parking_lot::ArcMutexGuard<parking_lot::RawMutex, State>),
+    Merged(std::sync::MutexGuard<'static, State>),
+}
 
 impl std::ops::Deref for Held {
     type Target = State;
     fn deref(&self) -> &State {
-        &self.0
+        match self {
+            Held::Own(g) => g,
+            Held::Merged(g) => g,
+        }
     }
 }
 
 impl std::ops::DerefMut for Held {
     fn deref_mut(&mut self) -> &mut State {
-        &mut self.0
+        match self {
+            Held::Own(g) => &mut *g,
+            Held::Merged(g) => &mut *g,
+        }
     }
 }
 
@@ -395,9 +558,29 @@ impl Drop for Held {
     }
 }
 
-pub fn state() -> Held {
+fn hold() {
     assert!(!HELD.with(|h| h.replace(true)), "the profile's state was taken again on a thread holding it: a closure ran under its lock");
-    Held(STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+}
+
+/// This thread's records, to add to. What is read from them is this thread's alone: a reader of the run's takes
+/// `merged`.
+pub fn state() -> Held {
+    hold();
+    Held::Own(SHARD.with(|s| s.lock_arc()))
+}
+
+/// Every thread's records, merged: each shard's taken into the run's (an ended thread's shard then dropped).
+pub fn merged() -> Held {
+    hold();
+    let mut all = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut shards = SHARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    for s in shards.iter() {
+        let taken = std::mem::take(&mut *s.lock());
+        all.absorb(taken);
+    }
+    // A shard held only here is an ended thread's: emptied, it is not kept.
+    shards.retain(|s| std::sync::Arc::strong_count(s) > 1);
+    Held::Merged(all)
 }
 
 pub struct Open {
@@ -526,7 +709,7 @@ fn live_threads() -> Vec<(u32, String)> {
     {
         unsafe extern "C" {
             fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::kern_return_t;
-            /// The task's own port, as `mach_task_self()` reads it (libc's is deprecated for the `mach2` crate's).
+            // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
             static mach_task_self_: libc::mach_port_t;
         }
         let mut list: libc::thread_act_array_t = std::ptr::null_mut();
@@ -1200,7 +1383,7 @@ pub fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
 /// SQL waits attributed to their connection and span, including the content store's separate connection.
 /// Each row is (span, connection and SQL text, executions, nanoseconds).
 pub fn sql_waits() -> Vec<(String, String, u64, u64)> {
-    state().hazards.iter().map(|((_, path, text), (runs, ns))|
+    merged().hazards.iter().map(|((_, path, text), (runs, ns))|
         (path.clone(), text.clone(), *runs, *ns)).collect()
 }
 
@@ -1350,7 +1533,7 @@ pub fn decisions() -> BTreeMap<(String, String), u64> {
     if !on() {
         return BTreeMap::new();
     }
-    state().decisions.clone()
+    merged().decisions.clone()
 }
 
 /// The decisions made since `before` (`decisions`), with how often: what a step decided.
@@ -1425,6 +1608,12 @@ pub fn fallback(key: &str, class: String) {
         return;
     }
     state().fallbacks.insert(key.to_owned(), class);
+}
+
+/// The strata that fell back to SQLite so far, by key: the kind of literal declined (a test's check that a form runs
+/// natively).
+pub fn declined() -> BTreeMap<String, String> {
+    state().fallbacks.clone()
 }
 
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
@@ -1652,12 +1841,12 @@ pub fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
 
 /// Forgets everything recorded (a run's start).
 pub fn reset() {
-    *state() = State::default();
+    *merged() = State::default();
 }
 
 /// The statements recorded, by SQLite's time, most first: (span, text, totals).
 pub fn statements() -> Vec<(String, String, SqlTotal)> {
-    let state = state();
+    let state = merged();
     let mut all: Vec<_> = state.sql.iter().map(|((p, t), s)| (p.clone(), t.clone(), s.clone())).collect();
     all.sort_by_key(|(_, _, s)| std::cmp::Reverse(s.ns));
     all
@@ -1665,7 +1854,7 @@ pub fn statements() -> Vec<(String, String, SqlTotal)> {
 
 /// The spans recorded: path and totals.
 pub fn spans() -> BTreeMap<String, SpanTotal> {
-    state().spans.clone()
+    merged().spans.clone()
 }
 
 pub fn short(s: &str, n: usize) -> String {
@@ -1846,7 +2035,7 @@ pub fn open_spans() -> String {
         }
         if let Some((text, since)) = &t.statement {
             let _ = writeln!(r, "  SQL running for {:.2} s (wall): {}", since.elapsed().as_secs_f64(), short(text, 600));
-            let plan = state().notes.get(&format!("plan:{}", normal(text))).cloned();
+            let plan = merged().notes.get(&format!("plan:{}", normal(text))).cloned();
             for line in plan.iter().flat_map(|p| p.lines()) {
                 let _ = writeln!(r, "      {line}");
             }
@@ -1867,6 +2056,39 @@ pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads
 pub mod tests {
     use super::*;
 
+    /// A thread records into its own shard: another thread holding its records does not hold it up (one lock for
+    /// every thread's records made sixteen threads take turns at it), and an ended thread's records are read with
+    /// the rest.
+    #[test]
+    fn a_thread_records_while_another_holds_its_records() {
+        let _serial = one_run();
+        set(true);
+        reset();
+        let held = state();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..10 {
+                        let _s = span(|| "xsharded".into());
+                        decision("xshard", || "on another thread".into());
+                    }
+                    let _ = tx.send(());
+                })
+            })
+            .collect();
+        let recorded = (0..8).all(|_| rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok());
+        drop(held);
+        for t in threads {
+            t.join().unwrap();
+        }
+        let (d, s) = (decisions(), spans());
+        set(false);
+        assert!(recorded, "a thread waited for another's records to record its own");
+        assert_eq!(d.get(&("xshard".to_owned(), "on another thread".to_owned())), Some(&80));
+        assert_eq!(s.get("xsharded").map(|t| t.calls), Some(80));
+    }
 
     #[test]
     fn spans_nest_and_charge_their_own_cpu() {

@@ -417,3 +417,159 @@
             assert_eq!(got[1].1, got[0].1, "{case}: the device's counts per step are the CPU's");
         }
     }
+
+    /// Decision 0261: the device's column statistics read a relation it holds in place (its resident upload), and
+    /// are the same as over the values gathered on the host; a relation it does not hold is gathered.
+    #[test]
+    fn column_statistics_read_a_resident_relation_in_place() {
+        use crate::code_rule_dsl::logic::device::StatColumn;
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let mut x = 0x0223_u64;
+        let mut next = |m: u64| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x % m };
+        let n = 6_000;
+        let mut rows = Vec::with_capacity(2 * n);
+        for _ in 0..n {
+            let r = next(1000);
+            rows.push(3_288_784_809_065_000_000 + (if r < 600 { next(20) } else { next(2_000) }) as i64);
+            rows.push(if next(2) == 0 { -(1i64 << 40) } else { 1i64 << 40 } + next(9) as i64);
+        }
+        let rel = InRel::from_flat(rows.clone(), n, vec![b'i'; 2]);
+        let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
+        let (gathered, in_place) = super::column_stats(&cols, 16).expect("the device");
+        assert_eq!(in_place, 0);
+        let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
+        let mut rep = super::Report::default();
+        // Both columns uploaded: a copy holds only the columns asked for (decision 0277).
+        super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
+        let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
+        assert_eq!(in_place, 2);
+        assert_eq!(read, gathered);
+        let values: Vec<i64> = rows.iter().step_by(2).copied().collect();
+        let (of_values, _) = super::column_stats(&[StatColumn::Values(&values)], 16).expect("the device");
+        assert_eq!(of_values[0], read[0]);
+        assert_eq!(read[1].ndv, 18);
+    }
+
+    /// Decision 0221 §4, through the device interface: the device's batch makes the CPU's heavy values.
+    #[test]
+    fn the_gpu_batch_makes_the_cpu_batch_heavy_values() {
+        use crate::code_rule_dsl::logic::plan::table;
+        // A skewed key of node-like ids, and a narrow one.
+        let mut x = 0x0209_u64;
+        let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        let wide: Vec<i64> = (0..20_000).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 30 } else { next() % 3_000 }) as i64 }).collect();
+        let narrow: Vec<i64> = (0..3_000).map(|_| (next() % 5) as i64).collect();
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let gpu = table::heavy_of_values_gpu(&[&wide, &narrow]).expect("the registered device");
+        for (col, g) in [&wide, &narrow].into_iter().zip(gpu) {
+            let mut counts: rustc_hash::FxHashMap<i64, u64> = rustc_hash::FxHashMap::default();
+            for &v in col { *counts.entry(v).or_default() += 1; }
+            let cpu = table::HeavyCol::of_counts(counts);
+            assert_eq!((g.rows, g.ndv, g.sq, g.cube, g.tail_rows, g.tail_ndv), (cpu.rows, cpu.ndv, cpu.sq, cpu.cube, cpu.tail_rows, cpu.tail_ndv));
+            // The same top counts (ties may take other values of the same count).
+            let counts_of = |h: &table::HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
+            assert_eq!(counts_of(&g), counts_of(&cpu));
+            assert!((table::heavy_fan(&g, &[&g, &g]).unwrap() / table::heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
+        }
+    }
+    /// The CPU's and the GPU's batch on columns of 1 M and 8 M rows, warm (a measure: `--ignored`).
+    #[test]
+    #[ignore]
+    fn heavy_batches_timed() {
+        use crate::code_rule_dsl::logic::plan::table;
+        let mut x = 0x0209_u64;
+        let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        for n in [1usize << 20, 8 << 20] {
+            let col: Vec<i64> = (0..n).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 600 } else { next() % 200_000 }) as i64 }).collect();
+            let _ = table::heavy_of_values_gpu(&[&col]);
+            let t = std::time::Instant::now();
+            let gpu = table::heavy_of_values_gpu(&[&col]).expect("a device");
+            let g = t.elapsed().as_secs_f64();
+            let t = std::time::Instant::now();
+            let mut counts: rustc_hash::FxHashMap<i64, u64> = rustc_hash::FxHashMap::default();
+            for &v in &col { *counts.entry(v).or_default() += 1; }
+            let cpu = table::HeavyCol::of_counts(counts);
+            let c = t.elapsed().as_secs_f64();
+            assert_eq!((gpu[0].ndv, gpu[0].sq), (cpu.ndv, cpu.sq));
+            eprintln!("heavy batch, {n} rows: GPU {:.1} ms, CPU {:.1} ms", g * 1e3, c * 1e3);
+        }
+    }
+
+    /// Past the step that binds the head, the device keeps one witness per binding (decision 0277), as the CPU's walk
+    /// does (decision 0229): the same rows, and no binding table of every row the rest of the body would make. The
+    /// rest: an atom that binds, then semi-joins keyed by its columns, a constant and a slot bound before, and a
+    /// negated atom.
+    #[test]
+    fn past_the_bound_head_the_device_keeps_one_witness() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 23u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        // Documents `d` with many nodes `n` each (`a(d, n)`), a line per most nodes (`b(n, l)`), a column for some
+        // (`c(n, k)`).
+        db.execute_batch("CREATE TEMP TABLE dm (c0); CREATE TEMP TABLE a (c0, c1); CREATE TEMP TABLE b (c0, c1); CREATE TEMP TABLE c (c0, c1);").unwrap();
+        for d in 0..200 {
+            db.execute("INSERT INTO dm VALUES (?1)", [d]).unwrap();
+            for k in 0..40 {
+                let n = d * 1000 + k;
+                db.execute("INSERT INTO a VALUES (?1, ?2)", [d, n]).unwrap();
+                if next(4) != 0 {
+                    db.execute("INSERT INTO b VALUES (?1, ?2)", [n, next(50)]).unwrap();
+                }
+                if next(3) == 0 {
+                    db.execute("INSERT INTO c VALUES (?1, ?2)", [n, next(3)]).unwrap();
+                }
+            }
+        }
+        let src = |t: &str, cols: &str, types: &str| format!("t:x:{}:{}:{types}", hex(&format!("temp.{t}")), hex(cols));
+        let (dm, a, b, c) = (src("dm", "c0", "i"), src("a", "c0, c1", "ii"), src("b", "c0, c1", "ii"), src("c", "c0, c1", "ii"));
+        let rules = [
+            // h0(d) :- dm(d), a(d, n), b(n, _), c(n, _).
+            format!("pos {dm} v0\npos {a} v0 v1\npos {b} v1 v2\npos {c} v1 v3\nhead v0"),
+            // h0(d) :- dm(d), a(d, n), c(n, 2): a constant key.
+            format!("pos {dm} v0\npos {a} v0 v1\npos {c} v1 i:2\nhead v0"),
+            // h0(d) :- dm(d), a(d, n), !b(n, _): a negated atom.
+            format!("pos {dm} v0\npos {a} v0 v1\nneg {b} v1 _\nhead v0"),
+        ];
+        for (case, rule) in rules.iter().enumerate() {
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0);").unwrap();
+                let mut spec = vec!["name dev_wit".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 i empty".into());
+                spec.push(format!("seed 0 {}", hex(rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "dev_wit", 0).unwrap();
+                let report = super::take_report();
+                if device {
+                    let r = report.as_ref().expect("a device report");
+                    assert!(r.refused.is_none(), "{case}: {r:?}");
+                    // The documents scanned and those with a witness: never a binding per node (8,000 nodes).
+                    assert!(r.bindings <= 400, "{case}: {} bindings, a witness per document", r.bindings);
+                }
+                super::super::close(&db, "dev_wit").unwrap();
+                let mut rows: Vec<i64> = db.prepare("SELECT c0 FROM temp.h0").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert!(!got[0].is_empty(), "{case}: rows");
+            assert_eq!(got[0], got[1], "{case}: the device's rows are the CPU's");
+        }
+    }

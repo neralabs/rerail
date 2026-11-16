@@ -236,7 +236,13 @@ fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Valu
 }
 
 /// The prepared program of `facts` (what preparing found, `rest_of`) and its two programs, for `dialect`.
-pub fn prepared_of(facts: &Facts, prog: crate::code_rule_dsl::logic::front::Program, program: crate::code_rule_dsl::logic::front::Program, dialect: GrammarDialect) -> Result<Prepared, String> {
+pub fn prepared_of(
+    facts: &Facts,
+    prog: crate::code_rule_dsl::logic::front::Program,
+    program: crate::code_rule_dsl::logic::front::Program,
+    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    dialect: GrammarDialect,
+) -> Result<Prepared, String> {
     let mut by_rel: BTreeMap<String, Vec<(i64, lower::Domain)>> = BTreeMap::new();
     for r in facts.get("prepared_domain").into_iter().flatten() {
         let d = text(&r[2])?;
@@ -320,7 +326,7 @@ pub fn prepared_of(facts: &Facts, prog: crate::code_rule_dsl::logic::front::Prog
                 }).collect())
             };
             let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
-            crate::code_rule_dsl::typing::file_local::assemble(&program, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)
+            crate::code_rule_dsl::typing::file_local::assemble(&program, version, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
@@ -330,7 +336,7 @@ pub fn prepared_of(facts: &Facts, prog: crate::code_rule_dsl::logic::front::Prog
     Ok(Prepared {
         prog,
         vocabulary: Arc::new(vocabulary),
-        lowered: lower::Lowered { program, domains, ops, dialect },
+        lowered: lower::Lowered { program: lower::Tree::given(program), version: None, maint: None, domains, ops, dialect },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
@@ -341,6 +347,9 @@ pub fn prepared_of(facts: &Facts, prog: crate::code_rule_dsl::logic::front::Prog
         split,
         interned,
         documents: Default::default(),
+        cone: Default::default(),
+        maintained: Default::default(),
+        parts: Default::default(),
     })
 }
 
@@ -386,15 +395,16 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     let mut programs = Vec::new();
     for digest in [front, lowered] {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read a program's text".into());
-        let Some((program, sources)) = program_text::load(store, digest, lists)? else { return Ok(None) };
-        programs.push(program);
+        let Some((program, version, sources)) = program_text::load_version(store, digest, lists)? else { return Ok(None) };
+        programs.push((program, version));
         documents.extend(sources);
     }
     let read = start.elapsed();
     let at = std::time::Instant::now();
-    let lowered = programs.pop().expect("two");
-    let front = programs.pop().expect("two");
-    let got = prepared_of(&facts, front, lowered, dialect);
+    // The lowered program's version, where it is kept as an image: the split's parts are views of it.
+    let (lowered, version) = programs.pop().expect("two");
+    let (front, _) = programs.pop().expect("two");
+    let got = prepared_of(&facts, front, lowered, version, dialect);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), result.entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),

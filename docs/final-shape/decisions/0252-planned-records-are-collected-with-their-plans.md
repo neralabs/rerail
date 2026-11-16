@@ -12,13 +12,16 @@ the engine, or edit of a program, keys them anew, so the old ones piled up.
 
 ## Decision
 
+Since the hub's records are lists (`observe::encode_lists`, merged 2026-11-15), every plan a record names is an
+entry `plan`, empty path, the plan's digest in hex, in any of its lists, as a cutoff's consulted list holds it.
+
 A record that names the plans it is kept for goes when none of them is live, as a cutoff's did:
 
 | Record | Names |
 |---|---|
 | `cutoff:` | the plans the run used (as before) |
-| `constants:` | the plans the constants' run used, in its consulted lines; filtered out before its reads are checked (key v3) |
-| `cone-rounds:` | the part key its frames are kept under (`part_keys`), a fourth line its reader does not read |
+| `constants:` | the plans the constants' run used, in its consulted list; filtered out before its reads are checked (key v5) |
+| `cone-rounds:` | the key its frames are kept under (`part_keys`), a third list its reader does not read |
 
 A plan is live while a kept manifest names it: the outer run's manifest names the constants' plans (0250) and the
 rounds' part key (0227). A `constants:` or `cone-rounds:` record naming no plan is from before this, and goes.

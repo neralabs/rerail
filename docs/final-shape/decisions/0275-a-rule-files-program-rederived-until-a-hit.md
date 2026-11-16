@@ -1,6 +1,6 @@
 # 0275: a rule file's program, rederived until a key hits
 
-Status: built (2026-11-15). Amends how a rule file's statements are read (decision 0062) and continues 0260.
+Status: built (2026-11-15). Amends how a rule file's statements are read (decision 0062) and continues 0285.
 
 ## Intro
 
@@ -60,13 +60,13 @@ The cutoff's check (`reuse::reused`) did two things again after every rule file 
 rule files again (each phase program parsed, 54 ms of a 44-policy pack's warm run), and it combined the program again
 to read a few of its parts (57 ms). Both are functions of what was just checked, so the record keeps them:
 
-- **The include graphs.** The record holds a line of the texts' include graphs' digests (`graphs`). With every rule
-  file as recorded, the same graphs list the same rule files, so the check compares this line and lists the rule
+- **The include graphs.** The record holds an entry of the texts' include graphs' digests (`graphs`). With every rule
+  file as recorded, the same graphs list the same rule files, so the check compares this entry and lists the rule
   files again only for a record without one. A phase program is looked for in the run's `phase_dir`, then among the
   engine's own: the places looked in before the one found are recorded as rule files with no digest, so a phase
   program written there later differs by its digest, as an edit does.
 - **The program's parts the check reads** (`corpus::Summary`): whether it reads `declared_ret`, its settings, its
-  JSON policies, its scopes and text globs, and its `env` facts. They are a line of the record (`program`, compact
+  JSON policies, its scopes and text globs, and its `env` facts. They are an entry of the record (`program`, as
   JSON), so the check reads them there and does not combine the program again. A record without one combines it.
 
 A warm run of the 44 data-layer policies on `dl1` (`run-policies`, one pack): 4.1 G instructions and 0.31 to 0.35 s

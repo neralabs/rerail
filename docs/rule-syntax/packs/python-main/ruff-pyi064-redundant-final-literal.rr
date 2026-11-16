@@ -86,7 +86,8 @@ PYI064(n) :- kind(n, "assignment"), field(n, "type", c1), kind(c1, "type"),
     suppress noqa "PYI064"
 PYI064_redundant_final_literal_unassigned(n, LIT) :- kind(n, "assignment"),
     field(n, "type", c1), kind(c1, "type"), child(c1, c2, _),
-    pyi064_final_of_literal(c2, LIT), !pyi064_tok_has_2(n).
+    pyi064_final_of_literal(c2, LIT),
+    count : { field(n, "right", c3), match("(?s).*..*", c3) } = 0.
 
 // PYI064_redundant_final_literal_mismatch(n): a finding at node n, from clause `redundant-final-literal-mismatch`.
 // Each rule below is one way the JSON `rule` can match.
@@ -108,17 +109,6 @@ pyi064_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
 pyi064_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
 pyi064_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
-
-// tok_has_2(n): a child of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pyi064_tok_has_2(n: node)
-.stored pyi064_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi064_tok_has_2(n) :- field(n, "right", c3), match("(?s).*..*", c3).
-pyi064_tok_has_2(n) :- op(n, t4), match("(?s).*..*", t4).
-pyi064_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
-    match("(?s)^.*\\S.*$", g5).
-pyi064_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
-    match("(?s)^.*\\S.*$", g5).
-pyi064_tok_has_2(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^.*\\S.*$", g5).
 
 // set_1: node kinds from a JSON `any`
 .decl pyi064_set_1(v: symbol)

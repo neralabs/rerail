@@ -7,7 +7,8 @@
 //! The program is written out as text in the grammar of the script's `lang`, the one of
 //! `<script setup>` before the one of `<script>` (`ts`: TypeScript, `tsx`: TSX, none, `js` or
 //! `jsx`: JavaScript; a file without a script: JavaScript; any other `lang`, such as `coffee`: no
-//! program), and parsed with tree-sitter; each of its nodes maps back to the `.vue` bytes it came
+//! program), and read by the lean ECMAScript parser, or by tree-sitter where it refuses the text
+//! (`embed::Parse::read`); each of its nodes maps back to the `.vue` bytes it came
 //! from (`embed::segments::SegmentMap::file_ranges`). Script content and template expressions are copied byte for byte, so their
 //! nodes map exactly onto the file. The syntax around them is synthetic, each token anchored to
 //! the Vue construct it stands for. The two scripts share the program's module scope, as
@@ -70,23 +71,26 @@
 //! tag (`</ElTable.TableColumn>`) with an `ERROR` in it, a syntax error in the file (a
 //! self-closing dotted tag parses).
 
-use crate::code_rule_dsl::embed::{Program, host::HostNode, segments::SegmentMap};
+use crate::code_rule_dsl::embed::{self, Program, host::HostNode, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::vue::sfc;
 use crate::code_rule_dsl::vue::template::{self, Arg, Directive, Parse};
-use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
 use std::ops::Range;
 #[cfg(any(test, feature = "test-hooks"))]
-use tree_sitter::Node;
-use tree_sitter::{Parser, Tree};
+use tree_sitter::{Node, Tree};
 
 /// The program a Vue single-file component embeds and its map back to the file.
 pub struct View {
     /// The program's text, never empty.
     pub text: String,
     pub segments: SegmentMap,
-    tree: Tree,
+    /// The program read: the lean ECMAScript parser's tape, or tree-sitter's tree where it
+    /// refuses the text.
+    parse: embed::Parse,
+    /// tree-sitter's tree of the program, for tests (made where the lean parser read it).
+    #[cfg(any(test, feature = "test-hooks"))]
+    tree: std::sync::OnceLock<Tree>,
     dialect: GrammarDialect,
 }
 
@@ -94,17 +98,15 @@ impl View {
     /// The program the SFC whose tape's root is `root` (tree-sitter-vue's tree, from whichever
     /// parser read it: `embed::host`) embeds; `None` where its script
     /// is in a language other than JavaScript or TypeScript, or nothing it holds is read.
-    pub fn build(root: HostNode<'_>, source: &str) -> Option<Self> {
+    pub fn build(root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Option<Self> {
         let blocks = sfc::blocks(root, source);
         let dialect = sfc::script_dialect(&blocks)?;
-        let language = dialect.get_ts_language();
-        let mut handlers = Parser::new();
-        handlers.set_language(&language).ok()?;
         let mut emitter = Emitter {
             source,
             out: String::new(),
             segments: SegmentMap::new(),
-            handlers,
+            dialect,
+            budget,
         };
         for block in &blocks {
             match block.name {
@@ -120,15 +122,15 @@ impl View {
         if emitter.segments.is_empty() {
             return None;
         }
-        let mut parser = Parser::new();
-        parser.set_language(&language).ok()?;
-        let tree = parser.parse(&emitter.out, None)?;
+        let parse = embed::Parse::read(dialect, &emitter.out, budget)?;
         let mut segments = emitter.segments;
         segments.index();
         Some(Self {
             text: emitter.out,
             segments,
-            tree,
+            parse,
+            #[cfg(any(test, feature = "test-hooks"))]
+            tree: std::sync::OnceLock::new(),
             dialect,
         })
     }
@@ -139,7 +141,7 @@ impl View {
     pub(crate) fn into_program(self) -> Program {
         Program {
             dialect: self.dialect,
-            parse: crate::code_rule_dsl::embed::Parse::Tree(self.tree),
+            parse: self.parse,
             text: self.text,
             segments: self.segments,
             host_errors: Vec::new(),
@@ -152,10 +154,20 @@ impl View {
         self.dialect
     }
 
-    /// The program's root node.
+    /// The root of tree-sitter's tree of the program (made here where the lean parser read it).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn root(&self) -> Node<'_> {
-        self.tree.root_node()
+        let tree = self.tree.get_or_init(|| match &self.parse {
+            embed::Parse::Tree(tree) => tree.clone(),
+            embed::Parse::Tape(_) => embed::Parse::tree_sitter(self.dialect, &self.text).expect("tree-sitter parses"),
+        });
+        tree.root_node()
+    }
+
+    /// Whether the lean ECMAScript parser read the program.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn read_by_the_lean_parser(&self) -> bool {
+        self.parse.is_lean()
     }
 
     /// The program's text.
@@ -536,8 +548,9 @@ struct Emitter<'t> {
     source: &'t str,
     out: String,
     segments: SegmentMap,
-    /// A parser in the program's grammar, for `template::handler_with`.
-    handlers: Parser,
+    /// The program's grammar, in which `template::handler` reads a handler.
+    dialect: GrammarDialect,
+    budget: &'t dyn Fn() -> bool,
 }
 
 impl<'t> Emitter<'t> {
@@ -830,9 +843,10 @@ impl<'t> Emitter<'t> {
             (Some(value), Arg::Static(_) | Arg::Dynamic(_))
                 if directive.name == "on"
                     && matches!(
-                        template::handler_with(
-                            &mut self.handlers,
-                            &decoded(&source[value.clone()])
+                        template::handler(
+                            &decoded(&source[value.clone()]),
+                            self.dialect,
+                            self.budget
                         ),
                         Parse::Statements
                     ) =>

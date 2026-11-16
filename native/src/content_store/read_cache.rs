@@ -168,7 +168,7 @@ pub(super) struct DecompressedReadCache {
     tail: Option<CacheKey>,
     entries: HashMap<CacheKey, DecompressedCacheEntry>,
     /// Entry-map probes made while unlinking and relinking LRU nodes.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     lru_link_probes: usize,
 }
 
@@ -185,24 +185,24 @@ impl DecompressedReadCache {
             head: None,
             tail: None,
             entries: HashMap::new(),
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             lru_link_probes: 0,
         }
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn contains(&self, key: CacheKey) -> bool {
         self.entries.contains_key(&key)
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Counts one entry-map probe of LRU relinking; a no-op outside tests.
     fn count_link_probe(&mut self) {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         {
             self.lru_link_probes += 1;
         }

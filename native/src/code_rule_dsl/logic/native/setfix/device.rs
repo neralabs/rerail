@@ -30,6 +30,7 @@
 
 use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_dead, rowcode, thread_cpu};
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -81,6 +82,10 @@ enum Kind {
     /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text test of one), a SIMD group a row:
     /// over the names of `cols`' symbols and `consts` (as `Names`), with its automaton.
     RowText { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64>, auto: RowAuto },
+    /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
+    /// `cols`) and the atoms after it (`rest`: each relation, its key columns and its probe), run as one witness per
+    /// binding (`mj::WITNESS`, decision 0277), as the CPU's walk runs them (decision 0229).
+    Witness { rel: Arc<InRel>, cols: Vec<usize>, rest: Vec<(Arc<InRel>, Vec<usize>, mj::Stage)> },
 }
 
 /// A `Kind::RowText` stage's automaton.
@@ -116,8 +121,6 @@ enum TextOp {
     Replace { pattern: i64, with: i64, literal: bool },
 }
 
-/// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
-/// the constants, into `d`'s keys `0..` as slots or constants.
 thread_local! {
     /// The step that first bound each slot of the rule being compiled (its name): what a refusal of a slot names.
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -147,6 +150,8 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
     })
 }
 
+/// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
+/// the constants, into `d`'s keys `0..` as slots or constants.
 fn text_keys(d: &mut mj::Stage, keys: &[Key], origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>, what: &str) -> Result<Kind, String> {
     let (mut cols, mut consts): (Vec<(Arc<InRel>, usize)>, Vec<i64>) = (Vec::new(), Vec::new());
     for (k, a) in keys.iter().enumerate() {
@@ -314,9 +319,69 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
 /// whole (no keys), the CPU makes them all too, and the device takes it.
 fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
-        Some(v) if keys > 0 && v.src.made_on_lookup() => Err("an atom read by keys over a relation made on lookup".into()),
+        // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0277).
+        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
+}
+
+/// The witness form of `j`'s steps from `i` (decision 0277), where every slot the head reads is bound before `i`
+/// (`setfix::tail`): an atom over an input relation that binds slots, then at most `mj::WITNESS_PROBES` atoms (or
+/// negated atoms) over input relations keyed by slots bound before `i`, constants or the first atom's columns, none
+/// with a fused program. Each binding needs one row of them, not all: the device's breadth-first stages would make
+/// every one (PostHog: 10.6 M rows for 7,086 documents' keys at one step). `None` for any other shape.
+fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
+    if i < super::tail(j) {
+        return None;
+    }
+    let Step::Atom { src: Src::In(rel, _), neg: false, keys, binds, tests } = &j.steps[i] else { return None };
+    let rest = &j.steps[i + 1..];
+    if binds.is_empty() || j.fused[i].is_some() || rest.len() > mj::WITNESS_PROBES || keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
+        return None;
+    }
+    readable(rel, keys.len()).ok()?;
+    let key_of = |d: &mut mj::Stage, k: usize, c: usize, key: Key| {
+        d.key_rcol[k] = c as u32;
+        match key {
+            Key::Slot(s) => { d.key_kind[k] = mj::SLOT; d.key_slot[k] = s as u32; }
+            Key::Const(v) => { d.key_kind[k] = mj::CONST; d.key_const[k] = v; }
+        }
+    };
+    let tests_of = |d: &mut mj::Stage, tests: &[(usize, usize)]| {
+        for (k, &(a, b)) in tests.iter().enumerate() {
+            d.test_a[k] = a as u32;
+            d.test_b[k] = b as u32;
+        }
+        d.ntests = tests.len() as u32;
+    };
+    let mut d = mj::Stage { mode: mj::WITNESS, ..mj::Stage::default() };
+    for (k, &(c, key)) in keys.iter().enumerate() {
+        key_of(&mut d, k, c, key);
+    }
+    d.nkeys = keys.len() as u32;
+    tests_of(&mut d, tests);
+    let mut probes = Vec::new();
+    for (m, st) in rest.iter().enumerate() {
+        let Step::Atom { src: Src::In(r, _), neg, keys: bk, tests: bt, .. } = st else { return None };
+        if j.fused[i + 1 + m].is_some() || bk.len() > mj::MAX_KEYS || bt.len() > mj::MAX_TESTS || readable(r, bk.len()).is_err() {
+            return None;
+        }
+        let mut b = mj::Stage { mode: if *neg { mj::ANTI } else { mj::SEMI }, ..mj::Stage::default() };
+        for (k, &(c, key)) in bk.iter().enumerate() {
+            key_of(&mut b, k, c, key);
+            if let Key::Slot(s) = key && !bound.get(s).copied().unwrap_or(false) {
+                // A slot the first atom binds: its column of the candidate row.
+                let &(ca, _) = binds.iter().find(|&&(_, x)| x == s)?;
+                b.key_kind[k] = mj::ACOL;
+                b.key_slot[k] = ca as u32;
+            }
+        }
+        b.nkeys = bk.len() as u32;
+        tests_of(&mut b, bt);
+        probes.push((r.clone(), bk.iter().map(|&(c, _)| c).collect(), b));
+    }
+    let cols = keys.iter().map(|&(c, _)| c).collect();
+    Some(PStage { first: i, span: j.steps.len() - i, kind: Kind::Witness { rel: rel.clone(), cols, rest: probes }, desc: d, npassed: 0 })
 }
 
 /// `j`'s device plan, or the step the device cannot run.
@@ -353,6 +418,12 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
     let mut i = 0;
     while i < j.steps.len() {
         let step = &j.steps[i];
+        // The rest of the body as one witness per binding, where it takes that shape (decision 0277).
+        if matches!(step, Step::Atom { .. }) && let Some(w) = witness_stage(j, i, &bound) {
+            stages.push(w);
+            i = j.steps.len();
+            continue;
+        }
         match step {
             Step::Unused { .. } => {
                 stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
@@ -787,7 +858,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
             }
-            Step::Func { name, kinds, args, out, bind } => {
+            Step::Func { name, kinds, args, out, bind, .. } => {
                 // Integer arithmetic: a filter of its own whose bind computes the value (`mj::BIND_ARITH`); a row
                 // where it has none is dropped, as on the CPU.
                 let op = arith_op(name).filter(|_| kinds.iter().all(|k| *k == crate::code_rule_dsl::logic::strings::functions::Kind::Number) && args.len() == 2);
@@ -991,11 +1062,97 @@ fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Opt
 }
 
 /// A relation kept on the device: its rows, and its sorts by key columns.
+/// Whose rows an entry holds: a relation's, or a source's that views read whole (`View` with no rows chosen): every
+/// view of the source, whatever its columns, reads the one upload (decision 0277).
+enum Owner {
+    Rel(Weak<InRel>),
+    Src(Weak<dyn crate::code_rule_dsl::facts::vtab::Source>),
+}
+
+impl Owner {
+    fn of(rel: &Arc<InRel>) -> Owner {
+        match &rel.view {
+            Some(v) if v.whole() && rel.ndead == 0 => Owner::Src(Arc::downgrade(&v.src)),
+            _ => Owner::Rel(Arc::downgrade(rel)),
+        }
+    }
+
+    fn live(&self) -> bool {
+        match self {
+            Owner::Rel(r) => r.strong_count() > 0,
+            Owner::Src(s) => s.strong_count() > 0,
+        }
+    }
+
+    fn same(&self, other: &Owner) -> bool {
+        match (self, other) {
+            (Owner::Rel(a), Owner::Rel(b)) => Weak::ptr_eq(a, b),
+            (Owner::Src(a), Owner::Src(b)) => std::ptr::addr_eq(a.as_ptr(), b.as_ptr()),
+            _ => false,
+        }
+    }
+}
+
+/// Column `c` of `rel` among its owner's columns (`Owner`).
+fn owner_col(rel: &InRel, c: usize) -> usize {
+    match &rel.view {
+        Some(v) if v.whole() && rel.ndead == 0 => v.column(c),
+        _ => c,
+    }
+}
+
+/// The columns of the relation an atom's stage reads (`d`'s keys, column tests, binds, row program and fold): the
+/// device holds only these of it (decision 0277).
+fn right_cols(d: &mj::Stage) -> Vec<usize> {
+    let mut out: Vec<usize> = Vec::new();
+    out.extend(d.key_rcol[..d.nkeys as usize].iter().map(|&c| c as usize));
+    for k in 0..d.ntests as usize {
+        out.extend([d.test_a[k] as usize, d.test_b[k] as usize]);
+    }
+    out.extend((0..d.nbinds as usize).filter(|&k| d.bind_kind[k] == mj::BIND_RIGHT).map(|k| d.bind_idx[k] as usize));
+    out.extend((0..d.ncols as usize).filter(|&k| d.col_kind[k] == mj::RIGHT).map(|k| d.col_idx[k] as usize));
+    if d.mode == mj::AGG && d.agg[1] != mj::NONE {
+        out.push(d.agg[1] as usize);
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// `d` reading the relation's columns where the device holds them: column `c` at `at[c]` (`right_cols`' columns).
+fn narrowed(mut d: mj::Stage, at: &[u32]) -> mj::Stage {
+    let m = |c: u32| at[c as usize];
+    for k in 0..d.nkeys as usize {
+        d.key_rcol[k] = m(d.key_rcol[k]);
+    }
+    for k in 0..d.ntests as usize {
+        (d.test_a[k], d.test_b[k]) = (m(d.test_a[k]), m(d.test_b[k]));
+    }
+    for k in 0..d.nbinds as usize {
+        if d.bind_kind[k] == mj::BIND_RIGHT {
+            d.bind_idx[k] = m(d.bind_idx[k]);
+        }
+    }
+    for k in 0..d.ncols as usize {
+        if d.col_kind[k] == mj::RIGHT {
+            d.col_idx[k] = m(d.col_idx[k]);
+        }
+    }
+    if d.mode == mj::AGG && d.agg[1] != mj::NONE {
+        d.agg[1] = m(d.agg[1]);
+    }
+    d
+}
+
 struct Entry {
-    rel: Weak<InRel>,
+    owner: Owner,
+    /// The owner's columns the upload holds, in its order.
+    cols: Vec<usize>,
     dev: Rc<mj::DevRel>,
+    /// Its sorts, by the owner's key columns.
     indexes: Vec<(Vec<usize>, Rc<mj::DevIndex>)>,
-    /// Per column a text test read, its distinct symbols' names; per (column, test), the test's verdicts.
+    /// Per column a text test read, its distinct symbols' names; per (column, test), the test's verdicts (the
+    /// owner's columns).
     texts: Vec<(usize, Rc<mj::DevText>)>,
     verdicts: Vec<((usize, String), Rc<mj::DevRel>)>,
     /// Per (column, text functions), the column's symbols' texts made (`mapped_text`), with `lower`'s check.
@@ -1023,7 +1180,7 @@ thread_local! {
 impl Resident {
     /// Drops entries whose relation the engine dropped, then the least recently used while over the budget.
     fn trim(&mut self, room: usize) {
-        self.entries.retain(|e| e.rel.strong_count() > 0);
+        self.entries.retain(|e| e.owner.live());
         self.unions.retain(|(cols, _, _)| cols.iter().all(|(r, _)| r.strong_count() > 0));
         if self.bytes() + room > resident_max() {
             self.unions.clear();
@@ -1064,6 +1221,10 @@ struct Run<'p> {
     /// Each stage's first counter (`None`: it counts no fused steps).
     counter: Vec<Option<usize>>,
     rels: Vec<Option<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>)>>,
+    /// Per atom stage, where its relation's columns lie in the device's copy (`resident`).
+    places: Vec<Option<Vec<u32>>>,
+    /// Per witness stage, its probes' relations, sorts and descriptors (their columns where the copies hold them).
+    probes: Vec<Option<Vec<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, mj::Stage)>>>,
     /// The head's distinct rows (a column per slot of `uniq_cols`), made on the device after the last stage; their
     /// count is `totals`' last word.
     uniq: Option<mj::Table>,
@@ -1074,25 +1235,37 @@ struct Run<'p> {
     checks: Vec<Rc<mj::Words>>,
 }
 
-/// The device's copy of `rel`, and its sort by `cols` (none when it has no keys), uploaded and encoded into `batch`
-/// when not resident.
-fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>), String> {
+/// The device's copy of `rel`'s columns `need` and `cols`, its sort by `cols` (none when it has no keys), and where
+/// each of its columns lies in the copy (`mj::NONE`: not held), uploaded and encoded into `batch` when not resident.
+/// A copy holds only the columns stages read; one that lacks a column is uploaded again with it (decision 0277).
+#[allow(clippy::type_complexity)]
+fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vec<u32>), String> {
     RESIDENT.with_borrow_mut(|res| {
         res.clock += 1;
         let clock = res.clock;
-        let weak = Arc::downgrade(rel);
-        let at = res.entries.iter().position(|e| Weak::ptr_eq(&e.rel, &weak));
-        let at = match at {
-            Some(at) => {
+        let owner = Owner::of(rel);
+        let mut want: Vec<usize> = need.iter().chain(cols).map(|&c| owner_col(rel, c)).collect();
+        want.sort_unstable();
+        want.dedup();
+        let found = res.entries.iter().position(|e| e.owner.same(&owner));
+        let at = match found {
+            Some(at) if want.iter().all(|c| res.entries[at].cols.contains(c)) => {
                 rep.resident_hits += 1;
                 at
             }
-            None => {
+            found => {
                 let c0 = thread_cpu();
+                // The columns held already stay held: the entry's texts and verdicts carry over to the new copy.
+                let old = found.map(|at| res.entries.swap_remove(at));
+                if let Some(o) = &old {
+                    want.extend(o.cols.iter().copied());
+                    want.sort_unstable();
+                    want.dedup();
+                }
                 let n_all = rel.len();
                 let ids: Option<Vec<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
                 let n = ids.as_ref().map_or(n_all, Vec::len);
-                let k = rel.k;
+                let k = want.len();
                 res.trim(8 * k * n);
                 // The process's device budget short (the syntax side's tapes hold most of it): every relation kept
                 // and the pool's free buffers give theirs back first.
@@ -1103,18 +1276,31 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                 }
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
-                    if rel.view.is_none() {
-                        for r in 0..n {
-                            let row = rel.row(row_of(r));
-                            for c in 0..k {
-                                v[c * n + r] = row[c];
+                    match (&owner, &rel.view) {
+                        (Owner::Src(_), Some(view)) => {
+                            // The source's rows, the columns held read at once per row (`Source::row_at`).
+                            let mut row = vec![0i64; k];
+                            for r in 0..n {
+                                view.src.row_at(r, &want, &mut row);
+                                for (c, &x) in row.iter().enumerate() {
+                                    v[c * n + r] = x;
+                                }
                             }
                         }
-                    } else {
-                        for r in 0..n {
-                            let row = rel.at(row_of(r)).read();
-                            for c in 0..k {
-                                v[c * n + r] = row.at(c);
+                        (_, None) => {
+                            for r in 0..n {
+                                let row = rel.row(row_of(r));
+                                for (c, &w) in want.iter().enumerate() {
+                                    v[c * n + r] = row[w];
+                                }
+                            }
+                        }
+                        (_, Some(_)) => {
+                            for r in 0..n {
+                                let row = rel.at(row_of(r)).read();
+                                for (c, &w) in want.iter().enumerate() {
+                                    v[c * n + r] = row.at(w);
+                                }
                             }
                         }
                     }
@@ -1123,33 +1309,91 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                 rep.uploads += 1;
                 rep.upload_bytes += dev.bytes() as u64;
                 rep.upload_cpu += thread_cpu() - c0;
-                let bytes = dev.bytes();
-                res.entries.push(Entry { rel: weak, dev: Rc::new(dev), indexes: Vec::new(), texts: Vec::new(), verdicts: Vec::new(), mapped: Vec::new(), bytes, used: clock });
-                res.bytes += bytes;
+                let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                res.bytes = res.bytes();
                 res.entries.len() - 1
             }
         };
         let e = &mut res.entries[at];
         e.used = clock;
         let dev = e.dev.clone();
+        let place: Vec<u32> = (0..rel.k).map(|c| e.cols.iter().position(|&w| w == owner_col(rel, c)).map_or(mj::NONE, |p| p as u32)).collect();
         if cols.is_empty() {
-            return Ok((dev, None));
+            return Ok((dev, None, place));
         }
-        if let Some((_, ix)) = e.indexes.iter().find(|(c, _)| c == cols) {
+        let key: Vec<usize> = cols.iter().map(|&c| owner_col(rel, c)).collect();
+        if let Some((_, ix)) = e.indexes.iter().find(|(c, _)| *c == key) {
             rep.sort_hits += 1;
-            return Ok((dev, Some(ix.clone())));
+            return Ok((dev, Some(ix.clone()), place));
         }
-        let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: a sort of {} rows", dev.rows))?);
+        let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: a sort of {} rows", dev.rows))?);
         rep.sorts += 1;
         e.bytes += ix.bytes();
-        e.indexes.push((cols.to_vec(), ix.clone()));
-        Ok((dev, Some(ix)))
+        e.indexes.push((key, ix.clone()));
+        Ok((dev, Some(ix), place))
     })
+}
+
+/// Decision 0209 §6 on the device, with decision 0261: columns' statistics in one batch
+/// (`rerail_accel::gpu::join::column_stats_of`). A relation this thread holds on the device, as it is now (its live
+/// rows), is read in place: its column of the resident upload. Any other's values are gathered on the host. Also how
+/// many columns were read in place.
+pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
+    use rerail_accel::gpu::join::{StatCol, column_stats_of};
+    // Each relation's upload and where the column is in it: a copy holds only the columns stages read, in its
+    // owner's numbering (decision 0277), so a column it lacks is gathered on the host.
+    let devs: Vec<Option<(Rc<mj::DevRel>, usize)>> = RESIDENT.with_borrow(|res| {
+        cols.iter()
+            .map(|c| {
+                let StatColumn::Rel(rel, col) = c else { return None };
+                let owner = Owner::of(rel);
+                let e = res.entries.iter().find(|e| e.owner.same(&owner))?;
+                let at = e.cols.iter().position(|&w| w == owner_col(rel, *col))?;
+                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols).then(|| (e.dev.clone(), at))
+            })
+            .collect()
+    });
+    let gathered: Vec<Option<Vec<i64>>> = cols
+        .iter()
+        .zip(&devs)
+        .map(|(c, d)| match (c, d) {
+            (StatColumn::Rel(rel, col), None) => Some(column_values(rel, *col)),
+            _ => None,
+        })
+        .collect();
+    let stat: Vec<StatCol<'_>> = cols
+        .iter()
+        .zip(&devs)
+        .zip(&gathered)
+        .map(|((c, d), g)| match (c, d, g) {
+            (StatColumn::Values(v), _, _) => StatCol::Host(v),
+            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: at * d.rows, rows: d.rows },
+            (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
+        })
+        .collect();
+    let made = column_stats_of(&stat, k)?;
+    let in_place = devs.iter().filter(|d| d.is_some()).count();
+    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top }).collect(), in_place))
+}
+
+/// Column `col` of `rel`'s live rows, in row order (as the resident upload lays them out).
+fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
+    let n = rel.len();
+    let live = (0..n).filter(|&id| rel.ndead == 0 || !is_dead(&rel.dead, id as u32));
+    if rel.view.is_none() {
+        live.map(|id| rel.row(id)[col]).collect()
+    } else {
+        live.map(|id| rel.at(id).read().at(col)).collect()
+    }
 }
 
 /// The names of column `col`'s distinct symbols on the device, kept with the relation's entry `e` (copied once).
 fn column_text(e: &mut Entry, rel: &InRel, col: usize, rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
-    if let Some((_, t)) = e.texts.iter().find(|(c, _)| *c == col) {
+    let oc = owner_col(rel, col);
+    if let Some((_, t)) = e.texts.iter().find(|(c, _)| *c == oc) {
         return Ok(t.clone());
     }
     let c0 = thread_cpu();
@@ -1159,7 +1403,7 @@ fn column_text(e: &mut Entry, rel: &InRel, col: usize, rep: &mut Report, names: 
     rep.upload_bytes += t.bytes() as u64;
     rep.upload_cpu += thread_cpu() - c0;
     e.bytes += t.bytes();
-    e.texts.push((col, t.clone()));
+    e.texts.push((oc, t.clone()));
     Ok(t)
 }
 
@@ -1234,11 +1478,12 @@ fn mapped_text(rel: &Arc<InRel>, col: usize, ops: &[TextOp], batch: &mut mj::Bat
             }
         });
     }
-    resident(rel, &[], batch, rep)?;
+    // The relation's entry holds its texts (no column of it need be uploaded for them).
+    resident(rel, &[], &[], batch, rep)?;
     RESIDENT.with_borrow_mut(|res| {
-        let weak = Arc::downgrade(rel);
-        let e = res.entries.iter_mut().find(|e| Weak::ptr_eq(&e.rel, &weak)).expect("the relation made resident");
-        let key = (col, steps.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";"));
+        let owner = Owner::of(rel);
+        let e = res.entries.iter_mut().find(|e| e.owner.same(&owner)).expect("the relation made resident");
+        let key = (owner_col(rel, col), steps.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";"));
         if let Some((_, (t, flag))) = e.mapped.iter().find(|(k, _)| *k == key) {
             rep.sort_hits += 1;
             return Ok((t.rel(), flag.clone()));
@@ -1272,11 +1517,13 @@ fn mapped_text(rel: &Arc<InRel>, col: usize, ops: &[TextOp], batch: &mut mj::Bat
 fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text::table::Table>, key: &str, batch: &mut mj::Batch, rep: &mut Report, names: &Interner)
     -> Result<Rc<mj::DevRel>, String> {
     // The relation resident first (its entry holds the verdicts).
-    resident(rel, &[], batch, rep)?;
+    // The relation's entry holds its texts (no column of it need be uploaded for them).
+    resident(rel, &[], &[], batch, rep)?;
     RESIDENT.with_borrow_mut(|res| {
-        let weak = Arc::downgrade(rel);
-        let e = res.entries.iter_mut().find(|e| Weak::ptr_eq(&e.rel, &weak)).expect("the relation made resident");
-        if let Some((_, v)) = e.verdicts.iter().find(|((c, k), _)| *c == col && k == key) {
+        let owner = Owner::of(rel);
+        let e = res.entries.iter_mut().find(|e| e.owner.same(&owner)).expect("the relation made resident");
+        let oc = owner_col(rel, col);
+        if let Some((_, v)) = e.verdicts.iter().find(|((c, k), _)| *c == oc && k == key) {
             rep.sort_hits += 1;
             return Ok(v.clone());
         }
@@ -1288,7 +1535,7 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
         batch.hold_table(dt);
         rep.sorts += 1;
         e.bytes += bits.bytes();
-        e.verdicts.push(((col, key.to_owned()), bits.clone()));
+        e.verdicts.push(((oc, key.to_owned()), bits.clone()));
         Ok(bits)
     })
 }
@@ -1345,7 +1592,7 @@ impl<'p> Run<'p> {
         for s in &plan.stages {
             match s.kind {
                 Kind::Pass | Kind::Map => io.push((slot, slot)),
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } | Kind::Witness { .. } => {
                     io.push((slot, slot + 1));
                     slot += 1;
                 }
@@ -1377,7 +1624,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None, checks: Vec::new() })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None, checks: Vec::new() })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1408,7 +1655,7 @@ impl<'p> Run<'p> {
                     let t = self.tables[i].as_ref().expect("the map's table");
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } | Kind::Witness { .. } => {
                     match (&s.kind, &self.rels[k]) {
                         (Kind::Names { cols, consts }, None) => {
                             let t = texts(cols, consts, rep, names)?;
@@ -1417,7 +1664,33 @@ impl<'p> Run<'p> {
                             }
                             self.rels[k] = Some((t.rel(), None));
                         }
-                        (Kind::Atom { rel, cols }, None) => self.rels[k] = Some(resident(rel, cols, batch, rep)?),
+                        (Kind::Atom { rel, cols }, None) => {
+                            let (dev, ix, place) = resident(rel, &right_cols(&s.desc), cols, batch, rep)?;
+                            self.rels[k] = Some((dev, ix));
+                            self.places[k] = Some(place);
+                        }
+                        (Kind::Witness { rel, cols, rest }, None) => {
+                            // The first atom's columns its stage reads and those the probes key on.
+                            let mut need = right_cols(&s.desc);
+                            for (_, _, b) in rest {
+                                need.extend((0..b.nkeys as usize).filter(|&q| b.key_kind[q] == mj::ACOL).map(|q| b.key_slot[q] as usize));
+                            }
+                            let (dev, ix, place) = resident(rel, &need, cols, batch, rep)?;
+                            let mut probes = Vec::new();
+                            for (r, bcols, b) in rest {
+                                let (bdev, bix, bplace) = resident(r, &right_cols(b), bcols, batch, rep)?;
+                                let mut b = narrowed(*b, &bplace);
+                                for q in 0..b.nkeys as usize {
+                                    if b.key_kind[q] == mj::ACOL {
+                                        b.key_slot[q] = place[b.key_slot[q] as usize];
+                                    }
+                                }
+                                probes.push((bdev, bix, b));
+                            }
+                            self.rels[k] = Some((dev, ix));
+                            self.places[k] = Some(place);
+                            self.probes[k] = Some(probes);
+                        }
                         (Kind::Text { rel, col, table, key }, None) => self.rels[k] = Some((verdicts(rel, *col, table, key, batch, rep, names)?, None)),
                         (Kind::RowText { cols, consts, .. }, None) => self.rels[k] = Some((texts(cols, consts, rep, names)?.rel(), None)),
                         (Kind::Mapped { rel, col, ops }, None) => {
@@ -1458,7 +1731,13 @@ impl<'p> Run<'p> {
                         let names_rel = right.map(|r| r.0).ok_or("a made text's stage with no names")?;
                         batch.row_stage(s.desc, left, names_rel, auto.as_ref().map(|(b, p)| (&**b, *p)), i, o, &self.totals, &self.counters, self.counter[k], &out)
                     } else {
-                        batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out)
+                        let desc = self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at));
+                        if let Some(probes) = &self.probes[k] {
+                            let rest: Vec<(mj::Stage, &mj::DevRel, Option<&mj::DevIndex>)> = probes.iter().map(|(r, ix, b)| (*b, &**r, ix.as_deref())).collect();
+                            batch.witness(desc, left, right.ok_or("a witness with no relation")?, &rest, i, o, &self.totals, &out)
+                        } else {
+                            batch.stage(desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out)
+                        }
                     }
                     .map_err(|e| format!("{e:?}: a stage's space for {cap_in} rows"))?;
                     self.tables[o] = Some(out);
@@ -2202,6 +2481,8 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) {
         let vals: Vec<u64> = match (&s.kind, r.counter[k]) {
             _ if s.span == 0 => Vec::new(),
             (Kind::Pass | Kind::Map, _) => vec![n_in; s.span],
+            // One witness per binding: every step of the rest passes the bindings that have one.
+            (Kind::Witness { .. }, _) => vec![n_out; s.span],
             _ if s.desc.mode == mj::AGG => vec![n_out],
             (Kind::Atom { .. } | Kind::Own { .. }, Some(c)) => (0..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
             (Kind::Filter, Some(c)) => (1..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),

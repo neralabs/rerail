@@ -214,7 +214,7 @@ pub mod tests {
     use std::path::PathBuf;
 
     fn git(directory: &Path, arguments: &[&str]) {
-        let output = std::process::Command::new("git")
+        let output = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
             .arg("-C")
             .arg(directory)
             .args(arguments)

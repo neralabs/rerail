@@ -31,6 +31,9 @@ type R<T> = Result<T, Refusal>;
 /// tree-sitter's `MAX_VERSION_COUNT`: past it, tree-sitter drops versions by a measure of its own.
 const MAX_VERSIONS: usize = 6;
 
+/// tree-sitter's `MAX_LINK_COUNT` (stack.c): the links a stack node keeps.
+const MAX_LINKS: u32 = 8;
+
 // ---- The lexer: the grammar's own tokens, longest match among those the state takes.
 
 /// The grammar's tokens a state takes, a bit each.
@@ -363,6 +366,12 @@ struct P<'a> {
     evs: Vec<Ev>,
     groups: u32,
     done: Vec<V>,
+    /// The images so far that merged with their reading as `!` and a link: each a link more in
+    /// tree-sitter's stack, which keeps both readings to the text's end.
+    merges: u32,
+    /// The last such image's start (its readings merge more than once, and a merge may find an
+    /// image counted before).
+    merged_at: u32,
 }
 
 pub fn parse(src: &[u8]) -> R<Tape> {
@@ -376,7 +385,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     if let Err(e) = std::str::from_utf8(src) {
         return Err(Refusal::Lex(e.valid_up_to() as u32));
     }
-    let mut p = P { src, b, evs: Vec::new(), groups: 0, done: Vec::new() };
+    let mut p = P { src, b, evs: Vec::new(), groups: 0, done: Vec::new(), merges: 0, merged_at: 0 };
     let best = p.run()?;
     p.write(&best)
 }
@@ -400,6 +409,9 @@ impl<'a> P<'a> {
             }
             // Each group (or lone version): one token, lexed in the union of its members' states.
             now.sort_by_key(|v| v.group);
+            // The delimiter tokens lexed here, and whether one leans on a link text's last
+            // punctuation (see `leans_on_punctuation`).
+            let (mut delims, mut leans) = (0u8, false);
             let mut a = 0;
             while a < now.len() {
                 let g = now[a].group;
@@ -414,6 +426,17 @@ impl<'a> P<'a> {
                     ext |= ex;
                 }
                 let tok = self.lex(pos as usize, lex, ext, now[a].sc)?;
+                if matches!(self.src.get(pos as usize), Some(b'*' | b'_' | b'~')) {
+                    delims |= match tok.map(|t| t.t) {
+                        Some(T::X(Ext::Open(_))) => 1,
+                        Some(T::X(Ext::Close(_))) => 2,
+                        _ => 4,
+                    };
+                    leans |= self.leans_on_punctuation(&now[a..z], tok.map(|t| t.t))?;
+                    if leans && delims.count_ones() > 1 {
+                        return Err(Refusal::Parse(pos));
+                    }
+                }
                 if let Some(tok) = tok {
                     if ext & (x::LTW | x::LTP) != 0 {
                         self.relex_risk(&now[a..z], &tok)?;
@@ -429,7 +452,18 @@ impl<'a> P<'a> {
                         };
                         for mut w in out.drain(..) {
                             w.group = group;
-                            merge(&mut vs, w, &self.evs);
+                            if let Some(start) = merge(&mut vs, w, &self.evs)
+                                && (self.merges == 0 || start > self.merged_at)
+                            {
+                                self.merged_at = start;
+                                self.merges += 1;
+                                if self.merges > MAX_LINKS {
+                                    // tree-sitter's stack keeps at most `MAX_LINK_COUNT` links a
+                                    // node, and drops the readings past them (with nine images,
+                                    // the first is read as `!` and a link): refused.
+                                    return Err(Refusal::Parse(pos));
+                                }
+                            }
                         }
                     }
                 }
@@ -481,6 +515,18 @@ impl<'a> P<'a> {
         if !matches!(self.src.get(at), Some(b'*' | b'_' | b'~')) {
             return Ok(());
         }
+        // After an image's merge with its reading as `!` and a link, the stack holds both
+        // readings, and a reduction across them lexes again: an opener that needs the last
+        // token's white space or punctuation (`*(`, `*.`) is then lone text.
+        if self.merges > 0 && matches!(tok.t, T::X(Ext::Open(_))) {
+            for v in vs {
+                let (_, ext) = valid(v);
+                let mut sc = v.sc;
+                if !matches!(scan(self.src, &self.b, at, ext & !(x::LTW | x::LTP), &mut sc), Ok(Some((Ext::Open(_), _)))) {
+                    return Err(Refusal::Parse(at as u32));
+                }
+            }
+        }
         for v in vs {
             let n = v.f.len();
             let (F::Seq { any: true, .. }, Some(F::Emph { d, .. })) = (v.f[n - 1], n.checked_sub(2).map(|i| v.f[i])) else { continue };
@@ -493,6 +539,27 @@ impl<'a> P<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Whether a group's token at an emphasis delimiter leans on the last token's punctuation in
+    /// a link's text: the grammar takes no `_last_token_punctuation` there (`_inline_element_no_link`),
+    /// so a version in it lexes otherwise in its own state. tree-sitter lexes each version, reusing
+    /// the last token where the lex modes agree: when another version lexes a different token here
+    /// (`_[^_]`: a closer for the emphasis, an opener for the text, punctuation for the link),
+    /// which the link gets depends on the versions' order, which this parser does not keep.
+    fn leans_on_punctuation(&self, vs: &[V], tok: Option<T>) -> R<bool> {
+        for v in vs {
+            if v.last & x::LTP == 0 || !matches!(v.f.last(), Some(F::Seq { no_link: true, .. })) {
+                continue;
+            }
+            let (_, ext) = valid(v);
+            let mut sc = v.sc;
+            let alone = scan(self.src, &self.b, v.pos as usize, ext & !x::LTP, &mut sc).map_err(|_| Refusal::Parse(v.pos))?;
+            if alone.map(|(e, _)| T::X(e)) != tok {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     // ---- The lexer.
@@ -1312,19 +1379,61 @@ fn valid(v: &V) -> (u16, u16) {
 }
 
 /// Version `w` into `vs`, merged with one in the same state: the higher score's tree kept; of two
-/// different trees of the same score, the version is marked tied.
-fn merge(vs: &mut Vec<V>, w: V, evs: &[Ev]) {
+/// different trees of the same score, the version is marked tied. Where an image it merged with
+/// another reading of it starts, if it did.
+fn merge(vs: &mut Vec<V>, w: V, evs: &[Ev]) -> Option<u32> {
     for v in vs.iter_mut() {
         if v.same_state(&w) {
+            let different = !same_events(evs, v.ev, w.ev);
+            let image_start = if different { image_apart(evs, v.ev, w.ev) } else { None };
             if w.score > v.score {
                 *v = w;
-            } else if w.score == v.score && (w.tied || !same_events(evs, v.ev, w.ev)) {
+            } else if w.score == v.score && (w.tied || different) {
                 v.tied = true;
             }
-            return;
+            return image_start;
         }
     }
     vs.push(w);
+    None
+}
+
+/// The start of an image closed on one of the event lists ending at `a` and `b` since they
+/// parted (the events of all versions are one tree, an event's index past its `prev`'s), looked
+/// for over the last few events. Its readings (`![a]` and `![a](b)`) end apart but start together.
+fn image_apart(evs: &[Ev], mut a: u32, mut b: u32) -> Option<u32> {
+    let mut found = None;
+    for _ in 0..32 {
+        if a == b {
+            return found;
+        }
+        let newer = if a > b { &mut a } else { &mut b };
+        let x = evs[*newer as usize - 1];
+        if found.is_none() && matches!(x, Ev { op: Op::Close, k: K::Image, .. }) {
+            found = open_of(evs, x.prev);
+        }
+        *newer = x.prev;
+    }
+    None
+}
+
+/// The start of the node whose close is the event after `at` (its open, past the nodes in it).
+fn open_of(evs: &[Ev], mut at: u32) -> Option<u32> {
+    let mut depth = 0u32;
+    for _ in 0..256 {
+        if at == 0 {
+            return None;
+        }
+        let x = evs[at as usize - 1];
+        match x.op {
+            Op::Close => depth += 1,
+            Op::Open if depth == 0 => return Some(x.s),
+            Op::Open => depth -= 1,
+            Op::Leaf => {}
+        }
+        at = x.prev;
+    }
+    None
 }
 
 /// Whether the event lists ending at `a` and `b` are the same.

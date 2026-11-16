@@ -172,7 +172,7 @@ hex_char(12, "C"). hex_char(13, "D"). hex_char(14, "E"). hex_char(15, "F").
 .decl hex_pattern(h: symbol)
 hex_pattern(h) :- hex_upper(_, h), strlen(h) < 4, match("[1248]0*|[137F]F*", h).
 hex_pattern(h) :- hex_upper(_, h), strlen(h) >= 4, match("[1248]0*.|[137F]F*.|[7F][0F]*", h).
-.decl lit_repr_threshold(t: number)   // given by the including rule
+.decl lit_repr_threshold(t: number) extensible   // given by the including rule
 .decl dec_lit_repr(n: node)
 dec_lit_repr(n) :- int_lit_value(n, v), lit_repr_threshold(t), v >= t, hex_upper(v, h), hex_pattern(h).
 hex_wanted(v) :- int_lit_value(_, v), lit_repr_threshold(t), v >= t.

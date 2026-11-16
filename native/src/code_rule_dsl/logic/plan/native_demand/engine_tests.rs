@@ -22,8 +22,10 @@ reached(c,f,r,o) :- python_candidates(c,f,r,o,demand,targets,"async_function","o
     let consumer = sccs.iter().position(|s| s.contains(operator)).unwrap();
     // The target can be a view. Its underlying input must also survive until the native reader.
     for views in [HashSet::new(), HashSet::from(["targets".into()])] {
-        let first = plan::first_reads(&p, &sccs, &views);
-        let last = plan::last_reads(&p, &sccs, &views);
+        let vs = plan::body::Versions::with(&p, plan::body::Placed::of_program(&p).unwrap());
+        let by = plan::keys_by_stratum(vs.placed(0), &sccs);
+        let first = plan::first_reads(vs.whole(0), &vs, &sccs, &by, &views);
+        let last = plan::last_reads(vs.whole(0), &vs, &sccs, &by, &views);
         for rel in ["demand", "targets"] {
             assert_eq!(first.get(rel), Some(&consumer), "first read of {rel}");
             assert_eq!(last.get(rel), Some(&consumer), "last read of {rel}");

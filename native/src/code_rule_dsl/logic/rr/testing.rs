@@ -283,13 +283,15 @@ pub struct Outcome {
     pub findings: Vec<String>,
 }
 
+#[cfg(test)]
 impl Outcome {
+    #[cfg(test)]
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
     }
 }
 
-/// A finding's key, from a row of `rr_diagnostic.csv`.
+/// A finding's key, from a row of `rr_diagnostic`.
 #[derive(Clone, Debug, PartialEq)]
 struct Finding {
     code: String,
@@ -316,8 +318,16 @@ fn matches(e: &Expected, f: &Finding) -> bool {
         && column.is_none_or(|c| f.column.is_none_or(|fc| fc == c))
 }
 
-fn row_matches(values: &[Value], row: &[String]) -> bool {
-    row.len() == values.len() && row.iter().zip(values).all(|(have, want)| want.as_ref().is_none_or(|(w, _)| w == have))
+/// Whether `row` is one `values` names: a text by its text, any other value as the run shows it.
+fn row_matches(values: &[Value], row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> bool {
+    use crate::code_rule_dsl::logic::plan::output::Value as V;
+    row.len() == values.len()
+        && row.values().zip(values).all(|(have, want)| {
+            want.as_ref().is_none_or(|(w, _)| match have {
+                V::Text(t) => t == w,
+                v => v.to_string() == *w,
+            })
+        })
 }
 
 /// Runs `test` of the file at `path` in `work` (a directory of its own, made empty first): its fixture files under
@@ -372,7 +382,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             program.outputs.push(relation.clone());
         }
     }
-    let report = crate::code_rule_dsl::tools::run_program(path, program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
+    let report = crate::code_rule_dsl::tools::run_program(program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
     let findings: Vec<Finding> = report["diagnostics"]
         .as_array()
         .into_iter()
@@ -384,13 +394,9 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             column: row["column"].as_i64(),
         })
         .collect();
-    let rows = |relation: &str| -> Result<Vec<Vec<String>>, String> {
-        match std::fs::read_to_string(out.join(format!("{relation}.csv"))) {
-            Ok(text) => Ok(text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(format!("{relation}.csv: {e}")),
-        }
-    };
+    // The run's outputs, read where they are.
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let rows = |relation: &str| -> Result<Vec<crate::code_rule_dsl::logic::plan::output::Row<'_>>, String> { Ok(outputs.rows(relation)) };
     let mut outcome = Outcome { failures: Vec::new(), findings: findings.iter().map(ToString::to_string).collect() };
     let mut fail = |line: usize, what: String| outcome.failures.push(format!("line {line}: {what}"));
     for e in &test.expects {
@@ -432,7 +438,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             Expected::Row { relation: r, values, only: true } if r == relation => Some(values),
             _ => None,
         }).collect();
-        let extra: Vec<Vec<String>> = rows(relation)?.into_iter().filter(|row| !named.iter().any(|v| row_matches(v, row))).collect();
+        let extra: Vec<crate::code_rule_dsl::logic::plan::output::Row<'_>> = rows(relation)?.into_iter().filter(|row| !named.iter().any(|v| row_matches(v, row))).collect();
         if !extra.is_empty() {
             fail(e.line, format!(".expect only {relation}: also {}{}", extra.len(), sample(&extra)));
         }
@@ -451,18 +457,23 @@ fn list(findings: &[Finding]) -> String {
     if all.len() > 5 { format!("{} and {} more", all[..5].join(", "), all.len() - 5) } else { all.join(", ") }
 }
 
-fn sample(rows: &[Vec<String>]) -> String {
+fn sample(rows: &[crate::code_rule_dsl::logic::plan::output::Row<'_>]) -> String {
     if rows.is_empty() {
         return String::new();
     }
-    let shown: Vec<String> = rows.iter().take(3).map(|r| format!("({})", r.join(", "))).collect();
+    // The first rows in the order their values show (a relation's rows hold no order of their own).
+    let mut shown: Vec<String> = rows.iter().map(|r| format!("({})", r.values().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))).collect();
+    shown.sort_unstable();
+    shown.truncate(3);
     format!(": {}{}", shown.join(", "), if rows.len() > 3 { ", …" } else { "" })
 }
 
 // ---------------------------------------------------------------- printing
 
+#[cfg(test)]
 /// The text of each `.test` and `.fixtures` block of `src`, as written, in order: what a printer of the file's
 /// program (`flatten`) adds after it, so the file's tests go with it.
+#[cfg(test)]
 pub fn blocks(src: &str) -> Vec<String> {
     use super::tape::Kind;
     let mut parser = syntax::Parser::taped(src);

@@ -926,6 +926,10 @@ impl<'a> P<'a> {
     fn argument(&mut self) -> R<()> {
         let n = self.open(K::Argument, f::NONE, C_NONE)?;
         if self.peek() == T::Name && self.kind_at(1) == T::Colon {
+            // A keyword that starts its own expression is no argument's name to tree-sitter.
+            if matches!(self.tok().word, w::CLONE | w::INCLUDE | w::INCLUDE_ONCE | w::LIST | w::NEW | w::PRINT | w::REQUIRE | w::REQUIRE_ONCE | w::YIELD) {
+                return self.refuse();
+            }
             self.leaf(K::Name, f::NAME, C_NONE)?;
             self.tk(K::Argument, K::TColon)?;
         }

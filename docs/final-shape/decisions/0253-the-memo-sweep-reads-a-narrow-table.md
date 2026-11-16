@@ -1,6 +1,8 @@
 # 0253: the memo sweep reads a narrow table
 
-Status: built (2026-11-15). Amends decision 0227 (reachability) and the frames' schema (`frame_part_used`).
+Status: superseded by decision 0240 §4 (2026-11-15, at the hub merge into investigate-bend-vs-datalog): a memo
+entry is a row of `memo_entries`, with its content digest in its own column, and the sweep reads that table, so
+`frame_part_used` has no `content` column. Was built (2026-11-15). Amends decision 0227 (reachability) and the frames' schema (`frame_part_used`).
 
 ## Intro
 

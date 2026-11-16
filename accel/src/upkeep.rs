@@ -112,6 +112,7 @@ impl Drop for RunGuard {
 }
 
 /// The lock file beside `file` that the runs over it hold shared (`<file>.runs.lock`).
+#[cfg(unix)]
 fn runs_lock(file: &std::path::Path) -> std::path::PathBuf {
     let mut name = file.as_os_str().to_owned();
     name.push(".runs.lock");
@@ -123,19 +124,21 @@ fn runs_lock(file: &std::path::Path) -> std::path::PathBuf {
 /// missing is skipped.
 pub fn run_begins(files: &[&std::path::Path]) -> RunGuard {
     RUNS.fetch_add(1, Ordering::AcqRel);
-    let mut locks = Vec::new();
     #[cfg(unix)]
-    for f in files {
-        use std::os::fd::AsRawFd as _;
-        if let Ok(lock) = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(f)) {
+    let locks = files
+        .iter()
+        .filter_map(|f| {
+            use std::os::fd::AsRawFd as _;
+            let lock = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(f)).ok()?;
             // Shared: runs do not wait for each other. A probe holds the lock exclusively for an instant.
-            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH) } == 0 {
-                locks.push(lock);
-            }
-        }
-    }
+            (unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH) } == 0).then_some(lock)
+        })
+        .collect();
     #[cfg(not(unix))]
-    let _ = files;
+    let locks = {
+        let _ = files;
+        Vec::new()
+    };
     RunGuard { _locks: locks }
 }
 
@@ -176,7 +179,10 @@ fn others_run_over(file: &std::path::Path) -> bool {
         *active
     }
     #[cfg(not(unix))]
-    false
+    {
+        let _ = file;
+        false
+    }
 }
 
 /// The file beside `file` that records when each job over it last finished (`<file>.upkeep`: `name\tunix seconds`

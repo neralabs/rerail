@@ -139,7 +139,7 @@ slf001_free(n, CLS, SELFTAG) :- node(_, n, _, _, _), CLS = n, node(_, n, _, _, _
 // SELFTAG: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
 slf001_same_class_type(n, CLS, SELFTAG) :-
     ( slf001_self_type(n), slf001_free(n, CLS, SELFTAG)
-    ; kind(n, "identifier"), node(_, n, _, _, _), CLS = n, unset(SELFTAG), count : { slf001_self_type(n), slf001_free(n, CLS_e0, SELFTAG_e0) } = 0
+    ; kind(n, "identifier"), node(_, n, _, _, _), CLS = n, unset(SELFTAG), count : { slf001_self_type(n),slf001_free(n, CLS_e0, SELFTAG_e0) } = 0
     ).
 
 slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression"),

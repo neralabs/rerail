@@ -37,13 +37,33 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
 const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE"];
 
-fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
+/// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
+/// the run's key.
+fn switches() -> Vec<u8> {
+    let mut switches: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
+        .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))
+        .collect();
+    switches.sort();
+    let mut out = Vec::new();
+    for (k, v) in switches {
+        out.extend_from_slice(k.as_bytes());
+        out.push(0);
+        out.extend_from_slice(v.as_bytes());
+        out.push(0);
+    }
+    out
+}
+
+fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
-    h.update(b"rerail.run-reuse/v1\0");
+    // v4: the run's settings keyed as the rows it adds (decision 0249), the texts as the files'.
+    h.update(b"rerail.run-reuse/v4\0");
     for p in programs {
         h.update((p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
     }
+    added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
     h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
@@ -59,17 +79,7 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's
     // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
     // `RERAIL_AST_PARTS=off` answered with the outputs of one with it on. The cache's own path names the store.
-    let mut switches: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
-        .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))
-        .collect();
-    switches.sort();
-    for (k, v) in switches {
-        h.update(k.as_bytes());
-        h.update([0]);
-        h.update(v.as_bytes());
-        h.update([0]);
-    }
+    h.update(switches());
     format!("{CUTOFF}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
@@ -78,11 +88,11 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
 /// live plan of which it names is dropped (`observe::collect`).
 pub const CUTOFF: &str = "cutoff:";
 
-/// The record's line of the texts' include graphs (`Texts::graphs`), each one's digest or none: with every rule file
+/// The record's entry of the texts' include graphs (`Texts::graphs`), each one's digest or none: with every rule file
 /// as recorded, the same graphs list the same rule files, so the check need not list them again (decision 0275).
 const GRAPHS: &str = "graphs";
 
-/// The texts' include graphs as the record's line holds them.
+/// The texts' include graphs as the record's entry holds them.
 fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
     let mut h = Sha256::new();
     for g in graphs {
@@ -97,14 +107,14 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The record's line of the program's parts the check reads (`corpus::Summary`), as compact JSON (one line, no tab).
+/// The record's entry of the program's parts the check reads (`corpus::Summary`), as JSON.
 const SUMMARY: &str = "program";
 
-/// The programs with the root's settings (`<root>/rerail.env`, the `env` option), as the run reads them.
-fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) -> Result<Vec<String>> {
+/// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
+fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
-    Ok(programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect())
+    Ok(super::added::Added::of(&settings, options))
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
@@ -133,26 +143,28 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
     Ok(out)
 }
 
-pub fn encode_consulted(consulted: &[(String, String, String)]) -> String {
-    consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n")
+/// A record's lists as bytes: the observer's codec (one definition for every record, `observe::encode_lists`).
+pub use crate::content_store::observe::{decode_lists, encode_lists};
+
+/// A record's consulted list as bytes (`encode_lists`): each entry its kind, its path and its digest.
+pub fn encode_consulted(consulted: &[(String, String, String)]) -> Vec<u8> {
+    let flat: Vec<&str> = consulted.iter().flat_map(|(w, p, d)| [w.as_str(), p, d]).collect();
+    encode_lists(&[&flat[..]])
 }
 
-pub fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
-    text.lines()
-        .filter_map(|l| {
-            let mut f = l.splitn(3, '\t');
-            Some((f.next()?.to_owned(), f.next()?.to_owned(), f.next()?.to_owned()))
-        })
-        .collect()
+/// The list `encode_consulted` made, or none where the bytes are not one.
+pub fn decode_consulted(bytes: &[u8]) -> Option<Vec<(String, String, String)>> {
+    let [flat]: [Vec<String>; 1] = decode_lists(bytes)?.try_into().ok()?;
+    if flat.len() % 3 != 0 {
+        return None;
+    }
+    let mut it = flat.into_iter();
+    Some(std::iter::from_fn(|| Some((it.next()?, it.next()?, it.next()?))).collect())
 }
 
-/// The outputs a run wrote: each `<rel>.csv` in `out`, as (name, bytes).
-fn outputs_of<'a>(out: &Path, names: impl Iterator<Item=&'a str>) -> Vec<(String,Vec<u8>)> {
-    let mut files=names.filter_map(|name| {
-        let name=format!("{name}.csv");
-        std::fs::read(out.join(&name)).ok().map(|bytes|(name,bytes))
-    }).collect::<Vec<_>>();
-    files.sort(); files
+/// The outputs a run wrote, as one file: a base of the relations `names` of the stack in `out` (decision 0239).
+fn outputs_of<'a>(out: &Path, names: impl Iterator<Item = &'a str>) -> Vec<(String, Vec<u8>)> {
+    crate::code_rule_dsl::logic::plan::output::base_of(out, names).map(|bytes| vec![(crate::code_rule_dsl::logic::plan::output::FILE.to_owned(), bytes)]).unwrap_or_default()
 }
 
 pub fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
@@ -184,15 +196,18 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
     let programs = given.programs;
     let checking = super::thread_usage();
-    let texts = with_settings(programs, root, options)?;
-    let key = key(&texts, root, options, modes, typing);
+    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
-        miss(&format!("no record under the run's key {} (programs {})", &key[..CUTOFF.len() + 12], texts.len()));
+        miss(&format!("no record under the run's key {} (programs {})", &key[..CUTOFF.len() + 12], programs.len()));
+        return Ok(None);
+    };
+    let Some(consulted) = decode_consulted(&consulted) else {
+        miss("the record's consulted list does not decode");
         return Ok(None);
     };
     // The plans it names are for collection (`CUTOFF`), not reads to check: the reused run names them, as the run
     // that made the record did, so its outer run records the manifest it recorded then.
-    let (plans, consulted): (Vec<_>, Vec<_>) = decode_consulted(&consulted).into_iter().partition(|c| c.0 == "plan");
+    let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
     let (graphs, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == GRAPHS);
     let (summary, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == SUMMARY);
     let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
@@ -227,7 +242,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     // The program's parts the check reads, as recorded: a function of the texts (the key) and the rule files (as
     // recorded), so the program is not combined again to read them.
     let summary = summary.first().and_then(|c| super::Summary::decode(c.2.as_bytes()));
-    if !unchanged(programs, &given.graphs, root, typing, options, &rest, summary)? {
+    if !unchanged(programs, &given.graphs, given.read, root, typing, options, &rest, summary)? {
         miss("a consulted file or read changed");
         return Ok(None);
     }
@@ -235,9 +250,14 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?;
     let mut report = Report { plans, ..Report::default() };
     for (name, bytes) in &outputs {
-        std::fs::write(out.join(name), bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
-        let rel = name.trim_end_matches(".csv").to_owned();
-        report.rows.insert(rel, bytes.iter().filter(|b| **b == b'\n').count());
+        if name != crate::code_rule_dsl::logic::plan::output::FILE {
+            return Err(Error::Plan(format!("{name}: no output file of this run's")));
+        }
+        crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        for rel in image.names() {
+            report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
+        }
     }
     let now = super::thread_usage();
     report.phases.push(("unchanged: phase 0 checked every read, outputs kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
@@ -277,8 +297,7 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let texts = with_settings(programs, root, options)?;
-    let key = key(&texts, root, options, modes, typing);
+    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
     let mut consulted = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();
@@ -289,7 +308,7 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     consulted.extend(read);
     consulted.extend(report.plans.iter().map(|plan| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(plan))));
     consulted.push((GRAPHS.to_owned(), String::new(), graphs_line(&given.graphs)));
-    if let Some(summary) = super::Summary::of(programs, &given.graphs, root, options)?.encode().and_then(|b| String::from_utf8(b).ok()).filter(|t| !t.contains(['\n', '\t'])) {
+    if let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode().and_then(|b| String::from_utf8(b).ok()) {
         consulted.push((SUMMARY.to_owned(), String::new(), summary));
     }
     let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));

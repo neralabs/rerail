@@ -20,7 +20,7 @@
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
-//!   `native_group`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
+//!   `native_group`), `native_text_test` (with `native_text_pattern`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
 //!
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
@@ -28,7 +28,7 @@
 use super::front::Name;
 use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
 use super::magic::{Gate, Report};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Rows by relation, as a program's `facts` holds them.
 pub type Facts = BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::name::List<Value>>>;
@@ -100,6 +100,8 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("native_roots", &["p:sym", "rel:sym", "roots:sym"]),
         ("native_match", &["p:sym", "rel:sym", "input:sym", "pattern:sym", "positions:int"]),
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
+        ("native_text_test", &["p:sym", "rel:sym", "input:sym", "column:int", "op:sym"]),
+        ("native_text_pattern", &["p:sym", "rel:sym", "i:int", "pattern:sym"]),
         ("native_python_candidates", &["p:sym", "rel:sym", "input:sym", "targets:sym", "context:sym", "member:sym"]),
         ("native_python", &["p:sym", "rel:sym", "kind:sym", "input:sym", "targets:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
@@ -119,6 +121,9 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("text_glob", &["p:sym", "i:int", "glob:sym"]),
         // `answers`: each request relation's answering programs, in order.
         ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
+        // `asked_by`: the k-th rule of each request relation, one row for each relation whose readers it serves
+        // (decision 0174).
+        ("asked", &["p:sym", "req:sym", "k:int", "by:sym"]),
         // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
         ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
         // `tapes`: the columns declared `tape` (decision 0103 §3).
@@ -385,6 +390,12 @@ impl Writer<'_> {
                         self.row("native_group", vec![s(rel), n(i), s(group)]);
                     }
                 }
+                Native::TextTest { input, column, op, patterns } => {
+                    self.row("native_text_test", vec![s(rel), s(input), n(*column), s(op)]);
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        self.row("native_text_pattern", vec![s(rel), n(i), s(pattern)]);
+                    }
+                }
                 Native::PythonCandidates {input,targets,context,member} => self.row("native_python_candidates",vec![s(rel),s(input),s(targets),s(context),s(member)]),
                 Native::Python {kind,input,targets} => self.row("native_python",vec![s(rel),s(kind),s(input),s(targets.as_deref().unwrap_or(""))]),
                 Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
@@ -412,6 +423,13 @@ impl Writer<'_> {
         for (req, by) in &prog.answers {
             for (i, b) in by.iter().enumerate() {
                 self.row("answer", vec![s(req), n(i), s(b)]);
+            }
+        }
+        for (req, rules) in &prog.asked_by {
+            for (k, readers) in rules.iter().enumerate() {
+                for b in readers {
+                    self.row("asked", vec![s(req), n(k), s(b)]);
+                }
             }
         }
         for (span, text) in &prog.rx_spans {
@@ -764,6 +782,12 @@ impl<'a, C: Cell> Reader<'a, C> {
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
         }
+        let patterns = self.by_id_text("native_text_pattern")?;
+        for row in self.get("native_text_test") {
+            let rel = text(&row[0])?;
+            let patterns = ordered(patterns.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            prog.natives.insert(rel, Native::TextTest { input: text(&row[1])?, column: int(&row[2])? as usize, op: text(&row[3])?, patterns });
+        }
         for row in self.get("native_python_candidates") {
             prog.natives.insert(text(&row[0])?,Native::PythonCandidates{input:text(&row[1])?,targets:text(&row[2])?,context:text(&row[3])?,member:text(&row[4])?});
         }
@@ -821,6 +845,15 @@ impl<'a, C: Cell> Reader<'a, C> {
             answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
         }
         prog.answers = answers.into_iter().map(|(req, by)| (req, ordered(by))).collect();
+        for row in self.get("asked") {
+            let (req, k, by) = (text(&row[0])?, int(&row[1])?, text(&row[2])?);
+            let k = usize::try_from(k).map_err(|_| format!("asked: rule {k}"))?;
+            let rules = prog.asked_by.entry(req).or_default();
+            if rules.len() <= k {
+                rules.resize_with(k + 1, BTreeSet::new);
+            }
+            rules[k].insert(by);
+        }
         Ok(prog)
     }
 
@@ -1053,7 +1086,8 @@ pub mod tests {
         super::write(&mut facts, "p", &prog);
         let back = super::program(&facts, "p").unwrap();
         assert_eq!(back.facts, prog.facts);
-        assert_eq!(super::super::plan::corpus::memo::program_digest(&back), super::super::plan::corpus::memo::program_digest(&prog));
+        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::super::plan::corpus::memo::program_digest(&super::super::plan::body::Placed::of_program(p).unwrap().v);
+        assert_eq!(key(&back), key(&prog));
     }
 
     /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored

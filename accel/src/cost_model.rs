@@ -19,6 +19,7 @@
 
 use crate::kernel::Kernel;
 use crate::lanes::Lane;
+#[cfg(target_os = "macos")]
 use crate::score::Sample;
 
 /// A launch's cost on a lane, as the model predicts it: its one-launch job's wall and host CPU seconds.
@@ -277,6 +278,7 @@ pub fn train(samples: &[Sample], config: &CostConfig, min: usize) -> Result<Trai
 
 /// [`train`], given up between its phases (the comparison, the training, the kernels' compile) once `stop` says so:
 /// upkeep's retraining yields to a run that begins (`upkeep::Slice::stopper`). Nothing is put in place then.
+#[cfg(target_os = "macos")]
 pub fn train_until(samples: &[Sample], config: &CostConfig, min: usize, stop: &dyn Fn() -> bool) -> Result<Trained, String> {
     const STOPPED: &str = "stopped: a run began";
     if samples.len() < min {

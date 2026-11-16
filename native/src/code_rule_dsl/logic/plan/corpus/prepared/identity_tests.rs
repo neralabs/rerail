@@ -1,4 +1,3 @@
-use super::*;
 use crate::code_rule_dsl::{logic::{front, plan}, typing::file_local::Binding};
 use std::collections::BTreeMap;
 
@@ -65,8 +64,8 @@ fn prepared_identity_child() {
     super::super::with_prepared(|kept| for (key, all) in kept.iter() {
         for p in all {
             let (sccs, _) = front::strata(&p.split.cross).unwrap();
-            let by = plan::rules_by_stratum(&p.split.cross, &sccs);
-            let identities: BTreeMap<_, _> = plan::identities(&p.split.cross, &sccs, &by).into_iter().collect();
+            let by = front::rules_by_stratum(&p.split.cross, &sccs);
+            let identities: BTreeMap<_, _> = plan::identities_of(&p.split.cross, &sccs, &by).unwrap().into_iter().collect();
             let label = key.iter().map(|b| format!("{b:02x}")).collect::<String>();
             assert!(!programs.contains_key(&label), "one store must have one prepared variant per key");
             programs.insert(label, serde_json::json!({"outputs":p.prog.outputs,"front":format!("{:?}",p.prog),
@@ -76,7 +75,7 @@ fn prepared_identity_child() {
     });
     let phases: Vec<_> = report.phase_runs.iter().map(|p| serde_json::json!({"name":p.name,
         "prepared":p.report.prepared,"kept":p.report.cross_kept,"maintained":p.report.cross_maintained,"memo":p.report.memo,"chunks":p.report.chunks,"strata":p.report.cross_strata})).collect();
-    let result = serde_json::json!({"programs":programs,"outputs":std::fs::read_to_string(out.join("hit.csv")).unwrap(),
+    let result = serde_json::json!({"programs":programs,"outputs":crate::code_rule_dsl::logic::plan::output::shown(&out, "hit").unwrap(),
         "prepared":report.prepared,"phases":phases});
     std::fs::write(root.join(format!("{phase}.json")), serde_json::to_vec_pretty(&result).unwrap()).unwrap();
 }

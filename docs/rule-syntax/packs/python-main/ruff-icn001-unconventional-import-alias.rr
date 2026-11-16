@@ -94,7 +94,7 @@ ICN001_non_ascii_spelling(n, MOD) :- kind(n, "identifier"), node(_, n, _, _, _),
 .decl icn001_spelled(n: node)
 icn001_spelled(n) :- kind(n, "dotted_name"), imported_sym(n, q1), icn001_set_3(q1),
     ( match(".*[^\\x00-\\x7f].*", n)
-    ; inside(n, p1, "import_from_statement"), icn001_tok_has_6(p1)
+    ; inside(n, p1, "import_from_statement"), field(p1, "module_name", c1), match(".*[^\\x00-\\x7f].*", c1)
     ).
 
 
@@ -146,30 +146,6 @@ icn001_tok_has_4(n) :- child(n, c36, _), structural_after(c36, g31),
     match("(?s)^(?:(?:.*\\W)?(?:xml[\\s\\\\]*\\.[\\s\\\\]*etree)(?:\\W.*)?)$", g31).
 icn001_tok_has_4(n) :- node_text(n, g31), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:xml[\\s\\\\]*\\.[\\s\\\\]*etree)(?:\\W.*)?)$", g31).
-
-// tok_has_5(n): a child of n, a named node or an anonymous token, matches "[^\\x00-\\x7f]": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl icn001_tok_has_5(n: node)
-.stored icn001_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-icn001_tok_has_5(n) :- field(n, "module_name", c3), match(".*[^\\x00-\\x7f].*", c3).
-icn001_tok_has_5(n) :- op(n, t4), match(".*[^\\x00-\\x7f].*", t4).
-icn001_tok_has_5(n) :- child(n, c10, _), structural_before(c10, g5),
-    match("(?s)^(?:.*\\S*?(?:[^\\x00-\\x7f])\\S*.*)$", g5).
-icn001_tok_has_5(n) :- child(n, c10, _), structural_after(c10, g5),
-    match("(?s)^(?:.*\\S*?(?:[^\\x00-\\x7f])\\S*.*)$", g5).
-icn001_tok_has_5(n) :- node_text(n, g5), !child(n, _, _),
-    match("(?s)^(?:.*\\S*?(?:[^\\x00-\\x7f])\\S*.*)$", g5).
-
-// tok_has_6(n): a child of n, a named node or an anonymous token, matches "[^\\x00-\\x7f]": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl icn001_tok_has_6(n: node)
-.stored icn001_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-icn001_tok_has_6(n) :- field(n, "module_name", c2), match(".*[^\\x00-\\x7f].*", c2).
-icn001_tok_has_6(n) :- op(n, t3), match(".*[^\\x00-\\x7f].*", t3).
-icn001_tok_has_6(n) :- child(n, c9, _), structural_before(c9, g4),
-    match("(?s)^(?:.*\\S*?(?:[^\\x00-\\x7f])\\S*.*)$", g4).
-icn001_tok_has_6(n) :- child(n, c9, _), structural_after(c9, g4),
-    match("(?s)^(?:.*\\S*?(?:[^\\x00-\\x7f])\\S*.*)$", g4).
-icn001_tok_has_6(n) :- node_text(n, g4), !child(n, _, _),
-    match("(?s)^(?:.*\\S*?(?:[^\\x00-\\x7f])\\S*.*)$", g4).
 
 // set_3: symbols from the JSON `resolves.imported`
 .decl icn001_set_3(v: symbol)

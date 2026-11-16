@@ -40,6 +40,9 @@ dump-cli = ["rerail-device-metal/dump-cli", "rerail-facts/dump-cli", "rerail-lan
 # `syntax_error` on Python from a parser that follows CPython's grammar (Ruff's, with its 0.8 MB Unicode name table);
 # off, Python's verdict is tree-sitter's, as the other languages' are.
 python-syntax-error = ["rerail-device-metal/python-syntax-error", "rerail-facts/python-syntax-error", "rerail-lang/python-syntax-error", "rerail-lang-ecma/python-syntax-error", "rerail-lang-json/python-syntax-error", "rerail-lang-php/python-syntax-error", "rerail-lang-python/python-syntax-error", "rerail-lang-rust/python-syntax-error", "rerail-lang-sql/python-syntax-error", "rerail-logic/python-syntax-error", "rerail-rr/python-syntax-error", "rerail-sessions/python-syntax-error", "rerail-transducer/python-syntax-error", "rerail-w/python-syntax-error"]
+# E7 (draft decision 0156): counts of each part of a tape node that readers take, on stderr at a command's end
+# (`tape::reads`). Off in every shipped build.
+tape-reads = ["rerail-facts/tape-reads", "rerail-lang/tape-reads"]
 # The corpus runner's persistent store (`RERAIL_TAPE_CACHE`): tapes kept across runs, the per-file memo, run records
 # and their collection, in zstd frames. Off (the browser build), every run parses every file.
 tape-cache = ["rerail-device-metal/tape-cache", "rerail-facts/tape-cache", "rerail-lang/tape-cache", "rerail-lang-ecma/tape-cache", "rerail-lang-json/tape-cache", "rerail-lang-php/tape-cache", "rerail-lang-python/tape-cache", "rerail-lang-rust/tape-cache", "rerail-lang-sql/tape-cache", "rerail-logic/tape-cache", "rerail-rr/tape-cache", "rerail-sessions/tape-cache", "rerail-transducer/tape-cache", "rerail-w/tape-cache"]
@@ -216,6 +219,8 @@ rerail-markdown-lean = { path = "crates/markdown_lean" }
 rerail-markdown-inline-lean = { path = "crates/markdown_inline_lean" }
 # The lean SQL parser, measured directly (`tape::tests::sql_parse_costs`).
 rerail-sql-lean = { path = "crates/sql_lean" }
+# The lean Vue parser, measured directly (`tape::tests::vue_parse_costs`).
+rerail-vue-lean = { path = "crates/vue_lean" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`), named here rather than through
 # the engine as its own dev-dependency: that built and linked the engine library (and its cdylib) a second time
 # into every test build (docs/final-shape/notes/t37-edit-loop-time.md).

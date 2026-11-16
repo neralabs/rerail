@@ -832,7 +832,7 @@ fn the_napi_slice_audits_and_applies_as_the_slice_does() {
     assert_eq!((warm, evaluated, rerun), (keys.clone(), 0, 0));
     // The Git observer: a clean checkout's `HEAD` is the directory's snapshot, so it is warm too.
     let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
+        let status = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
             .args(["-c", "user.name=rerail", "-c", "user.email=rerail@example.invalid", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&dir)

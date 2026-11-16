@@ -310,7 +310,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     }
     // No corpus: an empty root, and the library a root the loader may read (`env`).
     // Canonical (`/private/var/...`, not `/var/...` on macOS), as the run's world names its roots: one journal root.
-    // Both are rerail's own (decision 0246), as the family `rerail-phase-0-…`: answered, never kept, and nothing above
+    // Both are rerail's own (decision 0284), as the family `rerail-phase-0-…`: answered, never kept, and nothing above
     // them watched for them. Canonicalizing the root had watched the whole temporary directory, whose news (other
     // programs' files, the last process's outputs) the run after a cold one stored.
     crate::content_store::observe::own(&std::env::temp_dir().join("rerail-phase-0"));
@@ -323,26 +323,27 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     IN_PHASE_0.with(|c| c.set(true));
     let run = super::run_with_options(&[&text], &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
     IN_PHASE_0.with(|c| c.set(false));
-    let read = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
-    };
     let result = run.map(|report| {
+        use crate::code_rule_dsl::logic::plan::output::Value as V;
         let mut g = Graph { plans: report.plans, ..Graph::default() };
-        for r in read("p0_include") {
-            if let [from, at, name, path] = r.as_slice() {
-                g.includes.entry(from.clone()).or_default().push((at.parse().unwrap_or(0), name.clone(), PathBuf::from(path)));
+        // The outputs' image, read where it is: each value typed, nothing parsed.
+        let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap_or_else(|_| crate::code_rule_dsl::logic::plan::output::Outputs::of(&[]).expect("no image"));
+        for r in outputs.rows("p0_include") {
+            if let (V::Text(from), Some(at), V::Text(name), V::Text(path)) = (r.get(0), r.get(1).int(), r.get(2), r.get(3)) {
+                g.includes.entry(from.to_owned()).or_default().push((at, name.to_owned(), PathBuf::from(path)));
             }
         }
         for v in g.includes.values_mut() {
             v.sort();
         }
-        for r in read("p0_missing") {
-            if let [from, at, name] = r.as_slice() {
-                g.missing.push((from.clone(), at.parse().unwrap_or(0), name.clone()));
+        for r in outputs.rows("p0_missing") {
+            if let (V::Text(from), Some(at), V::Text(name)) = (r.get(0), r.get(1).int(), r.get(2)) {
+                g.missing.push((from.to_owned(), at, name.to_owned()));
             }
         }
         g.missing.sort();
-        g.absent = read("p0_absent").into_iter().filter_map(|r| r.first().map(PathBuf::from)).collect();
+        g.absent = outputs.rows("p0_absent").iter().filter_map(|r| r.get(0).text().map(PathBuf::from)).collect();
+        drop(outputs);
         let files = seeds.iter().filter_map(|s| match s {
             Seed::File(p) => Some(p.clone()),
             Seed::Text { .. } => None,

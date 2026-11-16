@@ -164,17 +164,16 @@ pub trait ScopeRules {
     /// Ruff's settings declaring the family's builtins: `python`, the query's, else Ruff's
     /// default version; `None` for a family they do not configure.
     fn ruff_options(python: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>>;
-    /// `ScopeTable::unbound_locally`: no name is, for a family with no scopes of its own. A default, so a family
-    /// compiled where this item's `test-hooks` is off (the engine's library in a test build) still implements the
-    /// trait.
+    /// `ScopeTable::unbound_locally`. A family without scope binds nothing locally. The default
+    /// keeps a family's adapter free of the trait crate's `test-hooks`: an adapter in the engine
+    /// crate is built without them when an integration test links the engine's library.
     #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-        builtin: bool,
+        _table: &ScopeTable,
+        _reference: &Reference,
+        _name: &str,
+        _builtin: bool,
     ) -> bool {
-        let _ = (table, reference, name, builtin);
         false
     }
     /// The usage index of `table`, whose file's root is `root`.

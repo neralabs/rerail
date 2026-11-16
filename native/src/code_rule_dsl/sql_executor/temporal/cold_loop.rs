@@ -86,7 +86,7 @@ struct Stage {
     expansion: usize,
     arms: usize,
 }
-struct Plan {
+pub struct Plan {
     stages: BTreeMap<usize, Arc<Stage>>,
     fold: Arc<Stage>,
     differences: BTreeMap<usize, (usize, usize, bool)>,
@@ -138,13 +138,13 @@ impl Plan {
         })
     }
 }
-struct Private {
+pub struct Private {
     parent: i64,
     roots: Vec<(usize, versions::Version)>,
     counts: BTreeMap<String, phase::Counts>,
     cleared: Vec<usize>,
 }
-struct Arena {
+pub struct Arena {
     plan: Arc<Plan>,
     states: Vec<State>,
     private: Vec<Private>,

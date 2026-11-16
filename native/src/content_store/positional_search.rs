@@ -8,6 +8,8 @@
 //! `put_search_indexes_bulk` takes W's index); G's value and text FTS tables, the kind instance
 //! vocabulary and their delete trigger are created on first use (`POSITIONAL_SCHEMA`), since W's
 //! schema has only the kind stream; `search_index_sets` rows take W's `has_errors` default.
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::vtab::array::Array;
@@ -156,19 +158,19 @@ impl ContentStore {
         }
         if !rebuild.is_empty() {
             let ids: Array = Rc::new(rebuild.iter().copied().map(SqlValue::Integer).collect());
-            transaction.execute(
+            transaction.execute_cached(
                 "DELETE FROM search_kind_fts WHERE rowid IN (SELECT value FROM rarray(?1))",
                 [ids.clone()],
             )?;
-            transaction.execute(
+            transaction.execute_cached(
                 "DELETE FROM search_value_fts WHERE rowid IN (SELECT value FROM rarray(?1))",
                 [ids.clone()],
             )?;
-            transaction.execute(
+            transaction.execute_cached(
                 "DELETE FROM search_text_fts WHERE rowid IN (SELECT value FROM rarray(?1))",
                 [ids.clone()],
             )?;
-            transaction.execute(
+            transaction.execute_cached(
                 "DELETE FROM search_index_sets WHERE tape_id IN (SELECT value FROM rarray(?1))",
                 [ids],
             )?;
@@ -207,14 +209,14 @@ impl ContentStore {
         );
         // The three stable statements scan one shared packed BLOB array. Tape objects and their
         // indexes are immutable, so existing rows are retained instead of deleted/reindexed.
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO search_kind_fts(rowid,token) \
              SELECT CAST(substr(value,1,20) AS INTEGER), \
                     CAST(substr(value,41,CAST(substr(value,21,10) AS INTEGER)) AS TEXT) \
              FROM rarray(?1)",
             [documents.clone()],
         )?;
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO search_value_fts(rowid,token) \
              SELECT CAST(substr(value,1,20) AS INTEGER), \
                     CAST(substr(value,41+CAST(substr(value,21,10) AS INTEGER), \
@@ -222,7 +224,7 @@ impl ContentStore {
              FROM rarray(?1)",
             [documents.clone()],
         )?;
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO search_text_fts(rowid,token) \
              SELECT CAST(substr(value,1,20) AS INTEGER), \
                     CAST(substr(value,41+CAST(substr(value,21,10) AS INTEGER) \
@@ -244,7 +246,7 @@ impl ContentStore {
                 })
                 .collect(),
         );
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO search_index_sets(tape_id,index_version,node_count,complete) \
              SELECT CAST(substr(value,1,20) AS INTEGER), \
                     CAST(substr(value,21,20) AS INTEGER), \

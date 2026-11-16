@@ -78,7 +78,7 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
          CREATE INDEX IF NOT EXISTS samples_by_form ON samples(machine, lane, forms, at);
          -- The priced samples (units > 0), which alone are read (`read_samples`). Binaries from before jobs with no
          -- units kept none still write them to the shared file: 488,666 of its 500,356 (2026-11-15), so a read down
-         -- the indexes above stepped through all of them, a third of a 1-file run's CPU (decision 0260).
+         -- the indexes above stepped through all of them, a third of a 1-file run's CPU (decision 0285).
          CREATE INDEX IF NOT EXISTS samples_priced ON samples(machine, at) WHERE units > 0;
          CREATE INDEX IF NOT EXISTS samples_priced_by_form ON samples(machine, lane, forms, at) WHERE units > 0;
          CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);
@@ -271,6 +271,9 @@ fn read() {
     })();
     match r {
         Ok((samples, saved)) => {
+            // The saved model is placed by the macOS training below.
+            #[cfg(not(target_os = "macos"))]
+            let _ = saved;
             let fitted = rerail_accel::price::learn_from(&samples);
             *FITTED.lock().unwrap_or_else(|p| p.into_inner()) = Some((samples.len(), fitted.len()));
             #[cfg(target_os = "macos")]
@@ -502,7 +505,7 @@ static STARTED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// Starts the statistics, once: the executor keeps its samples and a thread writes them. The stored ones are read,
 /// and the prices fitted, when the run first has work to price ([`begin_read`], beside it) or an executor is made
 /// ([`ready`]): a run that evaluates nothing (a warm run with no change) reads none of them. Building the read took
-/// 40 ms of CPU and the machine's name a Metal device, 11 ms of the main thread, in every process (decision 0260).
+/// 40 ms of CPU and the machine's name a Metal device, 11 ms of the main thread, in every process (decision 0285).
 /// Without a store (`RERAIL_COSTS=off`) there is nothing to read.
 pub fn start() {
     static STARTED: OnceLock<()> = OnceLock::new();
@@ -522,7 +525,7 @@ pub fn start() {
                 write();
             }
         });
-        // The statistics' store is rerail's own: outside the file observer (decision 0246).
+        // The statistics' store is rerail's own: outside the file observer (decision 0284).
         if let Some(p) = path() {
             crate::content_store::observe::own(&p);
         }
@@ -590,6 +593,7 @@ thread_local! {
 /// retraining, which counts the samples written since the saved model (none saved: due at once).
 pub fn upkeep_jobs() -> Vec<rerail_accel::upkeep::Registered> {
     let Some(path) = path() else { return Vec::new() };
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut jobs = vec![rerail_accel::upkeep::register(Box::new(crate::content_store::upkeep::SqliteFile::new(&path, crate::content_store::upkeep::Tables::All)))];
     #[cfg(target_os = "macos")]
     {
@@ -799,7 +803,7 @@ pub mod tests {
         super::write();
     }
 
-    /// A run that evaluates nothing reads no stored statistics (decision 0260): `start` keeps and writes samples
+    /// A run that evaluates nothing reads no stored statistics (decision 0285): `start` keeps and writes samples
     /// only, and the read runs once the run has work (`begin_read`) or an executor waits for it (`ready`). A child
     /// process, as the statistics' state is the process's.
     #[test]

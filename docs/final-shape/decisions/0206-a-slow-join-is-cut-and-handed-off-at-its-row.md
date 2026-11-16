@@ -118,6 +118,28 @@ measured gain, not by a fixed factor, is the job of the trials of decision 0207 
 The 6% more work where nothing was replaced is the cut rows read twice, and checks at each doubling past 20,000
 rows. At the default 100,000 there are fewer.
 
+## Fixed: a cut inside a fused chunk lost rows (2026-11-14)
+
+A first step fused with the filters after it (`rowcode`) reads its rows a chunk at a time. The chunk's work is
+counted before its rows go on, so a budget can run out before the first row of a chunk, or partway through one.
+The joins below then return at once. But the chunk's loop went on naming each row it passed over as the row
+reached (`at0`). So the cut took the chunk's last row as its place, and the rows between were counted as read.
+They were never read again, and what they derive was lost.
+
+```text
+a delta of 600 rows, one chunk; budget 300 steps, spent by the chunk's filters
+before: cut at row 599 -> done 599, left 1      (599 rows never joined)
+after:  cut before any row -> done 0, left 600
+```
+
+On the O125 replay (step 14, one file), cuts in the cold run of `tbv`, `ownq`, `fl350_walk` and others made
+`type_of` differ from the full run: 13 rows extra, 5 missing. With cuts off (`RERAIL_JOINS=off`, or
+`RERAIL_JOIN_SLOW_ROWS` out of reach), it matched.
+
+Now the chunk stops at the row the cut stopped at. A cut before any first-step row leaves every row
+(`seen0`). Test: `a_fused_first_step_cut_leaves_the_rows_after_its_row` (`setfix::cut_tests`). It fails without the
+fix (left 1, done 599).
+
 ## Whole plans (O168, closed 2026-11-14)
 
 A probe whose delta is all of its relation (a component's first wave) runs its whole plan, which reads the
@@ -139,3 +161,19 @@ A line's recorded work held its last order's work only, not the orders it handed
 (`RERAIL_JOIN_SLOW=0.5`) is understated by the replaced order's work. With every order counted, the default run of
 decision 0207 did 0.70 M rows (not 0.37 M), still 2.5× under the 1.73 M of no cuts. With decision 0216's price of a
 kind check, the line starts in its best order and does 0.39 M.
+
+## A cut inside a fused chunk (2026-11-14)
+
+A first step fused with the tests after it (`rowcode`) runs a chunk of rows at a time. Two faults lost or stalled
+rows at a cut there:
+
+- After the cut, the chunk's loop went on, so the row it stopped at (`at0`) moved to the chunk's last row. The rows
+  between were reported done but never run. The fixpoint was short of rows. With joins on, typescript-eslint's
+  no-shadow flagged six or seven valid fixtures (018, 028–033), varying from run to run, because its
+  `count : { … } = 0` missed rows. The loop now stops at the cut. The paired-batch and per-value loops stop there
+  too.
+- The chunk's filter work was charged before its rows ran. A chunk whose filters alone spent the budget was cut
+  before its first row on every run, so no run made progress. The work is now charged after the rows run, so each
+  run makes progress.
+
+Test: `a_cut_inside_a_fused_chunk_leaves_the_rows_it_did_not_run` (cut_tests.rs). It fails without the stop.

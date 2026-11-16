@@ -20,7 +20,7 @@ PT001(rr_at, SPAN, F) :- kind(n, "decorator"), child(n, c1, _), pt001_empty_call
     kind(c5, "function_definition"),
     ( count : { child(n, c2, _), kind(c2, "comment") } = 0, unset(SPAN)
     ; child(n, c4, _), kind(c4, "comment"), match("(?s)(?<SPAN>@.*?\\))(?:[ \\t\\f]|\\\\(?:\\r\\n?|\\n))*(?:#[^\\n]*)?\\s*", n), count : { count : { child(n, c2_e0, _), kind(c2_e0, "comment") } = 0 } = 0
-    ; child(n, c6, _), kind(c6, "comment"), unset(SPAN), count : { child(n, c4_e1, _), kind(c4_e1, "comment"), match("(?s)(?<SPAN>@.*?\\))(?:[ \\t\\f]|\\\\(?:\\r\\n?|\\n))*(?:#[^\\n]*)?\\s*", n) } = 0
+    ; child(n, c6, _), kind(c6, "comment"), unset(SPAN), count : { child(n, c4_e1, _),kind(c4_e1, "comment"),match("(?s)(?<SPAN>@.*?\\))(?:[ \\t\\f]|\\\\(?:\\r\\n?|\\n))*(?:#[^\\n]*)?\\s*", n) } = 0
     ),
     (unset(SPAN), rr_at = n ; !unset(SPAN), rr_at = SPAN).
 

@@ -197,6 +197,66 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
     Ok(Bounded { program: out, hops, split, unbounded })
 }
 
+/// `bound(prog, same_doc).hops`, read from the program's version (t36 item 7): what a run asks before it knows it runs
+/// rounds, which only then bounds the program's tree.
+pub(crate) fn hops(prog: &crate::code_rule_dsl::logic::plan::body::Placed, same_doc: &BTreeMap<String, Vec<usize>>) -> crate::code_rule_dsl::logic::plan::Result<BTreeSet<String>> {
+    use crate::code_rule_dsl::logic::program_image::{AtomRef, Lit, TermRef};
+    let (v, f) = (&prog.v, prog.fields()?);
+    let sccs = prog.components()?;
+    let comp: BTreeMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, s)| s.iter().map(move |r| (r.as_str(), i))).collect();
+    // `first_node_var`: the variable of the atom's first `node` column.
+    let node_var = |a: AtomRef<'_>| {
+        let cols = f.columns(v.rel_name(a.rel()))?;
+        a.args().zip(cols).find_map(|(t, (_, ty))| match t {
+            TermRef::Var(s) if ty == "node" => Some(s),
+            _ => None,
+        })
+    };
+    let mut hops = BTreeSet::new();
+    for rule in v.rules() {
+        let Some(&hc) = comp.get(v.rel_name(rule.head().rel())) else { continue };
+        let head_node = node_var(rule.head());
+        // `same_document`: the variables positive atoms of `same_doc` relations join to the head's node.
+        let local_to_head = head_node.map(|h| {
+            let groups: Vec<BTreeSet<_>> = rule.body().filter_map(|l| match l.view() {
+                Lit::Atom(a) if !a.neg() => Some(a),
+                _ => None,
+            })
+            .filter_map(|a| {
+                let cols = same_doc.get(v.rel_name(a.rel()))?;
+                let args: Vec<TermRef<'_>> = a.args().collect();
+                Some(cols.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).collect())
+            })
+            .collect();
+            let mut reached = BTreeSet::from([h]);
+            loop {
+                let before = reached.len();
+                for g in &groups {
+                    if !g.is_disjoint(&reached) {
+                        reached.extend(g.iter().copied());
+                    }
+                }
+                if reached.len() == before {
+                    return reached;
+                }
+            }
+        }).unwrap_or_default();
+        let mut found = Vec::new();
+        for l in rule.body() {
+            let Some(a) = l.atom().filter(|a| comp.get(v.rel_name(a.rel())) == Some(&hc)) else { continue };
+            match (head_node, node_var(a)) {
+                (Some(h), Some(x)) if h == x || local_to_head.contains(&x) => {}
+                (Some(_), Some(_)) if matches!(l.view(), Lit::Atom(_)) => found.push(v.rel_name(a.rel())),
+                _ => {}
+            }
+        }
+        if !found.is_empty() && found.len() <= MAX_HOPS {
+            hops.extend(found.into_iter().map(str::to_owned));
+        }
+    }
+    Ok(hops)
+}
+
 /// The suffix of a cone relation's final rows, read by the rest of the part (`cone_split`).
 pub(crate) const DONE: &str = "__done";
 

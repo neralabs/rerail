@@ -26,7 +26,7 @@ kept manifest ─ names ─▶ live plan / program ─ owns ─▶ its space's f
 ```
 
 Collection deletes the following. It runs as the `frames <store>` upkeep job (`frames::collect_unreachable_frames`,
-by `ContentStore::sweep_frames`): a utility job (decision 0190 §7), due once a keep decision is past the last sweep,
+by `ContentStore::sweep_frames`): a utility job (decision 0190 §7), due once a keep decision is past the last sweep (`corpus_decided.swept`, a column added on open: no table of its own, decision 0104),
 run soon after it behind the run, and finished before the run's process exits.
 
 | What | Unreachable when |
@@ -72,7 +72,8 @@ On `tmp/warm` (dl10, `layer-violations.rr`, and the 44-policy batch over dl1g), 
 
 The memo sweep reads every memo entry's `reads` in each live plan's space. On the largest local store (120,169
 frames, 390 MB of data) that full scan takes 0.42 s. It runs only after a keep decision, which is rare (decision 0053).
-That was not worth optimising then. Decision 0253 has the sweep read each entry's digest from `frame_part_used` instead.
+That was not worth optimising then. Decision 0253 had the sweep read each entry's digest from `frame_part_used` instead; since decision 0240 §4 the
+entries are rows of `memo_entries`, each with its digest, and the sweep reads that table.
 
 ## What this gives up
 

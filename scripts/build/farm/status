@@ -1,0 +1,58 @@
+#!/usr/bin/python3
+"""What the build farm can use now (README.md): its configuration, each host's health (probed now),
+and whether this machine's side is installed.
+
+    scripts/build/farm/status [--json]
+
+A host is usable when it answers over ssh, is reached over its configured interface (`link`;
+when it is not, the farm looks for an address of it that is, `farm.recover`), and has the free disk, round trip and throughput the configuration asks.
+Exits 0 when at least one host is usable, 1 when none is (everything then runs here).
+"""
+import json
+import os
+import socket
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm  # noqa: E402
+
+
+def main(argv):
+    cfg = farm.config()
+    path = farm.config_path()
+    rows = []
+    for host in farm.hosts():
+        h = farm.health(host, fresh=True) if host.get("enabled", True) else {"ok": False, "why": "disabled"}
+        rows.append((host, h))
+    if "--json" in argv:
+        print(json.dumps([dict(name=host["name"], **h) for host, h in rows], indent=1))
+    else:
+        print(f"configuration: {path}" if path else
+              f"configuration: none ({os.path.join(farm.CONFIG, 'farm.json')} missing): no hosts, everything runs here")
+        print(f"limits: {cfg['min_free_gb']} GB free, {cfg['max_rtt_ms']} ms round trip, {cfg['min_mbps']} MB/s")
+        sock = socket.socket(socket.AF_UNIX)
+        try:
+            sock.connect(farm.state("mirror.sock"))
+            daemon = "running"
+        except OSError:
+            daemon = "not running (the first remote compile or test-remote starts it)"
+        finally:
+            sock.close()
+        print(f"farm sccache: {'installed' if os.path.exists(farm.SCCACHE) else 'not installed (setup)'}; mirror daemon: {daemon}")
+        for host, h in rows:
+            uses = "compiles" + (", tests" if host.get("tests", True) else "")
+            facts = ", ".join(f"{v} {unit}" for v, unit in ((h.get("rtt_ms"), "ms"), (h.get("mbps"), "MB/s through ssh"),
+                                                            (h.get("free_gb"), "GB free"), (h.get("load"), "load")) if v is not None)
+            if h.get("ok"):
+                facts += f"; {farm.spare(host):.0f} cores to spare"
+            state = "usable" if h.get("ok") else f"not usable: {h.get('why')}"
+            print(f"  {host['name']}: {state} ({host.get('cores')} cores; {uses}{'; ' + facts if facts else ''})")
+            if h.get("arrival") and not farm.link_of(host):
+                print(f"    no link: it is reached over its {h['arrival']}; a fall back to WiFi is not caught")
+            if h.get("route"):
+                print(f"    reached at an address of its {farm.link_of(host)} (its name resolved to another link)")
+    sys.exit(0 if any(h.get("ok") for _, h in rows) else 1)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

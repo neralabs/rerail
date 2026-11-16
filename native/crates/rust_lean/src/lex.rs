@@ -174,6 +174,12 @@ pub mod w {
         code >= U8 && code <= CHAR
     }
 
+    /// Whether `code` is one of the grammar's `_reserved_identifier`s (an `identifier` where the
+    /// grammar takes one: `default`, `union`, `gen`, `raw`).
+    pub const fn is_reserved(code: u8) -> bool {
+        code == DEFAULT || code == UNION || code == GEN || code == RAW
+    }
+
     /// Whether `code` is a fragment specifier's word.
     pub const fn is_fragment(code: u8) -> bool {
         code >= BLOCK && code <= VIS
@@ -196,11 +202,6 @@ fn decode(src: &[u8], at: usize) -> Option<(char, usize)> {
     let s = std::str::from_utf8(&src[at..(at + 4).min(src.len())]).or_else(|e| std::str::from_utf8(&src[at..at + e.valid_up_to()])).ok()?;
     let c = s.chars().next()?;
     Some((c, c.len_utf8()))
-}
-
-/// White space past ASCII as the grammar's `\s` reads it (Unicode White_Space).
-fn wide_space(c: char) -> bool {
-    c.is_whitespace()
 }
 
 /// C's `iswalpha` for the float scanner: a letter (ASCII, or a Unicode alphabetic character).
@@ -232,16 +233,23 @@ impl<'s> Lexer<'s> {
     #[inline]
     pub fn skip(&self, mut at: usize, extras: &mut Vec<Extra>) -> R<usize> {
         loop {
+            at = self.space_end(at);
+            match self.at(at) {
+                b'/' if self.at(at + 1) == b'/' => at = self.line_comment(at, extras),
+                b'/' if self.at(at + 1) == b'*' => at = self.block_comment(at, extras)?,
+                _ => return Ok(at),
+            }
+        }
+    }
+
+    /// From `at`: white space passed (the grammar's `\s`, line ends included); where it ends.
+    pub fn space_end(&self, mut at: usize) -> usize {
+        loop {
             at = self.blocks.blank_end(at);
             match self.at(at) {
                 b'\n' | b'\r' => at += 1,
-                b'/' if self.at(at + 1) == b'/' => at = self.line_comment(at, extras),
-                b'/' if self.at(at + 1) == b'*' => at = self.block_comment(at, extras)?,
-                c if c >= 0x80 => match decode(self.src, at) {
-                    Some((c, n)) if wide_space(c) => at += n,
-                    _ => return Ok(at),
-                },
-                _ => return Ok(at),
+                // The grammar's `\s` is ASCII's: U+00A0, U+2028 and the rest are no white space.
+                _ => return at,
             }
         }
     }
@@ -369,7 +377,9 @@ impl<'s> Lexer<'s> {
                 if let Some(end) = self.char_end(s) {
                     return Ok((Char, end, 0));
                 }
-                let end = self.name_end(s + 1)?;
+                // `'r#a`: a raw identifier's lifetime, its identifier `r#a`.
+                let raw = if self.at(s + 1) == b'r' && self.at(s + 2) == b'#' { self.name_end(s + 3)? } else { s + 3 };
+                let end = if raw > s + 3 { raw } else { self.name_end(s + 1)? };
                 if end == s + 1 {
                     (Quote, 1)
                 } else {
