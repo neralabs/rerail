@@ -377,12 +377,14 @@ describe("complexity rule pack", () => {
     "}",
   ];
 
-  // A constructor and a record's compact constructor take their class's name. A lambda is no function of its own.
+  // A constructor and a record's compact constructor take their class's name. A lambda is no function of its own: its
+  // decisions are its method's.
   const NAMED_JAVA = [
     "class Box {",
     "    Box(boolean a) { %D% }",
     "    int method(boolean a) { %D% return 1; }",
     "    static int make(boolean a) { %D% return 1; }",
+    "    int deferred(boolean a) { Runnable later = () -> { %D% }; return 1; }",
     "}",
     "record Range(boolean a) {",
     "    Range { %D% }",
@@ -400,7 +402,7 @@ describe("complexity rule pack", () => {
     ["blade", "resources/views/names.blade.php", NAMED_BLADE, ["declared", "$assigned", undefined]],
     ["rust", "src/names.rs", NAMED_RUST, ["declared", "method", "area"]],
     ["vue", "src/Names.vue", NAMED_VUE, ["declared", "method", "assigned", undefined]],
-    ["java", "src/main/java/Names.java", NAMED_JAVA, ["Box", "method", "make", "Range", "area"]],
+    ["java", "src/main/java/Names.java", NAMED_JAVA, ["Box", "method", "make", "deferred", "Range", "area"]],
   ] as const)("%s: names the function in the steer, or says 'This function' when it has no name", (language, path, lines, names) => {
     // A function starts on its `def` line in Python, and on the line holding its decisions in the one-line sources.
     const opens = (line: string) => (language === "python" ? /^\s*def /u.test(line) : line.includes("%D%"));
