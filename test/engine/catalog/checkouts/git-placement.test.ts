@@ -61,11 +61,12 @@ function locateCalls(folder: string): number {
   return vi.mocked(runGit).mock.calls.filter(([cwd, args]) => cwd === resolve(folder) && args.includes("--show-toplevel")).length;
 }
 
-/** Rerail's answer for each folder against Git's own; returns how many Git processes Rerail started for them. */
+/** Rerail's answer for each folder, in order, against Git's own; returns how many Git processes Rerail started for them. */
 function expectGitsAnswers(...folders: string[]): number {
-  const before = folders.map(locateCalls);
+  const asked = [...new Set(folders.map(folder => resolve(folder)))];
+  const before = asked.reduce((sum, folder) => sum + locateCalls(folder), 0);
   for (const folder of folders) expect(repositoryIdentityLocation(folder), folder).toEqual(gitsAnswer(folder));
-  return folders.reduce((sum, folder, index) => sum + locateCalls(folder) - before[index]!, 0);
+  return asked.reduce((sum, folder) => sum + locateCalls(folder), 0) - before;
 }
 
 describe("a linked worktree is placed from the files Git reads, as Git places it", () => {
