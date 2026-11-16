@@ -3466,3 +3466,41 @@ Measured, as information (instructions a token, before → after):
 Tests: `class_pack::a_lexers_sets_are_one_table`;
 `the_refill_is_leans_window` (one table's lookups a vector, the pair's
 next bytes an `ext`, no vector load at a block's byte after).
+
+## A test of the byte after asks no bound
+
+**Intro.** Lean reads `b[pos + 1]` where the file's bytes after its end
+are zeros; it never compares with the length there. Ours tested a `-`
+not before a digit as `'-' & !(digit(b[s + 1]) & within(1))`. The
+`within(1)` at `s + 1` asks whether byte `s`, the token's own first
+byte, is in the file. It cost a reload of the length, a compare with
+it, and a guard against overflow.
+
+`native_cpu_bytes::scalar` now gives a `within` that asks about the
+anchor's own byte (`i - d` is `p`) as the constant 1. Its callers make
+this sound. `bit_first` and `rest_after` cut their bit by `p < len`,
+or `zero_kills` proves the output false at a zero `p`, and `zero_kills`
+never counts a `within`.
+
+The run loop's other leftovers from the earlier list are gone with the
+steps before. The pair bit is made once. The `mov` shuffle around the
+ninth byte's compare went with `WordRest::Ninth`. In the steady loop the
+marks reach the code by one `orr` of the test's hit. The pending marks'
+merge (`orr …, lsl #16`) is only in the loop's first, rotated copy. The
+`-` test's filter is one `tbz` on the entry's bit, as before.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 85.0 | 86.7 |
+| Punctuation | 48.3 | 50.3 |
+| Mixed code | 49.9 | 51.8 |
+| Strings | 237.6 | 231.9 |
+| Numbers | 121.8 | 113.1 |
+| Comments | 189.7 | 185.0 |
+
+Only the `-` test's code changed. The other rows moved by rustc's code
+for `f0` as a whole, as before.
+
+Test: `a_tests_next_byte_asks_no_bound`.

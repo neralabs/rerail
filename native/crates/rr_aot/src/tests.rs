@@ -199,6 +199,18 @@ fn the_refill_is_leans_window() {
     assert_eq!(odd.count(), 0, "a vector load at a block's byte after");
 }
 
+/// A token's test of the byte after its first (`-` not before a digit) reads it as lean reads
+/// `b[pos + 1]`, the file's padding a zero: no bound on the token's own byte (`within` at the
+/// anchor, `native_cpu_bytes::scalar`), no signed compare with the file's length.
+#[test]
+fn a_tests_next_byte_asks_no_bound() {
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let at = f0.find("== ((45i64 as u64) as u64)").expect("the `-` test");
+    let test = &f0[at..at + f0[at..].find("wrapping_shl(").expect("its hit placed")];
+    assert!(!test.contains("as i64)"), "a bound in the `-` test: {test}");
+}
+
 /// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)
 /// is the 64-bit `addp` of its halves (`clif_rust`): rustc keeps one `addp` a step, simdjson's
 /// five instructions, where it made each `vpaddq_u8(a, a)` three.
