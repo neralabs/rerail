@@ -5598,9 +5598,21 @@ fn run_observed(
                             let mut round = stats.clone();
                             for (rel, source) in &sources {
                                 if slice_reads.contains(rel) {
+                                    // Measured once per mix and relation, then scaled to each chunk's rows, as the main
+                                    // run's statistics are (below): measured in every chunk, it was 10.5 s of a cold
+                                    // PostHog run's CPU, a measurement making the relation it sampled.
                                     let m = measured.entry(rel.clone()).or_insert_with(|| {
-                                        let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
-                                        sampled_statistics(source.as_ref())
+                                        let key = (format!("guest slice {mix}"), rel.clone());
+                                        let once = measured_once.lock().get(&key).cloned();
+                                        match once {
+                                            Some((first, m)) if first > 0 => scaled_statistics(&m, first, source.estimated_len()),
+                                            _ => {
+                                                let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
+                                                let m = sampled_statistics(source.as_ref());
+                                                measured_once.lock().insert(key, (source.estimated_len(), m.clone()));
+                                                m
+                                            }
+                                        }
                                     });
                                     round.measured(rel, m.iter().cloned().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
                                 }
