@@ -154,6 +154,15 @@ and cleaned when that command ends. Its only Relax home is the farm's own, under
 farm 17 nothing did this: one host's target directories reached 207 GB, 195 GB of it leftovers, and
 the host fell under `min_free_gb` (2026-11-16).
 
+The root is pruned too, after a command ends, at most hourly, logged in `root.log` beside it: what
+no run has read or written for 3 days goes (a directory none of whose files was used goes whole; in
+a directory still in use, only the copies the mirror sent, which it sends again when a run needs
+them; a file a command wrote stays while its directory is in use). While the host has less than
+`min_free_gb` + 40 GB free, the same goes at 1 day idle, then 6 hours. The farm's Relax home is left
+to the cleaner. A compile that misses a pruned copy fails once, runs on the build machine, and the
+host is asked what it holds. Before farm 18 the root kept every copy and run output (95 GB on one
+host).
+
 ## Told at the build
 
 What an agent does wrong is printed in its own build output, not left for someone to find. At the

@@ -346,7 +346,138 @@ def run_command(job):
     sys.stderr.flush()
     if job.get("target") and job.get("cleaner"):
         clean(os.path.join(TARGETS, job["target"]), job["cleaner"], env.get("RELAX_HOME"))
+    if job.get("target"):
+        tidy_root(job.get("min_free_gb", 40))
     os._exit(code if code >= 0 else 128 - code)
+
+
+# What the root holds that no run has used for ROOT_DAYS goes (prune_root); while the disk is short
+# (under min_free_gb + PRUNE_HEADROOM_GB free), what is idle for a day, then 6 hours. Checked after a
+# command ends, at most once every ROOT_SECONDS. Without it the root kept every copy and every run
+# output (95 GB on one host, 2026-11-16).
+ROOT_DAYS = 3
+ROOT_SHORT_DAYS = (1, 0.25)
+ROOT_SECONDS = 3600
+
+
+def tidy_root(min_free_gb):
+    """Starts prune_root in a process of its own (the command's exit is not held up), logged in
+    the farm's `root.log` beside the root."""
+    import time
+    stamp = os.path.join(os.path.dirname(ROOT), "root.pruned")
+    try:
+        if time.time() - os.stat(stamp).st_mtime < ROOT_SECONDS:
+            return
+    except OSError:
+        pass
+    open(stamp, "w").close()
+    try:
+        if os.fork():
+            return
+    except OSError:
+        return
+    # The child: only file system calls from here, never this process's streams or threads' locks.
+    try:
+        os.setsid()
+        os.setpriority(os.PRIO_PROCESS, 0, 19)
+        # Off the command's streams: ssh waits until every holder of them closes.
+        null = os.open(os.devnull, os.O_RDWR)
+        for n in (0, 1, 2):
+            os.dup2(null, n)
+        fd = os.open(os.path.join(os.path.dirname(ROOT), "root.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        relax = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+        for days in (ROOT_DAYS,) + ROOT_SHORT_DAYS:
+            if days != ROOT_DAYS and free_gb() >= min_free_gb + PRUNE_HEADROOM_GB:
+                break
+            n, b = prune_root(days, [relax])
+            os.write(fd, f"{time.strftime('%Y-%m-%d %H:%M')}: idle {days:g}+ days: {n} paths, "
+                         f"{b / 1e9:.1f} GB; {free_gb():.0f} GB free\n".encode())
+    finally:
+        os._exit(0)
+
+
+def prune_root(days, keep=()):
+    """Removes from ROOT what no run has used for `days`: whole directories none of whose files was
+    read or written since, and, in directories still in use, the copies the mirror sent (they carry
+    XATTR; the mirror sends one again when a run needs it: a compile that misses it fails once, runs
+    on the build machine, and the host is asked what it holds). A file a command wrote here stays
+    while its directory is in use. `keep`: subtrees left alone (the farm's Relax home: clean-target
+    cleans it). Files are judged by their own access and modification times, never a
+    directory's (this walk reads the directories). Symlinks are never followed; nothing outside
+    ROOT is touched. Returns (paths, bytes)."""
+    import shutil, time
+    cutoff = time.time() - days * 86400
+    keep = [os.path.realpath(k) for k in keep]
+    removed = [0, 0]
+
+    def blocks(path):
+        total = 0
+        for d, dirs, files in os.walk(path):
+            for n in dirs + files:
+                try:
+                    total += os.lstat(os.path.join(d, n)).st_blocks * 512
+                except OSError:
+                    pass
+        return total
+
+    def remove(path, isdir):
+        if not path.startswith(ROOT + "/"):
+            return
+        try:
+            b = blocks(path) if isdir else os.lstat(path).st_blocks * 512
+        except OSError:
+            return
+        removed[0] += 1
+        removed[1] += b
+        if isdir:
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def sent(path):
+        return libc.getxattr(path.encode(), XATTR, None, 0, 0, 0x0001) > 0  # XATTR_NOFOLLOW
+
+    def walk(d, top=False):
+        """The newest use of anything under `d` (0: nothing in it); removes what is idle in it."""
+        if any(d == k or d.startswith(k + "/") for k in keep):
+            return time.time()
+        newest, idle_dirs, idle_sent = 0.0, [], []
+        try:
+            # Its own modification time (an entry added or removed) counts: a directory a command
+            # made and has not written into yet is in use.
+            newest = os.lstat(d).st_mtime
+            entries = list(os.scandir(d))
+        except OSError:
+            return time.time()
+        for e in entries:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    used = walk(e.path)
+                    if used < cutoff:
+                        idle_dirs.append(e.path)
+                else:
+                    st = e.stat(follow_symlinks=False)
+                    used = max(st.st_atime, st.st_mtime)
+                    if used < cutoff and not e.is_symlink() and sent(e.path):
+                        idle_sent.append(e.path)
+            except OSError:
+                used = time.time()
+            newest = max(newest, used)
+        # A directory still in use keeps itself and what was used; its idle parts go. A wholly idle
+        # one goes whole, from its parent.
+        if newest >= cutoff or top:
+            for p in idle_dirs:
+                remove(p, True)
+            for p in idle_sent:
+                remove(p, False)
+        return newest
+
+    if os.path.isdir(ROOT) and not os.path.islink(ROOT):
+        walk(ROOT, True)
+    return removed[0], removed[1]
 
 
 def clean(target, source, relax_home):
