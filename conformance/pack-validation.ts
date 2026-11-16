@@ -87,6 +87,11 @@ export interface ValidatePackOptions {
    * scored once, in the conformance job.
    */
   fixtures?: boolean;
+  /**
+   * The core version check 5 holds the pack's core range to (`heldOff`, and a language core first reads after 0.1.0).
+   * Default: the repository's package.json version.
+   */
+  coreVersion?: string;
 }
 
 /** Validation material: kept in the repository, never published. */
@@ -997,9 +1002,10 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       }
       const failure = packageLicenceFailure(manifest.license, sources.recorded);
       if (failure !== undefined) fail("package", failure);
-      const range = heldOffRangeFailure(manifest.peerDependencies["@neralabs/rerail"], heldOffRules(pack), rootPackage().version);
+      const coreVersion = options.coreVersion ?? rootPackage().version;
+      const range = heldOffRangeFailure(manifest.peerDependencies["@neralabs/rerail"], heldOffRules(pack), coreVersion);
       if (range !== undefined) fail("package", range);
-      const languageRange = languageRangeFailure(manifest.peerDependencies["@neralabs/rerail"], shippedLanguages(directory), rootPackage().version);
+      const languageRange = languageRangeFailure(manifest.peerDependencies["@neralabs/rerail"], shippedLanguages(directory), coreVersion);
       if (languageRange !== undefined) fail("package", languageRange);
     }
   }

@@ -188,6 +188,35 @@ describe("validatePack", () => {
     ]);
   });
 
+  // Check 5 reads the languages of the shipped documents only: a candidate is not published, so it holds no core back.
+  describe("with a Java rule, core at the release that first reads Java", () => {
+    const since = LANGUAGE_SINCE.get("java")!;
+    const withJavaRule =
+      (folder: string, range = ">=0.1.0-0") =>
+      (directory: string): void => {
+        mkdirSync(join(directory, folder), { recursive: true });
+        writeJson(join(directory, folder, "java-rule.json"), { clauses: [{ forbid: { ast: { language: "java" } } }] });
+        editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": range } }));
+      };
+
+    it("fails check 5 when the rule ships and the core range admits older cores", async () => {
+      const validation = await validatePack(changed("valid", withJavaRule("rules")), { coreVersion: since });
+      expect(validation.checks.package).toEqual([
+        `package.json: the core range >=0.1.0-0 admits Rerail older than ${since}, which reads no java rule; raise it to >=${since}-0`,
+      ]);
+    });
+
+    it("passes check 5 when the core range leaves older cores out", async () => {
+      const validation = await validatePack(changed("valid", withJavaRule("rules", `>=${since}-0`)), { coreVersion: since });
+      expect(validation.checks.package).toEqual([]);
+    });
+
+    it("passes check 5 when the rule is only a candidate", async () => {
+      const validation = await validatePack(changed("valid", withJavaRule(join("candidates", "rules"))), { coreVersion: since });
+      expect(validation.checks.package).toEqual([]);
+    });
+  });
+
   it("passes a pack for a planned language, its rules not supported yet and their examples skipped", async () => {
     const validation = await validatePack(join(FIXTURES, "exemplar"));
     expect(failing(validation)).toEqual({});

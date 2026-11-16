@@ -270,13 +270,12 @@ export function heldOffRules(packJson) {
 export function shippedLanguages(directory) {
   const rules = join(directory, "rules");
   const named = new Set();
+  // An array's entries are its values too, so one walk over Object.entries covers arrays and objects.
   const collect = (value) => {
-    if (Array.isArray(value)) value.forEach(collect);
-    else if (typeof value === "object" && value !== null) {
-      for (const [key, child] of Object.entries(value)) {
-        if (key === "language" && typeof child === "string") named.add(child);
-        else collect(child);
-      }
+    if (typeof value !== "object" || value === null) return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "language" && typeof child === "string") named.add(child);
+      else collect(child);
     }
   };
   if (existsSync(rules)) {
