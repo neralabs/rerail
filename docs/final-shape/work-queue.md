@@ -525,9 +525,17 @@ pass.
       reads every row's overflow pages, kept or not. A sample has 29% of the main thread in that read, almost all
       `pread` under `vdbeColumnFromOverflow`. The read grows with every edit the store keeps, the shape the done-when
       rules out.
-    - **Next:** (1) scan the keys alone (`data` is past them in the row, so its overflow pages are not read), then
-      read the blobs of the kept frames; (2) collection drops the identities no live program reads; (3) find out how
-      much of the 347 MB a run reads at all, now that kept inputs are decoded where read (Q20).
+    - **Tried, does not work:** scan the keys alone, then read the kept frames' blobs. `frames` is `WITHOUT ROWID`,
+      so its rows are its key records. A seek or range scan by `space` compares whole records past their first page,
+      blob included, whatever columns it selects; a lookup by key reads its neighbours' blobs. On ep2 the space's
+      keys scan in 0.12 s through `frames_by_digest` (covering), but lookups by key cost about 115 µs each (134K
+      lookups: 15.7–18.2 s). Every other frame read by key (`admit_frame_parts`) pays the same.
+      `a_cross_space_read_reads_no_blob_of_a_frame_it_leaves_out` (ignored) breaks a stale blob's overflow chain
+      and asserts the read still succeeds.
+    - **Next, a store format change, the user's call:** take the blobs out of the key's b-tree: a rowid table keyed
+      by the frame (`frames.data` → `frame_data(id INTEGER PRIMARY KEY, data)`), or `frames` as a rowid table with
+      a unique index on its key. Then (2) collection drops the identities no live program reads; (3) how much of the
+      347 MB a run reads at all, now that kept inputs are decoded where read (Q20).
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 

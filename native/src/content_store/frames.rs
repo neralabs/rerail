@@ -1853,6 +1853,52 @@ mod tests {
         }
     }
 
+    /// Q19: the read of a run's cross space reads the blobs of the frames it keeps, not those of every frame of the
+    /// space. A space holding an earlier run's big frame (2 MB of rows, about 500 overflow pages) costs the read its
+    /// keys alone: on ep2 the scan read 3.45 GB of blobs to keep 347 MB.
+    ///
+    /// Ignored: no read of this table does it. Its rows are its key records (`WITHOUT ROWID`), so a seek or a range
+    /// scan by `space` compares whole records, blobs and all, past their first page; a lookup by key reads its
+    /// neighbours' (ep2: 0.12 s to scan the space's keys by `frames_by_digest`, about 115 µs a lookup by key). The
+    /// blobs leave the key's b-tree first (work queue, Q19).
+    #[test]
+    #[ignore = "Q19: frames' blobs are in the key's b-tree; every seek reads them"]
+    fn a_cross_space_read_reads_no_blob_of_a_frame_it_leaves_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let cross = [9u8; 32];
+        let (kept, stale) = (rel("x", 1), rel("x", 2));
+        let overflow: Vec<i64> = {
+            let store = ContentStore::open(&path).unwrap();
+            let small = Put { rel: kept.clone(), part: 0, digest: 1, reads: vec![("-".into(), 0)], rows: Rows { types: vec![0], rows: vec![7], n: 1 } };
+            let big: Vec<i64> = (0..250_000u64).map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 1) as i64).collect();
+            let old = Put { rel: stale.clone(), part: 0, digest: 2, reads: vec![("-".into(), 0)], rows: Rows { types: vec![0], n: big.len(), rows: big } };
+            store.keep_frames(&cross, &[small, old], &[], None).unwrap();
+            let c = store.connection.lock().unwrap();
+            c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+            // Only the stale frame's blob overflows its page.
+            let mut st = c.prepare("SELECT pageno FROM dbstat WHERE name = 'frames' AND pagetype = 'overflow' ORDER BY pageno").unwrap();
+            st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+        };
+        assert!(overflow.len() > 100, "the stale frame's blob overflows: {} pages", overflow.len());
+        // Its overflow chain, broken: a page in its middle points past the file's end.
+        let mut file = std::fs::read(&path).unwrap();
+        let page = (overflow[overflow.len() / 2] as usize - 1) * 4096;
+        file[page..page + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+        std::fs::write(&path, &file).unwrap();
+        fn cross_of(_: &std::path::Path) -> [u8; 32] {
+            [9; 32]
+        }
+        let store = ContentStore::open(&path).unwrap();
+        let whole = store.connection.lock().unwrap().query_row("SELECT sum(instr(data, x'00')) FROM frames", [], |r| r.get::<_, i64>(0)).map(|_| ());
+        assert!(whole.is_err(), "reading the stale blob fails");
+        let rels = HashSet::from([kept.clone()]);
+        let own = CrossSpace { space: cross, own: true, rels: Some(&rels), cross_of };
+        assert_eq!(store.preload_frames_live(Some(own)).unwrap().0, 1, "the kept frame, read without the stale one's blob");
+        let held = store.admit_frames(&cross, std::slice::from_ref(&kept), 0).unwrap();
+        assert_eq!(held[&kept].rows().unwrap().rows, vec![7]);
+    }
+
     /// Decision 0280: what a later run keeps over an entry (its identities) is read with it, from the store and from
     /// the snapshot, survives compaction, is dropped where the entry is not the same content, and goes when the
     /// entry is written again whole.
