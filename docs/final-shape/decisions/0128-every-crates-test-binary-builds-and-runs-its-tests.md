@@ -52,18 +52,26 @@ engine too: `typing::phase_tests`, `waves::owner::tests`, `logic::liveness::test
 
 ## Open
 
-Each of these is ignored with its reason (`open (decision 0128)`). None had run since the split.
+None. What was open here, closed on 2026-11-16:
 
-- **The tests that parse rule files**, 21 here: the hub has since moved them, and 54 more, into the
-  engine (`tools/cratify/runtime_hosts.py`, `runtime-hosts.tsv`), and their ignores are gone.
+- **The tests that parse rule files**: the hub moved them, and 54 more, into the engine
+  (`tools/cratify/runtime_hosts.py`, `runtime-hosts.tsv`), and their ignores are gone.
   `prepared::identity_tests` then failed on a stale assertion: outputs became rows (0239), and
-  the test read them as text. With that fixed it passes, except the first run after a rebuild
-  failed once (7 of 8 passed): a restored program differed from the fresh one. Not yet traced;
-  the per-build default store, cold after each rebuild, is the suspect.
-- **The decision-0104 lints** (`facts_only`: `every_table_is_facts_or_listed`,
-  `every_kept_map_is_state_or_listed`). Since they last ran, 12 tables (mostly the device tests'
-  scratch tables) and 19 maps have been added. Each needs a judgement: state, scratch, or a
-  result that should be facts (`CROSS_FILE`, `CENSUS` and `RECORDED` may be).
-- **`aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups`**: a seed step of
-  `rr_agg2` makes 6 rows for 3 demanded groups (`1:3,3:6,6:3,3:3` in its trace), where the test
-  allows at most 3.
+  the test read them as text. With that fixed, the first run after a rebuild still failed once
+  (7 of 8 passed). The cause: the test store's template is filled by whichever test process asks
+  first, and that process kept the template's phase-0 include graphs for itself. Its own runs then
+  derived none, and prepared one program fewer than a process that found the template made. The
+  template's graphs are no longer kept for the process (`test_store::filling`, `phase0::graphs`).
+- **The decision-0104 lints** run again. Of the maps added while they did not run, eight are
+  state (`SHAPE`, `SHIPPED`, `READ_BEFORE`, `OWN`, `COMMAND`, `DECIDING`, `RUN_PHASES`, `ENTERED`).
+  Four listed entries were stale and are cut. `CROSS_FILE` (a registration at load), `RECORDED`
+  (test placements under a test's guard) and `CENSUS` (a test module's read of the shipped files)
+  stay state: none is a result a run reads.
+- **`aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups`** passes again: the
+  6-row step was a sibling test's seed (`rr_agg2`) in the process's shared profile. The hub's
+  filter on the helper's own demand now leaves it out.
+
+Found while closing them: the corpus tests' module, run in parallel, ran past 115 s. A store's
+`frames` upkeep job outlived the store. Its cached connection read the deleted file, so the job
+stayed due, and its step made a new store at the path. Each `finish_soon` then ran a hundred
+passes over every gone store. Fixed in `content_store::upkeep::Frames`; the module takes 5 s.
