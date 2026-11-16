@@ -494,9 +494,9 @@ function keepSuspended(state: EngineRoutingState, runtimeKey: string, suspension
 /**
  * Opens again, in its lane, the session the idle close suspended (`RerailRuntime.resumeSession`), making its runtime
  * again when that has closed, so a scan just queued for it runs now. A session that is not suspended is left alone, and
- * so is one whose end, or an event that opened it, took its suspension while this waited for the lane. A failure is
- * reported, and the scans queued for a session still suspended fail with it (`failQueuedScans`), as an open session's
- * do when its evaluator cannot open.
+ * so is one whose end, or an event that opened it, took its suspension while this waited for the lane; one whose folder
+ * was removed meanwhile is ended instead (`endRemoved`). A failure is reported, and the scans queued for a session still
+ * suspended fail with it (`failQueuedScans`), as an open session's do when its evaluator cannot open.
  */
 async function resumeSuspended(state: EngineRoutingState, sessionId: string, now: () => number): Promise<void> {
   const entry = state.suspended.get(sessionId);
@@ -506,6 +506,11 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
   const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), async () => {
     // Asked again in the lane: an end that ran first has closed the session's record, which must stay closed.
     if (state.suspended.get(sessionId) !== entry) return;
+    if (!existsSync(suspension.descriptor.cwd)) {
+      endRemoved(state, entry);
+      retireUnusedRuntime(state, runtimeKey);
+      return;
+    }
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     noteSessionUse(state, sessionId, runtimeKey, now());
     await runtime.resumeSession(suspension.descriptor);
@@ -518,6 +523,18 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
     process.stderr.write(`rerail: opening quiet session ${sessionId} again failed: ${reason}\n`);
     if (state.suspended.get(sessionId) === entry) failScans(suspension, reason);
   }
+}
+
+/**
+ * Ends the suspended session of `entry`, whose folder was removed while it was quiet, at the time it went quiet, as an
+ * idle close that ends it would have, once its queued scans have failed, saying so: opening it again to run them would
+ * make the folder anew with Rerail's records. Its next event, should one come, opens it again.
+ */
+function endRemoved(state: EngineRoutingState, entry: SuspendedEntry): void {
+  const { suspension } = entry;
+  state.suspended.delete(suspension.descriptor.sessionId);
+  failScans(suspension, `its folder ${suspension.descriptor.cwd} was removed`);
+  endEntries([entry]);
 }
 
 /** Fails the scans queued for a suspended session that could not be opened again (`failQueuedScans`); a failure is reported. */

@@ -244,7 +244,8 @@ are not waited for further: that edit is checked by the first pass once they ope
   next digest. One whose file has changed since the session last saw it is dropped, as an edit of that file would drop
   it.
 - A session running a scan, or with one waiting to start, keeps its memory until the scan has run, for up to a day.
-- A scan asked for a quiet session that cannot be opened again (its folder gone, say) fails at once, saying why.
+- A scan asked for a quiet session whose folder was removed fails, saying so, and ends the session when it went quiet;
+  the folder is not made again. A scan for one that cannot be opened again for another reason fails at once, saying why.
 - Stopping the daemon ends the session, as it ends every open one. Its history shows it ended when its memory was
   freed, the last the daemon heard of it, not when the daemon stopped.
 - A daemon that ends without being stopped (the machine restarts or shuts down, it is killed) ends no session. The next

@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -527,6 +528,34 @@ describe("the engine service's idle close", () => {
         expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
       }, { timeout: 10_000, interval: 50 });
       expect(scans).toEqual(["repository"]);
+    } finally {
+      controls.close();
+    }
+  });
+
+  // At base the idle close ended the session, so a scan asked for it once its checkout was removed failed at once, and
+  // the folder stayed gone. Opening the session again to run the scan made the folder anew with Rerail's records.
+  it("ends a quiet session whose checkout was removed, rather than open it again for a scan, and fails the scan", async () => {
+    const { create, scans } = recordingAuditor();
+    const { first, clock, service, start, databasePath, ended } = await idleService({ createAuditor: create });
+    await start("a");
+    clock.now += 60_000;
+    const quietAt = clock.now;
+    await service.closeIdleSessions();
+    await removeFolder(first);
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      const request = controls.requestAudit("a", { scope: "repository" });
+      expect(request).toMatchObject({ status: "queued", error: null });
+      clock.now += 60_000;
+      await service.resumeSession("a");
+      expect(existsSync(first), "the removed checkout").toBe(false);
+      expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({
+        status: "failed", error: expect.stringContaining(`its folder ${first} was removed`),
+      });
+      expect(ended("a")).toBe(quietAt);
+      expect(scans).toEqual([]);
+      expect(service.openRuntimes()).toBe(0);
     } finally {
       controls.close();
     }

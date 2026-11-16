@@ -1,4 +1,5 @@
-import { mkdtemp, realpath } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -95,5 +96,38 @@ describe("the daemon and a session it let go of while quiet", () => {
       const listed = await api<{ auditRequests: { id: string; status: string }[] }>(daemon, "/api/sessions/a/audit-requests");
       expect(listed.body.auditRequests.find(request => request.id === queued.body.id)).toMatchObject({ status: "completed" });
     }, { timeout: 10_000, interval: 100 });
+  }, 20_000);
+
+  // At base the idle close ended the session, so a scan asked for it once its checkout was removed was refused at once,
+  // and the checkout stayed gone. Opening the session again to run the scan made the checkout anew with Rerail's records.
+  it("leaves a removed checkout gone when a scan is asked for its quiet session, and ends the session", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-quiet-")));
+    const databasePath = join(root, "rerail.sqlite");
+    const checkout = join(root, "checkout");
+    await mkdir(checkout);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    startTestRepository(checkout, databasePath);
+    const daemon = await RerailDaemon.start({
+      version: "0.0.0-test", databasePath, workspaceRoot: checkout, port: 0, nativeHealth: () => ({ ok: true, kernelVersion: "1" }), accessToken: ACCESS,
+    });
+    daemons.push(daemon);
+    await ingestEngineEvent({ socketPath: daemon.kernelSocketPath, accessToken: ACCESS }, {
+      kind: "session-start", eventId: "a:start", session: { host: "claude-code", sessionId: "a", cwd: checkout },
+    });
+    const [engine] = engines.started;
+    engines.clock.now += 60_000;
+    await engine!.closeIdleSessions();
+    await removeFolder(checkout);
+    const queued = await api<{ id: string; status: string }>(daemon, "/api/sessions/a/audit-requests", { scope: "repository" });
+    expect(queued).toMatchObject({ status: 200, body: { status: "queued" } });
+    await vi.waitFor(async () => {
+      const listed = await api<{ auditRequests: { id: string; status: string; error: string | null }[] }>(daemon, "/api/sessions/a/audit-requests");
+      expect(listed.body.auditRequests.find(request => request.id === queued.body.id)).toMatchObject({
+        status: "failed", error: expect.stringContaining("was removed"),
+      });
+    }, { timeout: 10_000, interval: 100 });
+    expect(existsSync(checkout), "the removed checkout").toBe(false);
+    const session = await api<{ session: { endedAt: string | null } }>(daemon, "/api/sessions/a");
+    expect(session.body.session.endedAt).not.toBeNull();
   }, 20_000);
 });
