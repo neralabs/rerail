@@ -3470,6 +3470,9 @@ impl Source for Viewed {
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
         let view = device_chunk::device_view(self.view)?;
         let chunk = self.batch.chunk();
+        if matches!(self.view, View::Loc(_)) && !device_chunk::fill_locs(&self.batch, chunk) {
+            return None;
+        }
         Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view, rows: self.len(), pairs: 0 })
     }
     fn columns(&self) -> Vec<String> {

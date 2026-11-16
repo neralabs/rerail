@@ -273,6 +273,31 @@ inline long kind_of(device const ChunkDoc& d, uint id) {
     return long(d.tag * 1024u + (c == 0xffffu ? 0u : c));
 }
 
+// A node's or span's id (`Projected::global`): past the locals with ids by definition, a span's (`granules::span_low`).
+inline long loc_global(device const ChunkDoc& d, uint l) {
+    uint low;
+    if (d.preorder != 0u) {
+        low = l;
+    } else if (l < uint(d.low.len)) {
+        low = items<uint>(d.low)[l];
+    } else {
+        uint i = l - uint(d.low.len);
+        uint slot = (GR_SLOTS - 1u) - min(i >> GR_INDEX_BITS, GR_SPAN_SLOTS - 1u);
+        low = slot << GR_INDEX_BITS | (i & ((1u << GR_INDEX_BITS) - 1u));
+    }
+    return long(ulong(d.key) << 32 | ulong(low));
+}
+// The lines starting at or before byte `at` (`core_rr::Lines::line`, before its `max(1)`).
+inline uint line_of(device const ChunkDoc& d, uint at) {
+    device const uint* st = items<uint>(d.lines);
+    uint lo = 0u, hi = uint(d.lines.len);
+    while (lo < hi) {
+        uint m = (lo + hi) / 2u;
+        if (st[m] <= at) lo = m + 1u; else hi = m;
+    }
+    return lo;
+}
+
 // The document holding node row `row` (of `node`): the last whose rows start at or before it.
 inline uint doc_of_node(device const ChunkDoc* docs, uint ndocs, uint row) {
     uint lo = 0u, hi = ndocs;
@@ -299,6 +324,40 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
             uint row = p[5 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
             device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, row)];
             out[ulong(c) * n + r] = global_of(d, row - d.node_row);
+        }
+        return;
+    }
+    if (view >= 5u) {
+        // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
+        uint lo = 0u, hi = root->ndocs;
+        while (hi - lo > 1u) {
+            uint m = (lo + hi) / 2u;
+            if (docs[m].loc_row <= r) lo = m; else hi = m;
+        }
+        device const ChunkDoc& d = docs[lo];
+        uint l = r - d.loc_row;
+        uint s, e;
+        if (l < d.nodes) {
+            uint id = items<uint>(d.core)[l];
+            s = items<uint>(d.start)[id];
+            e = items<uint>(d.end)[id];
+        } else {
+            s = items<uint>(d.spans)[2u * (l - d.nodes)];
+            e = items<uint>(d.spans)[2u * (l - d.nodes) + 1u];
+        }
+        for (uint c = 0u; c < p[3]; c++) {
+            long v;
+            if (p[5 + c] == 0u) {
+                v = loc_global(d, l);
+            } else if (view == 8u) {
+                v = long(d.key);
+            } else {
+                uint line = max(line_of(d, s), 1u);
+                if (view == 5u) v = long(line);
+                else if (view == 6u) v = long(e > s ? max(line_of(d, e - 1u), 1u) : line);
+                else v = long(s - items<uint>(d.lines)[line - 1u]);
+            }
+            out[ulong(c) * n + r] = v;
         }
         return;
     }

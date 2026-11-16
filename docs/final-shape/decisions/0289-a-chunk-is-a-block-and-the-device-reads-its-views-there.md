@@ -63,8 +63,8 @@ read straight into the device relation the stages already read: one thread per r
 binary search over the row ranges. That relation stays resident for the chunk's other strata, as uploads do now
 (0277). Nothing downstream changes: probes, sorts and stages read it as before.
 
-A view the device cannot make (a lazy family's `py.*` rows, `Within`'s axes, the `Loc` places of `core.rr` lines)
-is uploaded as before, and named in the profile's split.
+A view the device cannot make (a lazy family's `py.*` rows, `has`, `tape`, `node_order`, a guest's places in its host
+file) is uploaded as before, and named in the profile's split.
 
 Check: the device's parity tests, with a view relation in each shape. Measure: the light run's view uploads, which
 should go from 22.4 ms of host CPU to the block's build (a copy of each array, once per batch) plus the kernel.
@@ -129,6 +129,28 @@ block's build (about 0.3 ms a batch), which §3 removes, and the axes' solve is 
 past containment's bound. Placement varied between these runs (4 to 8 strata with a run on the GPU; the last run
 put more on the GPU, so more views were read), so the uploads are compared, not the totals. The check of the
 second write is the device test, with a bound of no rows.
+
+Then `core.rr`'s places (`View::Loc`: `line`, `end_line`, `col`, `docof`). With placement repriced (below), the
+strata it moved read them, and they were most of what was still made on the host: 1.05 M values of `line` in 13.4
+ms, about 13 ns a value (a document found again, then two searches of its lines, per row). On a `Loc` view's first
+device read (`device_chunk::fill_locs`, once per chunk), each entry gets its first row in the `Loc` views, its
+spans past its nodes (`[start, end]` each, as `Projected::span` gives them: tokens, the whole text, lines and end
+points) and its line starts (`core_rr::Lines`). `view_expand` finds the row's document and span, then its line,
+last line and column by searching the line starts, as `Lines::place` does. A span's id past the ids by definition
+is `granules::span_low`'s, in MSL, with the same constants. A guest placed in its host file keeps the host's view.
+The check is the device test, over a `core.rr`-shaped batch: every column of the four views against the host's.
+
+Measured cold, at the repriced placement (10 strata with a run on the GPU), the same findings: views made on the
+host went from 22.7 MB in 23.0 ms to 9.7 MB in 5.7 ms.
+
+### Placement repriced
+
+Placement priced a value the device reads at 7 ns (`DEVICE_UPLOAD_PER_VALUE`), measured when every view's rows were
+made on the host. From the uploads' split, it is now about 2.2 ns: a flat relation's value 1.7 ns, a view's made on
+the host 2.5 ns, a view's made on the device 2.7 ns (its share of the block's build, of the axes' solve and of the
+kernel). At 2.2 ns, more strata go to the GPU: 10 to 13 with a run there, against 4 to 8. An A/B of the two prices,
+each run cold three times back to back, with the same findings: 72.7 G instructions retired at 7 ns, and 71.7 G
+at 2.2 ns, fewer in every pair (user CPU 6.31 s and 5.88 s; the machine was loaded, so wall times are not compared).
 
 ### 3. The host reads the block
 
