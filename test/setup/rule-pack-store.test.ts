@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../src/engine/index.js";
-import type { NpmRunner } from "../../src/runtime/index.js";
+import { CommandTimeoutError, type NpmRunner } from "../../src/runtime/index.js";
 import {
   addPackSpecs,
   discoverPacks,
@@ -435,8 +435,8 @@ describe("newerPackVersions", () => {
 
     await expect(newerPackVersions(home, "latest", "0.1.5", npm)).resolves.toEqual({
       updates: [
-        { packageName: "@acme/rerail-pack-sql", installed: "1.0.0", available: "1.1.0" },
-        { packageName: "@neralabs/rerail-pack-typescript", installed: "0.1.5", available: "0.1.6" },
+        { packageName: "@acme/rerail-pack-sql", installed: "1.0.0", available: "1.1.0", tag: "latest" },
+        { packageName: "@neralabs/rerail-pack-typescript", installed: "0.1.5", available: "0.1.6", tag: "latest" },
       ],
       problems: [],
     });
@@ -488,7 +488,8 @@ describe("newerPackVersions", () => {
       : await npm(args, options);
 
     await expect(newerPackVersions(home, "latest", "0.1.5", answering)).resolves.toEqual({
-      updates: [{ packageName: "@neralabs/rerail-pack-java", installed: "0.1.0-next.1", available: "0.1.0-next.3" }],
+      // Under next, not the channel, so the update says so.
+      updates: [{ packageName: "@neralabs/rerail-pack-java", installed: "0.1.0-next.1", available: "0.1.0-next.3", tag: "next" }],
       problems: [],
     });
     expect(calls.map(call => call.args[1])).toEqual([...latest === "" ? [] : ["@neralabs/rerail-pack-java@latest"], "@neralabs/rerail-pack-java@next"]);
@@ -513,8 +514,25 @@ describe("newerPackVersions", () => {
     });
 
     const check = await newerPackVersions(home, "latest", "0.1.5", npm);
-    expect(check.updates).toEqual([{ packageName: "@neralabs/rerail-pack-python", installed: "0.1.6", available: "0.1.7" }]);
+    expect(check.updates).toEqual([{ packageName: "@neralabs/rerail-pack-python", installed: "0.1.6", available: "0.1.7", tag: "latest" }]);
     expect(check.problems).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript: could not reach the npm registry \(https:\/\/registry\.npmjs\.org, ECONNRESET\)/u)]);
+  });
+
+  it("says a pack check npm did not finish was stopped, on one line, with the last line npm printed", async () => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-typescript", "0.1.5");
+    installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
+    const { npm } = registryNpm({
+      "@neralabs/rerail-pack-typescript@latest": new CommandTimeoutError("npm view", 60_000, "npm http fetch GET 200 https://registry.npmjs.org/a\nnpm http fetch GET attempt 3 failed with ETIMEDOUT"),
+      // Nothing printed, so there is no last line to name.
+      "@neralabs/rerail-pack-python@latest": new CommandTimeoutError("npm view", 60_000),
+    });
+
+    const check = await newerPackVersions(home, "latest", "0.1.5", npm);
+    expect([...check.problems].sort()).toEqual([
+      "@neralabs/rerail-pack-python: npm view did not finish within 1 min and was stopped",
+      "@neralabs/rerail-pack-typescript: npm view did not finish within 1 min and was stopped (its last output: npm http fetch GET attempt 3 failed with ETIMEDOUT)",
+    ]);
   });
 
   it("asks npm nothing when no pack is installed", async () => {

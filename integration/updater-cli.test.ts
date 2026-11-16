@@ -133,8 +133,17 @@ import { join } from "node:path";
 const argv = process.argv.slice(2);
 const command = argv.findIndex(argument => !argument.startsWith("-"));
 const args = command === -1 ? [] : argv.slice(command);
+if (args[0] === "view" && args[1].startsWith("@neralabs/rerail-pack-java@")) {
+  // Java is published under next only, as set-up installs it.
+  if (!args[1].endsWith("@next")) {
+    process.stderr.write("npm error code E404\\nnpm error 404 No match found for version " + args[1].split("@").at(-1) + "\\n");
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify({ version: "0.1.0-next.3", peerDependencies: { "@neralabs/rerail": ">=0.0.0-0" } }) + "\\n");
+  process.exit(0);
+}
 if (args[0] === "view" && args[1].includes("/rerail-pack-")) {
-  // Every rule pack has a newer version for any core.
+  // Every other rule pack has a newer version for any core.
   process.stdout.write(JSON.stringify({ version: "0.9.0", peerDependencies: { "@neralabs/rerail": ">=0.0.0-0" } }) + "\\n");
   process.exit(0);
 }
@@ -277,6 +286,18 @@ describe("Rerail managed launcher", () => {
       "",
     ].join("\n"));
     expect(current.stdout.trimEnd().endsWith("rerail packs add @acme/rerail-pack-sql@0.9.0 typescript@0.9.0")).toBe(true);
+    // A pack the channel has no version of is looked up under next: its line says so, and the header names no channel.
+    await installRegistryPacks(home, { "@acme/rerail-pack-sql": "0.2.0", "@neralabs/rerail-pack-java": "0.1.0-next.1", "@neralabs/rerail-pack-typescript": "0.1.0" });
+    const held = await run(["node", entrypoint, "update"], environment);
+    expect(held.exitCode).toBe(0);
+    expect(held.stderr.split("\n").filter(line => line !== "")).toEqual(nothingNewerSteps);
+    expect(held.stdout).toContain([
+      "Newer versions of 3 rule packs you installed:",
+      "  @acme/rerail-pack-sql 0.2.0 → 0.9.0 (Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve @acme/rerail-pack-sql)",
+      "  java 0.1.0-next.1 → 0.1.0-next.3 (on next)",
+      "  typescript 0.1.0 → 0.9.0",
+      "",
+    ].join("\n"));
     expect(await readdir(commands)).toContain("rerail-show-me.md");
     const acceptedState = JSON.parse(await readFile(join(home, "update-state.json"), "utf8")) as Record<string, unknown>;
     expect(acceptedState).toMatchObject({

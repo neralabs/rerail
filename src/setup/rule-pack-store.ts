@@ -36,7 +36,8 @@ import {
 } from "../engine/catalog/rule-packs.js";
 import { RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
-import { outsideAnyProject, prefixInstallNpm, runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
+import { CommandTimeoutError, outsideAnyProject, prefixInstallNpm, runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
+import { formatDuration } from "../runtime/progress.js";
 import { withPacksLock } from "./packs-lock.js";
 
 /** The dist-tag a pack is fetched under when core's update channel has no version of it: where a held pack publishes. */
@@ -121,6 +122,21 @@ const NO_ACCESS = /\bE40[34]\b/u;
  * missing or expired login.
  */
 export function fetchProblemReason(packageName: string, error: unknown): string {
+  return timeoutReason(error) ?? npmFailureReason(packageName, error);
+}
+
+/**
+ * Why a command `runCommand` stopped for running too long, in one line, with the last line it printed: npm's last
+ * retry says what it was waiting for. Undefined for any other failure.
+ */
+function timeoutReason(error: unknown): string | undefined {
+  if (!(error instanceof CommandTimeoutError)) return undefined;
+  const last = error.output.split("\n").at(-1)!.trim();
+  return `${error.command} did not finish within ${formatDuration(error.timeoutMs)} and was stopped${last === "" ? "" : ` (its last output: ${last})`}`;
+}
+
+/** Why an npm that ended on its own failed: no access, no registry, or its own `npm error` line. */
+function npmFailureReason(packageName: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (NO_ACCESS.test(message)) return `npm cannot read ${packageName}: it is not published, or the registry or token in ~/.npmrc refuses it`;
   const unreachable = unreachableRegistryReason(message);
@@ -238,11 +254,13 @@ export function installedPackagesOf(id: string, home: string = defaultRerailHome
   return installedPackDirectories(home).map(installedPackageName).filter(name => packIdOfPackage(name) === id);
 }
 
-/** An installed pack with a newer version on the update channel that fits the active core. */
+/** An installed pack with a newer version that fits the active core, and the dist-tag npm has it under. */
 export interface PackUpdate {
   readonly packageName: string;
   readonly installed: string;
   readonly available: string;
+  /** The update channel, or `next` for a pack the channel has no version of. */
+  readonly tag: string;
 }
 
 /** What `newerPackVersions` found: the packs to suggest, and why a pack could not be checked. */
@@ -260,6 +278,11 @@ const PACK_CHECK_TIMEOUT_MS = 60_000;
 interface ViewedPack {
   readonly version: string;
   readonly coreRange: string | undefined;
+}
+
+/** A pack version npm has under `tag`. */
+interface TaggedPack extends ViewedPack {
+  readonly tag: string;
 }
 
 /** An installed pack `newerPackVersions` asks npm about. */
@@ -303,17 +326,18 @@ async function viewUnderTag(npm: NpmRunner, cwd: string, packageName: string, ta
  * What npm has of `packageName` under `channel`, or, when the channel has no version of it, under `next`: set-up
  * installs a pack from there then, so that is where its newer versions are.
  */
-async function viewNewest(npm: NpmRunner, cwd: string, packageName: string, channel: string): Promise<ViewedPack | undefined> {
+async function viewNewest(npm: NpmRunner, cwd: string, packageName: string, channel: string): Promise<TaggedPack | undefined> {
   const viewed = await viewUnderTag(npm, cwd, packageName, channel);
-  if (viewed !== undefined || channel === PACK_FALLBACK_TAG) return viewed;
-  return await viewUnderTag(npm, cwd, packageName, PACK_FALLBACK_TAG);
+  if (viewed !== undefined || channel === PACK_FALLBACK_TAG) return viewed && { ...viewed, tag: channel };
+  const fallback = await viewUnderTag(npm, cwd, packageName, PACK_FALLBACK_TAG);
+  return fallback && { ...fallback, tag: PACK_FALLBACK_TAG };
 }
 
 /** The update to suggest for `pack`: npm's version when it is newer than the installed one and core `coreVersion` loads it. */
-function packUpdate(pack: InstalledPack, available: ViewedPack | undefined, coreVersion: string): PackUpdate | undefined {
+function packUpdate(pack: InstalledPack, available: TaggedPack | undefined, coreVersion: string): PackUpdate | undefined {
   if (available === undefined || semver.valid(available.version) === null || !semver.gt(available.version, pack.version)) return undefined;
   if (available.coreRange !== undefined && !semver.satisfies(coreVersion, available.coreRange, { includePrerelease: true })) return undefined;
-  return { packageName: pack.packageName, installed: pack.version, available: available.version };
+  return { packageName: pack.packageName, installed: pack.version, available: available.version, tag: available.tag };
 }
 
 /**

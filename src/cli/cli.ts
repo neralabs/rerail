@@ -98,7 +98,7 @@ import {
   type UpdateResult,
   type UpdateStatus,
 } from "../setup/updater.js";
-import { newerPackVersions, packsLeftOutByCore, type PackUpdateCheck } from "../setup/rule-pack-store.js";
+import { newerPackVersions, packsLeftOutByCore, type PackUpdate, type PackUpdateCheck } from "../setup/rule-pack-store.js";
 import { formatDuration, streamProgress, type Progress } from "../runtime/progress.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
@@ -166,21 +166,41 @@ function leftOutPackLines(coreVersion: string, leftOut: readonly string[]): stri
 }
 
 /**
- * The installed rule packs with a newer version on the update's channel that fits the core it left active, each with
- * the version to move to, and the one command that installs them all; nothing when there is none. A third party's new
- * version waits for a person's approval again, so it says so.
+ * The installed rule packs with a newer version that fits the core the update left active, each with the version to
+ * move to, and the one command that installs them all; nothing when there is none.
  */
 function packUpdateLines({ updates }: PackUpdateCheck, channel: string): string[] {
   if (updates.length === 0) return [];
   const name = (packageName: string) => rulePackShortName(packageName);
   return [
-    `Newer versions of ${updates.length === 1 ? "a rule pack" : `${updates.length} rule packs`} you installed are on ${channel}:`,
-    ...updates.map(pack => `  ${name(pack.packageName)} ${pack.installed} → ${pack.available}${rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER
-      ? ""
-      : ` (Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve ${pack.packageName})`}`),
+    packUpdateHeader(updates, channel),
+    ...updates.map(pack => `  ${name(pack.packageName)} ${pack.installed} → ${pack.available}${packUpdateNotes(pack, channel)}`),
     `A pack's new version changes the rules of every repository that adds it. To update ${updates.length === 1 ? "it" : "them"}:`,
     `  rerail packs add ${updates.map(pack => `${name(pack.packageName)}@${pack.available}`).join(" ")}`,
   ];
+}
+
+/** The line over the newer pack versions: it names the update's channel only when every version is on it. */
+function packUpdateHeader(updates: readonly PackUpdate[], channel: string): string {
+  const packs = updates.length === 1 ? "a rule pack" : `${updates.length} rule packs`;
+  return updates.every(pack => pack.tag === channel)
+    ? `Newer versions of ${packs} you installed are on ${channel}:`
+    : `Newer versions of ${packs} you installed:`;
+}
+
+/**
+ * What a newer pack version's line adds, in parentheses: the tag npm has it under when that is not the update's
+ * channel (`next`, for a pack the channel has no version of), and, for a third party's pack, that its new version waits
+ * for a person's approval again.
+ */
+function packUpdateNotes(pack: PackUpdate, channel: string): string {
+  const notes = [
+    ...pack.tag === channel ? [] : [`on ${pack.tag}`],
+    ...rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER
+      ? []
+      : [`Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve ${pack.packageName}`],
+  ];
+  return notes.length === 0 ? "" : ` (${notes.join("; ")})`;
 }
 
 /**
