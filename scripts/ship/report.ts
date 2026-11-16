@@ -294,7 +294,43 @@ function waitsHeadline(w: WaitsSection): string {
   return `- **waits: ${w.status}** · ${w.counts.failing} of ${w.items.filter((i) => i.gated).length} scenarios fail${lead}`;
 }
 
+/** A note's values on one side as one figure: the median of its numbers, else its values joined. */
+function noteFigure(item: WaitItem | undefined, side: "baseline" | "candidate", key: string): string {
+  const values = item?.notes[side][key] ?? [];
+  const numbers = values.filter((v): v is number => typeof v === "number").sort((a, b) => a - b);
+  if (numbers.length > 0) return String(Math.round(numbers[(numbers.length - 1) >> 1]!));
+  return values.length > 0 ? values.map(String).join(", ") : "–";
+}
+
+/**
+ * One shape's steps as the step benchmarks print them, one row per step: the scan after it (W5) and the verdict on its
+ * edit (W1), each side's median, and the scan's findings and daemon CPU (medians; reported).
+ */
+function stepsTable(shape: string, items: readonly WaitItem[]): string[] {
+  const figure = (item: WaitItem | undefined, side: "baseline" | "candidate"): string => {
+    const value = item?.metrics[0]?.first[side];
+    return value == null ? "–" : formatMs(value);
+  };
+  const ratio = (item: WaitItem | undefined): string => (item === undefined ? "–" : markedRatio(item.metrics[0]?.first.ratio ?? null, item.status));
+  const steps = [...new Set(items.map((i) => i.step!))];
+  return [
+    `**Step benchmark, ${shape}**`,
+    "",
+    "| Step | Scan baseline | Scan candidate | Ratio | Verdict baseline | Verdict candidate | Ratio | Findings | Daemon CPU per scan |",
+    "|---|---|---|---|---|---|---|---|---|",
+    ...steps.map((step) => {
+      const scan = items.find((i) => i.step === step && i.wait === "W5");
+      const verdict = items.find((i) => i.step === step && i.wait === "W1");
+      const pair = (key: string, unit = ""): string => `${noteFigure(scan, "baseline", key)}${unit} / ${noteFigure(scan, "candidate", key)}${unit}`;
+      return `| ${step} | ${figure(scan, "baseline")} | ${figure(scan, "candidate")} | ${ratio(scan)} | ${figure(verdict, "baseline")} | ${figure(verdict, "candidate")} | ${ratio(verdict)} | ${pair("findings")} | ${pair("daemon_cpu_ms", " ms")} |`;
+    }),
+    "",
+  ];
+}
+
 function waitsSection(w: WaitsSection): string[] {
+  const plain = w.items.filter((i) => i.shape === null);
+  const shapes = [...new Set(w.items.map((i) => i.shape).filter((s) => s !== null))];
   const lines = [
     `## User waits: ${w.status}`,
     "",
@@ -302,14 +338,19 @@ function waitsSection(w: WaitsSection): string[] {
     "",
     "| Scenario | Wait | Status | Baseline | Candidate | Ratio | Limit | Biggest contributor |",
     "|---|---|---|---|---|---|---|---|",
-    ...w.items.map(waitRow),
+    ...plain.map(waitRow),
     "",
+    ...(shapes.length > 0 ? ["The step benchmarks' edit sequence (cold, warm, then each edit over the ones before it), through the product on both sides: a repository scan after each step (W5) and the verdict on each edit made through the hooks (W1).", ""] : []),
+    ...shapes.flatMap((shape) => stepsTable(shape, w.items.filter((i) => i.shape === shape))),
   ];
   if (w.not_measured.length > 0) lines.push(`<details><summary>${w.not_measured.length} waits not measured</summary>`, "", ...w.not_measured.map((n) => `- \`${n.id}\`: ${n.reason}`), "", "</details>", "");
-  for (const wait of [...new Set(w.items.map((i) => i.wait))]) {
-    const items = w.items.filter((i) => i.wait === wait);
+  const groups = [
+    ...[...new Set(plain.map((i) => i.wait))].map((wait) => ({ label: `${wait}: ${plain.find((i) => i.wait === wait)!.title.replace(/[,:].*$/, "")}`, items: plain.filter((i) => i.wait === wait) })),
+    ...shapes.map((shape) => ({ label: `Step benchmark, ${shape}`, items: w.items.filter((i) => i.shape === shape) })),
+  ];
+  for (const { label, items } of groups) {
     const open = items.some((i) => i.gated && (i.status === "fail" || i.status === "noisy"));
-    lines.push(`<details${open ? " open" : ""}><summary>${wait}: ${items[0]!.title.replace(/[,:].*$/, "")} · ${items.map((i) => `${i.scenario} ${statusWord(i.status)}`).join(", ")}</summary>`, "", ...items.flatMap(waitDetails), "</details>", "");
+    lines.push(`<details${open ? " open" : ""}><summary>${label} · ${items.map((i) => `${i.scenario} ${statusWord(i.status)}`).join(", ")}</summary>`, "", ...items.flatMap(waitDetails), "</details>", "");
   }
   const inputs = [
     ...Object.entries(w.inputs.repos).map(([name, r]) => `- repository ${name}: corpus ${r.corpus}, ${r.files} files, \`${r.sha256.slice(0, 12)}\`; packs ${r.packs.join(", ")}`),

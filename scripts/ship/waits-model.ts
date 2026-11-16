@@ -257,6 +257,9 @@ export interface WaitItem {
   entry: string;
   store: string;
   kind: ScenarioSpec["kind"];
+  /** A step scenario's shape and step (waits-steps.ts); null for the other waits. */
+  shape: Shape | null;
+  step: Step | null;
   /** Counted in the waits verdict; a scenario the configuration reports only (W4 by default) is not. */
   gated: boolean;
   status: ItemStatus;
@@ -358,7 +361,7 @@ export function waitItem(spec: ScenarioSpec, runs: readonly WaitRun[], config: P
   const sibling = own.reduce((most, r) => Math.max(most, r.siblingBusy), 0);
   const dropped = own.map((r) => r.cacheDropped).filter((d): d is boolean => d !== null);
   return {
-    id, wait: spec.wait, scenario: spec.scenario, title: spec.title, entry: spec.entry, store: spec.store, kind: spec.kind,
+    id, wait: spec.wait, scenario: spec.scenario, title: spec.title, entry: spec.entry, store: spec.store, kind: spec.kind, shape: spec.shape ?? null, step: spec.step ?? null,
     gated: !config.reportOnly.includes(spec.wait) && !config.reportOnly.includes(id),
     status, reason, metrics,
     runs: { baseline: sideRuns("baseline"), candidate: sideRuns("candidate"), confirm: confirm.length, failed },
