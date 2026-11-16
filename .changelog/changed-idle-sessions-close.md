@@ -1,1 +1,1 @@
-The daemon frees the memory of a session quiet for 30 minutes, or 24 hours while still owed a check, steer or finding. Where the daemon holds its owner lock, the session stays open: it shows as live and a scan asked for it runs. Its next tool call waits up to 20 seconds for its rules.
+The daemon frees the memory of a session quiet for 30 minutes, or 24 hours while it is still owed a check, steer or finding, and keeps the session open, still shown as live, where the daemon holds its owner lock. Its next tool call waits up to 20 seconds for its rules.
