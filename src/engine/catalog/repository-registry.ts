@@ -726,11 +726,16 @@ export interface PruneCheckoutsOptions {
   /** Once aborted, the pass forgets nothing and ends at once, even while the filesystem has not answered it. */
   readonly signal?: AbortSignal;
   /**
-   * The checkouts whose folder the filesystem has not answered for yet, kept across passes: a folder is in it while it
-   * is looked at, and stays in it when a pass gives up on it. A pass skips them, so they stay, and asks nothing of a
-   * share that keeps a pool thread waiting already; one that answers late leaves it.
+   * Kept across passes: what an earlier pass asked of the filesystem or Git and was not answered when it ended. A pass
+   * looks at nothing while it waits, so a share that does not answer holds one pool thread, or one Git, however many
+   * recorded checkouts or listed worktrees sit on it and however many passes give up on it.
    */
-  readonly unanswered?: Set<string>;
+  readonly unanswered?: UnansweredLooks;
+}
+
+/** The looks of a pass that ended before the filesystem or Git answered them, while they still wait. */
+export interface UnansweredLooks {
+  looking: Promise<unknown> | undefined;
 }
 
 /**
@@ -738,31 +743,34 @@ export interface PruneCheckoutsOptions {
  * their own settings, and return their paths. A checkout Git can't answer for stays, whatever became of its folder: a
  * clone's own checkout while its `.git` entry is there, a folder renamed away, one on a drive that is not mounted or a
  * share that is down, a clone with no checkout on disk. So a checkout that comes back has its start state and
- * settings. Nothing in the pass blocks its caller: the folders are looked at one at a time without blocking, so a share
- * that does not answer holds one pool thread, and Git runs as a child process, once per clone with a checkout to
- * decide. A checkout recorded or seen again since `now` stays, as when a session starts in a worktree made again at a
- * removed one's path while the others are looked at.
+ * settings. Nothing in the pass blocks its caller: every filesystem call and Git run of a pass waits for the one before
+ * it, without blocking, and Git runs as a child process, once per clone with a checkout to decide. A pass that ends
+ * first leaves the call it waited on in `unanswered`, and no pass looks at anything until it is answered, so a share
+ * that does not answer holds one pool thread or one Git. A checkout recorded or seen again since `now` stays, as when a
+ * session starts in a worktree made again at a removed one's path while the others are looked at.
  */
-export async function pruneCheckouts(db: RerailDatabase, { now = Date.now(), signal, unanswered = new Set() }: PruneCheckoutsOptions = {}): Promise<string[]> {
+export async function pruneCheckouts(
+  db: RerailDatabase,
+  { now = Date.now(), signal, unanswered = { looking: undefined } }: PruneCheckoutsOptions = {},
+): Promise<string[]> {
+  if (unanswered.looking !== undefined) return [];
   const rows = db.select({ path: checkouts.checkoutPath, cloneId: checkouts.cloneId }).from(checkouts).all();
-  const gone = await unlessAborted(goneCheckouts(rows.filter(row => !unanswered.has(row.path)), signal, unanswered), signal);
+  const looking = goneCheckouts(rows, signal);
+  unanswered.looking = looking;
+  const answered = (): void => { unanswered.looking = undefined; };
+  void looking.then(answered, answered);
+  const gone = await unlessAborted(looking, signal);
   if (gone === undefined || gone.length === 0 || signal?.aborted === true) return [];
   return db.transaction(tx => forgetCheckouts(tx, gone, now), { behavior: "immediate" });
 }
 
 /** {@link unlistedByTheirClones} of `rows`, their folders looked at one by one; none once `signal` aborts. */
-async function goneCheckouts(
-  rows: ReadonlyArray<{ readonly path: string; readonly cloneId: string }>,
-  signal: AbortSignal | undefined,
-  unanswered: Set<string>,
-): Promise<string[]> {
+async function goneCheckouts(rows: ReadonlyArray<{ readonly path: string; readonly cloneId: string }>, signal: AbortSignal | undefined): Promise<string[]> {
   const looked: LookedAt[] = [];
   const drives = new Map<string, Promise<boolean | undefined>>();
   for (const row of rows) {
     if (signal?.aborted === true) return [];
-    unanswered.add(row.path);
     looked.push({ ...row, onDisk: await onDiskOf(row.path, drives) });
-    unanswered.delete(row.path);
   }
   return await unlistedByTheirClones(looked, signal);
 }

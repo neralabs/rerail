@@ -14,15 +14,15 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as Git from "../../../../src/engine/git.js";
-import { listRepositories, pruneCheckouts, recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
-import { openRerailDatabase } from "../../../../src/engine/storage/database.js";
+import { listRepositories, pruneCheckouts, recordCheckout, type UnansweredLooks } from "../../../../src/engine/catalog/repository-registry.js";
+import { openRerailDatabase, type RerailDatabase } from "../../../../src/engine/storage/database.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const HANG_MS = 1_000;
 /** The longest a pass may hold the thread it runs on, well below {@link HANG_MS}. */
 const HELD_BOUND_MS = 250;
 
-const share = vi.hoisted(() => ({ root: "\0", waiting: 0 }));
+const share = vi.hoisted(() => ({ root: "\0", waiting: 0, listings: 0, gitHangs: false }));
 
 function onShare(path: unknown): boolean {
   return String(path).startsWith(share.root);
@@ -88,7 +88,12 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
       return actual.runGit(cwd, args, options);
     },
     runGitAsync: async (cwd: string, args: readonly string[], options?: Git.RunGitOptions & { input?: string }) => {
-      if (listing(args)) await sleep(HANG_MS);
+      if (listing(args)) {
+        share.listings += 1;
+        // Git's own look at a worktree on the share never answers either, as when that worktree is not locked.
+        if (share.gitHangs) return await Promise.withResolvers<never>().promise;
+        await sleep(HANG_MS);
+      }
       return await actual.runGitAsync(cwd, args, options);
     },
   };
@@ -98,6 +103,8 @@ const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   share.root = "\0";
   share.waiting = 0;
+  share.listings = 0;
+  share.gitHangs = false;
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -140,6 +147,20 @@ function longestHold(): () => number {
 
 async function settledWithin<T>(work: Promise<T>, ms: number): Promise<T | "still waiting"> {
   return await Promise.race([work, sleep(ms, "still waiting" as const)]);
+}
+
+/** `count` passes over `database`, as the daemon runs them, each given up after `ms`; what they forgot. */
+async function passesGivingUp(database: RerailDatabase, count: number, ms: number): Promise<string[][]> {
+  const unanswered: UnansweredLooks = { looking: undefined };
+  const forgotten: string[][] = [];
+  for (let pass = 0; pass < count; pass += 1) {
+    const abort = new AbortController();
+    const pruning = pruneCheckouts(database, { signal: abort.signal, unanswered });
+    await sleep(ms);
+    abort.abort();
+    forgotten.push(await pruning);
+  }
+  return forgotten;
 }
 
 describe("a pruning pass over a share that does not answer", () => {
@@ -190,5 +211,47 @@ describe("a pruning pass over a share that does not answer", () => {
 
     expect(await pruneCheckouts(database)).toEqual([gone]);
     expect(recorded()).toEqual([main]);
+  }, 10_000);
+
+  it("asks the share nothing more while an earlier pass waits on it, however many recorded checkouts sit on it", async () => {
+    const { root, main, database, recorded } = cloneWithRemovedWorktree();
+    for (const name of ["one", "two", "three"]) {
+      const away = join(root, "share", name);
+      git(main, "worktree", "add", "-q", "-b", name, away);
+      recordCheckout(database, away);
+    }
+    const before = recorded();
+    share.root = join(root, "share");
+
+    expect(await passesGivingUp(database, 4, 200)).toEqual([[], [], [], []]);
+    expect(share.waiting).toBe(1);
+    expect(recorded()).toEqual(before);
+  }, 10_000);
+
+  it("runs Git once, and looks once at a locked worktree it lists on the share, while an earlier pass waits on it", async () => {
+    const { root, main, database, recorded } = cloneWithRemovedWorktree();
+    // Git's documentation suggests locking a worktree on a share, and Git does not look at a locked worktree's folder.
+    const away = join(root, "share", "away");
+    git(main, "worktree", "add", "-q", "-b", "away", away);
+    git(main, "worktree", "lock", away);
+    const before = recorded();
+    share.root = join(root, "share");
+
+    // Each pass waits long enough for Git to answer and the pass to look at the worktree Git names.
+    expect(await passesGivingUp(database, 3, HANG_MS + 300)).toEqual([[], [], []]);
+    expect(share.listings).toBe(1);
+    expect(share.waiting).toBe(1);
+    expect(recorded()).toEqual(before);
+  }, 15_000);
+
+  it("leaves one Git waiting on the share, however many passes run while it does", async () => {
+    const { root, database, recorded } = cloneWithRemovedWorktree();
+    const before = recorded();
+    share.root = join(root, "share");
+    share.gitHangs = true;
+
+    expect(await passesGivingUp(database, 4, 200)).toEqual([[], [], [], []]);
+    expect(share.listings).toBe(1);
+    expect(recorded()).toEqual(before);
   }, 10_000);
 });
