@@ -334,9 +334,9 @@ fn corpus_sql_mode_matches_native_rule_execution() {
         }
     }
     let output =
-        |name: &str| std::fs::read_to_string(dir.path().join(name).join("reach.csv")).unwrap();
+        |name: &str| crate::code_rule_dsl::logic::plan::output::shown(&dir.path().join(name), "reach").unwrap();
     assert_eq!(output("sql"), output("native"));
-    assert_eq!(output("sql").lines().count(), 6);
+    assert_eq!(output("sql").len(), 6);
 }
 
 #[test]

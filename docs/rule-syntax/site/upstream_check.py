@@ -44,6 +44,8 @@ def run(engine, rrs, fixtures):
                               os.path.join(d, "r"), fixtures, os.path.join(d, "o")],
                              env=env, capture_output=True, text=True).stdout.strip()
     found, error = None, ""
+    # The run's outputs are one image (`outputs.rro`, decision 0239): written out as `.csv` files to read.
+    subprocess.run([engine, "csv", os.path.join(d, "o")], capture_output=True)
     csv = os.path.join(d, "o", "violation.csv")
     if summary.startswith("rc=0") and os.path.exists(csv):
         found = set()

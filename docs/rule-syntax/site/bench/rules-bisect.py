@@ -11,6 +11,7 @@ def run(sub):
     for f in sub + [always]: shutil.copy(os.path.join(rules, f), d + "/r/")
     env = dict(os.environ, RERAIL_SQL_STRICT="1", RERAIL_TAPE_CACHE=d + "/store.sqlite", RERAIL_RR_LIB=f"{SP}/rs-now/lib")
     subprocess.run(["nice", "-n", "19", f"{SP}/engine-cur", "logic", d + "/r", corpus, d + "/o"], env=env, capture_output=True, timeout=300)
+    subprocess.run([f"{SP}/engine-cur", "csv", d + "/o"], capture_output=True)  # outputs.rro as .csv (0239)
     try: hit = pat in open(d + "/o/violation.csv").read()
     except FileNotFoundError: hit = False
     print(f"try {tries[0]}: {len(sub)} rules -> {hit}", flush=True)

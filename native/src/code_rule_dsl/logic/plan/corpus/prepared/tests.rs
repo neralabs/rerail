@@ -20,7 +20,7 @@
         let run = || {
             let out = dir.join("out");
             let report = super::super::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-            let mut rows: Vec<String> = std::fs::read_to_string(out.join("calls.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "calls").unwrap_or_default();
             rows.sort();
             (report.prepared, rows)
         };
@@ -108,7 +108,7 @@
         let query = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         let out = dir.join("out");
         super::super::run(&query, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let rows = std::fs::read_to_string(out.join("negated.csv")).unwrap();
-        assert_eq!(rows.lines().collect::<Vec<_>>(), vec!["kind"], "the one negated relation of the rule");
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "negated").unwrap();
+        assert_eq!(rows, [["kind"]], "the one negated relation of the rule");
         let _ = std::fs::remove_dir_all(&dir);
     }

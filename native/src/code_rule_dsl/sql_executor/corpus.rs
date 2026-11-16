@@ -132,12 +132,12 @@ impl Corpus {
                 let w = self.width();
                 let mut rows: Vec<Vec<i64>> = match (self.run.entry(doc), self.form) {
                     (Some(e), Form::Rows) if self.nullary => e.rows.get(&self.name).map_or_else(Vec::new, |_| vec![vec![1]]),
-                    (Some(e), Form::Lines) if self.nullary => e.lines.get(&self.name).filter(|(_, l)| !l.is_empty()).map_or_else(Vec::new, |_| vec![vec![1]]),
+                    (Some(e), Form::Lines) if self.nullary => e.outputs.get(&self.name).filter(|(_, r)| !r.is_empty()).map_or_else(Vec::new, |_| vec![vec![1]]),
                     (Some(e), Form::Rows) => match e.rows.get(&self.name) {
                         Some((width, values)) if *width == w => values.chunks(w).map(<[i64]>::to_vec).collect(),
                         _ => vec![],
                     },
-                    (Some(e), Form::Lines) => e.lines.get(&self.name).map_or_else(Vec::new, |(_, lines)| self.parse(lines)),
+                    (Some(e), Form::Lines) => e.outputs.get(&self.name).map_or_else(Vec::new, |(_, rows)| self.values(rows)),
                     (None, _) => vec![],
                 };
                 rows.sort_unstable();
@@ -147,22 +147,33 @@ impl Corpus {
             .clone()
     }
 
-    /// Rendered lines as rows. A line whose number does not parse is left out; a text column may
-    /// hold tabs only as the last column.
-    fn parse(&self, lines: &[String]) -> Vec<Vec<i64>> {
+    /// A memo entry's typed rows as rows of values: an int, node or location column's integers as they are, a text
+    /// column's texts as atoms. A row of another width, or with a text where an integer is declared, is left out.
+    fn values(&self, rows: &rerail_logic::code_rule_dsl::logic::plan::output::Rows) -> Vec<Vec<i64>> {
+        use rerail_logic::code_rule_dsl::logic::plan::output::Cell;
         let w = self.width();
-        let fields: Vec<Vec<&str>> = lines.iter().map(|l| l.splitn(w, '\t').collect()).filter(|f: &Vec<&str>| f.len() == w).collect();
-        let parsed = |t: &str| matches!(t, "int" | "node" | "loc");
-        let texts: Vec<&str> = fields.iter().flat_map(|f| f.iter().zip(&self.types).filter(|(_, t)| !parsed(t)).map(|(v, _)| *v)).collect();
-        let Ok(atoms) = self.atoms.intern_all(&texts) else { return vec![] };
+        if rows.width() != w {
+            return vec![];
+        }
+        let integer = |t: &str| matches!(t, "int" | "node" | "loc");
+        // A text column's values, each shown (an integer a text column holds: as it is written).
+        let shown: Vec<String> = (0..rows.len())
+            .flat_map(|i| (0..w).filter(|&c| !integer(&self.types[c])).map(move |c| (i, c)))
+            .map(|(i, c)| match rows.cell(i, c) {
+                Cell::Text(t) => t.to_owned(),
+                Cell::Int(v) => v.to_string(),
+            })
+            .collect();
+        let Ok(atoms) = self.atoms.intern_all(&shown.iter().map(String::as_str).collect::<Vec<_>>()) else { return vec![] };
         let mut atoms = atoms.into_iter();
-        fields
-            .iter()
-            .filter_map(|f| {
-                let row: Vec<Option<i64>> = f
-                    .iter()
-                    .zip(&self.types)
-                    .map(|(v, t)| if parsed(t) { v.parse().ok() } else { atoms.next().map(i64::from) })
+        (0..rows.len())
+            .filter_map(|i| {
+                let row: Vec<Option<i64>> = (0..w)
+                    .map(|c| match (rows.cell(i, c), integer(&self.types[c])) {
+                        (Cell::Int(v), true) => Some(v),
+                        (Cell::Text(_), true) => None,
+                        (_, false) => atoms.next().map(i64::from),
+                    })
                     .collect();
                 row.into_iter().collect()
             })
