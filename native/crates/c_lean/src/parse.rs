@@ -174,6 +174,16 @@ struct P<'a> {
     /// (2), that type's template arguments (3): tree-sitter-cpp's tie there reads a name's
     /// argument (`std::unique_ptr<X> p`) as an expression.
     ctor_args: u8,
+    /// The next item is a block's second or later (C++: `T [a](b);` declares only as a block's
+    /// first item, as tree-sitter-cpp's tie-break settles it).
+    later_item: bool,
+    /// The template argument lists open around the parse, and how many of them are past their
+    /// first argument (`cpp::template_args`).
+    targ_depth: u8,
+    targ_later: u8,
+    /// Where the file was found to be one tree-sitter-cpp reads by its GLR's version cap
+    /// (`cpp::template_args`): refused, whatever a speculation then reads.
+    poisoned: Option<u32>,
     /// The `>>` tokens split into two `>` (a template's closer): their tokens before, for a
     /// rewind.
     splits: Vec<(usize, Tok)>,
@@ -197,6 +207,9 @@ struct Mark {
     top: bool,
     in_pointer: bool,
     ctor_args: u8,
+    later_item: bool,
+    targ_depth: u8,
+    targ_later: u8,
 }
 
 /// `src` parsed.
@@ -228,6 +241,10 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             in_pointer: false,
             paren_top: false,
             ctor_args: 0,
+            later_item: false,
+            targ_depth: 0,
+            targ_later: 0,
+            poisoned: None,
             splits: Vec::new(),
             relexes: 0,
         };
@@ -236,6 +253,9 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
                 Refusal::Parse(at) => Refusal::Parse(at.max(p.far)),
                 r => r,
             });
+        }
+        if let Some(at) = p.poisoned {
+            return Err(Refusal::Parse(at));
         }
         match p.w.finish_columns() {
             Ok(columns) => return Ok(columns),
@@ -713,6 +733,9 @@ impl<'a> P<'a> {
             top: self.top,
             in_pointer: self.in_pointer,
             ctor_args: self.ctor_args,
+            later_item: self.later_item,
+            targ_depth: self.targ_depth,
+            targ_later: self.targ_later,
         }
     }
 
@@ -744,6 +767,9 @@ impl<'a> P<'a> {
         self.top = m.top;
         self.in_pointer = m.in_pointer;
         self.ctor_args = m.ctor_args;
+        self.later_item = m.later_item;
+        self.targ_depth = m.targ_depth;
+        self.targ_later = m.targ_later;
     }
 
     /// The next token, a `>>` (or `>=`, `>>=`, `&&`), read as two: the first left as the next token.

@@ -1133,6 +1133,18 @@ impl<'a> P<'a> {
     /// `<` template arguments `>` in slot `s`: each a type where one reads (tree-sitter's dynamic
     /// precedence), else an expression; `...` after one.
     pub(super) fn template_args(&mut self, s: Slot) -> R<N> {
+        // tree-sitter-cpp forks at every template argument (a type, dynamic precedence 3, or an
+        // expression, 1) and keeps at most 6 stack versions: where nested lists fork past that,
+        // it drops versions by their order, not their precedence, and an argument can read as an
+        // expression (`p<A, B<C>>`, `a<b<c<d>>>`; the tests in decision 0307). Such a file is left
+        // to tree-sitter: a list inside a list's later argument, or lists four deep.
+        if self.targ_later > 0 || self.targ_depth >= 3 {
+            let at = self.tok().start;
+            self.poisoned.get_or_insert(at);
+            return self.refuse();
+        }
+        let (depth, later) = (self.targ_depth, self.targ_later);
+        self.targ_depth += 1;
         let n = self.open_in(K::TemplateArgumentList, s);
         self.tk(K::TemplateArgumentList, K::TLt)?;
         let no_gt = std::mem::replace(&mut self.no_gt, true);
@@ -1147,11 +1159,15 @@ impl<'a> P<'a> {
                 self.ctor_args = 0;
                 if self.peek() == T::Comma {
                     self.tk(K::TemplateArgumentList, K::TComma)?;
+                    if self.targ_later == later {
+                        self.targ_later += 1;
+                    }
                     continue;
                 }
                 break;
             }
         }
+        (self.targ_depth, self.targ_later) = (depth, later);
         self.no_gt = no_gt;
         self.angle_close(K::TemplateArgumentList)?;
         self.close(n);
@@ -1464,6 +1480,10 @@ impl<'a> P<'a> {
             self.tk(K::DeleteExpression, K::TColonColon)?;
         }
         self.kw(K::DeleteExpression, w::DELETE)?;
+        // `delete [] (T*)p`: tree-sitter-cpp reads `[](T*)` as a lambda's head (an error): refused.
+        if self.peek() == T::LBracket && self.kind_at(1) == T::RBracket && self.kind_at(2) == T::LParen {
+            return self.refuse();
+        }
         if self.peek() == T::LBracket && self.kind_at(1) == T::RBracket {
             self.leaf(K::TLBracket, f::NONE, C_NONE)?;
             self.leaf(K::TRBracket, f::NONE, C_NONE)?;
@@ -1607,6 +1627,12 @@ impl<'a> P<'a> {
     /// `T{…}`, `int(x)`, raw strings, user-defined literals. `None` where C's reading applies.
     pub(super) fn cpp_primary(&mut self, s: Slot) -> R<Option<N>> {
         let t = self.tok();
+        // `operator delete[](p)` as an expression: tree-sitter-cpp's error (its `[]` reads as a
+        // lambda's head there): refused.
+        let o = usize::from(t.kind == T::ColonColon);
+        if self.is_word_at(o, w::OPERATOR) && (self.is_word_at(o + 1, w::NEW) || self.is_word_at(o + 1, w::DELETE)) && self.kind_at(o + 2) == T::LBracket {
+            return self.refuse();
+        }
         if t.kind == T::Name && self.kind_at(1) == T::Str && !self.reserved(t.word) {
             return Ok(None);
         }

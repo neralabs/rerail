@@ -3729,6 +3729,13 @@ fn cpp_tapes_from_the_lean_parser_are_tree_sitters() {
     ];
     let invalid = ["int f( {\n", "class A {\n", "auto x = [&] -> int { return 1; };\n", "int x = (a = b, c);\n", "void f() { p->A::~A(); }\n"];
     c_lean_matches_tree_sitter(GrammarDialect::Cpp, &sources, &invalid);
+    // Where tree-sitter-cpp's GLR forks past its 6 stack versions in nested template arguments,
+    // it reads some as expressions by version order (decision 0307): refused, for tree-sitter.
+    use crate::code_rule_dsl::tape::c_lean;
+    let grammar = Grammar::new(GrammarDialect::Cpp).unwrap();
+    for capped in ["[[nodiscard]] std::pair<A, B<C>> f(int);\n", "void f() { x = *static_cast<A<B<C<double>>>*>(p); }\n"] {
+        assert!(c_lean::encode(&grammar, capped, &|| false).is_err(), "accepted {capped:?}");
+    }
 }
 
 /// The product reads C and C++ with the lean parser: a file's image through the engine's parse

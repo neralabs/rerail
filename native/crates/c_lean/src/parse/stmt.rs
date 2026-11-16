@@ -213,14 +213,17 @@ impl<'a> P<'a> {
         // differs after the first item).
         // C++'s tapes show no such tie: every item reads as an expression.
         let top = std::mem::replace(&mut self.top, !self.cpp);
+        let later = std::mem::replace(&mut self.later_item, false);
         while self.peek() != T::RBrace {
             if self.peek() == T::Eof {
                 return self.refuse();
             }
             self.item(Level::Block, K::CompoundStatement)?;
             self.top = false;
+            self.later_item = true;
         }
         self.top = top;
+        self.later_item = later;
         self.tk(K::CompoundStatement, K::TRBrace)?;
         self.close(n);
         Ok(n)

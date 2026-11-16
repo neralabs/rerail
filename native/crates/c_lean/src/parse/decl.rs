@@ -164,7 +164,7 @@ impl<'a> P<'a> {
             T::LParen => self.macro_type_ahead(top) || self.paren_declarator_ahead(1, top),
             // `T [a](b, c);`: a function declarator named by a structured binding (its reading
             // wins where its parameters read).
-            T::LBracket if self.cpp => {
+            T::LBracket if self.cpp && !self.later_item => {
                 let Some(e) = self.paren_end(1) else { return false };
                 (2..e).all(|i| if i % 2 == 0 { self.is_ident_at(i) } else { self.kind_at(i) == T::Comma }) && self.kind_at(e + 1) == T::LParen && self.params_at(e + 1)
             }
@@ -1562,7 +1562,9 @@ impl<'a> P<'a> {
             self.rekind(n.at, K::OptionalParameterDeclaration, BARE);
             self.tk(K::OptionalParameterDeclaration, K::TEq)?;
             if self.peek() == T::LBrace {
-                self.initializer_list(slot(f::DEFAULT_VALUE, Ctx::Bare))?;
+                // `T x = {}`: tree-sitter-cpp's default value is an expression; it reads the
+                // braces as a compound literal with a MISSING type (an error): refused.
+                return self.refuse();
             } else {
                 self.expr(slot(f::DEFAULT_VALUE, Ctx::Expr))?;
             }
