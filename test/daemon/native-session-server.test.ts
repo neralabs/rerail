@@ -421,6 +421,8 @@ describe("NativeSessionServer request boundary", () => {
     const session = { workspaceRoot: root, sessionId: "s", host: "omp" as const };
     await server.handle({ ...session, operation: "initialize", entries: [] });
     await server.handle({ ...session, operation: "await-code-rules" });
-    expect(of).toHaveBeenCalledTimes(1);
+    // The session looks its repository's walk up at its first walk, which a prompt's boundary asks for.
+    await server.handle({ ...session, operation: "ingest", event: { kind: "user-prompt", sessionId: "s", eventId: "p", text: "hi" } });
+    await vi.waitFor(() => expect(of).toHaveBeenCalledTimes(1), { timeout: 10_000 });
   });
 });

@@ -920,7 +920,7 @@ export class CodeRuleBridge {
   /** The other worktrees as the shared walk last showed them to this session. */
   readonly #worktreeView = new WorktreeView();
   /** The walk of the other worktrees this session shares with others (`worktreeWalks`), else its own, made on first use. */
-  #worktreeWalks: WorktreeWalks | undefined;
+  #worktreeWalks: WorktreeWalks | (() => WorktreeWalks) | undefined;
   /**
    * The text each source this session changed was last seen with: the preimage of its next change made without one
    * captured, once its digest proves it (`#recoverPreimages`). The baseline is not kept, but for a source a walk first
@@ -974,7 +974,7 @@ export class CodeRuleBridge {
        * engine service; one of its own otherwise. Shared, each worktree is walked and held once however many sessions
        * watch it.
        */
-      worktreeWalks?: WorktreeWalks;
+      worktreeWalks?: WorktreeWalks | (() => WorktreeWalks);
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
       firstSightTextBytes?: number;
     } = {},
@@ -1651,6 +1651,9 @@ export class CodeRuleBridge {
   }
 
   #sharedWorktreeWalks(): WorktreeWalks {
+    // A walk given as a function is taken now, at the first walk, so the repository's walk this session joins is the one
+    // its other sessions watch then, not one dropped since the session opened.
+    if (typeof this.#worktreeWalks === "function") this.#worktreeWalks = this.#worktreeWalks();
     this.#worktreeWalks ??= new WorktreeWalks(this.#worktreeWalkGapMs === undefined ? {} : { gapMs: this.#worktreeWalkGapMs });
     return this.#worktreeWalks;
   }

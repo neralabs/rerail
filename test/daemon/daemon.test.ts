@@ -200,8 +200,10 @@ describe("Rerail daemon", () => {
       });
       expect((await send({ operation: "initialize", entries: [] })).status).toBe(200);
       expect((await send({ operation: "await-code-rules" })).status).toBe(200);
+      // The session looks its repository's walk up at its first walk, which a prompt's boundary asks for.
+      expect((await send({ operation: "ingest", event: { kind: "user-prompt", sessionId: "native", eventId: "p", text: "hi" } })).status).toBe(200);
+      await vi.waitFor(() => expect(of).toHaveBeenCalledTimes(1), { timeout: 10_000 });
       await daemon.close();
-      expect(of).toHaveBeenCalledTimes(1);
       expect(close).toHaveBeenCalledTimes(1);
       expect(close.mock.contexts[0]).toBe(of.mock.contexts[0]);
       expect(close.mock.invocationCallOrder[0]).toBeGreaterThan(nativeClose.mock.invocationCallOrder[0]!);

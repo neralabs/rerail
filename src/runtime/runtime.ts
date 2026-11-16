@@ -1579,8 +1579,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
-        // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own.
-        worktreeWalks: this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),
+        // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
+        // looked up at the session's first walk, as one dropped when its last session left is no longer the repository's.
+        worktreeWalks: () => this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),
         ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
         // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
         onDiscoveryPending: boundary => this.#recordSessionFact(
