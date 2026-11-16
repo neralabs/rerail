@@ -23,7 +23,7 @@ history_runtime_ret("return_statement").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, name, line, syntax_error, value, value_type_of
+.input doc, node, child, field, text, name, line, syntax_error, value_type_of, value
 .output violation
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/**/*.py", p).

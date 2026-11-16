@@ -1107,6 +1107,43 @@ impl Lowering {
         Some(out)
     }
 
+    /// Whether `b` holds at every byte `a` holds at, as their operations show it: a conjunct
+    /// of `a`'s, or each of its disjuncts, implies `b`; `a` implies a disjunct of `b`'s, or
+    /// each of its conjuncts; a `prev` is its operand at a delay as much smaller; `within` at
+    /// one delay is `within` at another, each at its own. False where the operations do not
+    /// show it (a carry, a fill), and past a bound on the steps.
+    pub fn implies(&self, a: Val, b: Val) -> bool {
+        let mut steps = 4096;
+        self.implied(a.v, i32::from(a.d), b.v, i32::from(b.d), &mut steps)
+    }
+
+    fn implied(&self, a: u16, da: i32, b: u16, db: i32, steps: &mut u32) -> bool {
+        if a == b && da == db {
+            return true;
+        }
+        if *steps == 0 {
+            return false;
+        }
+        *steps -= 1;
+        let (x, y) = (self.program.ops[usize::from(a)], self.program.ops[usize::from(b)]);
+        let by_a = match x {
+            BlockOp::Const(0) => true,
+            BlockOp::Prev(p, k) => self.implied(p, da - i32::from(k), b, db, steps),
+            BlockOp::And(p, q) => self.implied(p, da, b, db, steps) || self.implied(q, da, b, db, steps),
+            BlockOp::AndNot(p, _) => self.implied(p, da, b, db, steps),
+            BlockOp::Or(p, q) => self.implied(p, da, b, db, steps) && self.implied(q, da, b, db, steps),
+            BlockOp::Within(k) => matches!(y, BlockOp::Within(j) if da - i32::from(k) == db - i32::from(j)),
+            _ => false,
+        };
+        by_a || match y {
+            // Its first `k` bits are the bytes before the stream's: only at a delay of `k` or more.
+            BlockOp::Prev(q, k) if db >= i32::from(k) => self.implied(a, da, q, db - i32::from(k), steps),
+            BlockOp::Or(p, q) => self.implied(a, da, p, db, steps) || self.implied(a, da, q, db, steps),
+            BlockOp::And(p, q) => self.implied(a, da, p, db, steps) && self.implied(a, da, q, db, steps),
+            _ => false,
+        }
+    }
+
     /// Whether `a` is the constant zero.
     pub fn is_zero(&self, a: Val) -> bool {
         self.program.ops.get(usize::from(a.v)) == Some(&BlockOp::Const(0))
@@ -2224,6 +2261,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 Some((a, l)) => low.kind_checks.push((tkind, Some(k), a, l)),
                 None => {
                     let value = low.expr(&e)?;
+                    // A count of one of a mask that holds where each of the kind's tokens
+                    // starts: it holds at every token (`least` 0, `TokenCheck::always`), as a
+                    // lexer knows a comment it reads has its opener, and no count is made.
+                    // A read kind's tokens (`read`): its arms' openers, where a reader reads
+                    // them; another's, those of its rows.
+                    let rows: Vec<Val> = match low.token_reads.get(&tkind) {
+                        Some(arms) => arms.iter().map(|a| a.0).collect(),
+                        None => token_rows.iter().filter(|r| r.0 == tkind).map(|r| r.1).collect(),
+                    };
+                    let least = if count && least == 1 && !rows.is_empty() && rows.iter().all(|&s| low.implies(s, value)) { 0 } else { least };
                     let mark = u8::try_from(k).ok().filter(|&m| usize::from(m) < crate::records::MARKS).ok_or("a mark with token tests past the marks a code holds")?;
                     let then = if after { crate::records::CheckThen::After(mark) } else { crate::records::CheckThen::At(mark) };
                     low.token_escapes.push((tkind, count, value, least, then));

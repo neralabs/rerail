@@ -8,7 +8,8 @@ e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the
 `scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`.
 
 The host is a usable one (`scripts/build/farm/status`: reachable, on its link, with disk to spare)
-with a free test slot, most cores first; with none free, the first usable one, once its run ends.
+with a free test slot, the most cores to spare first (its cores less its load: a host busy with its
+own work comes after an idle one with fewer); with none free, the first usable one, once its run ends.
 What changed of this checkout is sent through the farm's mirror into the host's farm root, after
 the host is asked again what it holds (it may have been cleaned). COMMAND runs there at `nice -n
 10`, from the checkout's `native/` (or `--dir`), with this machine's open-file limit, and builds in

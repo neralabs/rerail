@@ -124,7 +124,21 @@ impl<'a> P<'a> {
                     self.close(n);
                     n
                 }
-                w::SWITCH => self.switch_expression(s)?,
+                w::SWITCH => {
+                    let n = self.switch_expression(s)?;
+                    if expr::continues_switch(self.tok()) {
+                        // `switch (x) { … } + 1;`: the switch an operand; refused.
+                        return self.refuse();
+                    } else if self.peek() != T::Semi {
+                        n
+                    } else {
+                        // `switch (x) { … };`: an expression statement.
+                        let n = self.wrap(n, K::ExpressionStatement, s, EXPR);
+                        self.punct_tk(K::ExpressionStatement, T::Semi, false)?;
+                        self.close(n);
+                        n
+                    }
+                }
                 w::SYNCHRONIZED if self.kind_at(1) == T::LParen => {
                     let n = self.open_in(K::SynchronizedStatement, s);
                     self.tk(K::SynchronizedStatement, K::TSynchronized)?;

@@ -93,6 +93,12 @@ impl P<'_> {
                 return Ok(());
             }
             self.restore(saved);
+            // A `block` (`begin; …; end`), pushed in the statement's place.
+            let saved = self.save();
+            if self.block().is_ok() {
+                return Ok(());
+            }
+            self.restore(saved);
         }
         let m = self.open(K::Statement, 0)?;
         let explained = ws.first().is_some_and(|&(_, k)| k == K::KeywordExplain) && ws.len() == 1;
@@ -392,7 +398,10 @@ impl P<'_> {
                 }
                 self.expect_punct(b")", K::TRParen)?;
                 self.node(K::CubeRollupClause, m);
-            } else if self.is(K::KeywordGrouping)? && self.next_is(K::KeywordSets)? {
+            } else if self.is(K::KeywordGrouping)? && !self.next_is(K::KeywordSets)? {
+                // `grouping` lexes as the keyword here: no field.
+                return self.refuse();
+            } else if self.is(K::KeywordGrouping)? {
                 self.expect(K::KeywordGrouping)?;
                 self.expect(K::KeywordSets)?;
                 self.expect_punct(b"(", K::TLParen)?;
@@ -856,7 +865,7 @@ impl P<'_> {
             if t.t == T::Str {
                 return self.refuse();
             }
-            self.expect_ident(NONE, 0)?;
+            self.expect_column(NONE, 0)?;
             self.close(c);
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
@@ -1434,7 +1443,7 @@ impl P<'_> {
             self.take(t);
             self.leaf(K::Identifier, f::NAME, t.s, t.e);
         } else {
-            self.expect_ident(Ctx::Sure(&[&[K::KeywordConstraint, K::KeywordPrimary, K::KeywordUnique, K::KeywordCheck, K::KeywordForeign, K::KeywordExclude, K::KeywordLike, K::KeywordNot]]), f::NAME)?;
+            self.expect_column(Ctx::Sure(&[&[K::KeywordConstraint, K::KeywordPrimary, K::KeywordUnique, K::KeywordCheck, K::KeywordForeign, K::KeywordExclude, K::KeywordLike, K::KeywordNot]]), f::NAME)?;
         }
         self.type_(f::TYPE)?;
         loop {
@@ -1463,7 +1472,11 @@ impl P<'_> {
             }
             K::KeywordDefault => {
                 self.expect(K::KeywordDefault)?;
-                self.expr(prec::MINUS - 1, 0)?;
+                // `_default_expression` offers `keyword_current_timestamp` beside an expression, so
+                // the word lexes as the keyword there, and an operator or `(` after it is an error.
+                if self.kw(K::KeywordCurrentTimestamp)?.is_none() {
+                    self.expr(prec::MINUS - 1, 0)?;
+                }
             }
             K::KeywordPrimary => {
                 self.expect(K::KeywordPrimary)?;
@@ -1644,7 +1657,7 @@ impl P<'_> {
         self.expect_punct(b"(", K::TLParen)?;
         loop {
             let c = self.open(K::Column, 0)?;
-            self.expect_ident(NONE, f::NAME)?;
+            self.expect_column(NONE, f::NAME)?;
             if self.is(K::KeywordAsc)? || self.is(K::KeywordDesc)? || self.at_punct(b"(")? {
                 return self.refuse();
             }
@@ -1671,7 +1684,7 @@ impl P<'_> {
             if t.t == T::Str {
                 return self.refuse();
             }
-            self.expect_ident(Ctx::Sure(&[&[K::KeywordOn, K::KeywordIf]]), f::COLUMN)?;
+            self.expect_column(Ctx::Sure(&[&[K::KeywordOn, K::KeywordIf]]), f::COLUMN)?;
         }
         self.expect(K::KeywordOn)?;
         if self.is(K::KeywordOnly)? {
@@ -1716,7 +1729,7 @@ impl P<'_> {
                 }
                 self.set_field(id, f::FUNCTION);
             } else {
-                self.expect_ident(NONE, f::COLUMN)?;
+                self.expect_column(NONE, f::COLUMN)?;
             }
             if self.is(K::KeywordCollate)? {
                 return self.refuse();
@@ -2505,6 +2518,23 @@ impl P<'_> {
             self.statement()?;
             self.expect_punct(b";", K::TSemi)?;
         }
+        self.close(m);
+        Ok(())
+    }
+
+    /// `block`: `begin [;] statement; … end`, ended by the first `end`.
+    fn block(&mut self) -> R<()> {
+        let m = self.open(K::Block, 0)?;
+        self.expect(K::KeywordBegin)?;
+        self.punct(b";", K::TSemi)?;
+        while !self.is(K::KeywordEnd)? {
+            if self.is(K::KeywordBegin)? || self.peek()?.t == T::Eof {
+                return self.refuse();
+            }
+            self.statement()?;
+            self.expect_punct(b";", K::TSemi)?;
+        }
+        self.expect(K::KeywordEnd)?;
         self.close(m);
         Ok(())
     }

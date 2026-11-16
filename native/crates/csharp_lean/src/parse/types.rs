@@ -40,7 +40,14 @@ impl<'a> P<'a> {
                 return Ok(n);
             }
             T::Name if t.word == w::DELEGATE && self.kind_at(1) == T::Star => self.function_pointer_type(s)?,
-            T::Name if t.word == w::VAR && !matches!(self.kind_at(1), T::Lt | T::Dot | T::ColonColon) => self.leaf_in(K::ImplicitType, s)?,
+            // Before `and` or `or` (a pattern's combinators) tree-sitter takes `var` as a name.
+            T::Name if t.word == w::VAR && !matches!(self.kind_at(1), T::Lt | T::Dot | T::ColonColon) && !(self.is_word_at(1, w::AND) || self.is_word_at(1, w::OR)) => {
+                // `var with`: `with` is lexed as its keyword there, an error.
+                if self.is_word_at(1, w::WITH) {
+                    return self.refuse();
+                }
+                self.leaf_in(K::ImplicitType, s)?
+            }
             T::Name if w::is_predefined(t.word) => self.leaf_in(K::PredefinedType, s)?,
             T::Name if !w::is_reserved(t.word) => self.name(s)?,
             T::LParen => self.tuple_type(s)?,
@@ -161,7 +168,7 @@ impl<'a> P<'a> {
     }
 
     /// An array creation's type: its element type, then ranks (with sizes).
-    pub(super) fn array_type_with_ranks(&mut self, s: Slot) -> R<N> {
+    pub(super) fn array_type_with_ranks(&mut self, s: Slot, creation: bool) -> R<N> {
         self.deeper()?;
         let t = self.tok();
         let mut n = match t.kind {
@@ -188,14 +195,27 @@ impl<'a> P<'a> {
         if self.peek() != T::LBracket {
             return self.refuse();
         }
-        while self.peek() == T::LBracket {
+        // In a creation (`creation`), a rank with sizes after the first is an element access
+        // over it (`new int[4][2]` is `(new int[4])[2]`).
+        let mut first = true;
+        while self.peek() == T::LBracket && (first || !creation || self.rank_is_bare(0)) {
             n = self.wrap(n, K::ArrayType, slot(f::TYPE, Ctx::Bare), slot(f::TYPE, Ctx::Bare));
             self.rank()?;
             self.close(n);
+            first = false;
         }
         self.rekey(n.at, s);
         self.depth -= 1;
         Ok(n)
+    }
+
+    /// Whether the `[` `k` tokens ahead opens a rank without sizes (`[]`, `[,]`).
+    fn rank_is_bare(&mut self, k: usize) -> bool {
+        let mut j = k + 1;
+        while self.kind_at(j) == T::Comma {
+            j += 1;
+        }
+        self.kind_at(j) == T::RBracket
     }
 
     /// `tuple_type`: `(` elements `)`, two or more, each a type and a name.

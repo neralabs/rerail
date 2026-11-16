@@ -111,7 +111,7 @@ rr_kind_function_definition("function_definition").
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, op, line, value, fstring_piece, source, src_line_lf, tape_line, end_line, node_text, cpython_syntax_error
+.input doc, syntax_error, node, field, child, text, op, line, fstring_piece, source, src_line_lf, tape_line, end_line, cpython_syntax_error, node_text, value
 .output violation
 ofc_introspection("get_type_hints").
 ofc_introspection("model_fields").
@@ -166,7 +166,7 @@ optimizer_fslot_at(h, s, st) :- node(_, h, "format_specifier", _, _), child(h, s
 rr_ctx3(h, st) :- optimizer_fslot_at(h, s, st).
 rr_agg2(h, rr_any1, st, t) :- rr_demand_agg_rr_agg2(h, st), rr_ctx3(h, st), optimizer_fslot_at(h, rr_any1, t), t < st.
 optimizer_fslot(h, k, s) :- optimizer_fslot_at(h, s, st), k = count : { rr_agg2(h, _, st, _) }.
-rr_ctx6(h, i) :- fstring_piece(h, i, "literal", v).
+rr_ctx6(h, i) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v).
 rr_agg5(h, i, j, rr_any4) :- rr_demand_agg_rr_agg5(h, i), rr_ctx6(h, i), fstring_piece(h, j, "interpolation", rr_any4), j < i.
 optimizer_flit(h, i, v, k) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v), k = count : { rr_agg5(h, i, _, _) }.
 optimizer_fcontent(h, c, st) :- optimizer_fstr(h), node(_, h, "string", _, _), child(h, c, _), node(_, c, "string_content", st, _).

@@ -25,13 +25,13 @@
 //   4. Lengths: how many elements an argvalues or params expression has (len_of), on demand.
 //   5. Fixtures: the closure of fixtures a test requests, nearest definition first.
 //   6. The count: a product of factors per test, summed per file.
-//   7. Names: pc_sym, the module-level lookup the model uses, asked only for the expressions above.
+//   7. Names: pyc_sym, the module-level lookup the model uses, asked only for the expressions above.
 //
 // Differences from pytest, all of them the model's: a name bound in both arms of an `if` counts once per arm;
 // methods resolve along the nearest base, not C3 order; a list a function builds by `append` counts every growth
 // its `for` loops allow (an `if` inside is ignored); a list built by introspection has no length (open); marks on
 // base classes are not inherited.
-// Internal relations start `pc_`.
+// Internal relations start `pyc_` (`pc_` is data-layer purity-calls.rr's, and a run may read both).
 
 #include "python/ast.rr"
 #include "python/calls.rr"   // call_arg, callee, posarg, dexpr (syntax only: no call targets are asked for)
@@ -48,363 +48,363 @@
 // module node.
 collect_file(d) :- doc(d, p, _), collect_root(r), prefix(r, p), file_name(d, x), match("test_.*\\.py", x),
     modnode(d, _), !collect_disabled(p).
-.decl pc_mod(d: number, m: node)
-pc_mod(d, m) :- collect_file(d), modnode(d, m).
-.decl pc_test_name(x: symbol)
-pc_test_name(x) :- def_name(_, x), collect_fn_prefix(p), prefix(p, x).
-.decl pc_class_name(x: symbol)
-pc_class_name(x) :- def_name(_, x), collect_cls_prefix(p), prefix(p, x).
-.decl pc_testish(x: symbol)
-pc_testish(x) :- pc_test_name(x).
-pc_testish(x) :- pc_class_name(x).
-// pc_ns(d, x, f): the module's namespace, as pytest walks it: its live definitions, and the definitions its
+.decl pyc_mod(d: number, m: node)
+pyc_mod(d, m) :- collect_file(d), modnode(d, m).
+.decl pyc_test_name(x: symbol)
+pyc_test_name(x) :- def_name(_, x), collect_fn_prefix(p), prefix(p, x).
+.decl pyc_class_name(x: symbol)
+pyc_class_name(x) :- def_name(_, x), collect_cls_prefix(p), prefix(p, x).
+.decl pyc_testish(x: symbol)
+pyc_testish(x) :- pyc_test_name(x).
+pyc_testish(x) :- pyc_class_name(x).
+// pyc_ns(d, x, f): the module's namespace, as pytest walks it: its live definitions, and the definitions its
 // from-imports bind. `from .base import test_shared` collects test_shared again in this module.
-.decl pc_ns(d: number, x: symbol, f: node)
-pc_ns(d, x, f) :- pc_mod(d, m), live_def(m, x, f), pc_testish(x).
-pc_ns(d, x, f) :- pc_mod(d, m), ifrom(m, x, mq, y), pc_testish(x), pc_res(@dot(mq, y), q), pc_end(q), qualname(f, q),
+.decl pyc_ns(d: number, x: symbol, f: node)
+pyc_ns(d, x, f) :- pyc_mod(d, m), live_def(m, x, f), pyc_testish(x).
+pyc_ns(d, x, f) :- pyc_mod(d, m), ifrom(m, x, mq, y), pyc_testish(x), pyc_res(@dot(mq, y), q), pyc_end(q), qualname(f, q),
     (kind(f, "function_definition") ; kind(f, "class_definition")).
 
 // Fixtures: a def whose decorator is `fixture` or `yield_fixture` (bare, called, or through a module).
-.decl pc_fixdeco(g: node, e: node)
-pc_fixdeco(g, e) :- dexpr(g, e), kind(g, "function_definition"), kind(e, "call"), callee(e, h), leaf_name(h, s),
+.decl pyc_fixdeco(g: node, e: node)
+pyc_fixdeco(g, e) :- dexpr(g, e), kind(g, "function_definition"), kind(e, "call"), callee(e, h), leaf_name(h, s),
     (s = "fixture" ; s = "yield_fixture").
-pc_fixdeco(g, e) :- dexpr(g, e), kind(g, "function_definition"), !kind(e, "call"), leaf_name(e, s),
+pyc_fixdeco(g, e) :- dexpr(g, e), kind(g, "function_definition"), !kind(e, "call"), leaf_name(e, s),
     (s = "fixture" ; s = "yield_fixture").
-.decl pc_isfix(g: node)
-pc_isfix(g) :- pc_fixdeco(g, _).
-// pc_fixture(g, x): fixture g is requested as x: its `name=`, else its def name.
-.decl pc_named(g: node, x: symbol)
-pc_named(g, x) :- pc_fixdeco(g, e), call_arg(e, -1, "name", v), str_const(v, x).
-.decl pc_fixture(g: node, x: symbol)
-pc_fixture(g, x) :- pc_named(g, x).
-pc_fixture(g, x) :- pc_isfix(g), !pc_named(g, _), def_name(g, x).
-.decl pc_fx_params(g: node, v: node)
-pc_fx_params(g, v) :- pc_fixdeco(g, e), call_arg(e, -1, "params", v).
-.decl pc_fx_auto(g: node)
-pc_fx_auto(g) :- pc_fixdeco(g, e), call_arg(e, -1, "autouse", v), kind(v, "true").
+.decl pyc_isfix(g: node)
+pyc_isfix(g) :- pyc_fixdeco(g, _).
+// pyc_fixture(g, x): fixture g is requested as x: its `name=`, else its def name.
+.decl pyc_named(g: node, x: symbol)
+pyc_named(g, x) :- pyc_fixdeco(g, e), call_arg(e, -1, "name", v), str_const(v, x).
+.decl pyc_fixture(g: node, x: symbol)
+pyc_fixture(g, x) :- pyc_named(g, x).
+pyc_fixture(g, x) :- pyc_isfix(g), !pyc_named(g, _), def_name(g, x).
+.decl pyc_fx_params(g: node, v: node)
+pyc_fx_params(g, v) :- pyc_fixdeco(g, e), call_arg(e, -1, "params", v).
+.decl pyc_fx_auto(g: node)
+pyc_fx_auto(g) :- pyc_fixdeco(g, e), call_arg(e, -1, "autouse", v), kind(v, "true").
 
 // ---- 2. classes --------------------------------------------------------------------------------------------------
 // A Test class is not collected when it or a base defines __init__ or __new__, when the nearest class that says
 // sets `__test__ = False` (in its body, or by setattr or attribute assignment in its module), or when a
 // workspace decorator replaces it with a function.
-.decl pc_has_init(q: symbol)
-pc_has_init(q) :- method(q, x, _), (x = "__init__" ; x = "__new__").
-pc_has_init(q) :- pc_anc(q, b, _), method(b, x, _), (x = "__init__" ; x = "__new__").
-.decl pc_test_set(q: symbol, on: number)
-pc_test_set(q, 0) :- class_def(c, q), asg(c, "__test__", v, _), kind(v, "false").
-pc_test_set(q, 1) :- class_def(c, q), asg(c, "__test__", v, _), !kind(v, "false").
-.decl pc_mod_off(q: symbol)
-pc_mod_off(q) :- kind(c, "call"), callee(c, h), kind(h, "identifier"), text(h, "setattr"), call_arg(c, 0, "", a),
+.decl pyc_has_init(q: symbol)
+pyc_has_init(q) :- method(q, x, _), (x = "__init__" ; x = "__new__").
+pyc_has_init(q) :- pyc_anc(q, b, _), method(b, x, _), (x = "__init__" ; x = "__new__").
+.decl pyc_test_set(q: symbol, on: number)
+pyc_test_set(q, 0) :- class_def(c, q), asg(c, "__test__", v, _), kind(v, "false").
+pyc_test_set(q, 1) :- class_def(c, q), asg(c, "__test__", v, _), !kind(v, "false").
+.decl pyc_mod_off(q: symbol)
+pyc_mod_off(q) :- kind(c, "call"), callee(c, h), kind(h, "identifier"), text(h, "setattr"), call_arg(c, 0, "", a),
     kind(a, "identifier"), text(a, x), call_arg(c, 1, "", s), str_const(s, "__test__"), call_arg(c, 2, "", v),
     kind(v, "false"), nearest(c, m, scope), kind(m, "module"), modname(m, mq), q = @dot(mq, x).
-pc_mod_off(q) :- kind(a, "assignment"), field(a, "left", t), attr_of(t, o, "__test__"), kind(o, "identifier"),
+pyc_mod_off(q) :- kind(a, "assignment"), field(a, "left", t), attr_of(t, o, "__test__"), kind(o, "identifier"),
     text(o, x), field(a, "right", v), kind(v, "false"), nearest(a, m, scope), kind(m, "module"), modname(m, mq),
     q = @dot(mq, x).
-.decl pc_test_off(q: symbol)
-pc_test_off(q) :- pc_mod_off(q).
-pc_test_off(q) :- pc_test_set(q, 0), !pc_mod_off(q).
-pc_test_off(q) :- class_def(c, q), !pc_mod_off(q), !pc_test_set(q, _), pc_base(c, b), pc_test_off(b).
-// pc_wrapper(g): def g returns one of its own nested defs by name, so what it decorates becomes a function.
-.decl pc_returns_inner(g: node, h: node)
-pc_returns_inner(g, h) :- kind(g, "function_definition"), field(g, "body", b), body_stmt(b, r, _),
+.decl pyc_test_off(q: symbol)
+pyc_test_off(q) :- pyc_mod_off(q).
+pyc_test_off(q) :- pyc_test_set(q, 0), !pyc_mod_off(q).
+pyc_test_off(q) :- class_def(c, q), !pyc_mod_off(q), !pyc_test_set(q, _), pyc_base(c, b), pyc_test_off(b).
+// pyc_wrapper(g): def g returns one of its own nested defs by name, so what it decorates becomes a function.
+.decl pyc_returns_inner(g: node, h: node)
+pyc_returns_inner(g, h) :- kind(g, "function_definition"), field(g, "body", b), body_stmt(b, r, _),
     kind(r, "return_statement"), child(r, v, 0), kind(v, "identifier"), text(v, x), body_stmt(b, s, _),
     defstmt(h, s), kind(h, "function_definition"), def_name(h, x).
-.decl pc_replaced(c: node)
-pc_replaced(c) :- kind(c, "class_definition"), dexpr(c, e), !kind(e, "call"), pc_sym(e, q), qualname(g, q),
-    pc_returns_inner(g, _).
-pc_replaced(c) :- kind(c, "class_definition"), dexpr(c, e), kind(e, "call"), callee(e, h), pc_sym(h, q),
-    qualname(g, q), pc_returns_inner(g, w), pc_returns_inner(w, _).
-.decl pc_class_ok(c: node)
-pc_class_ok(c) :- class_def(c, q), !pc_has_init(q), !pc_test_off(q), !pc_replaced(c).
+.decl pyc_replaced(c: node)
+pyc_replaced(c) :- kind(c, "class_definition"), dexpr(c, e), !kind(e, "call"), pyc_sym(e, q), qualname(g, q),
+    pyc_returns_inner(g, _).
+pyc_replaced(c) :- kind(c, "class_definition"), dexpr(c, e), kind(e, "call"), callee(e, h), pyc_sym(h, q),
+    qualname(g, q), pyc_returns_inner(g, w), pyc_returns_inner(w, _).
+.decl pyc_class_ok(c: node)
+pyc_class_ok(c) :- class_def(c, q), !pyc_has_init(q), !pyc_test_off(q), !pyc_replaced(c).
 
-// pc_class(d, c, p): Test class c is collected in module d inside p: d's module node, or the Test class whose
+// pyc_class(d, c, p): Test class c is collected in module d inside p: d's module node, or the Test class whose
 // body defines it.
-.decl pc_class(d: number, c: node, p: node)
-pc_class(d, c, m) :- pc_ns(d, x, c), kind(c, "class_definition"), pc_class_name(x), pc_class_ok(c), pc_mod(d, m).
-pc_class(d, c2, c) :- pc_class(d, c, _), defn(c, x, c2), kind(c2, "class_definition"), pc_class_name(x),
-    pc_class_ok(c2).
+.decl pyc_class(d: number, c: node, p: node)
+pyc_class(d, c, m) :- pyc_ns(d, x, c), kind(c, "class_definition"), pyc_class_name(x), pyc_class_ok(c), pyc_mod(d, m).
+pyc_class(d, c2, c) :- pyc_class(d, c, _), defn(c, x, c2), kind(c2, "class_definition"), pyc_class_name(x),
+    pyc_class_ok(c2).
 // A nested Test class of a base is an attribute of the subclass too.
-pc_class(d, c2, c) :- pc_class(d, c, _), class_def(c, q), pc_anc(q, b, _), class_def(cb, b), defn(cb, x, c2),
-    kind(c2, "class_definition"), pc_class_name(x), pc_class_ok(c2), !pc_own_class(q, x).
-.decl pc_own_class(q: symbol, x: symbol)
-pc_own_class(q, x) :- class_def(c, q), defn(c, x, c2), kind(c2, "class_definition").
-// pc_chain(d, o, c): class c is o or encloses o, in o's collection.
-.decl pc_chain(d: number, o: node, c: node)
-pc_chain(d, c, c) :- pc_class(d, c, _).
-pc_chain(d, c, a) :- pc_class(d, c, p), pc_chain(d, p, a).
+pyc_class(d, c2, c) :- pyc_class(d, c, _), class_def(c, q), pyc_anc(q, b, _), class_def(cb, b), defn(cb, x, c2),
+    kind(c2, "class_definition"), pyc_class_name(x), pyc_class_ok(c2), !pyc_own_class(q, x).
+.decl pyc_own_class(q: symbol, x: symbol)
+pyc_own_class(q, x) :- class_def(c, q), defn(c, x, c2), kind(c2, "class_definition").
+// pyc_chain(d, o, c): class c is o or encloses o, in o's collection.
+.decl pyc_chain(d: number, o: node, c: node)
+pyc_chain(d, c, c) :- pyc_class(d, c, _).
+pyc_chain(d, c, a) :- pyc_class(d, c, p), pyc_chain(d, p, a).
 
 // Methods: a class's own last definition of a name, else the one of its nearest base that defines it.
-.decl pc_own(q: symbol, x: symbol, f: node)
-pc_own(q, x, f) :- method(q, x, f), pc_test_name(x), !pc_later(q, x, f).
-.decl pc_later(q: symbol, x: symbol, f: node)
-pc_later(q, x, f) :- method(q, x, f), method(q, x, g), g > f.
-.decl pc_anc(q: symbol, b: symbol, n: number)
-pc_anc(q, b, 1) :- class_def(c, q), pc_base(c, b), class_def(_, b).
-pc_anc(q, b, n + 1) :- pc_anc(q, m, n), n < 12, class_def(c, m), pc_base(c, b), class_def(_, b).
-.decl pc_mro(q: symbol, x: symbol, f: node)
-pc_mro(q, x, f) :- pc_own(q, x, f).
-pc_mro(q, x, f) :- pc_anc(q, b, n), pc_own(b, x, f), !method(q, x, _),
-    n = min k : { pc_anc(q, b2, k), pc_own(b2, x, _) }.
+.decl pyc_own(q: symbol, x: symbol, f: node)
+pyc_own(q, x, f) :- method(q, x, f), pyc_test_name(x), !pyc_later(q, x, f).
+.decl pyc_later(q: symbol, x: symbol, f: node)
+pyc_later(q, x, f) :- method(q, x, f), method(q, x, g), g > f.
+.decl pyc_anc(q: symbol, b: symbol, n: number)
+pyc_anc(q, b, 1) :- class_def(c, q), pyc_base(c, b), class_def(_, b).
+pyc_anc(q, b, n + 1) :- pyc_anc(q, m, n), n < 12, class_def(c, m), pyc_base(c, b), class_def(_, b).
+.decl pyc_mro(q: symbol, x: symbol, f: node)
+pyc_mro(q, x, f) :- pyc_own(q, x, f).
+pyc_mro(q, x, f) :- pyc_anc(q, b, n), pyc_own(b, x, f), !method(q, x, _),
+    n = min k : { pyc_anc(q, b2, k), pyc_own(b2, x, _) }.
 
 // The templates: (module, owner, def). A def is not a test when it is a fixture.
-.decl pc_tmpl(d: number, o: node, f: node)
-pc_tmpl(d, m, f) :- pc_ns(d, x, f), kind(f, "function_definition"), pc_test_name(x), !pc_isfix(f), pc_mod(d, m).
-pc_tmpl(d, c, f) :- pc_class(d, c, _), class_def(c, q), pc_mro(q, _, f), !pc_isfix(f).
+.decl pyc_tmpl(d: number, o: node, f: node)
+pyc_tmpl(d, m, f) :- pyc_ns(d, x, f), kind(f, "function_definition"), pyc_test_name(x), !pyc_isfix(f), pyc_mod(d, m).
+pyc_tmpl(d, c, f) :- pyc_class(d, c, _), class_def(c, q), pyc_mro(q, _, f), !pyc_isfix(f).
 
 // ---- 3. marks ----------------------------------------------------------------------------------------------------
-// pc_mark(e, k): e is `pytest.mark.k(...)`, `mark.k`, or any dotted name with a `mark` component before k.
-.decl pc_mark(e: node, k: symbol)
-pc_mark(e, k) :- kind(e, "call"), callee(e, h), dotted_expr(h, s),
+// pyc_mark(e, k): e is `pytest.mark.k(...)`, `mark.k`, or any dotted name with a `mark` component before k.
+.decl pyc_mark(e: node, k: symbol)
+pyc_mark(e, k) :- kind(e, "call"), callee(e, h), dotted_expr(h, s),
     match("(?:.*\\.)?mark\\.(?:.*\\.)?(?<k>[A-Za-z_0-9]+)", s).
-pc_mark(e, k) :- !kind(e, "call"), dotted_expr(e, s), match("(?:.*\\.)?mark\\.(?:.*\\.)?(?<k>[A-Za-z_0-9]+)", s).
-// pc_pytestmark(s, e): `pytestmark = e` or `pytestmark = [e, …]` in scope s (a module or a class body).
-.decl pc_pytestmark(s: node, e: node)
-pc_pytestmark(s, v) :- asg(s, "pytestmark", v, _), !kind(v, "list"), !kind(v, "tuple").
-pc_pytestmark(s, e) :- asg(s, "pytestmark", v, _), (kind(v, "list") ; kind(v, "tuple")), child(v, e, _),
+pyc_mark(e, k) :- !kind(e, "call"), dotted_expr(e, s), match("(?:.*\\.)?mark\\.(?:.*\\.)?(?<k>[A-Za-z_0-9]+)", s).
+// pyc_pytestmark(s, e): `pytestmark = e` or `pytestmark = [e, …]` in scope s (a module or a class body).
+.decl pyc_pytestmark(s: node, e: node)
+pyc_pytestmark(s, v) :- asg(s, "pytestmark", v, _), !kind(v, "list"), !kind(v, "tuple").
+pyc_pytestmark(s, e) :- asg(s, "pytestmark", v, _), (kind(v, "list") ; kind(v, "tuple")), child(v, e, _),
     !kind(e, "comment").
-.decl pc_cmark(c: node, e: node, k: symbol)
-pc_cmark(c, e, k) :- dexpr(c, e), pc_mark(e, k).
-pc_cmark(c, e, k) :- pc_pytestmark(c, e), pc_mark(e, k).
-// pc_tmark(d, o, f, e, k): mark e of kind k applies to the template: on the def, on a class of its chain, or in
+.decl pyc_cmark(c: node, e: node, k: symbol)
+pyc_cmark(c, e, k) :- dexpr(c, e), pyc_mark(e, k).
+pyc_cmark(c, e, k) :- pyc_pytestmark(c, e), pyc_mark(e, k).
+// pyc_tmark(d, o, f, e, k): mark e of kind k applies to the template: on the def, on a class of its chain, or in
 // the collecting module's pytestmark.
-.decl pc_tmark(d: number, o: node, f: node, e: node, k: symbol)
-pc_tmark(d, o, f, e, k) :- pc_tmpl(d, o, f), dexpr(f, e), pc_mark(e, k).
-pc_tmark(d, o, f, e, k) :- pc_tmpl(d, o, f), pc_chain(d, o, c), pc_cmark(c, e, k).
-pc_tmark(d, o, f, e, k) :- pc_tmpl(d, o, f), pc_mod(d, m), pc_pytestmark(m, e), pc_mark(e, k).
+.decl pyc_tmark(d: number, o: node, f: node, e: node, k: symbol)
+pyc_tmark(d, o, f, e, k) :- pyc_tmpl(d, o, f), dexpr(f, e), pyc_mark(e, k).
+pyc_tmark(d, o, f, e, k) :- pyc_tmpl(d, o, f), pyc_chain(d, o, c), pyc_cmark(c, e, k).
+pyc_tmark(d, o, f, e, k) :- pyc_tmpl(d, o, f), pyc_mod(d, m), pyc_pytestmark(m, e), pyc_mark(e, k).
 
 // parametrize(argnames, argvalues): a factor of len(argvalues), at least 1 (an empty list yields one skipped item).
-.decl pc_pz(e: node)
-pc_pz(e) :- pc_mark(e, "parametrize"), kind(e, "call").
-.decl pc_pz_vals(e: node, v: node)
-pc_pz_vals(e, v) :- pc_pz(e), call_arg(e, 1, "", v).
-pc_pz_vals(e, v) :- pc_pz(e), call_arg(e, -1, "argvalues", v).
+.decl pyc_pz(e: node)
+pyc_pz(e) :- pyc_mark(e, "parametrize"), kind(e, "call").
+.decl pyc_pz_vals(e: node, v: node)
+pyc_pz_vals(e, v) :- pyc_pz(e), call_arg(e, 1, "", v).
+pyc_pz_vals(e, v) :- pyc_pz(e), call_arg(e, -1, "argvalues", v).
 // The names a parametrize supplies directly: they hide fixtures of the same name.
-.decl pc_pz_names(e: node, a: node)
-pc_pz_names(e, a) :- pc_pz(e), call_arg(e, 0, "", a).
-pc_pz_names(e, a) :- pc_pz(e), call_arg(e, -1, "argnames", a).
-.decl pc_pz_name(e: node, x: symbol)
-pc_pz_name(e, x) :- pc_pz_names(e, a), str_const(a, s), match_all("\\s*(?<x>[^,\\s]+)\\s*", s).
-pc_pz_name(e, x) :- pc_pz_names(e, a), (kind(a, "list") ; kind(a, "tuple")), child(a, s, _), str_const(s, x).
+.decl pyc_pz_names(e: node, a: node)
+pyc_pz_names(e, a) :- pyc_pz(e), call_arg(e, 0, "", a).
+pyc_pz_names(e, a) :- pyc_pz(e), call_arg(e, -1, "argnames", a).
+.decl pyc_pz_name(e: node, x: symbol)
+pyc_pz_name(e, x) :- pyc_pz_names(e, a), str_const(a, s), match_all("\\s*(?<x>[^,\\s]+)\\s*", s).
+pyc_pz_name(e, x) :- pyc_pz_names(e, a), (kind(a, "list") ; kind(a, "tuple")), child(a, s, _), str_const(s, x).
 
 // ---- 4. lengths --------------------------------------------------------------------------------------------------
 // python/lengths evaluates an expression's length from its syntax (len_of, len_size). Asked here: the argvalues and
 // params expressions. Supplied here: what a name stands for, Enum-like classes, workspace helpers, function-local
 // names and lists a function builds.
-len_want(v) :- pc_pz_vals(_, v).
-len_want(v) :- pc_fx_params(_, v).
+len_want(v) :- pyc_pz_vals(_, v).
+len_want(v) :- pyc_fx_params(_, v).
 
 // A name or attribute: the value of a constant in the scope the name reads, in an imported module, or in a
 // class; or an Enum-like class, by its assignments. A reference inside the value it would stand for is not followed.
-len_val(e, v) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), split_dot(q, mq, x),
+len_val(e, v) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pyc_sym(e, q), split_dot(q, mq, x),
     modname(m, mq), live_asg(m, x, v), !within(e, v).
-len_val(e, v) :- len_want(e), attr_of(e, o, a), pc_sym(o, qc), class_def(c, qc), live_asg(c, a, v), !within(e, v).
-len_of(e, n) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), class_def(c, q),
+len_val(e, v) :- len_want(e), attr_of(e, o, a), pyc_sym(o, qc), class_def(c, qc), live_asg(c, a, v), !within(e, v).
+len_of(e, n) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pyc_sym(e, q), class_def(c, q),
     field(c, "body", b), n = count : { body_stmt(b, s, _), asgstmt(a, s), !field(a, "type", _), field(a, "left", l),
     text(l, x), !match("_.*", x) }, n > 0.
 // A name defined in a module this run does not read: its length by symbol, from the `values` phase (module- and
 // class-level constants and Enum-like classes of every document, re-exports followed).
 .decl values__len(q: symbol, n: number)
-len_of(e, k) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), split_dot(q, mq, y), y != "",
-    !pc_read(mq), values__len(q, k).
-.decl pc_read(mq: symbol)
-pc_read(mq) :- modname(_, mq).
-.decl pc_helper(e: node, g: node)
-pc_helper(e, g) :- len_call(e, _), callee(e, h), kind(h, "identifier"), pc_sym(h, q), qualname(g, q),
+len_of(e, k) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pyc_sym(e, q), split_dot(q, mq, y), y != "",
+    !pyc_read(mq), values__len(q, k).
+.decl pyc_read(mq: symbol)
+pyc_read(mq) :- modname(_, mq).
+.decl pyc_helper(e: node, g: node)
+pyc_helper(e, g) :- len_call(e, _), callee(e, h), kind(h, "identifier"), pyc_sym(h, q), qualname(g, q),
     kind(g, "function_definition").
 // Each of the helper's own returns (not a nested def's) is a reading.
-.decl pc_hret(g: node, v: node)
-pc_hret(g, v) :- pc_helper(_, g), within(r, g), kind(r, "return_statement"), nearest(r, g, "function_definition"),
+.decl pyc_hret(g: node, v: node)
+pyc_hret(g, v) :- pyc_helper(_, g), within(r, g), kind(r, "return_statement"), nearest(r, g, "function_definition"),
     child(r, v, 0), !kind(v, "comment").
-len_want(v) :- pc_hret(_, v).
-len_of(e, k) :- pc_helper(e, g), pc_hret(g, v), len_of(v, k).
+len_want(v) :- pyc_hret(_, v).
+len_of(e, k) :- pyc_helper(e, g), pyc_hret(g, v), len_of(v, k).
 
 // A local name: each value the reading function assigns to it; a list value is read as built (below).
-.decl pc_local(e: node, g: node, x: symbol)
-pc_local(e, g, x) :- len_want(e), kind(e, "identifier"), text(e, x), nearest(e, g, "function_definition"),
+.decl pyc_local(e: node, g: node, x: symbol)
+pyc_local(e, g, x) :- len_want(e), kind(e, "identifier"), text(e, x), nearest(e, g, "function_definition"),
     asg(g, x, _, _).
-len_val(e, v) :- pc_local(e, g, x), live_asg(g, x, v), !within(e, v), !kind(v, "list").
+len_val(e, v) :- pyc_local(e, g, x), live_asg(g, x, v), !within(e, v), !kind(v, "list").
 
 // A list the function builds: `x = [...]`, then `x.append(v)`, `x.extend(s)` and `x += s` in the same function,
 // folded in source order from the literal. A growth counts once per iteration of each `for` around it in the
 // function; one inside a `while`, or with a part of unknown length, leaves the list unknown. An `if` makes the
 // length an upper bound.
-.decl pc_bld(g: node, x: symbol, l: node)
-pc_bld(g, x, l) :- pc_local(_, g, x), asg(g, x, l, _), kind(l, "list").
-len_want(l) :- pc_bld(_, _, l).
-.decl pc_bop(g: node, x: symbol, c: node)
-pc_bop(g, x, c) :- pc_bld(g, x, _), within(c, g), kind(c, "call"), callee(c, h), attr_of(h, o, f),
+.decl pyc_bld(g: node, x: symbol, l: node)
+pyc_bld(g, x, l) :- pyc_local(_, g, x), asg(g, x, l, _), kind(l, "list").
+len_want(l) :- pyc_bld(_, _, l).
+.decl pyc_bop(g: node, x: symbol, c: node)
+pyc_bop(g, x, c) :- pyc_bld(g, x, _), within(c, g), kind(c, "call"), callee(c, h), attr_of(h, o, f),
     (f = "append" ; f = "extend"), kind(o, "identifier"), text(o, x), nearest(c, g, "function_definition").
-pc_bop(g, x, c) :- pc_bld(g, x, _), within(c, g), kind(c, "augmented_assignment"), op(c, "+="), field(c, "left", o),
+pyc_bop(g, x, c) :- pyc_bld(g, x, _), within(c, g), kind(c, "augmented_assignment"), op(c, "+="), field(c, "left", o),
     kind(o, "identifier"), text(o, x), nearest(c, g, "function_definition").
-len_want(a) :- pc_bop(_, _, c), kind(c, "call"), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a).
-len_want(r) :- pc_bop(_, _, c), kind(c, "augmented_assignment"), field(c, "right", r).
-// pc_loop(c, f): `for` statement f, inside the building function, encloses growth c.
-.decl pc_loop(c: node, f: node)
-pc_loop(c, f) :- pc_bop(g, _, c), nearest(c, f, "for_statement"), within(f, g).
-pc_loop(c, f2) :- pc_loop(c, f), pc_bop(g, _, c), nearest(f, f2, "for_statement"), within(f2, g).
-.decl pc_inwhile(c: node)
-pc_inwhile(c) :- pc_bop(g, _, c), nearest(c, w, "while_statement"), within(w, g).
-len_want(it) :- pc_loop(_, f), field(f, "right", it).
-.decl pc_lj(c: node, f: node, j: number)
-pc_lj(c, f, j) :- pc_loop(c, f), j = count : { pc_loop(c, f2), f2 < f }.
-.decl pc_nl(c: node, n: number)
-pc_nl(c, n) :- pc_bop(_, _, c), n = count : { pc_loop(c, _) }.
-.decl pc_lf(c: node, j: number, k: number)
-pc_lf(c, 0, 1) :- pc_bop(_, _, c), !pc_inwhile(c).
-pc_lf(c, j + 1, t) :- pc_lf(c, j, k), j < 100000, pc_lj(c, f, j), field(f, "right", it), len_of(it, w), t = k * w,
+len_want(a) :- pyc_bop(_, _, c), kind(c, "call"), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a).
+len_want(r) :- pyc_bop(_, _, c), kind(c, "augmented_assignment"), field(c, "right", r).
+// pyc_loop(c, f): `for` statement f, inside the building function, encloses growth c.
+.decl pyc_loop(c: node, f: node)
+pyc_loop(c, f) :- pyc_bop(g, _, c), nearest(c, f, "for_statement"), within(f, g).
+pyc_loop(c, f2) :- pyc_loop(c, f), pyc_bop(g, _, c), nearest(f, f2, "for_statement"), within(f2, g).
+.decl pyc_inwhile(c: node)
+pyc_inwhile(c) :- pyc_bop(g, _, c), nearest(c, w, "while_statement"), within(w, g).
+len_want(it) :- pyc_loop(_, f), field(f, "right", it).
+.decl pyc_lj(c: node, f: node, j: number)
+pyc_lj(c, f, j) :- pyc_loop(c, f), j = count : { pyc_loop(c, f2), f2 < f }.
+.decl pyc_nl(c: node, n: number)
+pyc_nl(c, n) :- pyc_bop(_, _, c), n = count : { pyc_loop(c, _) }.
+.decl pyc_lf(c: node, j: number, k: number)
+pyc_lf(c, 0, 1) :- pyc_bop(_, _, c), !pyc_inwhile(c).
+pyc_lf(c, j + 1, t) :- pyc_lf(c, j, k), j < 100000, pyc_lj(c, f, j), field(f, "right", it), len_of(it, w), t = k * w,
     t >= 0, t <= 100000.
-.decl pc_grow(c: node, k: number)
-pc_grow(c, m) :- pc_lf(c, n, m), pc_nl(c, n), callee(c, h), attr_of(h, _, "append").
-pc_grow(c, t) :- pc_lf(c, n, m), pc_nl(c, n), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a), len_of(a, w),
+.decl pyc_grow(c: node, k: number)
+pyc_grow(c, m) :- pyc_lf(c, n, m), pyc_nl(c, n), callee(c, h), attr_of(h, _, "append").
+pyc_grow(c, t) :- pyc_lf(c, n, m), pyc_nl(c, n), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a), len_of(a, w),
     t = m * w, t >= 0, t <= 100000.
-pc_grow(c, t) :- pc_lf(c, n, m), pc_nl(c, n), kind(c, "augmented_assignment"), field(c, "right", r), len_of(r, w),
+pyc_grow(c, t) :- pyc_lf(c, n, m), pyc_nl(c, n), kind(c, "augmented_assignment"), field(c, "right", r), len_of(r, w),
     t = m * w, t >= 0, t <= 100000.
-.decl pc_bj(g: node, x: symbol, c: node, j: number)
-pc_bj(g, x, c, j) :- pc_bop(g, x, c), j = count : { pc_bop(g, x, c2), c2 < c }.
-.decl pc_nb(g: node, x: symbol, n: number)
-pc_nb(g, x, n) :- pc_bld(g, x, _), n = count : { pc_bop(g, x, _) }.
-.decl pc_bf(g: node, x: symbol, j: number, k: number)
-pc_bf(g, x, 0, k) :- pc_bld(g, x, l), len_of(l, k).
-pc_bf(g, x, j + 1, t) :- pc_bf(g, x, j, k), j < 100000, pc_bj(g, x, c, j), pc_grow(c, w), t = k + w, t >= 0, t <= 100000.
-len_of(e, k) :- pc_local(e, g, x), pc_bf(g, x, n, k), pc_nb(g, x, n).
+.decl pyc_bj(g: node, x: symbol, c: node, j: number)
+pyc_bj(g, x, c, j) :- pyc_bop(g, x, c), j = count : { pyc_bop(g, x, c2), c2 < c }.
+.decl pyc_nb(g: node, x: symbol, n: number)
+pyc_nb(g, x, n) :- pyc_bld(g, x, _), n = count : { pyc_bop(g, x, _) }.
+.decl pyc_bf(g: node, x: symbol, j: number, k: number)
+pyc_bf(g, x, 0, k) :- pyc_bld(g, x, l), len_of(l, k).
+pyc_bf(g, x, j + 1, t) :- pyc_bf(g, x, j, k), j < 100000, pyc_bj(g, x, c, j), pyc_grow(c, w), t = k + w, t >= 0, t <= 100000.
+len_of(e, k) :- pyc_local(e, g, x), pyc_bf(g, x, n, k), pyc_nb(g, x, n).
 
 
 // ---- 5. fixtures -------------------------------------------------------------------------------------------------
 // Scopes, nearest last: each conftest.py from the root down to the module's directory, the module, then each
-// class of the template's chain. pc_vis(d, o, s, r): scope s is visible from owner o of module d at rank r.
-.decl pc_conftest(dir: symbol, m: node)
-pc_conftest(@replace_all(p, "conftest\\.py$", ""), m) :- doc(c, p, _), file_name(c, "conftest.py"), modnode(c, m).
-.decl pc_vis(d: number, o: node, s: node, r: number)
-pc_vis(d, m, s, strlen(dir)) :- pc_mod(d, m), doc(d, p, _), pc_conftest(dir, s), prefix(dir, p).
-pc_vis(d, m, m, 100000) :- pc_mod(d, m).
-pc_vis(d, c, s, r) :- pc_class(d, c, p), pc_vis(d, p, s, r).
-pc_vis(d, c, c, 100000 + strlen(q)) :- pc_class(d, c, _), class_def(c, q).
-// pc_fx(s, x, g): scope s defines fixture x by def g: a def in its body, or (in a conftest) a fixture it imports.
-.decl pc_fx(s: node, x: symbol, g: node)
-pc_fx(s, x, g) :- pc_fixture(g, x), defstmt(g, st), stmt(st, s).
-pc_fx(s, x, g) :- pc_conftest(_, s), ifrom(s, x, mq, y), !pc_fx_here(s, x), pc_res(@dot(mq, y), q), pc_end(q),
-    qualname(g, q), pc_fixture(g, _).
-.decl pc_fx_here(s: node, x: symbol)
-pc_fx_here(s, x) :- pc_fixture(g, x), defstmt(g, st), stmt(st, s).
-// pc_fxv(d, o, x, g, r): a visible definition; pc_pick: the nearest one at or below rank b (a fixture that
+// class of the template's chain. pyc_vis(d, o, s, r): scope s is visible from owner o of module d at rank r.
+.decl pyc_conftest(dir: symbol, m: node)
+pyc_conftest(@replace_all(p, "conftest\\.py$", ""), m) :- doc(c, p, _), file_name(c, "conftest.py"), modnode(c, m).
+.decl pyc_vis(d: number, o: node, s: node, r: number)
+pyc_vis(d, m, s, strlen(dir)) :- pyc_mod(d, m), doc(d, p, _), pyc_conftest(dir, s), prefix(dir, p).
+pyc_vis(d, m, m, 100000) :- pyc_mod(d, m).
+pyc_vis(d, c, s, r) :- pyc_class(d, c, p), pyc_vis(d, p, s, r).
+pyc_vis(d, c, c, 100000 + strlen(q)) :- pyc_class(d, c, _), class_def(c, q).
+// pyc_fx(s, x, g): scope s defines fixture x by def g: a def in its body, or (in a conftest) a fixture it imports.
+.decl pyc_fx(s: node, x: symbol, g: node)
+pyc_fx(s, x, g) :- pyc_fixture(g, x), defstmt(g, st), stmt(st, s).
+pyc_fx(s, x, g) :- pyc_conftest(_, s), ifrom(s, x, mq, y), !pyc_fx_here(s, x), pyc_res(@dot(mq, y), q), pyc_end(q),
+    qualname(g, q), pyc_fixture(g, _).
+.decl pyc_fx_here(s: node, x: symbol)
+pyc_fx_here(s, x) :- pyc_fixture(g, x), defstmt(g, st), stmt(st, s).
+// pyc_fxv(d, o, x, g, r): a visible definition; pyc_pick: the nearest one at or below rank b (a fixture that
 // requests its own name reaches the definition below its own).
-.decl pc_owner(d: number, o: node)
-pc_owner(d, o) :- pc_tmpl(d, o, _).
-.decl pc_fxv(d: number, o: node, x: symbol, g: node, r: number)
-pc_fxv(d, o, x, g, r) :- pc_owner(d, o), pc_vis(d, o, s, r), pc_fx(s, x, g).
-.decl pc_bound(d: number, o: node, x: symbol, b: number)
-pc_bound(d, o, x, 1000000) :- pc_fxv(d, o, x, _, _).
-pc_bound(d, o, x, r - 1) :- pc_fxv(d, o, x, _, r).
-.decl pc_top(d: number, o: node, x: symbol, b: number, r: number)
-pc_top(d, o, x, b, r) :- pc_bound(d, o, x, b), pc_fxv(d, o, x, _, r0), r0 <= b,
-    r = max r2 : { pc_fxv(d, o, x, _, r2), r2 <= b }.
-.decl pc_fxv_later(d: number, o: node, x: symbol, g: node, r: number)
-pc_fxv_later(d, o, x, g, r) :- pc_fxv(d, o, x, g, r), pc_fxv(d, o, x, g2, r), g2 > g.
-.decl pc_pick(d: number, o: node, x: symbol, b: number, g: node, r: number)
-pc_pick(d, o, x, b, g, r) :- pc_top(d, o, x, b, r), pc_fxv(d, o, x, g, r), !pc_fxv_later(d, o, x, g, r).
+.decl pyc_owner(d: number, o: node)
+pyc_owner(d, o) :- pyc_tmpl(d, o, _).
+.decl pyc_fxv(d: number, o: node, x: symbol, g: node, r: number)
+pyc_fxv(d, o, x, g, r) :- pyc_owner(d, o), pyc_vis(d, o, s, r), pyc_fx(s, x, g).
+.decl pyc_bound(d: number, o: node, x: symbol, b: number)
+pyc_bound(d, o, x, 1000000) :- pyc_fxv(d, o, x, _, _).
+pyc_bound(d, o, x, r - 1) :- pyc_fxv(d, o, x, _, r).
+.decl pyc_top(d: number, o: node, x: symbol, b: number, r: number)
+pyc_top(d, o, x, b, r) :- pyc_bound(d, o, x, b), pyc_fxv(d, o, x, _, r0), r0 <= b,
+    r = max r2 : { pyc_fxv(d, o, x, _, r2), r2 <= b }.
+.decl pyc_fxv_later(d: number, o: node, x: symbol, g: node, r: number)
+pyc_fxv_later(d, o, x, g, r) :- pyc_fxv(d, o, x, g, r), pyc_fxv(d, o, x, g2, r), g2 > g.
+.decl pyc_pick(d: number, o: node, x: symbol, b: number, g: node, r: number)
+pyc_pick(d, o, x, b, g, r) :- pyc_top(d, o, x, b, r), pyc_fxv(d, o, x, g, r), !pyc_fxv_later(d, o, x, g, r).
 
-// pc_arg(g, x): a parameter that names a fixture: positional without a default, or keyword-only; not self,
+// pyc_arg(g, x): a parameter that names a fixture: positional without a default, or keyword-only; not self,
 // cls or request.
-.decl pc_arg(g: node, x: symbol)
-pc_arg(g, x) :- sig_param(g, _, nm, _, k, _, dv), (k = "pos" ; k = "posonly"), unset(dv), text(nm, x),
+.decl pyc_arg(g: node, x: symbol)
+pyc_arg(g, x) :- sig_param(g, _, nm, _, k, _, dv), (k = "pos" ; k = "posonly"), unset(dv), text(nm, x),
     x != "self", x != "cls", x != "request".
-pc_arg(g, x) :- sig_param(g, _, nm, _, "kwonly", _, _), text(nm, x), x != "self", x != "cls", x != "request".
-// pc_direct(d, o, f, x): a parametrize on the template supplies x, which hides any fixture x.
-.decl pc_direct(d: number, o: node, f: node, x: symbol)
-pc_direct(d, o, f, x) :- pc_tmark(d, o, f, e, "parametrize"), pc_pz(e), pc_pz_name(e, x).
-// pc_need(d, o, f, x, b): the template requests fixture x, resolved at or below rank b: its own arguments,
+pyc_arg(g, x) :- sig_param(g, _, nm, _, "kwonly", _, _), text(nm, x), x != "self", x != "cls", x != "request".
+// pyc_direct(d, o, f, x): a parametrize on the template supplies x, which hides any fixture x.
+.decl pyc_direct(d: number, o: node, f: node, x: symbol)
+pyc_direct(d, o, f, x) :- pyc_tmark(d, o, f, e, "parametrize"), pyc_pz(e), pyc_pz_name(e, x).
+// pyc_need(d, o, f, x, b): the template requests fixture x, resolved at or below rank b: its own arguments,
 // usefixtures marks and the visible autouse fixtures, then each fixture's arguments.
-.decl pc_need(d: number, o: node, f: node, x: symbol, b: number)
-pc_need(d, o, f, x, 1000000) :- pc_tmpl(d, o, f), pc_arg(f, x).
-pc_need(d, o, f, x, 1000000) :- pc_tmark(d, o, f, e, "usefixtures"), kind(e, "call"), posarg(e, _, a),
+.decl pyc_need(d: number, o: node, f: node, x: symbol, b: number)
+pyc_need(d, o, f, x, 1000000) :- pyc_tmpl(d, o, f), pyc_arg(f, x).
+pyc_need(d, o, f, x, 1000000) :- pyc_tmark(d, o, f, e, "usefixtures"), kind(e, "call"), posarg(e, _, a),
     str_const(a, x).
-pc_need(d, o, f, x, 1000000) :- pc_tmpl(d, o, f), pc_fxv(d, o, x, g, _), pc_fx_auto(g).
-pc_need(d, o, f, x, r - 1) :- pc_need(d, o, f, x, b), !pc_direct(d, o, f, x), pc_pick(d, o, x, b, g, r), pc_arg(g, x).
-pc_need(d, o, f, a, 1000000) :- pc_need(d, o, f, x, b), !pc_direct(d, o, f, x), pc_pick(d, o, x, b, g, _),
-    pc_arg(g, a), a != x.
-.decl pc_reach(d: number, o: node, f: node, g: node)
-pc_reach(d, o, f, g) :- pc_need(d, o, f, x, b), !pc_direct(d, o, f, x), pc_pick(d, o, x, b, g, _).
+pyc_need(d, o, f, x, 1000000) :- pyc_tmpl(d, o, f), pyc_fxv(d, o, x, g, _), pyc_fx_auto(g).
+pyc_need(d, o, f, x, r - 1) :- pyc_need(d, o, f, x, b), !pyc_direct(d, o, f, x), pyc_pick(d, o, x, b, g, r), pyc_arg(g, x).
+pyc_need(d, o, f, a, 1000000) :- pyc_need(d, o, f, x, b), !pyc_direct(d, o, f, x), pyc_pick(d, o, x, b, g, _),
+    pyc_arg(g, a), a != x.
+.decl pyc_reach(d: number, o: node, f: node, g: node)
+pyc_reach(d, o, f, g) :- pyc_need(d, o, f, x, b), !pyc_direct(d, o, f, x), pyc_pick(d, o, x, b, g, _).
 
 // ---- 6. the count ------------------------------------------------------------------------------------------------
-// pc_factor(d, o, f, site, w): the template is multiplied by w at site (a parametrize call, or a fixture def).
-.decl pc_pz_len(e: node, k: number)
-pc_pz_len(e, max(k, 1)) :- pc_pz_vals(e, v), len_size(v, k).
-pc_pz_len(e, 1) :- pc_pz(e), !pc_pz_vals(e, _).
-.decl pc_factor(d: number, o: node, f: node, site: node, w: number)
-pc_factor(d, o, f, e, w) :- pc_tmark(d, o, f, e, "parametrize"), pc_pz_len(e, w).
-pc_factor(d, o, f, g, max(w, 1)) :- pc_reach(d, o, f, g), pc_fx_params(g, v), len_size(v, w).
+// pyc_factor(d, o, f, site, w): the template is multiplied by w at site (a parametrize call, or a fixture def).
+.decl pyc_pz_len(e: node, k: number)
+pyc_pz_len(e, max(k, 1)) :- pyc_pz_vals(e, v), len_size(v, k).
+pyc_pz_len(e, 1) :- pyc_pz(e), !pyc_pz_vals(e, _).
+.decl pyc_factor(d: number, o: node, f: node, site: node, w: number)
+pyc_factor(d, o, f, e, w) :- pyc_tmark(d, o, f, e, "parametrize"), pyc_pz_len(e, w).
+pyc_factor(d, o, f, g, max(w, 1)) :- pyc_reach(d, o, f, g), pyc_fx_params(g, v), len_size(v, w).
 
 .decl collect_open(d: number, o: node, f: node)
-collect_open(d, o, f) :- pc_tmark(d, o, f, e, "parametrize"), pc_pz_vals(e, v), !len_size(v, _).
-collect_open(d, o, f) :- pc_reach(d, o, f, g), pc_fx_params(g, v), !len_size(v, _).
+collect_open(d, o, f) :- pyc_tmark(d, o, f, e, "parametrize"), pyc_pz_vals(e, v), !len_size(v, _).
+collect_open(d, o, f) :- pyc_reach(d, o, f, g), pyc_fx_params(g, v), !len_size(v, _).
 
 .decl collect_item(d: number, o: node, f: node, k: number)
-collect_item(d, o, f, k) :- pc_tmpl(d, o, f), k = product w : { pc_factor(d, o, f, _, w) }.
+collect_item(d, o, f, k) :- pyc_tmpl(d, o, f), k = product w : { pyc_factor(d, o, f, _, w) }.
 .decl collected_file(d: number, n: number)
 collected_file(d, n) :- collect_file(d), n = sum k : { collect_item(d, _, _, k) }.
 .decl collected(n: number)
 collected(n) :- n = sum k : { collected_file(_, k) }.
-.decl pc_rel(d: number, s: symbol)
-pc_rel(d, substr(p, strlen(r), strlen(p) - strlen(r))) :- collect_file(d), doc(d, p, _), collect_root(r), prefix(r, p).
-.decl pc_group(d: number, g: symbol)
-pc_group(d, g) :- pc_rel(d, s), match("(?<g>[^/]+)/.+", s).
-pc_group(d, "root") :- pc_rel(d, s), !match(".+/.+", s).
+.decl pyc_rel(d: number, s: symbol)
+pyc_rel(d, substr(p, strlen(r), strlen(p) - strlen(r))) :- collect_file(d), doc(d, p, _), collect_root(r), prefix(r, p).
+.decl pyc_group(d: number, g: symbol)
+pyc_group(d, g) :- pyc_rel(d, s), match("(?<g>[^/]+)/.+", s).
+pyc_group(d, "root") :- pyc_rel(d, s), !match(".+/.+", s).
 .decl collected_dir(g: symbol, n: number)
-collected_dir(g, n) :- pc_group(_, g), n = sum k : { pc_group(d, g), collected_file(d, k) }.
+collected_dir(g, n) :- pyc_group(_, g), n = sum k : { pyc_group(d, g), collected_file(d, k) }.
 
 // ---- 7. names ----------------------------------------------------------------------------------------------------
-// pc_sym(e, q): expression e names q, looked up as the model does: the module's own definitions and assignments,
+// pyc_sym(e, q): expression e names q, looked up as the model does: the module's own definitions and assignments,
 // its imports, and attributes of those, then re-exports followed to the module that defines the name. A name in a
 // function or class body is looked up in its module too. Only the expressions the rules above ask about
-// (pc_symq) are looked up: python/names' sym_of walks the scopes of every name in every file (O-names-cost).
-.decl pc_symq(e: node)
-pc_symq(e) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")).
-pc_symq(o) :- len_want(e), attr_of(e, o, _).
-pc_symq(h) :- len_want(e), kind(e, "call"), callee(e, h), kind(h, "identifier").
-pc_symq(e) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument"),
+// (pyc_symq) are looked up: python/names' sym_of walks the scopes of every name in every file (O-names-cost).
+.decl pyc_symq(e: node)
+pyc_symq(e) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")).
+pyc_symq(o) :- len_want(e), attr_of(e, o, _).
+pyc_symq(h) :- len_want(e), kind(e, "call"), callee(e, h), kind(h, "identifier").
+pyc_symq(e) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument"),
     !kind(e, "comment").
-pc_symq(e) :- kind(c, "class_definition"), dexpr(c, e), !kind(e, "call").
-pc_symq(h) :- kind(c, "class_definition"), dexpr(c, e), kind(e, "call"), callee(e, h).
-pc_symq(o) :- pc_symq(e), attr_of(e, o, _).
-// pc_raw(e, q): the name as the module binds it, through attributes, each step's re-exports followed. Only the
-// names the workspace defines or imports are made (pc_qdom): an attribute of an outside module has no row, and the
+pyc_symq(e) :- kind(c, "class_definition"), dexpr(c, e), !kind(e, "call").
+pyc_symq(h) :- kind(c, "class_definition"), dexpr(c, e), kind(e, "call"), callee(e, h).
+pyc_symq(o) :- pyc_symq(e), attr_of(e, o, _).
+// pyc_raw(e, q): the name as the module binds it, through attributes, each step's re-exports followed. Only the
+// names the workspace defines or imports are made (pyc_qdom): an attribute of an outside module has no row, and the
 // lookup, which jumps from names to values, makes no name of its own.
-.decl pc_qdom(q: symbol)
-pc_qdom(q) :- qualname(_, q).
-pc_qdom(mq) :- modname(_, mq).
-pc_qdom(@dot(mq, x)) :- modname(m, mq), live_asg(m, x, _).
-pc_qdom(@dot(cq, x)) :- class_def(c, cq), live_asg(c, x, _).
-pc_qdom(q) :- ibind(_, _, q).
-pc_qdom(q) :- values__len(q, _).
-.decl pc_home(e: node, m: node)
-pc_home(e, m) :- pc_symq(e), nearest(e, m, pc_module_kind).
-.decl pc_module_kind(k: symbol)
-pc_module_kind("module").
-.decl pc_raw(e: node, q: symbol)
-pc_raw(e, q) :- pc_symq(e), kind(e, "identifier"), text(e, x), pc_home(e, m), live_def(m, x, f), qualname(f, q).
-pc_raw(e, q) :- pc_symq(e), kind(e, "identifier"), text(e, x), pc_home(e, m), live_asg(m, x, _), modname(m, mq),
-    q = @dot(mq, x), pc_qdom(q).
-pc_raw(e, q) :- pc_symq(e), kind(e, "identifier"), text(e, x), pc_home(e, m), ibind(m, x, q).
-pc_raw(e, q) :- pc_symq(e), attr_of(e, o, a), pc_raw(o, q0), pc_final(q0, q1), q = @dot(q1, a), pc_qdom(q).
-// pc_res(q, r): import target q is really r, after re-exports: `from .impl import read` in pkg/__init__.py makes
+.decl pyc_qdom(q: symbol)
+pyc_qdom(q) :- qualname(_, q).
+pyc_qdom(mq) :- modname(_, mq).
+pyc_qdom(@dot(mq, x)) :- modname(m, mq), live_asg(m, x, _).
+pyc_qdom(@dot(cq, x)) :- class_def(c, cq), live_asg(c, x, _).
+pyc_qdom(q) :- ibind(_, _, q).
+pyc_qdom(q) :- values__len(q, _).
+.decl pyc_home(e: node, m: node)
+pyc_home(e, m) :- pyc_symq(e), nearest(e, m, pyc_module_kind).
+.decl pyc_module_kind(k: symbol)
+pyc_module_kind("module").
+.decl pyc_raw(e: node, q: symbol)
+pyc_raw(e, q) :- pyc_symq(e), kind(e, "identifier"), text(e, x), pyc_home(e, m), live_def(m, x, f), qualname(f, q).
+pyc_raw(e, q) :- pyc_symq(e), kind(e, "identifier"), text(e, x), pyc_home(e, m), live_asg(m, x, _), modname(m, mq),
+    q = @dot(mq, x), pyc_qdom(q).
+pyc_raw(e, q) :- pyc_symq(e), kind(e, "identifier"), text(e, x), pyc_home(e, m), ibind(m, x, q).
+pyc_raw(e, q) :- pyc_symq(e), attr_of(e, o, a), pyc_raw(o, q0), pyc_final(q0, q1), q = @dot(q1, a), pyc_qdom(q).
+// pyc_res(q, r): import target q is really r, after re-exports: `from .impl import read` in pkg/__init__.py makes
 // pkg.read pkg.impl.read. Over the import targets only, below the lookup.
-.decl pc_res(q: symbol, r: symbol)
-pc_res(q, q) :- ibind(_, _, q).
-pc_res(q, r) :- pc_res(q, q1), split_dot(q1, mq, x), modname(m, mq), ifrom(m, x, m2, y), r = @dot(m2, y), r != q1.
-// pc_final(q, r): q followed to the end of its re-exports; a name that is no import target is itself.
-.decl pc_end(q: symbol)
-pc_end(q) :- pc_res(_, q), split_dot(q, mq, x), !pc_modfrom(mq, x).
-pc_end(q) :- pc_res(_, q), !match(".*\\..*", q).
-.decl pc_resd(q: symbol)
-pc_resd(q) :- pc_res(q, _).
-.decl pc_final(q: symbol, r: symbol)
-pc_final(q, r) :- pc_raw(_, q), pc_res(q, r), pc_end(r).
-pc_final(q, q) :- pc_raw(_, q), !pc_resd(q).
-.decl pc_sym(e: node, q: symbol)
-pc_sym(e, r) :- pc_raw(e, q), pc_final(q, r).
-// pc_modfrom(mq, x): module mq binds x by a from-import, so pc_res goes on from mq.x.
-.decl pc_modfrom(mq: symbol, x: symbol)
-pc_modfrom(mq, x) :- modname(m, mq), ifrom(m, x, _, _).
-// pc_base(c, b): class c's base b, by name.
-.decl pc_base(c: node, b: symbol)
-pc_base(c, b) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), pc_sym(e, b).
+.decl pyc_res(q: symbol, r: symbol)
+pyc_res(q, q) :- ibind(_, _, q).
+pyc_res(q, r) :- pyc_res(q, q1), split_dot(q1, mq, x), modname(m, mq), ifrom(m, x, m2, y), r = @dot(m2, y), r != q1.
+// pyc_final(q, r): q followed to the end of its re-exports; a name that is no import target is itself.
+.decl pyc_end(q: symbol)
+pyc_end(q) :- pyc_res(_, q), split_dot(q, mq, x), !pyc_modfrom(mq, x).
+pyc_end(q) :- pyc_res(_, q), !match(".*\\..*", q).
+.decl pyc_resd(q: symbol)
+pyc_resd(q) :- pyc_res(q, _).
+.decl pyc_final(q: symbol, r: symbol)
+pyc_final(q, r) :- pyc_raw(_, q), pyc_res(q, r), pyc_end(r).
+pyc_final(q, q) :- pyc_raw(_, q), !pyc_resd(q).
+.decl pyc_sym(e: node, q: symbol)
+pyc_sym(e, r) :- pyc_raw(e, q), pyc_final(q, r).
+// pyc_modfrom(mq, x): module mq binds x by a from-import, so pyc_res goes on from mq.x.
+.decl pyc_modfrom(mq: symbol, x: symbol)
+pyc_modfrom(mq, x) :- modname(m, mq), ifrom(m, x, _, _).
+// pyc_base(c, b): class c's base b, by name.
+.decl pyc_base(c: node, b: symbol)
+pyc_base(c, b) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), pyc_sym(e, b).

@@ -224,7 +224,7 @@ fn run_stages(p: &Placed, db: &Connection, inputs: &mut Inputs, lowered: Option<
     let mut remaining=p.clone();
     while *executions<STAGES {
         simplify(&mut remaining,db,inputs,&mut resident)?;
-        let mut plan=planned(&remaining,&tree_text(&remaining)?,db,inputs)?;
+        let mut plan=planned(&remaining,db,inputs)?;
         plan.resident=resident.clone();
         let Some(boundary)=plan.boundary() else {
             *executions+=1;
@@ -238,7 +238,7 @@ fn run_stages(p: &Placed, db: &Connection, inputs: &mut Inputs, lowered: Option<
         let rels: Vec<String>=boundary.iter().cloned().collect();
         let part=with_outputs(&remaining,&rels)?;
         let kept=std::mem::replace(&mut inputs.kept,boundary.clone());
-        let query=tree_text(&part).and_then(|text|planned(&part,&text,db,inputs));
+        let query=planned(&part,db,inputs);
         inputs.kept=kept;
         let query=query?;
         if query.boundary().is_some() { return Err(Error::Plan("composed materialization does not fit the reference budget".into())); }

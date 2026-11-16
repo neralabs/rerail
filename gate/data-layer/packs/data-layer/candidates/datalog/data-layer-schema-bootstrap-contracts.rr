@@ -68,7 +68,7 @@ bootstrap_type("type").
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl within(n: node, a: node)
-.input doc, node, line, syntax_error, field, child, text, value, str, strprefix, value_type_of, token, within, parsed, string_annotation, cpython_syntax_error
+.input doc, node, line, syntax_error, field, child, text, str, strprefix, value_type_of, within, parsed, string_annotation, cpython_syntax_error, value, token
 .output violation
 bootstrap_broad("Any").
 bootstrap_broad("Collection").

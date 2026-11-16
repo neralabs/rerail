@@ -45,7 +45,7 @@
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, strprefix, value_type_of, fstring_template, node_text
+.input doc, syntax_error, node, field, child, text, line, strprefix, value_type_of, fstring_template, node_text, value
 .output violation
 option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).

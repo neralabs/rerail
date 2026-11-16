@@ -70,7 +70,7 @@ pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
 /// 5: a lowered program's atoms are branded leaves and cells, with what they name (decision 0270).
 pub const FORMAT: u32 = 5;
 /// The program the `.about` rows are written as (`program_facts`), as the text has them.
-const ABOUT: &str = "a";
+pub(crate) const ABOUT: &str = "a";
 
 // ---- ids ----
 

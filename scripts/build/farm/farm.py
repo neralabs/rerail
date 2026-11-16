@@ -12,6 +12,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -19,7 +20,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 4
+VERSION = 7
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -284,6 +285,168 @@ def same_in_every_checkout(args, out_dir, crate):
     return out
 
 
+TIDY_SECONDS = 3600
+
+
+def target_of(out_dir):
+    """The cargo target directory `out_dir` is in, or None."""
+    d = os.path.realpath(out_dir or "")
+    for _ in range(4):
+        if os.path.isfile(os.path.join(d, "CACHEDIR.TAG")):
+            return d
+        d = os.path.dirname(d)
+    return None
+
+
+def tidy(target, checkout):
+    """Starts `clean-target --wait` on `target`, at most once an hour per target directory:
+    Rerail's worktrees together write terabytes of builds a day, and what the next build cannot use
+    goes after the build ends (it waits for cargo's lock). Then `diagnose --brief` on the checkout,
+    whose findings `advise` prints at the next builds. Detached, at nice 19."""
+    if os.environ.get("RERAIL_FARM_NO_TIDY"):
+        return
+    script = os.path.join(SHARE, "clean-target")
+    if target is None or not os.path.exists(script):
+        return
+    stamp = state("tidy", key(target))
+    try:
+        if time.time() - os.stat(stamp).st_mtime < TIDY_SECONDS:
+            return
+    except OSError:
+        pass
+    # One starter per hour: whoever creates the claim starts it.
+    claim = stamp + f".{int(time.time() // TIDY_SECONDS)}"
+    try:
+        os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except OSError:
+        return
+    open(stamp, "w").close()
+    for old in os.listdir(os.path.dirname(stamp)):
+        # The claims only (`<key>.<hour>`), not the log or the findings beside them.
+        if re.fullmatch(re.escape(os.path.basename(stamp)) + r"\.\d+", old) and old != os.path.basename(claim):
+            try:
+                os.unlink(os.path.join(os.path.dirname(stamp), old))
+            except OSError:
+                pass
+    findings = findings_path(checkout)
+    with open(stamp + ".log", "a") as out:
+        subprocess.Popen(["nice", "-n", "19", "/bin/sh", "-c",
+                          '"$0" --wait "$1"; "$2" --brief "$3" > "$4.tmp" 2>/dev/null && mv "$4.tmp" "$4"',
+                          script, target, os.path.join(SHARE, "diagnose"), checkout, findings],
+                         stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True, close_fds=True)
+
+
+def findings_path(checkout):
+    return state("findings", key(checkout))
+
+
+ADVICE_SECONDS = 3 * 3600
+
+
+# Options of `cargo test` and `cargo nextest run` that take a value (so the value is no test filter).
+VALUED = {"-p", "--package", "--profile", "--features", "-F", "-j", "--jobs", "--target", "--target-dir",
+          "--manifest-path", "--bin", "--test", "--example", "--bench", "--color", "--config", "-Z",
+          "--message-format", "--partition", "--test-threads", "--retries", "--archive-file", "--cargo-profile"}
+
+
+def whole_tier(pid):
+    """The command line of cargo process `pid` when it runs a whole test tier here (`cargo test` or
+    `cargo nextest run` with no filter, or nextest's gate profile), else None."""
+    def ps(pid):
+        try:
+            out = subprocess.run(["ps", "-o", "ppid=,args=", "-p", str(pid)], capture_output=True, text=True,
+                                 timeout=5).stdout.split()
+        except (OSError, subprocess.TimeoutExpired):
+            return None, []
+        return (out[0], out[1:]) if out else (None, [])
+    parent, words = ps(pid)
+    # nextest builds through `cargo test --no-run`: its own command line, above, has the filter
+    if "--no-run" in words and parent:
+        _, words = ps(parent)
+        if "nextest" not in words:
+            return None
+    for i, w in enumerate(words):
+        if w == "test" or (w == "run" and "nextest" in words[:i]):
+            rest = words[i + 1:]
+            break
+    else:
+        return None
+    if "nextest" in words and any(r == "gate" or r == "--profile=gate" for r in rest):
+        return " ".join(words)
+    j = 0
+    while j < len(rest):
+        r = rest[j]
+        if r == "--" or r in ("-E", "--filterset", "--filter-expr") or r.startswith(("-E=", "--filterset=")):
+            return None  # a filter (after `--`, or an expression)
+        if r in VALUED:
+            j += 2
+            continue
+        if not r.startswith("-"):
+            return None  # a test name filter
+        j += 1
+    return " ".join(words)
+
+
+def advise(checkout, rustc):
+    """At the first compile of each cargo command (once per cargo process): what this build does
+    that it should not, on stderr, where the agent running it reads it. Its own nice value, a rustc
+    other than the checkout pins, and the checkout's latest `diagnose --brief` findings (the hourly
+    job writes them). RERAIL_FARM_QUIET=1 keeps it quiet."""
+    if os.environ.get("RERAIL_FARM_QUIET"):
+        return
+    cargo = os.getppid()
+    said = state("said", str(cargo))
+    try:
+        if time.time() - os.stat(said).st_mtime < ADVICE_SECONDS:
+            return
+    except OSError:
+        pass
+    try:
+        open(said, "w").close()
+        for name in os.listdir(os.path.dirname(said)):
+            if name.isdigit():
+                try:
+                    os.kill(int(name), 0)
+                except ProcessLookupError:
+                    os.unlink(os.path.join(os.path.dirname(said), name))
+                except OSError:
+                    pass
+    except OSError:
+        return
+    lines = []
+    nice = os.getpriority(os.PRIO_PROCESS, 0)
+    if nice < 19:
+        lines.append(f"this build runs at nice {nice}: run every build and test at `nice -n 19` (AGENTS.md)")
+    m = re.search(r"/toolchains/(\d+\.\d+\.\d+)-", rustc)
+    try:
+        pinned = re.search(r'^\s*channel\s*=\s*"(\d+\.\d+\.\d+)"', open(os.path.join(checkout, "rust-toolchain.toml")).read(), re.M)
+    except OSError:
+        pinned = None
+    if m and pinned and m.group(1) != pinned.group(1):
+        lines.append(f"this build runs rustc {m.group(1)}, but the checkout pins {pinned.group(1)}: its crates are cached "
+                     "apart from every other worktree's. Use rustup's cargo (`which cargo` is ~/.cargo/bin/cargo), "
+                     "without `cargo +VERSION` or RUSTUP_TOOLCHAIN")
+    tier = whole_tier(cargo)
+    if tier and not os.environ.get("RERAIL_FARM_TESTS_HERE"):
+        free = [h for h in usable("tests") if spare(h) >= 4]
+        if free:
+            lines.append(f"this command runs a whole test tier here while {free[0]['name']} has "
+                         f"{spare(free[0]):.0f} cores to spare: `scripts/dev/test-remote -- {tier.split(' ', 1)[-1]}` "
+                         "runs it there (RERAIL_FARM_TESTS_HERE=1 says it must run here)")
+    try:
+        f = findings_path(checkout)
+        if time.time() - os.stat(f).st_mtime < 2 * TIDY_SECONDS:
+            lines += [l.rstrip() for l in open(f) if l.strip()]
+    except OSError:
+        pass
+    if lines:
+        out = ["warning: rerail-farm: this checkout's builds miss the shared cache or the machine's rules:"]
+        out += [f"warning: rerail-farm:   {l}" for l in lines[:10]]
+        out.append("warning: rerail-farm: details: ~/.local/share/rerail-farm/diagnose (RERAIL_FARM_QUIET=1 silences this)")
+        sys.stderr.write("\n".join(out) + "\n")
+        sys.stderr.flush()
+
+
 def wrapper(rustc, args):
     """cargo's RUSTC_WRAPPER."""
     env = dict(os.environ)
@@ -304,6 +467,10 @@ def wrapper(rustc, args):
     if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
         canonical(crate)
     join(checkout)
+    target = target_of(out_dir)
+    if target and crate != "___":
+        tidy(target, checkout)
+        advise(checkout, rustc)
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
@@ -467,12 +634,12 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
     script = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1;'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
-              " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
+              " sysctl -n vm.loadavg; mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
     try:
         out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
         out = None
-    if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 4:
+    if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 5:
         if route(name) and not fell_back:
             # The address that reached it over its link is gone (it was renumbered, or the link
             # is down): back to what its name resolves to.
@@ -489,7 +656,11 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = "its answer could not be read"
         return h
     arrival = h["arrival"] = lines[3].strip()
-    h["mounts"] = [m for m in lines[4:] if m]
+    try:
+        h["load"] = float(lines[4].strip("{} ").split()[0])
+    except (ValueError, IndexError):
+        h["load"] = None
+    h["mounts"] = [m for m in lines[5:] if m]
     started = time.time()
     try:
         subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
@@ -556,16 +727,24 @@ def health(host, fresh=False):
         lock.release()
 
 
+def spare(host):
+    """The cores `host` has to spare now: its capacity (`capacity`) less its load average when last
+    probed. Only an order between hosts (a test command goes to the one with most to spare), never
+    a refusal: macOS's background work raises the load of an idle machine too."""
+    return capacity(host) - (health(host).get("load") or 0)
+
+
 def usable(kind=None):
-    """The enabled hosts that are usable now, most cores first; `kind` ("mirror", "tests") keeps those
-    the configuration names for it."""
+    """The enabled hosts that are usable now, the most cores to spare first (`spare`: a host busy
+    with its own work comes after an idle one with fewer cores); `kind` ("mirror", "tests") keeps
+    those the configuration names for it."""
     out = []
     for host in hosts():
         if not host.get("enabled", True) or (kind and not host.get(kind, True)):
             continue
         if health(host).get("ok"):
             out.append(host)
-    return sorted(out, key=lambda h: -h.get("cores", 0))
+    return sorted(out, key=lambda h: -spare(h))
 
 
 def capacity(host):

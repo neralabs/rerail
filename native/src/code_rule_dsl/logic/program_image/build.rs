@@ -578,6 +578,12 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.head = true;
         self
     }
+    /// Records rule `id` of the derivation's input as this rule's source (§9), as `Builder::rewrite` does: for a rule
+    /// written term by term from one of the input's (a maintenance rule of a source rule, decision 0258).
+    pub fn source(mut self, id: RuleId) -> Self {
+        self.from = Some(id);
+        self
+    }
     /// The slot this rule gives the variable named `name` (new variables are numbered as they first appear).
     pub fn slot(&mut self, name: &str) -> Slot {
         let a = self.b.enc.atom(name);

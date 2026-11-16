@@ -94,8 +94,9 @@ impl<'a> P<'a> {
         self.kind_at(k) == T::LBracket && self.kind_at(k + 1) == T::RBracket
     }
 
-    /// `dimensions`: `[` `]` pairs, each after its annotations. A gap of more than one pair is not
-    /// its kind's implied word (`[ ]`): its brackets are stored.
+    /// `dimensions`: `[` `]` pairs, each after its annotations. Only the last gap implies a word, one
+    /// pair (`[ ]`): a gap of more pairs, or one before an annotation (which may follow another at
+    /// once), stores its brackets.
     pub(super) fn dimensions(&mut self, field: u8) -> R<N> {
         let n = self.open(K::Dimensions, field, C_NONE);
         while self.dims_ahead(0) {
@@ -106,9 +107,10 @@ impl<'a> P<'a> {
             while self.kind_at(2 * pairs) == T::LBracket && self.kind_at(2 * pairs + 1) == T::RBracket {
                 pairs += 1;
             }
+            let keep = pairs > 1 || self.kind_at(2 * pairs) == T::At && self.dims_ahead(2 * pairs);
             for _ in 0..pairs {
-                self.gap_tk(K::Dimensions, K::TLBracket, pairs > 1)?;
-                self.gap_tk(K::Dimensions, K::TRBracket, pairs > 1)?;
+                self.gap_tk(K::Dimensions, K::TLBracket, keep)?;
+                self.gap_tk(K::Dimensions, K::TRBracket, keep)?;
             }
         }
         self.close(n);

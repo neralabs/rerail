@@ -20,7 +20,7 @@ comparison_defs("function_definition").
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, node_text, prev_token, token
+.input doc, syntax_error, node, field, child, text, line, prev_token, node_text, token
 .output violation
 comparison_ops("is").
 comparison_ops("is not").

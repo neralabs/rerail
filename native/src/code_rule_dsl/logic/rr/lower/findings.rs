@@ -5,6 +5,65 @@ use super::*;
 
 const OUTPUT: &str = "rr_diagnostic";
 
+/// The setting that keeps a finding's message template beside the program (`.message B101 "…"`): what `rr::print`
+/// prints and the writer reads where the program's own texts do not hold the `.violation` (decision 0225 §3).
+pub const MESSAGE: &str = "message";
+
+/// A message template's texts and placeholders: the texts between the placeholders (one more than the placeholders),
+/// and each placeholder's key (`a`, `a.line`, `rel(a)`). `{{` and `}}` are a brace of the text (O111), as the converter
+/// writes a literal one (`convert::policy`), and a lone `}` is text.
+pub fn message_parts(template: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    let (mut texts, mut keys) = (Vec::new(), Vec::new());
+    let mut rest = template;
+    let mut text = String::new();
+    loop {
+        let Some(start) = rest.find(['{', '}']) else { break };
+        text.push_str(&rest[..start]);
+        let brace = &rest[start..start + 1];
+        if rest[start + 1..].starts_with(brace) {
+            text.push_str(brace);
+            rest = &rest[start + 2..];
+            continue;
+        }
+        if brace == "}" {
+            text.push('}');
+            rest = &rest[start + 1..];
+            continue;
+        }
+        texts.push(std::mem::take(&mut text));
+        let Some(end) = rest[start + 1..].find('}').map(|end| end + start + 1) else {
+            return Err("unclosed placeholder".to_owned());
+        };
+        keys.push(rest[start + 1..end].to_owned());
+        rest = &rest[end + 1..];
+    }
+    text.push_str(rest);
+    texts.push(text);
+    Ok((texts, keys))
+}
+
+/// A template's placeholders alone, as a template (`{a}{a.line}`): what lowering reads of it, so what a program's key
+/// holds of it (`rr::message_masked`).
+pub fn message_skeleton(template: &str) -> String {
+    match message_parts(template) {
+        Ok((_, keys)) => keys.iter().map(|k| format!("{{{k}}}")).collect(),
+        Err(_) => template.to_owned(),
+    }
+}
+
+/// A message from its template and its placeholders' values, as the rule made them (`diagnostic_rule`).
+pub fn message_of(template: &str, values: &[String]) -> String {
+    let Ok((texts, _)) = message_parts(template) else { return values.concat() };
+    let mut out = String::new();
+    for (i, text) in texts.iter().enumerate() {
+        out.push_str(text);
+        if let Some(v) = values.get(i) {
+            out.push_str(v);
+        }
+    }
+    out
+}
+
 fn v(name: &str) -> Term { Term::Var(name.to_owned().into()) }
 fn s(text: &str) -> Term { Term::Str(text.to_owned().into()) }
 fn call(name: &str, args: Vec<Term>) -> Term { Term::Call(name.to_owned().into(), args.into()) }
@@ -59,30 +118,11 @@ impl Lowerer {
         let string_column = |i: usize| if matches!(finding.columns[i].1.as_str(), "symbol" | "sym") {
             cols[i].clone()
         } else { number(if i == 0 && place { at.clone() } else { cols[i].clone() }) };
+        // The message's placeholders' values, in order; its texts are not the program's (decision 0225 §3): the
+        // writer puts them in from the template (`message_of`), so a message's edit is no edit of the rules.
+        let (_, keys) = message_parts(&finding.message).map_err(|e| Error::Syntax(format!(".violation {} message: {e}", finding.name)))?;
         let mut pieces = Vec::new();
-        let mut rest = finding.message.as_str();
-        // `{{` and `}}` are a brace of the text (O111), as the converter writes a literal one (`convert::policy`).
-        let mut text = String::new();
-        loop {
-            let Some(start) = rest.find(['{', '}']) else { break };
-            text.push_str(&rest[..start]);
-            let brace = &rest[start..start + 1];
-            if rest[start + 1..].starts_with(brace) {
-                text.push_str(brace);
-                rest = &rest[start + 2..];
-                continue;
-            }
-            if brace == "}" {
-                // A lone `}` was always text.
-                text.push('}');
-                rest = &rest[start + 1..];
-                continue;
-            }
-            pieces.push(s(&std::mem::take(&mut text)));
-            let Some(end) = rest[start + 1..].find('}').map(|end| end + start + 1) else {
-                return Err(Error::Syntax(format!(".violation {} message: unclosed placeholder", finding.name)));
-            };
-            let key = &rest[start + 1..end];
+        for key in &keys {
             let value = self.fresh("message");
             let term = if let Some((node, property)) = key.split_once('.') {
                 let i = column(node)?;
@@ -114,12 +154,15 @@ impl Lowerer {
                     }
                 } else { string_column(i) }
             };
-            pieces.push(term);
-            rest = &rest[end + 1..];
+            if !pieces.is_empty() { pieces.push(s(",")); }
+            pieces.push(json(term));
         }
-        text.push_str(rest);
-        pieces.push(s(&text));
-        let message = concat(pieces);
+        let message = concat(std::iter::once(s("[")).chain(pieces).chain([s("]")]).collect());
+        // The template beside the program, for `rr::print` and the writer (`MESSAGE`).
+        let setting = (MESSAGE.to_owned(), format!("{} {}", finding.name, rerail_rr_syntax::syntax::quote(&finding.message)));
+        if !finding.message.is_empty() && !self.prog.settings.contains(&setting) {
+            self.prog.settings.push(setting);
+        }
         let code = match &finding.code {
             FindingCode::Name => s(&finding.name),
             FindingCode::Constant(code) => s(code),
@@ -132,7 +175,7 @@ impl Lowerer {
         let mut terms = vec![s("{\"policy\":"), json(s(policy)), s(",\"clause\":"), json(s(&finding.name)),
                              s(",\"code\":"), json(code), s(",\"path\":"), json(v("rr_p")),
                              s(",\"line\":"), number(v("rr_l")), s(",\"at\":"), number(at),
-                             s(",\"tag\":"), tag, s(",\"message\":"), json(message), s(",\"parameters\":{")];
+                             s(",\"tag\":"), tag, s(",\"message\":"), message, s(",\"parameters\":{")];
         for (i, (name, ty)) in finding.columns.iter().enumerate().skip(1) {
             if i > 1 { terms.push(s(",")); }
             terms.push(s(&format!("{}:", rerail_rr_syntax::syntax::quote(name))));

@@ -8,7 +8,7 @@
 //   walk_name(r, x)    `_names(r)`: x is the id of a Name or the attr of an Attribute in `ast.walk(r)`, r included
 //   body_def(c, f, x)  def f, named x, is a statement of class c's own body (`node.body`), decorated or not
 //   last_body_def(c, f, x)  the last such def named x: a `{m.name: m for m in node.body}` dict keeps that one
-//   class_field(c, x)  `x: T` (an AnnAssign to a bare name) is a statement of class c's own body
+//   class_field_name(c, x)  `x: T` (an AnnAssign to a bare name) is a statement of class c's own body
 //   deco_at(f, i, e)   e is f's i-th decorator expression, in source order
 //   walk_qualname(f, q)  the `__qualname__` of def or class f, for defs a walk of statement bodies reaches
 //   py_repr(s, r)      r is Python's repr of the str s, for each s of repr_want(s), which the check fills
@@ -59,10 +59,10 @@ body_def_at(c, s, f) :- kind(c, "class_definition"), field(c, "body", b), child(
 last_body_def(c, f, x) :- body_def_at(c, s, f), def_name(f, x),
     count : { body_def_at(c, s2, f2), def_name(f2, x), precedes(s, s2) } = 0.
 
-// class_field(c, x): `class R:` / `user_id: UserId` gives class_field(<R>, "user_id"); `x: int = 0` too;
+// class_field_name(c, x): `class R:` / `user_id: UserId` gives class_field_name(<R>, "user_id"); `x: int = 0` too;
 // `self.x: int` and `x = 0` do not.
-.decl class_field(c: node, x: symbol)
-class_field(c, x) :- kind(c, "class_definition"), field(c, "body", b), child(b, st, _), asgstmt(a, st),
+.decl class_field_name(c: node, x: symbol)
+class_field_name(c, x) :- kind(c, "class_definition"), field(c, "body", b), child(b, st, _), asgstmt(a, st),
     field(a, "type", _), field(a, "left", t), kind(t, "identifier"), text(t, x).
 
 // deco_at(f, i, e): `@a` / `@b(1)` / `def f` gives deco_at(<f>, 0, <a>) and deco_at(<f>, 1, <b(1)>). i counts the

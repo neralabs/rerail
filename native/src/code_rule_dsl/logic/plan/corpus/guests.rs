@@ -63,6 +63,17 @@ pub(super) enum Request {
     Splice { node: i64, with: String },
 }
 
+/// The location a slice's output line asks at (`requests`): `embed`'s and `embed_value`'s second column, a demand's
+/// first. Whose request it is: that location's file's (decision 0225 §2).
+pub(super) fn asked_at(rel: &str, line: &str) -> Option<i64> {
+    let col = match rel {
+        "embed" | "embed_value" => 1,
+        DEMAND | PARSE | SPLICE => 0,
+        _ => return None,
+    };
+    line.split('\t').nth(col)?.parse().ok()
+}
+
 /// The requests of a slice run's outputs, in order. A library's embeds are made whatever a program shows: `.guests
 /// off` hides them from its rules (decision 0058 §1), and `guest` still reaches them.
 pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> {
@@ -403,7 +414,7 @@ impl Guests {
         let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Ok(None) };
         let Some(Ok(image)) = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
         let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root() else { return Ok(None) };
-        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) else { return Ok(None) };
+        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false) else { return Ok(None) };
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
         let place = Placement::Segments(Arc::new(program.segments));
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, cache)? else { return Ok(None) };

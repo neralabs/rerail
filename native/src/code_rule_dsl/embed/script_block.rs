@@ -9,7 +9,7 @@ use crate::code_rule_dsl::vue::view::View;
 pub struct ScriptBlock;
 
 impl Embedder for ScriptBlock {
-    fn build(&self, root: HostNode<'_>, source: &str) -> Option<Program> {
-        View::build(root, source).map(View::into_program)
+    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Option<Program> {
+        View::build(root, source, budget).map(View::into_program)
     }
 }

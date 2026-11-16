@@ -196,7 +196,7 @@ prs_lambdak("lambda").
 .decl tape_syntax_error(d: number)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, line, value, strprefix, node_text
+.input doc, syntax_error, node, field, child, line, strprefix, node_text, value
 .output violation
 option_value("entryPoint", "scan_paths").
 prs_allowcallee("build_internal_permission_query_request").

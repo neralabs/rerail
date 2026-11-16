@@ -276,6 +276,14 @@ and after, and with the library lowered together, on one file (144 rows) and on 
 
 ## Stages 3, 4 and 7, as built so far (2026-11-15)
 
+- **Linking merges helpers equal across modules** (found merging the hub, 2026-11-15). Lowering makes a context's,
+  cover's or aggregate's helper once per stem, columns and rule templates (365610cbf), but only within one lowering:
+  two library modules each made their own, and the linked library had both where lowering them together has one
+  (`library_modules_link_to_the_lowering_of_them_together`, javascript's `rr_cover`s). `append` keys each module's
+  helpers as `helper_once` does, in the order they were made, and an equal one is renamed to the earlier module's.
+  A module image keeps its helpers' stems (`module_helper` rows): an aggregate's names its readers' heads, which its
+  rules do not say.
+
 - **Every program is lowered in its libraries' scope** (`rr::Text::lower_in`, `lower::link_in`): its own clauses,
   as a module against the library modules its includes reach, and the whole-program half over them with the scope
   seeded; the scope's names are then taken out (core's and the kind sets stay, as `own_part` left them). No program

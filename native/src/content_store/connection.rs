@@ -362,6 +362,21 @@ pub(super) fn release_all_at(database_path: &Path) {
     });
 }
 
+/// What in this process still holds the store at `database_path`: its open handles, and the thread connections to it
+/// that are open (a test checks a closed store's are none).
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn holding(database_path: &Path) -> (usize, usize) {
+    let handles = HANDLES.lock().get(database_path).copied().unwrap_or(0);
+    let open = ALL_CONNECTIONS
+        .lock()
+        .iter()
+        .filter(|(path, _)| path == database_path)
+        .filter_map(|(_, connection)| connection.upgrade())
+        .filter(|connection| connection.try_lock().is_none_or(|c| c.is_some()))
+        .count();
+    (handles, open)
+}
+
 /// A connection's page cache at rest, in KiB.
 pub(super) const CACHE_KIB: i64 = 1_024;
 

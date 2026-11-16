@@ -78,7 +78,7 @@ introspection_frame_mark("function_definition"). introspection_frame_mark("decor
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, strprefix, value_type_of, fstring_piece, end_line, node_text, token
+.input doc, syntax_error, node, field, child, text, line, strprefix, value_type_of, fstring_piece, end_line, node_text, value, token
 .output violation
 introspection_allowed("/schema/").
 introspection_allowed("_schema/").
@@ -254,7 +254,7 @@ introspection_run_line(e, k, l) :- introspection_run(e, k, _), l = min l2 : { in
 rr_ctx4(b, e) :- introspection_field(e, _, b, _).
 rr_agg3(b, b2, e, rr_any1, rr_any2) :- rr_demand_agg_rr_agg3(b, e), rr_ctx4(b, e), introspection_field(e, rr_any1, b2, rr_any2), b2 < b.
 introspection_ford(e, b, j) :- introspection_field(e, _, b, _), j = count : { rr_agg3(b, _, e, _, _) }.
-rr_ctx7(e, i) :- fstring_piece(e, i, "interpolation", _).
+rr_ctx7(e, i) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _).
 rr_agg6(e, i, i2, rr_any5) :- rr_demand_agg_rr_agg6(e, i), rr_ctx7(e, i), fstring_piece(e, i2, "interpolation", rr_any5), i2 < i.
 introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _), j = count : { rr_agg6(e, i, _, _) }.
 introspection_later(e, i) :- introspection_fhost(e), fstring_piece(e, i, _, _), fstring_piece(e, i2, _, _), i2 > i.

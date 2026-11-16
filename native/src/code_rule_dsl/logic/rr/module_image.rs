@@ -38,6 +38,9 @@ pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
     for (stem, k) in &p.made {
         put("module_made", vec![s(stem), n(*k)]);
     }
+    for (name, stem) in &p.helper_stems {
+        put("module_helper", vec![s(name), s(stem)]);
+    }
     put("module_next", vec![n(p.next)]);
     put("module_stated", vec![n(p.stated)]);
     for (r, x) in &p.deps {
@@ -110,6 +113,7 @@ pub fn decode(bytes: &[u8]) -> Result<Module, String> {
     p.sets = of("module_set").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
     p.lattices = of("module_lattice").iter().map(|r| Ok((text(&r[0])?, text(&r[1])?, text(&r[2])?))).collect::<Result<_, String>>()?;
     p.made = of("module_made").iter().map(|r| Ok((text(&r[0])?, int(&r[1])? as usize))).collect::<Result<_, String>>()?;
+    p.helper_stems = of("module_helper").iter().map(|r| Ok((text(&r[0])?, text(&r[1])?))).collect::<Result<_, String>>()?;
     p.next = of("module_next").first().map(|r| int(&r[0])).transpose()?.unwrap_or(0) as usize;
     p.stated = of("module_stated").first().map(|r| int(&r[0])).transpose()?.unwrap_or(0) as usize;
     p.deps = of("module_dep").iter().map(|r| Ok((text(&r[0])?, text(&r[1])?))).collect::<Result<_, String>>()?;

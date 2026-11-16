@@ -614,6 +614,10 @@ pub(super) struct Skip {
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
     pub(super) literal: bool,
+    /// `str`'s strings, where the literals are read for another relation: each literal's contents interned.
+    pub(super) str: bool,
+    /// The literal values (`value`, `static_value`, `value_type`, `rr_value_lit`), likewise.
+    pub(super) literal_value: bool,
     /// `str`, `strprefix`, `value` rows themselves. `literal` may be off for `text` alone (a prefix makes a node
     /// token-like), which reads no literal's value: 139 k of execution_authority_bypass's strings were string values.
     pub(super) literal_rows: bool,
@@ -646,19 +650,9 @@ pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::ast::Span
 pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
-    /// Whether a rule reads node `id`'s `text` (`text_nodes`): of kind `kind`, in a field read, a child of a kind read,
-    /// or with a text a rule compares it with.
-    fn reads_text(&self, f: &Facts, dialect: &Dialect, id: u32, kind: &str) -> bool {
-        self.text_nodes.as_ref().is_none_or(|t| {
-            t.kinds.contains(kind)
-                || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| t.fields.contains(name))
-                || !(t.parents.is_empty() && t.parent_fields.is_empty())
-                    && f.parent(id).is_some_and(|p| {
-                        t.parents.contains(dialect.name(f, p))
-                            || dialect.catalog.field_name(f.field[p as usize]).is_some_and(|name| t.parent_fields.contains(name))
-                    })
-                || !t.values.is_empty() && t.values.contains(f.text(id))
-        })
+    /// Whether a rule reads node `id`'s `text` (`text_nodes`, `TextNodes::reads`).
+    fn reads_text(&self, f: &Facts, dialect: &Dialect, id: u32) -> bool {
+        self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(f, id, dialect))
     }
 
     /// The nodes `node` visits. Where it makes no row but `text`, and the rules read only some nodes' (`text_nodes`),
@@ -682,7 +676,7 @@ impl CoreRows {
             Visits::None => false,
             Visits::TextNodes => {
                 let id = p.core[local as usize];
-                self.reads_text(&p.facts, dialect, id, dialect.name(&p.facts, id))
+                self.reads_text(&p.facts, dialect, id)
             }
         }
     }
@@ -783,10 +777,10 @@ impl CoreRows {
                 }
                 token_like = true;
             }
-            if let Some(v) = lit.str.as_ref().filter(|_| !self.skip.literal_rows) {
+            if !self.skip.str && let Some(v) = &lit.str {
                 self.str.push([n, string(v) as i64]);
             }
-            if let Some((v, ty)) = lit.value.as_ref().filter(|_| !self.skip.literal_rows) {
+            if !self.skip.literal_value && let Some((v, ty)) = &lit.value {
                 self.value.push([n, string(v) as i64, string(ty) as i64]);
             }
             if dialect.family == Family::Python
@@ -820,7 +814,7 @@ impl CoreRows {
                 }
             }
         }
-        if wants_text && self.reads_text(f, dialect, id, kind) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
+        if wants_text && self.reads_text(f, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
             self.text.push([n, string(text) as i64]);
         }
     }
@@ -866,16 +860,26 @@ impl CoreRows {
         // line where one reads theirs (`requested_container`), or, where the rules read every node's text (no
         // `text_nodes`), within the bound. Every line's and token's text was 1.27 M of execution_authority_bypass's
         // 1.61 M strings over the data layer's 7,416 files, read by no rule.
+        // RERAIL_LINE_TEXT=all makes every line's and the source's text within the bound, as before span_text_demand.
+        let all_line_text = std::env::var("RERAIL_LINE_TEXT").is_ok_and(|v| v == "all");
         let narrowed = self.text_nodes.is_some();
         let token_text = projection.token_text || std::env::var("RERAIL_TOKEN_TEXT").is_ok_and(|v| v == "all");
         if wants_text {
             // An end point has no text (it is empty): the positions before them.
             for i in 0..x.ends_from() as usize {
                 let [a, b] = p.span(p.len() + i as u32);
+                // The source and its lines have text where a rule reads it (`span_text_demand`), at any length:
+                // within the inline bound too, or every distinct line of the corpus is an atom (40 of the 55 MB of
+                // atoms authentication-plan-purity left over `impl/`). `RERAIL_LINE_TEXT=all` makes every one
+                // within the bound, as before.
+                let container = i >= x.tokens as usize && i <= x.tokens as usize + x.lines.count();
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
                 let token = i < x.tokens as usize;
-                if requested_container || token && token_text || !narrowed && !token && (b - a) as usize <= TEXT_INLINE {
+                // Within the bound: a line or the source only where asked for (or RERAIL_LINE_TEXT=all); another
+                // location where the rules read every node's text (not `narrowed`).
+                let bounded = (b - a) as usize <= TEXT_INLINE && if container { all_line_text } else { !narrowed };
+                if requested_container || token && token_text || !token && bounded {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }

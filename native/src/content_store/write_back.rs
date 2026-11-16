@@ -159,14 +159,16 @@ enum Run {
 /// in about one transaction.
 const BATCH_IDLE: Duration = Duration::from_millis(500);
 
-/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it.
+/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it. Of
+/// the cap in force: with `RERAIL_WRITE_QUEUE_MB` under the default, a batch of half the default never committed
+/// before the queue was full, and every large job waited for `BATCH_IDLE`.
 fn batch_bytes() -> usize {
-    cap_bytes_default() / 2
+    cap_bytes() / 2
 }
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
 fn small_job() -> usize {
-    cap_bytes_default() / 64
+    cap_bytes() / 64
 }
 
 struct Lane {
@@ -441,6 +443,7 @@ impl ContentStore {
                 }
                 let mut next: Option<Queued> = None;
                 loop {
+                    // The queue closed (the last handle's drop): the checkpointer ends with the writer (below).
                     let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
                     let before = thread_cpu();
                     if first.4 != Run::Batched {
@@ -456,7 +459,7 @@ impl ContentStore {
                         continue;
                     }
                     // One transaction while jobs keep coming: it commits once the queue is idle for `BATCH_IDLE`, holds
-                    // `batch_bytes`, or a job comes that runs alone (a wait for the writer sends one: `written`).
+                    // `batch_bytes()`, or a job comes that runs alone (a wait for the writer sends one: `written`).
                     let mut batch = vec![first];
                     let run = |batch: &mut Vec<Queued>, next: &mut Option<Queued>| -> Vec<StoreResult<()>> {
                         let mut outcomes = Vec::new();

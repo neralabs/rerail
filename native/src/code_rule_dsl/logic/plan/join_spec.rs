@@ -325,6 +325,12 @@ impl<'a> Run<'a, '_> {
                                 .position(|x| x.var() == Some(n))
                                 .and_then(|c| pf.column_type(b.rel(l), c).map(str::to_owned)),
                             Lit::Agg { var, op: AggRef::Count | AggRef::Sum | AggRef::Product, .. } if var == n => Some("int".to_owned()),
+                            // An extremum has its column's type (`v = min l : { line_of(f, l) }`).
+                            Lit::Agg { var, op: AggRef::Min | AggRef::Max, over: Some(o), atom: a } if var == n => b
+                                .args(s.at)
+                                .iter()
+                                .position(|x| x.var() == Some(o))
+                                .and_then(|c| pf.column_type(b.rel(a), c).map(str::to_owned)),
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: r @ TermRef::Call(..) } if v == n && numeric_call(b, r) => Some("int".to_owned()),
                             // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: TermRef::Int(_) | TermRef::Branded(_) } | Lit::Cmp { l: TermRef::Int(_) | TermRef::Branded(_), op: CmpOp::Eq, r: TermRef::Var(v) }
@@ -635,10 +641,8 @@ impl<'a> Run<'a, '_> {
                 }
                 // `sym_at($e, @cat(1539, $x))`: a qualified name of a constant scope (the planner folds a scope's name
                 // to its symbol) and a bound part, or two constants: the name made into a slot of its own first.
-                TermRef::Call(_, args) if call_of(t, "cat") && args.clone().count() == 2 => {
-                    if !args.clone().all(|x| is_const(x) || slots.bound(x)) {
-                        return None;
-                    }
+                // A part that is itself computed (`walk_qualname(f, @cat(p, @nfkc(x)))`) goes to `expr` below.
+                TermRef::Call(_, args) if call_of(t, "cat") && args.clone().count() == 2 && args.clone().all(|x| is_const(x) || slots.bound(x)) => {
                     let mut args = args;
                     let (x, y) = (args.next().expect("two"), args.next().expect("two"));
                     let (a, c) = (t_tok(b, x, &mut slots)?, t_tok(b, y, &mut slots)?);

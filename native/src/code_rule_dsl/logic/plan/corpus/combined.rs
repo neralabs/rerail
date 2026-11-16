@@ -6,8 +6,8 @@
 //!
 //! - **the texts' digest** (`texts_digest`, which also names the switches that change combining), as a small source
 //!   of its own;
-//! - **a plan** naming the engine build, the grammar version, the library's directory and the comparison switches
-//!   (`RERAIL_LIBRARIES`, `RERAIL_REQUESTS`);
+//! - **a plan** naming the engine build, the grammar version, the library's directory and the switches that change
+//!   combining (`corpus::COMBINING`);
 //! - **the read record**: every library file the combine read or probed, misses included, with its bytes' digest
 //!   (`rr::recording`). A run takes the entry only when each file still reads as recorded: an edited library file, or
 //!   a file appearing where an include looked and found none, combines again.
@@ -56,7 +56,7 @@ fn plan() -> FactsPlanSet {
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(rr::library().to_string_lossy().as_bytes());
-    for switch in ["RERAIL_LIBRARIES", "RERAIL_REQUESTS"] {
+    for switch in super::COMBINING {
         hash.update(b"\0");
         hash.update(std::env::var(switch).unwrap_or_default().as_bytes());
     }
