@@ -298,6 +298,21 @@ impl Tape for F15<'_> {
 }
 
 /// A stored format 15 image's columns and its code table (`MAGIC`, `FORMAT_VERSION`), read where they lie.
+/// The view a format 15 tape's reads take (decision 0310), the tape at byte `base` of what the view's offsets count
+/// from (0: the tape's own bytes).
+pub fn f15_view(bytes: &[u8], base: usize) -> Result<rerail_clif::view::TapeView, String> {
+    let (c, _) = f15_columns(bytes)?;
+    let at = |column: &[u8]| u32::try_from(base + (column.as_ptr() as usize - bytes.as_ptr() as usize)).map_err(|_| "a tape placed past 4 GiB".to_owned());
+    let widths = u32::from(c.widths[0]) | u32::from(c.widths[1]) << 4 | u32::from(c.widths[2]) << 8 | u32::from(c.from_start) << 12;
+    Ok(rerail_clif::view::TapeView {
+        nodes: u32::try_from(c.code.len() / 2).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+        format: 15,
+        widths,
+        columns: [at(c.code)?, at(c.size)?, at(c.base)?, at(c.off)?, at(c.tail)?],
+        ..Default::default()
+    })
+}
+
 pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> {
     let u64_at = |at: usize| -> Result<usize, String> {
         let b = bytes.get(at..at + 8).ok_or("a short tape header")?;

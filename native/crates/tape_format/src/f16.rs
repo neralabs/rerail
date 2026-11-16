@@ -307,6 +307,31 @@ pub struct Placement {
     pub vw: [usize; 4],
 }
 
+impl Placement {
+    /// The view a tape's reads take (decision 0310), the tape at byte `base` of what the view's offsets count from
+    /// (0: the tape's own bytes).
+    pub fn view(&self, lang: &Lang, base: usize) -> Result<rerail_clif::view::TapeView, String> {
+        let at = |offset: usize| u32::try_from(base + offset).map_err(|_| "a tape placed past 4 GiB".to_owned());
+        let (cut, per, w) = lang.device();
+        let wide = |w: usize| if w <= 15 { Ok(w as u32) } else { Err("a width past a nibble".to_owned()) };
+        let mut widths = 0;
+        for (k, w) in [w[0], w[1], w[2], self.cw, self.vw[0], self.vw[1], self.vw[2], self.vw[3]].into_iter().enumerate() {
+            widths |= wide(w)? << (4 * k);
+        }
+        Ok(rerail_clif::view::TapeView {
+            nodes: u32::try_from(self.n).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+            format: 16,
+            widths,
+            columns: [at(self.at[0])?, at(self.at[1])?, at(self.at[2])?, at(self.at[3])?, at(self.at[4])?],
+            side: [at(self.at[5])?, at(self.at[6])?, at(self.at[7])?, at(self.at[8])?],
+            parts: [at(self.parts[0])?, at(self.parts[1])?, at(self.parts[2])?, at(self.parts[3])?],
+            cut,
+            per,
+            ..Default::default()
+        })
+    }
+}
+
 /// The placement of the stored format 16 tape `buf`, its header and part starts checked against its length as
 /// `Tape16::from_bytes` checks them, without copying a byte.
 pub fn placement(buf: &[u8]) -> Result<Placement, String> {
@@ -1258,51 +1283,7 @@ mod tests {
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
-        // A root over 3,000 children; every 7th child holds a chain 9 deep. Spans grow past one byte's gap.
-        let mut nodes: Vec<(u32, u64, u64, usize)> = vec![(0, 0, 0, 0)];
-        let mut pos = 0u64;
-        for c in 0..3_000u32 {
-            let deep = if c % 7 == 0 { 9 } else { 0 };
-            let at = nodes.len();
-            let start = pos;
-            for d in 0..=deep {
-                nodes.push(((c * 31 + d) % 600, pos, 0, 0));
-                pos += if c % 50 == 0 { 400 } else { 3 };
-                let _ = d;
-            }
-            pos += 10;
-            for (d, k) in (at..nodes.len()).enumerate() {
-                nodes[k].2 = pos - d as u64;
-                nodes[k].3 = nodes.len() - k;
-            }
-            let _ = start;
-        }
-        nodes[0] = (599, 0, pos + 1, nodes.len());
-        // Format 16 from these nodes, and a reference read straight from them.
-        struct Plain<'a>(&'a [(u32, u64, u64, usize)], &'a CodeTable);
-        impl Tape for Plain<'_> {
-            fn len(&self) -> usize {
-                self.0.len()
-            }
-            fn table(&self) -> &CodeTable {
-                self.1
-            }
-            fn code(&self, i: usize) -> u32 {
-                self.0[i].0
-            }
-            fn subtree_end(&self, i: usize) -> usize {
-                i + self.0[i].3
-            }
-            fn parent(&self, i: usize) -> Option<usize> {
-                (0..i).rev().find(|&j| self.subtree_end(j) > i)
-            }
-            fn start(&self, i: usize) -> u64 {
-                self.0[i].1
-            }
-            fn end(&self, i: usize) -> u64 {
-                self.0[i].2
-            }
-        }
+        let (nodes, pos) = escaped_nodes();
         let plain = Plain(&nodes, &table);
         let number: Vec<u32> = (0..600).collect();
         let t = sixteen(&lang, &plain, &number, pos + 2);
@@ -1326,6 +1307,164 @@ mod tests {
         crate::tape::nearest_all(&t.reader(&lang).unwrap(), &set, |_| true, &mut near);
         crate::tape::nearest_all(&z.reader(&lang).unwrap(), &set, |_| true, &mut near_z);
         assert_eq!(near, near_z, "nearest in blocks");
+    }
+
+    /// A root over 3,000 children; every 7th child holds a chain 9 deep. Spans grow past one byte's gap. Each
+    /// node: its code, start, end and subtree size; and the source's length less 2.
+    fn escaped_nodes() -> (Vec<(u32, u64, u64, usize)>, u64) {
+        let mut nodes: Vec<(u32, u64, u64, usize)> = vec![(0, 0, 0, 0)];
+        let mut pos = 0u64;
+        for c in 0..3_000u32 {
+            let deep = if c % 7 == 0 { 9 } else { 0 };
+            let at = nodes.len();
+            for d in 0..=deep {
+                nodes.push(((c * 31 + d) % 600, pos, 0, 0));
+                pos += if c % 50 == 0 { 400 } else { 3 };
+            }
+            pos += 10;
+            for (d, k) in (at..nodes.len()).enumerate() {
+                nodes[k].2 = pos - d as u64;
+                nodes[k].3 = nodes.len() - k;
+            }
+        }
+        nodes[0] = (599, 0, pos + 1, nodes.len());
+        (nodes, pos)
+    }
+
+    /// Nodes read straight from their cells: a reference.
+    struct Plain<'a>(&'a [(u32, u64, u64, usize)], &'a CodeTable);
+    impl Tape for Plain<'_> {
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+        fn table(&self) -> &CodeTable {
+            self.1
+        }
+        fn code(&self, i: usize) -> u32 {
+            self.0[i].0
+        }
+        fn subtree_end(&self, i: usize) -> usize {
+            i + self.0[i].3
+        }
+        fn parent(&self, i: usize) -> Option<usize> {
+            (0..i).rev().find(|&j| self.subtree_end(j) > i)
+        }
+        fn start(&self, i: usize) -> u64 {
+            self.0[i].1
+        }
+        fn end(&self, i: usize) -> u64 {
+            self.0[i].2
+        }
+    }
+
+    /// The tape's reads written once in CLIF (decision 0310), compiled by the JIT through its inlining pass, each
+    /// called through an exported function of its own (a hot read inlined into it, a cold one a call).
+    struct Reads {
+        _module: cranelift_jit::JITModule,
+        fns: std::collections::HashMap<&'static str, *const u8>,
+    }
+
+    impl Reads {
+        fn new() -> Self {
+            use cranelift_codegen::ir::{InstBuilder, UserFuncName};
+            use cranelift_module::{Linkage, Module};
+            let builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
+            let mut module = cranelift_jit::JITModule::new(builder);
+            let mut ids = Vec::new();
+            for read in rerail_clif::reads::READS {
+                let signature = rerail_clif::reads::signature(read, module.isa().default_call_conv());
+                let id = module.declare_function(&format!("call_{}", read.name), Linkage::Export, &signature).unwrap();
+                let mut context = module.make_context();
+                context.func.signature = signature;
+                context.func.name = UserFuncName::user(0, id.as_u32());
+                let mut fctx = cranelift_frontend::FunctionBuilderContext::new();
+                let mut f = cranelift_frontend::FunctionBuilder::new(&mut context.func, &mut fctx);
+                let entry = f.create_block();
+                f.append_block_params_for_function_params(entry);
+                f.switch_to_block(entry);
+                f.seal_block(entry);
+                let params = f.block_params(entry).to_vec();
+                let callee = rerail_clif::inline::func_ref(&mut module, read.name, f.func).unwrap();
+                let call = f.ins().call(callee, &params);
+                let result = f.inst_results(call)[0];
+                f.ins().return_(&[result]);
+                f.finalize();
+                rerail_clif::inline::reads(&mut module, &mut context).unwrap();
+                // A hot read is inlined (what it calls is cold); a cold one stays a call.
+                let called = rerail_clif::inline::reads_called(&module, &context.func);
+                assert_eq!(called.contains(&read.name), !read.hot, "{} after the pass calls {called:?}", read.name);
+                assert!(called.iter().all(|name| !rerail_clif::reads::read(name).unwrap().hot), "{} calls a hot read: {called:?}", read.name);
+                module.define_function(id, &mut context).unwrap();
+                ids.push((read.name, id));
+            }
+            module.finalize_definitions().unwrap();
+            let fns = ids.into_iter().map(|(name, id)| (name, module.get_finalized_function(id))).collect();
+            Self { _module: module, fns }
+        }
+
+        fn one(&self, name: &str, tape: &[u8], view: &rerail_clif::view::TapeView, i: usize) -> u32 {
+            // SAFETY: the read's signature: the tape's base, its view, a node.
+            let f: extern "C" fn(*const u8, *const rerail_clif::view::TapeView, u32) -> u32 = unsafe { std::mem::transmute(self.fns[name]) };
+            f(tape.as_ptr(), view, i as u32)
+        }
+
+        fn two(&self, name: &str, tape: &[u8], view: &rerail_clif::view::TapeView, i: usize, k: u32) -> u32 {
+            // SAFETY: as `one`, with a second u32.
+            let f: extern "C" fn(*const u8, *const rerail_clif::view::TapeView, u32, u32) -> u32 = unsafe { std::mem::transmute(self.fns[name]) };
+            f(tape.as_ptr(), view, i as u32, k)
+        }
+
+        /// Every read of every node equals `t`'s, read where the tape lies.
+        fn same_as<T: Tape>(&self, t: &T, tape: &[u8], view: &rerail_clif::view::TapeView) {
+            const NONE: u32 = u32::MAX;
+            let none = |v: Option<usize>| v.map_or(NONE, |v| v as u32);
+            for i in 0..t.len() {
+                let end = t.subtree_end(i);
+                assert_eq!(self.one("tape_size", tape, view, i) as usize, end - i, "size of {i}");
+                assert_eq!(self.one("tape_end_of", tape, view, i) as usize, end, "end of {i}'s subtree");
+                assert_eq!(self.one("tape_number", tape, view, i), t.code(i), "code of {i}");
+                assert_eq!(u64::from(self.one("tape_start", tape, view, i)), t.start(i), "start of {i}");
+                assert_eq!(u64::from(self.one("tape_end", tape, view, i)), t.end(i), "end of {i}");
+                let parent = t.parent(i);
+                assert_eq!(self.one("tape_parent", tape, view, i), none(parent), "parent of {i}");
+                let next = parent.and_then(|p| Some(end).filter(|&n| n < t.subtree_end(p)));
+                assert_eq!(self.one("tape_next", tape, view, i), none(next), "next of {i}");
+                if let Some(p) = parent {
+                    assert_eq!(self.two("tape_next_in", tape, view, i, t.subtree_end(p) as u32), none(next), "next of {i} in its parent");
+                }
+                let kids = crate::tape::children(t, i).collect::<Vec<_>>();
+                assert_eq!(self.one("tape_first_child", tape, view, i), none(kids.first().copied()), "first child of {i}");
+                assert_eq!(self.one("tape_child_count", tape, view, i) as usize, kids.len(), "children of {i}");
+                for k in 0..=kids.len().min(12) {
+                    assert_eq!(self.two("tape_child", tape, view, i, k as u32), none(kids.get(k).copied()), "child {k} of {i}");
+                }
+            }
+        }
+    }
+
+    /// The CLIF reads (decision 0310) read every node as this crate's readers do: format 16 with every side list
+    /// in use, and format 15; the format's numbers they are written for are this crate's.
+    #[test]
+    fn the_clif_reads_read_every_node_as_the_crate_does() {
+        use rerail_clif::view;
+        assert_eq!((view::F16_K, view::F16_BLOCK, view::F16_PART), (K as u32, BLOCK as u32, PART as u32));
+        assert_eq!(1 << view::F15_STRIDE_SHIFT, crate::CHECKPOINT_STRIDE);
+        let reads = Reads::new();
+        // Format 16, every side list in use.
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
+        let v = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
+        reads.same_as(&t.reader(&lang).unwrap(), t.as_bytes(), &v);
+        // Format 15.
+        let (image, _) = crate::tape::tests::sample();
+        let (columns, table) = crate::tape::f15_columns(&image).unwrap();
+        let f15 = crate::tape::F15::new(columns, &table).unwrap();
+        let v = crate::tape::f15_view(&image, 0).unwrap();
+        reads.same_as(&f15, &image, &v);
     }
 
     /// Every shipped table loads, and its text reads back to the same choices.
