@@ -77,7 +77,7 @@ pub fn key(p: &super::body::Placed) -> [u8; 32] {
     hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).to_le_bytes());
     for row in settings.into_iter().flat_map(|f| f.rows()) {
         let cells: Vec<Cell> = row.collect();
-        let text = |c: &Cell| match *c { Cell::Int(i) => i.to_string(), Cell::Str(a) => v.text(a).to_owned() };
+        let text = |c: &Cell| match *c { Cell::Int(i) => i.to_string(), Cell::Str(a) => v.text(a).to_owned(), Cell::Branded(b) => b.to_string() };
         if cells.get(2).is_some_and(|k| text(k) == crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE) {
             continue;
         }
@@ -276,7 +276,7 @@ fn take_notes(facts: &Facts) {
         .get(NOTES_REL)
         .into_iter()
         .flatten()
-        .filter_map(|row| super::joins::of_note_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) => None }).collect::<Option<Vec<_>>>()?))
+        .filter_map(|row| super::joins::of_note_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) | Value::Branded(_) => None }).collect::<Option<Vec<_>>>()?))
         .collect();
     let exact = facts
         .get(EXACT_REL)
@@ -325,7 +325,7 @@ fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<super::S
         .get(PLANS_REL)
         .into_iter()
         .flatten()
-        .filter_map(|row| super::StoredPlan::of_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) => None }).collect::<Option<Vec<_>>>()?))
+        .filter_map(|row| super::StoredPlan::of_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) | Value::Branded(_) => None }).collect::<Option<Vec<_>>>()?))
         .collect())
 }
 

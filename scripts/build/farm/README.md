@@ -48,7 +48,7 @@ instead, and only that run's output is shown.
 | `farm.py` | all of them |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host, and (`exec`) a test command there |
-| `status` | what the farm can use now: each host probed, and why one is not usable |
+| `status` | what the farm can use now: each host probed, and why one is not usable; leases and their queues |
 | `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
 | `setup` | installs all of it here, the machine's cargo configuration, a configuration to fill in, and the toolchain on each host |
 | `cargo-config` | writes the farm's part of `~/.cargo/config.toml` (`--check` reports) |
@@ -140,7 +140,9 @@ target directory, at most once an hour per directory, detached and at nice 19. I
 build to end (cargo's lock on the profile directory), then removes what no build can use any more:
 another rustc's artifacts, builds that none of the current builds was made from (a mark and sweep
 over cargo's own dependency records, an hour's grace), debug objects no binary names, incremental
-state of crates no longer built or untouched for a day. Each target
+state of crates no longer built or untouched for a day, and Relax run dirs no run has used for
+6 hours (a worktree's own `target/relax`, another share's, never the most recently used shared one
+nor one a Relax process runs in: scripts/dev/relax/README.md). Each target
 directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 `RERAIL_FARM_NO_TIDY=1` keeps a build from starting one.
 
@@ -156,7 +158,9 @@ profile) while a test host has 4 cores or more to spare is told the `test-remote
 it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). The hourly job writes
 those findings after the cleaner (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
-its message. A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
+its message. On a machine leased for a benchmark (Quiet runs, below), every build is told the
+lease and its end, and a checkout whose processes loaded it during one is told that this was unfair.
+A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
 build at the first compile. `RERAIL_FARM_QUIET=1` silences the warnings.
 
 ## Configuration
@@ -167,18 +171,20 @@ hosts, and everything compiles and tests here, as without the farm.
 
 | Key | Meaning |
 |---|---|
-| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link"}` |
+| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link", "unattended"}` |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | free disk a host needs (default 40) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
-| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh, so they fall when either Mac is busy (an ssh round trip of 34 ms and 2 MB/s on a link that pings at 0.3 ms): a low figure is no proof of a slow link |
+| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
-half as many otherwise (`HIDIdleTime`). Compiles take slots in turn across the hosts (each host's
+half as many otherwise (`HIDIdleTime`), and `quiet-run` does not take it. A host nobody sits at whose
+trackpad reports touches on its own (one did, every 0.1–4 s, on 2026-11-15) is marked
+`"unattended": true`: then its input counts for nothing. Compiles take slots in turn across the hosts (each host's
 first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
 Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
 
@@ -256,6 +262,45 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
 with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).
+
+## Quiet runs: a lease for benchmarks
+
+A benchmark needs a machine nobody else loads. `scripts/dev/quiet-run` asks for one, waits its
+turn, and runs a command there:
+
+```
+scripts/dev/quiet-run [--host NAME | --here] [--minutes N] [--max-wait M] [--label TEXT] \
+                      [--dir native] [--tree DIR]... -- COMMAND...
+```
+
+The default machine is the usable host with the shortest queue and the most cores to spare;
+`--here` is this one, which other agents keep busy: benchmarks belong on a host. On a host, COMMAND runs in this checkout's copy there, as `test-remote` sends
+it (`--tree` sends inputs or a program built here), at nice 0.
+
+**The rules.**
+
+| Rule | How it holds |
+|---|---|
+| A run has 10 minutes at most | `--minutes` (default 10) ends it: the run is stopped (exit 124). Plan a longer benchmark in parts of 10 minutes. |
+| Fair turns | The queue is served by use: the checkout that held leases least in the last hour goes first, then the earliest asked. A checkout has one request open or held at a time (a second exits 75). |
+| Unfair use is told | A request from a checkout that held more than its share while others wait is warned. On this machine, a checkout whose processes used 10 CPU-s or more during a lease, started after it, is told at the first compile of each of its cargo commands for 3 hours. Every build's first compile on a leased machine is told so, with the end of the lease. |
+| A person comes first | A host whose user is at it (input in the last 5 minutes) is not taken (exit 75). |
+| Bounded | A lease ends with its holder: its process gone, or its time past. A wait is bounded by `--max-wait` (default 30 minutes), the drain by 2 minutes. |
+
+**What a lease does.** While it holds a machine the farm sends it nothing new: no remote compiles
+or `test-remote` commands to a leased host, and on a leased machine here every compile waits
+(the wrapper's first step, incremental ones included). Then the drain waits for the farm's work in
+flight to end and the CPU (sampled over a second, not the load average) to settle: nearly idle, or
+no longer falling, since what is left is work the farm does not hold back. Here that is tests,
+Relax and other processes: the farm controls only compiles, so the unfairness warnings above are
+what keeps them off. The lease's own command runs with `RERAIL_FARM_LEASE` set, so its builds are
+not held back.
+
+**The report.** At the end it prints how busy the machine was at the start, the load during the run,
+and each other process that used a fifth of a core or more, with its checkout (by working
+directory) and whether it started before the lease. The ledger
+(`~/Library/Caches/rerail-farm/leases/ledger.jsonl`) keeps each lease's machine, checkout, times,
+end and load; `status` shows each machine's lease, its queue and the last hour's use.
 
 ## No shared volume, no copy mode
 

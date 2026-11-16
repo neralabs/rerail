@@ -38,3 +38,34 @@ pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) ->
         None => Err(StoreError::Invalid("no nearest solve is registered".to_owned())),
     }
 }
+
+/// A kind-set axis's batch solve made on the device from the batch's chunk block (decision 0289 §2): per node row of
+/// the batch's `node`, the first of its rows (`nodes + 1` values, `u32`), and the rows, each a pair of node rows
+/// (inner << 32 | outer, `u64`). Both are written into the chunk, where the host reads them in place: their offsets
+/// in the block, and the pairs' count.
+#[cfg(target_os = "macos")]
+pub struct InChunk {
+    pub start: usize,
+    pub pairs: usize,
+    pub len: usize,
+}
+
+/// What makes an axis's solve in a chunk: `members` per dialect tag (256) and kind code (1,024) a bit, `None` for
+/// every kind (containment); `inside` for every ancestor in the set, else the nearest.
+#[cfg(target_os = "macos")]
+pub type ChunkAxis = fn(&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, Option<&[u32]>, bool) -> Result<InChunk, String>;
+
+#[cfg(target_os = "macos")]
+static CHUNK_AXIS: std::sync::OnceLock<ChunkAxis> = std::sync::OnceLock::new();
+
+/// Registers the device's solve of an axis in a chunk (once, at load: the Metal device's).
+#[cfg(target_os = "macos")]
+pub fn install_chunk_axis(solve: ChunkAxis) {
+    let _ = CHUNK_AXIS.set(solve);
+}
+
+/// The device's solve of an axis in a chunk, when one is registered.
+#[cfg(target_os = "macos")]
+pub(crate) fn chunk_axis() -> Option<ChunkAxis> {
+    CHUNK_AXIS.get().copied()
+}

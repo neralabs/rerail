@@ -75,6 +75,11 @@ impl Added {
                             h.update((s.len() as u64).to_le_bytes());
                             h.update(s.as_bytes());
                         }
+                        // An atom with what it names (decision 0270): apart from an integer of the same value.
+                        Value::Branded(b) => {
+                            h.update([2, b.class as u8]);
+                            h.update(b.atom.to_le_bytes());
+                        }
                     }
                 }
             }

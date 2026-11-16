@@ -50,6 +50,17 @@ pub trait RowCells: Send+Sync {
 }
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
+/// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
+#[cfg(target_os = "macos")]
+pub struct DeviceView<'a> {
+    pub block: &'a rerail_blocks::Block,
+    pub root: usize,
+    pub view: u32,
+    pub rows: usize,
+    /// An axis's pairs in the block (`device_chunk::VIEW_AXIS`), else 0.
+    pub pairs: usize,
+}
+
 pub trait Source: Send + Sync {
     fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
@@ -124,6 +135,12 @@ pub trait Source: Send + Sync {
     /// than a `value` call per row.
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
+    }
+    /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
+    /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
+    #[cfg(target_os = "macos")]
+    fn device_view(&self) -> Option<DeviceView<'_>> {
+        None
     }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
     /// makes every one: a join probes such a source through `lookup`, whatever its match estimate.
@@ -294,7 +311,9 @@ impl Modules {
         }
         // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
         let at = connection_scope(db);
-        let shape = (source.columns(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
+        // A derived relation named like a base one is read by the base names (`core::input_column_name`).
+        let columns: Vec<String> = source.columns().into_iter().map(|c| crate::code_rule_dsl::facts::core::input_column_name(name, &c).map_or(c, str::to_owned)).collect();
+        let shape = (columns.clone(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
         let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
         // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
         // drops is no longer kept, `dropped_temp`.)
@@ -305,7 +324,7 @@ impl Modules {
             return Ok(());
         }
         let binding = Binding {
-            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns: source.columns(), writable:source.writable() }),
+            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns, writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
         };

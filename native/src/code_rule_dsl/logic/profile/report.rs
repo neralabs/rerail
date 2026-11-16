@@ -28,6 +28,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 decode: d.decode_cpu,
                 uploads: u64::from(d.uploads),
                 upload_bytes: d.upload_bytes,
+                upload_by: d.upload_by,
                 resident: u64::from(d.resident_hits),
                 sorts: u64::from(d.sorts),
                 sort_hits: u64::from(d.sort_hits),
@@ -205,6 +206,30 @@ fn last_step(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
+/// The spans as a tree: each under its parent (its path less the last part, when that span was recorded; a root
+/// otherwise), children by CPU; below the roots, spans under 0.1% of `all` are left out (the tables keep them). The
+/// children are grouped in one pass: a scan of every span per node printed is quadratic in a run's ~100k spans.
+pub(super) fn span_tree(r: &mut String, spans: &BTreeMap<String, SpanTotal>, all: f64) {
+    let mut kids: std::collections::HashMap<Option<&str>, Vec<(&String, &SpanTotal)>> = Default::default();
+    for (p, t) in spans {
+        let parent = p.rsplit_once('/').map(|(par, _)| par).filter(|par| spans.contains_key(*par));
+        kids.entry(parent).or_default().push((p, t));
+    }
+    for v in kids.values_mut() {
+        v.sort_by(|a, b| b.1.total.total_cmp(&a.1.total));
+    }
+    fn walk(r: &mut String, kids: &std::collections::HashMap<Option<&str>, Vec<(&String, &SpanTotal)>>, parent: Option<&str>, depth: usize, all: f64) {
+        for &(p, t) in kids.get(&parent).map_or(&[][..], Vec::as_slice) {
+            if t.total < all * 0.001 && depth > 0 {
+                continue;
+            }
+            let _ = writeln!(r, "{:>9.3} {:>9.3} {:>5.1}% {:>9}  {}{}", t.total, t.own, 100.0 * t.total / all.max(1e-9), t.calls, "  ".repeat(depth), short(last_step(p), 100));
+            walk(r, kids, Some(p), depth + 1, all);
+        }
+    }
+    walk(r, &kids, None, 0, all);
+}
+
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
 pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
@@ -254,7 +279,9 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
 
-    // The report.
+    // The report. The process's life (`life`) as it begins: put after the header once the report's own work is known.
+    let life = super::life::now();
+    let mut after: Vec<(String, f64, f64)> = Vec::new();
     let mut r = String::new();
     r.push_str(header);
     let _ = writeln!(r, "Memory budgets (decision 0126): overall {} MB, Metal {} MB on top of it", rerail_accel::budget::memory() >> 20, rerail_accel::budget::metal() >> 20);
@@ -274,27 +301,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let roots: f64 = state.spans.iter().filter(|(p, _)| root(p)).map(|(_, t)| t.total).sum();
     let _ = writeln!(r, "\n== Spans: CPU (user + system), summed over calls; own = less the spans inside it ({roots:.2} s in all)");
     let _ = writeln!(r, "{:>9} {:>9} {:>6} {:>9}  span", "cpu s", "own s", "%", "calls");
-    // A tree: each span under its parent, children by CPU.
-    fn walk(r: &mut String, spans: &BTreeMap<String, SpanTotal>, parent: Option<&str>, depth: usize, all: f64) {
-        let mut kids: Vec<(&String, &SpanTotal)> = spans
-            .iter()
-            .filter(|(p, _)| match parent {
-                None => p.rsplit_once('/').is_none_or(|(parent, _)| !spans.contains_key(parent)),
-                Some(par) => p.strip_prefix(par).and_then(|rest| rest.strip_prefix('/')).is_some_and(|rest| !rest.contains('/')),
-            })
-            .collect();
-        kids.sort_by(|a, b| b.1.total.total_cmp(&a.1.total));
-        for (p, t) in kids {
-            // Spans under 0.1% of the run are left out of the tree (the tables keep them).
-            if t.total < all * 0.001 && depth > 0 {
-                continue;
-            }
-            let name = p.rsplit('/').next().unwrap_or(p);
-            let _ = writeln!(r, "{:>9.3} {:>9.3} {:>5.1}% {:>9}  {}{}", t.total, t.own, 100.0 * t.total / all.max(1e-9), t.calls, "  ".repeat(depth), short(name, 100));
-            walk(r, spans, Some(p), depth + 1, all);
-        }
-    }
-    walk(&mut r, &state.spans, None, 0, roots);
+    span_tree(&mut r, &state.spans, roots);
     let kinds_tsv = kinds::by_kind(&mut r, &state.spans);
     std::fs::write(dir.join("kinds.tsv"), kinds_tsv)?;
     kinds::unexplained(&mut r, &state.spans);
@@ -350,7 +357,8 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
             j.0 += work(steps) + made;
             j.1 += made;
         }
-        roofline::report(&mut r, &own, &charged, &joins);
+        let (wall, cpu, what) = roofline::report(&mut r, &own, &charged, &joins);
+        after.push((what, wall, cpu));
     }
 
     let _ = writeln!(r, "\n== Waits: wall time each thread spent blocked, on what, and what that was doing when the wait began");
@@ -545,6 +553,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     for (k, v) in state.notes.iter().filter(|(k, _)| !k.starts_with("plan:")) {
         let _ = writeln!(r, "{k}: {}", short(v, 600));
     }
+    r.insert_str(header.len(), &super::life::section(&life, &after));
     std::fs::write(dir.join("profile.txt"), r)
 }
 
@@ -596,3 +605,22 @@ fn stages(r: &mut String) {
 
 // Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rr` libraries).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The span tree: each span under its recorded parent, children by CPU; a span whose parent was not recorded is
+    /// a root (`x/y`), and a span under 0.1% of the run below the roots is left out (`a/tiny`).
+    #[test]
+    fn the_span_tree_nests_children_by_cpu() {
+        let mut spans = BTreeMap::new();
+        for (path, cpu) in [("a", 10.0), ("a/b", 6.0), ("a/b/c", 5.0), ("a/d", 3.0), ("a/tiny", 0.001), ("x/y", 2.0), ("z", 1.0), ("z/e", 0.5)] {
+            spans.insert(path.to_owned(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
+        }
+        let mut r = String::new();
+        super::span_tree(&mut r, &spans, 20.0);
+        let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
+        assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
+    }
+}

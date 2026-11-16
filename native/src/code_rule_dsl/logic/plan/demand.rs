@@ -138,7 +138,7 @@ fn split_with(f: &Fields<'_>, base: &Placed, model: &super::Model, candidates: &
     // A split that closes a cycle through a negation (a reader's body reading what the negated relation depends on)
     // leaves the program as it was.
     // Every failing component at once, not the first: a round per component was a split and strata per round.
-    let about = super::super::program_image::About::of(&placed.v);
+    let about = super::super::program_image::manager::analysis::<super::super::program_image::About>(&placed.v).map_err(|e| BTreeSet::from([e]))?;
     let errors = super::super::program_image::analyses::unstratified(&placed.v, &about);
     if errors.is_empty() {
         return Ok((demanded, placed));

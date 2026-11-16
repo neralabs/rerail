@@ -10,7 +10,8 @@
 //!   fixed cost `RERAIL_STRATA_FIXED`, 136 µs: 2.8 s over 20,589 strata). One strand per component: one fork of the
 //!   statistics, one prime of the scope. `RERAIL_STRATA_MERGE=off`: one stratum per component.
 //! - **Issue** (§3): the components of one look-ahead are submitted to the host stream with their estimates; the
-//!   executor decides how many run at once (none with one thread). Their count tables and seed joins go out first
+//!   executor decides how many run at once (none with one thread). Decision 0282: each with its rank, its members'
+//!   longest chain of estimates to the program's end (`levels`), so the stream claims the critical path first. Their count tables and seed joins go out first
 //!   as one device batch (§3, step 6). `RERAIL_STRATA_PARALLEL=off`: components run on the loop's thread, at
 //!   their retire.
 //! - **Retire** (§4): in program order, on the loop's thread. A member that declined runs as it would have (its
@@ -75,6 +76,8 @@ struct Component<'a> {
     own: BTreeSet<String>,
     digests: Vec<u64>,
     estimate: f64,
+    /// Decision 0282: the longest chain of estimates from its members to the program's end (`Board::level`).
+    rank: f64,
     state: State<'a>,
     /// The `issue` that made it: the components issued together share one device wave (decision 0123 §6).
     group: usize,
@@ -123,6 +126,9 @@ pub(super) struct Board<'a> {
     groups: usize,
     /// Each stratum's producers (`deps`), for the trace.
     from: Vec<Vec<usize>>,
+    /// Decision 0282: each stratum's bottom level, its estimate and the longest chain of its readers' to the
+    /// program's end; made at the first `issue` (`levels`).
+    level: Vec<f64>,
     /// `RERAIL_STRATA_TRACE`: the run's start, the stratum the loop is at (since when, and whether its component
     /// ran it), and each stratum's start, end and where it ran (0 the loop's thread, 1 a job, 2 a component run at
     /// its retire).
@@ -134,9 +140,15 @@ struct Trace {
     at: Option<(usize, Instant)>,
     by_component: bool,
     rows: Vec<Option<(f64, f64, u8)>>,
+    /// When each stratum's component was submitted to the stream (`RERAIL_STRATA_TRACE`'s last column), or -1.
+    submitted: Vec<f64>,
     /// Why a stratum ran on the loop's thread, if it was looked at.
     why: std::cell::RefCell<Vec<&'static str>>,
+    /// The loop thread's seconds by what it did (`SPENT`), for the trace's `loop` lines.
+    spent: std::cell::RefCell<[f64; 8]>,
 }
+
+const SPENT: [&str; 8] = ["issue: pack", "issue: statistics", "issue: device waves", "issue: submit", "collect", "help", "pause", "retire: wait or run"];
 
 fn env_f(name: &str, or: f64) -> f64 {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(or)
@@ -180,9 +192,10 @@ impl<'a> Board<'a> {
             counts: Counts::default(),
             groups: 0,
             from: producers,
+            level: Vec::new(),
             // Always kept (a few words a stratum): the run's measured critical path reads it (decision 0208), and
             // `RERAIL_STRATA_TRACE` writes it.
-            trace: Some(Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]) }),
+            trace: Some(Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], submitted: vec![-1.0; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]), spent: Default::default() }),
         }
     }
 
@@ -220,7 +233,7 @@ impl<'a> Board<'a> {
     }
 
     /// Appends the run's trace to `RERAIL_STRATA_TRACE`: per stratum its level, start, end, where it ran, its
-    /// component and its producers.
+    /// component, its producers, its name, why it ran on the loop's thread, and when its component was submitted.
     pub(super) fn dump(&self, level_of: &[usize], sccs: &[BTreeSet<String>]) {
         use std::io::Write as _;
         let Some(t) = &self.trace else { return };
@@ -233,9 +246,21 @@ impl<'a> Board<'a> {
             let from: Vec<String> = self.from[j].iter().map(usize::to_string).collect();
             let why = t.why.borrow()[j];
             let why = if why.is_empty() && comp < 0 { "not offered" } else { why };
-            out.push_str(&format!("s\t{j}\t{}\t{a:.7}\t{b:.7}\t{w}\t{comp}\t{}\t{}\t{why}\n", level_of[j], from.join(","), sccs[j].iter().next().map_or("", String::as_str)));
+            out.push_str(&format!("s\t{j}\t{}\t{a:.7}\t{b:.7}\t{w}\t{comp}\t{}\t{}\t{why}\t{:.7}\n", level_of[j], from.join(","), sccs[j].iter().next().map_or("", String::as_str), t.submitted[j]));
+        }
+        for (k, s) in t.spent.borrow().iter().enumerate() {
+            out.push_str(&format!("loop\t{}\t{s:.7}\n", SPENT[k]));
         }
         let _ = f.write_all(out.as_bytes());
+    }
+
+    /// Adds the time since `t` to the loop thread's `k`th count (`SPENT`), and returns now.
+    fn spend(&self, k: usize, t: Instant) -> Instant {
+        let now = Instant::now();
+        if let Some(tr) = &self.trace {
+            tr.spent.borrow_mut()[k] += (now - t).as_secs_f64();
+        }
+        now
     }
 
     fn retire(&mut self, p: usize) {
@@ -259,6 +284,24 @@ impl<'a> Board<'a> {
         }
         self.to = self.to.max(at);
         self.mark(at);
+    }
+
+    /// Decision 0282: each stratum's bottom level, as list scheduling ranks a task: its estimate, and the most of its
+    /// readers'. A stratum on the run's critical path has the highest of those ready with it, so it is issued, and
+    /// claimed by the stream, before larger strata off the path (the stream claimed the largest first, and the issue
+    /// took program order).
+    /// `RERAIL_STRATA_RANK=off` (a measurement aid): every stratum ranks 0, and the stream claims the largest first.
+    fn levels(&self, run: &Run<'a, '_>, rules_of: &dyn Fn(usize) -> Vec<RuleKey>) -> Vec<f64> {
+        let mut level = vec![0.0f64; self.readers.len()];
+        if matches!(std::env::var("RERAIL_STRATA_RANK").as_deref(), Ok("off")) {
+            return level;
+        }
+        for j in (0..level.len()).rev() {
+            // Readers come later in program order; one that does not is in a cycle the strata already broke.
+            let below = self.readers[j].iter().filter(|&&r| r > j).map(|&r| level[r]).fold(0.0, f64::max);
+            level[j] = self.estimate(run, &rules_of(j)) + below;
+        }
+        level
     }
 
     /// A stratum's estimate: the fixed cost and its rules' reads' rows.
@@ -291,9 +334,21 @@ impl<'a> Board<'a> {
     {
         const IN_FLIGHT: usize = 256;
         const MEMBERS: usize = 64;
+        if self.level.is_empty() {
+            self.level = self.levels(run, rules_of);
+        }
+        if self.in_flight >= IN_FLIGHT || self.ready.range(at..).next().is_none() {
+            return Ok(());
+        }
+        let mut t = Instant::now();
         let mut issued: Vec<usize> = Vec::new();
+        // Decision 0282: the ready strata are issued by rank, the stratum at `at` first, so the members in flight are
+        // the ones the run's end waits on longest; in program order, the cap filled with strata off the path.
+        let mut order: Vec<usize> = self.ready.range(at..).copied().collect();
+        order.sort_by(|&a, &b| (b == at).cmp(&(a == at)).then(self.level[b].total_cmp(&self.level[a])).then(a.cmp(&b)));
+        let mut order = order.into_iter();
         while self.in_flight < IN_FLIGHT {
-            let Some(j) = self.ready.range(at..).next().copied() else { break };
+            let Some(j) = order.by_ref().find(|j| self.ready.contains(j)) else { break };
             self.ready.remove(&j);
             let none = BTreeSet::new();
             let Some(first) = self.eligible(j, run, sccs, rules_of, load, &none)? else { continue };
@@ -351,8 +406,10 @@ impl<'a> Board<'a> {
             self.counts.largest = self.counts.largest.max(members.len());
             let data: Members = members.iter().map(|&m| sccs[m].clone()).zip(rules).collect();
             issued.push(c);
-            self.comps.push(Component { members, own: held, digests, estimate: est, state: State::Inline(strand, data), group: self.groups });
+            let rank = members.iter().map(|&m| self.level[m]).fold(0.0, f64::max);
+            self.comps.push(Component { members, own: held, digests, estimate: est, rank, state: State::Inline(strand, data), group: self.groups });
         }
+        t = self.spend(0, t);
         if issued.is_empty() {
             return Ok(());
         }
@@ -368,6 +425,7 @@ impl<'a> Board<'a> {
             run.model.wants_strata(&vs, strata, &mut wanted)?;
             run.model.make_statistics(vs.whole(run.version), &wanted)?;
         }
+        t = self.spend(1, t);
         // The issued components' count tables and seed joins, as one device batch (§3, step 6).
         let mut wants: BTreeSet<(String, Vec<usize>)> = BTreeSet::new();
         let mut specs = Vec::new();
@@ -389,14 +447,19 @@ impl<'a> Board<'a> {
             let _wave = super::super::profile::span(|| "device wave (joins, issued components)".into());
             super::super::native::component::prefetch_joins(db, &specs)?;
         }
+        t = self.spend(2, t);
         if !self.parallel {
             return Ok(());
         }
         for c in issued {
-            let est = self.comps[c].estimate;
+            let (est, rank) = (self.comps[c].estimate, self.comps[c].rank);
+            if let Some(t) = self.trace.as_mut() {
+                let now = (Instant::now() - t.t0).as_secs_f64();
+                self.comps[c].members.iter().for_each(|&m| t.submitted[m] = now);
+            }
             let State::Inline(strand, data) = std::mem::replace(&mut self.comps[c].state, State::Done(0, None)) else { unreachable!() };
             self.flying.push(c);
-            self.comps[c].state = State::Job(stream.submit(est, move || {
+            self.comps[c].state = State::Job(stream.submit_ranked(est, rank, move || {
                 let _in = ambient.enter();
                 let mut strand = strand;
                 let mut times = Vec::new();
@@ -416,6 +479,7 @@ impl<'a> Board<'a> {
                 (strand, n, stop, times, reserved, Parked { waiting, queued, data })
             }));
         }
+        self.spend(3, t);
         Ok(())
     }
 
@@ -445,6 +509,7 @@ impl<'a> Board<'a> {
     /// retire on the scoreboard now, so their readers are ready before the loop reaches them. A component writes only
     /// its own relations, so the order of absorbing is not the program's.
     pub(super) fn collect<'s>(&mut self, run: &mut Run<'a, '_>, stream: &Stream<'s, '_>) -> Result<()> {
+        let t = Instant::now();
         let mut k = 0;
         while k < self.flying.len() {
             let c = self.flying[k];
@@ -455,6 +520,7 @@ impl<'a> Board<'a> {
                 k += 1;
             }
         }
+        self.spend(4, t);
         Ok(())
     }
 
@@ -555,7 +621,7 @@ impl<'a> Board<'a> {
                     continue;
                 }
                 let outs = super::super::lanes::wave::take_outputs(&std::mem::take(&mut w.tickets));
-                jobs.push((x, stream.submit(self.comps[x].estimate, move || {
+                jobs.push((x, stream.submit_ranked(self.comps[x].estimate, self.comps[x].rank, move || {
                     let _in = ambient.enter();
                     let mut w = w;
                     super::super::lanes::wave::put_outputs(outs);
@@ -613,23 +679,33 @@ impl<'a> Board<'a> {
                 }
                 State::Job(h) if !stream.done(h) && !stream.queued(h) => {}
                 _ => {
+                    let t = Instant::now();
                     self.flying.retain(|&x| x != c);
                     self.finish(c, run, stream)?;
                     if matches!(self.comps[c].state, State::Parked(_)) {
                         self.flush_group(c, run, stream, ambient)?;
                     }
+                    self.spend(7, t);
                     break;
                 }
             }
             let before = self.counts.components;
             self.collect(run, stream)?;
             more(self, run)?;
-            if self.counts.components != before || stream.help() {
+            if self.counts.components != before {
+                nap = 20e-6;
+                continue;
+            }
+            let t = Instant::now();
+            let helped = stream.help();
+            let t = self.spend(5, t);
+            if helped {
                 nap = 20e-6;
                 continue;
             }
             // Woken when a job ends (one of a component's, which `collect` then retires), not after a nap.
             stream.pause(seen, nap);
+            self.spend(6, t);
             nap = (nap * 2.0).min(1e-3);
         }
         let comp = &mut self.comps[c];

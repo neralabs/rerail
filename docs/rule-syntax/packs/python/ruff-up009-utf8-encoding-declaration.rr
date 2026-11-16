@@ -27,7 +27,7 @@ remove(c) :- docof(c, d), line(c, l), src_line(d, l, sp) => delete(sp).
 // coding(d, l, x): line l is a comment-only line declaring encoding x. The regex is PEP 263's, greedy
 // where Python's `.*?` is lazy: they differ only on a line that says "coding" twice.
 .decl coding(d: number, l: number, x: symbol)
-coding(d, l, x) :- src_line(d, l, sp), match("[ \\t\\f]*#.*coding[:=][ \\t]*(?<x>[-\\w.]+)[\\s\\S]*", sp).
+coding(d, l, x) :- src_line(d, l, sp), match("[ \\t\\f]*#.*coding[:=][ \\t]*(?<xs>[-\\w.]+)[\\s\\S]*", sp), text(xs, x).
 // head(d, l): line l is in the leading block: no code line above it.
 .decl code_line(d: number, l: number)
 code_line(d, l) :- src_line(d, l, sp), !match("[ \\t\\f]*(#[\\s\\S]*)?", sp).

@@ -307,6 +307,7 @@ fn initial_child_prefix_handoff_preserves_all_branch_digits_and_typed_values() {
 
 #[test]
 fn complete_convergence_routing_reaches_terminal_barrier_within_shared_budget() {
+    crate::test_languages();
     let _guard = metal_execution_guard().unwrap();
     let scope = LaunchScope::enter();
     let actual = reach_terminal(&scope);

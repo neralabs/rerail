@@ -24,6 +24,8 @@ fn term(t: &Term) -> Result<String, Error> {
         Term::Int(n) => n.to_string(),
         Term::Str(s) => quote(s),
         Term::Top => "top".to_owned(),
+        // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
+        Term::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
         Term::Call(f, _) if is_test(f) || f == SET => return Err(Error::Syntax(format!("@{f} as a value: no .rr form"))),
         Term::Call(f, args) => format!("@{}({})", if f == "cat" { "dot" } else { f }, terms(args)?),
     })
@@ -298,10 +300,11 @@ fn print_written(prog: &Program) -> Result<String, Error> {
     for (rel, rows) in &prog.facts {
         for row in rows {
             let values = row.iter().map(|v| match v {
-                Value::Int(n) => n.to_string(),
-                Value::Str(s) => quote(s),
+                Value::Int(n) => Ok(n.to_string()),
+                Value::Str(s) => Ok(quote(s)),
+                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
             });
-            writeln!(out, "{}({}).", relation(rel), values.collect::<Vec<_>>().join(", ")).expect("a string");
+            writeln!(out, "{}({}).", relation(rel), values.collect::<Result<Vec<_>, _>>()?.join(", ")).expect("a string");
         }
     }
     for rule in &prog.rules {

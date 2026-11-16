@@ -120,6 +120,8 @@ pub struct Body<'v> {
     lits: Vec<LitRef<'v>>,
     vars: OnceCell<Vec<VarSet>>,
     args: OnceCell<Vec<Vec<TermRef<'v>>>>,
+    /// The rule's digest (`key`), made at the first ask: a plan call reads it for each of its keys.
+    key: OnceCell<u128>,
     /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
     /// maintained form (`Versions::at`); `None` for every other rule.
     sources: Option<&'v Version>,
@@ -127,7 +129,7 @@ pub struct Body<'v> {
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), sources: None }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None }
     }
     /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
     /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
@@ -182,6 +184,7 @@ impl<'v> Body<'v> {
             (TermRef::Var(a), TermRef::Var(b)) => self.var(a) == o.var(b),
             (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
             (TermRef::Int(a), TermRef::Int(b)) => a == b,
+            (TermRef::Branded(a), TermRef::Branded(b)) => a == b,
             (TermRef::Str(a), TermRef::Str(b)) => self.v.text(a) == o.v.text(b),
             (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
                 self.v.text(f) == o.v.text(g) && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
@@ -293,6 +296,7 @@ impl<'v> Body<'v> {
     pub fn constant(&self, t: TermRef<'_>) -> Option<Constant> {
         match t {
             TermRef::Int(i) => Some(Constant::Int(i)),
+            TermRef::Branded(a) => Some(Constant::Int(a.value())),
             TermRef::Str(a) => Some(Constant::Str(self.v.text(a).to_owned())),
             _ => None,
         }
@@ -358,9 +362,14 @@ impl<'v> Body<'v> {
             self.digest_lit(d, l);
         }
     }
+    /// The rule's digest (`digest`), made once: what every key of the rule writes (`plan_key`, `line_key`,
+    /// `observed_key`) in place of the rule's text.
+    pub fn key(&self) -> u128 {
+        *self.key.get_or_init(|| super::super::derived::digest(|d| self.digest(d)))
+    }
     /// The key observations of this rule's steps are kept under (`plan::obs_rule`).
     pub fn observed_key(&self) -> u64 {
-        let d = super::super::derived::digest(|d| self.digest(d));
+        let d = self.key();
         (d as u64) ^ ((d >> 64) as u64)
     }
     fn digest_term(&self, d: &mut super::super::derived::Inputs, t: TermRef<'_>) {
@@ -373,6 +382,11 @@ impl<'v> Body<'v> {
             TermRef::Int(i) => {
                 d.u64(2);
                 d.u64(i as u64);
+            }
+            TermRef::Branded(b) => {
+                d.u64(6);
+                d.u64(b.class as u64);
+                d.u64(u64::from(b.atom));
             }
             TermRef::Str(a) => {
                 d.u64(3);
@@ -475,7 +489,7 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
     let TermRef::Var(y) = r else { return None };
     let ready = match l {
         TermRef::Var(x) => bound.contains(x),
-        TermRef::Int(_) | TermRef::Str(_) => true,
+        TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
         _ => false,
     };
     (ready && !bound.contains(y)).then_some(y)
@@ -731,9 +745,15 @@ impl Placed {
     }
     /// Its components, dependencies first, in the tree's order (`front::components_of`), its maintained program's
     /// sets run together.
-    pub fn components(&self) -> Result<Vec<std::collections::BTreeSet<String>>> {
+    pub fn components(&self) -> Result<Arc<super::super::program_image::analyses::Components>> {
+        use super::super::program_image::analyses::Components;
         let f = super::fields::Fields::of(self).ok_or_else(|| Error::Plan("the components of a version of rules alone".into()))?;
-        Ok(super::super::program_image::analyses::components_by_name(f.v, f.about, &self.together())?)
+        let together = self.together();
+        if together.is_empty() {
+            // Held by the version (decision 0281 §2): computed once however many readers and `Placed`s ask.
+            return super::super::program_image::manager::analysis::<Components>(&self.v).map_err(Error::Plan);
+        }
+        Ok(Arc::new(Components(super::super::program_image::analyses::components_by_name(f.v, f.about, &together)?)))
     }
     /// The sets its maintained program runs as one component (`Program::together`, `Maint`), by name.
     pub fn together(&self) -> Vec<std::collections::BTreeSet<String>> {
@@ -777,6 +797,14 @@ impl Placed {
         match &self.ids {
             Some(ids) => ids.to_vec(),
             None => self.v.rules().map(|r| r.id()).collect(),
+        }
+    }
+    /// The program's rules, in its order: its version's (whose ids are ranges where it is a view, not `0..len`), or
+    /// those `ids` names.
+    pub fn rules(&self) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
+        match &self.ids {
+            None => self.v.rules(),
+            Some(ids) => Box::new(ids.iter().map(|&id| self.v.rule(id).expect("a rule of its version"))),
         }
     }
     /// The program's rule `k`.

@@ -232,6 +232,68 @@ Walls are measured with the oracle run first; the first run of a pair is slower 
 `schema-introspection-data-paths` keeps over `impl/` is mostly the text of modules, which it reads.
 `error-handling` reads every module's text, so its atoms stay 21 MB over `impl/sqlite`.
 
+## 8b. With a library cone: found on the Python pack (2026-11-15)
+
+A program that adds to a library relation takes the library's readers of it, its cone (0089 §3, `rr::with_cone`).
+The cone was taken over the library with this rewrite in it. From a relation the program adds to, it reached the
+widened copies and requests of that relation's readers, the attribute's answer, and every reader of the attribute.
+Five of the pack's 317 programs (those that add to library relations) took 1,300 to 1,500 of the library's rules
+each, and combining kept them apart (`p239_rr_agg`, `q8_truth_of`): the combined program went from 5,611 rules to
+10,261 before its own rewrite. A cold run of one file, debug: 679 G instructions with `RERAIL_NODE_SOURCES=eager`,
+930 G on request.
+
+Now the cone is taken without the rewrite's rules (`lower::on_request_rule`: answers, requests, widened copies), and
+`Text::lower_in` undoes the program's rewrite before adding the cone and makes it again over both. The combined
+program is 5,611 rules again (5,722 after its rewrite), the outputs are unchanged, and the run is 826 G. Test:
+`a_cone_is_taken_without_the_attributes_requests`.
+
+What stays is the rewrite's own cost on this run: 147 G (debug, one file), in more statistics measured, more hiding
+rounds and more cross-file strata. It is the trade §7 and §8 measured for single rules over 3,217 files; see the
+measured rows below for the pack. `undo_on_request` is not exact either: it drops a `node_text` declaration the
+program had (core's), and moves `value` to the end of the inputs. Combining is unaffected (the parts' sizes match
+eager's), but printing and converting read the undone program (open).
+
+### An answer placed in the cross-file part answered nothing
+
+§6's third point, found as wrong findings. On the Python pack, `__all__`'s and `exports`' readers ask for `value`
+across modules, so the split put `value`'s answer rule (`value(n, v) :- rr_value_req(n), v = @rr_node_value(n)`)
+in the cross-file part. That part holds no documents: `@rr_node_value` reads the node's document from the chunk's
+batch, found none, and answered nothing, without an error. Every reader of `value`, the file-local ones too, then
+saw no value. On 50 files the pack reported 5 outputs apart from eager: RUF034 flagged `1 if a else 0` (with no
+values on either side, compare.rr's `same_node` takes the branches for the same), PT014 flagged `[1, 5, 25]`, and
+RUF015 missed one. The smallest pack that shows it is RUF034 with C414 (their `cmp_same_ask` additions bring
+`dunder_all`'s readers in), and a one-rule `vals` reader gives no rows beside them, two files' worth alone.
+
+Now, until a cross-file answer reads its documents:
+
+- Combining (`answers_where_documents_are`) checks each attribute answered by a function of the document against
+  the split, and an attribute whose answer is not file-local is eager again (its round undone: `lower::undo_round`).
+  The profile's decisions say so ("value on request: no: its answer is not file-local …").
+- Preparation refuses a program whose function answer is still cross-file, so this can no longer answer nothing.
+- A program with a round undone still has core.rr's shape. `core_names` reads core.rr with the rewrite, so it
+  holds the requests, `rr_value_lit` and the like, and the projection took a program without them for T's shape:
+  it made no token leaves, and the planner found no statistics for `last_token`. The shape is now checked against
+  `rr::core_shape`, the core names less those the rewrite adds (`lower::made_on_request`).
+
+### Measured (2026-11-15)
+
+The Python pack's 317 rules, release, one thread, fresh project store, no bundle unless named, M3 Max:
+
+| Build | One file, on request | One file, eager | 50 files, on / eager (peak) |
+|---|---|---|---|
+| Before the hub merge | 38.9 G | | 273 G, eager's outputs |
+| The merge | 49.5 G | | |
+| With the cone fix | 41.7 G | 39.6 G | 300.8 G / 273.1 G (1,088 / 1,004 MB); 5 outputs apart |
+| With the cross-file answer and shape fixes | 40.2 G | 39.9 G | 273.6 G / 272.5 G (1,010 / 998 MB); 0 apart |
+| The same, with the bundle (0264) | 26.1 G | | |
+
+The 50-file outputs now match the build before the merge, on request and eager, and so do the one-file runs and the
+bundle's. On this pack `value` is eager (its cross-file readers), so on request costs what `node_text` and `token`
+save less the analysis: 0.3 G on one file.
+
+Test: `an_attribute_a_cross_file_reader_asks_for_is_eager` (a cross-file reader and a file-local one of `value`,
+over two files; it fails, refused, without the first point).
+
 ## 9. Order
 
 1. `node_text` on request, checked by §5. Remove 330d9cc2c's demand.

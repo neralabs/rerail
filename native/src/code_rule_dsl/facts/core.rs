@@ -822,8 +822,8 @@ impl LeBytes for u16 {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations `core.rr` declares (the engine's names, decision 0141), as the rule language reads them;
-/// registered at load (`install_core_names`). Empty without one.
+/// The relations a program in `core.rr`'s shape declares (the engine's names, decision 0141, less those decision
+/// 0174's rewrite adds), as the rule language reads them; registered at load (`install_core_names`). Empty without one.
 pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     CORE_NAMES.get().map_or(&EMPTY, |names| names())
@@ -834,6 +834,15 @@ static CORE_NAMES: std::sync::OnceLock<fn() -> &'static std::collections::BTreeS
 /// Registers what reads `core.rr`'s names (once, at load).
 pub fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<String>) {
     let _ = CORE_NAMES.set(names);
+}
+
+/// A column's name as the planner and SQL read it: a positional name (`c1`, as the engine names a derived
+/// relation's rows) of a relation named like a base one (`input_columns`) is that column's base name. Such a
+/// relation is derived where an attribute is answered on request (`value`, `node_text`: decision 0174), and handed
+/// on from the chunks it is the cross-file part's input, read as `value(n, v)`.
+pub fn input_column_name(rel: &str, name: &str) -> Option<&'static str> {
+    let i: usize = name.strip_prefix('c')?.parse().ok()?;
+    input_columns(rel)?.get(i).copied()
 }
 
 /// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….

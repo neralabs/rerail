@@ -842,6 +842,12 @@ impl<'a> Lanes<'a> {
         self.get_at(f, at, c, 0)
     }
 
+    /// `get`, `lag` bytes back: another output read in this window, its bytes and compares
+    /// shared (`Bytewise::short_words`).
+    pub fn get_lagged(&mut self, f: &mut FunctionBuilder<'_>, at: usize, c: usize, lag: u8) -> Lane {
+        self.get_at(f, at, c, lag)
+    }
+
     /// Instruction `at`'s chunk `c`, `lag` bytes back.
     fn get_at(&mut self, f: &mut FunctionBuilder<'_>, at: usize, c: usize, lag: u8) -> Lane {
         if let Some(&l) = self.memo.get(&(at, c, lag)) {

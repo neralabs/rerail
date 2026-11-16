@@ -25,6 +25,10 @@ status is COMMAND's. Ctrl-C, a kill or a closed terminal stops it on the host to
 root): a run's inputs and a program built here, e.g. `--tree tmp/bench --tree tmp/engines` for a
 benchmark run on the host.
 
+The pack test data pulled here (`npm run fixtures:pull`: the ignored files under
+`packs/<pack>/upstream/<tool>/`, none of it in git) is sent too, as trees: the tests that read it
+fail without it, on the host as here. The first run sends it (about 13 MB), later ones what changed.
+
 It runs the installed farm (`~/.local/share/rerail-farm`, `scripts/build/farm/setup`), the one every
 worktree's compiles use, whatever version this checkout has.
 """
@@ -132,8 +136,22 @@ def parse(argv):
     return named, directory, remote_only, trees, argv
 
 
+def pack_data():
+    """The tool directories of the packs (`packs/<pack>/upstream/<tool>/`) that hold pulled test data:
+    files git ignores there. Tracked files in them go as the checkout's too, the same bytes."""
+    out = subprocess.run(["git", "-C", CHECKOUT, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "--", "packs"],
+                         capture_output=True, text=True)
+    dirs = set()
+    for name in out.stdout.splitlines():
+        parts = name.split("/")
+        if len(parts) >= 5 and parts[0] == "packs" and parts[2] == "upstream":
+            dirs.add(os.path.join(CHECKOUT, *parts[:4]))
+    return sorted(d for d in dirs if os.path.isdir(d))
+
+
 def main(argv):
     named, directory, remote_only, trees, argv = parse(argv)
+    trees += [t for t in pack_data() if t not in trees]
     stop_on_signals()
     if not os.path.exists(os.path.join(SHARE, "farm.py")):
         here(argv, directory, "the farm is not installed (scripts/build/farm/setup)", remote_only)

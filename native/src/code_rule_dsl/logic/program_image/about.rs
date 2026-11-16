@@ -93,7 +93,7 @@ pub struct LatticeRef {
 }
 
 /// A version's other fields, read once from its about rows.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct About {
     /// Each request and a relation it produces, by request then in order (`Program::answers`).
     pub answers: Vec<(RelId, RelId)>,
@@ -157,11 +157,11 @@ impl About {
         let mut about = About::default();
         let rel = |c: Cell| match c {
             Cell::Str(a) => v.rel_of(a),
-            Cell::Int(_) => None,
+            Cell::Int(_) | Cell::Branded(_) => None,
         };
         let atom = |c: Cell| match c {
             Cell::Str(a) => Some(a),
-            Cell::Int(_) => None,
+            Cell::Int(_) | Cell::Branded(_) => None,
         };
         let mut merges: Vec<(RelId, AtomId)> = Vec::new();
         let mut widens: Vec<(RelId, u32)> = Vec::new();

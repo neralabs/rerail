@@ -66,7 +66,9 @@ fn pack_files() -> Vec<std::path::PathBuf> {
 
 /// Every seventh pack program, as the text's test samples them.
 fn pack_programs() -> Vec<(std::path::PathBuf, Program)> {
-    pack_files().into_iter().step_by(7).filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file(&p).ok()?))).collect()
+    let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
+    files.into_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file(&p).ok()?))).collect()
 }
 
 /// Every part of a program reads back from its image as written.
@@ -714,7 +716,11 @@ fn passes_agree(p: &Program) {
     assert_eq!(nv.digest(), base(&tp).digest(), "normalized digest");
     let names: std::collections::BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
     assert_eq!(names, ts, "sentinels");
-    // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule).
+    // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule). A program
+    // normalize leaves as it was is its input (the manager keeps no new base of it).
+    if Arc::ptr_eq(&nv, &v) {
+        assert_eq!(nv.digest(), base(&tp).digest());
+    } else {
     for r in nv.rules() {
         let s = r.source().expect("a derived rule's source");
         assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
@@ -722,6 +728,7 @@ fn passes_agree(p: &Program) {
     for r in v.rules() {
         let made = nv.derived(r.id()).count();
         assert!(made == 1 || (made == 0 && r.body().next().is_none()), "{} made {made}", v.rel_name(r.head().rel()));
+    }
     }
     let mut tp2 = tp.clone();
     let pairs = plan::stated_apart(&mut tp2);
@@ -974,6 +981,7 @@ fn fields_agree(p: &Program) {
         let want: Vec<Vec<String>> = rows.iter().map(|row| row.iter().map(|x| match x {
             Value::Int(i) => i.to_string(),
             Value::Str(s) => format!("{:?}", s.as_str()),
+            Value::Branded(b) => b.to_string(),
         }).collect()).collect();
         assert_eq!(got, want, "{rel}");
         assert_eq!(f.has_facts(rel), !rows.is_empty());
@@ -1084,4 +1092,168 @@ fn the_tree_text_from_handles_is_the_trees() {
         }
     }
     assert!(rules > 1000 && rels > 300, "{rules} rules, {rels} relations");
+}
+
+// ---- the pass manager (decision 0281) ----
+
+/// A program of three heads over two inputs, with stated facts: `e` read by `p` and `q`, `f` by `r`'s twelve rules.
+fn managed() -> Arc<Version> {
+    let mut p = Program::default();
+    for (n, k) in [("e", 2), ("f", 1), ("p", 1), ("q", 1), ("r", 1)] {
+        p.decls.insert(n.into(), (0..k).map(|i| (format!("c{i}").into(), "int".into())).collect());
+    }
+    p.facts.insert("f".into(), vec![[Value::Int(1)].into()]);
+    p.inputs = vec!["e".into()];
+    p.outputs = vec!["p".into(), "r".into()];
+    p.rules = vec![
+        Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x"), Term::Wild]))].into() },
+        Rule { head: atom("q", vec![v("y")]), body: vec![Literal::Atom(atom("e", vec![Term::Wild, v("y")]))].into() },
+        Rule { head: atom("r", vec![v("x")]), body: vec![Literal::Atom(atom("f", vec![v("x")]))].into() },
+        Rule { head: atom("r", vec![v("x")]), body: vec![Literal::Atom(atom("p", vec![v("x")]))].into() },
+    ];
+    // Rules that read neither `e` nor `q`, so an edit of `e`'s readers is a small part of the program.
+    p.rules.extend((1..9).map(|k| Rule { head: atom("r", vec![Term::Int(k)]), body: vec![Literal::Atom(atom("f", vec![Term::Int(k)]))].into() }));
+    base(&p)
+}
+
+/// Renames every read of `from` to `to`, and counts the rules it is shown.
+struct Rename {
+    from: RelId,
+    to: &'static str,
+    seen: usize,
+}
+impl super::Rewrite for Rename {
+    fn atom_as(&mut self, a: super::AtomRef<'_>) -> Option<(String, bool, bool)> {
+        (a.rel() == self.from).then(|| (self.to.to_owned(), a.neg(), a.gated()))
+    }
+}
+impl super::manager::RulePass for Rename {
+    const NAME: &'static str = "rename";
+    fn begin(&mut self, _: &super::manager::Cx<'_>) -> Result<super::manager::Select, String> {
+        Ok(super::manager::Select::Readers([self.from].into_iter().collect()))
+    }
+    fn rule(&mut self, _: &super::manager::Cx<'_>, _: super::RuleRef<'_>, out: &mut super::manager::RuleOut<'_, '_>) -> Result<super::manager::Step, String> {
+        self.seen += 1;
+        let mut rw = Rename { from: self.from, to: self.to, seen: 0 };
+        out.rewrite(&mut rw)
+    }
+}
+
+/// A rule pass costs the rules it selects: renaming one relation's reads visits its readers alone, and the edit is
+/// an overlay of the version whose delta is those rules out and their rewrites in, never a copy of the program.
+#[test]
+fn a_rule_pass_costs_the_rules_it_selects() {
+    use super::manager::{Delta, Form, Pipeline, Reads};
+    let v = managed();
+    let e = v.rel("e").unwrap();
+    let readers: Vec<RuleId> = v.readers(e).map(|(r, _)| r.id()).collect();
+    assert_eq!(readers.len(), 2);
+    let mut pass = Rename { from: e, to: "e2", seen: 0 };
+    let mut p = Pipeline::new("test", v.clone());
+    p.rules(&mut pass);
+    let (out, stages) = p.finish().unwrap();
+    assert_eq!(pass.seen, 2, "visited its selection alone");
+    assert_eq!((stages[0].visited, stages[0].form), (2, Form::Overlay));
+    let d = Delta::of(&v, &out);
+    assert_eq!(d.removed.iter().collect::<Vec<_>>(), readers);
+    assert_eq!(d.added.len(), 2);
+    assert!(!d.rebuilt);
+    assert_eq!(d.touched, Reads::RULES, "no field changed");
+    let e2 = out.rel("e2").unwrap();
+    assert_eq!(out.readers(e2).count(), 2);
+    assert_eq!(out.readers(e).count(), 0);
+    assert_eq!(out.size(), v.size());
+}
+
+/// Counts the rules of `rel` and keeps every rule: a pass that changes nothing.
+struct Keep;
+impl super::manager::RulePass for Keep {
+    const NAME: &'static str = "keep";
+    fn rule(&mut self, _: &super::manager::Cx<'_>, _: super::RuleRef<'_>, _: &mut super::manager::RuleOut<'_, '_>) -> Result<super::manager::Step, String> {
+        Ok(super::manager::Step::Keep)
+    }
+}
+
+/// Drops the stated facts of `f`: an edit of facts alone.
+struct DropFacts;
+impl super::manager::ProgramPass for DropFacts {
+    const NAME: &'static str = "drop facts";
+    fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+        w.on()?.drop_facts("f");
+        cx.decide("dropped", || "f".into());
+        Ok(())
+    }
+}
+
+/// Drops the rules of `q`.
+struct DropQ;
+impl super::manager::ProgramPass for DropQ {
+    const NAME: &'static str = "drop q";
+    fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+        let q = cx.v().rel("q").unwrap();
+        w.keep(|r| r.head().rel() != q)
+    }
+}
+
+/// An analysis is computed once per version, held by it, and carried to an edit's output when the edit misses what
+/// it reads: the strata over a facts edit, not over a rules edit; a pass that keeps every rule leaves the version as
+/// it was. A debug build checks each carried one against a fresh computation.
+#[test]
+fn analyses_carry_over_edits_that_miss_what_they_read() {
+    use super::analyses::{Needed, Strata};
+    use super::manager::{Form, Pipeline, Reads};
+    let v = managed();
+    let mut p = Pipeline::new("test", v.clone());
+    let s0 = p.get::<Strata>().unwrap();
+    p.get::<Needed>().unwrap();
+    assert_eq!(v.analyses().computed("strata"), 1);
+    p.rules(&mut Keep);
+    assert!(Arc::ptr_eq(p.version(), &v), "a pass that keeps every rule makes no version");
+    p.program(&mut DropFacts);
+    assert_eq!(p.stages()[1].touched, Reads::FACTS);
+    let facts_edit = p.version().clone();
+    let s1 = p.get::<Strata>().unwrap();
+    assert!(Arc::ptr_eq(&s0, &s1), "carried, not computed again");
+    assert_eq!(facts_edit.analyses().computed("strata"), 0);
+    p.program(&mut DropQ);
+    assert_eq!((p.stages()[2].form, p.stages()[2].touched), (Form::View, Reads::RULES));
+    assert!(!p.store().holds::<Strata>() && p.store().holds::<super::About>(), "a rules edit drops the strata, keeps the about rows");
+    p.get::<Strata>().unwrap();
+    assert_eq!(p.store().computed("strata"), 1, "a rules edit computes it again");
+    assert_eq!(p.store().computed("about"), 0, "the about rows carried through all three");
+    assert_eq!(p.decisions().len(), 1);
+    let (out, stages) = p.finish().unwrap();
+    assert_eq!(stages.iter().map(|s| s.form).collect::<Vec<_>>(), [Form::Unchanged, Form::Overlay, Form::View]);
+    assert_eq!(out.size(), 11);
+}
+
+/// A version's analyses are its own: every `Placed` of it reads one computation of its components and fields, as
+/// the run's readers make a `Placed` of a version again and again (`Lowered::placed`).
+#[test]
+fn every_placed_of_a_version_shares_its_analyses() {
+    use crate::code_rule_dsl::logic::plan::{body::Placed, fields::Fields};
+    let v = managed();
+    let a = Placed::whole(v.clone()).components().unwrap();
+    let b = Placed::whole(v.clone()).components().unwrap();
+    assert!(Arc::ptr_eq(&a, &b));
+    Fields::of(&Placed::whole(v.clone())).unwrap();
+    Fields::of(&Placed::whole(v.clone())).unwrap();
+    assert_eq!((v.analyses().computed("components"), v.analyses().computed("fields"), v.analyses().computed("about")), (1, 1, 1));
+}
+
+/// A rule pass that writes for a rule it says it kept fails its pipeline, named by the pass.
+#[test]
+fn a_pass_that_writes_for_a_kept_rule_fails() {
+    struct Liar;
+    impl super::manager::RulePass for Liar {
+        const NAME: &'static str = "liar";
+        fn rule(&mut self, _: &super::manager::Cx<'_>, _: super::RuleRef<'_>, out: &mut super::manager::RuleOut<'_, '_>) -> Result<super::manager::Step, String> {
+            out.rule().head("p", &[T::Int(1)]).finish()?;
+            Ok(super::manager::Step::Keep)
+        }
+    }
+    let mut p = super::manager::Pipeline::new("test", managed());
+    p.rules(&mut Liar);
+    let e = p.finish().err().expect("refused");
+    assert!(e.contains("liar") && e.contains("kept"), "{e}");
 }

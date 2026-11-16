@@ -711,6 +711,14 @@ impl<'s> P<'s> {
         self.flush(s);
         self.top().any = true;
         let at = self.w.push(key(kind, field, false), s as u32);
+        if kind == K::Identifier && self.src[s] == b'`' {
+            // A backtick identifier: a node over its two backticks (its name a hidden token).
+            self.frames.push(Frame { at: at as u32, held: self.held.len() as u32, kind: Some(kind), any: false });
+            let n = Node(self.frames.len() as u32 - 1);
+            self.token(K::TBacktick, 0, s, s + 1);
+            self.token(K::TBacktick, 0, e - 1, e);
+            return self.close_span(n, Some((s, e)));
+        }
         self.w.close(at, e as u32);
         at as u32
     }
@@ -918,6 +926,11 @@ impl<'s> P<'s> {
                     break tok(T::Quoted, q + 1);
                 }
             }
+        } else if c == b'`' && operator_at(self.src, s).1 == 1 {
+            // `` `…` ``: an identifier (`` ` `` `_backtick_identifier` `` ` ``), where `op_other`
+            // takes no more than the backtick (a string token wins a tie with a pattern; past it,
+            // where the state allows `op_other`, tree-sitter's lexer takes the operator).
+            tok(T::Quoted, self.backtick_end(s)?)
         } else if c == b'\'' {
             tok(T::Str, self.quoted_end(s)?)
         } else if c.is_ascii_digit() || c == b'.' && self.byte(s + 1).is_ascii_digit() {
@@ -948,6 +961,24 @@ impl<'s> P<'s> {
             }
         }
         Ok(())
+    }
+
+    /// The end of the backtick identifier whose backtick is at `q`: `([^`]|``)+` then a backtick.
+    /// Refused where its first byte could start what tree-sitter skips or scans before a token
+    /// (white space, a comment, a meta command, a dollar quote) or ends it at once.
+    fn backtick_end(&self, q: usize) -> R<usize> {
+        let first = self.byte(q + 1);
+        if first.is_ascii_whitespace() || first >= 0x80 || matches!(first, b'`' | b'-' | b'/' | b'\\' | b'$') || q + 1 >= self.src.len() {
+            return Err(Refusal::Parse(q as u32));
+        }
+        let mut e = q + 1;
+        loop {
+            match self.src[e..].iter().position(|&b| b == b'`') {
+                None => return Err(Refusal::Parse(q as u32)),
+                Some(i) if self.byte(e + i + 1) == b'`' => e += i + 2,
+                Some(i) => return Ok(e + i + 1),
+            }
+        }
     }
 
     /// The end of the string whose quote is at `q`: `'…'`, a `''` inside it a quote.
