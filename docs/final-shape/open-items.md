@@ -5321,3 +5321,16 @@ The profiles' spans say the same (the profiled runs: own CPU 14.9 → 15.7 s):
   asked for so that proposed orders are "actually tested ... in order to properly price them" (2026-11-14), and
   that would then hold for slow lines only.
 - The rest (≈1 G) is spread out: the `pre_` strata (+1 M rows of work), and the store writer.
+
+## O-loop-thread-issues. Only the loop's thread issues, and under load it runs jobs (2026-11-15)
+
+Status: open. Found by 0282. The issue board's loop thread is the only one that collects finished components
+and issues the strata they make ready. Under load the stream starts few workers (the cores over the load), so
+the loop runs much of the work itself. Over the python pack's 3,286 strata on 50 files at load 46–55, it ran
+components at their retire for 0.46–0.91 s and helped with other jobs for 0.13–0.58 s, out of a 1.2–1.9 s
+span. Meanwhile a stratum on the critical path that became ready waited to be issued: 0.45–0.82 s over the
+path's gaps (`RERAIL_STRATA_TRACE`'s `loop` lines and submit column).
+
+The direction: a job's end retires its members and issues their ready readers on the thread that ran it, under
+the board's lock. The loop then keeps only the program-order work: SQL strata, and what profile bookkeeping
+needs. Bound the loop's own jobs first, if that is enough: it helps only with jobs under a quantum.
