@@ -267,7 +267,8 @@ describe("the engine service's idle close", () => {
     options: Partial<Parameters<typeof startEngineService>[0]> = {},
     { gitFirst = false, host = "claude-code", noLock = false }: { gitFirst?: boolean; host?: "claude-code" | "omp"; noLock?: boolean } = {},
   ) {
-    const root = await mkdtemp(join(tmpdir(), "rerail-idle-"));
+    // Resolved: on macOS the run folder is under `/tmp`, a link, and the service records the paths it resolves.
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-idle-")));
     roots.push(root);
     const databasePath = join(root, "rerail.sqlite");
     const [first, second] = [join(root, "first"), join(root, "second")];
