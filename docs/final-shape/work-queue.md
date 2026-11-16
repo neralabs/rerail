@@ -685,6 +685,17 @@ pass.
 - **Whose**: lowering (a request and what its readers read, 0291), where cost-classifier works now. Not taken here.
 - **Done when**: such a rule is bound as a view of its source, and no stratum copies it.
 
+### Q32. A kind-set axis's tape code set counted ERROR nodes as members
+
+- **Found** (2026-11-16, Native-and-GPU-strata, merging sync-integration-hub-tape at d8fd02e57): `Within::set`
+  (0293 step 3) tested an entry's code against the set's kinds, so an ERROR node (its entry's code 0) was a member
+  whenever the set named ERROR. `Within::member`, the device's solve in the chunk and every reader before step 3
+  read the kind atom, where ERROR is never a member. `views_made_on_the_device_are_the_hosts_rows` showed it (the
+  host's nearest ancestor an ERROR node, the device's the one above).
+- **Fixed** on Native-and-GPU-strata (d8fd02e57): the set leaves ERROR entries out, and
+  `the_kind_set_axes_hold_exactly_their_pairs` holds a document with ERROR nodes and a set naming ERROR.
+- **Done when**: sync-integration-hub-tape has the fix (its next merge of this branch or the hub).
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
