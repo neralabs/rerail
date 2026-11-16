@@ -80,6 +80,19 @@ files its includes read as the entry's read record. The warm pack run went from 
 The cutoff's report counted a workspace document twice: once by its path from the root (the run's `doc`) and once
 by its absolute path (phase 1's `load`). It counts each document once now, as the run that made the record did.
 
+A run that reads files, against the engine before this decision's work (78f3c601b): the same 44 policies over `dl10`
+(10 files selected), each binary over its own store, in one sequence (instructions retired):
+
+| Run | Before | After |
+|---|---|---|
+| cold | 252.5 G | 238.4 G |
+| warm | 7.1 G | 2.4 G |
+| one file edited | 119.8 G | 114.0 G |
+| warm again | 7.1 G | 1.9 G |
+| the edit reverted | 114.0 G | 107.4 G |
+
+The per-file path did not regress. The findings are the same at every step (48).
+
 Phase 0's own cutoff stays for now. Without it, phase 0's maintained run re-evaluates its cone with no change: 6.95 G
 against 4.1 G on the same pack, and it reads the cost statistics (73 ms) because strata are evaluated.
 
