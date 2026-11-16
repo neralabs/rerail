@@ -280,11 +280,22 @@ impl<'s> Lexer<'s> {
         extras.push((key(K::Comment, 0, true), at as u32, end as u32));
         extras.push((key(K::TSlashSlash, 0, false) | 1 << EXTRA_DEPTH, at as u32, at as u32 + 2));
         if self.at(at + 2) == b'>' {
-            // `//>` then `using`: a directive (tree-sitter's `using_directive`); refused for now.
-            let mut i = at + 3;
-            i = self.blocks.blank_end(i);
+            // `//>` then `using`: a directive (`using_directive`: from the `>`, its key the word after
+            // `using`, its value the rest of the line from the key's end).
+            let i = self.blocks.blank_end(at + 3);
             if self.src[i..end].starts_with(b"using") && !self.at(i + 5).is_ascii_alphanumeric() {
-                return Err(Refusal::Lex(at as u32));
+                let k = self.blocks.blank_end(i + 5);
+                // The key: to the next blank, a word at a time.
+                let mut ke = k;
+                while ke < end && !matches!(self.at(ke), b' ' | b'\t') {
+                    ke = self.blocks.word_end(ke).max(ke + 1).min(end);
+                }
+                if k == i + 5 || k >= end || ke >= end {
+                    return Err(Refusal::Lex(at as u32));
+                }
+                extras.push((key(K::UsingDirective, 0, false) | 1 << EXTRA_DEPTH, at as u32 + 2, end as u32));
+                extras.push((key(K::UsingDirectiveKey, 0, false) | 2 << EXTRA_DEPTH, k as u32, ke as u32));
+                extras.push((key(K::UsingDirectiveValue, 0, false) | 2 << EXTRA_DEPTH, ke as u32, end as u32));
             }
         }
         Ok(())
@@ -491,7 +502,8 @@ impl<'s> Lexer<'s> {
             }
             break;
         }
-        if e > s && self.src[e - 1] == b'_' && op_char(self.at(e)) {
+        // An operator suffix after `_` (`foo_+`); a lone `_` is a wildcard (`_*` is two tokens).
+        if e > s + 1 && self.src[e - 1] == b'_' && op_char(self.at(e)) {
             let c = self.at(e);
             if c != b'/' || !matches!(self.at(e + 1), b'/' | b'*') {
                 return self.op_end(e);

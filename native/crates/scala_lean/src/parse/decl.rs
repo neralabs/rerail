@@ -63,11 +63,46 @@ impl P<'_> {
         let s = self.tok().start;
         let n = self.t.wrap_from(m, kind, field, s);
         rest(self)?;
+        if matches!(kind, K::ClassDefinition | K::ObjectDefinition | K::TraitDefinition | K::FunctionDefinition | K::ValDefinition | K::VarDefinition | K::TypeDefinition) {
+            self.end_marker()?;
+        }
         let id = self.close(n);
         if let Some(k) = self.retype.take() {
             self.t.retype(id, k);
         }
         self.t.unmark(m);
+        Ok(())
+    }
+
+    /// `end name` on the line after a definition (`_end_marker_named_tail`: the semicolon, then
+    /// `end_marker`: the `end` the scanner's, unwritten, then the name as `_end_ident`).
+    fn end_marker(&mut self) -> R<()> {
+        if !(self.tok().nl && self.is_word(w::END)) {
+            return Ok(());
+        }
+        let nx = self.peek_at(1);
+        if nx.nl || !(nx.kind == T::Id || nx.kind == T::BackId) {
+            return Ok(());
+        }
+        if self.layout(v::SEMI)? != Some(Ext::Semi) {
+            return Ok(());
+        }
+        self.take();
+        if self.layout(v::END_KW)? != Some(Ext::EndKw) {
+            return self.refuse();
+        }
+        self.take();
+        let n = self.open(K::EndMarker);
+        let e = self.bump()?;
+        self.t.last_end = e.end;
+        match nx.code {
+            w::VAL | w::GIVEN | w::THIS | w::EXTENSION if nx.kind == T::Id => return self.refuse(),
+            _ if w::is_reserved(nx.code) && nx.kind == T::Id => return self.refuse(),
+            _ => {
+                self.tk(K::TEndIdent)?;
+            }
+        }
+        self.close(n);
         Ok(())
     }
 
@@ -159,7 +194,8 @@ impl P<'_> {
         }
         loop {
             let t = self.tok();
-            if !(Self::is_name(t) || t.kind == T::Id && matches!(t.code, w::ENUM | w::EXPORT)) {
+            // `extension` in a path: tree-sitter takes its keyword (refused).
+            if !(Self::is_name(t) || t.kind == T::Id && matches!(t.code, w::ENUM | w::EXPORT)) || t.kind == T::Id && t.code == w::EXTENSION {
                 return self.refuse();
             }
             if t.kind == T::Id && matches!(t.code, w::ENUM | w::EXPORT) {
@@ -331,18 +367,14 @@ impl P<'_> {
 
     /// A template's `extends` clause, `derives` clause and body.
     fn template_tail(&mut self) -> R<()> {
-        if self.tok().nl && self.is_word(w::EXTENDS) {
-            return self.refuse();
-        }
-        if self.is_word(w::EXTENDS) {
+        // What the header's state takes after it: `extends`, `derives`, a body.
+        const HEAD: crate::scan::V = v::EXTENDS | v::DERIVES | v::COLON_EOL;
+        if self.is_word(w::EXTENDS) && self.continues(HEAD)? {
             let n = self.open_field(K::ExtendsClause, f::EXTEND);
             self.tk(K::TExtends)?;
             self.constructor_application(f::TYPE)?;
             loop {
-                if self.tok().nl && (self.is_word(w::WITH) || self.peek() == T::Comma) {
-                    return self.refuse();
-                }
-                if self.is_word(w::WITH) {
+                if self.is_word(w::WITH) && self.continues(v::WITH | HEAD)? {
                     self.tkf(K::TWith, f::TYPE)?;
                     self.constructor_application(f::TYPE)?;
                 } else if self.peek() == T::Comma {
@@ -353,18 +385,69 @@ impl P<'_> {
             }
             self.close(n);
         }
-        if self.is_word(w::DERIVES) {
+        if self.is_word(w::DERIVES) && self.continues(HEAD)? {
             return self.refuse();
         }
         if self.peek() == T::LBrace {
+            // `_definition_body`: a semicolon the scanner gives before the `{` is its (its dynamic
+            // precedence: the braces are the body).
             if self.tok().nl {
-                return self.refuse();
+                match self.layout(HEAD)? {
+                    Some(Ext::Semi) => {
+                        self.take();
+                    }
+                    None => {}
+                    Some(_) => return self.refuse(),
+                }
             }
             self.template_body(f::BODY)?;
-        } else if self.is_op(op::COLON) {
-            return self.refuse();
+        } else if self.is_op(op::COLON) && !self.tok().nl {
+            self.indented_template_body()?;
         }
         Ok(())
+    }
+
+    /// Whether the token next is the construct's where it starts a line: the scanner's choice where
+    /// the state takes `own` (a semicolon or an outdent there ends the construct).
+    fn continues(&mut self, own: crate::scan::V) -> R<bool> {
+        if !self.tok().nl {
+            return Ok(true);
+        }
+        Ok(match self.layout(own)? {
+            None => true,
+            Some(Ext::Semi | Ext::Outdent | Ext::CommaOutdent) => false,
+            Some(_) => return self.refuse(),
+        })
+    }
+
+    /// `:` at a line's end, then indented statements (`template_body`, field `body`: from the `:` to
+    /// the outdent).
+    fn indented_template_body(&mut self) -> R<()> {
+        if self.layout(v::COLON_EOL)? != Some(Ext::ColonEol) {
+            return self.refuse();
+        }
+        let n = self.open_field(K::TemplateBody, f::BODY);
+        self.take();
+        // The lexer's token for the same `:`.
+        self.tk(K::TColon)?;
+        match self.layout(v::INDENT)? {
+            Some(Ext::Indent) => {
+                self.take();
+            }
+            _ => return self.refuse(),
+        }
+        if self.self_type_ahead() {
+            return self.refuse();
+        }
+        self.statements(Region::Indent, f::NONE)?;
+        match self.layout(v::OUTDENT | v::COMMA_OUTDENT)? {
+            Some(Ext::Outdent | Ext::CommaOutdent) => {
+                let at = self.take();
+                self.close_at(n, at);
+                Ok(())
+            }
+            _ => self.refuse(),
+        }
     }
 
     /// `{ … }` (`template_body`), given `field`: a self type, then statements.
@@ -473,6 +556,10 @@ impl P<'_> {
     /// body: the kind is set when the body is known).
     fn def_rest(&mut self) -> R<()> {
         self.tk(K::TDef)?;
+        if self.is_word(w::EXTENSION) {
+            // `def extension`: tree-sitter reads the keyword.
+            return self.refuse();
+        }
         self.identifier(f::NAME)?;
         loop {
             match self.peek() {
@@ -621,7 +708,7 @@ impl P<'_> {
     /// `_definition_pattern`: a pattern without `|`, `: T` or `*` at its top.
     fn def_pattern(&mut self) -> R<u32> {
         let t = self.tok();
-        if Self::is_name(t) && (self.is_op_at(1, op::COLON) || self.is_op_at(1, op::EQ)) {
+        if Self::is_name(t) && t.code != w::UNDERSCORE && (self.is_op_at(1, op::COLON) || self.is_op_at(1, op::EQ)) {
             return self.identifier(f::NONE);
         }
         self.pattern_f(f::NONE)

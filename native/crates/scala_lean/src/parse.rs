@@ -483,6 +483,11 @@ impl<'a> P<'a> {
     fn compilation_unit(&mut self) -> R<()> {
         let root = self.t.open_root(K::CompilationUnit);
         self.statements(Region::Top, f::NONE)?;
+        // The end the lexer stopped at, where it refused: the refusal.
+        let t = self.tok();
+        if t.code == u8::MAX {
+            return Err(Refusal::Lex(t.start));
+        }
         let end = self.src.len() as u32;
         self.t.flush(end + 1);
         self.t.close_root(root, 0, end);

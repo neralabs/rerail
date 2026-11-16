@@ -112,7 +112,11 @@ impl P<'_> {
                     let n = self.open(K::CapturePattern);
                     self.identifier(f::NAME)?;
                     self.tk(K::TAt)?;
-                    self.pattern_f(f::PATTERN)?;
+                    // Its pattern binds tighter than an infix one (`r @ A -> B` is `(r @ A) -> B`).
+                    self.deeper()?;
+                    let p = self.simple_pattern()?;
+                    self.depth -= 1;
+                    self.t.refield(p, f::PATTERN);
                     return Ok(self.close(n));
                 }
                 self.path_pattern()

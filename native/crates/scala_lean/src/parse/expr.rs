@@ -272,13 +272,24 @@ impl P<'_> {
                 // The operator alone (`reduce(_ + _)`'s `+`): an operator name.
                 return self.simple();
             }
+            // Type arguments after the operand are the prefix expression's (`!x.is[T]`), or an
+            // infix expression's around it.
+            let m = self.mark();
             let n = self.open(K::PrefixExpression);
             let k = super::op_kind(t.code).expect("a prefix operator");
             self.tk(k)?;
             self.deeper()?;
-            self.simple()?;
+            let saved = std::mem::replace(&mut self.right_operand, true);
+            let r = self.simple();
+            self.right_operand = saved;
+            r?;
             self.depth -= 1;
-            return Ok(self.close(n));
+            let mut n = self.close(n);
+            if self.peek() == T::LBracket && !self.right_operand && !self.tok().nl {
+                n = self.suffixes(m, n)?;
+            }
+            self.t.unmark(m);
+            return Ok(n);
         }
         self.simple()
     }
@@ -594,7 +605,7 @@ impl P<'_> {
         self.with_fol(fol, |p| {
             loop {
                 while p.peek() == T::Semi {
-                    p.tk(K::TSemi)?;
+                    p.tkf(K::TSemi, f::BODY)?;
                 }
                 if p.peek() == T::RBrace || p.peek() == T::Eof {
                     return Ok(());
@@ -615,6 +626,8 @@ impl P<'_> {
                         // A semicolon the scanner gives before the `}` is the clause's last child.
                         let at = p.take();
                         if p.peek() == T::RBrace {
+                            // The comments before it are the clause's too.
+                            p.t.flush(at);
                             p.t.last_end = p.t.last_end.max(at);
                         }
                     }
@@ -739,9 +752,139 @@ impl P<'_> {
         Ok(self.close(n))
     }
 
-    /// `for (…) body`, `for { … } yield body` (`for_expression`): not read yet.
+    /// `for (…) body`, `for { … } yield body` (`for_expression`: the brackets' tokens and
+    /// `enumerators` given `enumerators`, then `body`). With `(` (named at run time) the engine stores
+    /// every token of it: they are written as leaves. `for x <- xs do …` (no brackets) is refused.
     fn for_expression(&mut self) -> R<u32> {
-        self.refuse()
+        let n = self.open(K::ForExpression);
+        let paren = match self.kind_at(1) {
+            T::LParen => true,
+            T::LBrace => false,
+            _ => return self.refuse(),
+        };
+        self.stored(K::TFor, f::NONE, paren)?;
+        self.stored(if paren { K::TLParen } else { K::TLBrace }, f::ENUMERATORS, paren)?;
+        let close = if paren { T::RParen } else { T::RBrace };
+        self.with_fol(0, |p| p.enumerators(close))?;
+        if self.peek() != close {
+            return self.refuse();
+        }
+        self.stored(if paren { K::TRParen } else { K::TRBrace }, f::ENUMERATORS, paren)?;
+        let fol = self.fol;
+        if self.is_word(w::YIELD) || self.tok().nl && self.word_at(0) == w::YIELD {
+            match self.layout(v::GATE | v::INDENT)? {
+                Some(Ext::Gate) => {
+                    self.take();
+                }
+                None => {}
+                Some(_) => return self.refuse(),
+            }
+            if !self.is_word(w::YIELD) {
+                return self.refuse();
+            }
+            self.stored(K::TYield, f::NONE, paren)?;
+            self.indentable_f(f::BODY)?;
+        } else if self.is_word(w::DO) && !self.tok().nl {
+            self.stored(K::TDo, f::NONE, paren)?;
+            self.indentable_f(f::BODY)?;
+        } else {
+            self.with_fol(fol, |p| p.indentable_f(f::BODY))?;
+        }
+        Ok(self.close(n))
+    }
+
+    /// The next token as `kind` given `field`: a leaf where `all` (its parent stores every token).
+    fn stored(&mut self, kind: K, field: u8, all: bool) -> R<()> {
+        if all {
+            let t = self.bump()?;
+            self.t.leaf(kind, field, t.start, t.end);
+        } else {
+            self.tkf(kind, field)?;
+        }
+        Ok(())
+    }
+
+    /// `enumerators` to `close`: enumerators apart by semicolons (the scanner's at line ends), in an
+    /// indent where the scanner gives one first; a semicolon before `close` is theirs.
+    fn enumerators(&mut self, close: T) -> R<()> {
+        let mut indent = false;
+        if self.tok().nl {
+            match self.layout(v::INDENT)? {
+                Some(Ext::Indent) => {
+                    self.take();
+                    indent = true;
+                }
+                None => {}
+                Some(_) => return self.refuse(),
+            }
+        }
+        let n = self.open_field(K::Enumerators, f::ENUMERATORS);
+        let fol = if indent { v::SEMI | v::OUTDENT } else { v::SEMI };
+        self.with_fol(fol, |p| {
+            loop {
+                p.enumerator()?;
+                if p.peek() == T::Semi {
+                    p.tk(K::TSemi)?;
+                    if p.peek() == close {
+                        break;
+                    }
+                    continue;
+                }
+                match p.layout(fol)? {
+                    Some(Ext::Semi) => {
+                        let at = p.take();
+                        if p.peek() == close {
+                            p.t.flush(at);
+                            p.t.last_end = p.t.last_end.max(at);
+                            break;
+                        }
+                    }
+                    Some(Ext::Outdent) if indent => break,
+                    None if p.peek() == close => break,
+                    _ => return p.refuse(),
+                }
+            }
+            Ok(())
+        })?;
+        if indent {
+            match self.layout(v::OUTDENT)? {
+                Some(Ext::Outdent) => {
+                    let at = self.take();
+                    self.close_at(n, at);
+                }
+                _ => return self.refuse(),
+            }
+        } else {
+            self.close(n);
+        }
+        Ok(())
+    }
+
+    /// `p <- e`, `p = e`, `case p <- e`, guards after it; or guards alone (`enumerator`).
+    fn enumerator(&mut self) -> R<()> {
+        let n = self.open(K::Enumerator);
+        if !self.is_word(w::IF) {
+            if self.is_word(w::CASE) {
+                self.tk(K::TCase)?;
+            }
+            self.pattern_f(f::NONE)?;
+            let t = self.tok();
+            match (t.kind, t.code) {
+                (T::Op, op::LARROW) => self.tk(K::TLArrow)?,
+                (T::Op, op::EQ) => self.tk(K::TEq)?,
+                _ => return self.refuse(),
+            };
+            self.indentable_f(f::NONE)?;
+        }
+        while self.is_word(w::IF) && !self.tok().nl {
+            self.guard()?;
+        }
+        if self.is_word(w::IF) {
+            // A guard on its own line: an enumerator of its own, or this one's (refused).
+            return self.refuse();
+        }
+        self.close(n);
+        Ok(())
     }
 
     /// `try body catch … finally …` (`try_expression`: `body`).
@@ -1085,6 +1228,8 @@ impl P<'_> {
                             self.with_fol(0, |p| p.block())?;
                             self.close(x);
                             i = self.t.last_end as usize;
+                            // What the look ahead lexed past the `}` is the string's.
+                            self.relex_at(i);
                         }
                         c if c.is_ascii_alphabetic() || c == b'_' => {
                             let e = self.lx.blocks.word_end(stop + 1);
