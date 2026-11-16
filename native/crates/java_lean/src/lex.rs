@@ -195,40 +195,54 @@ impl<'s> Lexer<'s> {
     #[inline]
     pub fn skip(&self, mut at: usize, extras: &mut Vec<Extra>) -> R<usize> {
         loop {
+            at = self.space_end(at);
+            let Some(x) = self.comment(at)? else { return Ok(at) };
+            extras.push(x);
+            at = x.end as usize;
+        }
+    }
+
+    /// From `at`: white space passed (ASCII's alone: tree-sitter-java's `\s` reads no other).
+    #[inline]
+    pub fn space_end(&self, mut at: usize) -> usize {
+        loop {
             at = self.blocks.blank_end(at);
             match self.at(at) {
                 b'\n' | b'\r' => at += 1,
-                b'/' if self.at(at + 1) == b'/' => {
-                    // To the `\n` (a `\r` is the comment's text: `[^\n]*` reads it).
-                    let mut end = self.blocks.eol(at + 2);
-                    while end < self.src.len() && self.src[end] != b'\n' {
-                        end = self.blocks.eol(end + 1);
-                    }
-                    extras.push(Extra { start: at as u32, end: end as u32, block: false });
-                    at = end;
-                }
-                b'/' if self.at(at + 1) == b'*' => {
-                    let mut i = at + 2;
-                    loop {
-                        i = self.blocks.star(i);
-                        if i >= self.src.len() {
-                            return Err(Refusal::Lex(at as u32));
-                        }
-                        if self.src[i] == b'*' && self.at(i + 1) == b'/' {
-                            i += 2;
-                            break;
-                        }
-                        i += 1;
-                    }
-                    extras.push(Extra { start: at as u32, end: i as u32, block: true });
-                    at = i;
-                }
-                c if c >= 0x80 => match decode(self.src, at) {
-                    Some((c, n)) if c.is_whitespace() => at += n,
-                    _ => return Ok(at),
-                },
-                _ => return Ok(at),
+                _ => return at,
             }
+        }
+    }
+
+    /// The comment starting at `at`, if one does; an unclosed `/*` refused.
+    #[inline]
+    pub fn comment(&self, at: usize) -> R<Option<Extra>> {
+        if self.at(at) != b'/' {
+            return Ok(None);
+        }
+        match self.at(at + 1) {
+            b'/' => {
+                // To the `\n` (a `\r` is the comment's text: `[^\n]*` reads it).
+                let mut end = self.blocks.eol(at + 2);
+                while end < self.src.len() && self.src[end] != b'\n' {
+                    end = self.blocks.eol(end + 1);
+                }
+                Ok(Some(Extra { start: at as u32, end: end as u32, block: false }))
+            }
+            b'*' => {
+                let mut i = at + 2;
+                loop {
+                    i = self.blocks.star(i);
+                    if i >= self.src.len() {
+                        return Err(Refusal::Lex(at as u32));
+                    }
+                    if self.src[i] == b'*' && self.at(i + 1) == b'/' {
+                        break Ok(Some(Extra { start: at as u32, end: i as u32 + 2, block: true }));
+                    }
+                    i += 1;
+                }
+            }
+            _ => Ok(None),
         }
     }
 
@@ -540,14 +554,14 @@ impl<'s> Lexer<'s> {
     pub fn string_end(&self, s: usize, block: bool) -> Option<usize> {
         let mut i = if block { s + 3 } else { s + 1 };
         loop {
-            // The next `"` or `\` (stage 1's stop mask), not a byte at a time.
+            // The next `"` or `\` (stage 1's mask): the text between is passed a block at a time.
             i = self.blocks.string_stop(i);
             match self.src.get(i)? {
                 b'"' if !block => return Some(i + 1),
                 b'"' if self.src[i..].starts_with(b"\"\"\"") => return Some(i + 3),
-                b'\\' if self.at(i + 1) == b'{' => i = self.interpolation_end(i + 2)?,
-                b'\\' => i += 2,
-                _ => i += 1,
+                b'"' => i += 1,
+                _ if self.at(i + 1) == b'{' => i = self.interpolation_end(i + 2)?,
+                _ => i += 2,
             }
         }
     }

@@ -134,7 +134,6 @@ impl Sketch {
         (est.round() as u64).clamp(self.rows, self.rows * self.rows)
     }
 
-
     pub(super) fn exact_counts(&self) -> Option<std::borrow::Cow<'_,[(i64,u32)]>> {
         if let Some(s)=&self.small {return Some(std::borrow::Cow::Borrowed(s));}
         if let Some(s)=&self.sparse {return Some(std::borrow::Cow::Owned(s.counts.iter().map(|(&v,&n)|(v,n)).collect()));}

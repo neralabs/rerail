@@ -19,7 +19,7 @@
 //         for a, b in z: (a, b)            cmp_same(<(a, b)>, <a, b>)
 #include "python/pyflakes.rr"
 
-.decl cmp_same_ask(a: node, b: node)
+.decl cmp_same_ask(a: node, b: node) extensible
 .decl cmp_same(a: node, b: node)
 cmp_same(a, b) :- cmp_same_ask(a, b), unparen(a, x), unparen(b, y), same_node(x, y).
 

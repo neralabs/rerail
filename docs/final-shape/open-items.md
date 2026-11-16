@@ -5144,7 +5144,10 @@ SQL statistics' loads, not the search.
 
 A trial (decision 0207) samples a line's rows at a stride. On `call_ret`, 23% of the rows (those of the 64
 largest functions) do 96% of the work, so a 9-row sample measures mostly light rows: 492 rows of work a row, where
-the line does 906. Sampling by the heavy values (some of each part, weighted back) would measure both. Open.
+the line does 906. Sampling by the heavy values (some of each part, weighted back) would measure both.
+
+Closed (2026-11-14, decision 0221): trials sample a skewed key's heavy rows and the rest apart, weighted back by
+the parts' rows. The winner's estimate went from 0.56 to 0.68 of the line's work per row.
 
 ## O172. Heavy values: deltas, processes, GPU (decision 0216)
 
@@ -5152,6 +5155,22 @@ Heavy values are made by a full pass over a relation when a column is raised. Op
 - a delta's Misra–Gries summary merged into the kept one (0209 §4), so a growing relation is not counted again;
 - a line's raised columns kept with its note across processes;
 - the GPU batch (0209 §6, step 4).
+
+Closed (2026-11-14, decision 0221): a change is merged into kept heavy values (`HeavyCol::merge`, from a mark of
+the relation); raised columns are kept with their note in the store (`rr_join_raised`); the GPU batch is
+`rerail_accel::gpu::join::column_stats`, one command buffer a round, exact.
+
+
+## O173. A trial's estimate under its line's work on a correlated key (decision 0261)
+
+On the self-join seed `call_ret`, a stratified trial (decision 0221) estimates the winning order at 0.69 of the
+line's work per row, even when each part is estimated by ratio to its rows' sizes (decision 0261). The sample is
+representative by size, so the gap is per-row work the key's size does not explain: the returns a function
+reaches (decision 0216 §3). Open: a size that sees that correlation, from exact pair statistics (0203 §3), or a
+larger heavy share under a larger cap; neither is tuned.
+
+Closed (2026-11-14, decision 0262): each order is estimated by its work at a row's key, from pair counts with
+the filters on the key's atoms: 0.97 of the line's work on `call_ret`.
 
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
@@ -5166,15 +5185,6 @@ variables as small integers, made once per rule body and kept with the body's di
 remove the allocations and the string comparisons. `_platform_memcmp`, 14.6% of the main thread, is spread over
 string-keyed BTree lookups like these across many passes (tarjan, components, `fork_with`, `keeps::choose`,
 `text_kind_demand`). `Board::finish`, 15%, is the main thread waiting on the pool: it is not work to cut.
-
-## O-corpus0-peak-memory. A run over corpus0 peaks at 2.5 GB (2026-11-14, decision 0225)
-
-Status: open. The main pack's 317 rules over corpus0's 300 files, profiling build: cold 2,533 MB peak footprint, a
-file edit 2,335 MB, a message edit 1,602 MB, a rule-body edit 2,128 MB, all over decision 0126's 1 GB overall budget.
-50 files cold: 1,050 MB, as 5de418d7a's 991 MB, so the growth is in the files, not a regression of the stall's fix
-(2ff9ffe8e). The sections' peak RSS says where: `parse (worker)` and `batch (worker)` 2.7–2.9 GB, `cross` 2.7 GB,
-`local` 2.1 GB. Not yet traced: which relation or buffer holds it, and whether a chunk's rows are held past the
-chunk.
 
 ## O-cross-file-answers. Node attributes asked across files find no text (2026-11-15, decision 0174 §6)
 
@@ -5210,3 +5220,12 @@ seed joins cut at 100k–200k rows of work, trials whose orders cost 5× their p
 statistics with a 449,720-row side, heavy-value splits (`xd_`, `xk_`) over 85–120k first-atom rows. A handoff whose
 replacement is cut too goes on unbounded ("the replacement goes on", `p68_rr_agg20`). The strata trace is written
 when the loop ends, so a killed run names no stratum.
+
+## O-corpus0-peak-memory. A run over corpus0 peaks at 2.5 GB (2026-11-14, decision 0225)
+
+Status: open. The main pack's 317 rules over corpus0's 300 files, profiling build: cold 2,533 MB peak footprint, a
+file edit 2,335 MB, a message edit 1,602 MB, a rule-body edit 2,128 MB, all over decision 0126's 1 GB overall budget.
+50 files cold: 1,050 MB, as 5de418d7a's 991 MB, so the growth is in the files, not a regression of the stall's fix
+(2ff9ffe8e). The sections' peak RSS says where: `parse (worker)` and `batch (worker)` 2.7–2.9 GB, `cross` 2.7 GB,
+`local` 2.1 GB. Not yet traced: which relation or buffer holds it, and whether a chunk's rows are held past the
+chunk.

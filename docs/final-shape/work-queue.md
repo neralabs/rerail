@@ -369,6 +369,13 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     sets `RUSTFLAGS` and `CARGO_TARGET_DIR` on purpose to compare flags (lab code, not mine to change; for the
     tape16 owner). Relax builds stop on macOS refusing to exec (AppleSystemPolicy "Security policy would not allow
     process", the Relax binary and native build scripts, 15:29–15:42), intermittent: the user decides the route.
+  - At the rr-align roll-up (2026-11-15): a plain `cargo build -p rerail-engine --lib` (not the test profile) shows
+    "unused attribute" warnings in rerail-logic (logic.rs:28, 43, 65, 109; rr.rs:15, 97), rerail-lang-python
+    (lib.rs:329), rerail-w (lib.rs:27, 237) and rerail-device-metal (lib.rs:720), and two unfulfilled lint
+    expectations in blade/forte/ast.rs (52, 100). None is from the roll-up's merges. tape16's bench-pack.sh now
+    exempts only its native build (rr-align's form).
+  - The Native-and-GPU-strata merge (645070bce) takes its generator-made mounts (`tools/cratify/mounts.py`): the
+    engine's library and test builds compile with no warning but the linker's `__eh_frame` note.
 
 ### Q14. Plan-time switches and the plan cache
 
@@ -406,7 +413,7 @@ pass.
 
 ### Q16. A constant world request in the kept cross part
 
-(Numbered Q15 until the roll-up brought another Q15.)
+(Numbered Q15 when written, on final-rerail-shape-rr-align; renumbered at the roll-up, the hub's Q15 being the Relax kills.)
 
 - **Found**: `dir_entry("sub", n, 0)` lowers to the request fact `rr_dir_req("sub")` (`rr::lower`'s `world_demand`).
   `world::wanted` and `world::answers` counted only request rules, so such a run failed ("no columns for

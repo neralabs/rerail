@@ -70,7 +70,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "DOC", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "KEPT", Thread, "dialects by grammar: any thread's gives the same"),
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "LOCATED", Call, "the state of one call in progress on this thread, set and read within it"),
-    ("src/code_rule_dsl/facts/vtab/syntax.rs", "TEXTS", Carried, ""),
     ("src/code_rule_dsl/import_target/mod.rs", "VIEW", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/logic/derived.rs", "MEMO", Carried, ""),
     ("src/code_rule_dsl/logic/derived.rs", "SESSION_MEMO", Outermost, "a session's derived values between its runs: taken and put back by the outermost run"),
@@ -106,6 +105,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan.rs", "SESSION_PLANS", Outermost, "a session's plans between its runs: taken and put back by the outermost run"),
     ("src/code_rule_dsl/logic/plan.rs", "SKEWING", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "STEP_ROWS", Carried, ""),
+    ("src/code_rule_dsl/logic/plan.rs", "WALK_SALT", Call, "the walks' seeds' salt, set while one search repeats its walks (decision 0247)"),
     ("src/code_rule_dsl/logic/plan/choices.rs", "DURABLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/compose.rs", "CACHE", Thread, "compiled compositions by digest: any thread's gives the same"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
@@ -126,11 +126,12 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/demand.rs", "WHOLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/lower.rs", "TREE_READS", Thread, "this thread's counts of trees decoded and copied, and of reads of a version's tree"),
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's lock"),
-    ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
+    ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
     ("src/code_rule_dsl/logic/rr.rs", "READS", Call, "the libraries read while `recording` runs; a job records its own and hands them back (`rr::recorded_on_worker`)"),
     ("src/code_rule_dsl/logic/strings/functions.rs", "CACHE", Thread, "compiled regexes by pattern: any thread's gives the same"),
@@ -186,7 +187,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/waves/relational/syntax.rs", "POOL", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/content_store/atoms.rs", "RESERVING", Thread, "this thread's store write in progress"),
     ("src/content_store/atoms.rs", "SEGMENT_BYTES_TEST", Thread, "this thread's store write in progress"),
-    ("src/content_store/atoms/map.rs", "MAPPED", Thread, "this thread's store write in progress: whether its symbols are mapped"),
+    ("src/content_store/atoms/map.rs", "MAPPED", Call, "a write in progress whose symbols are mapped (`atoms::map::mapped`)"),
     ("src/content_store/compression.rs", "DECODERS", Thread, "this thread's codecs"),
     ("src/content_store/compression.rs", "DICT_ENCODERS", Thread, "this thread's codecs"),
     ("src/content_store/compression.rs", "ENCODER", Thread, "this thread's codecs"),
@@ -291,7 +292,6 @@ const CARRIERS: &[fn(&mut Capture)] = &[
 fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["STAGE"], &super::profile::STAGE);
-    c.cloned(&["TEXTS"], &crate::code_rule_dsl::facts::vtab::syntax::TEXTS);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }
 

@@ -881,7 +881,6 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
 .output name
 "#;
     let out = dir.join("out");
-    #[cfg(target_os = "linux")]
     let store = out.join("store.sqlite");
     for (i, [a, b]) in [["alpha", "beta"], ["gamma", "delta"]].into_iter().enumerate() {
         let root = dir.join(format!("corpus-{i}"));
@@ -891,14 +890,42 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         let mut names = [a, b];
         names.sort_unstable();
         assert_eq!(std::fs::read_to_string(out.join("name.csv")).unwrap(), format!("{}\n{}\n", names[0], names[1]));
-        #[cfg(target_os = "linux")]
-        {
-            let open: Vec<std::path::PathBuf> = std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect();
-            let held: Vec<_> = open.iter().filter(|file| file.to_string_lossy().starts_with(&*store.to_string_lossy())).collect();
-            assert!(held.is_empty(), "run {i} left its store open: {held:?}");
-        }
+        // The run's connections close beside it (`close_beside`): once they are closed, nothing holds the store.
+        super::corpus::closes_done();
+        assert_eq!(crate::content_store::holding(&store), (0, 0), "run {i} left store handles or connections open (handles, connections)");
+        // The kernel names files by their real path (macOS's /var is /private/var).
+        let real = out.canonicalize().unwrap().join(store.file_name().unwrap());
+        let held: Vec<_> = open_files().into_iter().filter(|file| file.to_string_lossy().starts_with(&*real.to_string_lossy())).collect();
+        assert!(held.is_empty(), "run {i} left its store open: {held:?}");
     }
     std::fs::write(dir.join("done"), "").unwrap();
+}
+
+/// The files this process holds open.
+fn open_files() -> Vec<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        // SAFETY: getdtablesize reads the limit; F_GETPATH writes at most PATH_MAX bytes into the buffer.
+        let fds = unsafe { libc::getdtablesize() };
+        (0..fds)
+            .filter_map(|fd| {
+                let mut buf = [0u8; libc::PATH_MAX as usize];
+                (unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == 0).then(|| {
+                    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                    std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len]))
+                })
+            })
+            .collect()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        Vec::new()
+    }
 }
 
 /// A process runs the corpus twice over its own store (`corpus_store_child`).
@@ -2010,11 +2037,11 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     // A tiny delta can have fewer names than the input yet no matching names. Distinct counts alone cannot
     // detect this. Changing only the values must invalidate the plan even at fixed counts and fanouts.
     model.ndv.insert(("delta",1),1.0);
-    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(10),526)])));
-    model.stats.dfreq.insert(("restrict",2),std::sync::Arc::new(HashMap::from([(Constant::Int(10),450)])));
+    model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(10),526)]));
+    model.stats.dfreq.insert(("restrict",2),HashMap::from([(Constant::Int(10),450)]));
     let ((overlap,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(overlap.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","expand","restrict"]);
-    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(11),526)])));
+    model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(11),526)]));
     assert_eq!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),Some(2)),[0]);
     let ((disjoint,work,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(disjoint.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","restrict","expand"]);
@@ -2051,7 +2078,7 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     }
     Arc::make_mut(&mut model.stats.kfreq).insert("1".into(),2063);
     Arc::make_mut(&mut model.stats.kfreq).insert("2".into(),2181);
-    model.stats.dfreq.insert(("child",2),std::sync::Arc::new(HashMap::from([(Constant::Int(0),60_000)])));
+    model.stats.dfreq.insert(("child",2),HashMap::from([(Constant::Int(0),60_000)]));
     // The stated rule (the parse may give others first).
     let rule = p.rules.iter().find(|r| r.head.rel == "result").expect("the result rule");
     let made = body::alone(rule).unwrap();
@@ -2098,8 +2125,8 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
         }
     }
     let values = |v: &[(i64, i64)]| v.iter().map(|&(k, n)| (Constant::Int(k), n)).collect::<HashMap<_, _>>();
-    model.stats.dfreq.insert(("pv".to_owned(), 1), std::sync::Arc::new(values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)])));
-    model.stats.dfreq.insert(("fv".to_owned(), 2), std::sync::Arc::new(values(&[(193, 570), (1, 100), (2, 25)])));
+    model.stats.dfreq.insert(("pv".to_owned(), 1), values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)]));
+    model.stats.dfreq.insert(("fv".to_owned(), 2), values(&[(193, 570), (1, 100), (2, 25)]));
     model.stats.solve(["pv", "fv", "ifn"].into_iter().map(str::to_owned).collect());
     let r = &p.rules[0];
     let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
@@ -2385,7 +2412,7 @@ fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     model.stats.card.insert("a",210.0); watch.record(0,0,&model,"a");
     assert!(watch.take(0),"small changes accumulate against the last published size");
     for key in [1,2] {
-        model.stats.dfreq.insert(("a",0),std::sync::Arc::new(HashMap::from([(Constant::Int(key),210)])));
+        model.stats.dfreq.insert(("a",0),HashMap::from([(Constant::Int(key),210)]));
         watch.record(0,1,&model,"a");
         assert!(watch.take(0),"new key domains publish even at identical row counts");
     }

@@ -33,6 +33,8 @@ const LIMIT: usize = 64;
 /// The cone's program as rounds: its answers and gates as inputs.
 pub(in crate::code_rule_dsl) struct RoundProgram {
     pub(in crate::code_rule_dsl) program: front::Program,
+    /// Its image, made once: what the kept part's reads and writes (`retain`) read of it.
+    pub(in crate::code_rule_dsl) placed: crate::code_rule_dsl::logic::plan::body::Placed,
     /// Each gate's `done` relation and its `ask` (none: the whole relation's gate, `done_N(0)`).
     gates: Vec<(String, Option<String>)>,
     /// Each request relation and its width.
@@ -112,7 +114,8 @@ impl RoundProgram {
         // each is kept in the frames as any derived relation, with its rows.
         program.outputs.clear();
         front::components_of(&program).ok()?;
-        Some(RoundProgram { program, gates, requests, produced, fs })
+        let placed = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&program).ok()?;
+        Some(RoundProgram { program, placed, gates, requests, produced, fs })
     }
 
     /// The relations a round's caller reads: its requests and asks.
@@ -128,7 +131,7 @@ impl RoundProgram {
 
     /// What `kept` lacks of a final round: the requests and inputs it does not hold.
     pub(in crate::code_rule_dsl) fn missing(&self, kept: &retain::Retained) -> Vec<String> {
-        let requests = self.requests.iter().map(|(r, _)| r).filter(|r| !kept.holds(r, &self.program));
+        let requests = self.requests.iter().map(|(r, _)| r).filter(|r| !kept.holds(r, &self.placed));
         requests.chain(self.program.inputs.iter().filter(|r| !kept.has_input(r))).cloned().collect()
     }
 
@@ -186,7 +189,7 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
 impl Inputs<'_> {
     /// The constants' digests: the inputs a round binds as they are, which the frames' reads record; of their
     /// content (`retain::cells_of`, decision 0212), as `program` types them.
-    pub(in crate::code_rule_dsl) fn constant_digests(&self, atoms: &crate::content_store::atoms::Atoms, program: &crate::code_rule_dsl::logic::front::Program, domains: &super::lower::Domains) -> HashMap<String, u64> {
+    pub(in crate::code_rule_dsl) fn constant_digests(&self, atoms: &crate::content_store::atoms::Atoms, program: &crate::code_rule_dsl::logic::plan::body::Placed, domains: &super::lower::Domains) -> HashMap<String, u64> {
         self.constants.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref(), &retain::cells_of(atoms, program, domains, rel, source.columns().len())))).collect()
     }
 }
@@ -357,11 +360,11 @@ impl RoundProgram {
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.
         let was = match &kept {
             Some(k) => k.frames().cloned(),
-            None => retain::Retained::from_frames(on.store, on.space, on.key, on.key, &self.program, &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &inputs.constant_digests(&atoms, &self.program, &domains))?.frames().cloned(),
+            None => retain::Retained::from_frames(on.store, on.space, on.key, on.key, &self.placed, &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &inputs.constant_digests(&atoms, &self.placed, &domains))?.frames().cloned(),
         };
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
-            let program = &self.program;
+            let program = &self.placed;
             // A cone's program has no split: its inputs' rows are grouped by their first node column (`group_col`).
             let no_locations = retain::Locations::new();
             // A granule the store no longer holds: the last run's round is not as kept, and the rounds give up (the
@@ -429,7 +432,7 @@ impl RoundProgram {
                     let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
                     of_rows(width, all)
                 };
-                let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.program, &domains, &rel, width));
+                let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, &domains, &rel, width));
                 bound.insert(rel, (source, digest));
             }
             let given: Vec<(String, Arc<dyn Source>, u64, bool)> = bound.iter().map(|(r, (s, d))| (r.clone(), Arc::clone(s), *d, !fresh.contains(r))).collect();
@@ -538,7 +541,7 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_frames(on.store, was, &self.program, &domains, &retain::Locations::new(), &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
+                next.write_frames(on.store, was, &self.placed, &domains, &retain::Locations::new(), &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
             }
             None => 0,
         };

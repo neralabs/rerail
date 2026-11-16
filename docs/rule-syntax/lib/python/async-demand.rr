@@ -8,7 +8,7 @@ async_documents(d) :- doc(d,_,_).
 .decl async_candidates(c:node,f:node,r:node,o:node)
 async_candidates(c,f,r,o) :- python_candidates(c,f,r,o,async_documents,async_candidate_target,"async_function","open").
 
-.decl async_api_target(q: symbol)
+.decl async_api_target(q: symbol) extensible
 .decl async_site(c: node, f: node, r: node)
 async_site(c,f,r) :- async_candidates(c,f,r,_).
 .decl async_reference(n: node)

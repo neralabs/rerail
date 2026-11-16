@@ -120,11 +120,74 @@ pub struct Body<'v> {
     lits: Vec<LitRef<'v>>,
     vars: OnceCell<Vec<VarSet>>,
     args: OnceCell<Vec<Vec<TermRef<'v>>>>,
+    /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
+    /// maintained form (`Versions::at`); `None` for every other rule.
+    sources: Option<&'v Version>,
 }
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new() }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), sources: None }
+    }
+    /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
+    /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
+    pub fn origin(&self) -> Option<Body<'v>> {
+        let v0 = self.sources?;
+        let src = Body::of(v0, v0.rule(self.rule.source()?)?);
+        // A maintenance rule derives a relation of its source's (`h__del` of `h`): any other is not its source.
+        let (head, of) = (self.rel(self.head()), src.rel(src.head()));
+        (head.len() > of.len() + 2 && head.starts_with(of) && head[of.len()..].starts_with("__")).then_some(src)
+    }
+    /// Each literal's literal of `src`, the rule it was written from (`origin`), where it is one: the same atom over
+    /// the same terms, of the same relation or one of its maintenance relations (`r__old`, `r__minus`, `r__del`, …),
+    /// or the same literal of another kind. The rewrite copies a source literal, or writes one of its maintenance
+    /// relations over its terms (`maintain::write_ir`); what it adds (`h__old(..)`, `h__del(..)`, a group) is no
+    /// source literal's. Each source literal is taken once, one of the same relation before one of its maintenance
+    /// relations.
+    pub fn source_map(&self, src: &Body<'_>) -> Vec<Option<usize>> {
+        let derived = |r: &str, of: &str| r.len() > of.len() + 2 && r.starts_with(of) && r[of.len()..].starts_with("__");
+        let digest = |b: &Body<'_>, i: usize| super::super::derived::digest(|d| b.digest_lit(d, b.lits[i]));
+        let mut used = vec![false; src.len()];
+        let mut map = vec![None; self.len()];
+        for exact in [true, false] {
+            for (i, m) in map.iter_mut().enumerate() {
+                if m.is_some() {
+                    continue;
+                }
+                let found = (0..src.len()).find(|&j| {
+                    !used[j]
+                        && match (self.atom(i), src.atom(j)) {
+                            (Some(a), Some(c)) => {
+                                let (r, of) = (self.rel(a), src.rel(c));
+                                (if exact { r == of } else { derived(r, of) })
+                                    && self.plain_atom(i).is_some() == src.plain_atom(j).is_some()
+                                    && self.args(i).len() == src.args(j).len()
+                                    && self.args(i).iter().zip(src.args(j)).all(|(&t, &u)| self.same_term(t, src, u))
+                            }
+                            (None, None) => exact && digest(self, i) == digest(src, j),
+                            _ => false,
+                        }
+                });
+                if let Some(j) = found {
+                    used[j] = true;
+                    *m = Some(j);
+                }
+            }
+        }
+        map
+    }
+    /// Whether term `t` of this body is term `u` of `o`: the same text, variables by their names.
+    fn same_term(&self, t: TermRef<'_>, o: &Body<'_>, u: TermRef<'_>) -> bool {
+        match (t, u) {
+            (TermRef::Var(a), TermRef::Var(b)) => self.var(a) == o.var(b),
+            (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
+            (TermRef::Int(a), TermRef::Int(b)) => a == b,
+            (TermRef::Str(a), TermRef::Str(b)) => self.v.text(a) == o.v.text(b),
+            (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
+                self.v.text(f) == o.v.text(g) && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
+            }
+            _ => false,
+        }
     }
     /// The arguments of literal `i`'s atom (its own, or its aggregate's; none for another literal).
     pub fn args(&self, i: usize) -> &[TermRef<'v>] {
@@ -448,6 +511,9 @@ pub struct Placed {
     pub maint: Option<Arc<Maint>>,
     /// The version's other fields, read once at the first `Fields::of` and shared by every clone after it.
     pub(super) fields: std::sync::OnceLock<Arc<super::fields::FieldsData>>,
+    /// The ids of `v`'s rules in order, made at the first `id` where `ids` is `None` and `v` numbers its rules other
+    /// than `0..size` (a view or an overlay: a split's part, decision 0244).
+    positions: std::sync::OnceLock<Arc<[RuleId]>>,
 }
 
 /// A maintained program's parts beside its version (decision 0215): each stratum that may be derived again
@@ -485,6 +551,23 @@ pub struct AgainRef {
 }
 
 impl Maint {
+    /// The parts' digest (decision 0173 §7): each stratum derived again (its relations by name, its rules' and deltas'
+    /// hashes) and each set run as one component, summed, so it reads no rule's text. A program's digest with its
+    /// version's is `Placed::digest`.
+    pub fn digest(&self) -> u64 {
+        use super::super::program_image::strings::hash;
+        let names = |rels: &[RelId]| self.names(rels).collect::<Vec<_>>().join("\0");
+        let rules = |ids: &[RuleId]| ids.iter().fold(0u64, |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())));
+        let mut d = 0u64;
+        for g in &self.again {
+            let text = format!("again\x01{}\x01{}\x01{}\x01{}\x01{:016x}\x01{:016x}", names(&g.scc), names(&g.owned), names(&g.reads), names(&g.olds), rules(&g.rules), rules(&g.deltas));
+            d = d.wrapping_add(hash(text.as_bytes()));
+        }
+        for t in &self.together {
+            d = d.wrapping_add(hash(format!("together\x01{}", names(t)).as_bytes()));
+        }
+        d
+    }
     /// The name of relation `r`, one of `v`'s.
     pub fn name(&self, r: RelId) -> &str {
         self.v.rel_name(r)
@@ -603,7 +686,7 @@ impl Maint {
 impl Placed {
     /// `rules` made into a version of their own, in order.
     pub fn made(rules: &[Rule]) -> Result<Placed> {
-        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None, fields: Default::default() })
+        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None, fields: Default::default(), positions: Default::default() })
     }
     /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
     /// fields (`About`), which the passes read beside the rules; and a maintained program's parts beside it
@@ -614,7 +697,7 @@ impl Placed {
             return Placed::made(&prog.rules);
         };
         let maint = if prog.again.is_empty() && prog.together.is_empty() { None } else { Some(Arc::new(Maint::of(&v, prog)?)) };
-        Ok(Placed { v, ids: None, whole: true, maint, fields: Default::default() })
+        Ok(Placed { v, ids: None, whole: true, maint, fields: Default::default(), positions: Default::default() })
     }
     /// The run's version of the program whose image this is (t36 item 7, step 2): normalized for the SQL kernel
     /// (`passes::normalize`, a derivation), with its stated facts apart where `apart` (`passes::stated_apart`, an
@@ -629,7 +712,7 @@ impl Placed {
         let sentinels = sentinels.iter().map(|&r| v.rel_name(r).to_owned()).collect();
         let (v, stated) = if apart { passes::stated_apart(&v).map_err(Error::Plan)? } else { (v, Vec::new()) };
         let stated = stated.iter().map(|&(r, s)| (v.rel_name(r).to_owned(), v.rel_name(s).to_owned())).collect();
-        Ok(Normalized { placed: Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default() }, sentinels, stated })
+        Ok(Normalized { placed: Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default(), positions: Default::default() }, sentinels, stated })
     }
     /// The program this version is, as the tree: its rules in the program's order, and a maintained program's parts
     /// (`Maint`). For a reader that still reads a tree: the program digests (decision 0173, step 6), the stored text,
@@ -644,7 +727,7 @@ impl Placed {
     /// A maintained form, a derivation of the run's version (decision 0241): its rules `v`'s in order, its fields
     /// its own, and its maintenance's parts beside it.
     pub fn derived(v: Arc<Version>, maint: Option<Arc<Maint>>) -> Placed {
-        Placed { v, ids: None, whole: true, maint, fields: Default::default() }
+        Placed { v, ids: None, whole: true, maint, fields: Default::default(), positions: Default::default() }
     }
     /// Its components, dependencies first, in the tree's order (`front::components_of`), its maintained program's
     /// sets run together.
@@ -658,11 +741,24 @@ impl Placed {
     }
     /// A version whose rules are `v`'s in order (a program's image).
     pub fn whole(v: Arc<Version>) -> Placed {
-        Placed { v, ids: None, whole: true, maint: None, fields: Default::default() }
+        Placed { v, ids: None, whole: true, maint: None, fields: Default::default(), positions: Default::default() }
     }
     /// `v`, the program's rule `k` its rule `ids[k]`.
     pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
-        Placed { v, ids: Some(ids.into()), whole, maint: None, fields: Default::default() }
+        Placed { v, ids: Some(ids.into()), whole, maint: None, fields: Default::default(), positions: Default::default() }
+    }
+    /// The program's digest (decision 0173 §7): its version's, kept as the version was made, less the rules the
+    /// program leaves out of it (where it is some of its version's rules), with its maintained parts'. A sum, so it
+    /// does not see the rules' order.
+    pub fn digest(&self) -> u64 {
+        let d = match &self.ids {
+            None => self.v.digest(),
+            Some(ids) => {
+                let all = self.v.rules().fold(0u64, |a, r| a.wrapping_add(r.hash()));
+                ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
+            }
+        };
+        self.maint.as_ref().map_or(d, |m| d.wrapping_add(m.digest()))
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {
@@ -670,7 +766,11 @@ impl Placed {
     }
     /// The id of the program's rule `k`.
     pub fn id(&self, k: usize) -> RuleId {
-        self.ids.as_ref().map_or(RuleId(k as u32), |ids| ids[k])
+        match &self.ids {
+            Some(ids) => ids[k],
+            None if matches!(*self.v, Version::Base { .. }) => RuleId(k as u32),
+            None => self.positions.get_or_init(|| self.v.rules().map(|r| r.id()).collect())[k],
+        }
     }
     /// The program's rules' ids, in its order.
     pub fn order(&self) -> Vec<RuleId> {
@@ -807,13 +907,12 @@ impl Versions {
     }
     /// The rule `k` names, as the planner reads it.
     pub fn at(&self, k: RuleKey) -> Body<'_> {
-        self.0[k.v as usize].2.body(k.id as usize)
-    }
-    /// The version rule `k` is a rule of, held, and its id there (what outlives the run: an upkeep job's).
-    pub fn held(&self, k: RuleKey) -> (Arc<Version>, RuleId) {
-        // An overlay's program rule `k` is its version's rule `ids[k]` (`Placed::id`).
-        let p = &self.0[k.v as usize].2;
-        (Arc::clone(&p.v), p.id(k.id as usize))
+        let mut b = self.0[k.v as usize].2.body(k.id as usize);
+        // A maintained form's rules name their sources by the run's version's ids (`Body::origin`).
+        if k.v != 0 {
+            b.sources = Some(&self.0[0].2.v);
+        }
+        b
     }
     /// The rule `k` names by its handles, its literals read in place: for a reader that walks it once, with no
     /// `Body` (which collects the literals).

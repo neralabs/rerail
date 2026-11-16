@@ -202,7 +202,7 @@ fn vue_view_scope_oracle() {
             .filter(|block| block.name == "script")
             .map(|block| block.content.clone())
             .collect();
-        let Some(view) = View::build(host.root(), &source) else {
+        let Some(view) = View::build(host.root(), &source, &|| false) else {
             errors.push(format!("{path}: no program"));
             continue;
         };
