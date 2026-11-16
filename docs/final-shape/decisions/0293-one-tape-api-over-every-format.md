@@ -54,7 +54,10 @@ This record is steps 2 and 3, and the API they need.
    crate embeds. A language without one has no format 16 tape: format 15 serves it, and the run says so.
 
 4. **The format a run reads** is `RERAIL_TAPE`: `15` (the default until 0156 is accepted), `16`, or `16z` (the fixed
-   blocks). A document's `AnyTape` comes from its `TapeDoc` (`TapeDoc::tape`).
+   blocks); another value stops the run. A document's `AnyTape` comes from its `TapeDoc` (`TapeDoc::tape`): format
+   15 over the image's own columns, with the image's code table as the API's (made once an image). A language
+   without a table, or an image with a code its table lacks, is read as format 15, and the run says so once a
+   language.
 
 5. **The axes read the tape** (step 3). `within.rs`'s kind-set axes (`nearest`, `inside`, `has`) take membership
    from the code, and climbs, subtrees and the batch's solve from the tape's structure (the lab's `prim`: nearest
@@ -67,7 +70,10 @@ This record is steps 2 and 3, and the API they need.
   read format 15 until they move to the API. So no memory or time is measured before then.
 - **The writer is driven from format 15's finished columns** where a tape is written, not by the parser: the
   parsers' format-15 writer wraps and rewinds (`Writer::insert`, `rewind`), which format 16's writer has no
-  calls for yet. Format 16 is stored beside format 15 and read back as stored, not written again at each load.
+  calls for yet. Format 16 is to be stored beside format 15 and read back as stored, not written again at each
+  load. Until the store keeps it, a document's format 16 (or 16z) is written from format 15 once an image, the
+  first time the run reads it in that format (`tape/formats.rs`). The store must keep it before anything is
+  measured: a load-time write would be counted as a read.
 - **The axes' Metal solve** still climbs a parent array on the device (`facts::nearest`). The lab's format-16
   kernels (E30, E31) replace it in step 5.
 

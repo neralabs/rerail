@@ -4775,3 +4775,33 @@ fn markdown_inline_parse_costs() {
         );
     }
 }
+
+/// Decision 0293: every format a run reads (`RERAIL_TAPE`) answers as the restored records do: kind, field, span,
+/// subtree, parent and children. The Python file is past two of 16z's fixed blocks, so its reads cross them.
+#[test]
+fn every_tape_format_reads_the_document_as_restored() {
+    use super::formats::Format;
+    use rerail_tape_format::f16::Z;
+    use rerail_tape_format::tape::{Tape, children};
+    let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
+    let (_, doc, _, _) = fixture(&source, GrammarDialect::Python);
+    let n = doc.transducer_len();
+    assert!(n > 2 * Z, "{n} nodes");
+    for (format, name) in [(Format::F15, "15"), (Format::F16, "16"), (Format::F16Z, "16z")] {
+        let t = doc.tape_in(format);
+        assert_eq!(t.format(), name, "Python has format 16's table");
+        rerail_tape_format::with_tape!(t, |t| {
+            assert_eq!(t.len(), n);
+            for i in 0..n {
+                let node = i as u32;
+                let e = t.table().entry(t.code(i));
+                assert_eq!((e.kind, e.field), (doc.transducer_kind(node), doc.transducer_field(node)), "{name}: code of {i}");
+                let span = doc.transducer_span(node);
+                assert_eq!((t.start(i), t.end(i)), (span.start as u64, span.end as u64), "{name}: span of {i}");
+                assert_eq!(t.subtree_end(i), doc.transducer_descendants(node).end as usize, "{name}: subtree of {i}");
+                assert_eq!(t.parent(i), doc.transducer_parent(node).map(|p| p as usize), "{name}: parent of {i}");
+                assert_eq!(children(&t, i).collect::<Vec<_>>(), doc.transducer_children(node).map(|c| c as usize).collect::<Vec<_>>(), "{name}: children of {i}");
+            }
+        });
+    }
+}

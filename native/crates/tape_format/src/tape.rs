@@ -209,6 +209,11 @@ impl<'a> F15<'a> {
         }
         Ok(t)
     }
+    /// The tape of columns a writer made in this process (the engine's own image, whose shape its restore
+    /// checked): not checked again, as it is read once a document a pass. A wrong column panics where it is read.
+    pub fn over(columns: F15Columns<'a>, table: &'a CodeTable) -> Self {
+        F15 { n: columns.code.len() / 2, c: columns, table }
+    }
     #[inline(always)]
     fn size(&self, i: usize) -> usize {
         (cell(self.c.size, self.c.widths[0], i) as usize).max(1)
