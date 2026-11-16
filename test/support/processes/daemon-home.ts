@@ -11,11 +11,14 @@ import { DAEMON_STATE_FILE, readDaemonState } from "../../../src/runtime/index.j
 /** The checkout under test, whose `dist/` holds the daemon and the CLI that starts it. */
 export const packageRoot = resolve(import.meta.dirname, "..", "..", "..");
 
-/** Waits until `holds` is true, polling, for at most `ms`. */
-export async function until(holds: () => boolean | Promise<boolean>, ms = 10_000): Promise<void> {
+/** A pid no live process can hold on the platforms Rerail supports. */
+export const DEAD_PID = 2 ** 22 - 1;
+
+/** Waits until `holds` is true, polling, for at most `ms`; the error names `what` was waited for. */
+export async function until(holds: () => boolean | Promise<boolean>, ms = 10_000, what = "the condition"): Promise<void> {
   const deadline = Date.now() + ms;
   while (!(await holds())) {
-    if (Date.now() > deadline) throw new Error(`still not true after ${ms} ms`);
+    if (Date.now() > deadline) throw new Error(`${what}: still not true after ${ms} ms`);
     await delay(20);
   }
 }
@@ -32,6 +35,7 @@ export async function freePort(): Promise<number> {
 
 const DAEMONS_FILE = "test-daemons.txt";
 const LAUNCHERS_FILE = "test-launchers.txt";
+const EXITED_FILE = "test-exited.txt";
 const OLDER_DAEMON_FILE = "older-daemon.mjs";
 /** How long a daemon holds its event loop once asked ({@link holdEventLoop}), as a long check holds a busy daemon's. */
 const BUSY_MS = 8_000;
@@ -39,7 +43,8 @@ const BUSY_MS = 8_000;
 /**
  * The environment of the Rerail processes a test starts in `home`, through which the test sees every one of them: each
  * daemon (`dist/cli/daemon-entry.js`, or the older build's `olderDaemon`) adds its pid to a file in `home`, and so does
- * each `rerail daemon start`, the launcher an autostart runs. Processes those start inherit it. With `busy`, a daemon's
+ * each `rerail daemon start`, the launcher an autostart runs; each adds it to another as it exits, however it exits but
+ * a kill. Processes those start inherit it. With `busy`, a daemon's
  * event loop can be held ({@link holdEventLoop}): once the file `busy` appears, the daemon removes it, makes
  * `<busy>.held`, and spins {@link BUSY_MS} without returning to its event loop, then removes `<busy>.held`. The daemon
  * looks only for the file, never at what it holds: it polls, and could read a file the test has created and not yet
@@ -55,6 +60,7 @@ const daemon = /[\\\\/](daemon-entry\\.js|older-daemon\\.mjs)$/u.test(entry);
 const launcher = /[\\\\/]cli\\.js$/u.test(entry) && process.argv[2] === "daemon" && process.argv[3] === "start";
 if (daemon) fs.appendFileSync(${JSON.stringify(join(home, DAEMONS_FILE))}, process.pid + "\\n");
 if (launcher) fs.appendFileSync(${JSON.stringify(join(home, LAUNCHERS_FILE))}, process.pid + "\\n");
+if (daemon || launcher) process.on("exit", () => fs.appendFileSync(${JSON.stringify(join(home, EXITED_FILE))}, process.pid + "\\n"));
 const busy = ${JSON.stringify(busy ?? null)};
 if (daemon && busy !== null) {
   setInterval(() => {
@@ -113,6 +119,23 @@ export function launchers(home: string): number[] {
   return recorded(home, LAUNCHERS_FILE);
 }
 
+/**
+ * Those of `pids`, started in `home` under `watchedEnvironment`, not recorded as exited as often as they were started,
+ * for the caller to ask whether each runs. A pid one of them gave up as it exited can belong to another process on the
+ * machine by now, or to another process of the test, which then has a start of its own.
+ */
+export function notExited(home: string, pids: readonly number[]): number[] {
+  const exits = new Map<number, number>();
+  for (const pid of recorded(home, EXITED_FILE)) exits.set(pid, (exits.get(pid) ?? 0) + 1);
+  const left = pids.filter(pid => {
+    const pending = exits.get(pid) ?? 0;
+    if (pending === 0) return true;
+    exits.set(pid, pending - 1);
+    return false;
+  });
+  return [...new Set(left)];
+}
+
 /** The pid `daemon.json` in `home` names, if it names one. */
 export async function recordedPid(home: string): Promise<number | undefined> {
   return (await readDaemonState(join(home, DAEMON_STATE_FILE)))?.pid;
@@ -150,11 +173,13 @@ export async function olderDaemon(home: string, env: NodeJS.ProcessEnv): Promise
 await serveRerailDaemon(process.argv.slice(2));
 `);
   const child = spawn(process.execPath, [script, "--state-file", join(home, DAEMON_STATE_FILE), "--workspace-root", home, "--dev", "--port", "0"], {
-    cwd: home, env, stdio: "ignore", windowsHide: true,
+    cwd: home, env, stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
   });
+  let errors = "";
+  child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
   await until(async () => {
-    if (child.exitCode !== null) throw new Error(`the older daemon exited with code ${child.exitCode}`);
+    if (child.exitCode !== null) throw new Error(`the older daemon exited with code ${child.exitCode}: ${errors.slice(-600)}`);
     return await recordedPid(home) === child.pid;
-  }, 30_000);
+  }, 30_000, "daemon.json naming the older daemon");
   return child;
 }

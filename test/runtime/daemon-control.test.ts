@@ -49,14 +49,11 @@ import {
 import { LOCKS_DIR } from "../../src/engine/index.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
-import { olderDaemon, until } from "../support/processes/daemon-home.js";
+import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
 import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
-
-/** A pid no live process can hold on the platforms Rerail supports. */
-const DEAD_PID = 2 ** 22 - 1;
 
 const originalRerailHome = process.env.RERAIL_HOME;
 
@@ -1274,11 +1271,14 @@ describe("autostartDaemon", () => {
     await writeFile(claims.hung, String(process.pid));
     for (const claim of Object.values(claims)) await utimes(claim, long, long);
     const renewed = async (claim: string): Promise<boolean> => (await stat(claim)).mtimeMs > long.getTime() + 1_000;
-    // A launcher that started 31 s ago has outlived any start's waits: it no longer keeps its claim.
-    const stops = [keepAutostartClaim(own!, Date.now()), keepAutostartClaim(other!, Date.now()), keepAutostartClaim(hung!, Date.now() - 31_000)];
+    // A launcher that started 46 s ago has outlived any start's waits: it no longer keeps its claim.
+    const stops = [keepAutostartClaim(own!, Date.now()), keepAutostartClaim(other!, Date.now()), keepAutostartClaim(hung!, Date.now() - 46_000)];
     try {
       await until(async () => await renewed(claims.own), 5_000);
+      // Renewed again a second later, not only as it began: the lease of 5 s outlasts no start without it.
+      const first = (await stat(claims.own)).mtimeMs;
       await delay(1_500);
+      expect((await stat(claims.own)).mtimeMs).toBeGreaterThan(first);
       expect(await renewed(claims.other)).toBe(false);
       expect(await renewed(claims.hung)).toBe(false);
     } finally {

@@ -861,7 +861,8 @@ async function main(): Promise<number> {
   const args = managedChild ? rawArgs.slice(1) : rawArgs;
   const answered = await runBeforeDispatch(args, manifest);
   if (answered !== undefined) return answered;
-  keepClaimOfLauncher(args, home);
+  // The claim names the launcher an autostart started, never the active version's CLI it hands the start to.
+  if (!managedChild) keepClaimOfLauncher(args, home);
 
   if (!managedChild && !isVersionIndependentCommand(args)) {
     const exit = await dispatchToManagedVersion(args, updater);
