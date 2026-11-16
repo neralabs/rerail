@@ -6,8 +6,7 @@
  * deviations listed here; a measuring variant of each rule (same counting, no threshold) must give every function
  * lizard's number, so functions at the limit and below are checked too. Test files are out of scope even where lizard
  * scores them over the limit. The conformance check judges the same rules on the findings alone
- * (fixtures.expected.json, with packs/complexity/divergences.json); this test checks every number. The Java rule is a
- * candidate (packs/complexity/candidates/rules/): held to the same parity here, not shipped.
+ * (fixtures.expected.json, with packs/complexity/divergences.json); this test checks every number.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -196,8 +195,7 @@ function findings(language: CorpusLanguage, compiled: NativeCompiledCodeRuleDsl,
   return Object.fromEntries(Object.entries(messages(compiled, files)).map(([at, text]) => [at, ccnOf(language, text)]));
 }
 
-// `rules/` of the pack and of its candidates.
-const documents = loadPackRuleDocuments([repositoryPath("packs", "complexity"), repositoryPath("packs", "complexity", "candidates")]).filter(document => document.rule.id.startsWith("complexity-"));
+const documents = loadPackRuleDocuments([repositoryPath("packs", "complexity")]).filter(document => document.rule.id.startsWith("complexity-"));
 function ruleJson(language: CorpusLanguage): string {
   const document = documents.find(candidate => candidate.rule.id === RULES[language]);
   if (document === undefined) throw new Error(`${RULES[language]} is not bundled`);

@@ -15,9 +15,7 @@ describe("guidance review data", () => {
       "complexity-cyclomatic-typescript",
       "complexity-cyclomatic-vue",
     ]);
-    // The Java rule is a candidate: pack.json lists no examples for it, so its cases are its fixtures alone.
-    expect(pack?.rules.filter(rule => rule.candidate).map(rule => rule.id)).toEqual(["complexity-cyclomatic-java"]);
-    for (const rule of pack?.rules.filter(rule => !rule.candidate) ?? []) {
+    for (const rule of pack?.rules ?? []) {
       const caught = rule.cases.find(item => item.kind === "example");
       // Verbatim what the agent reads after an edit: the lead, each finding with its location and rule, the latitude.
       // Blade's example is a closure, named by the variable it is assigned to.
