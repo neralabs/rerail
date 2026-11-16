@@ -471,12 +471,12 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
 }
 
 /**
- * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), then ends what a daemon that died since
- * left open (`endAbandonedSessions`), as a start does: another daemon on the same records can run on for days after one
- * dies, with no start to end them. Only once an owner lock beside the database is free (`someOwnerLockFreed`), which a
- * service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on the
- * daemon's main thread, so a minute with no such lock opens no database. Rows that name no lock are judged at the next
- * start then, or by a sweep a free lock brings.
+ * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), then ends what a daemon that died left
+ * open (`endAbandonedSessions`), as a start does, for when the start's own pass failed, which it reports: with one
+ * daemon per Rerail home (`holdHomeDaemonLock`), no other start comes while this one runs. Only once an owner lock
+ * beside the database is free (`someOwnerLockFreed`), which a service that ended leaves: opening a writer waits for
+ * another process's write lock, up to `busy_timeout`, on the daemon's main thread, so a minute with no such lock opens
+ * no database. Rows that name no lock are judged at the next start then, or by a sweep a free lock brings.
  */
 async function sweepIdle(state: EngineRoutingState, options: EngineServiceOptions, databasePath: string): Promise<void> {
   const idleMs = options.idleSessionMs ?? IDLE_SESSION_MS;

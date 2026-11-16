@@ -317,7 +317,8 @@ describe("the next daemon's start after a daemon that died", () => {
 });
 
 describe("a daemon that runs on after another on the same records died", () => {
-  // Nothing starts after the death: the other daemon can run for days, and its idle sweep ends what the dead one left.
+  // The idle sweep ends what a dead daemon left when the start's own pass could not: a second service stands in for the
+  // daemon that runs on.
   it("ends the dead daemon's quiet session at its next idle sweep, as that daemon's idle close did, whatever holds its pid", { timeout: 120_000 }, async () => {
     const { root, databasePath, checkout } = await records();
     const { start, prompt } = events(checkout);

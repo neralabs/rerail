@@ -250,9 +250,9 @@ are not waited for further: that edit is checked by the first pass once they ope
   freed, the last the daemon heard of it, not when the daemon stopped.
 - A daemon that ends without being stopped (the machine restarts or shuts down, it is killed) ends no session. The next
   daemon to start on the same Rerail home ends each session it left open there, at 30 minutes after the session's last
-  event, or at that start when sooner. A second daemon already running on the same Rerail home does the same within a
-  minute, once it finds a lock that daemon held free; until then its minute's check opens no database. The session's
-  next event opens it again. A session that a daemon still running holds is left as it is. A daemon tells that another
+  event, or at that start when sooner. When that start could not end them, which its log says, the daemon tries again
+  every minute while a lock that daemon held is free; a minute with no such lock opens no database. The session's next
+  event opens it again. A session that a daemon still running holds is left as it is. A daemon tells that another
   has stopped by a lock that daemon held, also when another process now has its process id. Where a session's record
   names no such lock (a pi or OMP session, one a daemon recorded in another home or while it could take no lock, or
   one an earlier version left), it goes by that process id alone, at a start or when a free lock brings the check: it
