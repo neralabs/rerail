@@ -284,6 +284,16 @@ the save. `live-test-remote` now runs as here (`RELAX_SHARE`, the cap) with its 
 host's farm root, and sends the open-file limit (it did not, though §2 said so): on the M3 Max a
 cold first verdict in 160 s, then 2–3 s per body edit. Details in `scripts/dev/relax/README.md`.
 
+Quiet runs (2026-11-15, farm 9). Benchmarks among a dozen agents measured whatever else was
+running. `scripts/dev/quiet-run` leases a machine (a host, or this one) for a command: fair turns
+by the last hour's use, one request per checkout, 5 minutes guaranteed and more only while nobody
+wants the machine. While leased the farm sends it no compiles or test commands, and here every
+compile waits. Work the farm does not control (tests, Relax) is reported by checkout, and that
+checkout's builds are told it was unfair. Tested here, on the M1 Max, queued (two checkouts) and
+stopped when wanted. Here the machine never got idle in these tests: 5–18 cores busy at the
+start, mostly Spotlight, media analysis and other agents' tests. So the report, not the lease,
+is what makes a local benchmark's number readable. A host is the place for a quiet one.
+
 Hub code under Relax (2026-11-15). Relax rejected `ColMap::of_rel` (plan/table.rs) with E0310, which
 rustc accepts. The reduction: an edition 2024 `impl Iterator` returned from `fn f(&self, _r: &str)`
 (so it captures both lifetimes) that holds a closure built inside another closure, which captures

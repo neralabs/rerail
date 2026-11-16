@@ -59,7 +59,14 @@ scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds mis
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
+scripts/dev/quiet-run [--here] --minutes 5 -- COMMAND  # a benchmark on a mostly idle machine
 ```
+
+Benchmark only through `quiet-run` (README, "Quiet runs"). It waits its turn, keeps the farm's work
+off the machine, and runs COMMAND for 5 minutes, longer only while nobody else wants it. When a
+build prints that this machine is leased for a benchmark, its compiles wait. Don't start tests,
+Relax or other heavy work here until the lease ends: send them with `test-remote`. Doing so is
+unfair to the benchmark, and the checkout is told so at its next builds.
 
 `test-remote` sends this checkout's changes to a usable host and runs the command there, from
 `native/` (or `--dir`), in a warm target directory of its own on that host. A host can be asleep, gone,

@@ -48,7 +48,7 @@ instead, and only that run's output is shown.
 | `farm.py` | all of them |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host, and (`exec`) a test command there |
-| `status` | what the farm can use now: each host probed, and why one is not usable |
+| `status` | what the farm can use now: each host probed, and why one is not usable; leases and their queues |
 | `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
 | `setup` | installs all of it here, the machine's cargo configuration, a configuration to fill in, and the toolchain on each host |
 | `cargo-config` | writes the farm's part of `~/.cargo/config.toml` (`--check` reports) |
@@ -158,7 +158,9 @@ profile) while a test host has 4 cores or more to spare is told the `test-remote
 it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). The hourly job writes
 those findings after the cleaner (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
-its message. A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
+its message. On a machine leased for a benchmark (Quiet runs, below), every build is told the
+lease and its end, and a checkout whose processes loaded it during one is told that this was unfair.
+A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
 build at the first compile. `RERAIL_FARM_QUIET=1` silences the warnings.
 
 ## Configuration
@@ -258,6 +260,45 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
 with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).
+
+## Quiet runs: a lease for benchmarks
+
+A benchmark needs a machine nobody else loads. `scripts/dev/quiet-run` asks for one, waits its
+turn, and runs a command there:
+
+```
+scripts/dev/quiet-run [--host NAME | --here] [--minutes N] [--max-wait M] [--label TEXT] \
+                      [--dir native] [--tree DIR]... -- COMMAND...
+```
+
+The default machine is the usable host with the shortest queue and the most cores to spare;
+`--here` is this one. On a host, COMMAND runs in this checkout's copy there, as `test-remote` sends
+it (`--tree` sends inputs or a program built here), at nice 0.
+
+**The rules.**
+
+| Rule | How it holds |
+|---|---|
+| A run has 5 minutes | Past them it goes on, up to `--minutes` (60 at most), only while nobody else wants the machine. A compile or test turned away, or a request queued, wants it, and the run is stopped (exit 124). Plan a long benchmark in parts of 5 minutes. |
+| Fair turns | The queue is served by use: the checkout that held leases least in the last hour goes first, then the earliest asked. A checkout has one request open or held at a time (a second exits 75). |
+| Unfair use is told | A request from a checkout that held more than its share while others wait is warned. On this machine, a checkout whose processes used 10 CPU-s or more during a lease, started after it, is told at the first compile of each of its cargo commands for 3 hours. Every build's first compile on a leased machine is told so, with the end of the lease. |
+| A person comes first | A host whose user is at it (input in the last 5 minutes) is not taken (exit 75). |
+| Bounded | A lease ends with its holder: its process gone, or its time past. A wait is bounded by `--max-wait` (default 30 minutes), the drain by 2 minutes. |
+
+**What a lease does.** While it holds a machine the farm sends it nothing new: no remote compiles
+or `test-remote` commands to a leased host, and on a leased machine here every compile waits
+(the wrapper's first step, incremental ones included). Then the drain waits for the farm's work in
+flight to end and the CPU (sampled over a second, not the load average) to settle: nearly idle, or
+no longer falling, since what is left is work the farm does not hold back. Here that is tests,
+Relax and other processes: the farm controls only compiles, so the unfairness warnings above are
+what keeps them off. The lease's own command runs with `RERAIL_FARM_LEASE` set, so its builds are
+not held back.
+
+**The report.** At the end it prints how busy the machine was at the start, the load during the run,
+and each other process that used a fifth of a core or more, with its checkout (by working
+directory) and whether it started before the lease. The ledger
+(`~/Library/Caches/rerail-farm/leases/ledger.jsonl`) keeps each lease's machine, checkout, times,
+end and load; `status` shows each machine's lease, its queue and the last hour's use.
 
 ## No shared volume, no copy mode
 
