@@ -274,11 +274,33 @@ impl StopBy {
                 .is_some();
         }
         if forward {
-            self.reaches(node, || node.next(), || node.next_all(), related, env)
+            self.reaches(node, || node.next(), || charged(node, true, node.next_all()), related, env)
         } else {
-            self.reaches(node, || node.prev(), || node.prev_all(), related, env)
+            self.reaches(node, || node.prev(), || charged(node, false, node.prev_all()), related, env)
         }
     }
+}
+
+/// A sibling walk from `node` that spends, before each sibling and past the last, one matcher call for each implied
+/// token it passes (`gap::ImpliedPassed`), as a walk over the full tree tests each of them as a candidate: a work
+/// budget buys a named-only tape's walk what it buys a full tree's, and a clause runs out where it did before RER-131.
+/// The walk ends where the budget does, as a candidate's test then would.
+fn charged<'t, D: Doc>(node: &Node<'t, D>, forward: bool, all: impl Iterator<Item = Node<'t, D>>) -> impl Iterator<Item = Node<'t, D>> {
+    let passed = super::gap::ImpliedPassed::of(node);
+    let mut from = Some(node.node_id());
+    let mut all = all.fuse();
+    std::iter::from_fn(move || {
+        let at = from.take()?;
+        let next = all.next();
+        for _ in 0..passed.between(at, next.as_ref().map(Node::node_id), forward) {
+            if budget::matcher_call_budget_exhausted() {
+                return None;
+            }
+        }
+        let next = next?;
+        from = Some(next.node_id());
+        Some(next)
+    })
 }
 
 /// One candidate's verdict for a node-local rule (`Related::chains`), which reads no binding, and

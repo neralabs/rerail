@@ -29,10 +29,12 @@
 
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::AstMatcher;
+use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::tape::tokens::TokenGrammar;
 pub use crate::code_rule_dsl::tape::tokens::stored_gaps;
 use ast_grep_core::{Doc, Node};
 use crate::code_rule_dsl::regexes::Regex;
+use std::any::TypeId;
 use std::sync::Arc;
 
 /// Where, relative to the node, the token is looked for.
@@ -142,52 +144,17 @@ pub(super) struct ParentGaps {
     child_at: rustc_hash::FxHashMap<usize, usize>,
 }
 
-impl GapTest {
-    /// Whether an implied token the regex matches is at the test's place.
-    pub(in crate::code_rule_dsl) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        let found = self.found(node, true);
-        if self.stored {
-            // Where the gaps cannot be read the node keeps its tokens, and the walk reads them.
-            return found.is_none_or(|found| found.neighbour.is_none_or(|at| matches!(found.read.items[at], Item::Child(_))));
-        }
-        found.is_some_and(|found| !found.at.is_empty())
-    }
+/// Reads a parent's children and its gaps' tokens in order (`ParentGaps`) under one grammar: the gap tests', and the
+/// work a named-only walk owes for the implied tokens it passes (`implied_passed`).
+struct ParentReader<'g>(&'g TokenGrammar);
 
-    /// How many implied tokens the regex matches are at the test's place (`count`).
-    pub(in crate::code_rule_dsl) fn count<D: Doc>(&self, node: &Node<'_, D>) -> usize {
-        self.found(node, false).map_or(0, |found| found.at.len())
-    }
-
-    /// The token at the test's place that the regex matches, its byte range in the file and its
-    /// text: the first implied one, or a stored token where the tape keeps it (the relation's own
-    /// walk reads that one). An implied token's range is read from the source between its
-    /// parent's stored children: the gap holds only its word, whitespace and extras. `None` where
-    /// no token matches.
-    pub(in crate::code_rule_dsl) fn token<D: Doc>(&self, node: &Node<'_, D>) -> Option<(std::ops::Range<usize>, String)> {
-        let found = self.found(node, true)?;
-        let children = found.children();
-        let items = &found.read.items;
-        let stored = |at: &usize| matches!(items[*at], Item::Child(child) if !children[child].is_named() && self.regex.is_match(&children[child].text()));
-        let candidate = match &self.place {
-            Place::Own | Place::Field(_) => (0..items.len()).find(|at| found.at.first() == Some(at) || stored(at)),
-            Place::Before | Place::After => found.at.first().copied().or(found.neighbour.filter(stored)),
-            Place::Earlier | Place::Later => found.at.first().copied(),
-        }?;
-        match items[candidate] {
-            Item::Child(child) => Some((children[child].range(), children[child].text().into_owned())),
-            Item::Token(text, _) => {
-                let start = self.token_starts(&found.owner, children, items)[candidate]?;
-                Some((start..start + text.len(), text.to_owned()))
-            }
-        }
-    }
-
+impl ParentReader<'_> {
     /// The start of each implied token among `items`, by its place in the source: a gap's tokens
     /// lie after the named child before it that is not an extra (or the parent's start), in
     /// order, with only white space, extras and stored tokens between them. `None` for a stored
     /// child, and for a token the source does not hold where the grammar says.
     fn token_starts<D: Doc>(&self, owner: &Node<'_, D>, children: &[Node<'_, D>], items: &[Item<'_>]) -> Vec<Option<usize>> {
-        let passed = |child: &Node<'_, D>| !child.is_named() || self.grammar.is_extra(&child.kind());
+        let passed = |child: &Node<'_, D>| !child.is_named() || self.0.is_extra(&child.kind());
         let base = owner.range().start;
         let text = owner.text();
         let mut starts = vec![None; items.len()];
@@ -221,7 +188,7 @@ impl GapTest {
     /// source may hold its tokens before or between them (`{/* c */}`: `{`, the comment, `}`;
     /// `for (k in o)`: the stored `for`, then `(`).
     fn interleaved<'g, D: Doc>(&self, owner: &Node<'_, D>, children: &[Node<'_, D>], items: Vec<Item<'g>>) -> Vec<Item<'g>> {
-        let passed = |child: usize| !children[child].is_named() || self.grammar.is_extra(&children[child].kind());
+        let passed = |child: usize| !children[child].is_named() || self.0.is_extra(&children[child].kind());
         // Only a run holding both a passed child and an implied token can be out of order.
         let mut mixed = false;
         let (mut child_in_run, mut token_in_run) = (false, false);
@@ -260,16 +227,15 @@ impl GapTest {
         }
         order.into_iter().map(|at| items[at]).collect()
     }
-
     /// `owner`'s reading: its children and the gaps' tokens in order; `None` where its kind has no
     /// automaton or the automaton refuses its children.
     fn read<D: Doc>(&self, owner: &Node<'_, D>) -> Option<ParentGaps> {
-        let (children, gaps) = stored_gaps(&self.grammar, owner)?;
+        let (children, gaps) = stored_gaps(self.0, owner)?;
         let items: Vec<Item<'static>> = self
             .interleaved(owner, &children, sequence(children.len(), &gaps))
             .into_iter()
             .map(|item| match item {
-                Item::Token(text, field) => Item::Token(self.grammar.intern(text), self.grammar.intern(field)),
+                Item::Token(text, field) => Item::Token(self.0.intern(text), self.0.intern(field)),
                 Item::Child(child) => Item::Child(child),
             })
             .collect();
@@ -282,6 +248,95 @@ impl GapTest {
             })
             .collect();
         Some(ParentGaps { items, child_at })
+    }
+}
+
+/// The implied tokens a sibling walk passes between stored children of one parent, counted as the tree-sitter tree
+/// holds them: the candidates a walk over a full tree tests between two of the tape's (RER-131). A named-only tape
+/// leaves them out, so its walk tests fewer candidates for the same siblings, and its work budget, spent per
+/// candidate, bought more work than a full tree's: the walk charges these (`relation::charged`). Read once per walk,
+/// from the parent's gaps (`memo::parent_gaps`); none for a document that is not a tape, and where the parent's kind
+/// has no automaton or its gaps cannot be read (its tokens are then stored, and walked).
+pub(super) struct ImpliedPassed(Option<Arc<ParentGaps>>);
+
+impl ImpliedPassed {
+    /// The gaps of `node`'s parent.
+    pub(super) fn of<D: Doc>(node: &Node<'_, D>) -> Self {
+        if TypeId::of::<D>() != TypeId::of::<TapeDoc>() {
+            return Self(None);
+        }
+        // SAFETY: `D` is `TapeDoc` (checked above).
+        let node: &Node<'_, TapeDoc> = unsafe { &*std::ptr::from_ref(node).cast() };
+        let read = node.parent().and_then(|parent| {
+            let grammar = TokenGrammar::of_dialect(*parent.lang())?;
+            super::memo::parent_gaps(Arc::as_ptr(&grammar) as usize, &parent, || ParentReader(&grammar).read(&parent))
+        });
+        Self(read)
+    }
+
+    /// The implied tokens from the child `from` to the child `to` (node ids), walking `forward` or back; `to`
+    /// `None`: on to the parent's end, or back to its start.
+    pub(super) fn between(&self, from: usize, to: Option<usize>, forward: bool) -> usize {
+        let Some(read) = &self.0 else { return 0 };
+        let Some(&at) = read.child_at.get(&from) else { return 0 };
+        let end = match to {
+            Some(to) => match read.child_at.get(&to) {
+                Some(&end) => end,
+                None => return 0,
+            },
+            None if forward => read.items.len(),
+            None => return Self::tokens(&read.items[..at]),
+        };
+        match forward {
+            true if end > at => Self::tokens(&read.items[at + 1..end]),
+            false if end < at => Self::tokens(&read.items[end + 1..at]),
+            _ => 0,
+        }
+    }
+
+    fn tokens(items: &[Item<'_>]) -> usize {
+        items.iter().filter(|item| matches!(item, Item::Token(..))).count()
+    }
+}
+
+impl GapTest {
+    /// Whether an implied token the regex matches is at the test's place.
+    pub(in crate::code_rule_dsl) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+        let found = self.found(node, true);
+        if self.stored {
+            // Where the gaps cannot be read the node keeps its tokens, and the walk reads them.
+            return found.is_none_or(|found| found.neighbour.is_none_or(|at| matches!(found.read.items[at], Item::Child(_))));
+        }
+        found.is_some_and(|found| !found.at.is_empty())
+    }
+
+    /// How many implied tokens the regex matches are at the test's place (`count`).
+    pub(in crate::code_rule_dsl) fn count<D: Doc>(&self, node: &Node<'_, D>) -> usize {
+        self.found(node, false).map_or(0, |found| found.at.len())
+    }
+
+    /// The token at the test's place that the regex matches, its byte range in the file and its
+    /// text: the first implied one, or a stored token where the tape keeps it (the relation's own
+    /// walk reads that one). An implied token's range is read from the source between its
+    /// parent's stored children: the gap holds only its word, whitespace and extras. `None` where
+    /// no token matches.
+    pub(in crate::code_rule_dsl) fn token<D: Doc>(&self, node: &Node<'_, D>) -> Option<(std::ops::Range<usize>, String)> {
+        let found = self.found(node, true)?;
+        let children = found.children();
+        let items = &found.read.items;
+        let stored = |at: &usize| matches!(items[*at], Item::Child(child) if !children[child].is_named() && self.regex.is_match(&children[child].text()));
+        let candidate = match &self.place {
+            Place::Own | Place::Field(_) => (0..items.len()).find(|at| found.at.first() == Some(at) || stored(at)),
+            Place::Before | Place::After => found.at.first().copied().or(found.neighbour.filter(stored)),
+            Place::Earlier | Place::Later => found.at.first().copied(),
+        }?;
+        match items[candidate] {
+            Item::Child(child) => Some((children[child].range(), children[child].text().into_owned())),
+            Item::Token(text, _) => {
+                let start = ParentReader(&self.grammar).token_starts(&found.owner, children, items)[candidate]?;
+                Some((start..start + text.len(), text.to_owned()))
+            }
+        }
     }
 
     fn found<'t, D: Doc>(&self, node: &Node<'t, D>, first: bool) -> Option<Found<'t, D>> {
@@ -297,7 +352,7 @@ impl GapTest {
             Place::Own | Place::Field(_) => node.clone(),
             _ => node.parent()?,
         };
-        let read = super::memo::parent_gaps(Arc::as_ptr(&self.grammar) as usize, &owner, || self.read(&owner))?;
+        let read = super::memo::parent_gaps(Arc::as_ptr(&self.grammar) as usize, &owner, || ParentReader(&self.grammar).read(&owner))?;
         let items = &read.items;
         let children = std::cell::OnceCell::new();
         let child = |k: usize| children.get_or_init(|| owner.children().collect::<Vec<_>>())[k].clone();
