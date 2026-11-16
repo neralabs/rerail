@@ -21,6 +21,7 @@ import { linkDeliveries } from "../../presentation/session-presentation.js";
 import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { registerPiFixTool } from "./pi-fix-tool.js";
+import { registerPiConflictRenderer } from "./pi-conflict-renderer.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../../engine/catalog/registry.js";
 import { openCheckoutConversationRules } from "../../engine/code-rule/code-rule-dsl-catalog.js";
 import { defaultRerailDatabasePath } from "../../engine/storage/database.js";
@@ -74,6 +75,8 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
     const pendingBackgroundDeliveries = new Map<RerailRuntime, AdapterDelivery[]>();
     let semantic: NativeSemanticRuntime | undefined;
     const presentation = createOmpPresentation("pi");
+    // A Merge Assist note shows the person its conflict's line rather than Pi's card of the agent's note.
+    registerPiConflictRenderer(pi);
 
     const activeRegistry = (): ConversationRuleRegistry => {
       if (registry === undefined) throw new Error("cosine-rules extension received an event before session_start");

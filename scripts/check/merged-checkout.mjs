@@ -4,9 +4,10 @@
 // file limit, a migration list both sides added to). `prepare` prints a folder holding the working tree (staged,
 // unstaged and untracked work) merged into `origin/main`, checked out as a throwaway detached worktree with this
 // checkout's node_modules linked in; or the checkout itself when it already holds `origin/main`, when there is none,
-// or when the merge would conflict (said on stderr: CI runs on neither until the branch is merged). `remove <folder>`
-// removes what `prepare` made. scripts/check/pre-commit.sh runs its checks there. Nothing touches the network, the
-// branch, the index or the working tree; the commits it writes are unreachable and Git collects them.
+// or when the merge would conflict or Git cannot merge (said on stderr: CI runs on neither until the branch is merged).
+// scripts/check/pre-commit.sh runs its checks there. It makes the folder for `prepare --scratch <folder>` itself, so its
+// clean-up, `remove <folder>/checkout`, removes what `prepare` made even when a Ctrl-C stops it midway. Nothing touches
+// the network, the branch, the index or the working tree; the commits it writes are unreachable and Git collects them.
 import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,12 +49,14 @@ function workingTreeCommit(root, scratch, env) {
   return git(root, ["commit-tree", tree, "-p", "HEAD", "-m", "pre-commit: the working tree"], { ...plain, ...IDENTITY });
 }
 
-/** `work` merged into `base` as a commit, or the files they conflict in. */
+/** `work` merged into `base` as a commit, the files they conflict in, or why Git could not merge them. */
 function mergeWithBase(root, work, base, env) {
   const merge = spawnSync("git", ["merge-tree", "--write-tree", "--name-only", work, base], { cwd: root, env, encoding: "utf8" });
   // 1 is a conflict; anything else is Git failing (an older Git has no `--write-tree`), or stopped (Ctrl-C).
   if (merge.status === null) throw new Error("git merge-tree was stopped");
-  if (merge.status !== 0 && merge.status !== 1) throw new Error(`git merge-tree failed (it needs Git 2.38 or later): ${merge.stderr.trim()}`);
+  if (merge.status !== 0 && merge.status !== 1) {
+    return { failure: merge.stderr.split("\n").find((line) => line.trim() !== "")?.trim() ?? `exit ${merge.status}` };
+  }
   const [tree = "", ...rest] = merge.stdout.split("\n");
   if (merge.status === 1) return { conflicts: rest.slice(0, rest.indexOf("") === -1 ? rest.length : rest.indexOf("")) };
   return { commit: git(root, ["commit-tree", tree, "-p", work, "-p", base, "-m", `pre-commit: merged with ${base}`], { ...env, ...IDENTITY }) };
@@ -61,26 +64,29 @@ function mergeWithBase(root, work, base, env) {
 
 /**
  * The folder the pre-commit checks run in, from the checkout at `root`, with a `note` for the person when there is one,
- * and whether it is a throwaway worktree that {@link removeMergedCheckout} removes.
+ * and whether it is a throwaway worktree that {@link removeMergedCheckout} removes. A merge is made in `scratch` (a
+ * folder named with the `rerail-pre-commit-` prefix), or in a folder of its own.
  */
-export function prepareMergedCheckout(root, { base = BASE, env = process.env } = {}) {
+export function prepareMergedCheckout(root, { base = BASE, env = process.env, scratch } = {}) {
   const plain = withoutHookIndex(env);
   if (!succeeds(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`], plain)) {
     return { checkout: root, throwaway: false, note: `there is no ${base}, so your branch is checked alone` };
   }
   if (succeeds(root, ["merge-base", "--is-ancestor", base, "HEAD"], plain)) return { checkout: root, throwaway: false };
-  const scratch = mkdtempSync(join(tmpdir(), SCRATCH_PREFIX));
-  const checkout = join(scratch, "checkout");
+  const folder = scratch ?? mkdtempSync(join(tmpdir(), SCRATCH_PREFIX));
+  const checkout = join(folder, "checkout");
   try {
-    const merged = mergeWithBase(root, workingTreeCommit(root, scratch, env), base, plain);
+    const merged = mergeWithBase(root, workingTreeCommit(root, folder, env), base, plain);
     if (merged.commit === undefined) {
-      rmSync(scratch, { recursive: true, force: true });
+      rmSync(folder, { recursive: true, force: true });
       return {
         checkout: root, throwaway: false,
-        note: `your work conflicts with ${base} in ${merged.conflicts.join(", ")}, and CI runs on neither until you merge it; your branch is checked alone`,
+        note: merged.conflicts === undefined
+          ? `could not merge your work with ${base} (git merge-tree: ${merged.failure}; it needs Git 2.38 or later), so your branch is checked alone`
+          : `your work conflicts with ${base} in ${merged.conflicts.join(", ")}, and CI runs on neither until you merge it; your branch is checked alone`,
       };
     }
-    const noHooks = join(scratch, "no-hooks");
+    const noHooks = join(folder, "no-hooks");
     mkdirSync(noHooks);
     // No hook of the repository's (Git LFS's post-checkout) and no LFS download: CI's checkout holds pointers too.
     git(root, ["-c", `core.hooksPath=${noHooks}`, "worktree", "add", "--quiet", "--detach", checkout, merged.commit], { ...plain, GIT_LFS_SKIP_SMUDGE: "1" });
@@ -114,17 +120,17 @@ function isLink(path) {
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = git(process.cwd(), ["rev-parse", "--show-toplevel"], withoutHookIndex(process.env));
-  const [command, folder] = process.argv.slice(2);
-  // A Ctrl-C stops the Git command running, not this script, so it still removes what it made; pre-commit.sh then exits.
-  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {});
-  if (command === "prepare") {
-    const { checkout, note } = prepareMergedCheckout(root);
+  const [command, ...rest] = process.argv.slice(2);
+  if (command === "prepare" && (rest.length === 0 || (rest.length === 2 && rest[0] === "--scratch"))) {
+    const { checkout, note } = prepareMergedCheckout(root, { scratch: rest[1] });
     if (note !== undefined) process.stderr.write(`pre-commit: ${note}\n`);
     process.stdout.write(`${checkout}\n`);
-  } else if (command === "remove" && folder !== undefined) {
-    removeMergedCheckout(root, folder);
+  } else if (command === "remove" && rest.length === 1) {
+    // A second Ctrl-C during pre-commit.sh's clean-up stops the Git command running, not the removal.
+    for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {});
+    removeMergedCheckout(root, rest[0]);
   } else {
-    process.stderr.write("usage: merged-checkout.mjs prepare | remove <folder>\n");
+    process.stderr.write("usage: merged-checkout.mjs prepare [--scratch <folder>] | remove <folder>\n");
     process.exit(2);
   }
 }

@@ -1,8 +1,9 @@
 // scripts/check/merged-checkout.mjs: the pre-commit checks run on the working tree merged into the local origin/main,
 // as CI runs them on the pull request merged into main.
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +20,7 @@ const ENV = {
 delete ENV.GIT_INDEX_FILE;
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, env: ENV, encoding: "utf8" }).trim();
+const SCRIPT = fileURLToPath(new URL("../../../scripts/check/merged-checkout.mjs", import.meta.url));
 
 const roots = [];
 afterEach(() => {
@@ -36,6 +38,13 @@ function repository() {
   git(root, "update-ref", "refs/remotes/origin/main", "main");
   git(root, "switch", "-q", "-c", "feature");
   return root;
+}
+
+/** An empty folder to stand for the temporary folder, so what is left in it is what a run left. */
+function temporaryFolder() {
+  const folder = realpathSync(mkdtempSync(join(tmpdir(), "rerail-merged-checkout-tmp-")));
+  roots.push(folder);
+  return folder;
 }
 
 /** `origin/main` gains `file` with `text`, as a fetch after main moved on would leave it. */
@@ -115,11 +124,19 @@ describe("the checkout the pre-commit checks run in", () => {
     });
   });
 
-  it("says why when git merge-tree fails other than on a conflict", () => {
+  it("is the checkout itself, saying why, when git merge-tree fails other than on a conflict", () => {
     const root = repository();
     git(root, "update-ref", "refs/remotes/origin/main", git(root, "commit-tree", "HEAD^{tree}", "-m", "unrelated"));
+    const tmp = temporaryFolder();
 
-    expect(() => prepareMergedCheckout(root, options)).toThrow(/needs Git 2\.38.*unrelated histories/su);
+    const run = spawnSync("node", [SCRIPT, "prepare"], { cwd: root, env: { ...ENV, TMPDIR: tmp }, encoding: "utf8" });
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout.trim()).toBe(root);
+    expect(run.stderr.trim()).toMatch(
+      /^pre-commit: could not merge your work with origin\/main \(git merge-tree: fatal: refusing to merge unrelated histories; it needs Git 2\.38 or later\), so your branch is checked alone$/u,
+    );
+    expect(readdirSync(tmp)).toEqual([]);
     expect(git(root, "worktree", "list").split("\n")).toHaveLength(1);
   });
 
@@ -177,6 +194,42 @@ describe.skipIf(process.platform === "win32")("the pre-commit hook", () => {
     const listed = runHook(root, { ...ENV, PATH: path, GIT_INDEX_FILE: ".git/index" });
 
     expect(listed).toEqual(expect.arrayContaining(["a.txt", "branch.txt", "main.txt"]));
+    expect(git(root, "worktree", "list").split("\n")).toHaveLength(1);
+  });
+
+  // A stub git, ahead of the real one on PATH, that stops for a Ctrl-C at one point of `prepare`.
+  it.each([
+    ["merging", '*" merge-tree "*) : >"$MARKER"; sleep 30 ;;'],
+    ["with the worktree made", '*" worktree add "*) "$REAL" "$@"; : >"$MARKER"; sleep 30 ;;'],
+  ])("leaves no folder or worktree behind when stopped %s", { timeout: 30_000 }, async (_phase, stop) => {
+    const { root, path } = hookRepository();
+    const tmp = temporaryFolder();
+    const marker = join(root, ".git", "stopped-here");
+    const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    const bin = join(root, ".git", "stub-git");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "git"), `#!/bin/sh\ncase " $* " in\n  ${stop}\nesac\nexec "$REAL" "$@"\n`, { mode: 0o755 });
+
+    const hook = spawn("sh", ["scripts/check/pre-commit.sh"], {
+      cwd: root, env: { ...ENV, PATH: `${bin}:${path}`, TMPDIR: tmp, REAL: real, MARKER: marker }, detached: true, stdio: "ignore",
+    });
+    const exited = once(hook, "exit");
+    try {
+      while (!existsSync(marker) && hook.exitCode === null) await new Promise((wake) => setTimeout(wake, 50));
+      expect(existsSync(marker)).toBe(true);
+      expect(readdirSync(tmp)).toEqual([expect.stringMatching(/^rerail-pre-commit-/u)]);
+      // A Ctrl-C reaches every process of the terminal's foreground group: the hook, node and git.
+      process.kill(-hook.pid, "SIGINT");
+      expect(await exited).toEqual([130, null]);
+    } finally {
+      try {
+        process.kill(-hook.pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+
+    expect(readdirSync(tmp)).toEqual([]);
     expect(git(root, "worktree", "list").split("\n")).toHaveLength(1);
   });
 

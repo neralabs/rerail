@@ -43,11 +43,11 @@ const workspace = mergeAssistWorkspaces();
 const THEIR_ORDERS = { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" };
 
 /** A workspace with Merge Assist on, and a pass's context over it: pull requests as `pulls` says. */
-async function enabled(): Promise<{ ws: Workspace; context: (pulls: DetectContext["pulls"]) => DetectContext }> {
+async function enabled(): Promise<{ ws: Workspace; context: (pulls: DetectContext["pulls"], login?: string) => DetectContext }> {
   const ws = await workspace();
   await ws.service().setEnabled(ws.repo, true);
   const checkout = lookupCheckout(ws.database, ws.repo)!;
-  return { ws, context: pulls => ({ database: ws.database, checkout, pulls, now: Date.now }) };
+  return { ws, context: (pulls, login) => ({ database: ws.database, checkout, pulls, login: login ?? null, now: Date.now }) };
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -170,6 +170,17 @@ describe("a detection pass", { timeout: 30_000 }, () => {
 
     await detectConflicts(context([forkPull(5, "tbelanger", pushed), forkPull(6, "jbarnes", theirs)]));
     expect(open(ws)).toEqual(["refs/pull/6/head"]);
+  });
+
+  it("leaves out a pull request from the signed-in person's own fork of this branch, whatever this branch's reflog holds", async () => {
+    const { ws, context } = await enabled();
+    // A head this branch never pointed at (pushed from another clone, or its reflog expired), in the person's fork.
+    const elsewhere = commit(ws.worktree("other-clone"), THEIR_ORDERS, "Version the orders path");
+
+    await detectConflicts(context([forkPull(5, "TBelanger", elsewhere)]));
+    expect(open(ws)).toEqual(["refs/pull/5/head"]);
+    await detectConflicts(context([forkPull(5, "TBelanger", elsewhere)], "tbelanger"));
+    expect(open(ws)).toEqual(["other-clone"]);
   });
 
   it("keeps the open conflicts, and says so, when there is no base branch to compare with", async () => {

@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, MessageRenderer, MessageRenderOptions, Theme } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /** A main build's Pi goes through the daemon; tests that set `main` stand in for that daemon. */
@@ -47,6 +47,8 @@ interface PiHarness {
   commands: Map<string, CommandHandler>;
   messages: Array<{ message: unknown; options: unknown }>;
   entries: Array<{ customType: string; data: unknown }>;
+  /** The message renderers the extension registered, by `customType`. */
+  renderers: Map<string, MessageRenderer>;
   pi: ExtensionAPI;
   context: ExtensionContext;
   repositoryKey: string;
@@ -90,6 +92,7 @@ function createHarness(branch: unknown[] = []): PiHarness {
   const commands = new Map<string, CommandHandler>();
   const messages: Array<{ message: unknown; options: unknown }> = [];
   const entries: Array<{ customType: string; data: unknown }> = [];
+  const renderers = new Map<string, MessageRenderer>();
   const pi = {
     on(event: string, handler: Handler) {
       handlers.set(event, handler);
@@ -104,13 +107,16 @@ function createHarness(branch: unknown[] = []): PiHarness {
     registerCommand(name: string, options: { handler: CommandHandler }) {
       commands.set(name, options.handler);
     },
+    registerMessageRenderer(customType: string, renderer: MessageRenderer) {
+      renderers.set(customType, renderer);
+    },
   } as unknown as ExtensionAPI;
   const context = {
     cwd,
     sessionManager: { getSessionId: () => "pi-test-session", getBranch: () => branch },
   } as unknown as ExtensionContext;
   shutdowns.push(async () => handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, context));
-  return { handlers, commands, messages, entries, pi, context, repositoryKey };
+  return { handlers, commands, messages, entries, renderers, pi, context, repositoryKey };
 }
 
 function receiptCount(harness: PiHarness, sessionId = "pi-test-session"): number {
@@ -383,6 +389,11 @@ describe("Pi conversation-rules extension", () => {
           options: { deliverAs: "steer" },
         }]);
         expect(receiptCount(harness)).toBe(0);
+        // The person sees the conflict's line, not Pi's card of the note the agent read.
+        const sent = harness.messages[0]!.message as Parameters<MessageRenderer>[0];
+        const drawn = harness.renderers.get(RULE_MESSAGE_TYPE)?.(sent, { expanded: false, outputPad: 1 } as MessageRenderOptions, { fg: (_colour: string, text: string) => text } as Theme);
+        const lines = drawn?.render(200).map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, "").trimEnd());
+        expect(lines).toEqual([" ◆ R E R A I L · your edit overlaps jbarnes-1 (Tim): model.ts"]);
       } finally {
         spy.mockRestore();
       }

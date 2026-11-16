@@ -69,6 +69,8 @@ export interface DetectContext {
   readonly now: () => number;
   /** The open pull requests, as last listed; null when they could not be read, and remote-tracking branches stand in. */
   readonly pulls: readonly PullRequestSummary[] | null;
+  /** The person's GitHub login, as `gh` is signed in; absent or null when unknown. */
+  readonly login?: string | null;
 }
 
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
@@ -161,24 +163,25 @@ async function liveCommit(root: string, view: MineView, sha: string): Promise<bo
 
 /**
  * The pull requests from a fork that are this checkout's own work: their head branch is this checkout's branch (or its
- * upstream's), and their head commit was once this branch's tip, as its reflog holds it (an amend or a rebase since
- * moved it). Another person's fork with a branch of the same name never was; once Git expires that reflog entry, the
- * pull request is compared again.
+ * upstream's), and either the fork is the person's (its owner is the login `gh` is signed in with) or their head commit
+ * was once this branch's tip, as its reflog holds it (an amend or a rebase since moved it). Another person's fork with a
+ * branch of the same name is neither.
  */
-async function ownForkPulls(root: string, view: MineView, pulls: readonly PullRequestSummary[]): Promise<Set<PullRequestSummary>> {
+async function ownForkPulls(root: string, view: MineView, pulls: readonly PullRequestSummary[], login: string | null): Promise<Set<PullRequestSummary>> {
   const named = pulls.filter(pull => pull.crossRepository && view.own.has(pull.headRefName));
   if (named.length === 0 || view.branch === null) return new Set();
-  const reflog = await gitReadAsync(root, ["reflog", "show", "--format=%H", `refs/heads/${view.branch}`, "--"], LIST_OPTIONS);
+  const theirFork = named.filter(pull => login === null || pull.headOwner?.toLowerCase() !== login.toLowerCase());
+  const reflog = theirFork.length === 0 ? "" : await gitReadAsync(root, ["reflog", "show", "--format=%H", `refs/heads/${view.branch}`, "--"], LIST_OPTIONS);
   const tips = new Set((reflog ?? "").split("\n"));
-  return new Set(named.filter(pull => tips.has(pull.headCommit)));
+  return new Set(named.filter(pull => !theirFork.includes(pull) || tips.has(pull.headCommit)));
 }
 
 /**
  * Open pull requests whose head this repository holds and neither this branch nor the base branch already contains,
  * less this checkout's own from a fork ({@link ownForkPulls}).
  */
-async function pullRefs(root: string, view: MineView, pulls: readonly PullRequestSummary[]): Promise<LiveRef[]> {
-  const own = await ownForkPulls(root, view, pulls);
+async function pullRefs(root: string, view: MineView, pulls: readonly PullRequestSummary[], login: string | null): Promise<LiveRef[]> {
+  const own = await ownForkPulls(root, view, pulls, login);
   const theirs = pulls.filter(pull => !own.has(pull));
   const live = await mapLimited(theirs, pull => liveCommit(root, view, pull.headCommit));
   return theirs.filter((_, index) => live[index]).map(pull => ({
@@ -282,7 +285,7 @@ async function liveRefs(
   const pulls = context.pulls ?? [];
   const open = new Set(pulls.map(pullKey));
   const now = context.now();
-  const [opened, listed] = await Promise.all([pullRefs(root, view, pulls), branchRefs(root, view, context.pulls === null)]);
+  const [opened, listed] = await Promise.all([pullRefs(root, view, pulls, context.login ?? null), branchRefs(root, view, context.pulls === null)]);
   const keys = new Set(view.own);
   const shas = new Set<string>();
   const kept = [...opened, ...(listed ?? []).filter(ref => !stale(ref, open, now))].filter(ref => {

@@ -178,7 +178,7 @@ Where your line appears, and what happens to a steer found as the turn ends:
 - **Codex:** under the tool call (`↳ Hook · …`), plain: `… steered  ·  why? → <url>`. Codex takes a turn-end block as your message, so a turn-end steer shows nothing then: its line and its block ride the next hook carrying context (your next prompt, a tool call, a session start), the block led as a late steer.
 - **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `… steered  ·  [why?](<url>)`. A turn-end steer waits for the next tool result or session start.
 - **OMP:** drawn in OMP's theme colours, `why?` a link where the terminal draws them. Ctrl+O expands it to show each rule's source and the block, dimmed. A steer riding an edit's tool result shows right after that call's results, before the next model call; the agent never sees the line. At turn end, the run waits up to 10 seconds for the turn's check, then pending steers continue the run before it reports done. A steer arriving once the session is idle waits for your next message.
-- **Pi:** Pi's default message card, showing the whole block; Pi's extension API gives Rerail nothing to draw its own line with. Turn end as OMP.
+- **Pi:** Pi's default message card, showing the whole block. Turn end as OMP.
 
 </details>
 
@@ -287,7 +287,7 @@ Experimental, in [internal testing](../README.md#internal-testing), and off by d
 
 Dismiss on the dashboard (or `rerail merge-assist dismiss <conflict-id>`) is the person's only action on a conflict. Over MCP a coding agent cannot dismiss one (`403 agent-not-permitted`); an agent with a shell can still run `rerail merge-assist dismiss`, which runs as the person ([threat model](threat-model.md#t15-an-agent-saves-a-command-the-daemon-later-runs-as-the-person)).
 
-The same delivery carries the person's line, `◆ Rerail · your edit overlaps <label> (<author>): <title>  ·  open`, in Claude Code's and Codex's `systemMessage` beside the steer lines (the coloured `R E R A I L` in Claude Code, the word in Codex), and in OMP's steer card, `open` linking the conflict's card. Pi draws no Rerail line, as for steers. The footer's summary segment is below. None of these interrupts an edit.
+The same delivery carries the person's line, `◆ Rerail · your edit overlaps <label> (<author>): <title>  ·  open`, in Claude Code's and Codex's `systemMessage` beside the steer lines (the coloured `R E R A I L` in Claude Code, the word in Codex), and in OMP's steer card and in place of Pi's message card, `open` linking the conflict's card where the terminal draws links, else followed by its address. In OMP and Pi, Ctrl+O expands it to show the link written out and the note the agent read, dimmed. The footer's summary segment is below. None of these interrupts an edit.
 
 Codex has no footer, so its person's line carries the conflict's line: `<line> — <summary>`, read when the note is handed over, so a status the conflict hook command gave after the note was queued is the one shown.
 
@@ -357,13 +357,13 @@ The footer never animates. Full audits and rule lists are on the dashboard.
 
 ### Links in the terminal
 
-Steer lines in Claude Code and OMP are clickable (OSC 8) links in terminals known to draw them; elsewhere the URL is printed.
+Steer lines in Claude Code and OMP, and Merge Assist lines in those and Pi, are clickable (OSC 8) links in terminals known to draw them; elsewhere the URL is printed.
 
 <details>
 <summary>Supported terminals and overrides</summary>
 
 - **Supported:** kitty, Ghostty, WezTerm, iTerm2, VS Code, Alacritty, Windows Terminal, Orca, and tmux 3.4 or later; never GNU screen.
-- **Override:** `RERAIL_NO_HYPERLINKS=1` or `RERAIL_FORCE_HYPERLINKS=1` (OMP: `PI_NO_HYPERLINKS` / `PI_FORCE_HYPERLINKS`).
+- **Override:** `RERAIL_NO_HYPERLINKS=1` or `RERAIL_FORCE_HYPERLINKS=1` (OMP: `PI_NO_HYPERLINKS` / `PI_FORCE_HYPERLINKS`). Pi follows its own detection and its own override, `PI_HYPERLINKS` or the `terminal.hyperlinks` setting.
 
 The footer always carries its links; your terminal decides if they are clickable.
 

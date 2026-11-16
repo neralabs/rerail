@@ -122,6 +122,8 @@ export interface MergeAssistServiceOptions {
 
 /** How long `gh`'s readiness is reused before `gh auth status` runs again; a scan always reads it afresh. */
 const GITHUB_READINESS_MS = 5 * 60_000;
+/** How long a `gh` that could not tell (`unavailable`) is believed: soon asked again, but not on every status read. */
+const GITHUB_UNAVAILABLE_MS = 60_000;
 /** A scan marked running for longer than this, or by a process that is gone, was cut short; another may start. */
 const SCAN_STALE_MS = 10 * 60_000;
 /** The least time between two detections of a checkout's conflicts after the agent's edits. */
@@ -143,6 +145,8 @@ type ScanMark = z.infer<typeof scanningSchema>;
 interface PullListing {
   readonly pulls: readonly PullRequestSummary[] | null;
   readonly problems: readonly string[];
+  /** The login `gh` listed them with; null when it did not. */
+  readonly login?: string | null;
 }
 
 /** What a scan says when open pull requests could not be read: recently committed remote-tracking branches stood in. */
@@ -272,20 +276,21 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * `gh`'s readiness for the repository: the one read in the last five minutes by any process, else read now. One
-   * `gh` could not tell (`unavailable`) is never kept, and none is kept once Merge Assist is off.
+   * `gh`'s readiness for the repository: the one read in the last five minutes by any process (the last minute, for
+   * one `gh` could not tell, `unavailable`), else read now. None is kept once Merge Assist is off.
    */
   async #githubReadiness(repositoryKey: string, fresh: boolean): Promise<GithubReadiness> {
     const repository = githubRepositoryOf(repositoryKey);
     if (repository === null) return { state: "not-github", login: null, repository: null };
     const key = STATE_KEYS.github(repositoryKey);
     const cached = fresh ? undefined : readState(this.#db, key, githubCacheSchema);
-    if (cached !== undefined && this.#now() - cached.at < GITHUB_READINESS_MS) return cached.readiness;
+    const reuse = cached?.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
+    if (cached !== undefined && this.#now() - cached.at < reuse) return cached.readiness;
     let reading = this.#githubReads.get(repositoryKey);
     if (reading === undefined) {
       reading = this.#githubClient.readiness(repository)
         .then(readiness => {
-          if (readiness.state !== "unavailable") this.#keepReadiness(repositoryKey, readiness);
+          this.#keepReadiness(repositoryKey, readiness);
           return readiness;
         })
         .finally(() => this.#githubReads.delete(repositoryKey));
@@ -358,7 +363,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       return { pulls: null, problems: problem === undefined ? [] : [problem] };
     }
     const { pulls, truncated } = await this.#githubClient.openPullRequests(repository);
-    return { pulls, problems: truncated ? [`Only the ${PULL_REQUEST_LIMIT} newest open pull requests were compared.`] : [] };
+    return { pulls, problems: truncated ? [`Only the ${PULL_REQUEST_LIMIT} newest open pull requests were compared.`] : [], login: readiness.login };
   }
 
   /**
@@ -386,10 +391,10 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
    * as the checkout's last scan.
    */
   async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
-    const { pulls, problems } = await this.#openPulls(checkout, scan);
+    const { pulls, problems, login = null } = await this.#openPulls(checkout, scan);
     // Stopped while `gh` answered: the database may be closed, and nothing found now would be heard.
     if (this.#stopped) return;
-    const detected = await detectConflicts({ database: this.#db, checkout, pulls, now: this.#now });
+    const detected = await detectConflicts({ database: this.#db, checkout, pulls, login, now: this.#now });
     if (detected === null) return;
     if (scan) {
       const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...problems, ...detected.problems] };
@@ -582,7 +587,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
 /**
  * Merge Assist over one database. It runs `gh` only to list open pull requests, and the person's hook command on
  * conflict events; a status read runs neither, apart from `gh auth status` at most every five minutes per repository
- * while Merge Assist is on for it, and nothing while it is off.
+ * (every minute while `gh` cannot tell) while Merge Assist is on for it, and nothing while it is off.
  */
 export function createMergeAssistService(options: MergeAssistServiceOptions): MergeAssistRuntime {
   return new DatabaseMergeAssist(options);

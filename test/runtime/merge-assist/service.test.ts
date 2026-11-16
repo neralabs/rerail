@@ -115,19 +115,24 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.readinessReads).toBe(reads + 3);
   });
 
-  it("says when gh could not tell whether it is signed in, keeps no such answer, and makes it a problem of the scan", async () => {
+  it("says when gh could not tell whether it is signed in, asks again after a minute, and makes it a problem of the scan", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
     const github = new FakeGithub({ readinessError: true });
-    const service = ws.service({ github });
+    const service = ws.service({ github, now: () => now });
     const status = await service.setEnabled(ws.repo, true);
 
     expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app" });
+    const reads = github.readinessReads;
+    // Status reads within the minute run no `gh` again.
     await service.status(ws.repo);
-    expect(github.readinessReads).toBe(2);
+    await service.status(ws.repo);
+    expect(github.readinessReads).toBe(reads);
     expect((await service.scan(ws.repo)).lastScan).toMatchObject({ peers: { pullRequests: 0 }, problems: [expect.any(String)] });
 
-    // Once gh answers, the next read says so: nothing kept the failure.
+    // Once gh answers, the first read after the minute says so.
     github.options.readinessError = false;
+    now += 60_000;
     expect((await service.status(ws.repo)).readiness.github.state).toBe("signed-in");
   });
 
