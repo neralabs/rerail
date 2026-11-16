@@ -379,13 +379,90 @@ The rules that keep this one API:
 - **The guard test** refuses a `.metal` struct named like a `structure!`, and a `[[buffer(n)]]` outside a
   generated prologue. Its allowlist of kernels not yet ported may only shrink.
 
-## Consequence to settle while building
+### 10. Freeze: what makes reads come in a fixed order
 
-GPU writers claim rows in no fixed order, so a relation's row order varies from run to run. Anything keyed on a
-block's bytes depends on that order: frame digests, and a memo entry's key if it covers rows. That includes the
-determinism 0263 kept by merging morsels in order. So a range that leaves the run (a journal's frames, a memo
-entry) is either digested as a set or sorted when it is frozen. Which one is decided at step 4, with the
-measurement of both.
+Writers fill a relation in any order: many threads at once, or a GPU's claims. Freeze, once per relation at the
+end of its stratum, turns that into a relation every reader sees the same way, whoever wrote it:
+
+- **Set semantics.** It drops duplicate rows. In a delta it also drops rows the base still holds live (a binary
+  search of the base's order).
+- **The canonical order.** The live rows, sorted by the relation's order key (its declared key columns first, then
+  the rest). It is a permutation of row ids, so no row moves and no reference into the rows breaks.
+- **Hash indexes** on the declared keys, grouped stably, so a probe's answer comes in canonical order too.
+- **Dead bits** (the kills, plus the duplicates it dropped) and **statistics** (each column's minimum and maximum).
+- **The flag `FROZEN`,** written last. From then on the relation changes only by a new delta.
+
+A base and its delta read as one through the merged view: liveness from both, the two canonical orders merged,
+and a probe answered from both indexes, merged. So the earlier question of what anything keyed on a block's
+bytes does about GPU claim order is answered: nothing keys on bytes. Digests, frames and memo keys read the
+canonical order, which is the same for the same set of rows.
+
+```rust
+p1.begin(S_EDGE);
+join_gpu(&p1, ...);                              // claims in any order, on the device or on threads
+let st = p1.freeze_rel(P_EDGE);                  // set, order, indexes, dead bits, stats; FreezeStats
+p1.end(S_EDGE);
+let v = frozen.view(P_EDGE);                     // base + delta as one
+for id in v.ordered() { /* canonical order */ }
+for id in v.probe(0, &[callee]) { /* canonical order within the key */ }
+```
+
+Fields that change while a block is open (row counts, chunk offsets, the spans freeze sets, a stratum's range,
+the delta's cost) are atomics in the layout: relaxed loads, which are plain loads on ARM, and plain types in MSL.
+Writing them through pointers made from `&` let the optimiser keep a stale chunk offset. The profiling build
+faulted where the debug build passed. Atomics are the only way to write through a shared reference that Rust
+allows.
+
+### 11. The spike: every operation, every phase
+
+`native/crates/blocks` (with `examples/paces.rs`) builds this decision's blocks and runs a small rule workload
+through them, across every phase:
+
+- documents into `Chunk`s, with file-local facts, on 4 threads;
+- P1 cross-file facts in three strata: exports, a call-edge join (on the CPU and on the GPU), and a reachability
+  fixpoint;
+- P2, then the outputs;
+- a `Journal` in a file, holding memo entries, reopened and used for a memo-warm run;
+- one-file edits maintained as cumulative deltas, with roll-ups;
+- `Program` blocks with module deltas and roll-ups.
+
+After every run, every relation is checked against a from-scratch oracle, as a digest in canonical order. Checks
+also cover:
+
+- the GPU join against the CPU join, over base + delta;
+- the GPU overflow path, which reruns once;
+- memo-warm runs against cold ones;
+- roll-ups, which read the same before and after;
+- the journal refusing short files, never-frozen files and crashed files.
+
+Measured in the profiling build, with retired instructions:
+
+| Run | Checks | Cold | Freeze, share of cold | One edit, maintained | Peak footprint |
+|---|---|---|---|---|---|
+| 300 docs, 0.8M nodes, 8 edits | 128 pass | 1.76 G insn, 31 ms | about 6% | 108 M insn, 6 ms | 152 MB |
+| 50 docs, 40 edits | 480 pass | | | | 134 MB |
+| 20 docs, 40 edits | 485 pass, 1 roll-up | | | | 126 MB |
+| 3,000 docs, 8.1M nodes, 3 edits | 73 pass | 17.6 G insn, 274 ms | about 5% | 977 M insn, 40 ms | 255 MB |
+
+- **Freeze costs about 5% of a cold run.** Its delta form, which dedups against the base, costs 0.5 M
+  instructions per edit at 3,000 docs.
+- **Most of an edit's cost is the spike's workload,** not blocks. At 3,000 docs the reachability stratum is
+  recomputed and diffed (680 M of the 977 M). The edited chunk costs 6 M, carrying the delta forward 2.6 M, and
+  the maintained edge join 1.3 M.
+- **A delta stays small.** It is about 1/200 of its base at 3,000 docs after 3 edits. Roll-up fires by the cost
+  rule: at 20 docs, at the 30th edit, the cost was 165,604 bytes against a base of 164,424. The new full block
+  reads the same.
+- **The GPU's submission cost follows the length of the wrapped buffer,** not the bytes a kernel touches:
+  wrapping a 2 GiB reservation cost 120 ms per join, and wrapping 256 MiB about 17 ms. So a block is wrapped for
+  its used extent, rounded to 1 MiB, and a join costs about 3 ms. The first dispatch costs about 112 MB of
+  driver footprint once.
+- **Memo entries are gathered by document index.** A chunk's hits are a table of entry references, each entry
+  copied whole from the journal. They are not one contiguous range.
+
+The spike's ergonomics gaps, for step 1:
+
+- `View::ordered` and `probe` return `Vec`s. They become iterators over the merged order.
+- The carry step re-pushes a delta's rows. It becomes a range copy, like `copy_stratum`.
 
 ## Path
 

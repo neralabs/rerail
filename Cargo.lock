@@ -3159,6 +3159,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-blocks"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "metal",
+]
+
+[[package]]
 name = "rerail-compiler"
 version = "0.1.0"
 dependencies = [
