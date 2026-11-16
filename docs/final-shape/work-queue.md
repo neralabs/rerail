@@ -653,6 +653,14 @@ pass.
   operation it names, so all 30 land on the bound-pattern row, the one `match` probe not on the device. The
   ledger was last blessed at a9291fadd, before that commit. Re-blessed: `packs.tsv`'s one line moves (668 to 698,
   python-main 432 to 462), `matrix.tsv` is unchanged, and no new kind of gap appears. Passes.
+- **The rest of "each fails alone", at the hub's head** (2026-11-16): `a_stored_program_is_read_from_its_image`,
+  `library_modules_link_to_the_lowering_of_them_together`, `the_gate_catches_a_widened_walk`,
+  `spilled_walks_find_the_cpus_roots` and `the_backends_find_the_same_keys_on_real_files` pass. (`executors_are_shared`
+  is the blocks crate's, not run here; `rule_files_pass_their_own_tests` and the replay sample not run.)
+  `rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding` failed on its cause: 0174's on-request rewrite
+  answered `value` with no rule reading it, making it a derived relation the SQL executor refused beside the
+  snapshot's bound `value`. Fixed in `sources_on_request` (an attribute no rule reads stays an input; 0174 notes
+  it). Passes, with the executor's other 13 top-level tests and the on-request tests.
 
 - **Done when**: each passes on the hub, fixed at its cause.
 
@@ -666,6 +674,8 @@ pass.
   javascript pack's library linked from its modules differs from the one lowered together at line 441,
   `rr_cover135` against `rr_cover121`, 2,383 lines against 2,385).
 - **Done when**: both pass, each traced to its cause (and a commit that made it red, where one did).
+- **Record** (2026-11-16): both pass at the hub's head (after the roll-up of 2026-11-16); neither change traced to
+  one commit.
 
 ### Q23. The transducer's Metal tests register no language in `rerail-device-metal`
 
