@@ -100,3 +100,9 @@ every run (29,747, the same set).
   3.39 → 3.23/3.24 s.
 - **Still serial in phase 1:** the cone's strata (`ask_loaded_bff`, `ask_py_…`: about 0.6 s each, one walk each,
   in one job), and "answer load" (about 1 s on the main thread). The cone's documents are built on the pool.
+- **Then (decision 0292):** a CPU timeline showed the loads answered with 8–12 cores busy, and then 1.6–1.8 s on two:
+  the one recursive import stratum (50 relations), whose joins make text on every row and so walked whole. They
+  now walk in morsels that defer their new texts (one walk's atoms), a load's chunks evaluate at once, and a
+  long-text read goes with the file-local join that binds its node (which also fixed two tests that failed on many
+  threads). Phase 1 3.80/3.77 s → 3.60/3.53 s; the stratum's joins 0.70 s → 0.30 s on its thread (1.1 s CPU in
+  650 morsels). "Answer load" was waiting for documents built on the pool, not serial work.

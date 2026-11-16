@@ -267,10 +267,11 @@ fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
 }
 
 /// Decision 0279 §7: a scan whose join only reads texts (here a split whose parts are looked up) walks in morsels, and
-/// makes one walk's rows; one that makes atoms (the parts in its head, interned) walks whole, so its new atoms' ids
-/// do not follow the threads' timing.
+/// makes one walk's rows. Decision 0292 §1: one that makes atoms (the parts in its head, interned) walks in morsels too,
+/// each deferring its new texts, interned at the merge in the morsels' order: one walk's rows, under the atoms one
+/// walk gives them (each walk's connection has an arena of its own).
 #[test]
-fn a_join_that_only_reads_texts_walks_in_morsels_and_one_that_makes_atoms_walks_whole() {
+fn a_join_that_reads_texts_or_makes_atoms_walks_in_morsels_and_makes_one_walks_atoms() {
     if crate::threads::max() < 2 {
         return;
     }
@@ -294,18 +295,26 @@ fn a_join_that_only_reads_texts_walks_in_morsels_and_one_that_makes_atoms_walks_
         let (table, second) = if rel.starts_with("one ") { ("one", "''".to_owned()) } else { ("res", text("c1")) };
         let rows: Vec<(String, String)> = db.prepare(&format!("SELECT {}, {second} FROM {table} ORDER BY 1, 2", text("c0"))).unwrap()
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        // Each text with the value it is stored under: the atom where it is one.
+        let atoms: Vec<(String, String)> = db.prepare(&format!("SELECT {}, CAST(c0 AS TEXT) FROM {table} ORDER BY 1, 2", text("c0"))).unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
         close(&db, "txt").unwrap();
-        (rows, walked)
+        (rows, walked, atoms)
     };
     // The head reads the whole, not the parts: they are only keys of `p`.
     let looked_up = format!("pos {w} v0\ncat v0 v1 v2\npos {p} v1 v2\nhead v0");
-    let (one, _) = walk(&looked_up, "one s", true);
-    let (many, walked) = walk(&looked_up, "one s", false);
+    let (one, _, _) = walk(&looked_up, "one s", true);
+    let (many, walked, _) = walk(&looked_up, "one s", false);
     assert!(walked > 0, "the split's parts are only looked up: its scan walks in morsels");
     assert_eq!(one.len(), 13_334, "every third name's parts are a row of p");
     assert_eq!(many, one, "the same rows");
     let interned = format!("pos {w} v0\ncat v0 v1 v2\nhead v1 v2");
-    let (made, walked) = walk(&interned, "res ss", false);
-    assert_eq!(walked, 0, "parts in the head are interned: the walk stays whole");
-    assert_eq!(made.len(), 40_000 * 2, "each name at its start and at its dot");
+    let (whole, none, whole_atoms) = walk(&interned, "res ss", true);
+    let (made, walked, made_atoms) = walk(&interned, "res ss", false);
+    assert_eq!(none, 0, "under walks_whole, no morsels");
+    assert!(walked > 0, "parts in the head are deferred in each morsel: the walk is in morsels");
+    assert_eq!(whole.len(), 40_000 * 2, "each name at its start and at its dot");
+    assert_eq!(made, whole, "the same rows");
+    assert!(whole_atoms.iter().any(|(t, v)| t != v), "the parts are atoms");
+    assert_eq!(made_atoms, whole_atoms, "the same atom for each text: interned in one walk's order");
 }

@@ -163,6 +163,9 @@ levers left are threads (§5, after the lock) and fewer lookups (a plan that rea
 
 ### 7. Built: the arena's lock sharded by reader; text joins that make no atoms walk in morsels
 
+Narrowed by decision 0292 §1: a join that makes atoms walks in morsels too, each deferring its new texts, interned
+at the merge in the morsels' order.
+
 The arena's `RwLock<State>` is now `atoms::sharded::Sharded<State>`: one `parking_lot` read lock per shard, each on
 a cache line of its own, as many shards as threads can run (8 to 64). Each thread takes a shard round-robin at its
 first read, so the pool's threads share none (crossbeam's `ShardedLock`, the probe's, hashes threads to 8 shards).
