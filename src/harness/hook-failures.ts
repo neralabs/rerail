@@ -367,10 +367,14 @@ function heldElsewhere(id: string, taken: string, path: string): boolean {
  */
 const HELD_ELSEWHERE_LISTINGS = 4;
 
-/** The {@link fileId} of the file named `name`; undefined when it is missing or cannot be read. */
+/**
+ * The {@link fileId} of the name `name` itself, never followed; undefined when it is missing or cannot be read. A link a
+ * person made at the live name, which a status read could not open, is not followed a second time: on a network share
+ * that stopped answering each call through it waits, where `main` gives up after the open.
+ */
 function fileIdAt(name: string): string | undefined {
   try {
-    return fileId(statSync(name, { bigint: true }), name);
+    return fileId(lstatSync(name, { bigint: true }), name);
   } catch {
     return undefined;
   }

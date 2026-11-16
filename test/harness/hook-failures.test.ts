@@ -1175,6 +1175,27 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
   });
 
+  // A person linked the live name to a file status cannot open, as one on a network share that stopped answering. Status
+  // opens the live name, as `main` does, and goes through the link no further: a stat for the file's id would wait on
+  // the share once more, where `main` gives up after the open.
+  it("goes through a link at the live name only to open it when status cannot open the file it leads to", async context => {
+    const rerailHome = await home();
+    const { elsewhere } = await linkLogElsewhere(context, rerailHome, 3 * (fullLine.length + 1));
+    const reaches = `const target = fs.realpathSync(${JSON.stringify(elsewhere)});
+      const reaches = path => { try { return fs.realpathSync(String(path)) === target; } catch { return false; } };`;
+    const { said, followed } = await statusWith(rerailHome, {
+      openSync: `open => { ${reaches} return (path, ...rest) => {
+        if (reaches(path)) throw Object.assign(new Error("EIO: i/o error, open"), { code: "EIO" });
+        return open(path, ...rest);
+      }; }`,
+      statSync: `stat => { ${reaches} return (path, ...rest) => {
+        if (reaches(path)) globalThis.followed = (globalThis.followed ?? 0) + 1;
+        return stat(path, ...rest);
+      }; }`,
+    });
+    expect({ said, followed }).toEqual({ said: "", followed: 0 });
+  });
+
   // The size check found a full log through the live name's link, and by the time the hook moves the link, it leads to
   // a named pipe no program writes to, or to a folder, as when a person points it elsewhere in that moment; here the
   // size check is told the log is full. The link moves on to `.1` as it is, as `main` moves it right after its one size
