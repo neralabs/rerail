@@ -34,11 +34,16 @@ class ScriptedWatch implements TreeWatch {
   readonly queued: TreeNotice[] = [];
   /** Roots it refuses to watch. */
   readonly refused = new Set<string>();
+  /** Folders past the watch budget: it refuses a watch that follows any of them. */
+  readonly overBudget = new Set<string>();
   closed = false;
 
   watch(root: string, folders: readonly string[]): boolean {
     this.calls.push(`watch ${root} [${folders.join(",")}]`);
-    return !this.refused.has(root);
+    if (!this.refused.has(root) && !folders.some(folder => this.overBudget.has(folder))) return true;
+    // As the engine does, a refused root's queued notices go with it.
+    this.queued.splice(0, this.queued.length, ...this.queued.filter(notice => notice.root !== root));
+    return false;
   }
 
   unwatch(root: string): void {
@@ -267,5 +272,41 @@ describe("SharedTreeWatch", () => {
     watch.notice("/r", { changed: ["g.py"] });
     busy.take();
     expect(idle.take()).toEqual([{ root: "/r", changed: [], renamed: [], lost: true, ended: false }]);
+  });
+
+  it("tells the walks left on a root their notices were lost when another walk's watch of it was refused, and that it ended when theirs is too", () => {
+    const watch = new ScriptedWatch();
+    const shared = new SharedTreeWatch(watch);
+    const [first, second, third] = [shared.user(), shared.user(), shared.user()];
+    second.watch("/r", [""]);
+    watch.notice("/r", { changed: ["a.py"] });
+    watch.overBudget.add("big");
+    expect(first.watch("/r", ["", "big"])).toBe(false);
+    expect(watch.calls.at(-1)).toBe("watch /r []");
+    expect(second.take()).toEqual([{ root: "/r", changed: [], renamed: [], lost: true, ended: false }]);
+    watch.refused.add("/r");
+    expect(first.watch("/r", [""])).toBe(false);
+    expect(second.take()).toEqual([{ root: "/r", changed: [], renamed: [], lost: true, ended: true }]);
+    second.unwatch("/r");
+    expect(watch.calls.at(-1)).toBe("watch /r []");
+    second.watch("/s", [""]);
+    third.watch("/s", [""]);
+    watch.refused.add("/s");
+    second.unwatch("/s");
+    expect(third.take()).toEqual([{ root: "/s", changed: [], renamed: [], lost: true, ended: true }]);
+  });
+
+  it("keeps an ended watch's notice for a walk that lets go of its last other root before it takes it", () => {
+    const watch = new ScriptedWatch();
+    const shared = new SharedTreeWatch(watch);
+    const [first, second] = [shared.user(), shared.user()];
+    first.watch("/x", [""]);
+    first.watch("/y", [""]);
+    second.watch("/x", [""]);
+    watch.notice("/x", { ended: true });
+    expect(second.take()).toEqual([{ root: "/x", changed: [], renamed: [], lost: false, ended: true }]);
+    first.unwatch("/y");
+    expect(first.take()).toEqual([{ root: "/x", changed: [], renamed: [], lost: false, ended: true }]);
+    expect(first.take()).toEqual([]);
   });
 });

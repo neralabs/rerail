@@ -285,8 +285,8 @@ export class SharedTreeWatch {
   readonly #roots = new Map<string, Map<object, readonly string[]>>();
   /**
    * By user, the notices taken from the watch for it and not yet taken by it, one per root as the engine's take hands
-   * them: a walk that takes them rarely holds no more than the engine would. A user that watches nothing and took its
-   * last notices has none.
+   * them: a walk that takes them rarely holds no more than the engine would. A user that watches nothing and has taken
+   * every notice queued for it has none.
    */
   readonly #queues = new Map<object, Map<string, TreeNotice>>();
   #closed = false;
@@ -324,23 +324,48 @@ export class SharedTreeWatch {
       if (!this.#queues.has(user)) this.#queues.set(user, new Map());
       return true;
     }
-    // A user refused a root does not hold it: it reads that root on every walk, and no watch of it stays up for it.
+    // A user refused a root does not hold it: it reads that root on every walk, and no watch of it stays up for it. The
+    // engine let go of the root and of the notices it queued, so the users left on it watch it again from nothing.
     users.delete(user);
     if (users.size === 0) this.#roots.delete(root);
-    else this.#watch.watch(root, unionOf(users));
+    else if (this.#watchLeft(root, users)) this.#queue(users.keys(), lostNotice(root, false));
     return false;
   }
 
   #unwatchFor(user: object, root: string): void {
     const users = this.#roots.get(root);
     if (users === undefined || !users.delete(user)) return;
-    if (users.size > 0) this.#watch.watch(root, unionOf(users));
+    if (users.size > 0) this.#watchLeft(root, users);
     else {
       this.#roots.delete(root);
       this.#watch.unwatch(root);
     }
-    // A user that watches nothing more has no notices to come: its queue goes with its last root.
-    if (![...this.#roots.values()].some(holders => holders.has(user))) this.#queues.delete(user);
+    this.#forgetIdle(user);
+  }
+
+  /**
+   * Watches `root` with the folders of the `users` left on it; true when the engine holds it. When it refuses, it let go
+   * of the root and of its notices: no user holds the root any more, and each is told its watch ended.
+   */
+  #watchLeft(root: string, users: ReadonlyMap<object, readonly string[]>): boolean {
+    if (this.#watch.watch(root, unionOf(users))) return true;
+    this.#roots.delete(root);
+    this.#queue(users.keys(), lostNotice(root, true));
+    return false;
+  }
+
+  /** Queues `notice` for each of `users` still watching anything, merged with what it has not taken of that root. */
+  #queue(users: Iterable<object>, notice: TreeNotice): void {
+    for (const user of users) {
+      const queue = this.#queues.get(user);
+      queue?.set(notice.root, mergedNotice(queue.get(notice.root), notice));
+    }
+  }
+
+  /** Drops `user`'s queue once it watches nothing and has taken every notice queued for it, an ended watch's included. */
+  #forgetIdle(user: object): void {
+    if (this.#queues.get(user)?.size !== 0) return;
+    if (![...this.#roots.values()].some(users => users.has(user))) this.#queues.delete(user);
   }
 
   #takeFor(user: object): TreeNotice[] {
@@ -349,16 +374,13 @@ export class SharedTreeWatch {
       const users = [...this.#roots.get(notice.root)?.keys() ?? []];
       // An ended watch watches nothing: each user watching the root watches it again as its walk asks.
       if (notice.ended) this.#roots.delete(notice.root);
-      for (const other of users) {
-        const queue = this.#queues.get(other);
-        queue?.set(notice.root, mergedNotice(queue.get(notice.root), notice));
-      }
+      this.#queue(users, notice);
     }
     const queue = this.#queues.get(user);
     if (queue === undefined) return [];
     const notices = [...queue.values()];
     queue.clear();
-    if (![...this.#roots.values()].some(users => users.has(user))) this.#queues.delete(user);
+    this.#forgetIdle(user);
     return notices;
   }
 
@@ -371,4 +393,9 @@ export class SharedTreeWatch {
 /** Every folder any user watches a root with. */
 function unionOf(users: ReadonlyMap<object, readonly string[]>): string[] {
   return [...new Set([...users.values()].flat())];
+}
+
+/** A notice that `root`'s queued notices were lost, and with `ended` that its watch ended. */
+function lostNotice(root: string, ended: boolean): TreeNotice {
+  return { root, changed: [], renamed: [], lost: true, ended };
 }
