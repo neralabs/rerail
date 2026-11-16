@@ -1239,6 +1239,12 @@ fn every_switch_lowering_reads_is_classified() {
         // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
         "RERAIL_STRATA_COUNTS",
         "RERAIL_TAPE_CACHE",
+        // Where rule images are read from, kept and exported (decision 0264): an image is the program's stored form,
+        // keyed by its bytes' digest, so the program is the same wherever it is found, or with no image at all.
+        "RERAIL_SHIPPED_IMAGES",
+        "RERAIL_IMAGE_STORE",
+        "RERAIL_EXPORT_IMAGES",
+        "RERAIL_MODULE_IMAGES",
         "RERAIL_DUMP_PROGRAMS",
         "RERAIL_TIMELINE",
         "RERAIL_PROFILE",

@@ -11698,8 +11698,14 @@ pub fn decode_kept(
     for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
         super::native::component::hold_as(db, &rel, held);
     }
-    let prog = &lowered.program;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
+    // The inputs and the outputs' column types from the program's version where it has one (t36 item 7: a maintained
+    // run decodes no tree, `a_maintained_run_decodes_and_copies_no_tree`); else from its tree, which is then held.
+    let placed = lowered.version.as_ref().map(|_| lowered.placed()).transpose()?;
+    if let Some(f) = placed.as_ref().and_then(Fields::of) {
+        return decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names);
+    }
+    let prog = &lowered.program;
     decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
