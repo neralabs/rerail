@@ -143,8 +143,9 @@ export function remoteSinkEnabled(env: NodeJS.ProcessEnv = process.env): boolean
 }
 
 /**
- * Experimental: activation profiles. Off, `rerail activate`, `activation request`, `profile` and `--profile` refuse,
- * and no stored profile restricts `rerail update`. `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES`.
+ * Experimental: activation profiles. Off, `rerail activate`, `activation request`, `profile select` and `--profile`
+ * refuse; `profile status` and `profile remove` work, and a profile stored earlier still restricts `rerail update` and
+ * `rerail events`. `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES`.
  */
 export function activationProfilesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return experimentEnabled("ACTIVATION_PROFILES", env);

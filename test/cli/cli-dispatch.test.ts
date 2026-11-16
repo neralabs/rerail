@@ -59,11 +59,20 @@ describe("rerail's command dispatch", () => {
     [["remote", "push"], "REMOTE_SINK"],
     [["events"], "EVENT_STREAM"],
     [["activate", "--file", "profile.jws", "--trust-root", "roots.json"], "ACTIVATION_PROFILES"],
-    [["profile"], "ACTIVATION_PROFILES"],
+    [["profile", "select"], "ACTIVATION_PROFILES"],
     [["--profile", "acme", "status"], "ACTIVATION_PROFILES"],
   ] as Array<[string[], ExperimentalFeature]>)("%j refuses while its experiment is off, naming the variable", (args, feature) => {
     vi.stubEnv(`RERAIL_EXPERIMENTAL_${feature}`, "0");
     refuses(args, experimentOffMessage(feature), false);
+  });
+
+  it.each([
+    [["profile"]],
+    [["profile", "status"]],
+  ])("%j works while activation profiles are off, so a profile stored earlier, which still applies, can be seen", args => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES", "0");
+    const run = rerail(args);
+    expect(run).toMatchObject({ stdout: "No active Rerail customer profile.\n", stderr: "", status: 0 });
   });
 
   it.each([

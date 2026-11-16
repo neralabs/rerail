@@ -334,7 +334,7 @@ Lifecycle ingestion is not an MCP tool surface. OMP and Pi run a session-scoped 
 
 ## Activate
 
-Activation binds a machine to a signed customer profile; it is in [internal testing](../README.md#internal-testing), and experimental: `activate`, `activation request`, `profile` and `--profile` refuse, and no stored profile restricts `rerail update`, unless `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES=1`.
+Activation binds a machine to a signed customer profile; it is in [internal testing](../README.md#internal-testing), and experimental: `activate`, `activation request`, `profile select` and `--profile` refuse unless `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES=1`. `profile status` and `profile remove` work either way, and a profile stored earlier still restricts `rerail update` and `rerail events`.
 
 ```sh
 rerail --profile acme activate \

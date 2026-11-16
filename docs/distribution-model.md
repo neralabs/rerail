@@ -182,7 +182,7 @@ An update:
 
 Activation binds an install to one customer deployment via a signed entitlement.
 
-Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail's latest release. They are experimental: each refuses, and no stored profile restricts `rerail update`, unless `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES=1`. See [Internal testing](internal-testing.md).
+Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail's latest release. They are experimental: `activate`, `activation request`, `profile select` and `--profile` refuse unless `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES=1`. `profile status` and `profile remove` work either way, and a profile stored earlier is enforced as below whether or not it is set. See [Internal testing](internal-testing.md).
 
 Package access authorizes download; the entitlement authorizes execution.
 
