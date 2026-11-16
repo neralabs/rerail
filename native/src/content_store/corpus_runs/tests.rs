@@ -428,6 +428,31 @@ fn a_keep_decision_leaves_its_sweep_to_the_frames_job() {
     assert_eq!(job.due(), rerail_accel::upkeep::Due::No);
 }
 
+/// A frames job outlives its store (the process holds it): once the store is gone, the job reads no deleted file
+/// and is not due, and its step makes no new store at the path. Its cached connection had read the deleted file's
+/// last decision for ever, each `finish_soon` sweeping a store the step had made anew, a hundred passes over every
+/// gone store of a test process.
+#[test]
+fn a_frames_job_over_a_gone_store_is_not_due_and_makes_no_store() {
+    use rerail_accel::upkeep::Job as _;
+    let (path, store) = store("corpus-frames-gone");
+    let file = store.database_path().to_path_buf();
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let mut job = crate::content_store::upkeep::Frames::new(&file);
+    let source = store.put_source(&noise(9, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(509, 256)).unwrap();
+    assert!(store.record_corpus_run("/repo", &[source], 7, 9, [9u8; 32], 1_000).unwrap());
+    store.keep_corpus_runs(&policy, 1_000).unwrap();
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::Urgent);
+    drop(store);
+    drop(path);
+    assert!(!file.exists(), "the store's folder is gone with its binding");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::No, "a gone store has nothing to sweep");
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    assert_eq!(job.step(&rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)).unwrap(), rerail_accel::upkeep::Step::Done);
+    assert!(!file.exists(), "the step made no store");
+}
+
 /// Decision 0190 §8: a sweep yields to a run that begins over its store, here another process's (its shared lock on
 /// `<store>.runs.lock`). The step stops with its transaction rolled back, and the sweep stays due for after the run.
 #[test]
