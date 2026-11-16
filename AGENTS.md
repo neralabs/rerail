@@ -24,7 +24,28 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
-The farm's wrapper runs `scripts/dev/clean-target` on each target directory hourly: it removes the
+Build the CLI for development with the tests' features:
+
+```
+nice -n 19 cargo build --bin rerail-engine --features test-hooks
+```
+
+The tests turn on `test-hooks` in every dependency crate (and a few registry features). A CLI
+build without it compiles each of those crates a second time, apart from the tests' build, and
+keeps a second set of incremental state: twice the CPU per edit, and about 2 GB of disk per crate
+variant. With it, an edit compiles each dependency crate once for both, and a crate's own tests
+(`cargo test -p rerail-logic`) build the crates below it the same way too. Product builds (release,
+wasm, the Node addon) and measurement builds (`--profile profiling`) stay without it.
+
+Keep to that one feature set in this worktree's target. The farm's wrapper tells any build that
+compiles a workspace crate with other features than a build of the last 2 hours did, names the
+features and the earlier command, and repeats it at the checkout's next builds for 3 hours. Run a
+build with other features (`metal-tests`, `headless`, `code-rule-profile`, `--no-default-features`)
+on a farm host with `scripts/dev/test-remote`. `scripts/check/check-dev-features.py` (pre-commit)
+keeps the manifests' features in line: a crate's `test-hooks` and `default` turn on those of the
+crates below it.
+
+The farm's wrapper runs `scripts/dev/clean-target` on each target directory every 15 minutes: it removes the
 builds no current build was made from, debug objects no binary names, and stale incremental state.
 Never run a full `cargo clean`.
 

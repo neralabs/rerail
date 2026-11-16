@@ -136,11 +136,11 @@ the farm's protocol or to what a host keeps raises `VERSION`.
 Rerail's worktrees together write terabytes of builds a day: each edit of a workspace crate leaves
 the previous build, its debug objects and its incremental state behind, and cargo never removes
 them. So the wrapper starts `scripts/dev/clean-target --wait` (installed beside it) on a build's
-target directory, at most once an hour per directory, detached and at nice 19. It waits for that
+target directory, at most once every 15 minutes per directory, detached and at nice 19. It waits for that
 build to end (cargo's lock on the profile directory), then removes what no build can use any more:
 another rustc's artifacts, builds that none of the current builds was made from (a mark and sweep
 over cargo's own dependency records, an hour's grace), debug objects no binary names, incremental
-state of crates no longer built or untouched for a day, and Relax run dirs no run has used for
+state of crates no longer built or untouched for 2 hours, and Relax run dirs no run has used for
 6 hours (a worktree's own `target/relax`, another share's, never the most recently used shared one
 nor one a Relax process runs in: scripts/dev/relax/README.md). Each target
 directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
@@ -150,13 +150,19 @@ directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 
 What an agent does wrong is printed in its own build output, not left for someone to find. At the
 first compile of each cargo command the wrapper prints, as `warning: rerail-farm:` lines: a nice
-value under 19, a rustc other than the checkout pins, and the checkout's latest `diagnose --brief`
+value under 19, a rustc other than the checkout pins, a development build of the engine's CLI without
+`--features test-hooks` (it compiles every dependency crate apart from the tests' build of it:
+native/Cargo.toml), a workspace crate compiled with other features than a build of the same target
+and profile in the last 2 hours did (a second variant, compiled at each edit with every crate above
+it and with its own incremental state; said once per command and difference, with the crates, the
+features and the earlier command, and repeated at the checkout's builds for 3 hours; the records are
+in `~/Library/Caches/rerail-farm/variants/`), and the checkout's latest `diagnose --brief`
 findings (another toolchain or cargo configuration than the active worktrees, profile settings that
 differ, scripts that set the variables builds share), each with what to do. A cargo command that
 runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate
 profile) while a test host has 4 cores or more to spare is told the `test-remote` command that runs
-it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). The hourly job writes
-those findings after the cleaner (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
+it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). After a cleaner run, at most hourly per checkout, the job writes
+those findings (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
 its message. On a machine leased for a benchmark (Quiet runs, below), every build is told the
 lease and its end, and a checkout whose processes loaded it during one is told that this was unfair.
@@ -237,6 +243,12 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   interface the connection arrived on, its free disk, its idle time and its mounts; the round
   trip is timed, and every 10 minutes (or while it is slow) a 4 MB transfer measures the
   throughput. A host short of disk or past the limits is not used.
+- **Blocked here, not down.** macOS's Local Network privacy can deny the application the agents
+  run under (and every program it starts: ssh, nc, ping) any connection to a local address, as
+  "No route to host", while the hosts answer everyone else; it happened to every host at once on
+  2026-11-16. When a host cannot be reached, the probe tries it again from a job launchd starts:
+  if that reaches it, the reason names the application and the setting (System Settings, Privacy
+  & Security, Local Network), and the host is probed again every 30 s rather than backed off.
 - **Off its link: recovered.** A host's name (often an mDNS `.local` name) resolves to whichever
   of its addresses answers first, so ssh can reach it over WiFi while its fast link is up. When
   a probe arrives on another interface than `link`, the farm asks the host, over the connection
