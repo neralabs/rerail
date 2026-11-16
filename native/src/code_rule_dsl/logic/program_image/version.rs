@@ -220,6 +220,13 @@ impl Version {
             Version::Overlay { depth, .. } => *depth,
         }
     }
+    /// A base's image bytes, as they are stored (`program_text::store_version`); `None` for a view or an overlay.
+    pub fn base_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Version::Base { image, .. } => Some(image.bytes()),
+            _ => None,
+        }
+    }
     /// One past the last id of each id space: atoms, relations, rules.
     pub fn atom_end(&self) -> u32 {
         self.top().atom_end()

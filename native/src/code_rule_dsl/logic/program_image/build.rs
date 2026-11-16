@@ -193,7 +193,7 @@ impl<'p> Builder<'p> {
         }
     }
     /// The id the next added rule gets.
-    fn next_id(&self) -> RuleId {
+    pub(crate) fn next_id(&self) -> RuleId {
         RuleId(self.enc.rule_base() + self.enc.rules())
     }
     /// Adds `rule`, from the tree.
@@ -221,6 +221,13 @@ impl<'p> Builder<'p> {
         if self.parent.is_none() {
             self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
         }
+        id
+    }
+    /// Adds a copy of `rule`, one of `from`'s, recording it as the copy's source in an edit too: a rule a pass kept,
+    /// when a pipeline runs it again over an edit of its input onto its last output (`manager`, 0281 §3).
+    pub(crate) fn keep_into(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+        let id = self.copy(from, rule);
+        self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
         id
     }
     fn same(&self, rule: RuleRef<'_>) -> bool {
