@@ -794,6 +794,13 @@ impl Atoms {
     }
 
     /// Whether atoms are pending (given out, not yet in the database).
+    /// Pending atoms that a flush must store: none once forked (decision 0170). A forked process's write maps the
+    /// atoms its rows name as it writes them (`to_store`), and an atom no row names needs no store id. A flush queued
+    /// for them found the store's string by its key and wrote nothing, or stored a string nothing names.
+    pub fn flush_wanted(&self) -> bool {
+        !self.forked() && self.pending()
+    }
+
     pub fn pending(&self) -> bool {
         if self.path.is_none() {
             return false;
@@ -1726,7 +1733,7 @@ impl Drop for Atoms {
     /// symbols closing). Atoms never written are lost, as in a crash; nothing durable names them.
     fn drop(&mut self) {
         let Some(path) = &self.path else { return };
-        if !self.pending() || !path.exists() {
+        if !self.flush_wanted() || !path.exists() {
             return;
         }
         let flushed = Connection::open(path).map_err(StoreError::from).and_then(|connection| {
@@ -1753,10 +1760,10 @@ impl super::ContentStore {
         // A store with a writer has it append them (decision 0104: only its writers write); one without, now.
         if self.write_back.is_some() {
             // Due, and with atoms a flush would write (not only those a component reserves, `Atoms::pending`).
-            if self.atoms.due_now() && self.atoms.pending() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
+            if self.atoms.due_now() && self.atoms.flush_wanted() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
                 self.queue_atoms_flush();
             }
-        } else if self.atoms.due() {
+        } else if self.atoms.due() && self.atoms.flush_wanted() {
             self.flush_atoms()?;
         }
         Ok(ids)

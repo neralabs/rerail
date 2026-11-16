@@ -2,7 +2,8 @@
 use std::ops::Range;
 
 pub const WIDTH: usize = 6;
-pub const CHECKPOINT_STRIDE: usize = 16;
+/// Nodes a checkpoint covers: the tape format's (one definition, `rerail_tape_format`).
+pub use rerail_tape_format::CHECKPOINT_STRIDE;
 
 pub(super) fn read_varint(bytes: &[u8], at: &mut usize) -> Result<u32, String> {
     let mut result = 0u32;

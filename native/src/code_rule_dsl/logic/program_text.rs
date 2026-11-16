@@ -410,6 +410,23 @@ pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::col
 /// The program `store` keeps of sha256 `digest` (`store`), from its image where it has one, else its text, and the
 /// sources it is kept as; `None` when the store has lost it, or it no longer reads. Its lists are taken from the
 /// run's `lists`.
+/// The sources `texts` names for `digests` (each program's text and image), with none read: a run that holds the
+/// programs in memory names what it would have read (the manifest's), so collection keeps them while it keeps the run.
+pub fn sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<SourceId>> {
+    let mode = images();
+    let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+    let mut out: Vec<SourceId> = store.held_sources_by_hash(&hashes)?.into_iter().flatten().collect();
+    if mode != "off" {
+        for d in digests {
+            if let Some(id) = store.source_by_alias(image_key(d))? {
+                store.pin_held_sources(&[id])?;
+                out.push(id);
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<SourceId>)>> {
     let mut found = texts(store, &[*digest])?;
     let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };

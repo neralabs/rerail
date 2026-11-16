@@ -121,4 +121,8 @@ Tier 2 writes the same bytes (docs/parser-generators/37): a working row a node
 Over the corpus, the interpreter's, the JIT's and the ahead-of-time tapes
 are the lean parser's, byte for byte.
 
-Next: wide files parsed again at their widths, not refused; Metal's own kernel and digest.
+Next: wide files parsed again at their widths, not refused; Metal's own kernel.
+
+No digest is left to make (checked 2026-11-15): the header has none from format 12 on (RER-131),
+and Metal's resident runs take each file's SHA-256 from the engine, which has it from a `stat`
+or a Git blob (`run_resident_digested`, decision 0142 §3), so no kernel hashes a file.

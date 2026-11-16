@@ -9822,7 +9822,9 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     let corpus = PLANS.with(|p| p.borrow().is_some());
     // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
-    let chosen_key = if corpus { Some(choices::key(&normal_v)) } else { None };
+    // A program of no rules (a cross part whose every stratum is kept) has no choice to make, so none is kept for it:
+    // keeping one wrote to the store in the run after a cold one, for a program no other run plans (decision 0250).
+    let chosen_key = (corpus && program.len() > 0).then(|| choices::key(&normal_v));
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     // The program's version as the passes chose it (t36 item 6): their overlay, or the kept choice's, which the run
     // reads its rules from as it is; the program's own where nothing was rewritten.

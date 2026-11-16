@@ -3338,6 +3338,7 @@ fn lowers_back(dirs: &[&str], k: usize, n: usize) {
         .filter(|p| p.extension().is_some_and(|e| e == "rr"))
         .collect();
     paths.sort();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().skip(k).step_by(n));
     let (mut read, mut differ) = (0, Vec::new());
     for path in paths.iter().skip(k).step_by(n) {
         let Ok((program, _)) = super::read_file(path) else { continue };
@@ -3442,6 +3443,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
     }
     // The `part.0`th of `part.1` parts, by position in name order: a group too long for one test is split.
     paths.sort();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p));
     let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
         let path = path.as_path();
         let Ok((statements, _)) = program(&path) else { return None };
@@ -3771,4 +3773,41 @@ fn a_program_adds_only_to_extensible_library_relations() {
     assert!(refused.to_string().contains("`unparen` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
     let open = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
     super::read_text(open).unwrap().lower(false).expect("cmp_same_ask is extensible");
+}
+
+/// Decision 0275: a text's header is kept under its bytes with the library files its includes read, and found again:
+/// the header found is the header read, and another text's is its own.
+#[test]
+fn a_texts_header_is_found_under_its_bytes() {
+    let text = "#include \"core.rr\"\n.policy \"test:header-0275\" revision 1\n.language python\n.decl out(x: symbol)\n.output out\n";
+    let header = text_header(text).unwrap();
+    let kept = kept_header_found(text).expect("kept by the first read");
+    assert_eq!(format!("{kept:?}"), format!("{header:?}"), "the header kept is the header read");
+    assert!(kept.settings.iter().any(|(k, v)| k == "policy" && v.contains("test:header-0275")), "{:?}", kept.settings);
+    assert_eq!(format!("{:?}", text_header(text).unwrap()), format!("{header:?}"), "read again from the entry");
+    let other = text.replace("header-0275", "header-0275-b");
+    assert!(kept_header_found(&other).is_none(), "another text: its own entry");
+}
+
+/// Decision 0275: a rule file's program is kept under its path and sha with the files it read, and found again while
+/// each still reads as recorded: by its `stat`, and by its sha where the stat moved. An edit to an included file reads
+/// the program again; its bytes put back, the stat moved but the sha holds, and the entry is found again.
+#[test]
+fn a_rule_files_program_is_found_while_what_it_read_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let (main, helper) = (dir.path().join("main.rr"), dir.path().join("helper_0275.rr"));
+    let original = ".decl helper(x: symbol)\nhelper(\"a\").\n";
+    std::fs::write(&helper, original).unwrap();
+    std::fs::write(&main, "#include \"helper_0275.rr\"\n.decl out(x: symbol)\nout(x) :- helper(x).\n.output out\n").unwrap();
+    let main = main.canonicalize().unwrap();
+    let found = || kept_program_found(&main);
+    assert!(found().is_none(), "nothing kept before the first read");
+    let (program, files) = read_file(&main).unwrap();
+    let (kept, kept_files) = found().expect("kept by the first read");
+    assert_eq!(format!("{kept:?}"), format!("{program:?}"), "the program kept is the program read");
+    assert_eq!(kept_files, files, "with the files it read, in reading order");
+    std::fs::write(&helper, ".decl helper(x: symbol)\nhelper(\"b\").\n").unwrap();
+    assert!(found().is_none(), "an included file edited: read again");
+    std::fs::write(&helper, original).unwrap();
+    assert!(found().is_some(), "its bytes put back: its sha holds though its stat moved");
 }

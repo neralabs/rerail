@@ -438,7 +438,7 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     use super::logic::{plan::corpus, rr};
     let mut groups: Vec<(&'static str, PolicyGroup)> = Vec::new();
     for (k, text) in texts.iter().enumerate() {
-        let own = rr::read_text(text).and_then(rr::Text::header).ok();
+        let own = rr::text_header(text).ok();
         let joined = own.and_then(|own| {
             let named = own.settings.iter().find(|(k, _)| k == "language").map(|(_, v)| v.trim().trim_matches('"').to_owned());
             let one_dialect = named.as_deref().is_none_or(|name| {

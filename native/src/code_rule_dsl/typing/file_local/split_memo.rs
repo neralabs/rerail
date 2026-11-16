@@ -148,6 +148,8 @@ fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>, bodies:
     prog.facts.keys().for_each(|k| k.hash(&mut g));
     prog.lattice.keys().for_each(|k| k.hash(&mut g));
     format!("{:?}", prog.natives).hash(&mut g);
+    // The relations `locate` moved to the cross-file part (decision 0290).
+    super::moved(prog).hash(&mut g);
     // Each relation's digest (a pack's program has thousands).
     let heads_new = derived
         .iter()

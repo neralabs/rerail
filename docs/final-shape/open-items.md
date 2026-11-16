@@ -4298,6 +4298,15 @@ program itself and taken out where stratifying refuses it. Measured on the 44 st
 findings unchanged; `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and the 11
 `lowering_is_idempotent_*` shards pass.
 
+**Again (2026-11-15).** On a pack's programs, `guards` was ~16% of the samples of
+`dropping_unreached_clauses_prunes_to_the_same_program_script_packs` (500 G instructions, 33.5 s). `Reach` built
+the reverse edges again for each target's walk; `guards` cloned every safe literal and made each literal's
+variables again each round; and each placement dropped every walk. Now the reverse edges are made once, a
+placement adds its edges and drops only the walks of targets a guard is or reaches (`Reach::placed`; exact, cycles
+closed included), and `guards` borrows the literals with their variables made once, cloning only those kept.
+324 G instructions; `a_placement_keeps_only_the_walks_it_leaves_unchanged` (rr) and the `script_packs`,
+`python_pack_0` and `other_packs` shards pass.
+
 ## O-combine-hiding-single. A single program pays guest hiding's analysis in `combine`
 
 **Seen (2026-11-12).** 7.5% of the batch: `combine_texts` → `hiding::hide` (`analyse`, `carry`), for runs that
@@ -4740,7 +4749,7 @@ long rules' orders and searches short ones it could keep.
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
 
 
-## O-phase0-kept-flake. Phase 0's kept graph of a text once differed from a fresh derive
+## O-phase0-kept-flake. Phase 0's kept graph of a text once differed from a fresh derive (closed)
 
 **Seen (2026-11-12, once in about ten runs of `logic::rr::` with `phase0::`, at four threads, under load).**
 `phase0::tests::bootstrap_resolves_as_the_builtin_reader_does` failed its third part: for `python/conditions.rr`,
@@ -4757,6 +4766,11 @@ whole log.
 
 **Closure:** the field that differs is known from a failure's message, and the cause is fixed; or it does not
 recur in ten runs of the chunk.
+
+**Closed (2026-11-15): did not recur.** The test ran 20 times beside the rest of its chunk (`logic::rr::` with
+`phase0::`, in three parts that fit the two-minute cap, four threads, load 37 to 39) and passed each time. The
+observer's roots changed since the last sighting (decision 0250: a root takes in the roots inside it, collection
+keeps young unheld answers), one of the suspects. A failure's message still prints each graph's module digests.
 
 ## O-kept-strata-flake. A second run over unchanged files sometimes plans twice the cross part's strata
 
@@ -5251,6 +5265,16 @@ variables as small integers, made once per rule body and kept with the body's di
 remove the allocations and the string comparisons. `_platform_memcmp`, 14.6% of the main thread, is spread over
 string-keyed BTree lookups like these across many passes (tarjan, components, `fork_with`, `keeps::choose`,
 `text_kind_demand`). `Board::finish`, 15%, is the main thread waiting on the pool: it is not work to cut.
+
+## O-quiet-counters-shared. The quiet-stratum test reads process-wide counters beside other tests
+
+**Seen (2026-11-15).** `a_session_passes_on_a_quiet_stratum` failed in 3 of 6 runs of the session tests together
+(`quiet relations held with no column measured`, 2 and 3), and passes alone. It reads `plan::quiet_strata()` and
+`plan::unmeasured_quiet()` before and after its run: process-wide atomics, which the other session tests' runs add
+to as they run beside it.
+
+**Closure:** the counts are the run's, in its report (`Outcome`, `corpus::Report`), and the test reads its own
+run's; the session tests pass 10 runs together.
 
 ## O-cross-file-answers. Node attributes asked across files find no text (2026-11-15, decision 0174 §6)
 

@@ -36,6 +36,7 @@ use std::sync::{LazyLock, Mutex};
 pub mod analysis;
 pub mod analysis_report;
 pub mod kinds;
+pub mod life;
 pub mod memory;
 pub mod roofline;
 // cratify: `watch` is rerail-logic's (it mounts it)
@@ -1403,8 +1404,8 @@ pub fn warm() -> bool {
 }
 
 /// The writes a warm run may still make, by what the store's writer calls the job (`ContentStore::write_back`'s
-/// `what`), and why each is allowed: locks against another process's collection, and the timestamps by which
-/// collection judges recency. Nothing else is exempt from the warm check.
+/// `what`), and why each is allowed: locks against another process's collection, the timestamps by which
+/// collection judges recency, and the cost statistics. Nothing else is exempt from the warm check.
 ///
 /// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
 /// and refuses a commit that changes one without the other.
@@ -1415,6 +1416,7 @@ pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
     ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
     ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
+    ("the cost statistics", "the cost statistics' own file (`costs`): the samples, SQL plan reports and kernel forms a run measured, and the model trained on them; what a run costs is never a result it recomputes (approved 2026-11-15)"),
 ];
 
 /// Whether the store's writer may run a job called `what` in a warm run (`WARM_WRITES_ALLOWED`).

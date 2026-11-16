@@ -67,6 +67,7 @@ fn pack_programs_read_back_from_their_text() {
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
     files.sort();
     let mut read_back = 0;
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(files.iter().step_by(7));
     for path in files.iter().step_by(7) {
         let Ok(prog) = crate::code_rule_dsl::logic::rr::parse_file(path) else { continue };
         let text = print(&prog).unwrap_or_else(|e| panic!("{}: {e}", path.display()));

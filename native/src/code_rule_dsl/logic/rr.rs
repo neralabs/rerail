@@ -183,7 +183,11 @@ enum Read {
 
 /// `src` read once, its includes resolved (`Text`).
 pub fn read_text(src: &str) -> Result<Text, Error> {
-    let statements = from_tape::statements(src, &nodes(src))?;
+    read_parsed(from_tape::statements(src, &nodes(src))?)
+}
+
+/// `read_text` of statements already parsed.
+pub(in crate::code_rule_dsl) fn read_parsed(statements: Vec<syntax::Statement>) -> Result<Text, Error> {
     if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
         refuse_ungrounded(&statements, &BTreeSet::new())?;
         return Ok(Text(Read::Plain(statements)));
@@ -781,7 +785,7 @@ fn module_key<'k>(files: impl Iterator<Item = &'k [u8; 32]>, scope: impl Iterato
 pub struct TextRead {
     /// `None` for a text that includes nothing, or while phase 0 itself runs (`text_seed`).
     pub seed: Option<super::plan::corpus::phase0::Seed>,
-    statements: Vec<syntax::Statement>,
+    pub(in crate::code_rule_dsl) statements: Vec<syntax::Statement>,
 }
 
 /// What [`TextRead::resolved`] reads off a text: its library files (includes resolved, `core.rr` first unless the
@@ -1100,14 +1104,108 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
         crate::code_rule_dsl::prof::count("rr.program_reused", 1);
         return Ok((program.clone(), files.clone()));
     }
+    // Decision 0275: rederived until a key hits. The file's sha (by its `stat` while that holds), then the entry kept
+    // under its path and sha, taken while every file it read still reads as recorded (by `stat`, then sha).
+    let kept = kept_program(&key);
+    if let Some((_, _, Some((program, files)))) = &kept {
+        crate::code_rule_dsl::prof::count("rr.program_stored", 1);
+        files.iter().for_each(noted);
+        cache.lock().expect("the program cache").insert(key.clone(), (files.clone(), program.clone()));
+        return Ok((program.clone(), files.clone()));
+    }
     // The kept statements alone copied from the process's (`read_shared`): each policy copied its libraries whole,
     // to drop most of them (`unreached_dropped`).
     let (shared, files) = program_shared(path)?;
     let own = path.canonicalize().unwrap_or_else(|_| path.to_owned());
     let statements = reached_statements(&own, &shared.iter().collect::<Vec<_>>());
     let program = lower_files_dropping(path, statements, false)?;
+    // Kept behind the run (the store's writer), with what it read: the next run's check above.
+    if let Some((entry, Some(store), None)) = kept {
+        let (read, program) = (files.clone(), program.clone());
+        store.write_back_syms(crate::content_store::write_back::Syms::None, "a rule file's program", 0, vec![(super::plan::corpus::combined::queued(&entry), None)], Box::new(move |store| super::plan::corpus::combined::remember(store, &entry, &read, &program, &[]).map(drop)));
+        super::plan::corpus::combined::read_before_the_run(entry);
+    }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
     Ok((program, files))
+}
+
+/// `read_text(src)?.header()`, rederived until a key hits (decision 0275): the header kept under the text's bytes,
+/// taken while every library file its includes read still reads as recorded (by `stat`, then sha). A batch reads
+/// each policy's header before its run (`tools::policy_groups`): 44 policies parsed, checked and lowered again each
+/// run, over the same libraries.
+pub fn text_header(src: &str) -> Result<Program, Error> {
+    use super::plan::corpus::combined;
+    let (key, store, found) = kept_header(src);
+    if let Some((program, files)) = found {
+        crate::code_rule_dsl::prof::count("rr.header_stored", 1);
+        files.iter().for_each(noted);
+        combined::read_before_the_run(key);
+        return Ok(program);
+    }
+    let text = read_text(src)?;
+    let read: Vec<LibraryFile> = match &text.0 {
+        Read::Plain(_) => Vec::new(),
+        Read::Modular { files, .. } => files.iter().map(|(path, digest, _)| LibraryFile { path: path.clone(), sha256: Some(*digest) }).collect(),
+    };
+    let program = text.header()?;
+    if let Some(store) = store {
+        let kept = program.clone();
+        store.write_back_syms(crate::content_store::write_back::Syms::None, "a text's header", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &read, &kept, &[]).map(drop)));
+        combined::read_before_the_run(key);
+    }
+    Ok(program)
+}
+
+/// The entry of text `src`'s header: its key, the store it is kept in, and the header with its read record when the
+/// store keeps one that still holds.
+#[allow(clippy::type_complexity)]
+fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>) {
+    use super::plan::corpus::{combined, phases};
+    let key = combined::text_header_key(src);
+    let store = (cfg!(feature = "tape-cache") && !super::plan::corpus::phase0::active()).then(phases::reading_store).flatten();
+    let found = store.as_ref().and_then(|store| {
+        let _held = store.hold_collection().ok()?;
+        store.settle(&combined::queued(&key));
+        combined::lookup_read(store, &key, &Default::default()).ok().flatten()
+    });
+    (key, store, found)
+}
+
+/// The header the store keeps for text `src`, when it still holds (`kept_header`): for the tests of decision 0275.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn kept_header_found(src: &str) -> Option<Program> {
+    kept_header(src).2.map(|(program, _)| program)
+}
+
+/// The program and read record the store keeps for the rule file at `path` (canonical), when they still hold
+/// (`kept_program`): for the tests of decision 0275.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
+    kept_program(path).and_then(|(_, _, found)| found)
+}
+
+/// The entry of the rule file at `path` (canonical): its key, the store it is kept in, and its program and read
+/// record when the store keeps one that still holds (`combined::lookup_read`). `None` where there is no file to key
+/// by, or the program is phase 0's own (its builtin reader).
+#[allow(clippy::type_complexity)]
+fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
+    use super::plan::corpus::{combined, phases};
+    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() {
+        return None;
+    }
+    let sha = super::plan::corpus::observe(|o| o.digest(path))?;
+    let key = combined::rule_file_key(path, &sha);
+    let Some(store) = phases::reading_store() else { return Some((key, None, None)) };
+    let found = {
+        // Read while collection is held off, as a combined program's is (`combine_stored`).
+        let _held = store.hold_collection().ok()?;
+        store.settle(&combined::queued(&key));
+        combined::lookup_read(&store, &key, &Default::default()).ok().flatten()
+    };
+    if found.is_some() {
+        combined::read_before_the_run(key);
+    }
+    Some((key, Some(store), found))
 }
 
 /// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
@@ -1410,27 +1508,15 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, L
     Ok((statements, file))
 }
 
-/// A rule file's statements, read off its tape (decision 0062). The tape is the content store's, as any corpus
-/// file's is (`facts::core::build_cached`, keyed by the source's content and the grammar's version): a file read by an
-/// earlier run is not parsed again. Without a store (the browser build, `RERAIL_TAPE_CACHE=off`) the tape is made
-/// here.
-/// `src` (a document named `name`) as a program, read off the tape the store keeps for it, as a rule file's is
-/// (`stored_statements`): a prepared program's document (decision 0074).
+/// A rule file's statements, read off the lean parser's tape (decision 0275). Its tape was the content store's, as a
+/// corpus file's is (decision 0062): a lookup and a decode of facts cost more than the lean parse.
+/// `src` (a document named `name`) as a program, read off its tape as a rule file's is (`stored_statements`): a
+/// prepared program's document (decision 0074).
 pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<Program, Error> {
     lower::lower(stored_statements(Path::new(name), src)?)
 }
 
 fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
-    let store = if cfg!(feature = "tape-cache") { super::plan::corpus::phases::reading_store() } else { None };
-    if let Some(store) = store {
-        let src = std::sync::Arc::new(src);
-        let file = crate::code_rule_dsl::facts::core::Source { language: "rr".to_owned(), source: std::sync::Arc::clone(&src) };
-        if let Ok(crate::code_rule_dsl::facts::core::Built::Facts(facts)) = crate::code_rule_dsl::facts::core::build_cached(&file, &store) {
-            crate::code_rule_dsl::prof::count("rr.statements_from_stored_tape", 1);
-            return from_tape::statements(&src, &from_tape::nodes_of_facts(&facts));
-        }
-        return from_tape::statements(&src, &nodes(&src));
-    }
     from_tape::statements(&src, &nodes(&src))
 }
 
@@ -1532,8 +1618,6 @@ fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
         return json_program_shared(path);
     }
     let (order, files) = program_order(path)?;
-    // One handle on the tape cache for the files read (`phases::Reading`), not one each.
-    let _reading = super::plan::corpus::phases::Reading::enter();
     let modules = order.into_iter().map(|p| Ok((p.clone(), read_shared(&p)?.0))).collect::<Result<Vec<_>, Error>>()?;
     Ok((Shared(modules), files))
 }
@@ -1550,7 +1634,6 @@ fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error>
     let json = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let src = super::json_rules::Translator::new().translate_text(&json, &id).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    let _reading = super::plan::corpus::phases::Reading::enter();
     let statements = stored_statements(&path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let (modules, own) = resolve_shared(statements)?;
     let core = library().join("core.rr").canonicalize().ok();
