@@ -1692,9 +1692,11 @@ pub struct RecordTables {
     /// block's rare starts split its starts into runs (`record_tokens`); none where the loop's
     /// starts are not the lean lexer's.
     pub rare: Option<[[u8; 16]; 2]>,
-    /// How each rule's tokens end (`TokenEnd`, a first byte's `TOKEN_PLAIN_END` or
-    /// `TOKEN_WORD_END`).
+    /// How each rule's tokens end (`TokenEnd`): a rare start's tail is its rule's class's.
     pub ends: Vec<TokenEnd>,
+    /// A rare byte's entry is the same with the pair bit or without (`TOKEN[c | pair << 8]`):
+    /// a rare start's is loaded by its byte alone.
+    pub rare_unpaired: bool,
     pub table: crate::records::WordTable,
     /// The extracts of the first and last bytes.
     pub starts: u16,
@@ -1772,28 +1774,21 @@ const TOKEN_FUSED_RUN: i64 = 33;
 /// byte and the length alone (`RecordTables::punct`): no word looked up, as the lean lexer's
 /// `TOKEN` gives a punctuation's kind.
 const TOKEN_PUNCT: i64 = 34;
-/// 1 where the byte's rule's tokens end where the loop's starts leave none out after them
-/// (`plain_end`): the starts after such a token are those past it, no byte put back, as the
-/// lean lexer's `starts &= bits(cursor - base)` after its string's or comment's arm.
-const TOKEN_PLAIN_END: i64 = 35;
-/// 1 where the byte's rule's tokens end with no pair's first byte (`word_end`): the byte after
-/// it put back where it is a run byte. On a byte of no punctuation, whose
-/// code's bits (`TOKEN_PUNCT_ONE`) are free.
-const TOKEN_WORD_END: i64 = 36;
 
 /// A punctuation's code in its entry (`RecordTables::punct_in_entry`), past the kind's bits
 /// (none set in a code): from this bit to the entry's last.
 const TOKEN_PUNCT_ONE: u32 = 36;
 
 impl RecordTables {
-    /// Whether first byte `b`'s tokens end plainly (`TOKEN_PLAIN_END`, `plain_end`).
-    pub fn plain_end_at(&self, b: u8) -> bool {
-        self.words[self.token / 8 + usize::from(b)] >> TOKEN_PLAIN_END & 1 == 1
+    /// Whether `b` is a rare first byte (`rare`'s nibble tables).
+    pub fn is_rare(&self, b: u8) -> bool {
+        self.rare.is_some_and(|n| n[0][usize::from(b & 15)] & n[1][usize::from(b >> 4)] != 0)
     }
 
-    /// Whether first byte `b`'s tokens end with a run byte, no pair's first (`TOKEN_WORD_END`).
-    pub fn word_end_at(&self, b: u8) -> bool {
-        self.words[self.token / 8 + usize::from(b)] >> TOKEN_WORD_END & 1 == 1
+    /// How first byte `b`'s tokens end (`TokenEnd`), by its entry's rule.
+    pub fn end_at(&self, b: u8) -> TokenEnd {
+        let rule = (self.words[self.token / 8 + usize::from(b)] >> TOKEN_RULE & 0xff) as usize;
+        self.ends.get(rule).copied().unwrap_or(TokenEnd::Any)
     }
 
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
@@ -1908,11 +1903,25 @@ impl RecordTables {
         });
         // Each rule's tokens end plainly (`plain_end`), with the lean lexer's starts.
         // Else, their last byte no pair's first (`word_end`); else any.
+        // A rule's first bytes are its own and those of the readers that go on to it
+        // (`Reader::other`): its form holds for each of its tokens.
+        let mut firsts: Vec<Vec<u8>> = (0..r.rules.len()).map(|k| (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == k)).collect()).collect();
+        for _ in 0..r.rules.len() {
+            for k in 0..r.rules.len() {
+                if let crate::records::EndRule::Read(i) = r.rules[k] {
+                    let o = usize::from(r.readers[usize::from(i)].other);
+                    if o < r.rules.len() && o != k {
+                        let more: Vec<u8> = firsts[k].iter().copied().filter(|b| !firsts[o].contains(b)).collect();
+                        firsts[o].extend(more);
+                    }
+                }
+            }
+        }
         let ends_of: Vec<TokenEnd> = (0..r.rules.len()).map(|k| {
-            let starts: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == k)).collect();
+            let starts = &firsts[k];
             match lean.and(fused) {
-                Some((kn, kr)) if plain_end(r, made, k, &starts, kn, kr, 0) => TokenEnd::Plain,
-                Some((kn, kr)) if word_end(r, made, k, &starts, kn, kr) && starts.iter().all(|&b| !punct_codes[usize::from(b)].2) => TokenEnd::Word,
+                Some((kn, kr)) if plain_end(r, made, k, starts, kn, kr, 0) => TokenEnd::Plain,
+                Some((kn, kr)) if word_end(r, made, k, starts, kn, kr) => TokenEnd::Word,
                 _ => TokenEnd::Any,
             }
         }).collect();
@@ -1931,12 +1940,6 @@ impl RecordTables {
             let (fp, fr) = fused.map_or((false, false), |(kn, kr)| (usize::from(rule) == kn, usize::from(rule) == kr));
             let fr = fr && (lean.is_none() || run_word.is_some_and(|o| run_fused(made, o, b as u8)));
             *e = u64::from(r.kinds[b]) | u64::from(rule) << TOKEN_RULE | u64::from(wordy) << TOKEN_WORDY | u64::from(tests) | u64::from(row) << TOKEN_PAIR_ROW | u64::from(fp) << TOKEN_FUSED_PAIR | u64::from(fr) << TOKEN_FUSED_RUN | u64::from(punct_codes[b].2) << TOKEN_PUNCT;
-            match ends_of.get(usize::from(rule)) {
-                Some(TokenEnd::Plain) => *e |= 1 << TOKEN_PLAIN_END,
-                // A byte of no punctuation (`word_end`'s rules'): the code's bits are free.
-                Some(TokenEnd::Word) => *e |= 1 << TOKEN_WORD_END,
-                _ => {}
-            }
             if let (Some(_), true) = (punct_in_entry, punct_codes[b].2) {
                 *e |= (if two { punct_codes[b].1 } else { punct_codes[b].0 } >> kb) << TOKEN_PUNCT_ONE;
             }
@@ -1953,7 +1956,8 @@ impl RecordTables {
         });
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
-        Ok(RecordTables { words, slots, tails, second, rare, ends: ends_of, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
+        let rare_unpaired = rare.is_some_and(|n| (0..256).all(|b| n[0][b & 15] & n[1][b >> 4] == 0 || entries[b] == entries[b | 256]));
+        Ok(RecordTables { words, slots, tails, second, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -2507,7 +2511,8 @@ fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout };
     let rd = Reads { bytes: Some((bw, crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even })), outputs, calls };
     let mut heads = vec![];
-    let (l, refuse, tag, hits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, mode, Side::Both, &mut heads);
+    let (exits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, mode, Side::Both, &mut heads);
+    let (l, refuse, tag, hits) = exit_values(&mut f, exits[0].1);
     if packs(r) {
         let got = pack_rule(&mut f, l, refuse, tag, hits);
         f.ins().return_(&got);
@@ -2741,28 +2746,44 @@ impl Reads<'_> {
 /// that finds no last gives `s - 1`, which the order check refuses.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, side: Side, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value, Option<cranelift_codegen::ir::Block>) {
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, side: Side, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<(Side, cranelift_codegen::ir::Block)>, Option<cranelift_codegen::ir::Block>) {
     use crate::records::EndRule;
-    // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
-    let (ended, done) = (f.create_block(), f.create_block());
-    f.append_block_param(ended, types::I64);
-    f.append_block_param(ended, types::I64);
-    // And a refusal (`read_none`'s: a reader with no closer).
-    f.append_block_param(ended, types::I64);
-    f.append_block_param(done, types::I64);
-    f.append_block_param(done, types::I64);
-    f.append_block_param(done, types::I64);
-    // And the marks' tests' hits (`records::check_hits`).
-    f.append_block_param(done, types::I64);
+    // The exits: one; or the rare starts' (`Side::Rare`), one a class of how their tokens end
+    // (`TokenEnd`), each rule's arms going to its class's, as the lean lexer's arms each set
+    // their `cursor` (the class's tail after it, `record_tokens`). The others' last.
+    let forms: Vec<Side> = match side {
+        Side::Rare(_) => [TokenEnd::Plain, TokenEnd::Word, TokenEnd::Any].into_iter().filter(|e| *e == TokenEnd::Any || t.ends.contains(e)).map(|e| Side::Rare(Some(e))).collect(),
+        x => vec![x],
+    };
+    let exits: Vec<(Side, cranelift_codegen::ir::Block, cranelift_codegen::ir::Block)> = forms.iter().map(|&x| {
+        // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens
+        // refuse.
+        let (ended, done) = (f.create_block(), f.create_block());
+        f.append_block_param(ended, types::I64);
+        f.append_block_param(ended, types::I64);
+        // And a refusal (`read_none`'s: a reader with no closer).
+        f.append_block_param(ended, types::I64);
+        f.append_block_param(done, types::I64);
+        f.append_block_param(done, types::I64);
+        f.append_block_param(done, types::I64);
+        // And the marks' tests' hits (`records::check_hits`).
+        f.append_block_param(done, types::I64);
+        (x, ended, done)
+    }).collect();
+    let exit_of = |k: usize| match side {
+        Side::Rare(_) => {
+            let e = t.ends.get(k).copied().unwrap_or(TokenEnd::Any);
+            let x = exits.iter().find(|x| x.0 == Side::Rare(Some(e))).unwrap_or(&exits[exits.len() - 1]);
+            (x.1, x.2)
+        }
+        _ => (exits[0].1, exits[0].2),
+    };
+    let (_, done) = exit_of(usize::MAX);
     // The tag (`Reader::retag`): a reader's kind and marks for its token, `-1` for none.
     let untag = f.ins().iconst(types::I64, -1);
     let nohits = f.ins().iconst(types::I64, 0);
     // Output `o`'s word `q` (`q` below the file's blocks).
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| rd.word(f, c, q, o, heads);
-    // The rule from the first byte's entry (`RecordTables::token`), loaded with its kind.
-    let rule = f.ins().ushr_imm(entry, TOKEN_RULE);
-    let rule = f.ins().band_imm(rule, 0xff);
-    let rule = f.ins().ireduce(types::I32, rule);
     let q0 = f.ins().ushr_imm(s, 6);
     let sh = f.ins().band_imm(s, 63);
     let blocks: Vec<cranelift_codegen::ir::Block> = r.rules.iter().map(|_| f.create_block()).collect();
@@ -2805,6 +2826,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             let x = f.ins().band_imm(entry, 1 << TOKEN_FUSED_PAIR | 1 << TOKEN_FUSED_RUN);
             (n, r, x)
         } else {
+            let rule = rule_in(f, entry);
             let n = f.ins().icmp_imm(IntCC::Equal, rule, kn as i64);
             let r = f.ins().icmp_imm(IntCC::Equal, rule, kr as i64);
             (n, r, f.ins().bor(n, r))
@@ -2865,36 +2887,29 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             }
             v
         }
-        // A class of the rare rules: its rules, and those their readers go on to.
-        (None, Side::Rare(Some(p))) => {
-            let mut v: Vec<usize> = (0..r.rules.len()).filter(|&k| t.ends.get(k).copied().unwrap_or(TokenEnd::Any) == p).collect();
-            let mut at = 0;
-            while at < v.len() {
-                if let EndRule::Read(i) = r.rules[v[at]] {
-                    let o = usize::from(r.readers[usize::from(i)].other);
-                    if o < r.rules.len() && !v.contains(&o) {
-                        v.push(o);
-                    }
-                }
-                at += 1;
-            }
-            v
-        }
         _ => (0..r.rules.len()).collect(),
     };
     if let Some(k) = only {
         f.ins().jump(blocks[k], &[]);
     } else {
         let none = f.create_block();
-        // A rule of another class (`Side::Rare`) is none of this table's.
-        let class = |k: usize| match side {
-            Side::Rare(Some(p)) => t.ends.get(k).copied().unwrap_or(TokenEnd::Any) == p,
-            _ => true,
+        // A rare start (`Side::Rare`): its rule's block by its first byte, as the lean lexer's
+        // `match` on it; else by the rule in its entry (`RecordTables::token`).
+        let (index, calls): (Value, Vec<_>) = if let Side::Rare(_) = side {
+            let byte = f.ins().band_imm(raw, 0xff);
+            let byte = f.ins().ireduce(types::I32, byte);
+            // Only a rare byte comes here (`mid`'s rare word): the others none's.
+            let calls = (0..256).map(|b| {
+                let to = r.ends.get(b).map(|&e| usize::from(e)).filter(|&k| k < r.rules.len() && t.is_rare(b as u8)).map_or(none, |k| blocks[k]);
+                f.func.dfg.block_call(to, &[])
+            }).collect();
+            (byte, calls)
+        } else {
+            (rule_in(f, entry), blocks.iter().map(|&b| f.func.dfg.block_call(b, &[])).collect())
         };
-        let calls: Vec<_> = blocks.iter().enumerate().map(|(k, &b)| f.func.dfg.block_call(if class(k) { b } else { none }, &[])).collect();
         let default = f.func.dfg.block_call(none, &[]);
         let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
-        f.ins().br_table(rule, jt);
+        f.ins().br_table(index, jt);
         f.switch_to_block(none);
         f.set_cold_block(none);
         let refuse = f.ins().iconst(types::I64, if r.untaken.is_empty() || r.skip.is_none() { 0 } else { -1 });
@@ -2905,6 +2920,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             continue;
         }
         f.switch_to_block(b);
+        // The rule's exits: its class's (`exit_of`).
+        let (ended, done) = exit_of(k);
         // A rule with a function of its own, but the fused two: its call (`rule_fn`).
         let own = rd.calls.iter().find(|x| x.0 == RULES_CALL | k as u16);
         if let (RuleMode::Calls, Some((_, id, sig)), false) = (mode, own, fused.is_some_and(|(kn, kr)| k == kn || k == kr)) {
@@ -3251,12 +3268,27 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             }
         }
     }
-    f.switch_to_block(ended);
-    let (l, tag, no) = (f.block_params(ended)[0], f.block_params(ended)[1], f.block_params(ended)[2]);
-    let zero = f.ins().iconst(types::I64, 0);
-    f.ins().jump(done, &[l.into(), no.into(), tag.into(), zero.into()]);
+    for &(_, ended, done) in &exits {
+        f.switch_to_block(ended);
+        let (l, tag, no) = (f.block_params(ended)[0], f.block_params(ended)[1], f.block_params(ended)[2]);
+        let zero = f.ins().iconst(types::I64, 0);
+        f.ins().jump(done, &[l.into(), no.into(), tag.into(), zero.into()]);
+    }
+    (exits.iter().map(|&(x, _, d)| (x, d)).collect(), fused_exit)
+}
+
+/// The rule from a first byte's entry (`RecordTables::token`).
+fn rule_in(f: &mut FunctionBuilder<'_>, entry: Value) -> Value {
+    let rule = f.ins().ushr_imm(entry, TOKEN_RULE);
+    let rule = f.ins().band_imm(rule, 0xff);
+    f.ins().ireduce(types::I32, rule)
+}
+
+/// An exit of `rule_last`'s: its last, refusal, tag and hits, at its block.
+fn exit_values(f: &mut FunctionBuilder<'_>, done: cranelift_codegen::ir::Block) -> (Value, Value, Value, Value) {
     f.switch_to_block(done);
-    (f.block_params(done)[0], f.block_params(done)[1], f.block_params(done)[2], f.block_params(done)[3], fused_exit)
+    let p = f.block_params(done);
+    (p[0], p[1], p[2], p[3])
 }
 
 /// The pair rule's word in the block's registers (`BlockRegs::runs`), past the outputs: bit
@@ -4683,7 +4715,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // With the codes in the entries (`punct_in_entry`), the pair's entry where the byte starts
     // one: the pair word's bit, as the lean lexer's `TOKEN[c | pair << 8]`.
     let pair_reg = regs.as_ref().and_then(|g| g.runs.iter().find(|&&(k, _)| k == PAIR_WORD)).map(|&(_, v)| v);
-    let by_pair = t.punct_in_entry.and(pair_reg);
+    let by_pair = t.punct_in_entry.and(pair_reg).filter(|_| !(matches!(side, Side::Rare(_)) && t.rare_unpaired));
     let first = match by_pair {
         Some(p) => {
             let sh = f.ins().band_imm(s, 63);
@@ -4700,39 +4732,22 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // A rare start's rules, as the lean lexer's `match` arms: by the entry's bit, those whose
     // tokens end plainly (`TOKEN_PLAIN_END`) and the others, each class its rules' table and
     // its own tail, so that a plain token's has no byte put back.
-    let classes: Vec<(Side, Option<cranelift_codegen::ir::Block>)> = match side {
-        Side::Rare(None) if lean.is_some() && t.ends.iter().any(|&x| x != TokenEnd::Any) => {
-            let mut v = Vec::new();
-            for (form, bit) in [(TokenEnd::Plain, TOKEN_PLAIN_END), (TokenEnd::Word, TOKEN_WORD_END)] {
-                if t.ends.contains(&form) {
-                    let (b, other) = (f.create_block(), f.create_block());
-                    let is = f.ins().band_imm(entry, 1 << bit);
-                    f.ins().brif(is, b, &[], other, &[]);
-                    f.switch_to_block(other);
-                    v.push((Side::Rare(Some(form)), Some(b)));
-                }
-            }
-            let any = f.create_block();
-            f.ins().jump(any, &[]);
-            v.push((Side::Rare(Some(TokenEnd::Any)), Some(any)));
-            v
-        }
-        x => vec![(x, None)],
-    };
-    for (side, at) in classes {
-    if let Some(b) = at {
-        f.switch_to_block(b);
-    }
     // The rules' exits (`rule_last`): every rule's, and the fused rules' of their own, whose
     // tail is made again knowing their tokens are no reader's and no extra (the lean lexer's
-    // run loop, apart from its rare tokens).
-    let (general, fused_exit) = if ruled {
+    // run loop, apart from its rare tokens). A rare start's, one a class of how its tokens end
+    // (`TokenEnd`), each with its own tail, as the lean lexer's `match` arms: a plain token's
+    // puts no byte back.
+    let (exits, fused_exit) = if ruled {
         let mode = if rd.calls.iter().any(|x| x.0 & !0xff == RULES_CALL) { RuleMode::Calls } else { RuleMode::Inline };
-        let (l, refuse, tag, h, fx) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), mode, side, heads);
-        (Some((l, refuse, tag, h)), fx)
+        let (exits, fx) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), mode, side, heads);
+        (exits.into_iter().map(|(x, d)| (x, Some(d))).collect(), fx)
     } else {
-        (None, None)
+        (vec![(side, None)], None)
     };
+    let classes = exits.len();
+    for (at, (side, done)) in exits.into_iter().enumerate() {
+    let general = done.map(|d| exit_values(f, d));
+    let fused_exit = fused_exit.filter(|_| at + 1 == classes);
     for common in std::iter::once(false).chain(fused_exit.map(|_| true)) {
     let (l, refused, retag, hits) = if common {
         let fb = fused_exit.expect("the fused exit");

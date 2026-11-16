@@ -1905,3 +1905,40 @@ tail after the number is 9 instructions: the mask (2), the run byte
 put back (4), the block (3). Counts, reported: words 105.8,
 punctuation 53.2, mixed 56.2, strings 297.5, numbers 166.6,
 comments 272.2.
+
+## A rare start's rule by its first byte
+
+**Intro.** Lean's rare tokens are a `match` on the first byte, and
+each arm has its own tail. Ours had three steps:
+
+- load the entry, its index with the pair bit (`TOKEN[c | pair << 8]`);
+- test the class bits (plain, word);
+- switch on the rule, a second time, inside the class.
+
+**The change.** The rare side's rules are one `rule_last`, with an
+exit per class (`TokenEnd`). Each rule's arms go to its class's
+exit, and each exit gets its own tail. The rule's block comes from
+a table on the first byte, and only rare bytes are in it: no other
+byte comes to the rare head (`mid`'s rare word). `clif_rust` writes
+a table as a `match` whose entries for one target are one arm, with
+ranges:
+
+```
+match v968 { 34 => … 35 => … 47 => … 48..=57 => … 96 => … _ => … }
+```
+
+A rule's class holds for every first byte that reaches it, so a
+reader's `other` rule takes its readers' first bytes too. The class
+bits in the entry are gone. A rare byte's entry is the same with or
+without the pair bit, so the rare side loads it by its byte alone
+(`RecordTables::rare_unpaired`).
+
+Dropped first: the table over all 256 bytes, each to its own rule.
+LLVM made it a jump table, then compares for the letters' rule, and
+numbers went up (166.6 → 175.7).
+
+Stepped, the rare head: `add …, uxtb #3; ldr` (the entry), then
+`cmp #0x2e; b.gt; cmp #0x2f; b.eq; cmp #0x60; …; sub #0x30;
+cmp #0xa` to the number's call (lean: `cmp #0x2e; b.gt; cmp #0x22;
+b.eq`). Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 289.6, numbers 166.6, comments 268.2.

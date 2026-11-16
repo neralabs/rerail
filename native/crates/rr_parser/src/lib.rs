@@ -1690,19 +1690,19 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let t = c.parser.tier1.records.as_ref().expect("the record pass");
         for b in [b'"', b'`', b'/'] {
-            assert!(t.plain_end_at(b), "{:?} ends plainly", b as char);
+            assert_eq!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Plain, "{:?} ends plainly", b as char);
         }
         for b in [b'0', b'7', b'#', b'a', b'('] {
-            assert!(!t.plain_end_at(b), "{:?} does not", b as char);
+            assert_ne!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Plain, "{:?} does not", b as char);
         }
         // A number's and `#include`'s last byte is no pair's first (`12.5`'s dot is no run's
         // last): the byte after is put back where it is a run byte alone, as the lean lexer's
         // number arm reads the word after it. A punctuation's can be a pair's first.
         for b in [b'0', b'7', b'#'] {
-            assert!(t.word_end_at(b), "{:?} ends with no pair's first byte", b as char);
+            assert_eq!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Word, "{:?} ends with no pair's first byte", b as char);
         }
         for b in [b'"', b'/', b'('] {
-            assert!(!t.word_end_at(b), "{:?} is not of the class", b as char);
+            assert_ne!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Word, "{:?} is not of the class", b as char);
         }
     }
 
