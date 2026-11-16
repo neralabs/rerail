@@ -550,10 +550,19 @@ pass.
       ep2 all 357 plans are live and 31 live programs hold the cross space (`frame_program_used`): each edit is a new
       lane, so the 64 protected lanes keep up to 64 edits' predecessors. The space's size is the policy's, not a
       missing collector.
-    - **The user's call:** how an edit's predecessor stops being protected. Recommended: a lane also names its
-      policy set (where its rules come from), and a lane superseded by a newer one of the same policy set keeps no
-      protection. Reverting an edit is then cold. The alternative is fewer protected lanes, which also drops sibling
-      policy sets. Either way the first collection of ep2's backlog deletes GBs and runs in upkeep, not in a run.
+    - **Built, decision 0301** (the user chose: a lane names its policy set). A set's newer lane supersedes its
+      older, which keeps no protection; the program that reuses frames and puts nothing holds them (`hold_frames`:
+      without it, the sweep dropped the space after each edit and every other edit ran its cross part cold, seen on
+      the PYI062 repro). Tests: `a_policy_sets_newer_lane_supersedes_its_older`,
+      `a_program_that_reuses_frames_holds_them`.
+    - **ep2** (B101 edits, outputs identical as sets, 1,334 rows): the space stays at 196,767 frames over two edits
+      (it grew with each before). The frames sweep had not completed since run 289; run alone it took 10.5 s and
+      collected 66,155 frames. After it: 131,371 frames, 36,777 identities left out, an edit 52.8–54.9 G (67.8–69.9
+      before). Each process now sweeps the decision before its own (the decision is the writer's, after
+      `finish_soon`).
+    - **Open:** why the backlog's sweep never finished in a run's process (interrupted, or waiting on the writer):
+      a big backlog would stall again. And lanes of no set (older binaries' manifests, sessions, batches) stay
+      protected: ep2's 36,777 left-out identities leave only when 64 newer lanes of other sets push them out.
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 
