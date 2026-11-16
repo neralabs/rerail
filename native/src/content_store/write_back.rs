@@ -22,6 +22,8 @@
 //! otherwise, or stays busy past the deadline, leaves the store as a cache that lacks that write:
 //! the next run misses and recomputes, as when the write never happened. Its error is reported at
 //! `written`.
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{ContentStore, StoreError, StoreResult};
 use std::any::Any;
 use std::collections::HashMap;
@@ -425,19 +427,22 @@ impl ContentStore {
         // job meanwhile (3.0 s of a cold run's 7.7 s on the writer). A checkpoint is `PASSIVE` on a connection of
         // its own: in WAL mode it neither blocks the writer nor waits for it. Told after each commit; signals that
         // come while it checkpoints are one.
-        let (told, tells) = mpsc::channel::<()>();
+        let (mut told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
         let checkpoints = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
             super::hazards::behind_the_run();
             while tells.recv().is_ok() {
                 while tells.try_recv().is_ok() {}
                 let Ok(connection) = checkpointer.connection.lock() else { break };
-                if let Err(e) = connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())) {
+                if let Err(e) = connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())) {
                     eprintln!("rerail: the store's checkpoint failed: {e}");
                 }
             }
         })
         .expect("the store's checkpoint thread");
+        // Joined by the writer as it ends (below): a checkpoint after the store's last handle is gone touched its
+        // files after its owner removed them.
+        let mut checkpoints = Some(checkpoints);
         let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
@@ -447,8 +452,14 @@ impl ContentStore {
                 }
                 let mut next: Option<Queued> = None;
                 loop {
-                    // The queue closed (the last handle's drop): the checkpointer ends with the writer (below).
-                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
+                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else {
+                        // The queue is closed (the last handle's drop): the checkpointer ends with the writer.
+                        drop(std::mem::replace(&mut told, mpsc::channel().0));
+                        if let Some(c) = checkpoints.take() {
+                            let _ = c.join();
+                        }
+                        break;
+                    };
                     let (before, encoded) = (thread_cpu(), super::compression::encoded_here());
                     if first.4 != Run::Batched {
                         let (mut job, bytes, keys, holder, run, what) = first;
@@ -542,10 +553,6 @@ impl ContentStore {
                         finish(&w.shared, bytes, &keys, outcome, cpu, true);
                     }
                 }
-                // The checkpointer ends with the writer: the last handle's drop (which joins this thread) returns
-                // with no connection of the store's left open, so the store's files may be moved or removed then.
-                drop(told);
-                let _ = checkpoints.join();
             })
             .expect("the store's writer thread");
         Lane { tx, thread }

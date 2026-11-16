@@ -442,7 +442,8 @@
         assert_eq!(in_place, 0);
         let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        super::resident(&rel, &[], &mut batch, &mut rep).expect("resident");
+        // Both columns uploaded: a copy holds only the columns asked for (decision 0277).
+        super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
         let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
         assert_eq!(in_place, 2);
         assert_eq!(read, gathered);
@@ -496,5 +497,79 @@
             let c = t.elapsed().as_secs_f64();
             assert_eq!((gpu[0].ndv, gpu[0].sq), (cpu.ndv, cpu.sq));
             eprintln!("heavy batch, {n} rows: GPU {:.1} ms, CPU {:.1} ms", g * 1e3, c * 1e3);
+        }
+    }
+
+    /// Past the step that binds the head, the device keeps one witness per binding (decision 0277), as the CPU's walk
+    /// does (decision 0229): the same rows, and no binding table of every row the rest of the body would make. The
+    /// rest: an atom that binds, then semi-joins keyed by its columns, a constant and a slot bound before, and a
+    /// negated atom.
+    #[test]
+    fn past_the_bound_head_the_device_keeps_one_witness() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 23u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        // Documents `d` with many nodes `n` each (`a(d, n)`), a line per most nodes (`b(n, l)`), a column for some
+        // (`c(n, k)`).
+        db.execute_batch("CREATE TEMP TABLE dm (c0); CREATE TEMP TABLE a (c0, c1); CREATE TEMP TABLE b (c0, c1); CREATE TEMP TABLE c (c0, c1);").unwrap();
+        for d in 0..200 {
+            db.execute("INSERT INTO dm VALUES (?1)", [d]).unwrap();
+            for k in 0..40 {
+                let n = d * 1000 + k;
+                db.execute("INSERT INTO a VALUES (?1, ?2)", [d, n]).unwrap();
+                if next(4) != 0 {
+                    db.execute("INSERT INTO b VALUES (?1, ?2)", [n, next(50)]).unwrap();
+                }
+                if next(3) == 0 {
+                    db.execute("INSERT INTO c VALUES (?1, ?2)", [n, next(3)]).unwrap();
+                }
+            }
+        }
+        let src = |t: &str, cols: &str, types: &str| format!("t:x:{}:{}:{types}", hex(&format!("temp.{t}")), hex(cols));
+        let (dm, a, b, c) = (src("dm", "c0", "i"), src("a", "c0, c1", "ii"), src("b", "c0, c1", "ii"), src("c", "c0, c1", "ii"));
+        let rules = [
+            // h0(d) :- dm(d), a(d, n), b(n, _), c(n, _).
+            format!("pos {dm} v0\npos {a} v0 v1\npos {b} v1 v2\npos {c} v1 v3\nhead v0"),
+            // h0(d) :- dm(d), a(d, n), c(n, 2): a constant key.
+            format!("pos {dm} v0\npos {a} v0 v1\npos {c} v1 i:2\nhead v0"),
+            // h0(d) :- dm(d), a(d, n), !b(n, _): a negated atom.
+            format!("pos {dm} v0\npos {a} v0 v1\nneg {b} v1 _\nhead v0"),
+        ];
+        for (case, rule) in rules.iter().enumerate() {
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0);").unwrap();
+                let mut spec = vec!["name dev_wit".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 i empty".into());
+                spec.push(format!("seed 0 {}", hex(rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "dev_wit", 0).unwrap();
+                let report = super::take_report();
+                if device {
+                    let r = report.as_ref().expect("a device report");
+                    assert!(r.refused.is_none(), "{case}: {r:?}");
+                    // The documents scanned and those with a witness: never a binding per node (8,000 nodes).
+                    assert!(r.bindings <= 400, "{case}: {} bindings, a witness per document", r.bindings);
+                }
+                super::super::close(&db, "dev_wit").unwrap();
+                let mut rows: Vec<i64> = db.prepare("SELECT c0 FROM temp.h0").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert!(!got[0].is_empty(), "{case}: rows");
+            assert_eq!(got[0], got[1], "{case}: the device's rows are the CPU's");
         }
     }

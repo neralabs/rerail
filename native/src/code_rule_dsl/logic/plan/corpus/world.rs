@@ -112,6 +112,12 @@ impl World {
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
     /// Resolved by phase 0's observer: where the journal says nothing changed, with no `realpath` (decision 0105).
+    /// A load's request is resolved once (`resolve`) and its path handed to `bounded`, `loaded_as`, `reload` and
+    /// `load`: each resolution takes the observer's lock and, where the journal cannot vouch, a `realpath`.
+    pub(super) fn resolve(&self, asked: &str) -> Option<PathBuf> {
+        self.allowed(asked)
+    }
+
     fn allowed(&self, asked: &str) -> Option<PathBuf> {
         let path = super::observe(|o| o.canonical(&self.root.join(asked)))?;
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
@@ -177,17 +183,18 @@ impl World {
         out
     }
 
-    /// The document a load of `asked` gave earlier in this run, if any: a load asked again is answered alike.
-    pub(super) fn loaded_as(&self, asked: &str) -> Option<Loaded> {
-        let path = self.allowed(asked)?;
-        self.loads.get(path.to_string_lossy().as_ref()).cloned()
+    /// The document a load gave earlier in this run, if any, by its request's path (`resolve`): a load asked again
+    /// is answered alike.
+    pub(super) fn loaded_as(&self, path: Option<&Path>) -> Option<Loaded> {
+        self.loads.get(path?.to_string_lossy().as_ref()).cloned()
     }
 
-    pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
+    /// `path` is `asked` resolved (`resolve`).
+    pub(super) fn load(&mut self, asked: &str, path: Option<&Path>, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
         if corpus.contains(asked) || self.refused.contains(asked) {
             return None;
         }
-        let Some(path) = self.allowed(asked).filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
+        let Some(path) = path.filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
@@ -225,9 +232,10 @@ impl World {
         self.taken.keys()
     }
 
-    /// Whether a load of `asked` is one the budget bounds: a file beyond the corpus root, not loaded yet this run.
-    pub(super) fn bounded(&self, asked: &str) -> bool {
-        self.allowed(asked).is_some_and(|p| {
+    /// Whether a load is one the budget bounds, by its request's path (`resolve`): a file beyond the corpus root, not
+    /// loaded yet this run.
+    pub(super) fn bounded(&self, path: Option<&Path>) -> bool {
+        path.is_some_and(|p| {
             let p = p.to_string_lossy();
             !self.own(&p) && !self.loads.contains_key(p.as_ref())
         })
@@ -249,10 +257,10 @@ impl World {
         true
     }
 
-    /// The document of `asked` taken back this run, loaded again when the budget allows: it is the same document,
-    /// with the rows it was given (`unload`).
-    pub(super) fn reload(&mut self, asked: &str) -> Option<Loaded> {
-        let path = self.allowed(asked)?.to_string_lossy().into_owned();
+    /// The document of a request's path (`resolve`) taken back this run, loaded again when the budget allows: it is
+    /// the same document, with the rows it was given (`unload`).
+    pub(super) fn reload(&mut self, path: Option<&Path>) -> Option<Loaded> {
+        let path = path?.to_string_lossy().into_owned();
         if !self.taken.contains_key(&path) {
             return None;
         }
@@ -354,4 +362,31 @@ fn listing_digest(entries: &[(String, bool)]) -> String {
 /// A file's bytes' digest ("" when it cannot be read), from phase 0's observer: read only when its stat changed.
 pub(in crate::code_rule_dsl::logic::plan) fn bytes_digest(path: &Path) -> String {
     super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
+}
+
+/// Each file's `bytes_digest`, at once: the observer answers what it holds, and the files it must read are read and
+/// hashed on the pool, outside its lock, then recorded. One at a time, a run's first pass over PostHog's 29,885
+/// files read and hashed each on the main thread, under the observer's lock (1.9 s on an M3 Max, the pool idle).
+pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests(paths: &[PathBuf]) -> Vec<String> {
+    use crate::content_store::observe::DigestStep;
+    use rayon::prelude::*;
+    let steps: Vec<DigestStep> = super::observe(|o| paths.iter().map(|p| o.digest_step(p)).collect());
+    let hashed: Vec<Option<(u64, [u8; 32])>> = steps
+        .par_iter()
+        .map(|s| match s {
+            DigestStep::Read(r) => r.hash(),
+            DigestStep::Answered(_) => None,
+        })
+        .collect();
+    super::observe(|o| {
+        steps
+            .into_iter()
+            .zip(hashed)
+            .map(|(s, h)| match s {
+                DigestStep::Answered(d) => d,
+                DigestStep::Read(r) => o.digest_read(r, h),
+            })
+            .map(|d| d.map(|d| hex(&d)).unwrap_or_default())
+            .collect()
+    })
 }

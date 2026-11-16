@@ -436,6 +436,27 @@ fn a_second_run_still_holds_every_atom() {
     assert_eq!(store.intern_atoms(&["a", "d"]).unwrap(), [1, 4]);
 }
 
+/// A reservation made while another is open on the thread (a component's job run by another's wait) holds its own
+/// atoms; the outer one goes on when it ends, holding its own before and after.
+#[test]
+fn a_reservation_inside_another_holds_its_own_atoms() {
+    let path = path("nested");
+    let store = ContentStore::open(&path).unwrap();
+    let arena = std::sync::Arc::clone(&store.atoms);
+    let outer = super::reserving(&arena);
+    arena.intern_all(&["outer-1"]).unwrap();
+    let inner = super::reserving(&arena);
+    arena.intern_all(&["inner-1", "inner-2"]).unwrap();
+    let inner = inner.end();
+    arena.intern_all(&["outer-2"]).unwrap();
+    let outer = outer.end();
+    assert_eq!((inner.len(), outer.len()), (2, 2));
+    assert!(!store.atoms.pending(), "both still reserved");
+    drop(inner);
+    assert!(store.atoms.pending(), "the inner one retired: its atoms are pending");
+    drop(outer);
+}
+
 /// A commit's pending atoms are written in segments of a bounded size, so neither a copy of them nor SQLite's
 /// record of one holds a whole run's atoms at once; once stored, the arena holds their bytes once.
 #[test]
@@ -621,13 +642,17 @@ fn pending_atoms_are_written_in_segments_of_bounded_size() {
     }
     let (mut shape, mut keys, mut from) = (Vec::new(), 0, 1);
     while from < 6 {
-        let (ends, bytes, k, next) = interner.segment(from, 10);
+        let (ends, bytes, k, next) = interner.segment(from, 6, 10);
         shape.push((from, ends.len() / 4, bytes));
         keys += k.len();
         from = next;
     }
     assert_eq!(shape, [(1, 2, b"aaaabbbb".to_vec()), (3, 1, b"cccc".to_vec()), (4, 1, b"dddddddddddddd".to_vec()), (5, 1, b"e".to_vec())]);
     assert_eq!(keys, 5);
+    // Never past the write's end: atoms interned after it took its end are the next write's (a segment that ran past
+    // it was taken by the next write for another process's, a fork).
+    let (ends, _, k, next) = interner.segment(1, 2, 100);
+    assert_eq!((ends.len() / 4, k.len(), next), (1, 1, 2));
     let path = path("segments");
     let store = ContentStore::open(&path).unwrap();
     let words: Vec<String> = (0..300).map(|i| format!("{i:0>10000}")).collect();

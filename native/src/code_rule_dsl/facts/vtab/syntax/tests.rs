@@ -199,6 +199,36 @@ fn lookups_agree_with_scans() {
     }
 }
 
+/// A view's filter scan, document by document, holds the rows a per-row read finds: over several documents, for
+/// filters on each column of `node`, `child`, `field` and `tape`, and on two at once. It is the view's own scan (a
+/// merge had left it outside the `Source` impl, where the trait's per-row scan shadowed it).
+#[test]
+fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("filter-eq")).unwrap();
+    let python: GrammarDialect = dialect_by_label("python").unwrap();
+    let call = core::kind_atom(tape_tag(python).unwrap(), python.kinds().kind_id("call"));
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        if !["node", "child", "field", "tape"].iter().any(|&v| name == v) {
+            continue;
+        }
+        let width = source.columns().len();
+        let n = source.len();
+        assert!(n > 0, "{name}: no rows");
+        for (c, eqs) in (0..width).flat_map(|c| {
+            let (a, b) = (source.value(n / 3, c), source.value(n - 1, c));
+            let pair = if width > 1 { vec![(c, a), ((c + 1) % width, source.value(n / 3, (c + 1) % width))] } else { vec![(c, a)] };
+            [(c, vec![(c, a)]), (c, vec![(c, b)]), (c, pair)]
+        }).chain([(2, vec![(2, i64::from(call))])].into_iter().filter(|_| name == "node")) {
+            let per_row: Vec<u32> = (0..n).filter(|&r| eqs.iter().all(|&(c, v)| source.value(r, c) == v)).map(|r| r as u32).collect();
+            assert!(!per_row.is_empty(), "{name} column {c}: a value read from a row matches it");
+            assert_eq!(source.filter_eq(&eqs), per_row, "{name} {eqs:?}");
+            tried += 1;
+        }
+    }
+    assert!(tried >= 4 * 3, "the four views were tried");
+}
+
 /// Two cursors on one table, joined on a column the inner one does not index, pair children by position.
 #[test]
 fn self_joins_pair_children_by_position() {
@@ -496,6 +526,17 @@ fn within_holds_exactly_the_contained_pairs() {
         assert_eq!(within.estimated_len(), (0..nodes).map(|r| at(r).3 + own).sum::<usize>());
         if mode == within::Mode::Tree {
             assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
+        }
+        // Read whole first (the device's keyed read, decision 0277): the tree by the batch's solve, every pair once,
+        // and the lookups after it read the same rows; spans have no solve.
+        let whole = within::Within::new(Arc::clone(&batch), mode);
+        assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");
+        if mode == within::Mode::Tree {
+            let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect() };
+            assert_eq!(whole.len(), expected.len());
+            assert_eq!(rows((0..whole.len()).collect()), expected);
+            assert_eq!(rows(whole.lookup(0, &ids).unwrap()), expected);
+            assert_eq!(rows(whole.lookup(1, &ids).unwrap()), expected);
         }
         relation_cpu += cpu() - before_relation;
     }
@@ -1301,6 +1342,20 @@ fn a_phase_projects_the_subtrees_its_rules_start_from() {
             Err(_) => assert!(got.is_err(), "{body}: {got:?}"),
         }
     }
+}
+
+/// A rule reading the text of a node no kind fixes gets twins reading `rr_long_text_node(n)` (`long_text_twins`): a
+/// node's own fact, as `text` is, so the phase still projects only the subtrees its rules start from. Read as a
+/// relation of nodes from anywhere, it kept every node: PostHog's `py_from_name` visited all 41 M nodes.
+#[test]
+fn a_long_text_twin_keeps_its_phases_anchors() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let src = format!("{prelude}\n.phase p\n.export out\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_from_statement\"), field(i, \"name\", n), text(n, t).\n.output out\n");
+    let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
+    let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
+    assert!(long_text_twins(&mut program, &matchers) > 0, "the rule reads the text of a node no kind fixes");
+    let got = node_anchors(&program, &matchers);
+    assert_eq!(got, Ok(["import_from_statement".to_owned()].into_iter().collect::<BTreeSet<String>>()));
 }
 
 /// The definition ids of every node, token and span of a set of files, pinned (decision 0094 §2): a change to how

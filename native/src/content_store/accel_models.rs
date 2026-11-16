@@ -5,6 +5,8 @@
 //! another file replaces this one as the process's (`set_store`). Each call opens its own connection: models are
 //! read and written a few times a run.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rerail_accel::ane::ModelStore;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
@@ -29,14 +31,14 @@ impl StoreModels {
 impl ModelStore for StoreModels {
     fn get(&self, key: &[u8; 32]) -> Option<Arc<[u8]>> {
         let c = self.connection()?;
-        let got: Option<Vec<u8>> = c.query_row("SELECT archive FROM accel_models WHERE model_key = ?1", params![&key[..]], |r| r.get(0)).optional().ok()?;
+        let got: Option<Vec<u8>> = c.query_row_cached("SELECT archive FROM accel_models WHERE model_key = ?1", params![&key[..]], |r| r.get(0)).optional().ok()?;
         got.map(Into::into)
     }
 
     fn put(&self, key: [u8; 32], archive: Arc<[u8]>) {
         if let Some(c) = self.connection() {
             // A store that cannot take it leaves the model in this process only: the next run compiles it again.
-            let _ = c.execute("INSERT OR REPLACE INTO accel_models (model_key, archive) VALUES (?1, ?2)", params![&key[..], &archive[..]]);
+            let _ = c.execute_cached("INSERT OR REPLACE INTO accel_models (model_key, archive) VALUES (?1, ?2)", params![&key[..], &archive[..]]);
         }
     }
 }
