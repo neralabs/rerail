@@ -292,7 +292,10 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
 - State files go through a 0600 temp file and rename; logs open 0600.
 - The daemon's last answers of stopped that hooks repeat (`stopped-answers/`, `src/runtime/stopped-answers.ts`) are
   written 0600 in folders made 0700, hold no path, and are never read, written or removed through a link; the daemon
-  removes those of the daemons before it. A hook repeats one only while the checkout's clone id file names the clone
+  removes those of the daemons before it. A hook reads an answer, and the checkout's `.git`, `commondir` and clone id
+  files, only as small plain files opened without waiting, and opens the database only where it, its WAL and the WAL's
+  index are plain files, so a named pipe planted at one's name cannot hold the hook. A hook repeats an answer only
+  while the checkout's clone id file names the clone
   it names, the database places the checkout by that clone id in its repository and records it as stopped, and the
   folder, the checkout's top and its `.git` keep the device and file ids it names, so a changed or planted file cannot
   turn Rerail off in a checkout the database records as started.
