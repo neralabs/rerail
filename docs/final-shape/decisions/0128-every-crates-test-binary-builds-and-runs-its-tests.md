@@ -54,13 +54,12 @@ engine too: `typing::phase_tests`, `waves::owner::tests`, `logic::liveness::test
 
 Each of these is ignored with its reason (`open (decision 0128)`). None had run since the split.
 
-- **17 tests that parse rule files** in `logic::plan` (`phases`, `prepared`, `reuse`,
-  `cache_tests`, `phase0`, `compose`, `native_demand`, `prepared::identity_tests`). Only the
-  engine registers languages (`install_languages` reaches embedders, residency, the workspace,
-  eval and resolution), so these are the engine's to host. Many are inline modules in production
-  files: each must be moved out to a file, as above, and the private items it reads widened.
-  Four more in rerail-device-metal, for the same reason: the launch budget test, the slab
-  admission test, the resident tape test and the T-program split test.
+- **The tests that parse rule files**, 21 here: the hub has since moved them, and 54 more, into the
+  engine (`tools/cratify/runtime_hosts.py`, `runtime-hosts.tsv`), and their ignores are gone.
+  `prepared::identity_tests` then failed on a stale assertion: outputs became rows (0239), and
+  the test read them as text. With that fixed it passes, except the first run after a rebuild
+  failed once (7 of 8 passed): a restored program differed from the fresh one. Not yet traced;
+  the per-build default store, cold after each rebuild, is the suspect.
 - **The decision-0104 lints** (`facts_only`: `every_table_is_facts_or_listed`,
   `every_kept_map_is_state_or_listed`). Since they last ran, 12 tables (mostly the device tests'
   scratch tables) and 19 maps have been added. Each needs a judgement: state, scratch, or a

@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 
 #[test]
 
-#[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
 fn fresh_and_restored_programs_have_identical_relation_identities() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -27,7 +26,7 @@ fn fresh_and_restored_programs_have_identical_relation_identities() {
         let snapshot: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join(format!("{phase}.json"))).unwrap()).unwrap();
         snapshots.push(snapshot);
     }
-    assert!(!snapshots[0]["outputs"].as_str().unwrap().is_empty(), "the fixture must find a call");
+    assert!(!snapshots[0]["outputs"].as_array().unwrap().is_empty(), "the fixture must find a call");
     for next in &snapshots[1..] {
         assert_eq!(next["outputs"], snapshots[0]["outputs"]);
         let programs = next["programs"].as_object().unwrap();
