@@ -21,7 +21,7 @@
 //   busy           W8: while repository scans run (each after a branch switch), `rerail status` and a hook pair.
 
 import { spawnSync } from "node:child_process";
-import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -628,9 +628,10 @@ const stepFiles = new Map<string, string>();
 function stepFile(settings: WaitsSettings): string {
   let file = stepFiles.get(settings.corpusDir);
   if (file === undefined) {
-    // Any file the step edits apply to (waits-steps.ts names the languages): the corpus's own language decides.
-    const paths = (readdirSync(settings.corpusDir, { recursive: true }) as string[]).filter((path) => extname(path) !== "");
-    file = pickStepFile(paths.map((path) => ({ path, size: readFileSync(join(settings.corpusDir, path)).length, source: () => readFileSync(join(settings.corpusDir, path), "utf8") })));
+    // Any file the step edits apply to (waits-steps.ts names the languages): the corpus's own language decides. Samples
+    // corpora name directories like files (`x.php-c63b…/`), so only files count.
+    const paths = (readdirSync(settings.corpusDir, { recursive: true }) as string[]).filter((path) => extname(path) !== "" && statSync(join(settings.corpusDir, path)).isFile());
+    file = pickStepFile(paths.map((path) => ({ path, size: statSync(join(settings.corpusDir, path)).size, source: () => readFileSync(join(settings.corpusDir, path), "utf8") })));
     stepFiles.set(settings.corpusDir, file);
   }
   return file;
