@@ -33,6 +33,13 @@ pub(super) fn base_key(rel: &str) -> String {
 /// takes more of them kept over it (`identities_of`, decision 0280).
 pub(super) const COVERED: &str = "own:covered";
 
+/// What a hit read for its outputs alone decodes besides its outputs (decision 0117 step 1): its `own:` rows (its tree
+/// counts and `COVERED`), not its export or base rows, which the kept inputs hold. An entry is one image (decision
+/// 0240 §4), so it is held whole and only these are decoded; `Found::whole` decodes the rest if the kept inputs fail.
+pub(super) fn outputs_alone(rel: &str) -> bool {
+    rel.starts_with("own:")
+}
+
 /// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
 /// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
 /// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without

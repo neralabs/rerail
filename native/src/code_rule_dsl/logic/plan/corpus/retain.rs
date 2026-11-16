@@ -1493,9 +1493,215 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
             at += got.n;
         }
         let source = crate::code_rule_dsl::logic::native::component::columns_source(prog.fields()?.columns(rel).unwrap_or_default().into_iter().map(|(n, _)| n.to_owned()).collect(), columns.into_iter().map(Some).collect());
+        let source: Arc<dyn Source> = match std::env::var_os("RERAIL_KEPT_READS") {
+            Some(_) => {
+                // Each granule's first row, in the order the rows were laid out.
+                let mut starts: Vec<usize> = Vec::new();
+                let mut at = 0usize;
+                for run in owners.chunk_by(|a, b| a.0 == b.0) {
+                    starts.push(at);
+                    at += run.iter().map(|o| o.2 as usize).sum::<usize>();
+                }
+                Arc::new(Traced::new(rel.clone(), source, starts))
+            }
+            None => source,
+        };
         out.insert(rel.clone(), KeptInput { source, docs: Arc::clone(docs), digest: *digest, ranges: Arc::new(ranges) });
     }
     Ok(Ok(out))
+}
+
+/// `RERAIL_KEPT_READS`: a kept input that counts what the run reads of it, printed when it is dropped: the rows and
+/// granules read one at a time, and the calls that read a whole column (a scan, an index, statistics).
+struct Traced {
+    rel: String,
+    inner: Arc<dyn Source>,
+    starts: Vec<usize>,
+    rows: parking_lot::Mutex<rustc_hash::FxHashSet<usize>>,
+    whole: parking_lot::Mutex<BTreeMap<&'static str, usize>>,
+}
+impl Traced {
+    fn new(rel: String, inner: Arc<dyn Source>, starts: Vec<usize>) -> Self {
+        Self { rel, inner, starts, rows: Default::default(), whole: Default::default() }
+    }
+    fn row(&self, r: usize) {
+        let mut rows = self.rows.lock();
+        if rows.is_empty() && std::env::var_os("RERAIL_KEPT_READS_STACK").is_some_and(|v| v == self.rel.as_str()) {
+            eprintln!("RERAIL_KEPT_READS {}: first row read at\n{}", self.rel, std::backtrace::Backtrace::force_capture());
+        }
+        rows.insert(r);
+    }
+    fn rows_of(&self, got: &Option<Vec<usize>>) {
+        if let Some(g) = got {
+            self.rows.lock().extend(g.iter().copied());
+        }
+    }
+    fn whole(&self, what: &'static str) {
+        *self.whole.lock().entry(what).or_default() += 1;
+    }
+}
+impl Drop for Traced {
+    fn drop(&mut self) {
+        let rows = self.rows.lock();
+        let granules: BTreeSet<usize> = rows.iter().map(|r| self.starts.partition_point(|s| s <= r)).collect();
+        eprintln!("RERAIL_KEPT_READS {}: {} rows in {} granules; read {} rows in {} granules; whole {:?}", self.rel, self.inner.len(), self.starts.len(), rows.len(), granules.len(), self.whole.lock());
+    }
+}
+impl Source for Traced {
+    fn columns(&self) -> Vec<String> {
+        self.inner.columns()
+    }
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+    fn row_stream(&self, range: std::ops::Range<usize>, reverse: bool) -> Option<Box<dyn crate::code_rule_dsl::facts::vtab::RowStream>> {
+        self.whole("row_stream");
+        self.inner.row_stream(range, reverse)
+    }
+    fn direct_all(&self, equal: &[(usize, i64)]) -> Option<Vec<crate::code_rule_dsl::facts::vtab::ReadRow>> {
+        self.whole("direct_all");
+        self.inner.direct_all(equal)
+    }
+    fn direct_one(&self, column: usize, values: &[i64]) -> Option<Vec<crate::code_rule_dsl::facts::vtab::ReadRow>> {
+        self.whole("direct_one");
+        self.inner.direct_one(column, values)
+    }
+    fn caches_rows(&self) -> bool {
+        self.inner.caches_rows()
+    }
+    fn row_cells(&self, row: usize) -> Option<(i64, Arc<dyn crate::code_rule_dsl::facts::vtab::RowCells>)> {
+        self.row(row);
+        self.inner.row_cells(row)
+    }
+    fn frozen(&self) -> Option<Arc<dyn Source>> {
+        self.whole("frozen");
+        self.inner.frozen()
+    }
+    fn revision(&self) -> Option<u64> {
+        self.inner.revision()
+    }
+    fn cell(&self, row: usize, column: usize) -> rusqlite::types::Value {
+        self.row(row);
+        self.inner.cell(row, column)
+    }
+    fn row_id(&self, row: usize) -> i64 {
+        self.inner.row_id(row)
+    }
+    fn text_column(&self, column: usize) -> bool {
+        self.inner.text_column(column)
+    }
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        self.row(row);
+        self.inner.row_at(row, columns, out)
+    }
+    fn estimated_len(&self) -> usize {
+        self.inner.estimated_len()
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.inner.estimated_matches(column, batch)
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.inner.estimated_matches_all(columns)
+    }
+    fn composite(&self) -> bool {
+        self.inner.composite()
+    }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        self.whole("lookup_all (index)");
+        let got = self.inner.lookup_all(equal);
+        self.rows_of(&got);
+        got
+    }
+    fn doc_column(&self) -> Option<usize> {
+        self.inner.doc_column()
+    }
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+        self.whole("lookup_in (index)");
+        let got = self.inner.lookup_in(column, values, doc);
+        self.rows_of(&got);
+        got
+    }
+    fn kept_to_doc(&self, column: usize) -> bool {
+        self.inner.kept_to_doc(column)
+    }
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        self.whole("filter_eq (scan)");
+        self.inner.filter_eq(eqs)
+    }
+    fn made_on_lookup(&self) -> bool {
+        self.inner.made_on_lookup()
+    }
+    fn complete_rows(&self) -> bool {
+        self.inner.complete_rows()
+    }
+    fn expect_lookups(&self, column: usize, keys: f64) {
+        self.inner.expect_lookups(column, keys)
+    }
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.whole("statistics");
+        self.inner.statistics()
+    }
+    fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+        self.whole("value_counts");
+        self.inner.value_counts(wanted)
+    }
+    fn failure(&self) -> Option<String> {
+        self.inner.failure()
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.inner.indexed(column)
+    }
+    fn range_upper_compatible(&self, lower: usize, upper: usize) -> bool {
+        self.inner.range_upper_compatible(lower, upper)
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.inner.range_indexed(column)
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.whole("range_lookup (index)");
+        let got = self.inner.range_lookup(column, lower, upper);
+        self.rows_of(&got);
+        got
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.whole("lookup (index)");
+        let got = self.inner.lookup(column, values);
+        self.rows_of(&got);
+        got
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.row(row);
+        self.inner.value(row, column)
+    }
+    fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
+        self.whole("sorted_rows (index)");
+        self.inner.sorted_rows(column, value)
+    }
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.inner.sorts_rows(column)
+    }
+    fn prepare_lookup(&self, columns: &[usize]) {
+        self.whole("prepare_lookup");
+        self.inner.prepare_lookup(columns)
+    }
+    fn prepare_index(&self, columns: &[usize]) {
+        self.whole("prepare_index");
+        self.inner.prepare_index(columns)
+    }
+    fn primary_key_len(&self) -> Option<usize> {
+        self.inner.primary_key_len()
+    }
+    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+        self.whole("lookup_primary_batch");
+        self.inner.lookup_primary_batch(values)
+    }
+    fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
+        self.inner.ordered(equal, order)
+    }
+    fn ordered_range(&self, equal: &[(usize, i64)]) -> Option<std::ops::Range<usize>> {
+        self.whole("ordered_range");
+        self.inner.ordered_range(equal)
+    }
 }
 
 /// `source` with its columns named `names` (as the run binds it), its rows as they are.
