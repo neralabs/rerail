@@ -5260,3 +5260,21 @@ It still does so after 0267. The whole pack runs strict. The likely cause is tha
 reads the file-local export `plan` through SQL (`setfix::input_of`): one fixpoint binds the exports as empty,
 lazily filled sources, and `view()` applies only to base inputs. Next: bind such an export as a view of its
 rows, and check that a program alone and in a pack read its exports the same way.
+
+## O-adaptive-worst-case. A slow line with few lead rows done runs unbounded (2026-11-15)
+
+Status: open. The adaptive planner (0203, 0206, 0207) exists to bound the worst case: a join that runs far over its
+price is cut and replaced. Two paths leave a line with no bound.
+
+- **No trial, and no replan.** At a seed's or whole plan's check, a line flagged slow is replanned inline only with
+  trials off (`!joins::trials_on()`): with them on, "the orders are measured below instead". But a trial needs a
+  sample of `TRIAL_LEAST` (8) rows, sized `cap × done / work` with `cap` 10% of the work, so a line must have done
+  about 80 of its lead rows. A line whose few lead rows each cost more than its check's budget gets neither. Seen on
+  the data-layer candidates over 35 files (before 0267): `pre_570` was cut at 201,431 rows of work with 0 of its 423
+  lead rows done, flagged slow, and then ran 22 s on one worker. The planner's order ran it in 6 ms.
+- **A handoff's replacement cut too** goes on "unlimited" (0206 §3, the shape chosen on 2026-11-14): whichever of
+  the two orders has less work per row goes on, with no further check (`p68_rr_agg20` in O-cold-seed-join's log).
+
+Next: where a slow line cannot be trialled, replan it inline under the handoff's limit, as with trials off. Or
+trial it over at least `TRIAL_LEAST` of its rows left whatever their work so far, each trial still cut at `cap`.
+And decide whether a replacement cut twice keeps a limit.
