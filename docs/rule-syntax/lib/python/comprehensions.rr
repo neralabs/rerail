@@ -47,7 +47,7 @@ c4_builtin(c, x) :- kind(c, "call"), field(c, "function", f), unparen(f, m), bui
 // binding of x that Ruff has seen at n: in code that runs at import time, only the bindings above n.
 .decl c4_builtin_here(n: node, x: symbol)
 c4_builtin_here(n, x) :- c4_builtin_ask(n, x), builtin(x), !c4_shadow(n, x).
-.decl c4_builtin_ask(n: node, x: symbol)
+.decl c4_builtin_ask(n: node, x: symbol) extensible
 .decl c4_shadow(n: node, x: symbol)
 c4_shadow(n, x) :- c4_builtin_ask(n, x), binding(s, x, site, _), (within(n, s), !kind(s, "class_definition") ;
     scope_node(n, s), kind(s, "class_definition")), (!runs_at_import(n) ; earlier(site, n)).

@@ -362,6 +362,21 @@ pub(super) fn release_all_at(database_path: &Path) {
     });
 }
 
+/// What in this process still holds the store at `database_path`: its open handles, and the thread connections to it
+/// that are open (a test checks a closed store's are none).
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn holding(database_path: &Path) -> (usize, usize) {
+    let handles = HANDLES.lock().get(database_path).copied().unwrap_or(0);
+    let open = ALL_CONNECTIONS
+        .lock()
+        .iter()
+        .filter(|(path, _)| path == database_path)
+        .filter_map(|(_, connection)| connection.upgrade())
+        .filter(|connection| connection.try_lock().is_none_or(|c| c.is_some()))
+        .count();
+    (handles, open)
+}
+
 /// A connection's page cache at rest, in KiB.
 pub(super) const CACHE_KIB: i64 = 1_024;
 
@@ -400,7 +415,7 @@ pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>
 
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
     trace_for_hazards(connection);
-    connection.set_prepared_statement_cache_capacity(128);
+    connection.set_prepared_statement_cache_capacity(256);
     connection.busy_handler(Some(wait_for_writer))?;
     // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
     // creating transaction, it was ignored, so no store returned freed pages (decision 0053 §4).
@@ -576,7 +591,6 @@ impl ContentStore {
         stop: Option<&std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
         operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
-        self.yield_writer();
         let mut connection = self
             .connection
             .lock()
@@ -611,7 +625,6 @@ impl ContentStore {
     ) -> StoreResult<T> {
         // Opening the thread's connection (if an idle release closed it) is not a wait for
         // another writer, and must not fail as one.
-        self.yield_writer();
         let mut connection = self.connection.lock().map_err(StoreError::Invalid)?;
         let _no_wait = NoBusyWait::enter();
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
@@ -772,5 +785,23 @@ impl ContentStore {
                 Err(error)
             }
         }
+    }
+}
+
+/// `Connection::query_row` and `Connection::execute` through the connection's statement cache (decision 0240): the
+/// plain forms parse their SQL at every call, and the store's writer made several such calls a tape (the tape's
+/// generation, its source's hash), parsing SQL for each of 27,000 files.
+pub(crate) trait Cached {
+    fn query_row_cached<T, P: rusqlite::Params, F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>>(&self, sql: &str, params: P, f: F) -> rusqlite::Result<T>;
+    fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize>;
+}
+
+impl Cached for Connection {
+    fn query_row_cached<T, P: rusqlite::Params, F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>>(&self, sql: &str, params: P, f: F) -> rusqlite::Result<T> {
+        self.prepare_cached(sql)?.query_row(params, f)
+    }
+
+    fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize> {
+        self.prepare_cached(sql)?.execute(params)
     }
 }

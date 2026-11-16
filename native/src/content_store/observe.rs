@@ -33,6 +33,8 @@
 //! holds its committed blob's bytes. Its digest is the blob's, when the store has seen those bytes before
 //! (`git_alias`): a fresh clone or another worktree of the same repository is then not hashed.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use crate::content_store::RACY_NS;
 use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};
@@ -565,28 +567,37 @@ impl Observer {
 
     /// The sha256 of the file at `path` (`None`: not a readable file), read only when its stat changed.
     pub fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
+        match self.digest_step(path) {
+            DigestStep::Answered(d) => d,
+            DigestStep::Read(read) => {
+                let hashed = read.hash();
+                self.digest_read(read, hashed)
+            }
+        }
+    }
+
+    /// `digest` up to its read: the answer where none is needed, else the file to read and hash (`DigestRead::hash`,
+    /// which needs no observer, so many files are read at once, outside its lock) and then record (`digest_read`).
+    pub fn digest_step(&mut self, path: &Path) -> DigestStep {
         let path = &self.abs(path);
         self.ensure(path);
         if let Some(e) = self.trusted(path).filter(|e| e.kind == Kind::File) {
             self.counts.reused += 1;
-            return Some(e.digest);
+            return DigestStep::Answered(Some(e.digest));
         }
         let started = now_ns();
-        let (kind, now) = self.stat(path)?;
+        let Some((kind, now)) = self.stat(path) else { return DigestStep::Answered(None) };
         if kind != Kind::File {
-            return None;
+            return DigestStep::Answered(None);
         }
+        let read = |known, blob| DigestStep::Read(DigestRead { path: path.clone(), stat: now, started, known, blob });
         if let Some(e) = self.known(path).filter(|e| e.kind == Kind::File && e.holds(&now)) {
             if !self.checks(path) {
                 self.counts.reused += 1;
-                return Some(e.digest);
+                return DigestStep::Answered(Some(e.digest));
             }
             self.counts.validated += 1;
-            let (_, digest) = self.hash(path, now, started)?;
-            if digest != e.digest {
-                self.counts.mismatched += 1;
-            }
-            return Some(digest);
+            return read(Some(e.digest), None);
         }
         // A clean Git file whose stat is its index entry's holds its blob: the digest of bytes seen before under
         // that blob, unread; or read once, and the blob remembered.
@@ -603,13 +614,26 @@ impl Observer {
             if let Some(d) = self.alias(&key) {
                 self.counts.git += 1;
                 self.remember(path, Entry { kind: Kind::File, stat: now, digest: d, listing: None, recorded_ns: started });
-                return Some(d);
+                return DigestStep::Answered(Some(d));
             }
-            let (_, d) = self.hash(path, now, started)?;
-            self.record_alias(&key, d);
-            return Some(d);
+            return read(None, Some(key));
         }
-        self.hash(path, now, started).map(|(_, d)| d)
+        read(None, None)
+    }
+
+    /// Records a file read for `digest` (`digest_step`): its digest, `None` when it could not be read.
+    pub fn digest_read(&mut self, read: DigestRead, hashed: Option<(u64, [u8; 32])>) -> Option<[u8; 32]> {
+        let (len, digest) = hashed?;
+        self.counts.hashed += 1;
+        self.counts.bytes += len;
+        self.record_hash(&read.path, read.stat, read.started, digest);
+        if read.known.is_some_and(|k| k != digest) {
+            self.counts.mismatched += 1;
+        }
+        if let Some(key) = read.blob {
+            self.record_alias(&key, digest);
+        }
+        Some(digest)
     }
 
     /// Starts a run: the Git work trees are discovered again, as they may have changed since, and each root is
@@ -715,9 +739,9 @@ impl Observer {
     /// What the journal names as changed under each of `roots` since its cursor in `cursors` (`mark`'s), decision
     /// 0105: `None` where it cannot say.
     ///
-    /// `record` is the run record (`run_record`) whose first line the cursors are. Where the journal names nothing
+    /// `record` is the run record (`run_record`) whose first list (`encode_lists`) the cursors are. Where the journal names nothing
     /// under any of its roots and a cursor is `CURSOR_AGE` behind, the record holds as of the journal's cursors now:
-    /// its first line is stored again with them (a timestamp, `profile::WARM_WRITES_ALLOWED`), so its next check does
+    /// its first list is stored again with them (a timestamp, `profile::WARM_WRITES_ALLOWED`), so its next check does
     /// not replay from far back (4 million events back, a check timed out and the record was made again).
     pub fn changed_since(&mut self, record: &str, roots: &[PathBuf], cursors: &[String]) -> Option<Vec<PathBuf>> {
         let cookies = self.cookies.clone().filter(|_| self.db.is_some())?;
@@ -754,12 +778,14 @@ impl Observer {
         Some(named)
     }
 
-    /// Stores `record` again with `cursors` as its first line (`changed_since`), the rest as it was.
+    /// Stores `record` again with `cursors` as its first list (`changed_since`), the rest as it was.
     fn refresh_record(&mut self, record: &str, cursors: &[String]) {
         let Some(k) = self.db.as_mut() else { return };
         let Some((consulted, outputs)) = k.records.get(record).cloned() else { return };
-        let rest = consulted.split_once('\n').map_or("", |(_, rest)| rest);
-        let consulted = format!("{}\n{rest}", cursors.join("\t"));
+        // The record's first list is its cursors (`encode_lists`); the rest stays as it was.
+        let Some(mut lists) = decode_lists(&consulted).filter(|l| !l.is_empty()) else { return };
+        lists[0] = cursors.to_vec();
+        let consulted = encode_lists(&lists.iter().map(Vec::as_slice).collect::<Vec<_>>());
         k.records.insert(record.to_owned(), (consulted.clone(), outputs.clone()));
         let key = record.to_owned();
         k.writer.send(move |db| {
@@ -868,7 +894,7 @@ impl Observer {
                         let _ = one.execute([l.to_string_lossy()]);
                     }
                     if let Some((key, cursor)) = at {
-                        let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+                        let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
                     }
                 }
                 let _ = tx.commit();
@@ -906,11 +932,16 @@ impl Observer {
         self.counts.hashed += 1;
         self.counts.bytes += bytes.len() as u64;
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        self.record_hash(path, stat, started, digest);
+        Some((bytes, digest))
+    }
+
+    /// Keeps a file's digest as read with `stat`, where it is not kept so already.
+    fn record_hash(&mut self, path: &Path, stat: Stat, started: i64, digest: [u8; 32]) {
         let changed = self.entries.get(path).is_none_or(|e| e.digest != digest || e.stat != stat || e.kind != Kind::File);
         if changed || self.entries.get(path).is_some_and(|e| !e.holds(&stat)) {
             self.remember(path, Entry { kind: Kind::File, stat, digest, listing: None, recorded_ns: started });
         }
-        Some((bytes, digest))
     }
 
     /// The entries of the directory at `dir` (`None`: not a readable directory), listed only when its stat changed.
@@ -970,7 +1001,7 @@ impl Observer {
     }
 
     /// The record of the last run under `key`: what it consulted, and its outputs (`corpus::reuse`).
-    pub fn run_record(&mut self, key: &str) -> Option<(String, Vec<u8>)> {
+    pub fn run_record(&mut self, key: &str) -> Option<(Vec<u8>, Vec<u8>)> {
         let k = self.db.as_mut()?;
         if let Some(r) = k.records.get(key) {
             return Some(r.clone());
@@ -981,7 +1012,8 @@ impl Observer {
             return None;
         }
         k.asked.insert(key.to_owned());
-        let found: Option<(String, Vec<u8>)> = k.reader.as_ref()?.prepare_cached("SELECT consulted, outputs FROM run_record WHERE key = ?1").ok()?.query_row([key], |r| Ok((r.get(0)?, r.get(1)?))).ok();
+        // A run's record holds bytes (`encode_lists`); a canonical form's, a text, is not asked here.
+        let found: Option<(Vec<u8>, Vec<u8>)> = k.reader.as_ref()?.prepare_cached("SELECT consulted, outputs FROM run_record WHERE key = ?1").ok()?.query_row([key], |r| Ok((bytes_of(r.get(0)?), r.get(1)?))).ok().and_then(|(c, o)| Some((c?, o)));
         if let Some(r) = &found {
             k.records.insert(key.to_owned(), r.clone());
         }
@@ -989,12 +1021,12 @@ impl Observer {
     }
 
     /// Keeps a run's record under `key`, replacing the last: in memory now, in the store behind the run.
-    pub fn put_run_record(&mut self, key: &str, consulted: &str, outputs: &[u8]) {
+    pub fn put_run_record(&mut self, key: &str, consulted: &[u8], outputs: &[u8]) {
         if let Some(k) = self.db.as_mut() {
             k.records.insert(key.to_owned(), (consulted.to_owned(), outputs.to_owned()));
             let (key, consulted, outputs) = (key.to_owned(), consulted.to_owned(), outputs.to_owned());
             k.writer.send(move |db| {
-                let _ = db.execute("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
+                let _ = db.execute_cached("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
             });
         }
     }
@@ -1112,7 +1144,7 @@ impl Observer {
                         let _ = drop_key.execute([key]);
                     }
                     if let Some((key, cursor)) = at {
-                        let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+                        let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
                     }
                 }
                 let _ = tx.commit();
@@ -1125,7 +1157,7 @@ impl Observer {
 /// and the observer's own settings (the epoch, each root's journal cursor); and the writer of what changes.
 struct Kept {
     /// The runs' records asked so far (`run_record`) or kept this process, and the keys asked of the store.
-    records: HashMap<String, (String, Vec<u8>)>,
+    records: HashMap<String, (Vec<u8>, Vec<u8>)>,
     asked: HashSet<String>,
     /// The store, read only, for what is read as it is first needed (`ensure`, `run_record`).
     reader: Option<Connection>,
@@ -1320,14 +1352,17 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     };
     let records: Vec<String> = {
         let mut st = db.prepare("SELECT key, consulted FROM run_record")?;
-        st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        st.query_map([], |r| Ok((r.get::<_, String>(0)?, bytes_of(r.get(1)?).unwrap_or_default())))?
             .flatten()
             .filter(|(key, consulted)| {
                 if let Some(path) = key.strip_prefix(CANONICAL).or_else(|| key.strip_prefix("git-files:")) {
                     return !held(Path::new(path));
                 }
                 if key.starts_with(CUTOFF) {
-                    return !consulted.lines().filter_map(|l| l.strip_prefix("plan\t\t")).filter_map(unhex).any(|plan| live(&plan));
+                    // Its consulted list (`reuse::encode_consulted`): kind, path and digest by turns; a plan's
+                    // path is empty, its digest the plan's in hex.
+                    let flat = decode_lists(consulted).and_then(|l| l.into_iter().next()).unwrap_or_default();
+                    return !flat.chunks_exact(3).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
                 }
                 // A cutoff's record from before they were prefixed: its key alone, a digest.
                 key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())
@@ -1349,6 +1384,55 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     // The WAL folded in and emptied: a process that opens the store reads the database, not its history.
     db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
     Ok(swept)
+}
+
+/// Lists of texts as bytes, for a record the store keeps (a run's consulted list, the cone's rounds, the Git files):
+/// the lists' count, then each list's count and each text's length and bytes (little-endian `u32`s). Read back by
+/// `decode_lists`, never as text.
+pub fn encode_lists<S: AsRef<str>>(lists: &[&[S]]) -> Vec<u8> {
+    let mut out = (lists.len() as u32).to_le_bytes().to_vec();
+    for list in lists {
+        out.extend((list.len() as u32).to_le_bytes());
+        for t in *list {
+            let t = t.as_ref();
+            out.extend((t.len() as u32).to_le_bytes());
+            out.extend(t.as_bytes());
+        }
+    }
+    out
+}
+
+/// The lists `encode_lists` made, or none where the bytes are not some (a record of another form, or cut).
+pub fn decode_lists(bytes: &[u8]) -> Option<Vec<Vec<String>>> {
+    // The `u32` at `*at`, past it.
+    fn word(bytes: &[u8], at: &mut usize) -> Option<usize> {
+        let w = u32::from_le_bytes(bytes.get(*at..*at + 4)?.try_into().ok()?) as usize;
+        *at += 4;
+        Some(w)
+    }
+    let mut at = 0;
+    let n = word(bytes, &mut at)?;
+    let mut lists = Vec::with_capacity(n.min(64));
+    for _ in 0..n {
+        let k = word(bytes, &mut at)?;
+        let mut list = Vec::with_capacity(k.min(1 << 16));
+        for _ in 0..k {
+            let len = word(bytes, &mut at)?;
+            list.push(std::str::from_utf8(bytes.get(at..at + len)?).ok()?.to_owned());
+            at += len;
+        }
+        lists.push(list);
+    }
+    (at == bytes.len()).then_some(lists)
+}
+
+/// A record's consulted column as its bytes: a run's are bytes (`encode_lists`), a canonical form's a text.
+fn bytes_of(v: rusqlite::types::Value) -> Option<Vec<u8>> {
+    match v {
+        rusqlite::types::Value::Text(t) => Some(t.into_bytes()),
+        rusqlite::types::Value::Blob(b) => Some(b),
+        _ => None,
+    }
 }
 
 /// The prefix of a whole-run cutoff's record (`reuse::CUTOFF`, in the engine).
@@ -1377,6 +1461,31 @@ pub fn store_beside(content_store: &Path) -> PathBuf {
     let mut name = content_store.as_os_str().to_owned();
     name.push(".files");
     PathBuf::from(name)
+}
+
+/// `Observer::digest_step`'s answer: the digest (`None`: not a readable file), or a file to read first.
+pub enum DigestStep {
+    Answered(Option<[u8; 32]>),
+    Read(DigestRead),
+}
+
+/// A file `Observer::digest` reads: hashed with no observer (`hash`), then recorded (`Observer::digest_read`).
+pub struct DigestRead {
+    path: PathBuf,
+    stat: Stat,
+    started: i64,
+    /// The digest kept for it, which the read checks.
+    known: Option<[u8; 32]>,
+    /// Its clean Git blob's key, remembered with the digest.
+    blob: Option<[u8; 40]>,
+}
+
+impl DigestRead {
+    /// The file's length and bytes' digest; `None` when it cannot be read.
+    pub fn hash(&self) -> Option<(u64, [u8; 32])> {
+        let bytes = std::fs::read(&self.path).ok()?;
+        Some((bytes.len() as u64, Sha256::digest(&bytes).into()))
+    }
 }
 
 static OBSERVERS: OnceLock<Mutex<HashMap<Option<PathBuf>, Observer>>> = OnceLock::new();
@@ -1762,7 +1871,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// A record refreshed for its aged cursors keeps everything but its first line, in memory and in the store.
+    /// A record refreshed for its aged cursors keeps everything but its first list, in memory and in the store.
     #[test]
     fn a_refreshed_record_moves_only_its_cursors() {
         let base = std::env::temp_dir().join(format!("rerail-refreshed-record-{}", std::process::id()));
@@ -1770,10 +1879,11 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
         let store = base.join("store.files");
         let mut o = Observer::open(Some(&store));
-        o.put_run_record("git-files:/r", "1\t1\n/r\t/r/.git\n/r/.git/HEAD", b"2\na.py");
+        let record = |cursors: &[&str]| encode_lists(&[cursors, &["/r", "/r/.git"], &["/r/.git/HEAD"]]);
+        o.put_run_record("git-files:/r", &record(&["1", "1"]), b"2\na.py");
         o.refresh_record("git-files:/r", &["9".into(), "9".into()]);
         o.written();
-        let want = ("9\t9\n/r\t/r/.git\n/r/.git/HEAD".to_owned(), b"2\na.py".to_vec());
+        let want = (record(&["9", "9"]), b"2\na.py".to_vec());
         assert_eq!(o.run_record("git-files:/r"), Some(want.clone()));
         drop(o);
         assert_eq!(Observer::open(Some(&store)).run_record("git-files:/r"), Some(want));
@@ -1842,11 +1952,13 @@ mod tests {
         }
         let (live, dead) = ([1u8; 32], [2u8; 32]);
         let record = |key: &str, consulted: &str| db.execute("INSERT INTO run_record VALUES (?1, ?2, x'')", params![key, consulted]).unwrap();
+        // A cutoff's consulted list as the engine keeps it (`reuse::encode_consulted`): kind, path, digest by turns.
+        let cutoff = |key: &str, flat: &[&str]| db.execute("INSERT INTO run_record VALUES (?1, ?2, x'')", params![key, encode_lists(&[flat])]).unwrap();
         record(&format!("{CANONICAL}{}", s(&root.join("a.py"))), "");
         record(&format!("{CANONICAL}{}", s(&real.join("elsewhere"))), "");
-        record("cutoff:kept", &format!("rule\tx.rr\tab\nplan\t\t{}\nplan\t\t{}", hex(&dead), hex(&live)));
-        record("cutoff:dead", &format!("plan\t\t{}", hex(&dead)));
-        record(&"ab".repeat(32), "rule\tx.rr\tab");
+        cutoff("cutoff:kept", &["rule", "x.rr", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
+        cutoff("cutoff:dead", &["plan", "", &hex(&dead)]);
+        cutoff(&"ab".repeat(32), &["rule", "x.rr", "ab"]);
         record("constants:k", "");
         drop(db);
         let swept = collect(&store, |plan| *plan == live).unwrap();

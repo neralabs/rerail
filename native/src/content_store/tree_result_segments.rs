@@ -6,6 +6,8 @@
 // COPY: Tempo ner-1562-scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
 // l.265-279 (SCHEMA_V10), l.523-542 (segment structs), l.2962-3071 (complete_snapshot_trees),
 // l.3161-3252 (tree_result_segments), l.3439-3446 (collection).
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{
     CandidateCatalogIdentity, ContentStore, HashKey, SnapshotId, StoreError, StoreResult,
     WorkspaceCompletion, rows::intern_hash,
@@ -175,7 +177,7 @@ impl ContentStore {
                     ));
                 }
             }
-            transaction.execute(
+            transaction.execute_cached(
                 "INSERT INTO completed_workspace_revisions(workspace_id,revision,catalog_hash_id,completed_at) \
                  VALUES (?1,?2,?3,?4) ON CONFLICT(workspace_id) DO UPDATE SET \
                  revision=excluded.revision,catalog_hash_id=excluded.catalog_hash_id,completed_at=excluded.completed_at",
@@ -285,7 +287,7 @@ impl ContentStore {
         transaction: &rusqlite::Connection,
         limit: i64,
     ) -> StoreResult<()> {
-        transaction.execute(
+        transaction.execute_cached(
             "DELETE FROM tree_result_segments WHERE (tree_hash_id,prefix,catalog_hash_id) IN (\
              SELECT r.tree_hash_id,r.prefix,r.catalog_hash_id FROM tree_result_segments r \
              WHERE NOT EXISTS (SELECT 1 FROM completed_snapshot_trees c WHERE c.tree_hash_id=r.tree_hash_id \

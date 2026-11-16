@@ -24,7 +24,8 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
-    /// `'a + Tr + …`, a `bounded_type` that starts with a lifetime or `use<…>`, in slot `s`.
+    /// `'a + Tr`, a `bounded_type` that starts with a lifetime or `use<…>`, in slot `s`: `impl`'s
+    /// trait, which takes one bound after it (`impl 'a + B + C` is a `bounded_type` of it and `C`).
     fn bounds_type(&mut self, s: Slot) -> R<N> {
         let n = self.open_in(K::BoundedType, s);
         if self.peek() == T::Lifetime {
@@ -35,20 +36,14 @@ impl<'a> P<'a> {
         if self.peek() != T::Plus {
             return self.refuse();
         }
-        let mut n = n;
-        loop {
-            self.tk(K::BoundedType, K::TPlus, f::NONE)?;
-            match self.peek() {
-                T::Lifetime => drop(self.lifetime_node(BARE)?),
-                T::Name if self.is_word(w::USE) => self.use_bounds()?,
-                _ => drop(self.type_atom(TYPE)?),
-            }
-            self.close(n);
-            if self.peek() != T::Plus {
-                return Ok(n);
-            }
-            n = self.wrap(n, K::BoundedType, s, TYPE);
+        self.tk(K::BoundedType, K::TPlus, f::NONE)?;
+        match self.peek() {
+            T::Lifetime => drop(self.lifetime_node(BARE)?),
+            T::Name if self.is_word(w::USE) => self.use_bounds()?,
+            _ => drop(self.type_atom(TYPE)?),
         }
+        self.close(n);
+        Ok(n)
     }
 
     fn lifetime_node(&mut self, s: Slot) -> R<N> {
@@ -190,6 +185,10 @@ impl<'a> P<'a> {
                 w::DYN => {
                     let n = self.open_in(K::DynamicType, s);
                     self.tk(K::DynamicType, K::TDyn, f::NONE)?;
+                    // A trait first: `dyn 'a + Tr` is an error to tree-sitter.
+                    if self.peek() == T::Lifetime {
+                        return self.refuse();
+                    }
                     if self.is_word(w::FOR) && self.peek_at(1).kind == T::Lt {
                         self.higher_ranked(slot(f::TRAIT, Ctx::Bare))?;
                     } else {
@@ -277,7 +276,15 @@ impl<'a> P<'a> {
 
     /// A type's path: `A`, `a::B`, `<T as Tr>::A`, `A<T>`, `A<T>::B`, `Fn(A) -> B`, `m!(…)`.
     fn type_path(&mut self, s: Slot) -> R<N> {
+        // `self` alone is no type (`*const self`); `self::A` is a path.
+        if self.is_word(w::SELF) && self.peek_at(1).kind != T::ColonColon {
+            return self.refuse();
+        }
         let mut name_at = None;
+        // A reserved identifier alone (`union`, `default`): a generic type's name as an
+        // `identifier` (`union<'a>`), no type by itself.
+        let first = self.tok();
+        let reserved = first.kind == T::Name && w::is_reserved(first.word);
         let mut n = match self.peek() {
             T::Lt | T::LtLt => {
                 let b = self.bracketed_type(slot(f::PATH, Ctx::Bare))?;
@@ -313,13 +320,22 @@ impl<'a> P<'a> {
                         self.leaf(K::TColonColon, f::NONE, C_NONE)?;
                         self.type_arguments()?;
                         self.close(g);
+                        // A turbofish in a type is only a scoped type's path (`A::<T>::B`).
+                        if self.peek() != T::ColonColon || self.peek_at(1).kind != T::Name {
+                            return self.refuse();
+                        }
                         n = g;
                         name_at = None;
                     }
                     _ => break,
                 },
                 T::Lt | T::LtLt => {
-                    let t = self.type_name_of(n, slot(f::TYPE, Ctx::Bare), name_at);
+                    let t = if reserved && n.kind == K::Identifier {
+                        self.rekey(n.at, slot(f::TYPE, Ctx::Bare));
+                        n
+                    } else {
+                        self.type_name_of(n, slot(f::TYPE, Ctx::Bare), name_at)
+                    };
                     let g = self.wrap(t, K::GenericType, s, slot(f::TYPE, Ctx::Bare));
                     self.type_arguments()?;
                     self.close(g);
@@ -356,6 +372,9 @@ impl<'a> P<'a> {
                 }
                 _ => break,
             }
+        }
+        if reserved && n.kind == K::Identifier {
+            return self.refuse();
         }
         Ok(self.type_name_of(n, s, name_at))
     }
@@ -396,6 +415,8 @@ impl<'a> P<'a> {
                 T::LBrace => drop(self.block(BARE)?),
                 T::Int | T::Float | T::Char | T::Str | T::RawStr => drop(self.literal(slot(f::NONE, Ctx::Literal))?),
                 T::Name if matches!(t.word, w::TRUE | w::FALSE) => drop(self.literal(slot(f::NONE, Ctx::Literal))?),
+                // A primitive type's word is no binding's name (`S<i32 = u32>`).
+                T::Name if self.binding_ahead() && w::is_primitive(self.tok().word) => return self.refuse(),
                 T::Name if self.binding_ahead() => {
                     let b = self.open(K::TypeBinding, f::NONE, C_NONE);
                     self.leaf(K::TypeIdentifier, f::NAME, C_NONE)?;

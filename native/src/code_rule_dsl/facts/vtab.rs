@@ -130,6 +130,13 @@ pub trait Source: Send + Sync {
     fn made_on_lookup(&self) -> bool {
         false
     }
+    /// For a reader that takes the whole relation where a join would look it up (the device's keyed read, which
+    /// sorts the rows it is given, decision 0277): whether its rows can be made at once, at the cost of a solve the
+    /// source runs, rather than one lookup each. A source that answers so makes them (and its lookups then read
+    /// them). Every source not made on lookup has them.
+    fn complete_rows(&self) -> bool {
+        !self.made_on_lookup()
+    }
     /// The planner expects `keys` lookups on `column` (decision 0143): a source that can make every row at once for
     /// less than that many lookups cost chooses to.
     fn expect_lookups(&self, _column: usize, _keys: f64) {}
@@ -622,6 +629,11 @@ static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Bi
 /// The source bound now to the table `name` on `db`'s connection, if one is.
 pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
     BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
+}
+
+/// `bound_source` by the connection's scope (`Scoped::at`), for a callback that holds the scope, not the connection.
+pub fn bound_source_at(at: usize, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(at, name.to_owned())).map(Binding::current)
 }
 
 /// Rebind through the existing cell so its owning Modules and prepared cursors agree.

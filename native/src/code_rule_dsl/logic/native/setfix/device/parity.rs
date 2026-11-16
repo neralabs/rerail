@@ -162,7 +162,13 @@ fn run(fx: &Fixture, c: &Case, id: usize, device: bool) -> Result<(Rows, String,
     super::super::open(db, &spec.join("\n")).map_err(|e| format!("open: {e}"))?;
     let ran = super::super::run(db, &name, 0).map_err(|e| format!("run: {e}"));
     let report = super::take_report();
-    let counts = super::super::step_counts(db, &name).map(|c| format!("{c:?}")).unwrap_or_default();
+    // Counts before each rule's tail: past the step that binds the head the CPU counts one witness (decision 0229),
+    // the device every row where its witness stage does not take the rest (decision 0277). Rows are compared whole.
+    let tails = super::super::step_tails(db, &name).unwrap_or_default();
+    let counts = super::super::step_counts(db, &name)
+        .map(|c| c.into_iter().zip(tails.iter().copied().chain(std::iter::repeat(usize::MAX))).map(|(mut c, t)| { c.truncate(t); c }).collect::<Vec<_>>())
+        .map(|c| format!("{c:?}"))
+        .unwrap_or_default();
     super::super::close(db, &name).map_err(|e| format!("close: {e}"))?;
     ran?;
     let col = |k: usize| if c.head.as_bytes()[k] == b's' { format!("sym_text(c{k})") } else { format!("CAST(c{k} AS TEXT)") };
@@ -654,9 +660,9 @@ fn random_texts(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                         texts.push(next);
                         next += 1;
                         if g.chance(50) {
-                            format!("func replace_all v{} v{t} {} {}", next - 1, sym(*g.pick(&rxs)), sym(g.pick::<&str>(&["", "#", "<>"])))
+                            format!("func replace_all v{} v{t} {} {}", next - 1, sym(*g.pick(&rxs)), sym(*g.pick(&["", "#", "<>"])))
                         } else {
-                            format!("func sql_replace v{} v{t} {} {}", next - 1, sym(p), sym(g.pick::<&str>(&["", "#", "<>"])))
+                            format!("func sql_replace v{} v{t} {} {}", next - 1, sym(p), sym(*g.pick(&["", "#", "<>"])))
                         }
                     }
                     5 => {

@@ -34,8 +34,11 @@ struct P<'a> {
     b: &'a Blocks<'a>,
     w: Writer<Widths>,
     open: Vec<Open>,
+    /// The open tags' size as the scanner serializes them (`tags::serialized_size`).
+    serialized: usize,
     at: usize,
 }
+
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
@@ -46,7 +49,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     let b = Blocks::of(src);
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P { src, b: &b, w: Writer::new(0, widths, src.len() / 4 + 16), open: Vec::new(), at: 0 };
+        let mut p = P { src, b: &b, w: Writer::new(0, widths, src.len() / 4 + 16), open: Vec::new(), serialized: tags::SERIALIZED_EMPTY, at: 0 };
         p.document()?;
         match p.w.finish_columns() {
             Ok(columns) => return Ok(columns),
@@ -123,8 +126,15 @@ impl<'a> P<'a> {
 
     /// The innermost element ended implicitly, at `at` (a token of no width there).
     fn end_implicitly(&mut self) {
-        let o = self.open.pop().expect("an open element");
+        let o = self.pop();
         self.close(o.node, self.at);
+    }
+
+    /// The innermost open element, taken off the stack.
+    fn pop(&mut self) -> Open {
+        let o = self.open.pop().expect("an open element");
+        self.serialized -= tags::serialized_size(o.ty, (o.name.1 - o.name.0) as usize);
+        o
     }
 
     // ---- The grammar.
@@ -275,7 +285,7 @@ impl<'a> P<'a> {
         self.at += 1;
         self.close(node, self.at);
         if closes {
-            let o = self.open.pop().expect("an open element");
+            let o = self.pop();
             self.close(o.node, self.at);
         }
         Ok(())
@@ -286,6 +296,15 @@ impl<'a> P<'a> {
     fn start_tag(&mut self) -> R<()> {
         let from = self.at;
         let (end, ty) = self.name(from + 1)?;
+        if end == from + 1 {
+            // No name (`<%`): no start tag, and `<` is no text.
+            return self.refuse();
+        }
+        // The scanner holds the tag from its name on (a self-closing one too, until its `/>`).
+        let len = end - from - 1;
+        if !tags::serializes(self.serialized, ty, len) {
+            return Err(Refusal::Parse(from as u32));
+        }
         let raw = ty == tags::SCRIPT || ty == tags::STYLE;
         let element = self.open_node(
             match ty {
@@ -309,6 +328,7 @@ impl<'a> P<'a> {
                     self.tok(K::StartTag, K::TGt, gt, gt + 1);
                     self.close(tag, self.at);
                     self.open.push(Open { ty, name: (from as u32 + 1, end as u32), node: element });
+                    self.serialized += tags::serialized_size(ty, len);
                     if raw {
                         return self.raw_text(ty);
                     }

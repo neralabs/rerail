@@ -186,7 +186,9 @@ impl<'a> P<'a> {
         if quoted {
             self.tok_piece(kind, quote, f::NONE, ws - 1, ws, false);
         }
-        self.mark(K::HeredocStart, f::IDENTIFIER, C_NONE, ws, we);
+        // A bare word's `heredoc_start` takes the blanks after `<<<` (`<<< E`); a quoted one's
+        // starts at the word.
+        self.mark(K::HeredocStart, f::IDENTIFIER, C_NONE, if quoted { ws } else { start + 3 }, we);
         if quoted {
             self.tok_piece(kind, quote, f::NONE, we, we + 1, false);
         }
@@ -218,6 +220,12 @@ impl<'a> P<'a> {
         if nowdoc {
             self.nowdoc_body(nl, body, line, &word)?;
         } else if line > body {
+            // tree-sitter-php reads an indented heredoc with an error where its first `/*` is past
+            // its first line and the `*/` closing it on its eleventh or later (measured over
+            // probes and the survey's files); not read.
+            if tag_start > line && self.long_block_comment(body, limit) {
+                return self.refuse();
+            }
             // The pieces first (into a body opened at the line break), the body dropped where it
             // has none.
             let b = self.open_at(K::HeredocBody, f::VALUE, C_NONE, nl as u32);
@@ -270,15 +278,60 @@ impl<'a> P<'a> {
         Ok(stop)
     }
 
+    /// Whether `from..to`'s first `/*` stands past its first line and the `*/` after it on its
+    /// line 10 or later (from 0): a `*` or `/` a step, then a line a step.
+    fn long_block_comment(&self, from: usize, to: usize) -> bool {
+        let mut open = None;
+        let mut i = self.lx.blocks.star(from);
+        while i + 1 < to {
+            match (self.src[i], self.src[i + 1]) {
+                (b'/', b'*') if open.is_none() => {
+                    open = Some(i);
+                    i += 2;
+                }
+                (b'*', b'/') if let Some(o) = open => {
+                    let line_of = |at: usize| {
+                        let (mut n, mut l) = (0, from);
+                        while l <= at {
+                            let e = self.lx.blocks.eol(l);
+                            if e >= at {
+                                break;
+                            }
+                            n += 1;
+                            l = e + 1;
+                        }
+                        n
+                    };
+                    return line_of(o) >= 1 && line_of(i) >= 10;
+                }
+                _ => i += 1,
+            }
+            i = self.lx.blocks.star(i);
+        }
+        false
+    }
+
+    /// The end of a run of line ends from `at`, at most `limit`.
+    fn line_ends_end(&self, at: usize, limit: usize) -> usize {
+        self.lx.blocks.eol_end(at).min(limit).max(at)
+    }
+
     /// `nowdoc_body`: the opening line's break, then `nowdoc_string`s, each from the end of the one
-    /// before (white space and line breaks included) to its line's end.
+    /// before (white space and line breaks included) to its line's end; the first from past the
+    /// empty lines after the opening line.
     fn nowdoc_body(&mut self, nl: usize, body: usize, tag_line: usize, _word: &[u8]) -> R<()> {
         let mut pieces = Vec::new();
-        let mut pos = body;
+        let mut pos = self.line_ends_end(body, tag_line);
         loop {
             let mut q = pos;
-            while q < tag_line && matches!(self.src[q], b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c) {
-                q += 1;
+            // Blanks and line ends, a run of each a step.
+            loop {
+                q = self.lx.blocks.blank_end(q);
+                let r = self.line_ends_end(q, tag_line);
+                if r == q {
+                    break;
+                }
+                q = r;
             }
             if q >= tag_line {
                 break;

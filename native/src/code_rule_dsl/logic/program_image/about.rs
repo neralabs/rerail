@@ -499,6 +499,35 @@ impl Builder<'_> {
         let rows = pairs.iter().map(|(r, w)| vec![p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
         self.set_about_rows("qualifier", rows);
     }
+    /// Adds the tree's gates `gates` (`Program::gates`' entries, after the program's), each with its source where it
+    /// has one (`gate_src`), as `program_facts` writes them.
+    pub fn add_tree_gates(&mut self, gates: &[(String, crate::code_rule_dsl::logic::front::ast::Gate)]) {
+        if gates.is_empty() {
+            return;
+        }
+        let p = program_cell(self);
+        let base = self.about_rows("gate").len() as i64;
+        let made: Vec<_> = gates.iter().map(|(key, g)| (key.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
+        self.add_gates(&made);
+        let mut srcs = self.about_rows("gate_src");
+        for (k, (_, g)) in gates.iter().enumerate() {
+            if let Some(src) = &g.src {
+                srcs.push(vec![p, Cell::Int(base + k as i64), Cell::Str(self.atom(src))]);
+            }
+        }
+        self.set_about_rows("gate_src", srcs);
+    }
+    /// States the answers (`Program::answers`): each request and the relations that answer it, in order. Replaces
+    /// the program's.
+    pub fn set_answers(&mut self, answers: &std::collections::BTreeMap<String, Vec<String>>) {
+        let p = program_cell(self);
+        let rows = answers
+            .iter()
+            .flat_map(|(req, by)| by.iter().enumerate().map(move |(i, b)| (req, i, b)))
+            .map(|(req, i, b)| vec![p, Cell::Str(self.atom(req)), Cell::Int(i as i64), Cell::Str(self.atom(b))])
+            .collect();
+        self.set_about_rows("answer", rows);
+    }
     /// Adds gates (`Program::gates`' entries, after the program's): each its key, relation, level, the relations
     /// that must be quiet and the gates it waits on, as `program_facts` writes them.
     pub fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {

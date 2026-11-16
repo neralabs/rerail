@@ -1,5 +1,7 @@
 //! Content-addressed source and tape objects: compression, aliases, and bulk reads.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::read_cache::CacheKey;
 use super::rows::{generation, hash_params, intern_hash};
 use super::{
@@ -136,12 +138,12 @@ impl ContentStore {
         self.immediate_transaction(|transaction| {
             let canonical_hash_id = intern_hash(transaction, canonical)?;
             let generation = generation(transaction)?;
-            transaction.execute(
+            transaction.execute_cached(
                 "INSERT INTO source_objects(canonical_hash_id, raw_length, codec_id, frame, created_generation)\
                  VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(canonical_hash_id) DO NOTHING",
                 params![canonical_hash_id, raw_length, CODEC_ZSTD, frame, generation],
             )?;
-            let source_id: i64 = transaction.query_row(
+            let source_id: i64 = transaction.query_row_cached(
                 "SELECT source_id FROM source_objects WHERE canonical_hash_id = ?1",
                 [canonical_hash_id],
                 |row| row.get(0),
@@ -150,7 +152,7 @@ impl ContentStore {
             for alias in aliases {
                 let alias_hash_id = intern_hash(transaction, *alias)?;
                 let existing = transaction
-                    .query_row(
+                    .query_row_cached(
                         "SELECT source_id FROM source_aliases WHERE alias_hash_id = ?1",
                         [alias_hash_id],
                         |row| row.get::<_, i64>(0),
@@ -161,7 +163,7 @@ impl ContentStore {
                         "Git object alias maps to different source bytes".to_owned(),
                     ));
                 }
-                transaction.execute(
+                transaction.execute_cached(
                     "INSERT INTO source_aliases(alias_hash_id, source_id) VALUES (?1, ?2)\
                      ON CONFLICT(alias_hash_id) DO NOTHING",
                     params![alias_hash_id, source_id],
@@ -223,7 +225,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         connection
-            .query_row(
+            .query_row_cached(
                 "SELECT tape_id FROM tape_objects WHERE source_id=?1 AND grammar_id=?2 \
                  AND grammar_version=?3 AND tape_format_version=?4",
                 params![
@@ -244,7 +246,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         connection
-            .query_row(
+            .query_row_cached(
                 "SELECT EXISTS(SELECT 1 FROM source_aliases LIMIT 1)",
                 [],
                 |row| row.get(0),
@@ -258,7 +260,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         connection
-            .query_row(
+            .query_row_cached(
                 "SELECT a.source_id FROM hashes h JOIN source_aliases a ON a.alias_hash_id = h.hash_id \
                  WHERE h.algorithm_id=?1 AND h.lane0=?2 AND h.lane1=?3 AND h.lane2=?4 AND h.lane3=?5",
                 hash_params(alias),
@@ -352,7 +354,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let key: HashKey = connection.query_row(
+        let key: HashKey = connection.query_row_cached(
             "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM source_objects s \
              JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id=?1",
             [source_id.0],
@@ -404,7 +406,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         let stored = connection
-            .query_row(
+            .query_row_cached(
                 "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM source_objects s \
                  JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id=?1",
                 [source_id.0],
@@ -425,7 +427,7 @@ impl ContentStore {
                 .connection
                 .lock()
                 .expect("content store mutex poisoned");
-            connection.query_row(
+            connection.query_row_cached(
                 "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM source_objects s \
                  JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id=?1",
                 [source_id.0],
@@ -450,7 +452,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let (raw_length, codec, frame, key): (i64, i64, Vec<u8>, HashKey) = connection.query_row(
+        let (raw_length, codec, frame, key): (i64, i64, Vec<u8>, HashKey) = connection.query_row_cached(
             "SELECT s.raw_length, s.codec_id, s.frame, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3 \
              FROM source_objects s JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id=?1",
             [source_id.0],
@@ -916,7 +918,7 @@ impl ContentStore {
                 .connection
                 .lock()
                 .expect("content store mutex poisoned");
-            connection.query_row(
+            connection.query_row_cached(
                 "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM tape_objects t \
                  JOIN hashes h ON h.hash_id=t.canonical_hash_id WHERE t.tape_id=?1",
                 [tape_id.0],
@@ -941,7 +943,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let (raw_length, codec, frame, key, source): (i64, i64, Vec<u8>, HashKey, HashKey) = connection.query_row(
+        let (raw_length, codec, frame, key, source): (i64, i64, Vec<u8>, HashKey, HashKey) = connection.query_row_cached(
             "SELECT t.raw_length,t.codec_id,t.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3,\
              sh.algorithm_id,sh.lane0,sh.lane1,sh.lane2,sh.lane3 \
              FROM tape_objects t JOIN hashes h ON h.hash_id=t.canonical_hash_id \
@@ -1190,7 +1192,7 @@ pub(super) fn put_tape_tx(
     document_frames: &[(Vec<u8>, Vec<u8>)],
 ) -> StoreResult<TapeId> {
     let created_generation = generation(transaction)?;
-    let source_hash: HashKey = transaction.query_row(
+    let source_hash: HashKey = transaction.query_row_cached(
         "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM source_objects s \
          JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id=?1",
         [source_id.0],
@@ -1310,7 +1312,7 @@ fn put_tape_prepared_tx(
 
 pub(super) fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreResult<Option<SourceId>> {
     connection
-        .query_row(
+        .query_row_cached(
             "SELECT s.source_id FROM source_objects s JOIN hashes h ON h.hash_id=s.canonical_hash_id \
              WHERE h.algorithm_id=?1 AND h.lane0=?2 AND h.lane1=?3 AND h.lane2=?4 AND h.lane3=?5",
             hash_params(key),

@@ -71,6 +71,8 @@ pub mod markdown_lean;
 pub mod markdown_inline_lean;
 /// SQL's tape from the lean parser (`rerail_sql_lean`).
 pub mod sql_lean;
+/// Vue's tape from the lean parser (`rerail_vue_lean`).
+pub mod vue_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;
@@ -645,7 +647,7 @@ impl FileImage {
                 if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
                     continue;
                 }
-                if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) {
+                if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, budget) {
                     programs.push((via, program));
                 }
             }
@@ -1323,7 +1325,7 @@ impl TapeImage {
 
     /// The tape of a tree-sitter tree of `source` alone, leaving out the placeholders `omitted`
     /// marks (an embedded program's).
-    fn encode_tree_image(
+    pub fn encode_tree_image(
         root: TsNode<'_>,
         grammar: &Grammar,
         source: &str,

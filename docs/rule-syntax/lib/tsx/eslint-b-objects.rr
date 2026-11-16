@@ -103,7 +103,7 @@ receiver(f, o) :- forwarding(_, f, _, _), (kind(f, "member_expression") ; kind(f
 // which removes the variable. Asked at a position, not a reference: `({}).hasOwnProperty.call(a, b)` names no Object.
 //   function f(Object) { ({}).hasOwnProperty.call(a, b); }        not global_at(call, "Object")
 // By scope only: a `let` declared after n in the same block still counts, as eslint-scope's variables do.
-.decl global_at_ask(x: symbol)  // filled by the including rule: the names it asks about
+.decl global_at_ask(x: symbol) extensible  // filled by the including rule: the names it asks about
 .decl global_at(n: node, x: symbol)
 global_at(n, x) :- global_at_ask(x), node(d, n, _, _, _), !declared_around(n, x), !named_expr_around(n, x),
     !global_off(d, x).
@@ -139,7 +139,7 @@ global_named(r, g) :- static_prop(r, o, g), deparen(o, w), global_named(w, x),
 //   in, instanceof   11 shifts   12 + -   13 * / %   15 **   16 unary, await   17 ++ --   18 call   19 new
 //   20 anything else ESTree has (names, literals, members, …); -1 the TypeScript expressions (`a as T`, `a!`),
 //   which ESLint does not know and so always parenthesises.
-.decl prec_ask(e: node)  // filled by the including rule: the nodes it asks about
+.decl prec_ask(e: node) extensible  // filled by the including rule: the nodes it asks about
 .decl precedence(e: node, p: number)
 precedence(e, p) :- prec_ask(e), deparen(e, x), kind(x, k), prec_kind(k, p).
 precedence(e, p) :- prec_ask(e), deparen(e, x), kind(x, "binary_expression"), op(x, o), prec_op(o, p).
@@ -173,7 +173,7 @@ touching(n, x) :- touch_before(n, x).
 .decl cannot_touch(a: symbol, b: symbol)
 cannot_touch(a, b) :- touch_pair(a, b), match("[\\s\\S]*[A-Za-z0-9_$]", a), match("[A-Za-z0-9_$][\\s\\S]*", b).
 cannot_touch(a, b) :- touch_pair(a, b), (suffix("+", a), prefix("+", b) ; suffix("-", a), prefix("-", b)).
-.decl touch_pair(a: symbol, b: symbol)  // filled by the including rule: the token texts its fix puts side by side
+.decl touch_pair(a: symbol, b: symbol) extensible  // filled by the including rule: the token texts its fix puts side by side
 
 // ---- natural order -------------------------------------------------------------------------------------------------
 // natural_key(s, k): natural-compare 1.4 orders strings by a remapped alphabet: the control characters and
@@ -185,7 +185,7 @@ cannot_touch(a, b) :- touch_pair(a, b), (suffix("+", a), prefix("+", b) ; suffix
 // non-ASCII character as "9" and itself (after all ASCII, then by code point). A number run is "07", its length
 // in two digits, then its digits: it sorts between "066" ('0') and "076" ('A'), as natural-compare's codes for
 // the digits do, and two runs compare by length, then digit by digit, which is by value.
-.decl nat_ask(s: symbol)  // filled by the including rule
+.decl nat_ask(s: symbol) extensible  // filled by the including rule
 .decl natural_key(s: symbol, k: symbol)
 // The pieces of s, each encoded on its own and joined in order: one step, so no value grows by recursion.
 natural_key(s, k) :- nat_ask(s), k = join x by o : { nat_piece(s, o, x) }.

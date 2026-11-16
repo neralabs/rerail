@@ -186,7 +186,8 @@ fn wide_space(src: &[u8], at: usize) -> (usize, bool) {
         Some(c) => c,
         None => return (0, false),
     };
-    let space = matches!(c.0, 0x85 | 0xa0 | 0x1680 | 0x2000..=0x200b | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x2060 | 0x3000 | 0xfeff);
+    // U+0085 is not white space to tree-sitter's lexer.
+    let space = matches!(c.0, 0xa0 | 0x1680 | 0x2000..=0x200b | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x2060 | 0x3000 | 0xfeff);
     if space { (c.1, matches!(c.0, 0x2028 | 0x2029)) } else { (0, false) }
 }
 
@@ -205,6 +206,11 @@ pub struct Lexer<'s> {
 impl<'s> Lexer<'s> {
     pub fn new(src: &'s [u8]) -> Self {
         Lexer { src, blocks: Blocks::of(src) }
+    }
+
+    /// The text's first NUL, if it holds one: tree-sitter reads none, in a token or between them.
+    pub fn first_nul(&self) -> Option<usize> {
+        self.blocks.first_nul()
     }
 
     #[inline(always)]
@@ -525,6 +531,17 @@ impl<'s> Lexer<'s> {
             return refuse;
         }
         Ok(i)
+    }
+
+    /// The first line feed from `at` (a carriage return passed), or the text's end.
+    pub fn line_feed(&self, mut at: usize) -> usize {
+        loop {
+            at = self.blocks.eol(at);
+            if at >= self.src.len() || self.src[at] == b'\n' {
+                return at.min(self.src.len());
+            }
+            at += 1;
+        }
     }
 
     /// A string's end from its quote at `s`: past its closing quote. A line end inside it (but

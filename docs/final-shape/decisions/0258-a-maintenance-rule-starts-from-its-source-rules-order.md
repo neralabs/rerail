@@ -1,9 +1,13 @@
 # 0258: A maintenance rule starts from its source rule's order
 
-Status: withdrawn (2026-11-15): built, then removed the same day, a net cost in planning for the same plans (see "Re-validated", "The start inside the search" and "Removed"). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
+Status: built (2026-11-15), off by default (`RERAIL_SOURCE_ORDERS=on` turns it on); kept by the user as an escape hatch from inefficient rules. It was withdrawn and removed on cost-classifier the same day (49297f11e, see "Removed"); the hub merge into cost-classifier restored efcbd0717's form. Takes up decision 0230's first open item: a session's first-sight plans. Option one of
 0123 §5 ("carry the cold run's plans into the session"). `plan.rs` (`Model::started`, `source_order`,
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).
+
+Kept (the user, 2026-11-15): source orders stay. They are an escape hatch from inefficient rules. cost-classifier's
+withdrawal of this decision (49297f11e, "plan: remove source orders") is not taken when that branch is merged.
+django-bugs' form (efcbd0717: tried inside the search, `RERAIL_SOURCE_ORDERS` opt-in) is the form the hub takes.
 
 ## Intro
 
@@ -180,7 +184,10 @@ So source orders are **off by default** (`RERAIL_SOURCE_ORDERS=on` turns them on
 way (join work at parity, "same as full: true" with them on, steps 12 and 13), and off plans for less. With them
 off, no order is kept for them either (`orders_put`).
 
-## Removed
+## Removed (then restored)
+
+Restored at the hub merge into cost-classifier (2026-11-16): the user keeps source orders as an escape hatch, in
+the form of "The start inside the search" (off by default). What follows is what the removal did.
 
 2026-11-15. The mechanism is removed: `start_order`, `source_order`, the kept line orders (`RunPlans::orders`,
 `line_key`) and their carrying between a session's runs, `Body::origin` and `Body::source_map`, the rewrite's

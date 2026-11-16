@@ -592,7 +592,12 @@ pub mod tests {
             .iter()
             .find(|sequence| sequence.kind == SequenceKind::List)
             .unwrap();
+        assert_eq!(text(source, sequence.node), "[one(), # ignored\n *xs, three()]");
         let rows = &facts.sequence_children[sequence.children.clone()];
+        assert_eq!(
+            rows.iter().map(|row| text(source, row.node)).collect::<Vec<_>>(),
+            vec!["one()", "*xs", "three()"]
+        );
         assert_eq!(
             rows.iter().map(|row| row.named_index).collect::<Vec<_>>(),
             vec![0, 1, 2]
@@ -608,6 +613,8 @@ pub mod tests {
             .unwrap();
         assert_eq!(text(source, annotated.right.unwrap()), "init()");
         assert_eq!(text(source, annotated.annotation.unwrap()), "T");
+        assert_eq!(text(source, annotated.node), "x: T = init()");
+        assert_eq!(facts.contexts[annotated.context as usize].kind, ContextKind::Module);
         let bare = facts
             .assignments
             .iter()
@@ -617,7 +624,16 @@ pub mod tests {
         assert!(facts.assignments.iter().any(|assignment| assignment.kind
             == AssignmentKind::NamedExpression
             && text(source, assignment.left) == "z"));
+        // The walrus's parentheses: the node itself, and the one named child they hold.
+        let parenthesis = facts
+            .parentheses
+            .iter()
+            .find(|parenthesis| text(source, parenthesis.node) == "(z := choose())")
+            .unwrap();
+        assert_eq!(text(source, parenthesis.child), "z := choose()");
         assert_eq!(facts.with_items.len(), 2);
+        assert_eq!(text(source, facts.with_items[0].node), "maker() as (p, q)");
+        assert_eq!(facts.contexts[facts.with_items[0].context as usize].kind, ContextKind::Module);
         assert_eq!(text(source, facts.with_items[0].value), "maker()");
         assert_eq!(text(source, facts.with_items[0].target.unwrap()), "(p, q)");
         assert!(facts.with_items[0].as_pattern.is_some());

@@ -47,9 +47,20 @@ impl<'a> P<'a> {
     /// An expression in slot `s`, its operators of precedence `min` and above.
     pub(super) fn expr(&mut self, s: Slot, min: u8) -> R<N> {
         self.deeper()?;
+        // The callers that read an operand at precedence 1 are those `low` names.
+        let low = std::mem::replace(&mut self.low, min == 1 || std::mem::take(&mut self.closure_body));
         let n = self.prefix(s)?;
         let n = self.infix(n, s, min)?;
+        self.low = low;
         self.depth -= 1;
+        Ok(n)
+    }
+
+    /// `infix` at precedence 0 after a block-like expression that stands first (no `low` operand).
+    pub(super) fn infix_fresh(&mut self, n: N, s: Slot) -> R<N> {
+        let low = std::mem::replace(&mut self.low, false);
+        let n = self.infix(n, s, 0)?;
+        self.low = low;
         Ok(n)
     }
 
@@ -85,7 +96,13 @@ impl<'a> P<'a> {
                     }
                     n = self.wrap(n, K::TypeCastExpression, s, slot(f::VALUE, Ctx::Expr));
                     self.tk(K::TypeCastExpression, K::TAs, f::NONE)?;
-                    self.ty(slot(f::TYPE, Ctx::Type), false)?;
+                    let ty = self.ty(slot(f::TYPE, Ctx::Type), false)?;
+                    // `a as T < b`: tree-sitter reads the `<` as the type's arguments where the
+                    // type ends in a name that takes them (`a as i32 < b` compares).
+                    let named = matches!(ty.kind, K::TypeIdentifier | K::ScopedTypeIdentifier | K::ReferenceType | K::PointerType);
+                    if named && matches!(self.peek(), T::Lt | T::Le) {
+                        return self.refuse();
+                    }
                     self.close(n);
                 }
                 _ => {
@@ -113,6 +130,11 @@ impl<'a> P<'a> {
                         Bin::Range => {
                             n = self.wrap(n, K::RangeExpression, s, EXPR);
                             self.tk(K::RangeExpression, op, f::NONE)?;
+                            if self.low && t.kind == T::DotDot && self.peek() == T::LParen {
+                                // `x = a..(b)`: tree-sitter reads an open range, then the `(…)`
+                                // as a call of the whole expression (`x = a..`). Not read here.
+                                return self.refuse();
+                            }
                             if if t.kind == T::DotDot { self.optional_operand(false) } else { self.starts_operand() } {
                                 self.expr(EXPR, prec + 1)?;
                             }
@@ -223,6 +245,10 @@ impl<'a> P<'a> {
                 }
                 let n = self.open_in(K::RangeExpression, s);
                 self.tk_punct(K::RangeExpression, false)?;
+                if self.low && self.peek() == T::LParen {
+                    // `x = ..(b)`: a call of the whole expression, as in `infix`.
+                    return self.refuse();
+                }
                 if self.optional_operand(false) {
                     self.expr(EXPR, 2)?;
                 }
@@ -253,7 +279,8 @@ impl<'a> P<'a> {
                 let kind = if t.word == w::RETURN { K::ReturnExpression } else { K::YieldExpression };
                 let n = self.open_in(kind, s);
                 self.tk(kind, if t.word == w::RETURN { K::TReturn } else { K::TYield }, f::NONE)?;
-                if self.starts_operand() {
+                // In a condition too, `return {…}` takes the block as its value.
+                if self.starts_operand() || self.peek() == T::LBrace {
                     self.expr(EXPR, 1)?;
                 }
                 self.close(n);
@@ -264,6 +291,10 @@ impl<'a> P<'a> {
                 self.tk(K::BreakExpression, K::TBreak, f::NONE)?;
                 if self.peek() == T::Lifetime && self.peek_at(1).kind != T::Colon {
                     self.label()?;
+                    // `break 'l {` in a condition is an error to tree-sitter.
+                    if self.no_struct && self.peek() == T::LBrace {
+                        return self.refuse();
+                    }
                 }
                 if self.optional_operand(true) {
                     self.expr(EXPR, 1)?;
@@ -341,6 +372,11 @@ impl<'a> P<'a> {
     fn expr_path(&mut self, s: Slot) -> R<N> {
         // Whether the path's last segment is a plain identifier (a struct's name may be one).
         let mut plain;
+        // A primitive type's word alone (`str`, `u8`): the grammar's token, no identifier, so
+        // no macro's name and no turbofish's (`u8::max` is a path). And a path whose segment's
+        // path is a bracketed type (`<S as T>::A`): no struct's name.
+        let mut primitive = false;
+        let mut bracketed = false;
         let mut n = match self.peek() {
             T::Lt => {
                 let b = self.bracketed_type(slot(f::PATH, Ctx::Bare))?;
@@ -349,6 +385,7 @@ impl<'a> P<'a> {
                 }
                 let name = self.peek_at(1);
                 plain = plain_word(name.word);
+                bracketed = true;
                 self.scoped_segment(b, s)?
             }
             T::ColonColon => {
@@ -363,11 +400,12 @@ impl<'a> P<'a> {
             _ => {
                 let t = self.tok();
                 plain = t.kind == T::Name && plain_word(t.word);
+                primitive = t.kind == T::Name && w::is_primitive(t.word);
                 self.path_start(s)?
             }
         };
-        // The last segment's name, where it is a scoped path's.
-        let mut name_at = None;
+        // The last segment's name, where it is a scoped path's (`::a`'s too).
+        let mut name_at = (n.kind == K::ScopedIdentifier).then(|| self.w.len() - 1);
         loop {
             if self.peek() != T::ColonColon {
                 break;
@@ -375,9 +413,11 @@ impl<'a> P<'a> {
             match self.peek_at(1).kind {
                 T::Name => {
                     plain = plain_word(self.peek_at(1).word);
+                    (primitive, bracketed) = (false, false);
                     n = self.scoped_segment(n, s)?;
                     name_at = Some(self.w.len() - 1);
                 }
+                T::Lt | T::LtLt if primitive => return self.refuse(),
                 T::Lt | T::LtLt => {
                     // A turbofish: the tokens after its `>` say what it heads.
                     let Some(end) = self.angle_end(1) else { return self.refuse() };
@@ -417,13 +457,16 @@ impl<'a> P<'a> {
         }
         match self.peek() {
             T::Bang if matches!(n.kind, K::Identifier | K::ScopedIdentifier) && matches!(self.peek_at(1).kind, T::LParen | T::LBracket | T::LBrace) => {
+                if primitive {
+                    return self.refuse();
+                }
                 let m = self.wrap(n, K::MacroInvocation, s, slot(f::MACRO, Ctx::Bare));
                 self.tk(K::MacroInvocation, K::TBang, f::NONE)?;
                 self.token_tree(tt::Tt::Delim, f::NONE)?;
                 self.close(m);
                 Ok(m)
             }
-            T::LBrace if !self.no_struct && plain && matches!(n.kind, K::Identifier | K::ScopedIdentifier) => {
+            T::LBrace if !self.no_struct && plain && !bracketed && matches!(n.kind, K::Identifier | K::ScopedIdentifier) => {
                 // A struct: its name is a type's.
                 if n.kind == K::Identifier {
                     self.rekind(n.at, K::TypeIdentifier, slot(f::NAME, Ctx::Bare));
@@ -747,19 +790,16 @@ impl<'a> P<'a> {
             self.tk(K::ClosureExpression, K::TArrow, f::NONE)?;
             self.ty(slot(f::RETURN_TYPE, Ctx::Type), false)?;
             self.block(slot(f::BODY, Ctx::Bare))?;
-        } else if self.is_underscore() && !self.continues_after_underscore() {
+        } else if self.is_underscore() {
+            // `|| _`: the body is the `_` token, also before an operator (`|| _ = 0` assigns to
+            // the closure).
             self.tk(K::ClosureExpression, K::TUnderscore, f::BODY)?;
         } else {
+            self.closure_body = true;
             self.expr(slot(f::BODY, Ctx::Expr), 0)?;
         }
         self.close(n);
         Ok(n)
-    }
-
-    /// Whether an operator follows a `_` (then `_` is an identifier, an operand).
-    fn continues_after_underscore(&mut self) -> bool {
-        let t = self.peek_at(1);
-        binary_op(t.kind).is_some() || matches!(t.kind, T::Dot | T::Question | T::LParen | T::LBracket) || t.kind == T::Name && t.word == w::AS
     }
 
     // ---- Block-like expressions.
@@ -988,7 +1028,7 @@ impl<'a> P<'a> {
         let value = slot(f::VALUE, Ctx::Expr);
         let (n, ended) = if self.blocklike_start() {
             let n = self.blocklike(value)?;
-            if self.continues_expression() { (self.infix(n, value, 0)?, false) } else { (n, true) }
+            if self.continues_expression() { (self.infix_fresh(n, value)?, false) } else { (n, true) }
         } else {
             (self.expr(value, 0)?, false)
         };

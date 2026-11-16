@@ -37,15 +37,11 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
     let cpu = cpu_ns() - began;
     assert_eq!(report.files, paths.len(), "production workload must include every input file");
     let wall_ns = wall.elapsed().as_nanos() as u64;
-    let keys: Keys = match std::fs::read_to_string(out.join("violation.csv")) {
-        Ok(text) => text.lines().map(|line| {
-            let columns: Vec<_> = line.split('\t').collect();
-            // rule, clause, code, path, line and column (0165).
-            assert_eq!(columns.len(), 6, "unexpected violation row: {line}");
-            (columns[2].to_owned(), columns[3].to_owned(), columns[4].parse().unwrap())
-        }).collect(),
-        Err(e) => panic!("read violations: {e}"),
-    };
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(out).unwrap_or_else(|e| panic!("read violations: {e}"));
+    let violation = outputs.get("violation").unwrap_or_else(|| panic!("read violations: no violation in {}", out.display()));
+    // rule, clause, code, path, line and column (0165).
+    assert_eq!(violation.width(), 6, "unexpected violation columns: {:?}", violation.types());
+    let keys: Keys = violation.rows().map(|r| (r.get(2).to_string(), r.get(3).to_string(), r.get(4).int().expect("a line").try_into().unwrap())).collect();
     let spans: Vec<Value> = profile::spans().into_iter().map(|(name,s)| json!({
         "name":name,"calls":s.calls,"cpuSeconds":s.total,"ownCpuSeconds":s.own,
         "allocatedBytes":s.alloc,"ownAllocatedBytes":s.own_alloc,"freedBytes":s.freed,
@@ -292,9 +288,9 @@ asked(k) :- rr_embed_req(s,"annotation"), kind(s,k).
 "#;
     corpus::run_with_options(&[src], &root, None, &base.join("out"), "program", Binding::Cpu,
         1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py"]})).unwrap();
-    let asked = std::fs::read_to_string(base.join("out/asked.csv")).unwrap();
-    assert_eq!(asked.trim(), "string", "annotation demand must not parse ordinary type expressions");
-    assert_eq!(std::fs::read_to_string(base.join("out/qann.csv")).unwrap().lines().count(), 1);
+    let asked = crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "asked").unwrap();
+    assert_eq!(asked, [["string"]], "annotation demand must not parse ordinary type expressions");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "qann").unwrap().len(), 1);
     std::fs::remove_dir_all(base).unwrap();
 }
 
@@ -332,14 +328,44 @@ fn long_text_fallback_keeps_short_and_long_results_across_memo_replay() {
 result(t) :- field(_,"right",n), text(n,t).
 .output result
 "#;
-    for _ in 0..2 {
+    for run in ["first", "memo replay"] {
         corpus::run_with_options(&[src], &root, None, &base.join("out"), "program", Binding::Cpu,
             1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py"]})).unwrap();
-        let rows = std::fs::read_to_string(base.join("out/result.csv")).unwrap();
-        let got: std::collections::BTreeSet<_> = rows.lines().collect();
-        assert_eq!(got, [long.as_str(),"[1]"].into_iter().collect());
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "result").unwrap();
+        let got: std::collections::BTreeSet<&str> = rows.iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(rows.iter().map(Vec::len).max(), Some(1));
+        assert_eq!(got, [long.as_str(),"[1]"].into_iter().collect(), "the {run} run");
     }
     std::fs::remove_dir_all(base).unwrap();
+}
+
+/// Concurrent runs of one process, each with its own `a.py`: each reads its own long text (O174: the texts were
+/// held process-wide by document key, the path, so a run could read another's `a.py`).
+#[test]
+fn concurrent_runs_read_their_own_long_texts() {
+    let src = r#"
+#include "core.rr"
+.decl result(t:symbol)
+result(t) :- field(_,"right",n), text(n,t).
+.output result
+"#;
+    let runs: Vec<_> = ["111", "222", "333", "444"].into_iter().map(|digits| std::thread::spawn(move || {
+        let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("long-text-{digits}"));
+        let root = base.join("src");
+        std::fs::create_dir_all(&root).unwrap();
+        let long = format!("[{}]", vec![digits; 100].join(","));
+        std::fs::write(root.join("a.py"), format!("a = {long}\n")).unwrap();
+        for _ in 0..3 {
+            corpus::run_with_options(&[src], &root, None, &base.join("out"), "program", Binding::Cpu,
+                1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py"]})).unwrap();
+            let rows = crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "result").unwrap();
+            assert_eq!(rows, vec![vec![long.clone()]], "the run of {digits}");
+        }
+        std::fs::remove_dir_all(base).unwrap();
+    })).collect();
+    for run in runs {
+        run.join().unwrap();
+    }
 }
 
 #[test]
@@ -364,10 +390,10 @@ uses(n,f) :- imp(n,q), def(f,q).
     let run = || corpus::run_with_options(&[src], &root, None, &out, "program", Binding::Cpu,
         1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py","b.py"]})).unwrap();
     let first = run();
-    let rows = std::fs::read_to_string(out.join("uses.csv")).unwrap();
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap();
     assert_eq!(first.cross, (0, 2));
-    assert_eq!(rows.lines().count(), 1);
+    assert_eq!(rows.len(), 1);
     assert_eq!(run().cross, (2, 0));
-    assert_eq!(std::fs::read_to_string(out.join("uses.csv")).unwrap(), rows);
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap(), rows);
     std::fs::remove_dir_all(base).unwrap();
 }

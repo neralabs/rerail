@@ -13,7 +13,7 @@
 //                       prev_code(body, "(a)"), before_line(body, 1)
 //
 // A rule asks for the nodes it needs with layout_at(x); only those are walked.
-.decl layout_at(x: node)
+.decl layout_at(x: node) extensible
 
 // ---- after -------------------------------------------------------------------------------------------------------
 // after_up(x, a): a is x, or a node whose blank source after it ends x's (an ancestor x ends, or a comment

@@ -54,7 +54,7 @@ layout_at(m) :- child(b, m, _), kind(b, "class_body").
 //   "exact"   as written: `x.y` and `x.y`, or `x[k]` and `x[k]` (disableStaticComputedKey)
 //   a.b.c = a.b.c        this.x = this["x"] ("static" only)        a[i] = a[j] is neither
 // Asked only for the pairs in ref_same_ask(a, b, m), which the including rule fills.
-.decl ref_same_ask(a: node, b: node, m: symbol)
+.decl ref_same_ask(a: node, b: node, m: symbol) extensible
 .decl ref_eq_pair(a: node, b: node, m: symbol)  // a pair to compare, parentheses removed
 ref_eq_pair(x, y, m) :- ref_same_ask(a, b, m), deparen(a, x), deparen(b, y).
 ref_eq_pair(x, y, m) :- ref_eq_pair(a, b, m), field(a, "object", o), field(b, "object", p), deparen(o, x), deparen(p, y).

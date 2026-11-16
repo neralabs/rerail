@@ -53,6 +53,8 @@ napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-sy
 napi-derive = "3.0"
 indexmap = "=2.14.2"
 memchr = "=2.8.3"
+# The outputs image is read where its bytes are (decision 0239).
+memmap2 = "=0.9.12"
 num-bigint = "=0.5.1"
 num-integer = "=0.1.47"
 num-traits = "=0.2.19"
@@ -116,6 +118,8 @@ block = "0.1.6"
 metal = "0.33.0"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
+# The blocks spike, measured against setfix's relations (`setfix::blocks_compare_tests`).
+rerail-blocks = { path = "../blocks" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

@@ -256,6 +256,79 @@ Not yet, and why:
 - **A module image is pinned while a run holds it, not named in the run's record.** Collection may drop it, and the
   next run lowers that module again. Naming images in the record goes with stage 7 (the stored form).
 
+Measured (M3 Max, one thread, the 317 converted Python rules, `logic` over one file of the corpus; process
+instructions, CPU in seconds):
+
+| Row | Before | Stage 2 |
+|---|---|---|
+| Fresh store | 60.49 G, 4.61 s | 60.12 G, 4.70 s |
+| Store seeded by 10 files, then one file | 20.32 G, 1.54 s | 19.39 G, 1.49 s |
+| Warm (the same run again) | 6.20 G, 0.43 s | 6.26 G, 0.44 s |
+| One rule file edited on the seeded store | 42.66 G, 3.34 s | 43.59 G, 3.49 s |
+
+With one rule file edited, the store holds every module's image but not the prepared program, which is the case
+images are for. Reading them saves 0.2–0.3 G against `RERAIL_MODULE_IMAGES=off` (43.49 and 43.58 G against 43.78
+and 43.90 G, two pairs), under 1%. On a fresh store, lowering one module at a time costs about 0.3 G more than
+lowering the files together (`combine` 26.01 G against 25.70 G). So stage 2 is neutral on cost. The library's
+lowering is a small part of loading. The edited row's 24 G `combine` is the 317 programs: each is lowered,
+then combined with the library (`combine_read`). That is stage 3's work. Every output relation is the same before
+and after, and with the library lowered together, on one file (144 rows) and on ten (1,044 rows).
+
+## Stages 3, 4 and 7, as built so far (2026-11-15)
+
+- **Every program is lowered in its libraries' scope** (`rr::Text::lower_in`, `lower::link_in`): its own clauses,
+  as a module against the library modules its includes reach, and the whole-program half over them with the scope
+  seeded; the scope's names are then taken out (core's and the kind sets stay, as `own_part` left them). No program
+  lowers the library's declarations again: the Python pack made 110,927 relations a program lowered and `own_part`
+  took out. A program that asks of the library (decision 0089 §3) gets its request's cone from the linked library
+  (`with_cone`): made at link time, as §2 decided. The combined program before hiding: 5,788 rules (7,611).
+- **Each program, and the linked library, is an image in the store**, under its text (or its modules) and its
+  scope's module keys. A store that holds them reads them: nothing is lowered or linked again. An image is pinned
+  with a lease (7 days) that each run reading it renews: `pin_held_sources` pins nothing outside a run's hold, so
+  collection took every image at the end of its run (stage 2's were never read back). Naming them in the run's
+  record is still to do.
+- **Hiding is kept by delta across its rounds** (`hiding::Delta`): which rules reach a guest, what the columns gain
+  (a least fixpoint started from the round before's), which are definite (a greatest fixpoint, made again over the
+  cone of the change), and each round's analysis of only the rules whose inputs changed. Hiding the Python pack:
+  0.07 s (0.40 s), release. The library's part of it is not yet kept with the library's image.
+- **A stored program is its image** (`program_text::store`): encoded once, kept under its bytes' digest. Not printed,
+  read back, encoded, decoded and digested by `{:?}` three times.
+
+Measured (M3 Max, release, one thread, 317 rules, one file; instructions, CPU):
+
+| Row | Before stage 2 | Stages 3 and 4 | With asking programs in scope, images as the stored form, scopes seeded once |
+|---|---|---|---|
+| Fresh store | 60.49 G, 4.61 s | 46.14 G, 3.55 s | 38.95 G, 2.99 s |
+| Store seeded by 10 files, then one file | 20.32 G, 1.54 s | 19.42 G, 1.51 s | 19.23 G, 1.50 s |
+| Warm | 6.20 G, 0.43 s | 6.23 G, 0.44 s | 6.22 G, 0.43 s |
+| One rule file edited | 42.66 G, 3.34 s | 27.17 G, 2.15 s | 22.72 G, 1.80 s |
+
+Every output relation is the same as before, on one file, on ten, and with a rule file edited. On the default pool
+the fresh row takes 6.06 s CPU for 3.03 s wall (one thread: 3.06 s, 3.53 s): loading's pool loops are still to go. Loading cold is now
+about 2.0 s: the programs 0.48 s (0.25 s for the 301 in scope), the library 0.11 s, the merge 0.18 s, preparation
+0.67 s, the store's writer 0.43 s.
+
+Later the same day (release, M3 Max, one file, fresh store):
+
+- **The images are named in the run's record.** The combined program's entry lists the images its combine read or
+  kept (`rr_combined_image`), and a run naming the entry names them: 360 on the Python pack. The lease stays, for a
+  store whose runs are all collected.
+- **Loading's whole-program loops run in order** (hiding, simplify, the file-local split). On the default pool the
+  fresh row's CPU went from 5.93 s to 4.54 s; prepare takes the same instructions on the pool as on one thread
+  (9.34 G, 9.33 G), and combine's extra fell from 2.1 G to 1.2 G (what is left is the per-program lowering, one
+  task per program). One thread: 38.82 G, 2.93 s.
+- **The prepared program is written as its image**: 0.04 s on the store's writer (0.16 s).
+- **Phases**: phase 1 costs 0.05 s on this pack, and it runs no other phase; stage 6 changes little here.
+
+What is left of loading, one thread: reading and lowering the programs 0.63 s (lowering in scope 0.19 s, reading
+the texts 0.09 s, the library's aggregate demand 0.05 s, the merge's fact spaces, hiding and equal relations 0.12
+s); preparation 0.68 s (the text tests' automata 0.14 s, pushing joins 0.14 s, prune, simplify and demand 0.09 s,
+the memo's program 0.04 s, locating rows 0.03 s). On a fresh store every one of these is work done for the first
+time: no image exists yet to derive from.
+
+Open, found on the way: `typing::phase_tests::types_resolves_names_bases_members_and_annotations_by_symbol` fails
+("a dotted annotation through `import pkg.m`"), at stage 2's commit too, so before this work.
+
 ## Aligned with django-bugs (decisions 0239, 0240)
 
 - **Symbols by content.** A module image holds its names as strings, and a reader takes its own ids of them, as

@@ -1086,7 +1086,8 @@ pub mod tests {
         super::write(&mut facts, "p", &prog);
         let back = super::program(&facts, "p").unwrap();
         assert_eq!(back.facts, prog.facts);
-        assert_eq!(super::super::plan::corpus::memo::program_digest(&back), super::super::plan::corpus::memo::program_digest(&prog));
+        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::super::plan::corpus::memo::program_digest(&super::super::plan::body::Placed::of_program(p).unwrap().v);
+        assert_eq!(key(&back), key(&prog));
     }
 
     /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored

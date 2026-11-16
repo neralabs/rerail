@@ -127,3 +127,16 @@ fn show_diff(path: &str, got: &str, want: &str, src: &[u8]) {
     let e = (s + 80).min(src.len());
     eprintln!("  src: {:?}", String::from_utf8_lossy(&src[s.min(src.len())..e]));
 }
+
+/// Whether the lean parser reads `RERAIL_PY_FILE`, or why it refuses it (a probe, for cutting a text down to a case);
+/// nothing without it (the `oracle` filter runs it too).
+#[test]
+#[ignore = "a probe; needs RERAIL_PY_FILE"]
+fn reads() {
+    let Ok(path) = std::env::var("RERAIL_PY_FILE") else { return };
+    let src = std::fs::read(path).unwrap();
+    match tape(&src) {
+        Ok(_) => println!("read"),
+        Err(why) => println!("refused: {why:?}"),
+    }
+}
