@@ -248,7 +248,8 @@ impl<'a> P<'a> {
             self.flush(t.nl);
             if self.stores(rule, K::TNewline, f::NONE) {
                 let mut e = t.nl as usize + 1;
-                while e < self.src.len() && matches!(self.src[e], b'\n' | b'\r') {
+                // The run of `\n`s (a `\r` ends it: `\r\n` lines give one `\n`).
+                while e < self.src.len() && self.src[e] == b'\n' {
                     e += 1;
                 }
                 let n = self.w.push(key(K::TNewline, f::NONE, C_NONE, false), t.nl);

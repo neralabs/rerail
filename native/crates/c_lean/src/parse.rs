@@ -170,6 +170,10 @@ struct P<'a> {
     /// The next expression is the whole of a parentheses' content (C++: any expression may be
     /// assigned to there).
     paren_top: bool,
+    /// An out-of-line constructor's (`A::A(`) parameters ahead (1), its first parameter's type
+    /// (2), that type's template arguments (3): tree-sitter-cpp's tie there reads a name's
+    /// argument (`std::unique_ptr<X> p`) as an expression.
+    ctor_args: u8,
     /// The `>>` tokens split into two `>` (a template's closer): their tokens before, for a
     /// rewind.
     splits: Vec<(usize, Tok)>,
@@ -192,6 +196,7 @@ struct Mark {
     no_gt: bool,
     top: bool,
     in_pointer: bool,
+    ctor_args: u8,
 }
 
 /// `src` parsed.
@@ -222,6 +227,7 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             prefix_top: false,
             in_pointer: false,
             paren_top: false,
+            ctor_args: 0,
             splits: Vec::new(),
             relexes: 0,
         };
@@ -706,6 +712,7 @@ impl<'a> P<'a> {
             no_gt: self.no_gt,
             top: self.top,
             in_pointer: self.in_pointer,
+            ctor_args: self.ctor_args,
         }
     }
 
@@ -736,20 +743,22 @@ impl<'a> P<'a> {
         self.no_gt = m.no_gt;
         self.top = m.top;
         self.in_pointer = m.in_pointer;
+        self.ctor_args = m.ctor_args;
     }
 
-    /// The next token, a `>>`, read as two `>`: the first left as the next token.
+    /// The next token, a `>>` (or `>=`, `>>=`, `&&`), read as two: the first left as the next token.
     fn split_gt(&mut self) {
         let t = self.tok();
-        debug_assert!(matches!(t.kind, T::GtGt | T::Ge | T::GtGtEq));
+        debug_assert!(matches!(t.kind, T::GtGt | T::Ge | T::GtGtEq | T::AmpAmp));
         self.splits.push((self.i, t));
-        let rest = match t.kind {
-            T::GtGt => T::Gt,
-            T::GtGtEq => T::Ge,
-            _ => T::Eq,
+        let (first, rest) = match t.kind {
+            T::GtGt => (T::Gt, T::Gt),
+            T::GtGtEq => (T::Gt, T::Ge),
+            T::AmpAmp => (T::Amp, T::Amp),
+            _ => (T::Gt, T::Eq),
         };
         // The second half stays in the buffer as the next token after the first.
-        self.toks[self.i] = Tok { kind: T::Gt, word: 0, start: t.start, end: t.start + 1, nl: t.nl };
+        self.toks[self.i] = Tok { kind: first, word: 0, start: t.start, end: t.start + 1, nl: t.nl };
         self.toks.insert(self.i + 1, Tok { kind: rest, word: 0, start: t.start + 1, end: t.end, nl: NO_NL });
     }
 

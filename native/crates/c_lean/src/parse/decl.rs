@@ -605,7 +605,12 @@ impl<'a> P<'a> {
 
     /// A `type_qualifier` (or `alignas_qualifier`): its keyword stored.
     fn qualifier(&mut self) -> R<()> {
-        let n = self.open(K::TypeQualifier, f::NONE, C_NONE);
+        self.qualifier_in(true)
+    }
+
+    /// `qualifier`, its `type_qualifier` left out where not `wrapped` (a class head's `alignas`).
+    fn qualifier_in(&mut self, wrapped: bool) -> R<()> {
+        let n = wrapped.then(|| self.open(K::TypeQualifier, f::NONE, C_NONE));
         if matches!(self.tok().word, w::ALIGNAS | w::ALIGNAS_) {
             let a = self.open(K::AlignasQualifier, f::NONE, C_NONE);
             self.kw_any(K::AlignasQualifier)?;
@@ -620,7 +625,9 @@ impl<'a> P<'a> {
         } else {
             self.kw_any(K::TypeQualifier)?;
         }
-        self.close(n);
+        if let Some(n) = n {
+            self.close(n);
+        }
         Ok(())
     }
 
@@ -736,7 +743,8 @@ impl<'a> P<'a> {
             } else if self.is_attribute() {
                 self.attribute_specifier()?;
             } else if self.cpp && (self.is_word(w::ALIGNAS) || self.is_word(w::ALIGNAS_)) {
-                self.qualifier()?;
+                // In a class's head, `alignas(n)` stands alone (no `type_qualifier`).
+                self.qualifier_in(false)?;
             } else if self.cpp && self.peek() == T::LBracket && self.kind_at(1) == T::LBracket {
                 self.attribute_declaration()?;
             } else {
@@ -784,13 +792,21 @@ impl<'a> P<'a> {
     fn field_list(&mut self) -> R<()> {
         let n = self.open(K::FieldDeclarationList, f::BODY, C_NONE);
         self.tk(K::FieldDeclarationList, K::TLBrace)?;
+        let mut last_semi = false;
         while self.peek() != T::RBrace {
             if self.peek() == T::Eof {
                 return self.refuse();
             }
+            let semi = self.peek() == T::Semi;
             self.item(Level::Field, K::FieldDeclarationList)?;
+            last_semi = semi;
         }
-        self.tk(K::FieldDeclarationList, K::TRBrace)?;
+        // C++: after a bare `;` item, the `}` is stored (tree-sitter-cpp's tapes).
+        if self.cpp && last_semi {
+            self.leaf(K::TRBrace, f::NONE, C_NONE)?;
+        } else {
+            self.tk(K::FieldDeclarationList, K::TRBrace)?;
+        }
         self.close(n);
         Ok(())
     }
@@ -1460,7 +1476,7 @@ impl<'a> P<'a> {
     /// Whether it is an old-style definition's.
     pub(super) fn parameter_list(&mut self) -> R<bool> {
         let n = self.open(K::ParameterList, f::PARAMETERS, C_NONE);
-        if self.old_style_ahead() {
+        if !self.cpp && self.old_style_ahead() {
             // An old-style definition's names: identifiers.
             self.list(K::ParameterList, T::RParen, true, false, |p| {
                 p.leaf(K::Identifier, f::NONE, C_NONE)?;
@@ -1483,7 +1499,11 @@ impl<'a> P<'a> {
                     self.leaf(K::TDotDotDot, f::NONE, C_NONE)?;
                     last_dots = true;
                 } else {
+                    // The first parameter of an out-of-line constructor: see `ctor_args`.
+                    let named = self.peek() == T::ColonColon || self.peek() == T::Name && { let c = self.tok().word; !self.reserved(c) };
+                    self.ctor_args = if self.ctor_args == 1 && named { 2 } else { 0 };
                     self.parameter_declaration()?;
+                    self.ctor_args = 0;
                     last_dots = false;
                 }
                 if self.peek() != T::Comma {

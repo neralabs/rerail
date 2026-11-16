@@ -279,7 +279,10 @@ impl<'a> P<'a> {
             T::Name if t.word == w::SIZEOF => {
                 let n = self.open_in(K::SizeofExpression, s);
                 self.kw(K::SizeofExpression, w::SIZEOF)?;
-                if self.peek() == T::LParen && self.cast_ahead(0, false) {
+                // C++: `sizeof(v<4>)`, a template's name with numbers alone, reads as an expression
+                // (tree-sitter-cpp's tie).
+                let numbers = self.cpp && self.is_ident_at(1) && self.kind_at(2) == T::Lt && self.kind_at(3) == T::Number && self.kind_at(4) == T::Gt && self.kind_at(5) == T::RParen;
+                if self.peek() == T::LParen && !numbers && self.cast_ahead(0, false) {
                     self.tk(K::SizeofExpression, K::TLParen)?;
                     self.type_descriptor(slot(f::TYPE, Ctx::Bare))?;
                     self.punct_tk(K::SizeofExpression, T::RParen, false)?;
@@ -325,6 +328,10 @@ impl<'a> P<'a> {
                 self.tk(K::CastExpression, K::TLParen)?;
                 self.type_descriptor(slot(f::TYPE, Ctx::Bare))?;
                 self.punct_tk(K::CastExpression, T::RParen, false)?;
+                // `(T) &&x`: two address-ofs (tree-sitter-cpp's lexer splits the `&&` there).
+                if self.peek() == T::AmpAmp {
+                    self.split_gt();
+                }
                 self.unary(slot(f::VALUE, Ctx::Expr))?;
                 self.close(n);
                 Ok(n)
@@ -390,6 +397,9 @@ impl<'a> P<'a> {
             let u = self.peek_at(e + 1);
             return match u.kind {
                 T::Name => !matches!(u.word, w::U_ATTRIBUTE_U),
+                // `(std::min)(a, b)`: a cast in tree-sitter-cpp's tapes; `(T::max)()` and
+                // `(A::f)(g(x))` (a call alone in the parentheses) calls.
+                T::LParen => self.kind_at(e + 2) != T::RParen && !self.call_alone_at(e + 1),
                 T::Number | T::Char | T::Str | T::RawStr | T::Bang | T::Tilde | T::LBrace | T::PlusPlus | T::MinusMinus => true,
                 _ => false,
             };
@@ -408,7 +418,27 @@ impl<'a> P<'a> {
             // `(T)(x)` is a call of a parenthesized name.
             T::Number | T::Char | T::Str | T::RawStr | T::Bang | T::Tilde | T::LBrace => true,
             T::PlusPlus | T::MinusMinus => true,
+            // `(a) && b`: a cast of `&&b` in tree-sitter-cpp's tapes (never a conjunction).
+            T::AmpAmp if self.cpp => true,
             _ => false,
+        }
+    }
+
+    /// Whether the parentheses at `k` hold a call alone: a name's postfix chain (`a.b::c<T>`)
+    /// ending in its arguments.
+    fn call_alone_at(&mut self, k: usize) -> bool {
+        let Some(p) = self.paren_end(k) else { return false };
+        let mut j = k + 1;
+        loop {
+            match self.kind_at(j) {
+                T::Name | T::ColonColon | T::Dot | T::Arrow => j += 1,
+                T::Lt => match self.angle_end(j) {
+                    Some(a) => j = a + 1,
+                    None => return false,
+                },
+                T::LParen => return j > k + 1 && self.paren_end(j) == Some(p - 1),
+                _ => return false,
+            }
         }
     }
 

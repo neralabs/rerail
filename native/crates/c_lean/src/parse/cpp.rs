@@ -635,7 +635,9 @@ impl<'a> P<'a> {
             return self.operator_cast_item(first, start);
         }
         // The declarator: a function declarator, its name in no supertype.
+        self.ctor_args = u8::from(self.kind_at(1) == T::ColonColon || self.kind_at(1) == T::Lt && self.angle_end(1).is_some_and(|e| self.kind_at(e + 1) == T::ColonColon));
         let d = self.declarator(Fam::Decl, slot(f::DECLARATOR, Ctx::Bare))?;
+        self.ctor_args = 0;
         if d.kind != K::FunctionDeclarator {
             return self.refuse();
         }
@@ -1134,9 +1136,15 @@ impl<'a> P<'a> {
         let n = self.open_in(K::TemplateArgumentList, s);
         self.tk(K::TemplateArgumentList, K::TLt)?;
         let no_gt = std::mem::replace(&mut self.no_gt, true);
+        // The first parameter's type's arguments of an out-of-line constructor (`ctor_args`).
+        let ctor = std::mem::replace(&mut self.ctor_args, 0) == 2;
         if !self.at_angle_close() {
             loop {
+                if ctor && self.peek() == T::Name && { let c = self.tok().word; !self.reserved(c) } && matches!(self.kind_at(1), T::Gt | T::GtGt | T::Comma | T::Lt) {
+                    self.ctor_args = 3;
+                }
                 self.template_arg()?;
+                self.ctor_args = 0;
                 if self.peek() == T::Comma {
                     self.tk(K::TemplateArgumentList, K::TComma)?;
                     continue;
@@ -1153,6 +1161,14 @@ impl<'a> P<'a> {
     /// One template argument: a type where its tokens read as one to the next `,` or `>`, else an
     /// expression.
     fn template_arg(&mut self) -> R<()> {
+        if std::mem::replace(&mut self.ctor_args, 0) == 3 {
+            // An out-of-line constructor's first parameter's name argument: an expression.
+            let m = self.mark();
+            match self.expr(EXPR) {
+                Ok(_) if matches!(self.peek(), T::Comma | T::Gt | T::GtGt) => return Ok(()),
+                _ => self.reset(m),
+            }
+        }
         let m = self.mark();
         let typed = self.type_arg_ahead() && match self.type_descriptor(BARE) {
             Ok(_) => matches!(self.peek(), T::Comma | T::Gt | T::GtGt | T::GtGtEq | T::Ge | T::DotDotDot),
@@ -1303,7 +1319,9 @@ impl<'a> P<'a> {
             if self.peek() != T::Comma {
                 break;
             }
-            self.tk(K::BaseClassClause, K::TComma)?;
+            // A `,` before `virtual` is stored (its keyword is a bare token there).
+            let keep = self.is_word_at(1, w::VIRTUAL);
+            self.punct_tk(K::BaseClassClause, T::Comma, keep)?;
         }
         self.close(n);
         Ok(())
@@ -1460,7 +1478,9 @@ impl<'a> P<'a> {
         let n = self.open_in(K::LambdaExpression, s);
         let c = self.open(K::LambdaCaptureSpecifier, f::CAPTURES, C_NONE);
         // `[` is stored before a bare token (`[&x]`, `[*this]`), not before a default capture.
-        let bare = matches!(self.kind_at(1), T::Amp | T::Star) && !matches!(self.kind_at(2), T::Comma | T::RBracket);
+        // `&x = e`: an init capture, its `&` no bare token.
+        let init = |p: &mut Self| p.kind_at(1) == T::Amp && p.is_ident_at(2) && p.kind_at(3) == T::Eq;
+        let bare = matches!(self.kind_at(1), T::Amp | T::Star) && !matches!(self.kind_at(2), T::Comma | T::RBracket) && !init(self);
         if bare {
             self.leaf(K::TLBracket, f::NONE, C_NONE)?;
         } else {
@@ -1471,7 +1491,7 @@ impl<'a> P<'a> {
         while self.peek() != T::RBracket {
             if !first {
                 // A `,` before a bare `&` is stored.
-                let keep = self.kind_at(1) == T::Amp;
+                let keep = self.kind_at(1) == T::Amp && !init(self);
                 self.punct_tk(K::LambdaCaptureSpecifier, T::Comma, keep)?;
             }
             let t = self.tok();
