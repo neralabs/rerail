@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 16
+VERSION = 17
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1130,6 +1130,18 @@ def on_host(script):
     with the command, so a host needs nothing installed and a cleaned one still works."""
     here = os.path.join(os.path.dirname(os.path.realpath(__file__)), script)
     return "exec /usr/bin/python3 -u -c " + shlex.quote(open(here).read())
+
+
+def agent_exec(job):
+    """The command that runs `job` with farm-agent on a host (test-remote, live-test-remote,
+    quiet-run). The cleaner's text goes with it: once the command ends, the agent cleans the job's
+    target directory with it (farm-agent, `clean`)."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    for c in (os.path.join(here, "clean-target"), os.path.join(here, "../../dev/clean-target")):
+        if os.path.isfile(c):
+            job = dict(job, cleaner=open(c).read())
+            break
+    return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
 
 
 # ---- leases: a quiet machine for a benchmark (scripts/dev/quiet-run, README.md "Quiet runs")

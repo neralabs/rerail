@@ -146,6 +146,14 @@ nor one a Relax process runs in: scripts/dev/relax/README.md). Each target
 directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 `RERAIL_FARM_NO_TIDY=1` keeps a build from starting one.
 
+A host's target directories (`test-remote`, `live-test-remote` and `quiet-run` build there) are
+cleaned the same way: when a command ends, the host's agent runs the cleaner on its target directory
+(its text goes with the job), detached at nice 19, at most once every 15 minutes per directory, and
+logs it in that directory's `.cleaned.log`. A profile directory another command builds in is skipped
+and cleaned when that command ends. Its only Relax home is the farm's own, under the root. Before
+farm 17 nothing did this: one host's target directories reached 207 GB, 195 GB of it leftovers, and
+the host fell under `min_free_gb` (2026-11-16).
+
 ## Told at the build
 
 What an agent does wrong is printed in its own build output, not left for someone to find. At the
@@ -269,8 +277,10 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   forgets: an agent is asked what it holds when it starts, a compile that read a stale file clears
   what was sent, and `test-remote` asks the host again for every file of the checkout before it runs.
   Nothing but the farm writes under the root, so nothing else makes what the mirror remembers wrong.
-- **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) go after
-  14 unused days, and the least recently used go while the host has less than `min_free_gb` free.
+- **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) are
+  cleaned after each command (above), go after 3 unused days, and the least recently used go while
+  the host has less than `min_free_gb` + 40 GB free: pruning only to `min_free_gb` left the host
+  just above it, and the next build took it under.
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
 with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).

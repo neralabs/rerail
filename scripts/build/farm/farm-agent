@@ -257,8 +257,15 @@ def over_tcp(header):
 
 TARGETS = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/targets.noindex")
 # A test target directory unused this long goes; so do the least recently used ones while the disk
-# has less free than the run asks for.
-TARGET_DAYS = 14
+# has less free than the run asks for and PRUNE_HEADROOM_GB more: pruning only to the farm's own
+# threshold left the host just above it, and the next run's build took it below (unusable).
+TARGET_DAYS = 3
+PRUNE_HEADROOM_GB = 40
+# A target directory is cleaned (scripts/dev/clean-target: builds no current build was made from,
+# debug objects no binary names, stale incremental state) after a command that used it ends, at most
+# this often. Without it a host's targets grew without bound: 207 GB on one host, 195 GB of it
+# leftovers (2026-11-16).
+CLEAN_SECONDS = 15 * 60
 
 
 def free_gb():
@@ -281,7 +288,7 @@ def prune(keep, min_free_gb):
             used.append((0, d))
     used.sort()
     for when, d in used:
-        if time.time() - when > TARGET_DAYS * 86400 or free_gb() < min_free_gb:
+        if time.time() - when > TARGET_DAYS * 86400 or free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
             print(f"farm-agent: removing the test target {os.path.basename(d)} (unused since {time.ctime(when)})", file=sys.stderr, flush=True)
             shutil.rmtree(d, ignore_errors=True)
 
@@ -303,6 +310,13 @@ def run_command(job):
         target = os.path.join(TARGETS, job["target"])
         os.makedirs(target, exist_ok=True)
         open(os.path.join(target, ".used"), "w").close()
+        # Cargo writes the tag only into a directory it makes itself; clean-target cleans only a
+        # directory that has it.
+        tag = os.path.join(target, "CACHEDIR.TAG")
+        if not os.path.exists(tag):
+            with open(tag, "w") as f:
+                f.write("Signature: 8a477f597d28d172789f06886806bc55\n"
+                        "# This file is a cache directory tag created by the rerail farm.\n")
         prune(job["target"], job.get("min_free_gb", 40))
         env["CARGO_TARGET_DIR"] = target
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -330,7 +344,32 @@ def run_command(job):
     code = proc.wait()
     sys.stdout.flush()
     sys.stderr.flush()
+    if job.get("target") and job.get("cleaner"):
+        clean(os.path.join(TARGETS, job["target"]), job["cleaner"], env.get("RELAX_HOME"))
     os._exit(code if code >= 0 else 128 - code)
+
+
+def clean(target, source, relax_home):
+    """Starts the cleaner (clean-target's text, sent with the job) on `target`, detached, so the
+    command's exit is not held up, at most once every CLEAN_SECONDS. Its only Relax home is the
+    farm's (`relax_home`, the job's RELAX_HOME, under the farm's root), never one of the host's own.
+    It skips a profile directory another command builds in; that command cleans it when it ends."""
+    import time
+    stamp = os.path.join(target, ".cleaned")
+    try:
+        if time.time() - os.stat(stamp).st_mtime < CLEAN_SECONDS:
+            return
+    except OSError:
+        pass
+    open(stamp, "w").close()
+    home = relax_home if relax_home and os.path.realpath(relax_home).startswith(os.path.realpath(ROOT) + "/") else ""
+    try:
+        with open(os.path.join(target, ".cleaned.log"), "w") as log:
+            subprocess.Popen(["nice", "-n", "19", "/usr/bin/python3", "-c", source, "--relax-home", home, target],
+                             stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+                             env={k: v for k, v in os.environ.items() if k != "RELAX_HOME"})
+    except OSError as e:
+        print(f"farm-agent: the cleaner did not start: {e}", file=sys.stderr, flush=True)
 
 
 # The root is the farm's: made here, never a mount (a mounted root would write through to whatever

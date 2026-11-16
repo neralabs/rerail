@@ -168,7 +168,7 @@ def main(argv):
            "env": {"RUSTC_WRAPPER": ""}, "target": farm.key(CHECKOUT), "nice": 10,
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0],
            "min_free_gb": farm.config().get("min_free_gb", 40)}
-    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+    remote = farm.agent_exec(job)
     proc = subprocess.Popen(farm.ssh(name, remote, "test"), stdin=subprocess.PIPE)
     try:
         code = proc.wait()

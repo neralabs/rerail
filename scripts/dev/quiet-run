@@ -236,7 +236,7 @@ def start(machine, host, o, argv, lease):
            "map": [CHECKOUT] + [t for t in o["trees"] if not t.startswith(CHECKOUT + os.sep)],
            "env": {"RUSTC_WRAPPER": "", "RERAIL_FARM_LEASE": lease["id"]}, "target": farm.key(CHECKOUT), "nice": 0,
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0], "min_free_gb": farm.config().get("min_free_gb", 40)}
-    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+    remote = farm.agent_exec(job)
     return subprocess.Popen(farm.ssh(machine, remote, "quiet"), stdin=subprocess.PIPE)
 
 
