@@ -573,12 +573,17 @@ pass.
     Totals 63–68 G, peak 1.39 GB (was 98 G, 3.25 GB). An edit with `RERAIL_KEPT_INPUTS=off`: 69.1 G, peak 5.39 GB.
     The outputs are identical (md5 82c81b38…).
   - **The done-when is met**: every edit took its kept inputs, and taking them costs less than the fallback.
-- **Open.**
-  - `the kept inputs, from the frames` (0.31 s warm) still decodes every granule of all 1208 inputs, 1182 of them
-    never read. A source that decodes an input on its first read would save it, if the planner's estimates do not
-    force the decode. 0266's `Facts` block (step 4, not started on any branch) would read them in place.
-  - The 23 inputs read whole by `measure export` are the next read of unchanged rows: their kept statistics should
-    be taken.
+- **A kept input is decoded where it is first read, built.** `kept_inputs` admits each input's granules and checks
+  their counts and width undecoded (`Admitted::width`, `len`); the rows are decoded on the run's first read of the
+  input (`retain::Lazy`), and a granule whose rows are not its owners' is told through `failure` then. The planner's
+  estimates do not force it: an edit decodes 20 of 1208 inputs (3 by a stratum, 17 by statistics).
+  - Test: `a_kept_input_is_decoded_where_it_is_first_read` (rerail-logic).
+  - ep2, B101 edits after a cold run: `the kept inputs, from the frames` 0.08 s (was 0.31 s); `stats` 0.25–0.27 s;
+    totals 61–64 G, CPU 4.8–5.1 s, peak 1.0 GB (was 63–68 G, 1.39 GB). Outputs identical (82c81b38…).
+  - What is left of the step is the documents' tables and the frames' admission. 0266's `Facts` block (step 4, not
+    started on any branch) would read the inputs in place and replace `Lazy`.
+- **Open.** The exports read whole by `measure export` (their kept statistics' row count is not the rows held) are
+  the next read of unchanged rows: their kept statistics should be taken.
   - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 
 ## Questions for the user
