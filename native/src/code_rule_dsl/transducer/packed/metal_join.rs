@@ -371,10 +371,11 @@ kernel void axis_count(device const char* B [[buffer(0)]], device uint* start [[
     start[v] = count;
 }
 
-// Each node row's rows from its start (the scanned counts): inner << 32 | outer, nearest first.
+// Each node row's rows from its start (the scanned counts): inner << 32 | outer, nearest first. p[4] is the rows
+// the pairs' space holds: when the total (`start[n]`) is more, nothing is written, and the host writes again.
 kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device ulong* pairs [[buffer(2)]],
                        constant uint* p [[buffer(3)]], uint v [[thread_position_in_grid]]) {
-    if (v >= p[1]) return;
+    if (v >= p[1] || start[p[1]] > p[4]) return;
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
@@ -1686,11 +1687,24 @@ pub(in crate::code_rule_dsl) fn hash_keys(kv: &[i64], mask: u32) -> u32 {
 }
 
 /// A kind-set axis's batch solve on the device, written into `chunk` (decision 0289 §2, `facts::nearest::ChunkAxis`):
-/// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written.
-/// Two submissions, since the pairs' space is allocated once their count is read. The starts and the pairs are
-/// page-aligned in the block, each bound as a buffer of its own with no copy.
+/// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written,
+/// in one submission. The pairs' space is sized before the count: a nearest axis has at most a row per node, so its
+/// bound is exact; containment's is `INSIDE_ROWS` a node, and the rare batch past it writes again once its total is
+/// read. The space past the total is given back to the block. The starts and the pairs are page-aligned in the
+/// block, each bound as a buffer of its own with no copy; the block reserves address space, so the bound's pages
+/// the device never writes are never memory.
 pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, bits: Option<&[u32]>, inside: bool)
                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+    axis_in_chunk_bounded(chunk, bits, inside, INSIDE_ROWS)
+}
+
+/// Containment's rows a node that the pairs' space is sized for before the count.
+const INSIDE_ROWS: usize = 8;
+
+/// `axis_in_chunk`, with containment's space sized for `inside_rows` a node (a test makes it 0, to write again).
+pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk,
+                                                      bits: Option<&[u32]>, inside: bool, inside_rows: usize)
+                                                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
     use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
     const PAGE: usize = 16384;
     let b = &chunk.block;
@@ -1708,32 +1722,46 @@ pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_c
     };
     let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
     let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
+    let cap = if inside { inside_rows * n } else { n }.min(u32::MAX as usize);
+    let cap_bytes = (8 * cap).max(8).next_multiple_of(PAGE);
+    let pairs_at = b.try_alloc(cap_bytes, PAGE).ok_or_else(full)?;
     let device = rerail_accel::gpu::join::device()?;
     let whole = b.gpu_buffer(device);
     let part = |at: usize, bytes: usize| {
         device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(at) as *const std::ffi::c_void, bytes as u64, metal::MTLResourceOptions::StorageModeShared, None)
     };
     let starts = part(start_at, start_bytes);
+    let pairs = part(pairs_at, cap_bytes);
     let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
     let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
     let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
-    let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside)];
+    let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), cap as u32];
     let scan = Scan::owned(n + 1)?;
     let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
+    let pass = batch.pass(17).map_err(|e| format!("{e:?}"))?;
     pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
     scan.encode(pass, &starts)?;
+    if n > 0 {
+        pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
+    }
     batch.finish().map_err(|e| format!("{e:?}"))?;
     // SAFETY: the scan completed: its last value is the total.
     let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
-    let pairs_bytes = (8 * len).max(8).next_multiple_of(PAGE);
+    if len <= cap {
+        b.shrink_last(pairs_at, cap_bytes, (8 * len).max(8).next_multiple_of(PAGE));
+        return Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len });
+    }
+    // Past the bound: the write was skipped, and is made again into space of the total's size.
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("containment past {inside_rows} rows a node: written again"));
+    b.shrink_last(pairs_at, cap_bytes, 0);
+    let pairs_bytes = (8 * len).next_multiple_of(PAGE);
     let pairs_at = b.try_alloc(pairs_bytes, PAGE).ok_or_else(full)?;
     let pairs = part(pairs_at, pairs_bytes);
+    let whole = b.gpu_buffer(device);
+    let p = [p[0], p[1], p[2], p[3], len as u32];
     let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    if n > 0 {
-        let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
-        pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
-    }
+    let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+    pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
     batch.finish().map_err(|e| format!("{e:?}"))?;
     Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len })
 }

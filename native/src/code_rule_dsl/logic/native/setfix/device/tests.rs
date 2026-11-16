@@ -680,6 +680,18 @@
             batch.finish().unwrap();
             assert_eq!(out.column(1), &(0..n).map(|r| host.value(r, 1)).collect::<Vec<_>>()[..]);
         }
+        // Containment over every kind, in one submission (space sized before the count) and past a bound of no rows
+        // (written again once the total is read): the same pairs, as many as the host's containment.
+        let chunk = batch.chunk();
+        let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<u64> {
+            // SAFETY: the solve completed; `len` pairs at `pairs`.
+            unsafe { std::slice::from_raw_parts(chunk.block.ptr::<u64>(c.pairs), c.len) }.to_vec()
+        };
+        let once = mj::axis_in_chunk_bounded(chunk, None, true, 8).unwrap();
+        let again = mj::axis_in_chunk_bounded(chunk, None, true, 0).unwrap();
+        assert!(once.len > 0);
+        assert_eq!(once.len, Within::new(Arc::clone(&batch), Mode::Tree).len());
+        assert_eq!(read(&again), read(&once));
         // `has` is made per looked-up node, not by the batch's solve: uploaded as before.
         assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).device_view().is_none());
         let _ = std::fs::remove_file(&store_path);

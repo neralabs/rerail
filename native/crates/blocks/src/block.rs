@@ -225,6 +225,14 @@ impl Block {
         }
     }
 
+    /// Gives back the tail of the last allocation (`size` bytes at `at`), keeping its first `keep` bytes. When
+    /// another allocation came after it, nothing is given back. Whether it was. The tail must be unwritten: an
+    /// allocation of a block that is not dirty is zero, as the mapping gave it.
+    pub fn shrink_last(&self, at: usize, size: usize, keep: usize) -> bool {
+        assert!(keep <= size);
+        self.top.compare_exchange(at + size, at + keep, AcqRel, Relaxed).is_ok()
+    }
+
     /// `n` zeroed `T`s, or `None` when the block cannot hold them.
     pub fn try_alloc_t<T>(&self, n: usize) -> Option<*mut T> {
         self.try_alloc(n * size_of::<T>(), align_of::<T>().max(8)).map(|at| self.ptr(at))

@@ -105,7 +105,10 @@ climbs the node's ancestors through the chunk's arrays, checking each against th
 × 1,024 codes). The climb is bounded by the document's nodes. A scan of the counts gives each node's first row.
 Then `axis_write` writes the pairs, nearest first, in the host's order. The starts and the pairs are page-aligned
 in the chunk and bound with no copy, and the host reads them there in place (`Within::starts`, `pairs`).
-There are two submissions, since the pairs' space is allocated once the total is read. The host's gather of every
+The count, the scan and the write are one submission: the pairs' space is sized before the count. A nearest
+axis has at most a row per node, so its bound is exact. Containment's is 8 rows a node; a batch past it skips the
+write, and the host writes again into space of the total's size (the profile names it). The space past the total
+is given back to the block (`Block::shrink_last`), and pages the device never wrote are never memory. The host's gather of every
 node's parent and membership goes, and so does the copy of the pairs. Containment (`within`) is built with the
 CPU's binding: it keeps the host's solve, and its pairs are copied. When the chunk cannot hold an axis, the solve
 falls back to the host's, and the profile says why.
@@ -119,10 +122,13 @@ oracle.
 | Before §2 | 48.2 ms | 30.2 MB in 39.8 ms | 6.7 MB in 2.0 ms |
 | Axes' pairs copied | 30.1 ms | 6.9 MB in 2.6 ms | 21.7 MB in 22.4 ms |
 | Axes solved in the chunk | 18.2 ms | 1.3 MB in 0.3 ms | 19.9 MB in 11.5 ms |
+| In one submission | 13.9 ms | 4.7 MB in 1.5 ms | 21.9 MB in 7.3 ms |
 
-No axis is solved on the host now: 18 are solved in the chunk. Of the 11.5 ms, 6.3 ms is the chunk block's build
-(about 0.35 ms a batch), which §3 removes. Most of the rest is two submissions per axis. Placement varied between
-these runs (4 to 7 strata on the GPU), so the uploads are compared, not the totals.
+No axis is solved on the host now: 18 are solved in the chunk. In the last run, of the 7.3 ms, 5 ms is the chunk
+block's build (about 0.3 ms a batch), which §3 removes, and the axes' solve is about 3 ms of CPU for 18 (5 ms before; its wall time went from 11 ms to 6 ms). No batch went
+past containment's bound. Placement varied between these runs (4 to 8 strata with a run on the GPU; the last run
+put more on the GPU, so more views were read), so the uploads are compared, not the totals. The check of the
+second write is the device test, with a bound of no rows.
 
 ### 3. The host reads the block
 
