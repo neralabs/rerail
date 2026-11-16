@@ -561,7 +561,9 @@ pass.
   - Reading an input's granules where reached (a source that decodes a granule on first read, with its count from
     the documents' table) is the shape 0266's blocks give: "base + delta read as one".
 
-### Q17. The hub's gate failures at 692cc9772
+### Q21. The hub's gate failures at 692cc9772
+
+(Q17 on sync-integration-hub-tape, renumbered at the hub's merge: the hub's Q17 is the profiled cold run.)
 
 - **Found** (2026-11-15, `cargo test --lib --no-fail-fast` on 0288's branch at 51422de6a): 43 failures.
   - 8 have no pack test data on the host (ruff, sqlfluff, vue fixtures).
@@ -591,9 +593,17 @@ pass.
   stored table inside the waves). The same family as the `@rr_node_text` failures above. The shared `rs-now/lib` is
   older than decision 0263 (`load` not `extensible`), and this checkout's whole python pack stops at "not lowered
   yet: flat: match_all over $e".
+- **At the hub's cost-classifier merge** (2026-11-16): `base_relations_read_are_inputs`, `a_phase_hands_on_its_exports…`
+  and `a_policy_refused_its_kept_inputs_runs_again_over_its_store` pass (the long-text binding reaches them since the
+  merges of 0286 and 0294), as does the corpus test ignored for O-cross-file-answers. `every_operation_runs_on_every_executor`
+  still fails: python-main's programs meeting "a cat's text read by rx has no device form" are 462, the ledger says
+  432, with the pack's files unchanged since 692cc9772 (so it is the lowering's, not traced; not re-blessed).
+
 - **Done when**: each passes on the hub, fixed at its cause.
 
-### Q17. Two `rr::tests` red on the branch head
+### Q22. Two `rr::tests` red on the branch head
+
+(Q17 on cost-classifier, renumbered at the hub's merge: the hub's Q17 is the profiled cold run.)
 
 - **Found** (2026-11-15, while validating decision 0291; both fail at 86b6c271f without 0291's change):
   `guests_that_do_not_parse_follow_the_policy` (tests.rs 2286: "the broken guest keeps its partial tree", rows
@@ -644,6 +654,35 @@ pass.
   5, `chunks_exact` 4, precedence 3, and others). The binary's seven are fixed. `clippy --fix` applies none of its
   20 suggestions here. The lab is its own workspace, so CI does not see them.
 - **Done when**: the lab's library is clean under clippy, with its timing loops keeping what they time.
+
+### Q27. `within` read from its container is priced far under its work
+
+- **Found** (2026-11-16, while measuring decision 0297): `pth_deferred($n, $s) :- demand_pth_deferred($n, $s),
+  look($n, _, $s), rr_nearest_ks4($n, $f), within($f, $s)` took `within($f, $s)` (with `$s` bound, `$f` not) before
+  the `nearest` step in one run of the 300-file bench: priced at 0.24 M rows, it ran 30 M (the other order, `nearest`
+  first, priced and ran 0.26 M in two other runs). A node's descendants are its subtree's size, which the price does
+  not read for `within`.
+- **Done when**: `within` read from its container is priced by the container's subtree size (the kinds' `size`
+  statistics, as `nearest`'s descend is), and `pth_deferred` keeps the cheap order run after run.
+
+### Q28. Tests red as cost-classifier merged the hub in (dd93316ff)
+
+- **Found** (2026-11-16, at the hub merge 709a47b26; Q18 on cost-classifier, renumbered at the hub's merge): `cache_architecture::every_stored_table_is_a_relations_the_
+  stores_own_or_a_cache_not_yet_moved` refuses `memo_entries` and `memo_packs` (0240's tables; schema.rs and the
+  test are the hub's unchanged); `rr::tape_tests::a_policy_refused_its_kept_inputs_runs_again_over_its_store`
+  fails with "@rr_node_text without the run's long-text nodes bound" (0268) on `public-api-triples.rr`, with the
+  hub's `rr/lower.rs` and `simplify.rs` too (so not 0291).
+- **Found** (2026-11-16, while validating 0297; all five fail at 880f2a0de without 0297's change):
+  `plan::corpus::base_tests::base_relations_read_are_inputs` and `plan::corpus::phases::tests::a_phase_hands_on_
+  its_exports_and_its_reader_follows_each_edit` (the same "@rr_node_text without the run's long-text nodes bound");
+  `plan::corpus::tests::a_maintained_run_decodes_and_copies_no_tree` (a maintained run decodes one tree from its
+  version; the test names the decode's call site in `plan.rs`); `plan::corpus::tests::every_switch_lowering_reads_is_classified`
+  (`RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`, `RERAIL_MODULE_IMAGES`, `RERAIL_SHIPPED_IMAGES`, the hub's 0246 and
+  0264 switches, in neither list); `plan::coverage::every_operation_runs_on_every_executor` (the executors' gaps by
+  pack differ from `gate/executor-coverage/packs.tsv`).
+- **At the hub's merge of this branch** (2026-11-16): all pass there but `every_operation_runs_on_every_executor`
+  (Q21): `every_stored_table…`'s and the four others' causes were fixed on the hub's side.
+- **Done when**: each passes, traced to its cause; the hub's own fix taken at the next merge where it has one.
 
 ## Questions for the user
 
