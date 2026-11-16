@@ -150,6 +150,9 @@ struct Pool {
     /// Leases made and served from the pool, for the profile.
     made: u64,
     reused: u64,
+    /// Idle deferrable files (archived segments) by directory and class, the oldest first, and how many in all.
+    files: HashMap<(std::path::PathBuf, usize), Vec<(u64, std::path::PathBuf)>>,
+    files_idle: usize,
 }
 
 fn pool() -> &'static Mutex<Pool> {
@@ -290,6 +293,72 @@ pub fn lease_scratch(bytes: usize) -> Result<rerail_blocks::scratch::Scratch, St
 pub fn grow_block(b: rerail_blocks::Block, bytes: usize) -> Result<rerail_blocks::Block, String> {
     let slab = lease(bytes.max(SLAB_MIN))?;
     Ok(b.relocate(Box::new(slab)))
+}
+
+/// Idle deferrable files the pool keeps at most, all classes (each beyond is removed): they hold disk, not memory.
+const IDLE_FILES: usize = 16;
+
+/// A deferrable lease (decision 0295 §1): a block of `kind` in a file-backed shared mapping of at least `bytes` at
+/// `path`, wrapped for the device once. It counts in the one budget as a live lease until it is sealed
+/// (`Deferrable::seal`, at the wave's end) or dropped; then its pages are the OS's. A file the writer gave back
+/// (`return_deferrable`) in the same directory and of the same class is reused, renamed to `path`: its pages may
+/// still be cached, and the block zeroes what it allocates in it.
+pub fn lease_deferrable(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
+    let class = class(bytes.max(SLAB_MIN));
+    let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let reused = {
+        let mut p = pool().lock().expect("the pool");
+        let found = p.files.get_mut(&(dir, class)).and_then(Vec::pop).map(|(_, f)| f);
+        if found.is_some() {
+            p.files_idle -= 1;
+        }
+        found
+    };
+    let fresh = match reused {
+        Some(old) => std::fs::rename(&old, path).is_err(),
+        None => true,
+    };
+    let device = get().map(|s| s.device.as_ref());
+    let mut d = rerail_blocks::deferrable::Deferrable::create(path, kind, class, fresh, device).map_err(|e| format!("{}: {e}", path.display()))?;
+    LIVE.fetch_add(class, std::sync::atomic::Ordering::Relaxed);
+    d.on_release(move || {
+        LIVE.fetch_sub(class, std::sync::atomic::Ordering::Relaxed);
+    });
+    let mut p = pool().lock().expect("the pool");
+    if fresh {
+        p.made += 1;
+    } else {
+        p.reused += 1;
+    }
+    Ok(d)
+}
+
+/// `lease_deferrable`, kept within the Metal budget (`lease_within`).
+pub fn lease_deferrable_within(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
+    let need = class(bytes.max(SLAB_MIN));
+    if !make_room(need) {
+        return Err(format!("device budget: a deferrable lease of {} MB past the Metal budget of {} MB", need >> 20, crate::budget::metal() >> 20));
+    }
+    lease_deferrable(kind, bytes, path)
+}
+
+/// Gives the pool back a deferrable segment's file once the writer has archived it (decision 0295 §4), with the
+/// slab's length (`Deferrable::slab_len`, `Sealed::slab_len`): the next lease of its class in its directory reuses
+/// it. Past `IDLE_FILES`, the oldest is removed.
+pub fn return_deferrable(path: std::path::PathBuf, slab_len: usize) {
+    let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let mut p = pool().lock().expect("the pool");
+    p.returned += 1;
+    let at = p.returned;
+    p.files.entry((dir, slab_len)).or_default().push((at, path));
+    p.files_idle += 1;
+    while p.files_idle > IDLE_FILES {
+        // The least recently returned: each list is oldest first.
+        let Some(k) = p.files.iter().filter(|(_, v)| !v.is_empty()).min_by_key(|(_, v)| v[0].0).map(|(k, _)| k.clone()) else { break };
+        let (_, old) = p.files.get_mut(&k).unwrap().remove(0);
+        p.files_idle -= 1;
+        let _ = std::fs::remove_file(old);
+    }
 }
 
 impl std::ops::Deref for Pooled {
@@ -660,5 +729,49 @@ mod tests {
         relation::freeze(&b, r, &spec, None);
         // (i % 1000, i % 13) repeats every 13,000 rows; (1000 + i % 500, i % 11) every 5,500.
         assert_eq!(View::full(r).live_len(), 13_000 + 5_500);
+    }
+
+    /// A journal in a deferrable lease (decision 0295 §1): counted live until sealed, read in place once sealed,
+    /// written back and frozen by the writer, and its file reused by the next lease of its class.
+    #[test]
+    fn a_deferrable_journal_is_handed_off_and_its_file_reused() {
+        use rerail_blocks::block::kind;
+        use rerail_blocks::journal;
+        if get().is_none() {
+            return;
+        }
+        let _big = big_leases();
+        let dir = std::env::temp_dir().join(format!("rerail-deferrable-pool-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live = || LIVE.load(std::sync::atomic::Ordering::Relaxed);
+        let before = live();
+        let d = lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-1")).unwrap();
+        assert_eq!(live(), before + class(SLAB_MIN), "a deferrable lease counts in the budget while open");
+        journal::init(d.block(), 8);
+        let src = rerail_blocks::Block::anon(kind::SCRATCH, 1 << 20);
+        let start = src.alloc(4096, 64);
+        unsafe { std::ptr::write_bytes(src.ptr::<u8>(start), 0x5a, 4096) };
+        journal::add(d.block(), &src, start, start + 4096, start, 7, 0xfeed);
+        let slab_len = d.slab_len();
+        let sealed = d.seal();
+        assert_eq!(live(), before, "the seal takes it out of the budget");
+        assert_eq!(journal::entries(&sealed.reader())[0].digest, 0xfeed, "read in place once sealed");
+        let back = sealed.write_back().unwrap();
+        let e = &journal::entries(&back)[0];
+        assert_eq!((e.key, e.digest), (7, 0xfeed));
+        assert_eq!(back.bytes(e.start as usize, e.end as usize), &[0x5a; 4096][..]);
+        drop(back);
+        assert!(journal::open(&dir.join("seg-1")).is_ok(), "frozen on disk");
+
+        let (_, _, reused) = pool_counts();
+        return_deferrable(dir.join("seg-1"), slab_len);
+        let again = lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-2")).unwrap();
+        assert_eq!(pool_counts().2, reused + 1, "the archived file is reused");
+        assert!(!dir.join("seg-1").exists() && dir.join("seg-2").exists(), "renamed to the new segment");
+        let off = again.block().alloc(4096, 64);
+        assert!(again.block().bytes(off, off + 4096).iter().all(|&b| b == 0), "a reused file reads zero where allocated");
+        drop(again);
+        assert_eq!(live(), before, "dropped unsealed, it leaves the budget too");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

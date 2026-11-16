@@ -130,10 +130,17 @@ impl Block {
     /// A block in memory it does not own: `backing`'s, which may be dirty. Freezing it does not protect it (a
     /// slab's pages are the pool's); its owner gets it back when the block is dropped.
     pub fn over(kind: u32, backing: Box<dyn Backing>) -> Block {
+        Block::over_with(kind, backing, true)
+    }
+
+    /// `over`, saying whether the backing may hold earlier bytes (`dirty`): a backing known to read zero (a new
+    /// file, a new buffer) is not zeroed as it is allocated.
+    pub fn over_with(kind: u32, backing: Box<dyn Backing>, dirty: bool) -> Block {
         let (base, reserved) = (backing.base(), backing.len());
         assert!(reserved >= PAGE && base as usize % 64 == 0, "a backing of at least a page, 64-byte aligned");
         unsafe { std::ptr::write_bytes(base, 0, size_of::<Header>()) };
-        let b = Block::make(base, reserved, 0, None, true, Some(backing));
+        let mut b = Block::make(base, reserved, 0, None, true, Some(backing));
+        b.dirty = dirty;
         b.init(kind);
         b
     }
@@ -308,6 +315,21 @@ impl Block {
         } else if self.backing.is_none() {
             let r = unsafe { libc::mprotect(self.base.cast(), self.reserved, libc::PROT_READ) };
             assert_eq!(r, 0, "mprotect");
+        }
+        let mut b = self;
+        b.writable = false;
+        Frozen(Arc::new(b))
+    }
+
+    /// Seals a block whose state is written later, by someone else (a deferrable slab, decision 0295 §1): its length
+    /// is written and it takes no more writes, but its state stays open, and nothing is truncated or protected. Its
+    /// readers in the process read it as any frozen block.
+    pub fn seal(self) -> Frozen {
+        let len = self.used();
+        unsafe {
+            let h = self.header_mut();
+            h.length = len as u64;
+            fence(Release);
         }
         let mut b = self;
         b.writable = false;

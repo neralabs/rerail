@@ -1,6 +1,6 @@
 # 0295. Deferred writes are an application WAL of mapped slabs, archived into SQLite as rows in bulk
 
-Status: decided (2026-11-16), by the user's two requirements and answers below. Not built. Converges 0266 (blocks)
+Status: decided (2026-11-16), by the user's two requirements and answers below. Path step 2 (the tier) built. Converges 0266 (blocks)
 with 0173/0241/0244/0276 (the program image and its versions), 0239 (the output image), 0240 §4 and 0280 (the
 memo's pack), 0259 §5 (the spool) and 0260 §8 (the journal block). Keeps 0008 (facts read through virtual tables)
 and 0024 §5 (work can be redone, so no `fsync`).
@@ -61,8 +61,10 @@ So at a wave's end, once the wave's command buffers have completed:
    written, §7). Readers in the process keep reading it in place (0260 §8.5).
 2. **The writer** `msync`s the slab (`MS_ASYNC`: the host's dirty pages), unmaps it once its readers let go (the
    driver lets go of the GPU's pages; 0.1 ms, nothing is written then), maps the file again read-only, and
-   `msync`s it with `MS_SYNC` (the GPU's pages; the writer waits, no one else does). Then it writes the header's
-   state, frozen, last: a segment whose state says frozen has every page written back before it.
+   `msync`s it with `MS_SYNC` until `mincore` shows no page dirty (the GPU's pages; the writer waits, no one else
+   does). The driver lets go some 190–260 ms after the unmap, whatever the size, and an `msync` before that skips
+   the wired pages and still succeeds, hence the repeat (bounded: 10 s, then the segment is given up). Then it
+   writes the header's state, frozen, last: a segment whose state says frozen has every page written back before it.
 3. Readers and the archive read the read-only mapping. Dirty and written-back pages of a file mapping are not
    charged to the process (`phys_footprint`, §7); the OS drops them under pressure.
 
@@ -206,8 +208,13 @@ wrap, anonymous or file-backed, so the pool's own budget is what counts those.
 ## Path
 
 1. **Measured** (§7): the GPU's writes to file pages are written back once the range is unmapped and `msync`ed.
-2. **The tier**: deferrable leases in the pool, §1's hand-off and the writer's unmap, remap and `msync`, the state
-   written last, the files reused as idle buffers, `blocks::journal` as its first user.
+2. **The tier** (built): `rerail_blocks::deferrable` (`Deferrable::create`, `seal`, `Sealed::reader`,
+   `Sealed::write_back`), `Block::seal` and `Block::over_with`; in the pool (`accel/src/gpu/shared.rs`)
+   `lease_deferrable`, `lease_deferrable_within` (counted live until sealed or dropped) and `return_deferrable` (an
+   archived file kept by directory and class, reused renamed, 16 at most); `blocks::journal::init`/`add` on any
+   block. Tests: a host-written slab is written back and only then frozen; a kernel's writes reach the disk; a reused
+   file reads zero where allocated; a journal in a pool lease is handed off, read, frozen and its file reused. The
+   writer thread itself is the store's, wired in with the memo (step 4).
 3. **Outputs on blocks** (0266 path step 1), 0239's tests unchanged.
 4. **The memo's entries in segments**: 0240's rows found by the archive, the pack retired.
 5. **Frames** (the largest writes), then tapes and sources; 0259's guard (no `write_back` queues a closure).

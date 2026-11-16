@@ -35,36 +35,47 @@ pub struct Journal {
 impl Journal {
     pub fn create(path: &Path, reserve: usize, cap: usize) -> std::io::Result<Journal> {
         let block = Block::file(path, kind::JOURNAL, reserve)?;
-        let root: *mut JournalRoot = block.alloc_t(1);
-        let locs: *mut EntryLoc = block.alloc_t(cap.max(1));
-        unsafe { Span::set(&raw mut (*root).entries, locs, cap.max(1)) };
-        block.set_root(root);
+        init(&block, cap);
         Ok(Journal { block })
     }
 
     /// Copies an entry's range in from the scratch block it was built in. Safe from many threads at once.
     pub fn add(&self, src: &Block, start: usize, end: usize, entry: usize, key: u32, digest: u64) {
-        let dst = self.block.copy_in(src.bytes(start, end), start);
-        let root: &JournalRoot = self.block.root();
-        let i = root.n.fetch_add(1, AcqRel) as usize;
-        assert!(i < root.entries.len(), "journal entries past its capacity");
-        // The slot was just claimed: nothing reads it before this one write.
-        let loc = unsafe { root.entries.as_ptr().add(i) as *mut EntryLoc };
-        unsafe {
-            *loc = EntryLoc {
-                key,
-                pad: 0,
-                digest,
-                start: dst as u64,
-                end: (dst + end - start) as u64,
-                entry: (dst + entry - start) as u64,
-            }
-        };
+        add(&self.block, src, start, end, entry, key, digest);
     }
 
     pub fn freeze(self) -> Frozen {
         self.block.freeze()
     }
+}
+
+/// Makes `block` (a journal's kind, just made: a file, or a deferrable slab of the pool) a journal of room for
+/// `cap` entries.
+pub fn init(block: &Block, cap: usize) {
+    let root: *mut JournalRoot = block.alloc_t(1);
+    let locs: *mut EntryLoc = block.alloc_t(cap.max(1));
+    unsafe { Span::set(&raw mut (*root).entries, locs, cap.max(1)) };
+    block.set_root(root);
+}
+
+/// `Journal::add` on any journal block (`init`).
+pub fn add(journal: &Block, src: &Block, start: usize, end: usize, entry: usize, key: u32, digest: u64) {
+    let dst = journal.copy_in(src.bytes(start, end), start);
+    let root: &JournalRoot = journal.root();
+    let i = root.n.fetch_add(1, AcqRel) as usize;
+    assert!(i < root.entries.len(), "journal entries past its capacity");
+    // The slot was just claimed: nothing reads it before this one write.
+    let loc = unsafe { root.entries.as_ptr().add(i) as *mut EntryLoc };
+    unsafe {
+        *loc = EntryLoc {
+            key,
+            pad: 0,
+            digest,
+            start: dst as u64,
+            end: (dst + end - start) as u64,
+            entry: (dst + entry - start) as u64,
+        }
+    };
 }
 
 pub fn entries(b: &Block) -> &[EntryLoc] {
