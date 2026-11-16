@@ -136,6 +136,13 @@ pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     })
 }
 
+/// `core_names` less the relations decision 0174's rewrite adds (`lower::made_on_request`): what a program in
+/// `core.rr`'s shape declares whichever attributes it answers on request (a round may be undone, `lower::undo_round`).
+pub fn core_shape() -> &'static std::collections::BTreeSet<String> {
+    static SHAPE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
+    SHAPE.get_or_init(|| core_names().iter().filter(|r| !lower::made_on_request(r)).cloned().collect())
+}
+
 /// The library `#include` reads from.
 pub fn library() -> PathBuf {
     // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
@@ -291,7 +298,13 @@ impl Text {
         }).collect();
         let asked: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
         if !asked.is_empty() {
+            // The attributes on request made again over the program with its cone (decision 0174): its cone's readers
+            // ask too, through copies of their own.
+            lower::undo_on_request(&mut program);
             with_cone(&mut program, &library.program, &asked, &declared);
+            for round in lower::ON_REQUEST {
+                lower::sources_on_request(&mut program, round);
+            }
         }
         if let Ok(bytes) = encode_program(&program)
             && keep_image(store, "a program image", key, bytes)
@@ -673,7 +686,9 @@ fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_st
 /// 0089 §3): the library relations reading `asked`, through any rule or native, with `asked` themselves; and the
 /// relations their rules read that no library file declares (lowering's helpers), with their own. Their rules,
 /// declarations, natives, facts and lattices, as the library has them.
-fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>, declared: &BTreeSet<String>) {
+pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>, declared: &BTreeSet<String>) {
+    // The library as written: the on-request rewrite's rules are the program's to make again over its cone.
+    let rules: Vec<&super::front::Rule> = library.rules.iter().filter(|r| !lower::on_request_rule(r.head.rel.as_str())).collect();
     use super::front::Literal;
     fn reads(r: &super::front::Rule) -> Vec<&str> {
         r.body.iter().filter_map(|l| match l {
@@ -684,7 +699,7 @@ fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>,
     let mut cone: BTreeSet<String> = asked.clone();
     loop {
         let before = cone.len();
-        for r in &library.rules {
+        for r in &rules {
             if !cone.contains(r.head.rel.as_str()) && reads(r).iter().any(|b| cone.contains(*b)) {
                 cone.insert(r.head.rel.to_string());
             }
@@ -702,17 +717,17 @@ fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>,
     let mut take = cone;
     let mut work: Vec<String> = take.iter().cloned().collect();
     while let Some(rel) = work.pop() {
-        let read: Vec<String> = library.rules.iter().filter(|r| r.head.rel.as_str() == rel).flat_map(|r| reads(r).into_iter().map(str::to_owned)).chain(library.natives.get(&rel).into_iter().flat_map(|n| n.reads().into_iter().map(str::to_owned))).collect();
+        let read: Vec<String> = rules.iter().filter(|r| r.head.rel.as_str() == rel).flat_map(|r| reads(r).into_iter().map(str::to_owned)).chain(library.natives.get(&rel).into_iter().flat_map(|n| n.reads().into_iter().map(str::to_owned))).collect();
         for b in read {
-            if !declared.contains(&b) && !core.contains(&b) && !take.contains(&b) && (library.rules.iter().any(|r| r.head.rel.as_str() == b) || library.natives.contains_key(&b)) {
+            if !declared.contains(&b) && !core.contains(&b) && !take.contains(&b) && (rules.iter().any(|r| r.head.rel.as_str() == b) || library.natives.contains_key(&b)) {
                 take.insert(b.clone());
                 work.push(b);
             }
         }
     }
-    for r in library.rules.iter().filter(|r| take.contains(r.head.rel.as_str())) {
+    for r in rules.iter().filter(|r| take.contains(r.head.rel.as_str())) {
         if !program.rules.contains(r) {
-            program.rules.push(r.clone());
+            program.rules.push((*r).clone());
         }
     }
     for (rel, cols) in library.decls.iter().filter(|(r, _)| take.contains(r.as_str())) {

@@ -740,6 +740,27 @@ pub(in crate::code_rule_dsl) struct Cone {
     rest_version: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
+/// The attributes answered on request by a function of the node's document (decision 0174: `value`, `node_text`)
+/// whose answers are not file-local, made eager again: their rounds undone, so the projection makes them for every
+/// node. A function's answer reads the node's document from the chunk's batch, which the cross-file part does not
+/// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
+/// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
+/// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
+/// cross-file reader asks for is eager.
+fn answers_where_documents_are(prog: &mut front::Program) {
+    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
+    loop {
+        let local = crate::code_rule_dsl::typing::file_local::split(prog);
+        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| {
+            round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && !local.contains(a.rel)).map(|a| (*round, a.rel))
+        }) else {
+            return;
+        };
+        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
+        undo_round(prog, round);
+    }
+}
+
 /// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
 /// other files, one line each: `relation  own  inherited  output|-  rule`. A rule's own class is the first that holds:
 /// `recursive` (its stratum reads itself), `total` (an aggregate with no group variable), `grouped` (an aggregate by
@@ -1198,6 +1219,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>, i
     if parsed.len() == 1 {
         let mut one = parsed.pop().expect("one program");
         same_relations(&mut one);
+        answers_where_documents_are(&mut one);
         return Ok(one);
     }
     let axis = crate::code_rule_dsl::logic::front::AXIS;
@@ -1358,6 +1380,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>, i
     for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
         crate::code_rule_dsl::logic::rr::lower::sources_on_request(&mut all, round);
     }
+    answers_where_documents_are(&mut all);
     // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules are
     // the same for every program, so one analysis gives what each program's would.
     if shared && makes_guests {
@@ -3162,6 +3185,15 @@ fn run_observed(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
             drop(_step);
+            // An attribute's answer by a function of the node's document runs where the documents are (decision 0174
+            // §6, `answers_where_documents_are`): in the cross-file part it answers nothing, without an error.
+            {
+                use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
+                let local = crate::code_rule_dsl::typing::file_local::split(&prog);
+                if let Some(a) = ON_REQUEST.iter().flat_map(|r| r.iter()).find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && prog.rules.iter().any(|r| r.head.rel == a.rel) && !local.contains(a.rel)) {
+                    return Err(Error::Plan(format!("`{}` is answered on request in the cross-file part, which holds no documents to read it from (decision 0174 §6)", a.rel)));
+                }
+            }
             if let Some(path) = std::env::var_os("RERAIL_SPLIT_DUMP") {
                 dump_split(std::path::Path::new(&path), &split);
             }

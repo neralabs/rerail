@@ -4764,7 +4764,7 @@ pub(crate) fn install_languages() {
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
     // `core.rr`'s names, as the rule language reads them.
-    facts::core::install_core_names(logic::rr::core_names);
+    facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
     // core.rr's functors whose meaning is W's or a language's.
