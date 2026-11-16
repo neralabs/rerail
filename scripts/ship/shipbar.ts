@@ -38,8 +38,10 @@
 // process wall time on the `.rr` side. Findings come from each side's first cold run on the same corpus
 // directory and are scored by one function (verdict.ts) against the tool's upstream recording with main's
 // divergences.json, on (rule, path, line, code) keys: the candidate keeps every true positive of main's and adds no
-// false positive main lacks. Real code has no truth: its agreement is reported and does not gate. The report
-// (report-model.ts, schema ship-no-ship/report/v1) is rendered as Markdown by report.ts.
+// false positive main lacks. Real code has no truth: its agreement is reported and does not gate. Each product side
+// also runs an empty rule set, cold and warm (fixed.jsonl), and each corpus's workload is counted once (workload/):
+// the report shows start-up, net times, phases and workload beside the gross figures, never judged (metric.ts). The
+// report (report-model.ts, schema ship-no-ship/report/v1) is rendered as Markdown by report.ts.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -48,6 +50,7 @@ import { cpus as logicalCpus, hostname, release } from "node:os";
 import { dirname, join, matchesGlob, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { cachedWorkload, type CellCost, cellCost, engineBinary, type Phases, readPhases, readWorkload, ruleSet } from "./metric.js";
 import { buildReport, type RunMeta } from "./report-model.js";
 import { renderReport } from "./report.js";
 import {
@@ -514,6 +517,8 @@ interface RunRow {
   started: string;
   /** The product path's in-process evaluation time (product-run.ts evaluateMs); null on the `.rr` side or a failure. */
   evaluateMs: number | null;
+  /** product-run.ts's load, compile and evaluate times (metric.ts); null on the `.rr` side or a failure. */
+  phases?: Phases | null;
   /** rules.jsonl: the rule this run timed alone, "(none)" for the empty rule set; null elsewhere. */
   drillRule: string | null;
 }
@@ -619,10 +624,12 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   let reason: string | null = null;
   let stoppedOn: string | null = null;
   let evaluateMs: number | null = null;
+  let phases: Phases | null = null;
   if (completed) {
     try {
-      const output = readJson<{ evaluateMs?: number }>(result);
+      const output = readJson<{ evaluateMs?: number; loadMs?: number; compileMs?: number }>(result);
       if (side !== "rr" && typeof output.evaluateMs === "number") evaluateMs = Math.round(output.evaluateMs);
+      if (side !== "rr") phases = readPhases(output);
     } catch {
       completed = false;
       reason = "exited 0 with no readable result";
@@ -648,7 +655,7 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
     wallMs: Math.round(wall * 1000), cpuMs: Math.round((user + sys) * 1000), rssKB: rss,
     load, pinnedBusy: busiest(before, after, settings.cpus), siblingBusy: busiest(before, after, settings.siblings),
     cpus: settings.cpus.join(","), threads: settings.cpus.length, host: hostname(),
-    memCap: settings.memCap, timeCapS: settings.timeCapS, command: command.join(" "), started, evaluateMs, drillRule: p.drillRule ?? null,
+    memCap: settings.memCap, timeCapS: settings.timeCapS, command: command.join(" "), started, evaluateMs, phases, drillRule: p.drillRule ?? null,
   };
   appendFileSync(join(cell, p.log), `${JSON.stringify(row)}\n`);
   // Kept: the first cold run's findings (and every failure's stderr). The rest is scratch.
@@ -705,6 +712,28 @@ function measureCell(settings: Settings, pack: string, corpus: Corpus, sides: re
       const rows = done();
       if (rows.some((row) => !row.completed) || !rows.some((row) => row.tag === `${side}.cold${rep}`)) continue;
       if (!rows.some((row) => row.tag === `${side}.warm${rep}`)) measure(settings, cell, proc("warm"), pack, dir, rr);
+      rmSync(store, { recursive: true, force: true });
+    }
+  }
+}
+
+/**
+ * Each product side's start-up on this corpus (metric.ts T0): an empty rule set, cold then warm, --runs repetitions
+ * interleaved as the cell's, into fixed.jsonl. Reported beside the gross metrics, never judged.
+ */
+function measureFixed(settings: Settings, pack: string, corpus: Corpus, sides: readonly Side[]): void {
+  const cell = join(settings.out, "runs", pack, corpus);
+  const dir = corpusDirectory(settings.corpora, pack, corpus);
+  const empty = join(settings.out, "empty-rules");
+  mkdirSync(empty, { recursive: true });
+  const product = sides.filter((side) => side !== "rr");
+  for (let rep = 1; rep <= settings.runs; rep += 1) {
+    for (const side of product.map((_, i) => product[(i + rep - 1) % product.length]!)) {
+      const tag = (mode: "cold" | "warm"): string => `fixed.${side}.${mode}${rep}`;
+      if (readRows(join(cell, "fixed.jsonl")).some((row) => row.tag === tag("cold"))) continue;
+      const store = join(cell, `fixed.${side}.r${rep}.store`);
+      const proc = (mode: "cold" | "warm"): Process => ({ side, mode, rep, tag: tag(mode), store, log: "fixed.jsonl", rules: [], rulesDir: empty });
+      if (measure(settings, cell, proc("cold"), pack, dir, undefined).completed) measure(settings, cell, proc("warm"), pack, dir, undefined);
       rmSync(store, { recursive: true, force: true });
     }
   }
@@ -823,6 +852,8 @@ export interface CellVerdict {
   rules: { main: number; candidate: number };
   /** A confirmed slowdown's rules, each timed alone (rules.jsonl); null where none was made. */
   drill: { measure: "evaluate_ms" | "wall_ms"; reps: number; startup: { main: number | null; candidate: number | null }; rules: RuleTiming[] } | null;
+  /** metric.ts: start-up, net times, phases and workload; null where the cell was not measured. */
+  cost: CellCost | null;
 }
 
 interface Counts {
@@ -973,7 +1004,7 @@ function drillOf(cell: string, candidate: Candidate): CellVerdict["drill"] {
 }
 
 function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, lock: CorporaLock, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): CellVerdict {
-  const empty: CellVerdict = { corpus, note: "", blocked: null, completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 }, drill: null };
+  const empty: CellVerdict = { corpus, note: "", blocked: null, completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 }, drill: null, cost: null };
   const fixtures = lock.fixtures[pack];
   if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) return { ...empty, note: `no fixtures corpus: ${fixtures.absent}` };
   const cell = join(settings.out, "runs", pack, corpus);
@@ -1025,6 +1056,12 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     runs: { main: main.length, candidate: mine.length },
     rules: { main: mainRules.length, candidate: candidate === "rr" && rr !== undefined ? rrIds(rr, cell).length : shippedRules(settings.candidate.dir, pack).length },
     drill: drillOf(cell, candidate),
+    cost: cellCost({
+      baseline: { runs: main, fixed: readRows(join(cell, "fixed.jsonl")).filter((row) => row.side === "main"), rules: ruleSet(join(settings.baseline.dir, "packs", pack, "rules")) },
+      // The .rr side has no start-up run; its rule set is main's rules it runs.
+      candidate: { runs: mine, fixed: readRows(join(cell, "fixed.jsonl")).filter((row) => row.side === candidate), rules: candidate === "rr" ? ruleSet(join(settings.baseline.dir, "packs", pack, "rules"), new Set(ran)) : ruleSet(join(settings.candidate.dir, "packs", pack, "rules")) },
+      workload: readWorkload(settings.out, relative(settings.corpora, corpusDirectory(settings.corpora, pack, corpus))),
+    }),
   };
 }
 
@@ -1203,7 +1240,10 @@ function main(): void {
       for (const corpus of corpusKinds) {
         const fixtures = lock.fixtures[pack];
         if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) continue;
+        const dir = corpusDirectory(corpora, pack, corpus);
+        cachedWorkload(out, relative(corpora, dir), dir, engine ?? engineBinary(candidate.dir), cpus);
         measureCell(settings, pack, corpus, sides, rr);
+        measureFixed(settings, pack, corpus, sides);
         confirmCell(settings, pack, corpus, candidates, rr);
         for (const c of candidates) drillCell(settings, pack, corpus, c, rr);
       }

@@ -4,6 +4,7 @@
 // raw runs with the command that reproduces the cell. GitHub renders the <details>; every pack has an anchor.
 
 import { type CandidateItem, type CellItem, formatMs, type ItemStatus, type MetricItem, metricLabel, type PackItem, type Report, signedMs } from "./report-model.js";
+import { COST_NOTE, costRows, multipleColumn } from "./metric-report.js";
 
 const CORPUS_LABEL = { fixtures: "Fixtures", real: "Real code" } as const;
 const TOP_RULES = 5;
@@ -34,9 +35,9 @@ function anchor(p: PackItem): string {
 function packRow(p: PackItem): string {
   const column = (corpus: "fixtures" | "real"): string => {
     const entry = p.summary.wall_cold[corpus];
-    if (entry === undefined) return "–";
-    if (!entry.completed) return "**did not finish**";
-    return entry.ratio === null ? "n/a" : markedRatio(entry.ratio, entry.status);
+    if (entry === undefined) return "– | –";
+    if (!entry.completed) return "**did not finish** | –";
+    return `${entry.ratio === null ? "n/a" : markedRatio(entry.ratio, entry.status)} | ${times(entry.net_ratio)}`;
   };
   const worst = p.summary.worst === null ? "–" : `${p.summary.worst.corpus} · ${metricLabel(p.summary.worst.metric)} ${markedRatio(p.summary.worst.ratio, p.summary.worst.status)}`;
   return `| [${p.pack}](#${anchor(p)}) | ${statusWord(p.status)} | ${column("fixtures")} | ${column("real")} | ${worst} | ${p.summary.hint ?? ""} |`;
@@ -85,9 +86,9 @@ function drillSection(cell: CellItem): string[] {
   const measure = drill.measure === "evaluate_ms" ? "in-process evaluation time" : "process wall time";
   const row = (r: (typeof drill.rules)[number]): string => {
     const share = r.share === null ? "" : ` (${r.share < 0 ? "−" : ""}${Math.abs(Math.round(r.share * 100))}%)`;
-    return `| \`${r.rule}\` | ${figure("ms", r.baseline_ms)} | ${figure("ms", r.candidate_ms)} | ${r.added_ms === null ? "a side failed" : `${signedMs(r.added_ms)}${share}`} |`;
+    return `| \`${r.rule}\` | ${figure("ms", r.baseline_ms)} | ${figure("ms", r.candidate_ms)} | ${r.added_ms === null ? "a side failed" : `${signedMs(r.added_ms)}${share}`} | ${multipleColumn(r)} |`;
   };
-  const header = ["| Rule | Baseline | Candidate | Added |", "|---|---|---|---|"];
+  const header = ["| Rule | Baseline | Candidate | Added | Multiple of the median rule (baseline → candidate) |", "|---|---|---|---|---|"];
   const startup = drill.startup.baseline_ms === null && drill.startup.candidate_ms === null ? "" : ` Empty rule set: ${figure("ms", drill.startup.baseline_ms)} → ${figure("ms", drill.startup.candidate_ms)}.`;
   const lines = [
     `<details${cell.status === "fail" ? " open" : ""}><summary>Rules, ${CORPUS_LABEL[cell.corpus].toLowerCase()}: ${cell.hint ?? `${signedMs(drill.total_added_ms)} in all`}</summary>`,
@@ -147,7 +148,8 @@ function packSection(p: PackItem): string[] {
   for (const metric of ["wall-cold", "wall-warm", "cpu-cold", "cpu-warm", "rss-cold", "rss-warm"]) lines.push(`| ${metricLabel(metric)} | ${corpora.map((corpus) => cellMetric(cell(corpus), metric)).join(" | ")} |`);
   lines.push(`| Findings | ${corpora.map((corpus) => findingsText(cell(corpus)!)).join(" | ")} |`);
   lines.push(`| Completed | ${corpora.map((corpus) => completionText(cell(corpus)!)).join(" | ")} |`);
-  lines.push(`| Rules run (baseline / candidate) | ${corpora.map((corpus) => `${cell(corpus)!.rules.baseline} / ${cell(corpus)!.rules.candidate}`).join(" | ")} |`, "");
+  lines.push(`| Rules run (baseline / candidate) | ${corpora.map((corpus) => `${cell(corpus)!.rules.baseline} / ${cell(corpus)!.rules.candidate}`).join(" | ")} |`);
+  lines.push(...costRows(corpora.map(cell)), "", COST_NOTE, "");
   if (p.coverage.missing.length > 0) {
     lines.push(`<details open><summary><b>${p.coverage.missing.length} rule${p.coverage.missing.length === 1 ? "" : "s"} the baseline ships cannot run</b></summary>`, "", ...p.coverage.missing.map((m) => `- \`${m.rule}\`: ${m.reason}`), "", "</details>", "");
   }
@@ -179,11 +181,11 @@ function candidateSection(c: CandidateItem): string[] {
     "",
     `${c.description.charAt(0).toUpperCase()}${c.description.slice(1)}. ${c.counts.failing_packs} of ${c.counts.packs} packs fail${c.counts.noisy_packs > 0 ? `; ${c.counts.noisy_packs} pass only after confirmation (≈)` : ""}.`,
     "",
-    "| Pack | Status | Fixtures, wall cold | Real code, wall cold | Worst metric | Biggest contributor |",
-    "|---|---|---|---|---|---|",
+    "| Pack | Status | Fixtures, wall cold | Fixtures, net | Real code, wall cold | Real code, net | Worst metric | Biggest contributor |",
+    "|---|---|---|---|---|---|---|---|",
     ...packs.map(packRow),
     "",
-    "Bold: fails the bar (each failing metric shows its confirmation ratio when confirmation runs were made). ≈: failed at the median and passed its confirmation runs; reported, not counted.",
+    "Bold: fails the bar (each failing metric shows its confirmation ratio when confirmation runs were made). ≈: failed at the median and passed its confirmation runs; reported, not counted. Net: wall cold less each side's start-up (its empty rule set on the same corpus), candidate over baseline; reported, not judged.",
     "",
     ...itemsTable(`All ${c.failures.length} failing items`, c.failures, false),
     ...itemsTable(`${c.noisy.length} noisy items: failed at the median, passed confirmation`, c.noisy, false),
@@ -227,6 +229,8 @@ function runSection(report: Report, baseline: string): string[] {
     `Measured: ${report.scope.measured.join("; ")}.`,
     "",
     `Not measured by this harness yet: ${report.scope.not_measured.join("; ")}.`,
+    "",
+    `Known gaps of the reported (not judged) figures: ${report.scope.known_gaps.join("; ")}.`,
     "",
     "</details>",
     "",

@@ -84,6 +84,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   the baseline and the corpora anywhere; `run` measures on Linux only, signed in to AWS for the pack data; `run` and
   `verdict` write `report.json` (`report-model.ts`, schema `ship-no-ship/report/v1`) and `report.md` (`report.ts`): one
   row per pack naming its worst metric and the rule behind it, each pack's metrics, rules and raw runs behind
-  `<details>`.
+  `<details>`. Beside the gross figures, and never judged (`metric.ts`, `metric-report.ts`): each side's start-up (its
+  empty rule set on the same corpus, `fixed.jsonl`), net time and net ratio, the product path's load / compile /
+  evaluate phases (compile per rule, evaluate per rule per syntax node), the corpus's files, bytes, lines, tokens and
+  engine node counts (`<out>/workload/`), and in the drill-down each rule's multiple of the pack's median rule.
 - `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,
   `npm run upstream:bump`) the upstream workflows run (docs/upstream.md).
