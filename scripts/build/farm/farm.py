@@ -20,7 +20,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 7
+VERSION = 8
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")

@@ -90,7 +90,7 @@ after the same tests pass under cargo, because Relax's std is its own.
 
 ```
 scripts/dev/relax/build        # once, and after it changes: the pinned, patched Relax, into ~/.local/share/rerail-relax
-cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
+cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_CACHE_MAX=8192 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
 scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
 ```

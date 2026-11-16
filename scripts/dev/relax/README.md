@@ -27,7 +27,7 @@ scripts/dev/relax/build          # the pinned, patched Relax, into ~/.local/shar
 Then run a filter's tests live, from `native/`:
 
 ```
-cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail \
+cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_CACHE_MAX=8192 \
   RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
 ```
@@ -43,6 +43,7 @@ What each setting does:
 | `RELAX_ALLOW_C=1` | The engine links C (tree-sitter, SQLite, zstd, simdjson, allocators). Without the grant no C is built or run. |
 | `RELAX_SHARED_OPEN=1` | Shares registry crates' compiled code between every worktree's runs, in `~/.relax/code` (fork change 2). |
 | `RELAX_SHARE=rerail` | Mounts the worktree at one path, `~/.relax/vfs/share/rerail`, so the workspace's own crates have the same keys in every worktree (see "Sharing between worktrees"). |
+| `RELAX_CACHE_MAX=8192` | Caps the stores of the run dir at 8 GB, whatever the run's size (see "How the caches stay bounded"). |
 | `RELAX_STD=…` | The patched std of the installed version (fork change 1). |
 | `nice -n 19` | As for every build and test run (AGENTS.md). |
 
@@ -52,7 +53,6 @@ Other variables that help when something goes wrong:
 |---|---|
 | `RELAX_VERBOSE=1` | Phase times, cache hits and misses, and why a store went stale (`stale code store: … late input … changed`). |
 | `RELAX_CACHE_TRACE=1` | With `RELAX_VERBOSE`: what each prune removed. |
-| `RELAX_CACHE_MAX=MB` | The store cap (see "How the caches stay bounded"). |
 
 Don't set `RELAX_CACHE_DIR`: it turns sharing off.
 
@@ -196,12 +196,18 @@ worktree has its own, `<worktree>/target/relax`.
 | Shared registry code | `~/.relax/code` | Its own cap, the same rule. |
 | Native builds | `<root>/native` | By reachability: what each slot's last build uses stays; the rest goes. |
 | Build-script outputs | `<root>/build` | By reachability, the same way. |
-| Installed versions | `~/.local/share/rerail-relax/v/` | Not bounded yet: 111 MB per version. |
-| Roots no run uses | `<worktree>/target/relax`, other `~/.relax/target/<key>` | Not bounded: a prune runs only on the root a run uses. |
+| Installed versions | `~/.local/share/rerail-relax/v/` | The build script keeps the installed version and the one before it (about 110 MB each), and any a process runs from. Not `v/old-src`, an earlier script's checkout that can hold edits. |
+| Relax's own build | `~/Library/Caches/rerail-relax/target` | `clean-target` after each build of Relax. |
+| Run dirs no run uses | `<worktree>/target/relax`, other `~/.relax/target/<key>` | `clean-target` (the farm runs it hourly per target directory) removes one idle for 6 hours (`--relax-keep-hours`), whole. Kept: the most recently used shared run dir, whatever its age, and any a Relax process runs in (each holds a lock in `cache/live`). It renames the dir aside under those locks before deleting it, so a Relax that starts meanwhile makes a fresh one. |
 
 Measured on 2026-11-15: `~/.relax` 9.6 GB (stores 8.4 GB, native builds 1.0 GB, shared code
 110 MB). Per-worktree roots from before sharing: 9.0 GB and 3.9 GB. `relax clean` removes a
-worktree's `target/relax`.
+worktree's `target/relax` at once. `scripts/build/farm/diagnose` shows each run dir, its size and
+last use, and warns when a checkout's Relax runs use their own run dir (not shared).
+
+So the total is bounded: the shared run dir's stores at `RELAX_CACHE_MAX` (8 GB) plus its native
+builds (about 1 GB, by reachability), the shared code under the same cap (now 110 MB), two
+installed versions, and at most 6 hours of any other run dir.
 
 ## Invariants
 
@@ -225,9 +231,9 @@ These must hold. A change to the fork, the patches or the commands that breaks o
 7. **Concurrent runs are safe and share.** Two runs at once in different worktrees both pass. One
    waits on the other's build-script claim and takes its outputs instead of running the script
    twice. Neither deletes a store the other holds.
-8. **The caches stay bounded.** Each root's stores stay under their cap; native builds and
-   script outputs are kept by reachability alone. (Installed versions and unused roots are not
-   bounded yet: see t37's open items.)
+8. **The caches stay bounded.** Each run dir's stores stay under their cap; native builds and
+   script outputs are kept by reachability alone; a run dir no run uses goes after 6 idle hours;
+   two installed versions stay. Nothing is removed while a Relax process uses it.
 9. **The engine has no Relax workarounds.** A missing std item goes into `std.patch`, a Relax bug
    into the fork. The engine's code stays what cargo compiles.
 10. **No machine details in the tree.** Model numbers only. No hostnames, usernames, home

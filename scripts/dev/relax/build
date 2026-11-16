@@ -42,9 +42,29 @@ if [ ! -f "$tree/.built" ]; then
   (cd "$tree" && PATH=$HOME/.cargo/bin:$PATH RUSTC_WRAPPER= nice -n 19 cargo "+$toolchain" build -q --release \
     -p relax-runner --bin relax --target-dir "$cache/target")
   install -m 0755 "$cache/target/release/relax" "$tree/relax"
+  # Relax's own builds, superseded ones out (its cargo target, as every worktree's)
+  "$here/../clean-target" "$cache/target" | tail -1
   touch "$tree/.built"
 fi
+# Versions pile up (about 110 MB each, one per change of a patch): kept are the installed one,
+# the newest other (to go back to), and any a process runs from (its binary or std under it).
+# A version is rebuilt exactly from COMMIT and the patches, so nothing else is lost. Not
+# old-src: an earlier script's checkout, which can hold edits.
+prune_versions() {
+  keep_other=$(for d in "$share"/v/*-*/; do d=${d%/}; [ "$d" != "$tree" ] && [ -f "$d/.built" ] && echo "$(stat -f %m "$d/.built") $d"; done | sort -rn | sed -n '1s/^[0-9]* //p')
+  for d in "$share"/v/*-*/; do
+    d=${d%/}
+    case "$(basename "$d")" in *[!0-9a-f-]*) continue ;; esac
+    [ "$d" = "$tree" ] || [ "$d" = "$keep_other" ] && continue
+    if pgrep -f "$d/" >/dev/null; then echo "relax: kept $(basename "$d"): a process runs from it"; continue; fi
+    # (moved out first, then deleted there: deletes outside /tmp are refused on this machine)
+    gone=/tmp/ai-trash/rerail-relax-$(basename "$d")-$$
+    mkdir -p /tmp/ai-trash && mv "$d" "$gone" && rm -rf "$gone" && echo "relax: removed version $(basename "$d")"
+  done
+  git --git-dir="$repo" worktree prune
+}
 if [ "$(readlink "$share/src" 2>/dev/null)" = "$tree" ] && cmp -s "$tree/relax" "$share/bin/relax"; then
+  prune_versions
   echo "relax: $share/bin/relax is version $version"
   exit 0
 fi
@@ -59,4 +79,5 @@ mv "$share/bin/relax.tmp" "$share/bin/relax"
 # The checkout an earlier version of this script made at src: kept beside, never removed here.
 if [ -d "$share/src" ] && [ ! -L "$share/src" ]; then mv "$share/src" "$share/v/old-src"; fi
 ln -sfh "$tree" "$share/src"
+prune_versions
 echo "relax: $share/bin/relax is version $version (std: $tree/libs/relax/compiler/std)"

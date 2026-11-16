@@ -561,7 +561,58 @@ def diagnose(checkout, sizes=True, sibling_cache=None):
                 reasons[key_] = reasons.get(key_, 0) + 1
             for k, n in sorted(reasons.items(), key=lambda kv: -kv[1])[:5]:
                 r.info(f"    not shared, nearest sibling build differs in {k}: {n}")
+    relax_section(r, checkout, sizes)
     return r
+
+
+def cleaner():
+    """clean-target as a module (the installed one, else this tree's): its Relax rules, one
+    definition (relax_roots, relax_last_used, relax_plan)."""
+    import importlib.machinery
+    import importlib.util
+    for path in (os.path.join(SHARE, "clean-target"), os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../dev/clean-target")):
+        if os.path.exists(path):
+            loader = importlib.machinery.SourceFileLoader("clean_target", path)
+            spec = importlib.util.spec_from_loader("clean_target", loader)
+            m = importlib.util.module_from_spec(spec)
+            try:
+                loader.exec_module(m)
+            except Exception:
+                continue
+            if hasattr(m, "relax_plan"):
+                return m
+    return None
+
+
+def relax_section(r, checkout, sizes):
+    """Relax's run dirs and installed versions: what bounds them (scripts/dev/relax/README.md)."""
+    ct = cleaner()
+    if ct is None:
+        return
+    r.section("Relax")
+    share = os.path.expanduser("~/.local/share/rerail-relax")
+    versions = sorted(v for v in glob.glob(os.path.join(share, "v", "*-*")) if re.fullmatch(r"[0-9a-f]+-[0-9a-f]+", os.path.basename(v)))
+    if versions:
+        current = os.path.realpath(os.path.join(share, "src"))
+        r.ok(f"installed version {os.path.basename(current)}; {len(versions)} version folder(s) kept "
+             "(scripts/dev/relax/build keeps the installed one and the one before it)")
+    target = target_of_cached(checkout)
+    plan = {root for root, _, _ in ct.relax_plan(target, ct.RELAX_KEEP_HOURS)} if target else set()
+    now = time.time()
+    for root, shared in (ct.relax_roots(target) if target else []):
+        used = ct.relax_last_used(root)
+        hours = (now - used) / 3600
+        size = f", {du(root) / 1e9:.1f} GB" if sizes else ""
+        name = root.replace(os.path.expanduser("~"), "~")
+        if shared:
+            line = f"shared run dir {name}{size}, last used {hours:.1f} h ago"
+            r.info(line + (": idle, goes at the next clean-target" if root in plan else ""))
+        elif root in plan:
+            r.info(f"this checkout's own run dir{size} is idle ({hours:.0f} h): it goes at the next clean-target")
+        else:
+            r.warn(f"this checkout's Relax runs use its own run dir (target/relax{size}, used {hours:.1f} h ago): "
+                   "they share nothing with the other worktrees' runs",
+                   "run Relax with RELAX_SHARE=rerail RELAX_CACHE_MAX=8192, as AGENTS.md does")
 
 
 _names = {}

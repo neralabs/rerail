@@ -140,7 +140,9 @@ target directory, at most once an hour per directory, detached and at nice 19. I
 build to end (cargo's lock on the profile directory), then removes what no build can use any more:
 another rustc's artifacts, builds that none of the current builds was made from (a mark and sweep
 over cargo's own dependency records, an hour's grace), debug objects no binary names, incremental
-state of crates no longer built or untouched for a day. Each target
+state of crates no longer built or untouched for a day, and Relax run dirs no run has used for
+6 hours (a worktree's own `target/relax`, another share's, never the most recently used shared one
+nor one a Relax process runs in: scripts/dev/relax/README.md). Each target
 directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 `RERAIL_FARM_NO_TIDY=1` keeps a build from starting one.
 
