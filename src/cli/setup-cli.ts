@@ -922,7 +922,9 @@ export function setupIo(args: readonly string[] = []): SetupIo {
   const say = (text: string): void => {
     process.stdout.write(`${text}\n`);
   };
-  if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) return { lane: "agent", say, close: () => {} };
+  if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) {
+    return { lane: "agent", relayed: args.includes(SETUP_FLAGS.relay), say, close: () => {} };
+  }
   // One reader for the run: lines for the folder and pack prompts, keys for each question's menu. Each question drops
   // what was typed before it was on screen.
   const input = new TerminalInput(process.stdin, text => process.stdout.write(text), undefined, () => process.stdout.columns);

@@ -381,7 +381,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore(["python"]) }), { answer: "yes", repo: setup.repo }));
     expect(asked.text()).toContain([
-      "Scanned acme-api. None of Rerail’s rule packs fit it.",
+      "Scanned acme-api. No rule pack matches what it’s built with.",
       "",
       "  Found           .py 3 · .ts 1",
       "                  from Git’s list of files, which leaves out what Git ignores",
@@ -402,7 +402,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit acme-api.");
     expect(io.text()).toContain("npm error code E401");
     expect(io.text()).toContain("Try downloading them again?");
-    expect(io.text()).not.toContain("None of Rerail’s rule packs fit");
+    expect(io.text()).not.toContain("No rule pack matches");
     expect(io.text()).not.toContain("with no rule packs on?");
     expect(environment.connections).toEqual([]);
   });
@@ -422,7 +422,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(await runSetup(asked, request(setup, fakeSetupEnvironment({ packs }), { answer: "pick-myself", repo: setup.repo }))).toEqual({ status: "waiting" });
     const [complexity] = repositoryPackVersions("complexity");
     expect(asked.text()).toContain("Which rule packs should Rerail start with in acme-api?");
-    expect(asked.text()).toContain(`complexity@${complexity!.version}  Cyclomatic complexity`);
+    expect(asked.text()).toContain(`complexity@${complexity!.version}  Function complexity`);
     expect(asked.text()).not.toContain("(limit 6)");
     expect(asked.text()).toContain(`--answer pick-myself --repo ${shellWord("posix", setup.repo)} --packs none`);
     expect(readsRepository).not.toHaveBeenCalled();
@@ -452,7 +452,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       const asked = agentIo();
       await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
       expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.0\.9/u);
-      expect(asked.text()).toContain("Scanned acme-api. None of Rerail’s rule packs fit it.");
+      expect(asked.text()).toContain("Scanned acme-api. No rule pack matches what it’s built with.");
     } finally {
       await removeFolder(current);
     }
