@@ -823,6 +823,14 @@ pub struct Parts {
 }
 
 pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
+    let (local, constants, locations, same_doc) = found(prog);
+    assemble(prog, None, local, constants, locations, same_doc)
+}
+
+/// What `programs` splits `prog` by: its file-local relations, its relations of constants (derived in both parts),
+/// and the location and same-document columns (`split_located`).
+#[allow(clippy::type_complexity)]
+fn found(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>) {
     let (mut local, locations, same_doc) = split_located(prog);
     // A program that reads no document (a later phase over an earlier one's exports, `corpus::phases`) has no
     // file-local part: its relations made from those exports alone would be constants, derived again whole in the
@@ -835,20 +843,20 @@ pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs 
     // A relation of constants is derived in both parts (`constant_relations`), but where no document is read: the
     // file-local part then has nothing to give them to.
     let constants = if no_document { Default::default() } else { constant_relations(prog) };
-    assemble(prog, None, local, constants, locations, same_doc)
+    (local, constants, locations, same_doc)
 }
 
-/// `prog` split at its file-local relations `local` (`programs`), deriving the relations of `constants` in both parts:
-/// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs`
-/// finds them, a prepared program keeps them).
-pub fn assemble(
-    prog: &crate::code_rule_dsl::logic::front::Program,
-    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
-    local: std::collections::BTreeSet<String>,
-    constants: std::collections::BTreeSet<String>,
-    locations: std::collections::BTreeMap<String, Vec<usize>>,
-    same_doc: std::collections::BTreeMap<String, Vec<usize>>,
-) -> Programs {
+/// What passes between a split's parts (`assemble`), `local` the file-local relations: the exports, the base
+/// relations the cross-file part reads (and those it decodes), and the file-local relations it derives itself from a
+/// stored input (`projected`). Names alone: no part is made.
+struct Crossing {
+    exports: Vec<String>,
+    base_read: Vec<String>,
+    base: Vec<String>,
+    projected: std::collections::BTreeSet<String>,
+}
+
+fn crossing(prog: &crate::code_rule_dsl::logic::front::Program, local: &std::collections::BTreeSet<String>) -> Crossing {
     use crate::code_rule_dsl::logic::front::Literal;
     use std::collections::BTreeSet;
     let is_local = |rel: &str| local.contains(rel);
@@ -886,12 +894,29 @@ pub fn assemble(
             base.push(decode.to_owned());
         }
     }
+    Crossing { exports, base_read, base, projected }
+}
+
+/// `prog` split at its file-local relations `local` (`programs`), deriving the relations of `constants` in both parts:
+/// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs`
+/// finds them, a prepared program keeps them).
+pub fn assemble(
+    prog: &crate::code_rule_dsl::logic::front::Program,
+    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    local: std::collections::BTreeSet<String>,
+    constants: std::collections::BTreeSet<String>,
+    locations: std::collections::BTreeMap<String, Vec<usize>>,
+    same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+) -> Programs {
+    let Crossing { exports, base_read, base, projected } = crossing(prog, &local);
+    let is_local = |rel: &str| local.contains(rel);
+    let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
     let mut l = prog.clone();
     l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
     l.natives.retain(|rel, _| is_local(rel));
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
-    l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
+    l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
     l.inputs.retain(|i| !matches!(i.as_str(), "reference_edge" | "reference_open"));
     let mut c = prog.clone();
@@ -1721,13 +1746,17 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
 pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, Vec<String>> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::BTreeSet;
-    let split = programs(prog);
-    let local: BTreeSet<&str> = split.local.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    let targets: BTreeSet<String> = split
-        .exports
+    // The split's names alone (`found`, `crossing`), not its parts: the file-local part's heads, and what it hands on
+    // (the exports and its own outputs).
+    let (file_local, constants, locations, _) = found(prog);
+    let Crossing { exports, .. } = crossing(prog, &file_local);
+    let local: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| file_local.contains(h) || constants.contains(h)).collect();
+    let local: BTreeSet<&str> = local.iter().map(String::as_str).collect();
+    let local_outputs = prog.outputs.iter().filter(|o| file_local.contains(*o));
+    let targets: BTreeSet<String> = exports
         .iter()
-        .chain(split.local.outputs.iter())
-        .filter(|r| local.contains(r.as_str()) && split.locations.get(*r).is_none_or(Vec::is_empty))
+        .chain(local_outputs)
+        .filter(|r| local.contains(r.as_str()) && locations.get(*r).is_none_or(Vec::is_empty))
         .cloned()
         .collect();
     // Spans are located through docof, as are ordinary nodes.

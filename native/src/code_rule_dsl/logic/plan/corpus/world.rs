@@ -39,12 +39,12 @@ pub(super) fn wanted(prog: &front::Program) -> bool {
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
 /// (`corpus::loading`): a directory's entries, a file's lines and a load's `loaded` row.
-pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
+pub(super) fn answers(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>) -> BTreeMap<String, Vec<String>> {
     WORLD
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
-        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req))
+        .filter(|(req, _)| f.derives(req))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
         .collect()
 }
