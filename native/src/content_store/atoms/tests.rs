@@ -762,3 +762,33 @@ fn a_forked_processs_unnamed_atoms_queue_no_write() {
     drop(handle);
     assert_eq!(segments(&path), [(0, 1), (1, 3)], "nothing stored at the close");
 }
+
+/// Decision 0306: a store whose atoms are past the memory budget's share for them is not read whole. Its run takes no
+/// lease, maps its ids from the store's end (decision 0170) and reads nothing to give an id: a string the store has
+/// but the run does not hold gets one of the run's, and the write stores it once. Within the share, the same store is
+/// read whole under the lease, as before.
+#[test]
+fn a_store_past_the_budgets_share_is_mapped_not_read_whole() {
+    for (share, mapped) in [(2, true), (64, false)] {
+        let path = path(if mapped { "over-share" } else { "within-share" });
+        let store = ContentStore::open(&path).unwrap();
+        // Another process's atoms 1..4: `a`, `b`, `c`, 3 bytes of text.
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute("INSERT INTO atom_segment(first, ends, bytes) VALUES (1, x'010000000200000003000000', CAST('abc' AS BLOB))", [])
+            .unwrap();
+        super::READ_WHOLE_TEST.with(|c| c.set(Some(share)));
+        let handle = store.atoms_handle();
+        assert!(handle.ready_for_run().unwrap(), "{share}: the run's waves read nothing");
+        assert_eq!(handle.leased.load(Ordering::Acquire), !mapped, "{share}: the lease");
+        assert_eq!(handle.forked(), mapped, "{share}: mapped from the store's end");
+        assert_eq!(store.intern_atoms(&["c", "d"]).unwrap(), if mapped { [4, 5] } else { [3, 4] }, "{share}");
+        handle.run_over();
+        store.flush_atoms().unwrap();
+        if mapped {
+            assert_eq!(handle.stored(&[4, 5]).unwrap(), [Some(3), Some(4)], "the store's `c`, and `d` appended once");
+        }
+        assert_eq!(segments(&path), [(0, 1), (1, 3), (4, 1)], "{share}: `c` is not stored twice");
+        super::READ_WHOLE_TEST.with(|c| c.set(None));
+    }
+}

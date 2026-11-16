@@ -378,16 +378,29 @@ pub struct Atoms {
     complete: AtomicBool,
     /// A flush is queued to the store's writer and has not run yet (`queue_atoms_flush`).
     flush_queued: AtomicBool,
+    /// The store's atoms are more than the memory budget's share for them (decision 0306, `read_whole`): its runs give
+    /// ids out without the lease and map them at the store (decisions 0160, 0170), holding only the atoms their stored
+    /// rows name. Set before a run takes the lease, and kept: a store's atoms only grow.
+    over_share: AtomicBool,
 }
 
-/// A store's atoms of at most this many bytes of text are read whole before a run's first wave (`ready_for_run`).
-const READ_WHOLE: usize = 64 << 20;
-/// Up to this many bytes, a store whose segments average `LARGE_SEGMENT` or more is read whole too (decision 0171): a
-/// lookup reads its atom's whole segment, so a run over the files that wrote them reads nearly all of it anyway, one
-/// segment at a time inside its waves.
-const READ_WHOLE_LARGE: usize = 256 << 20;
-/// A segment this large is read whole by any lookup that lands in it.
-const LARGE_SEGMENT: usize = 1 << 20;
+/// A store's atoms are read whole before a run's first wave (`ready_for_run`) when their text is at most this share of
+/// the memory budget: 64 MB at the default 1 GB (decision 0306). Past it, the run maps its ids at the store (0170).
+/// Decision 0171 read up to 256 MB whole when the segments were large, outside every budget; a 4 GB budget reads
+/// that much again.
+fn read_whole() -> usize {
+    #[cfg(test)]
+    if let Some(bytes) = READ_WHOLE_TEST.with(std::cell::Cell::get) {
+        return bytes;
+    }
+    rerail_accel::budget::share(64 << 20)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's share for the atoms, on its thread alone (the budget is the process's; tests run side by side).
+    pub(crate) static READ_WHOLE_TEST: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
 
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
 /// made again at a path may have the inode the deleted one had; it was not made at the same time.
@@ -496,7 +509,7 @@ impl Drop for Reserved {
 
 /// Decision 0160's trial (`RERAIL_ATOMS_PROVISIONAL=1`): ids are provisional and the lease is never taken. Off, the
 /// lease is taken as before (decision 0049).
-fn lease_free() -> bool {
+fn lease_free_trial() -> bool {
     static FREE: LazyLock<bool> = LazyLock::new(|| std::env::var("RERAIL_ATOMS_PROVISIONAL").is_ok_and(|v| v == "1"));
     *FREE
 }
@@ -618,6 +631,7 @@ impl Atoms {
             forked: AtomicBool::new(false),
             complete: AtomicBool::new(false),
             flush_queued: AtomicBool::new(false),
+            over_share: AtomicBool::new(false),
         }
     }
 
@@ -770,7 +784,7 @@ impl Atoms {
     /// Every stored atom is held (`complete`), or this process maps its ids to the store's (decision 0170): forked, or
     /// over a store it does not hold whole, holding the atoms its stored rows name as they are read (`hold_named`).
     fn provisional(&self) -> bool {
-        lease_free() && self.runs.load(Ordering::Acquire) > 0 && (self.complete.load(Ordering::Acquire) || self.forked())
+        self.lease_free() && self.runs.load(Ordering::Acquire) > 0 && (self.complete.load(Ordering::Acquire) || self.forked())
     }
 
     /// Forks on this process's reader (outside a write): another process stored atoms past this one's pending ones.
@@ -995,7 +1009,7 @@ impl Atoms {
         }
         // Outside the waves: what this process does not hold may be stored, found in the database first (decision
         // 0111), and the rest is provisional too. No lease (decision 0160).
-        if lease_free() {
+        if self.lease_free() {
             let missing: Vec<&str> = {
                 let state = self.state.read();
                 values.iter().copied().filter(|value| state.atoms.get(value).is_none()).collect()
@@ -1451,7 +1465,7 @@ impl Atoms {
         }
         let whole = state.all_held >= base;
         state.atoms.advance(end)?;
-        if !whole || !lease_free() {
+        if !whole || !self.lease_free() {
             return Ok(());
         }
         let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 AND first < ?2 ORDER BY first")?;
@@ -1491,6 +1505,19 @@ impl Atoms {
         }
     }
 
+    /// Whether ids are given out without the lease (decision 0160): the process's trial (`RERAIL_ATOMS_PROVISIONAL=1`),
+    /// or a store whose atoms are past the budget's share (decision 0306).
+    fn lease_free(&self) -> bool {
+        lease_free_trial() || self.over_share.load(Ordering::Acquire)
+    }
+
+    /// The bytes of the store's atom text: one read, before a run's first wave.
+    fn stored_bytes(&self) -> StoreResult<usize> {
+        Ok(self
+            .with_reader(|connection| Ok(connection.query_row_cached("SELECT coalesce(sum(length(bytes)), 0) FROM atom_segment", [], |r| r.get::<_, i64>(0))? as usize))?
+            .unwrap_or(0))
+    }
+
     /// Before a run's first wave (decision 0104): takes the lease, kept to the run's end (`run_over`), and reads where
     /// the database's ids end, once. Where every stored atom is held here (a new store), the run's lookups read nothing
     /// from the store while the lease is held. Returns whether they do not.
@@ -1498,9 +1525,16 @@ impl Atoms {
         if self.path.is_none() {
             return Ok(true);
         }
+        // A store whose atoms are past the budget's share is run without the lease (decision 0306), decided before the
+        // outermost run would take it.
+        if !self.lease_free() && self.runs.load(Ordering::Acquire) == 0 && !self.leased.load(Ordering::Acquire) && !super::hazards::inside_waves() {
+            if self.stored_bytes()? > read_whole() {
+                self.over_share.store(true, Ordering::Release);
+            }
+        }
         // The outermost run reads where the database's ids end, once, before its first wave; no lease is taken
         // (decision 0160: the run's new ids are provisional). A nested run is inside it and reads nothing.
-        if !lease_free() {
+        if !self.lease_free() {
             let mut lease = self.lease.lock();
             self.acquire(&mut lease)?;
             self.runs.fetch_add(1, Ordering::AcqRel);
@@ -1520,30 +1554,23 @@ impl Atoms {
             }
         }
         let held = || self.holds_all();
-        // A store's atoms are read whole when they are few (the full corpus's are about 21 MB, decision 0049), or when
-        // its segments are large (decision 0171: a lookup would read them whole anyway): the run's lookups and ids then
-        // read nothing. A larger store of small segments (many small flushes) is found by its key as the run needs it
-        // (decision 0111), which the strict mode reports.
+        // A store's atoms are read whole when they fit the budget's share (decision 0306; the full corpus's are about
+        // 21 MB, decision 0049): the run's lookups and ids then read nothing. Past it the run is lease-free and mapped
+        // (below). A store read under the lease that grew past the share mid-process is found by its key as the run
+        // needs it (decision 0111), which the strict mode reports.
         // Inside another run's waves (decision 0160's trial) nothing is read: what is held stays as complete as it was.
-        if lease_free() && super::hazards::inside_waves() {
+        if self.lease_free() && super::hazards::inside_waves() {
             let complete = held() && self.complete.load(Ordering::Acquire);
             return Ok(complete);
         }
-        if !held() {
-            let (bytes, segments) = self
-                .with_reader(|connection| {
-                    Ok(connection.query_row_cached("SELECT coalesce(sum(length(bytes)), 0), count(*) FROM atom_segment", [], |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize)))?)
-                })?
-                .unwrap_or((0, 0));
-            if bytes <= READ_WHOLE || (bytes <= READ_WHOLE_LARGE && bytes / segments.max(1) >= LARGE_SEGMENT) {
-                self.read_all()?;
-            }
+        if !held() && !self.over_share.load(Ordering::Acquire) && self.stored_bytes()? <= read_whole() {
+            self.read_all()?;
         }
         let complete = held();
         self.complete.store(complete, Ordering::Release);
-        // Past `READ_WHOLE`, without the lease: this process maps its ids to the store's from its end (decision 0170),
+        // Past the share, without the lease: this process maps its ids to the store's from its end (decision 0170),
         // so the run's waves read nothing. The atoms its stored rows name are held as they are read (`hold_named`).
-        if !complete && lease_free() {
+        if !complete && self.lease_free() {
             self.map_from_end();
         }
         Ok(complete || self.forked())
