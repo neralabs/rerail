@@ -96,7 +96,8 @@ impl P<'_> {
     /// next, else an expression.
     pub(super) fn indentable_f(&mut self, field: u8) -> R<u32> {
         if self.tok().nl {
-            match self.layout(v::INDENT | v::INLINE | v::XML)? {
+            // An expression must come: what may follow the construct (`fol`) is not valid here.
+            match self.with_fol(0, |p| p.layout(v::INDENT | v::INLINE | v::XML))? {
                 Some(Ext::Indent) => {
                     let at = self.take();
                     return self.indented_block(field, at);

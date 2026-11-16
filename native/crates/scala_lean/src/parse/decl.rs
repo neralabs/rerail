@@ -791,6 +791,11 @@ impl P<'_> {
                 }
                 _ => return self.refuse(),
             }
+            // `_braced_template_body2`: statements after the outdent are the body's too (an indent
+            // the scanner measured past a line's leading comment ends before the `}`).
+            if self.peek() != T::RBrace {
+                self.statements(Region::Brace, f::NONE)?;
+            }
         }
         self.expect(T::RBrace)?;
         Ok(self.close(n))
@@ -839,11 +844,14 @@ impl P<'_> {
         if !self.is_op_at(1, op::COLON) {
             return false;
         }
-        // `name: T =>` on the line.
+        // `name: T =>` on the line, or on the next after an operator that continues the type
+        // (`A &` then `B =>`).
         let mut j = 2;
         loop {
             let t = self.peek_at(j);
-            if t.nl || t.kind == T::Eof || j > 40 {
+            let before = self.peek_at(j - 1);
+            let continued = before.kind == T::Op && before.code != op::COLON || before.kind == T::Id && before.code == w::WITH;
+            if t.nl && !continued || t.kind == T::Eof || j > 40 {
                 return false;
             }
             if t.kind == T::Op && t.code == op::ARROW {
