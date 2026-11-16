@@ -448,6 +448,7 @@ impl ContentStore {
     /// The snapshot, read: every frame but the memo's of before decision 0240 (`MEMO_RELS`), which nothing reads,
     /// and, with `cross`, every recorded root's cross space (`CrossSpace::cross_of`) and the run's own.
     fn install_snapshot(&self, cross: Option<&CrossSpace<'_>>) -> StoreResult<(usize, usize)> {
+        let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "the store's frames, read once a process".into());
         let mut snapshot = Snapshot::default();
         let (mut frames, mut bytes) = (0, 0);
         {
@@ -497,7 +498,10 @@ impl ContentStore {
             }
             snapshot.confirmed = confirmed;
             drop(connection);
+            let _held = rerail_prof::code_rule_dsl::logic::profile::span(|| "their symbols held".into());
             hold_symbols(&self.atoms, read.iter())?;
+            drop(_held);
+            let _chains = rerail_prof::code_rule_dsl::logic::profile::span(|| "their delta chains composed".into());
             for (space, held) in snapshot.iter_mut() {
                 compose_chains(held, chains.get(space))?;
             }
@@ -512,6 +516,7 @@ impl ContentStore {
     /// (`RERAIL_FRAMES_TRACE`), the identities of the space's frames left out, so a read of one names a reader the set
     /// missed (`read_frame_parts_from`).
     fn read_cross_space(&self, cross: &CrossSpace<'_>) -> StoreResult<(HashMap<(Rel, i64), Arc<Admitted>>, Option<HashSet<Rel>>)> {
+        let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "the cross part's space, by identity (Q19)".into());
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let space = cross.space;
         let atoms = self.atoms_handle();
@@ -557,6 +562,7 @@ impl ContentStore {
             None => None,
         };
         drop(connection);
+        let _held = rerail_prof::code_rule_dsl::logic::profile::span(|| "their symbols held".into());
         hold_symbols(&self.atoms, got.values())?;
         compose_chains(&mut got, Some(&chains))?;
         Ok((got, left))
@@ -1801,8 +1807,15 @@ mod tests {
     /// its programs can read (every part), not another identity's (an earlier build's, an earlier edit's); every
     /// other space whole. Whichever run reads first (phase 0's, a root of its own, on a rule edit), the store's first
     /// read leaves out every recorded root's cross space.
+    ///
+    /// Each read is under a span of its own, so the profile attributes it (it was the `parse` phase's own time: 2 s of
+    /// an edit, ep2).
     #[test]
     fn a_run_reads_its_cross_space_by_identity_whichever_run_reads_first() {
+        use rerail_prof::code_rule_dsl::logic::profile;
+        let _run = profile::one_run();
+        profile::reset();
+        profile::set(true);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("store.sqlite");
         let cross = [9u8; 32];
@@ -1832,6 +1845,12 @@ mod tests {
         assert_eq!((held(&cross, &kept, 0), held(&cross, &kept, 3)), (Some(vec![10]), Some(vec![11])));
         assert_eq!(held(&cross, &stale, 0), None, "an identity no program of the run reads is not read");
         assert_eq!(store.preload_frames_live(Some(own)).unwrap().0, 0, "once a process");
+        let spans: Vec<String> = profile::merged().spans.keys().cloned().collect();
+        profile::set(false);
+        for read in ["the store's frames, read once a process", "the cross part's space, by identity (Q19)"] {
+            assert!(spans.iter().any(|s| s == read), "{read}: {spans:?}");
+            assert!(spans.iter().any(|s| *s == format!("{read}/their symbols held")), "{read}: {spans:?}");
+        }
     }
 
     /// Decision 0280: what a later run keeps over an entry (its identities) is read with it, from the store and from

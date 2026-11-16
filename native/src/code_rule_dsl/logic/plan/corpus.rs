@@ -3865,7 +3865,10 @@ fn run_observed(
     // before the run's first engine run (the constants below), so no engine run's end flushes the symbols it made: the
     // store's writer writes them behind the run. Taken after, a phase that ran past `DUE_AFTER` (a loaded machine) had
     // the constants' run write its symbols ahead of the waves, which the strict mode refuses.
-    let complete = store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?;
+    let complete = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the atoms' lease (decision 0104)".into());
+        store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?
+    };
     let mapped = store.atoms_handle().forked();
     crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || match (complete, mapped) {
         (true, false) => "every stored atom held: lookups read nothing".into(),
@@ -4412,12 +4415,16 @@ fn run_observed(
         // process came first (phase 0's, on a rule edit): the store's first read leaves every recorded root's out.
         let main_cross = kept_strata::part_space(root, "cross");
         let cross_space = crate::content_store::FramesCrossSpace { space: main_cross, own: kept_strata::space(root) == main_cross, rels: cross_rels.as_ref(), cross_of: kept_strata::cross_space };
-        let (frames, bytes) = store.preload_frames_live(Some(cross_space)).map_err(|e| Error::Plan(e.to_string()))?;
+        let (frames, bytes) = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept frames, before the first wave (decision 0104)".into());
+            store.preload_frames_live(Some(cross_space)).map_err(|e| Error::Plan(e.to_string()))?
+        };
         let preload_secs = preload_at.elapsed().as_secs_f64();
         // The run's memo entries its waves may look up (a load's files): each path's newest of its plan's space, but
         // the files looked up already (decision 0104: read before the first wave).
         let (entries, entry_bytes, admitted) = match memo {
             Some(memo::Memo::Stored(_)) if memoised => {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the memo entries the waves may look up, admitted".into());
                 let looked: std::collections::HashSet<&str> = docs.iter().map(|(_, p)| world::store_path(p)).collect();
                 store.admit_memo_entries(&crate::content_store::local_space(&memo::plan_digest(&memo_program)), &looked, &|b| memo::hold(store, b)).map_err(|e| Error::Plan(e.to_string()))?
             }
@@ -5365,6 +5372,7 @@ fn run_observed(
     let mut process = |step: Step| -> Result<Option<(Task, Ctx)>> {
         let (ctx, ev) = match step {
             Step::Hand(rel, rows) => {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "an export handed on".into());
                 let types: Vec<&str> = lowered.program.decls[rel.as_str()].iter().map(|(_, t)| t.as_str()).collect();
                 let inserted = exports.borrow_mut().add(&rel, types.len(), rows.as_ref());
                 totals.add_rows(&rel, inserted, rows.as_ref(), &types);

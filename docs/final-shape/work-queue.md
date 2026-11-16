@@ -515,6 +515,19 @@ pass.
   - **Open:** `frame_rels` names the program's declared relations. `Retained::from_frames` also reads as inputs
     the relations a run binds from an earlier phase (`bound`: `doc`, `types__wgen`). If one is undeclared, it is
     left out. No read of a left-out frame was seen on ep2.
+  - **Found again** (2026-11-16, ep2, after Q20): `parse`'s 2 s of own time on an edit was this read. It now has
+    spans: "the kept frames, before the first wave", and inside the store "the store's frames, read once a process"
+    and "the cross part's space, by identity (Q19)", each with "their symbols held". `parse`'s own time is 0.03 s.
+    Test: `a_run_reads_its_cross_space_by_identity_whichever_run_reads_first` asserts the spans.
+    - A B101 edit after a warm run: 78 G. The space read is 1.70 s of it: 12,404 identities asked, 40,996 frames
+      (347 MB) kept, 45,161 identities left out (23,941 on 11-15).
+    - The space now holds 155,273 frames, 3.45 GB of blobs, in a store of 8.4 GB. The scan selects `data`, so SQLite
+      reads every row's overflow pages, kept or not. A sample has 29% of the main thread in that read, almost all
+      `pread` under `vdbeColumnFromOverflow`. The read grows with every edit the store keeps, the shape the done-when
+      rules out.
+    - **Next:** (1) scan the keys alone (`data` is past them in the row, so its overflow pages are not read), then
+      read the blobs of the kept frames; (2) collection drops the identities no live program reads; (3) find out how
+      much of the 347 MB a run reads at all, now that kept inputs are decoded where read (Q20).
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 
