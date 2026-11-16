@@ -918,7 +918,9 @@ The JIT went 222 to 217 a node. The common tokens (90% of the corpus)
 are nearer the lean lexer's. A rare token pays one call: about 30
 instructions of prologue, argument moves and a four-value return
 through memory. Packing the return into two registers was costed and
-dropped: the unpacking costs what the memory round trip does.
+dropped then. That was a count's decision. A lexer's function returns
+its token in registers, so the packed return was taken later ("A
+spent block is read once; a rule returns two words").
 
 Open: numbers are 379 a token against 107. Their run's word is a
 window function's call at each token, and their tests' gate is the
@@ -1281,6 +1283,9 @@ n     = ((lo64(lanes) + hi64(lanes)) * 0x0101..01) >> 56
 `a_floats_dots_are_its_bytes` checks that the number's counts are
 exact and a string's are not.
 
+The count by a multiply is gone where a test asks only one or two
+(see "A count test asks what it asks" below).
+
 | A token | Before | After | Lean |
 |---|---|---|---|
 | Numbers | 197 | 183 | 107 |
@@ -1321,12 +1326,11 @@ The short function still saves two registers. The rules return four
 values through memory, so its long case can't hand its caller's
 result slot straight on.
 
-**Tried and dropped.** Returning two registers (the last, and the
-hits with the refusal as their sign bit) made the long case a plain
-tail call: numbers 163. But it changed how rustc allocated the main
-loop's registers around the call. Words rose 3, punctuation and mixed
-code about 2, so the realistic mix got worse. It waits on the main
-loop's register pressure.
+**Tried and dropped then.** Returning two registers (the last, and
+the hits with the refusal as their sign bit) made the long case a
+plain tail call. It was dropped on the other kinds' counts, which is
+not how a step is judged. It is lean's shape, and was taken later ("A
+spent block is read once; a rule returns two words").
 
 | A token | Before | After | Lean |
 |---|---|---|---|
@@ -1512,11 +1516,9 @@ most. `tier1_by_kind` takes `RR_LINE` to count a line of one's own.
 Tried and dropped along the way:
 
 - The two-register return again (`(last+1) | (tag+1) << 32`, and
-  the hits with the refusal as their sign bit). Numbers 168→167,
-  strings and comments −5, but words, punctuation and mixed code +3
-  each. The results come back in `x0`/`x1`, where the loop kept its
-  constants (the tables' address). Those now cost an `adrp` a token,
-  and more of the loop's values spill.
+  the hits with the refusal as their sign bit), dropped on the
+  common kinds' counts. Taken in the next section, as lean's
+  function returns its token in registers.
 - Not marking the rule calls cold. rustc's code did not change.
 
 ## A spent block is read once; a rule returns two words
@@ -1776,10 +1778,11 @@ Counts, reported (before, after; lean):
 | Numbers | 187.8 | 173.7 | 107.3 |
 | Comments | 301.3 | 285.6 | 193.2 |
 
-Tried and dropped first: sending the run's end straight to the
-rare start `mid` had found, with one shared token head. rustc then
-moved the rare path's checks into that head: a plain word went
-from 42 instructions to 49. With the heads apart, it holds (below).
+Not taken: sending the run's end straight to the rare start `mid`
+had found, with one shared token head. Lean's run loop and its rare
+`match` are apart, each with its own head, and a shared head puts
+the rare path's checks into the common tokens' code. The heads stay
+apart (below).
 
 ## The run's end takes the rare start found
 
@@ -1843,10 +1846,10 @@ Each class (`Side::Rare(Some(plain))`) gets its own rule table,
 holding only its rules, and its own tail. The plain class's tail
 has no put-back.
 
-Dropped first: one tail with a branch on the bit after the join.
-rustc made it `csel`s, so both sides ran on every rare token, and
-strings went up (305.5 → 310.5). The decision has to come before
-the join, as lean's does.
+Not taken: one tail, with a branch on the bit after the join. In
+that source both tails' work meets in one block and is picked by a
+select, so every rare token does both. Lean's arms each end their
+own token. The decision comes before the join, as lean's does.
 
 Also dropped: the rare tail ORed the run's `rest` into its starts.
 A rare start's starts are `rest` already (`run_done`'s). The OR
@@ -1934,9 +1937,11 @@ bits in the entry are gone. A rare byte's entry is the same with or
 without the pair bit, so the rare side loads it by its byte alone
 (`RecordTables::rare_unpaired`).
 
-Dropped first: the table over all 256 bytes, each to its own rule.
-LLVM made it a jump table, then compares for the letters' rule, and
-numbers went up (166.6 → 175.7).
+Not taken: a table over all 256 bytes, each to its own rule. Lean's
+`match` on a rare start has arms for the rare bytes only, and its
+other bytes go to one default. A table of every byte would also
+send the common bytes, which the run loop has already taken, to
+their rules.
 
 Stepped, the rare head: `add …, uxtb #3; ldr` (the entry), then
 `cmp #0x2e; b.gt; cmp #0x2f; b.eq; cmp #0x60; …; sub #0x30;
@@ -2039,3 +2044,41 @@ the same window.
 
 Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
 strings 323.3, numbers 164.6, comments 267.2.
+
+## A count test asks what it asks
+
+**Intro.** Lean's number arm asks one question about a `.`: is there
+one, with a digit after it? It never counts. rr's grammar asks two
+questions at a number: at least one `.` (a float) and at least two
+(an error). Ours answered both with one count. Each lane in the set
+was a 1, the halves were added, and a multiply summed their bytes.
+Then came a compare with each threshold. That form was kept over a
+bitmask form because the two cost the same, which is a count's
+reason. The tests are predicates, so they are lowered as predicates.
+
+**The change.** Where a token fits one vector (`exact`), each set's
+bytes are made by what its tests ask:
+
+- at least one: any lane in the set (`needs_some`), `m != 0`;
+- at least two: the lanes' bitmask (`bitmask`), more than one bit
+  set, `m & (m - 1) != 0`;
+- more than two: the count, as before.
+
+```rust
+// generated (tier1_aot.rs, the number's rule), the dots in the token:
+v54 = movemask(dot & in_token) & 0xffff;
+v56 = v54 & v54.wrapping_sub(1);         // at least two: refused
+v60 = v27 | (((v56 != 0) as u64).wrapping_neg());
+v64 = v34 | (((v54 != 0) as u64) << 16); // at least one: a float
+```
+
+Also, a hit is a 0 or a 1 put in place. `hit_into` shifts it to its
+mark's bit, or negates it into the refusal. Before, every hit was
+made all ones (`sextend`, `ineg`) and then masked to its bit.
+`tests_fn` and the read loop already put a hit in place this way.
+
+Tests: `a_numbers_checks_are_at_its_token` and
+`chained_floats_go_to_the_engine` (`1.2.3`, `10.25.5`).
+
+Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 323.2, numbers 160.6, comments 267.2.

@@ -2407,6 +2407,25 @@ fn read_test_acc(f: &mut FunctionBuilder<'_>, counted: bool, acc: Value, w: Valu
     }
 }
 
+/// A test's hit, 0 or 1, into the refusal (`CheckThen::Escape`, all ones) or at its mark's
+/// bit: `(refusal, hits)`.
+fn hit_into(f: &mut FunctionBuilder<'_>, then: crate::records::CheckThen, hit: Value, refuse: Value, hits: Value) -> (Value, Value) {
+    match then {
+        crate::records::CheckThen::Escape => {
+            let all = f.ins().ineg(hit);
+            (f.ins().bor(refuse, all), hits)
+        }
+        crate::records::CheckThen::At(k) => {
+            let b = f.ins().ishl_imm(hit, i64::from(k));
+            (refuse, f.ins().bor(hits, b))
+        }
+        crate::records::CheckThen::After(k) => {
+            let b = f.ins().ishl_imm(hit, i64::from(crate::records::AFTER_SHIFT) + i64::from(k));
+            (refuse, f.ins().bor(hits, b))
+        }
+    }
+}
+
 /// The count tests' hits from their accumulators (`read_test_acc`), as `tests_fn` gives them:
 /// the refusal (`CheckThen::Escape`) as the sign bit, a mark's hit at its bit.
 fn read_test_hits(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], outs: &[(u16, bool)], accs: &[Value]) -> Value {
@@ -4014,30 +4033,39 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             }
             f.switch_to_block(vec);
             let (mut r, mut h) = (refuse, hits);
+            // Each set's bytes in the token, by what its tests ask, as the lean lexer asks
+            // whether a number has a `.`: at least one, any lane (`needs_some`'s); at least
+            // two, their bits with more than one set (`m & (m - 1)`); more, their count.
             let mut made: Vec<(crate::native_cpu_bytes::Needs, Value)> = Vec::new();
+            let weights = rd.bytes.map(|(_, file)| file.weights);
             for (t, n) in counts.iter().zip(&ex) {
+                let most = counts.iter().zip(&ex).filter(|(_, m)| *m == n).map(|(t, _)| t.least).max().unwrap_or(0);
                 let k = match made.iter().find(|(m, _)| m == n) {
                     Some(&(_, k)) => k,
                     None => {
-                        let k = needs_count(f, n, c.bytes, s, len);
+                        let k = match (most, weights) {
+                            (0..=1, _) => needs_some(f, n, c.bytes, s, len),
+                            (2, Some(w)) => {
+                                let lanes = needs_lanes(f, n, c.bytes, s, len);
+                                bitmask(f, &[lanes], w)
+                            }
+                            _ => needs_count(f, n, c.bytes, s, len),
+                        };
                         made.push((*n, k));
                         k
                     }
                 };
-                let hit = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, k, i64::from(t.least));
-                let hit = f.ins().sextend(types::I64, hit);
-                let hit = f.ins().ineg(hit);
-                match t.then {
-                    crate::records::CheckThen::Escape => r = f.ins().bor(r, hit),
-                    crate::records::CheckThen::At(b) => {
-                        let b = f.ins().band_imm(hit, 1i64 << b);
-                        h = f.ins().bor(h, b);
+                let hit = match (most, weights, t.least) {
+                    (0..=2, Some(_), 1) | (0..=1, _, 1) => f.ins().icmp_imm(IntCC::NotEqual, k, 0),
+                    (2, Some(_), 2) => {
+                        let k1 = f.ins().iadd_imm(k, -1);
+                        let two = f.ins().band(k, k1);
+                        f.ins().icmp_imm(IntCC::NotEqual, two, 0)
                     }
-                    crate::records::CheckThen::After(b) => {
-                        let b = f.ins().band_imm(hit, 1i64 << (crate::records::AFTER_SHIFT + u32::from(b)));
-                        h = f.ins().bor(h, b);
-                    }
-                }
+                    _ => f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, k, i64::from(t.least)),
+                };
+                let hit = f.ins().uextend(types::I64, hit);
+                (r, h) = hit_into(f, t.then, hit, r, h);
             }
             f.ins().jump(join, &[r.into(), h.into()]);
             if called {
@@ -4092,19 +4120,10 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         }
         let next = f.create_block();
         f.append_block_param(next, types::I64);
-        // A test's hit (all ones) into the refusal (`CheckThen::Escape`) or its mark's bit.
+        // A test's hit (0 or 1) into the refusal (`CheckThen::Escape`) or its mark's bit.
         let into = |f: &mut FunctionBuilder<'_>, hit: Value, refuse: Value, hits: Value| -> Value {
-            match t.then {
-                crate::records::CheckThen::Escape => f.ins().bor(refuse, hit),
-                crate::records::CheckThen::At(k) => {
-                    let b = f.ins().band_imm(hit, 1i64 << k);
-                    f.ins().bor(hits, b)
-                }
-                crate::records::CheckThen::After(k) => {
-                    let b = f.ins().band_imm(hit, 1i64 << (crate::records::AFTER_SHIFT + u32::from(k)));
-                    f.ins().bor(hits, b)
-                }
-            }
+            let (r, h) = hit_into(f, t.then, hit, refuse, hits);
+            if t.then == crate::records::CheckThen::Escape { r } else { h }
         };
         let escape = t.then == crate::records::CheckThen::Escape;
         let kept = if escape { refuse } else { hits };
@@ -4151,8 +4170,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             f.ins().brif(last, body, &[], head, &[q1.into(), acc.into()]);
             f.switch_to_block(body);
             let hit = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, acc, i64::from(t.least));
-            let hit = f.ins().sextend(types::I64, hit);
-            let hit = f.ins().ineg(hit);
+            let hit = f.ins().uextend(types::I64, hit);
             let hit = into(f, hit, refuse, hits);
             f.ins().jump(next, &[hit.into()]);
         } else {
@@ -4170,8 +4188,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
                     let b = rd.bit(f, c, at, t.o, heads);
                     all = f.ins().band(all, b);
                 }
-                let hit = f.ins().ineg(all);
-                let hit = into(f, hit, refuse, hits);
+                let hit = into(f, all, refuse, hits);
                 f.ins().jump(next, &[hit.into()]);
                 // The mask's form's blocks, unreached.
                 let _ = (two, one);
@@ -4202,8 +4219,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             let need = (!0u64 >> (64 - t.least)) as i64;
             let m = f.ins().band_imm(win, need);
             let hit = f.ins().icmp_imm(IntCC::Equal, m, need);
-            let hit = f.ins().sextend(types::I64, hit);
-            let hit = f.ins().ineg(hit);
+            let hit = f.ins().uextend(types::I64, hit);
             let hit = into(f, hit, refuse, hits);
             f.ins().jump(next, &[hit.into()]);
         }
