@@ -325,6 +325,21 @@ export function catalogDigest(packs: readonly LoadedRulePack[]): string {
 }
 
 /**
+ * {@link checkedCompileProblem} while `engine.compile` holds. Without the engine nothing compiles: the first pack to
+ * find that turns `engine.compile` off, so the packs after it are not asked either.
+ */
+function engineProblem(loaded: LoadedRulePack, options: RuleCatalogOptions, engine: { compile: boolean }): string | undefined {
+  if (!engine.compile) return undefined;
+  try {
+    return checkedCompileProblem(loaded, options);
+  } catch (error) {
+    if (!(error instanceof EngineUnavailableError)) throw error;
+    engine.compile = false;
+    return undefined;
+  }
+}
+
+/**
  * The catalog of the packs in `packDirectories`, read from disk on every call. Each pack is read and checked on its
  * own (`readRulePack`, its package name against the one npm installed it under, then the core range and the engine
  * with `options`). A pack that cannot be read and whose core range leaves this core out is skipped for its core range:
@@ -357,17 +372,9 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   const loaded: LoadedRulePack[] = [];
   const holders = new Map<string, string>();
   const owner = new Map<string, string>();
-  let compile = options.compile === true;
+  const engine = { compile: options.compile === true };
   for (const { at, directory, loaded: pack } of read.sort((left, right) => comparePackPrecedence(left.loaded, right.loaded))) {
-    let problem = packProblem(pack, directory, { holders, owner, reserved }, options);
-    if (problem === undefined && compile) {
-      try {
-        problem = checkedCompileProblem(pack, options);
-      } catch (error) {
-        if (!(error instanceof EngineUnavailableError)) throw error;
-        compile = false;
-      }
-    }
+    const problem = packProblem(pack, directory, { holders, owner, reserved }, options) ?? engineProblem(pack, options, engine);
     if (problem !== undefined) {
       reserve(directory, pack.pack.packageName);
       skipped.push({ at, entry: skippedPack(directory, problem) });
