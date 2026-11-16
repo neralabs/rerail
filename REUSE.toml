@@ -90,6 +90,48 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2018 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# The upstream presets and rule metadata set-up mirrors a repository's lint config with, as written by
+# scripts/generate/lint-config/ (scripts/generate/README.md names each generator's pinned source).
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/eslint-presets.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "OpenJS Foundation and other contributors, <www.openjsf.org>",
+  "2019 typescript-eslint and other contributors",
+  "2014 Yannick Croissant",
+  "Meta Platforms, Inc. and affiliates.",
+  "Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)",
+  "2015 Toru Nagashima",
+  "2025 Vercel, Inc.",
+  "2017 Toru Nagashima",
+  "2022 - PRESENT Verité Mugabo Makuza",
+]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/oxlint-rules.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = ["2024-present VoidZero Inc. & Contributors", "2023 Boshen"]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/ruff-rules.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = "2022 Charles Marsh"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/biome-rules.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = ["2023-present Biome Developers and Contributors", "2020-2023 Rome Tools, Inc. and its affiliates"]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/phpcs-standards.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = ["2012, Squiz Pty Ltd (ABN 77 084 670 600)", "2023, PHPCSStandards and contributors"]
+SPDX-License-Identifier = "BSD-3-Clause"
+
 # fortephp/forte 1.1.0, ported to Rust method by method (docs/blade-parser.md); the directive registry's
 # JSON under directives/resources/ is upstream's, byte-identical.
 [[annotations]]

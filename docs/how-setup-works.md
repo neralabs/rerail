@@ -76,8 +76,8 @@ pack that fits is shown.
 
 - Each fit shows its rule count, why it matched and the folder it would be added in.
 - The agents to connect ("Will connect to: …"; `--agents` names others).
-- Pack rules that start off or take options from the repository's own lint config
-  ([The repository's own lint config](rule-scoping.md#the-repositorys-own-lint-config)).
+- Pack rules that start on, start off or take options from the repository's own lint config, so the packs run the
+  rules its linters run ([The repository's own lint config](rule-scoping.md#the-repositorys-own-lint-config)).
 - With no match, no pack is offered; the repository can still start and add packs in the dashboard later.
 
 </details>

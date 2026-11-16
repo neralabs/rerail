@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { packAddSpec, runPacksCommand } from "../../src/cli/packs-cli.js";
-import { openRerailDatabase, recordCheckout, setUpRepository } from "../../src/engine/index.js";
-import { setRepositoryStarted } from "../../src/runtime/index.js";
-import { installedPackagesOf, type PackStore } from "../../src/setup/index.js";
-import { directoryPackStore } from "../support/directory-pack-store.js";
-import { installPackDirectory, linkingPackStore, thirdPartyPack } from "../support/installed-packs.js";
-import { fixturesPath, repositoryPath } from "../support/oracles.js";
-import { removeFolderSync } from "../support/platform/remove-folder.js";
+import { packAddSpec, runPacksCommand } from "../../../src/cli/packs-cli.js";
+import { openRerailDatabase, recordCheckout, setUpRepository } from "../../../src/engine/index.js";
+import { setRepositoryStarted } from "../../../src/runtime/index.js";
+import { installedPackagesOf, type PackStore } from "../../../src/setup/index.js";
+import { directoryPackStore } from "../../support/directory-pack-store.js";
+import { installPackDirectory, linkingPackStore, thirdPartyPack } from "../../support/installed-packs.js";
+import { fixturesPath, repositoryPath } from "../../support/oracles.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const homes: string[] = [];
 afterEach(() => {
