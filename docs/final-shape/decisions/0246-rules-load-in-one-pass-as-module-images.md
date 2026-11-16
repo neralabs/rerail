@@ -493,3 +493,19 @@ A cold run's loading, in order:
 | 23–28 | `needed`, `fold_own` (#3), prune, simplify (#4), magic demand, matchers, `plan::lower`, push joins, factorize, locate (#5), domains, the split (`assemble` clones twice) | once |
 | 29–31 | prepared program stored (print, parse back, encode, decode, three `{:?}` digests); DFAs compiled; parts become versions (`Placed::of_program`) | once |
 | 32 | after the run: `reuse::record` resolves every program's includes again for names | ×317 |
+
+## A graph held a refused candidate absent, and never held (2026-11-16)
+
+On the release Python pack's benchmark, each warm run took 0.47 s CPU and peaked at 585 MB, against 60 MB before
+this decision's images. Two rule files (`ruff-ruf013-implicit-optional.rr`, `ruff-up035-deprecated-import.rr`)
+include a pack table beside the library: `#include "../packs/python/….rr"`. Phase 0 tries the library's candidate
+(found) and the one beside the rule file, `<run>/rules/../packs/python/…`. The benchmark copies the packs to
+`<run>/packs`, outside every root phase 0 may read (the library, its parent, the phase programs, each rule file's
+directory). Its listing was refused and came back empty, and `p0_absent` held the candidate absent. `Graph::holds`
+stats each absent candidate, found the file, and the graph never held. So phase 0 derived those two seeds again on
+every run, warm ones too, and that run's first wave read every frame of the store (34,614 frames, 249 MB encoded).
+
+Now a graph holds absent only candidates whose directory lies under one of phase 0's roots: a refused one was not
+looked at, and its appearing cannot change the graph. Warm, M3 Max: 0.47 s CPU, 0.50 s wall, 585 MB -> 0.26 s,
+0.24 s, 45 MB. Test: `a_candidate_outside_the_roots_is_not_held_absent`. `RERAIL_PHASE0_TRACE` prints each seed's
+image and why it did not hold.
