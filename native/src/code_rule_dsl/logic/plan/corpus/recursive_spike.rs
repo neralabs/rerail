@@ -411,6 +411,7 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &
             Term::Var(v) => Arg::Slot(slot(v, names)),
             Term::Wild => Arg::Wild,
             Term::Int(i) => Arg::Const(*i),
+            Term::Branded(a) => Arg::Const(a.value()),
             other => return Err(format!("term {other:?}")),
         })
     };
@@ -443,6 +444,7 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &
         Ok(match t {
             Term::Var(v) => Head::Slot(*names.get(v.as_str()).ok_or_else(|| format!("head variable {v} unbound"))?),
             Term::Int(i) => Head::Const(*i),
+            Term::Branded(a) => Head::Const(a.value()),
             Term::Call(f, args) if f == "cat" && args.len() == 2 => Head::Cat(Box::new(head_term(&args[0], names)?), Box::new(head_term(&args[1], names)?)),
             other => return Err(format!("head term {other:?}")),
         })
@@ -1779,7 +1781,7 @@ pub(in crate::code_rule_dsl) fn run(
         let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())).collect();
         let reads: BTreeSet<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| if let Literal::Atom(a) = l { Some(a.rel.to_string()) } else { None }).filter(|r| !scc.contains(r.as_str())).collect();
         let facts = |rel: &str| -> Option<Rows> {
-            program.facts.get(rel).map(|rows| rows.iter().map(|r| r.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Str(_) => i64::MIN }).collect()).collect())
+            program.facts.get(rel).map(|rows| rows.iter().map(|r| r.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Branded(b) => b.value(), front::Value::Str(_) => i64::MIN }).collect()).collect())
         };
         let new_of = |rel: &str| derived.iter().find(|(r, _, _)| r == rel).map(|(_, w, h)| rel_rows(h, *w)).or_else(|| inputs.iter().find(|(r, _)| r == rel).map(|(_, s)| rows_of(s.as_ref())));
         let old_of = |rel: &str| old.kept(rel).map(|(h, w)| rel_rows(&h, w)).or_else(|| old.input_source(rel).map(|s| rows_of(s.as_ref())));

@@ -21,12 +21,16 @@
 
 pub mod block;
 pub mod chunk;
+pub mod col;
 pub mod facts;
 pub mod journal;
+pub mod packed;
 pub mod program;
 pub mod refs;
 pub mod relation;
 pub mod rows;
+pub mod scratch;
+pub mod sort;
 #[cfg(target_os = "macos")]
 pub mod gpu;
 

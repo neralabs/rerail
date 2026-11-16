@@ -135,12 +135,23 @@ pub(in crate::code_rule_dsl) type InputStats = (Vec<[i64; 4]>, Vec<(usize, i64, 
 /// The key of a cross-file part: the prepared program's key and the part's program as lowered, by its digest
 /// (`Lowered::digest`, decision 0173 §7), which reads no rule.
 pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: u64) -> [u8; 32] {
+    keys(prepared, cross).0
+}
+
+/// A cross-file part's key (`key`), and the key of its program alone (`cross`, its digest), which names its inputs'
+/// frames (`input_ident`) and a session's kept part: the prepared program's key folds in every rule's text, so a
+/// file-local rule's edit gave every input of an unchanged cross part a frame of a new name, none found again (every
+/// input's frame written again each edit, and an input no memo entry holds read as changed: its strata run again).
+pub(in crate::code_rule_dsl) fn keys(prepared: &[u8; 32], cross: u64) -> ([u8; 32], [u8; 32]) {
     use sha2::Digest as _;
-    let mut hash = sha2::Sha256::new();
-    hash.update(b"rerail.cross-retained/v2\0");
-    hash.update(prepared);
-    hash.update(cross.to_le_bytes());
-    hash.finalize().into()
+    let of = |prepared: &[u8; 32]| -> [u8; 32] {
+        let mut hash = sha2::Sha256::new();
+        hash.update(b"rerail.cross-retained/v2\0");
+        hash.update(prepared);
+        hash.update(cross.to_le_bytes());
+        hash.finalize().into()
+    };
+    (of(prepared), of(&[0; 32]))
 }
 
 /// An order-independent digest of `source`'s rows (a set: rows are distinct), with its row count, of their content
@@ -533,6 +544,14 @@ pub(in crate::code_rule_dsl) fn kept_source(
 }
 
 impl Retained {
+    /// The part taken under program `key`, another program of the same cross part (`keys`): its rows are the cross
+    /// program's, its inputs compared by digest (`cut`), and its documents answered only under the file-local
+    /// program they were read under (`docs`).
+    pub(in crate::code_rule_dsl) fn rekeyed(mut self, key: [u8; 32]) -> Self {
+        self.key = key;
+        self
+    }
+
     /// What a run of program `key` kept, read back from the store in a new process (t32 4.1, `kept_strata::load`):
     /// each input's digest and source, and each relation's rows as the engine holds them. Nothing measured.
     /// `digested`: inputs known by their digest alone (no rows kept: unchanged, or derived again if they changed).
@@ -1280,7 +1299,8 @@ fn unkept_digest(rel: &str, reads: &[(String, u64)]) -> u64 {
     h
 }
 
-/// An input's identity: its name, its columns and the program that binds it (`key`). Each program's input is a frame
+/// An input's identity: its name, its columns and the program that binds it (`key`: `keys`' second, of the part's
+/// program alone). Each program's input is a frame
 /// of its own (phase 1's `doc` and the pack's are not one frame each overwrites with its rows), while a derived
 /// relation is named by its rules and what they read (`plan::identities`), so two programs that derive it from
 /// inputs of the same digests share it (decision 0103).
@@ -1295,6 +1315,24 @@ fn input_ident(rel: &str, prog: &Placed, key: &[u8; 32]) -> [u8; 32] {
     h.update(format!("\0{:?}\0", decl.as_ref()).as_bytes());
     h.update(key);
     h.finalize().into()
+}
+
+/// The frames a run's cross part can read in its space (Q19, `ContentStore::preload_frames_live`): each derived
+/// relation's identity in each of `progs` (`plan::identities`, by their components, as `Retained::from_frames`,
+/// `kept_strata::load` and the planner's `Kept` name them), and each declared relation's as the part's input under
+/// `binds` (`input_ident`, as `kept_inputs` and `from_frames` name them). Not an earlier build's or an earlier edit's
+/// identities, which a kept run's frames are under.
+pub(in crate::code_rule_dsl) fn frame_rels(progs: &[&Placed], binds: &[u8; 32]) -> Result<std::collections::HashSet<FrameRel>> {
+    let mut out = std::collections::HashSet::new();
+    for p in progs {
+        let sccs = p.components()?;
+        let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed((*p).clone());
+        out.extend(leaves.identities_by_heads(&sccs)?.into_iter().map(|(name, ident)| FrameRel { name, ident }));
+        for (rel, _) in p.fields()?.decls_by_name() {
+            out.insert(FrameRel { name: rel.to_owned(), ident: input_ident(rel, p, binds) });
+        }
+    }
+    Ok(out)
 }
 
 /// A relation's column types, as frames store them.
@@ -1376,8 +1414,8 @@ pub(in crate::code_rule_dsl) type Ranges = rustc_hash::FxHashMap<i64, (u32, u32)
 /// (key `key`): `Err` (why) when one has none. Asked before the first wave, so that a run whose cross part kept no
 /// inputs (its first, or one after a rule edit) decodes its memo hits whole as it finds them: the waves read no entry
 /// of the store (decision 0104), and a hit read for its outputs alone has nothing else to take its rows from.
-pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &Placed, rels: &[String]) -> Result<std::result::Result<(), String>> {
-    let all: Vec<FrameRel> = rels.iter().map(|rel| FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &key) }).collect();
+pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, rels: &[String]) -> Result<std::result::Result<(), String>> {
+    let all: Vec<FrameRel> = rels.iter().map(|rel| FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &binds) }).collect();
     let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
     Ok(match all.iter().find(|f| !stored.contains_key(f)) {
         Some(f) => Err(format!("{}: no frame of its documents ({} of {} inputs have one)", f.name, stored.len(), all.len())),
@@ -1388,9 +1426,9 @@ pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: 
 /// The inputs `rels` of the cross part `prog` (key `key`) as the store's frames in `space` keep them: read as
 /// `Retained::load` reads a changed input, each owner's rows a range. `Err` (why) when one is not kept, or its frames
 /// do not match their document table.
-pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &Placed, locations: &Locations, rels: &[String]) -> Result<std::result::Result<HashMap<String, KeptInput>, String>> {
+pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, locations: &Locations, rels: &[String]) -> Result<std::result::Result<HashMap<String, KeptInput>, String>> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs, from the frames".into());
-    let names: Vec<(String, FrameRel)> = rels.iter().map(|rel| (rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &key) })).collect();
+    let names: Vec<(String, FrameRel)> = rels.iter().map(|rel| (rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &binds) })).collect();
     let all: Vec<FrameRel> = names.iter().map(|(_, f)| f.clone()).collect();
     let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
     if let Some(f) = all.iter().find(|f| !stored.contains_key(f)) {
@@ -1497,7 +1535,8 @@ impl Retained {
     /// it read has the digest it had then, and a derived read is taken too. So the relations taken are the rows one
     /// run left, whichever programs ran in between. Their rows are read when the run needs them (`load`).
     /// `sccs`: `prog`'s strata, computed once by the caller.
-    pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &Placed, sccs: &[BTreeSet<String>], bound: &HashMap<String, u64>) -> Result<Retained> {
+    /// `binds`: the key of the part's program alone (`keys`), which names its inputs' frames.
+    pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], binds: [u8; 32], prog: &Placed, sccs: &[BTreeSet<String>], bound: &HashMap<String, u64>) -> Result<Retained> {
         // The program's version, for its identities and its leaves' (`from_frame_snapshot`).
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         let idents = leaves.identities_by_heads(sccs)?;
@@ -1507,7 +1546,7 @@ impl Retained {
         // as phase 1's `doc` or the types phase's `types__wgen`, which no rule may name (a pattern reads `node`).
         let read: BTreeSet<String> = prog.fields()?.inputs().map(str::to_owned).chain(bound.keys().cloned()).filter(|r| !derived.contains(r)).collect();
         for rel in &read {
-            names.insert(rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &key) });
+            names.insert(rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &binds) });
         }
         let all: Vec<FrameRel> = names.values().cloned().collect();
         let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;

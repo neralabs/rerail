@@ -46,22 +46,24 @@ their own (`Boundary::CrossDerived`, `corpus::cross_atoms_ahead`): the writer ap
 kept part, not after the frames in the cross part's last wave. A warm run makes no atom: nothing is queued (checked
 with `RERAIL_WARM=list`: no pending-atoms or files'-stats write in a warm run).
 
-### 4. Collection keeps what is under a root this process watches
+### 4. Collection keeps what a run has not settled yet (superseded by 0250)
 
-`observe::collect` drops an answer, a canonical form or a Git file list under no root whose cursor the observer's
+`observe::collect` dropped an answer, a canonical form or a Git file list under no root whose cursor the observer's
 store holds. A root first asked in a run has its cursor stored at the outermost run's end (`settle_roots`), but its
 answers are written at each inner run's end (phase 1's), and the store's collection runs between the two, after the
 manifest. So on a cold store, whose first run always collects, every answer and canonical form under the corpus
-root was dropped (PostHog: 38,940 answers, 29,772 records; `RERAIL_OBSERVE_TRACE` listed the five roots collect
-saw, the corpus's not among them), and the next, warm run read and recorded each again (2.8 s, against 1.2 s).
-`collect` now also keeps what is under the roots this process's observers watch (`observe::watched`).
-`observe::tests::collection_drops_what_no_run_asks_any_more` holds such a root, with no cursor, whose answer and
-canonical form are kept.
+root was dropped (PostHog: 38,940 answers, 29,772 records; `RERAIL_OBSERVE_TRACE` lists the roots collect saw, the
+corpus's not among them), and the next, warm run read and recorded each again (2.8 s, against 1.2 s).
 
-### 5. A profiled warm run makes its profile's directory
+This branch kept what is under the roots this process watched (63a4c75c5). Decision 0250, on the hub at the same
+time, keeps what was recorded within the last hour (`UNHELD_GRACE_NS`): it covers a collection in another process
+too, so the merge of the hub (2026-11-16) took it, and dropped `observe::watched`. The trace stays.
 
-A run the whole-run cutoff answers writes no report, so nothing made `RERAIL_PROFILE`'s directory, and the run's
-lifecycle line (`profile.txt`) failed to open: the run failed after writing its outputs. The directory is made first.
+### 5. A profiled warm run makes its profile's directory (superseded by the hub)
+
+A run the whole-run cutoff answers wrote no report, so nothing made `RERAIL_PROFILE`'s directory, and the run's
+lifecycle line failed to open: the run failed after writing its outputs. The hub makes the directory and writes the
+run's spans as its report; the merge took that.
 
 ## Measured
 

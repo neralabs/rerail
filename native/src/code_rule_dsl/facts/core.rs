@@ -247,6 +247,9 @@ pub struct Facts {
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
     pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
+    /// The tape these facts were read off, its ids theirs (decision 0293): what the kind-set axes read in place.
+    /// `None` for facts made otherwise (a text-only document, or read off no image), which the axes read as before.
+    pub tape: Option<Arc<crate::code_rule_dsl::tape::formats::DocTape>>,
 }
 
 /// An anonymous child: a token the tape stores ([`Facts::tokens`]).
@@ -292,7 +295,7 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &image.primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = from_image(Arc::clone(file.source()), &grammar, &image.primary, lines)?;
+    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &image.primary, lines)?, image.primary);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
@@ -415,7 +418,7 @@ pub fn build_in_wave_with_tape(
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = from_image(Arc::clone(file.source()), &grammar, &primary, lines)?;
+    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
@@ -455,7 +458,7 @@ pub(crate) fn build_cached_with_tape(
             let primary = TapeImage::from_bytes(&held, &grammar)?;
             let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
-            return Ok((Built::Facts(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?), known, doc));
+            return Ok((Built::Facts(holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary)), known, doc));
         }
     }
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
@@ -514,7 +517,7 @@ pub(crate) fn build_cached_with_tape(
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = from_image(Arc::clone(file.source()), &grammar, &primary, lines)?;
+    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
     Ok((Built::Facts(facts), source_id, doc))
 }
@@ -545,7 +548,14 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> 
     let classes = doc.transducer_supertypes().map(|(node, class)| (kind_atom(tag, class), node)).collect();
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
     watch(&mut f);
+    f.tape = Some(Arc::clone(doc.doc_tape()));
     Ok(f)
+}
+
+/// `facts` holding the image they were read off (`Facts::tape`), moved in: not copied.
+fn holding(mut facts: Facts, image: crate::code_rule_dsl::tape::TapeImage) -> Facts {
+    facts.tape = Some(Arc::new(crate::code_rule_dsl::tape::formats::DocTape::new(Arc::new(image))));
+    facts
 }
 
 /// Allocates only the core columns. Line numbers are lookups in the shared source line table.
@@ -571,6 +581,7 @@ fn empty(tag: u8, source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts
         class_nodes: Vec::new(),
         syntax_errors: false,
         python_syntax: Default::default(),
+        tape: None,
     }
 
 }
@@ -638,6 +649,7 @@ pub fn text(source: Arc<String>) -> Facts {
         class_nodes: Vec::new(),
         syntax_errors: false,
         python_syntax: Default::default(),
+        tape: None,
     };
     index(&mut f);
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
@@ -765,6 +777,10 @@ impl Facts {
             + self.kind_nodes.len() * 4
             + self.class_nodes.len() * 4
     }
+    /// The resident bytes of the tape they were read off (`tape`), in each format made of it.
+    pub fn tape_bytes(&self) -> usize {
+        self.tape.as_ref().map_or(0, |t| t.bytes())
+    }
 }
 
 /// The digest of a file's core facts: every column a reader can see, and the source their spans
@@ -822,8 +838,8 @@ impl LeBytes for u16 {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations `core.rr` declares (the engine's names, decision 0141), as the rule language reads them;
-/// registered at load (`install_core_names`). Empty without one.
+/// The relations a program in `core.rr`'s shape declares (the engine's names, decision 0141, less those decision
+/// 0174's rewrite adds), as the rule language reads them; registered at load (`install_core_names`). Empty without one.
 pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     CORE_NAMES.get().map_or(&EMPTY, |names| names())

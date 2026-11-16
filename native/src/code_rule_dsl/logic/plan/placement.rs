@@ -20,6 +20,7 @@
 
 use super::{Mode, Order};
 use crate::code_rule_dsl::logic::program_image::{AggRef, CmpOp, Lit, TermRef, Version};
+use crate::code_rule_dsl::logic::device::caps::{self, DeviceFn};
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -156,10 +157,13 @@ const DEVICE_SORT: f64 = 45e-6;
 /// inserted, over the strata whose every run was on the GPU). At the 40 ns measured before (the read alone), a pure
 /// copy (`kind(n, k) :- node(_, n, k, _, _)`) priced as cheaper on the GPU and cost the same there.
 const DEVICE_ROW_BACK: f64 = 75e-9;
-/// A value of a relation the device reads, copied into its upload (the host reads the source's row and writes the
-/// device's column), per column an atom reads (decision 0277): 7 ns, measured on the same run (98.7 ms for 13.7 M
-/// values). Priced for every stratum, though a relation an earlier stratum of the chunk uploaded is found resident.
-const DEVICE_UPLOAD_PER_VALUE: f64 = 7e-9;
+/// A value of a relation the device reads, per column an atom reads (decision 0277), in the host's CPU: 2.2 ns,
+/// measured on PostHog's `posthog/hogql` (2026-11-16, the profile's split of the uploads: 13.9 ms for 6.3 M values).
+/// A flat relation's value is a copy (1.7 ns), a view's made on the host a row read (2.5 ns), and a view's made on
+/// the device (decision 0289) its share of the chunk block's build, of the axes' solve and of the kernel (2.7 ns).
+/// It was 7 ns while every view's rows were made on the host (98.7 ms for 13.7 M values, 2026-11-14). Priced for
+/// every stratum, though a relation an earlier stratum of the chunk uploaded is found resident.
+const DEVICE_UPLOAD_PER_VALUE: f64 = 2.2e-9;
 
 /// CPU: seconds per unit of planned work, and per stratum (measured; see the module's comment).
 const CPU_PER_WORK: f64 = 100e-9;
@@ -277,16 +281,28 @@ fn row_term(v: &Version, t: TermRef<'_>) -> bool {
     match f {
         "doc" => matches!(args.as_slice(), [TermRef::Var(_)]),
         f if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !is_call(a)),
-        f if DEVICE_ARITHMETIC.contains(&f) && args.len() == 2 => args.iter().all(|&a| row_term(v, a)),
-        // The order of two symbols' names (`<` of symbols lowers to it): their texts are the device's.
-        // Of names or cats' texts (compared from their parts, never made).
-        "str_cmp" if args.len() == 2 => args.iter().all(|&a| !is_call(&a) || is_cat_of_rows(v, a) || is_text_fn_of_rows(v, a)),
-        // A name's characters (or a cat's text's): counted over the device's names.
-        "strlen" | "rr_strlen" if args.len() == 1 => !is_call(&args[0]) || is_cat_of_rows(v, args[0]) || is_text_fn_of_rows(v, args[0]),
-        // A text function the device makes into its text arena (`setfix::device`'s `TEXTFN`).
-        f if DEVICE_TEXT_FUNCTIONS.contains(&f) => is_text_fn_of_rows(v, t),
-        _ => false,
+        // The device's functions (`device::caps`, the table its compile reads).
+        f => match device_fn(f) {
+            Some(d) if d.arity() != args.len() => false,
+            Some(DeviceFn::Arith(_)) => args.iter().all(|&a| row_term(v, a)),
+            // The order of two symbols' names (`<` of symbols lowers to it), or a name's characters: of names or
+            // cats' texts (compared from their parts, never made), or of texts the device makes.
+            Some(DeviceFn::Names { .. }) => args.iter().all(|&a| !is_call(&a) || is_cat_of_rows(v, a) || is_text_fn_of_rows(v, a)),
+            // A text function the device makes into its text arena (`setfix::device`'s `TEXTFN`).
+            Some(DeviceFn::Text { .. } | DeviceFn::RegexReplace) => is_text_fn_of_rows(v, t),
+            None => false,
+        },
     }
+}
+
+/// The device's form of `.rr`'s (or the native engine's) function `f`.
+fn device_fn(f: &str) -> Option<DeviceFn> {
+    caps::device_fn(caps::native(f))
+}
+
+/// Whether the device makes `f`'s value into its text arena.
+fn makes_text(f: &str) -> bool {
+    device_fn(f).is_some_and(DeviceFn::makes_text)
 }
 
 /// `cat(a, b)` (lowered, `concat`) of variables and constants: a text the device compares where it is read.
@@ -294,19 +310,12 @@ fn is_cat_of_rows(v: &Version, t: TermRef<'_>) -> bool {
     call(v, t).is_some_and(|(f, args)| (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !is_call(a)))
 }
 
-/// The text functions the device makes (`metal_join::ROW_MAP`), by the names the planner's terms and the native
-/// engine's steps give them.
-const DEVICE_TEXT_FUNCTIONS: [&str; 14] = [
-    "lower", "sql_lower", "sql_upper", "head", "dir", "substr", "rr_substr", "sql_substr", "slice", "to_string", "rr_to_string", "sql_replace",
-    "replace_all", "rx_replace",
-];
-
 /// A text function of variables and constants (its text argument perhaps another's value): a text the device makes.
 fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
     match call(v, t) {
-        Some((f, args)) if DEVICE_TEXT_FUNCTIONS.contains(&f) && !args.is_empty() => {
+        Some((f, args)) if makes_text(f) && !args.is_empty() => {
             // A regex's and its replacement's texts are constants (the device's automaton is made before the run).
-            let constants = !matches!(f, "replace_all" | "rx_replace") || args[1..].iter().all(|a| !matches!(a, TermRef::Var(_)));
+            let constants = device_fn(f) != Some(DeviceFn::RegexReplace) || args[1..].iter().all(|a| !matches!(a, TermRef::Var(_)));
             constants && (!is_call(&args[0]) || is_text_fn_of_rows(v, args[0])) && args[1..].iter().all(|a| !is_call(a))
         }
         _ => false,
@@ -316,11 +325,8 @@ fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
 /// The first text function the device makes in `t` (its arena), the operation it needs.
 fn text_fn_in(v: &Version, t: TermRef<'_>) -> Option<String> {
     let (f, args) = call(v, t)?;
-    if DEVICE_TEXT_FUNCTIONS.contains(&f) { Some(format!("@{f}")) } else { args.iter().find_map(|&a| text_fn_in(v, a)) }
+    if makes_text(f) { Some(format!("@{f}")) } else { args.iter().find_map(|&a| text_fn_in(v, a)) }
 }
-
-/// The integer functions the device computes (`.rr`'s `+ - * / %`, Soufflé's `max` and `min`).
-const DEVICE_ARITHMETIC: [&str; 7] = ["add", "sub", "mul", "div", "mod", "max", "min"];
 
 impl Shape {
     /// Notes form `f`, and where the device lacks it, the operation that uses it.

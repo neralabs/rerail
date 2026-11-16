@@ -84,7 +84,7 @@ pub fn accepts(p: &Placed) -> Result<bool> {
     {
         return Ok(false);
     }
-    for scc in p.components()? {
+    for scc in p.components()?.iter() {
         if scc.len() != 1 {
             return Ok(false);
         }
@@ -230,6 +230,7 @@ pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
                     row.map(|v| match v {
                             super::super::program_image::Cell::Int(n) => n.to_string(),
                             super::super::program_image::Cell::Str(s) => format!("'{}'", pf.text(s).replace('\'', "''")),
+                            super::super::program_image::Cell::Branded(b) => b.value().to_string(),
                         })
                         .collect::<Vec<_>>()
                         .join(",")
@@ -270,7 +271,7 @@ pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
             BTreeMap::new(),
         );
     }
-    for scc in p.components()? {
+    for scc in p.components()?.iter() {
         let rel = scc.iter().next().unwrap();
         if !needed.contains(rel) || pf.is_input(rel) {
             continue;

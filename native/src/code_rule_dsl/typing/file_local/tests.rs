@@ -21,6 +21,26 @@ fn source_relations_keep_their_document_location() {
     }
 }
 
+/// A relation whose rows name no document (`aware()`, as data-layer's `ma_branch_aware`), handed on to a cross-file
+/// reader (`found`, as `MA033` over `ma_owner(_)`), is moved to the cross-file part with its file-local readers
+/// (decision 0290), so `locate` leaves every row the chunks hand on located.
+#[test]
+fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
+                .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
+    let mut program = parse(text).unwrap();
+    assert!(split(&program).contains("aware"), "the case: aware is file-local before the move");
+    let located = locate(&mut program).expect("every row the chunks hand on located");
+    assert_eq!(moved(&program), ["aware"]);
+    let parts = split(&program);
+    assert!(!parts.contains("aware") && !parts.contains("found") && parts.contains("owner"), "{parts:?}, located {located:?}");
+    assert_eq!(cross_causes(&program)["aware"], "its rows name no document (moved by `locate`)");
+    // Located again, nothing more moves.
+    locate(&mut program).unwrap();
+    assert_eq!(moved(&program), ["aware"]);
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text

@@ -17,9 +17,12 @@
 //! `nearest`, a matcher, or a variable no positive atom binds keeps its form; its stratum is maintained as before.
 
 use super::lower;
-use crate::code_rule_dsl::logic::plan::fields::Fields;
-use crate::code_rule_dsl::logic::program_image::{Builder, Lit, RuleRef, T, TermRef, Version};
+use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
+use crate::code_rule_dsl::logic::program_image::analyses;
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, RuleOut, RulePass, Select, Step};
+use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, T, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// Whether a session maintains by counting: the default. `RERAIL_MAINTAIN=dred` asks for delete-and-rederive, to
 /// compare with.
@@ -33,62 +36,94 @@ pub(in crate::code_rule_dsl) fn is_support(rel: &str) -> bool {
 }
 
 /// `cross` with each rule of a non-recursive stratum through its own support relation; with how many rules were
-/// so, and how many kept their form. Made on `cross`'s version (decision 0241's form: a derivation, each rule that
-/// keeps its form copied by its handle, in order, and each made one added), reading its fields and rules by their
-/// handles, never a tree. A program the image has no fields for (its rules alone) keeps its form.
+/// so, and how many kept their form. A rule pass over `cross`'s version (`Supports`, decision 0281): a derivation,
+/// each rule that keeps its form kept by its handle, in order, and each made one written from it. A program the
+/// image has no fields for (its rules alone), or whose components are not found, keeps its form.
 pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowered, usize, usize) {
     let Ok(p) = cross.placed() else { return (cross.clone(), 0, 0) };
-    let Some(f) = Fields::of(&p) else { return (cross.clone(), 0, 0) };
-    let Ok(sccs) = p.components() else { return (cross.clone(), 0, 0) };
-    let v: &Version = &p.v;
-    let mut b = Builder::derive(v);
-    let mut out = cross.clone();
-    let mut failed = false;
-    let (mut through, mut kept) = (0, 0);
-    // A stratum of one relation is recursive when a rule of it reads it: found in one pass over the rules (a pass
-    // per stratum was quadratic, thousands of strata by tens of thousands of rules).
-    let reads_itself: BTreeSet<&str> = p
-        .rules()
-        .filter(|r| r.reads().any(|a| a.rel() == r.head().rel()))
-        .map(|r| v.rel_name(r.head().rel()))
-        .collect();
-    let recursive: BTreeSet<&str> = sccs
-        .iter()
-        .filter(|scc| scc.len() > 1 || scc.iter().any(|r| reads_itself.contains(r.as_str())))
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    let mut n: BTreeMap<&str, usize> = BTreeMap::new();
-    for rule in p.rules() {
-        let h = v.rel_name(rule.head().rel());
-        let eligible = !recursive.contains(h) && !f.gate(h) && f.native(h).is_none() && !f.lattice(h) && !f.nullary(h);
-        match eligible.then(|| support(&f, v, rule, &cross.domains)).flatten() {
-            Some(s) => {
-                let i = n.entry(h).or_default();
-                let name = format!("{h}__sup{i}");
-                *i += 1;
-                let cols: Vec<(&str, &str)> = s.decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-                b.declare(&name, &cols);
-                // Every column's domain: the head's, then each bound variable's in the rule (a kind's is no atom,
-                // decision 0170).
-                let d = s.domains(cross.domains.get(h).map_or(&[][..], Vec::as_slice));
-                out.domains.entry(name.clone()).or_insert(d);
-                failed |= s.write(&mut b, v, rule, &name).is_err();
-                through += 1;
-            }
-            None => {
-                b.copy(v, rule);
-                kept += 1;
-            }
-        }
+    if !p.whole {
+        return (cross.clone(), 0, 0);
     }
-    out.version = super::made_from(true, b.finish().ok().filter(|_| !failed).map(|(v, _)| v), "the supports");
+    let mut pass = Supports { domains: &cross.domains, together: p.together(), fields: None, recursive: BTreeSet::new(), n: BTreeMap::new(), made: BTreeMap::new(), through: 0, kept: 0, skipped: false };
+    let mut pipe = Pipeline::new("supports", p.v.clone());
+    pipe.rules(&mut pass);
+    let made = pipe.finish().ok().map(|(v, _)| v);
+    if pass.skipped {
+        return (cross.clone(), 0, 0);
+    }
+    let mut out = cross.clone();
+    out.version = super::made_from(true, made, "the supports");
     match &out.version {
         // The run reads the version; a reader of the tree decodes it (`lower::Tree`), none on the run's path.
         Some(made) => out.program = lower::Tree::of(made.clone()),
         None => return (cross.clone(), 0, 0),
     }
-    (out, through, kept)
+    for (name, d) in pass.made {
+        out.domains.entry(name).or_insert(d);
+    }
+    (out, pass.through, pass.kept)
+}
+
+/// `supports` as a rule pass: which strata are recursive is found once (`begin`); each rule of a non-recursive one
+/// is written as its support relation and the head's projection of it, each recording the rule as its source.
+struct Supports<'d> {
+    /// The domains of `cross`'s relations.
+    domains: &'d lower::Domains,
+    /// The sets a maintained program runs as one component.
+    together: Vec<BTreeSet<String>>,
+    fields: Option<Arc<FieldsData>>,
+    recursive: BTreeSet<String>,
+    /// How many support relations each head has.
+    n: BTreeMap<String, usize>,
+    /// Each support relation's columns' domains.
+    made: lower::Domains,
+    through: usize,
+    kept: usize,
+    /// Whether the components were not found, so every rule keeps its form.
+    skipped: bool,
+}
+
+impl RulePass for Supports<'_> {
+    const NAME: &'static str = "supports";
+    fn begin(&mut self, cx: &Cx<'_>) -> Result<Select, String> {
+        let v = cx.v();
+        let f = cx.get::<FieldsData>()?;
+        // The version's components where nothing runs together (most programs), else its own with the sets merged.
+        let sccs = if self.together.is_empty() { cx.get::<analyses::Components>().map(|c| c.0.clone()) } else { analyses::components_by_name(v, &f.about, &self.together).map_err(|e| e.to_string()) };
+        let Ok(sccs) = sccs else {
+            self.skipped = true;
+            cx.decide("skipped", || "its components are not found: every rule keeps its form".into());
+            return Ok(Select::Rules(Default::default()));
+        };
+        // A stratum of one relation is recursive when a rule of it reads it: found in one pass over the rules (a pass
+        // per stratum was quadratic, thousands of strata by tens of thousands of rules).
+        let reads_itself: BTreeSet<&str> = v.rules().filter(|r| r.reads().any(|a| a.rel() == r.head().rel())).map(|r| v.rel_name(r.head().rel())).collect();
+        self.recursive = sccs.iter().filter(|scc| scc.len() > 1 || scc.iter().any(|r| reads_itself.contains(r.as_str()))).flatten().cloned().collect();
+        self.fields = Some(f);
+        Ok(Select::All)
+    }
+    fn rule(&mut self, cx: &Cx<'_>, rule: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step, String> {
+        let v: &Version = cx.v();
+        let f = Fields::over(v, self.fields.as_ref().expect("begun"));
+        let h = v.rel_name(rule.head().rel());
+        let eligible = !self.recursive.contains(h) && !f.gate(h) && f.native(h).is_none() && !f.lattice(h) && !f.nullary(h);
+        let Some(s) = eligible.then(|| support(&f, v, rule, self.domains)).flatten() else {
+            self.kept += 1;
+            return Ok(Step::Keep);
+        };
+        let i = self.n.entry(h.to_owned()).or_default();
+        let name = format!("{h}__sup{i}");
+        *i += 1;
+        let cols: Vec<(&str, &str)> = s.decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+        out.builder().declare(&name, &cols);
+        // Every column's domain: the head's, then each bound variable's in the rule (a kind's is no atom, decision
+        // 0170).
+        let d = s.domains(self.domains.get(h).map_or(&[][..], Vec::as_slice));
+        self.made.entry(name.clone()).or_insert(d);
+        s.write(out, v, rule, &name)?;
+        self.through += 1;
+        Ok(Step::Written)
+    }
 }
 
 /// A rule of a head as its support relation (`support`): the relation's columns, the fresh variable each wildcard of
@@ -129,7 +164,7 @@ fn term_vars(v: &Version, r: RuleRef<'_>, t: TermRef<'_>, out: &mut Vec<String>)
 fn support(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>, domains: &lower::Domains) -> Option<Support> {
     let head = rule.head();
     let hdecl = f.columns(v.rel_name(head.rel()))?;
-    if !head.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))) {
+    if !head.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_))) {
         return None;
     }
     // Each variable's type, from the first positive atom column binding it; wildcards there become variables.
@@ -195,19 +230,20 @@ fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Wild => T::Wild,
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
     }
 }
 
 impl Support {
-    /// Writes `rule` through support relation `name` into `b` (a derivation of `v`): `name(head, extra) :- body`,
-    /// each positive atom's wildcard its variable, then `head :- name(head, _, …)`.
-    fn write<'v>(&self, b: &mut Builder<'_>, v: &'v Version, rule: RuleRef<'v>, name: &str) -> Result<(), String> {
+    /// Writes `rule` through support relation `name` (`rule`'s replacement, in a derivation of `v`):
+    /// `name(head, extra) :- body`, each positive atom's wildcard its variable, then `head :- name(head, _, …)`.
+    fn write<'v>(&self, out: &mut RuleOut<'_, '_>, v: &'v Version, rule: RuleRef<'v>, name: &str) -> Result<(), String> {
         let head: Vec<T<'v>> = rule.head().args().map(|t| t_of(v, rule, t)).collect();
         let mut args = head.clone();
         args.extend(self.extra.iter().map(|x| T::Var(x.as_str())));
-        let mut rb = b.rule().head(name, &args);
+        let mut rb = out.rule().head(name, &args);
         for (i, l) in rule.body().enumerate() {
             rb = match l.view() {
                 Lit::Atom(a) if !a.neg() => {
@@ -223,7 +259,7 @@ impl Support {
         rb.finish()?;
         let mut over = head;
         over.extend(self.extra.iter().map(|_| T::Wild));
-        b.rule().head_from(v, rule, rule.head()).atom(name, &over).finish()?;
+        out.rule().head_from(v, rule, rule.head()).atom(name, &over).finish()?;
         Ok(())
     }
 }

@@ -2462,6 +2462,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lz4-sys"
+version = "1.11.1+lz4-1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3155,6 +3165,7 @@ dependencies = [
  "objc",
  "parking_lot",
  "rayon",
+ "rerail-blocks",
  "rerail-forest",
  "sha2 0.10.9",
 ]
@@ -3165,6 +3176,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "metal",
+ "rayon",
 ]
 
 [[package]]
@@ -3239,10 +3251,12 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-lang",
+ "rerail-lang-python",
  "rerail-logic",
  "rerail-metal",
  "rerail-prof",
@@ -3422,6 +3436,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3429,6 +3444,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -4083,6 +4099,7 @@ dependencies = [
  "libc",
  "metal",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-metal",
  "rerail-prof",
@@ -4474,6 +4491,7 @@ dependencies = [
 name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
+ "lz4-sys",
  "sha2 0.10.9",
 ]
 

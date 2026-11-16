@@ -148,10 +148,10 @@ pub fn family_name(scope: &str, program: &str, rel: &str) -> String {
     format!("{scope}#wave:{program}:{rel}")
 }
 
-/// A document's resident cost in a chunk: its core facts, the batch's projection of them and its
-/// source.
+/// A document's resident cost in a chunk: its core facts, the batch's projection of them, the tape they were read
+/// off and its source.
 fn bytes(d: &Document) -> usize {
-    2 * d.facts.bytes() + d.facts.source.len()
+    2 * d.facts.bytes() + d.facts.tape_bytes() + d.facts.source.len()
 }
 
 /// Documents in chunks of at most `budget` bytes, in order; a document over the budget is a chunk

@@ -29,6 +29,21 @@ impl ContentStore {
         self.pin_object(OBJECT_SOURCE, source_id.0, owner, lease_until)
     }
 
+    /// When `owner`'s pin of `source_id` ends (unix seconds), where it has one: a reader renews a lease only once it
+    /// has run down, so a run that reads what an earlier run kept writes nothing (decision 0250).
+    pub fn source_lease(&self, source_id: SourceId, owner: &str) -> StoreResult<Option<i64>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        connection
+            .query_row_cached(
+                "SELECT p.lease_until FROM object_pins p JOIN strings s ON s.string_id=p.owner_string_id \
+                 WHERE p.object_kind_id=?1 AND p.object_id=?2 AND s.domain_id=?3 AND s.value=?4",
+                params![OBJECT_SOURCE, source_id.0, STRING_OWNER, owner],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
     pub fn pin_tape(&self, tape_id: TapeId, owner: &str, lease_until: i64) -> StoreResult<()> {
         self.pin_object(OBJECT_TAPE, tape_id.0, owner, lease_until)
     }

@@ -829,12 +829,15 @@ fn split_in(
             !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),
         _ => true,
     });
+    // A relation `locate` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file.
+    let moved = |r: &str| prog.qualified(r, CROSS_FILE);
     // The file-local relations by number, and each cross-file one's cause.
-    let mut local_now: Vec<bool> = (0..n).map(|r| match was(r) { Some(p) => p.local.contains(rels.names[r]), None => !cross_native(rels.names[r]) }).collect();
+    let mut local_now: Vec<bool> = (0..n).map(|r| match was(r) { Some(p) => p.local.contains(rels.names[r]), None => !cross_native(rels.names[r]) && !moved(rels.names[r]) }).collect();
     let mut causes: BTreeMap<String, String> = (0..n)
         .filter_map(|r| match was(r) {
             Some(p) => p.causes.get(rels.names[r]).map(|c| (rels.names[r].to_owned(), c.clone())),
-            None => cross_native(rels.names[r]).then(|| (rels.names[r].to_owned(), "made natively".to_owned())),
+            None if cross_native(rels.names[r]) => Some((rels.names[r].to_owned(), "made natively".to_owned())),
+            None => moved(rels.names[r]).then(|| (rels.names[r].to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
         })
         .collect();
     let base_locations = |rel: &str| base_locations(prog, rel);
@@ -1081,23 +1084,37 @@ pub fn assemble(
     let Crossing { exports, base_read, base, projected } = crossing(prog, &local);
     let is_local = |rel: &str| local.contains(rel);
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
-    let mut l = prog.clone();
-    l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
-    l.natives.retain(|rel, _| is_local(rel));
-    l.lattice.retain(|rel, _| is_local(rel));
-    l.gates.retain(|(rel, _)| is_local(rel));
-    l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    // The parts' inputs and outputs: what the parts' versions overlay (below), and their trees' where one is made.
+    let l_outputs: Vec<String> = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
-    l.inputs.retain(|i| !matches!(i.as_str(), "reference_edge" | "reference_open"));
-    let mut c = prog.clone();
-    c.rules.retain(|r| in_cross(&r.head.rel));
-    c.natives.retain(|rel, _| in_cross(rel));
-    c.lattice.retain(|rel, _| !is_local(rel));
-    c.gates.retain(|(rel, _)| !is_local(rel));
-    c.outputs.retain(|o| !is_local(o));
-    c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
-    crate::code_rule_dsl::logic::version_trace::note("split.local", prog, &l);
-    crate::code_rule_dsl::logic::version_trace::note("split.cross", prog, &c);
+    let l_inputs: Vec<String> = prog.inputs.iter().filter(|i| !matches!(i.as_str(), "reference_edge" | "reference_open")).cloned().collect();
+    let c_outputs: Vec<String> = prog.outputs.iter().filter(|o| !is_local(o)).cloned().collect();
+    let c_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
+    // The parts as trees: each a copy of the program, less what the other part keeps.
+    let local_tree = || {
+        let mut l = prog.clone();
+        l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
+        l.natives.retain(|rel, _| is_local(rel));
+        l.lattice.retain(|rel, _| is_local(rel));
+        l.gates.retain(|(rel, _)| is_local(rel));
+        l.outputs = l_outputs.clone();
+        l.inputs = l_inputs.clone();
+        l
+    };
+    let cross_tree = || {
+        let mut c = prog.clone();
+        c.rules.retain(|r| in_cross(&r.head.rel));
+        c.natives.retain(|rel, _| in_cross(rel));
+        c.lattice.retain(|rel, _| !is_local(rel));
+        c.gates.retain(|(rel, _)| !is_local(rel));
+        c.outputs = c_outputs.clone();
+        c.inputs = c_inputs.clone();
+        c
+    };
+    if crate::code_rule_dsl::logic::version_trace::on() {
+        crate::code_rule_dsl::logic::version_trace::note("split.local", prog, &local_tree());
+        crate::code_rule_dsl::logic::version_trace::note("split.cross", prog, &cross_tree());
+    }
     // The parts as versions of the program's (the stored image's, else made here): the rules each keeps, a view, and
     // the fields above, an overlay over it. A program the image has no form for has none.
     let version = version.or_else(|| {
@@ -1107,16 +1124,16 @@ pub fn assemble(
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = v.part(&local_rule, &l.inputs, &l.outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local }).ok()?;
-        let cross = v.part(&in_cross, &c.inputs, &c.outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local }).ok()?;
+        let local = v.part(&local_rule, &l_inputs, &l_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local }).ok()?;
+        let cross = v.part(&in_cross, &c_inputs, &c_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local }).ok()?;
         Some(Parts { local, cross })
     });
-    // Each part's tree is its version's where it has one, made here beside it (`lower::Tree::beside`): a reader on
-    // the run's path is named as one of a version's tree; else the tree alone.
+    // Each part's tree is its version's where it has one, decoded where a reader asks (`lower::Tree::of`, decision
+    // 0246 §4: the parts are views, nothing cloned); else the tree, a copy of the program.
     use crate::code_rule_dsl::logic::plan::lower::Tree;
     let (l, c) = match &versions {
-        Some(p) => (Tree::beside(p.local.clone(), l), Tree::beside(p.cross.clone(), c)),
-        None => (Tree::given(l), Tree::given(c)),
+        Some(p) => (Tree::of(p.local.clone()), Tree::of(p.cross.clone())),
+        None => (Tree::given(local_tree()), Tree::given(cross_tree())),
     };
     Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants, versions }
 }
@@ -1260,7 +1277,7 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
             let reader = &prog.rules[ri];
             let Literal::Atom(a) = &reader.body[li] else { return false };
             a.args.iter().any(|t| match t {
-                Term::Int(_) | Term::Str(_) => true,
+                Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
                 Term::Var(v) => reader.body.iter().enumerate().any(|(j, l)| j != li && matches!(l, Literal::Atom(b) if !b.neg && b.vars().contains(v.as_str()))),
                 _ => false,
             })
@@ -1411,7 +1428,7 @@ fn determined(body: &[crate::code_rule_dsl::logic::front::Literal], mut known: s
                 Literal::Atom(a) if !a.neg => {
                     let fixed = |c: &usize| match a.args.get(*c) {
                         Some(Term::Var(v)) => known.contains(v.as_str()),
-                        Some(Term::Int(_) | Term::Str(_)) => true,
+                        Some(Term::Int(_) | Term::Branded(_) | Term::Str(_)) => true,
                         _ => false,
                     };
                     if keys.get(a.rel.as_str()).is_some_and(|ks| ks.iter().any(|k| k.iter().all(fixed))) {
@@ -1950,7 +1967,44 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
 /// `doc`, `tape_line`, …, a document column left unnamed included, or a node through `node(d, n, …)`), and the
 /// cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
 /// one whose rule binds no location is left; its name is returned in the `Err`: its rows are not attributable.
+///
+/// A relation left so is moved to the cross-file part (qualified `CROSS_FILE`, decision 0290), with every file-local
+/// relation that reads it, and the program is located again: the chunks then hand on only located rows, and the per-file
+/// memo holds for the rest of the program. The `Err` is left for a relation the moves cannot place, which none is.
 pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, Vec<String>> {
+    let mut located = Vec::new();
+    loop {
+        match locate_once(prog) {
+            Ok(now) => {
+                located.extend(now);
+                return Ok(located);
+            }
+            Err((now, blocked)) => {
+                located.extend(now);
+                // Each round moves a relation the split held file-local; a moved one is cross-file and no target again.
+                let fresh: Vec<String> = blocked.into_iter().filter(|r| !prog.qualified(r, CROSS_FILE)).collect();
+                if fresh.is_empty() {
+                    return Err(prog.qualifiers.iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r.clone()).collect());
+                }
+                for rel in fresh {
+                    prog.qualifiers.entry(rel).or_default().insert(CROSS_FILE.to_owned());
+                }
+            }
+        }
+    }
+}
+
+/// The qualifier `locate` gives a relation whose rows name no document: the split holds it cross-file (decision 0290).
+pub const CROSS_FILE: &str = "cross_file";
+
+/// The relations `locate` moved to the cross-file part (`CROSS_FILE`).
+pub fn moved(prog: &crate::code_rule_dsl::logic::front::Program) -> Vec<&str> {
+    prog.qualifiers.iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r.as_str()).collect()
+}
+
+/// One round of `locate`: the relations located, and in the `Err` those left beside them.
+#[allow(clippy::type_complexity)]
+fn locate_once(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, (Vec<String>, Vec<String>)> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::BTreeSet;
     // The split's names alone (`found`, `crossing`), not its parts: the file-local part's heads, and what it hands on
@@ -2075,5 +2129,5 @@ pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<
         located.push(rel.clone());
     }
     prog.rules = rules;
-    if blocked.is_empty() { Ok(located) } else { Err(blocked) }
+    if blocked.is_empty() { Ok(located) } else { Err((located, blocked)) }
 }

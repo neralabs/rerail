@@ -294,6 +294,25 @@ struct Snapshot {
     admitted: HashSet<[u8; 32]>,
     /// The memo entries admitted (`admit_memo_entries`) and written since, by space and part (decision 0240 §4).
     memo: HashMap<[u8; 32], HashMap<i64, Arc<MemoBlob>>>,
+    /// The cross spaces a run read before its first wave, by identity (Q19: each by the run whose own it is).
+    preloaded: HashSet<[u8; 32]>,
+    /// A dev trace's (`RERAIL_FRAMES_TRACE`): the space read by identity, and its frames' identities left out.
+    left_out: Option<([u8; 32], HashSet<Rel>)>,
+}
+
+/// A root's cross part's space, as a run reads it before its first wave (`preload_frames_live`, Q19).
+#[derive(Clone, Copy)]
+pub struct CrossSpace<'a> {
+    /// The root's cross space (the cross part of a run of no phase).
+    pub space: [u8; 32],
+    /// Whether it is this run's own (a run of no phase): only that run reads it.
+    pub own: bool,
+    /// The identities its programs can read there; `None`: every frame of it.
+    pub rels: Option<&'a HashSet<Rel>>,
+    /// A root's cross space (by its path, as `corpus_roots` records it): the store's first read leaves every root's
+    /// out, each read by its own run, by identity; whichever run reads the store's frames first (phase 0's, on a
+    /// rule edit: before the corpus run starts, a root of its own).
+    pub cross_of: fn(&std::path::Path) -> [u8; 32],
 }
 
 impl std::ops::Deref for Snapshot {
@@ -376,27 +395,61 @@ impl ContentStore {
     /// frames are read from memory, and every write of this process updates it. Returns the frames and their
     /// encoded bytes read now (none when an earlier run of the process read them).
     pub fn preload_frames(&self) -> StoreResult<(usize, usize)> {
-        self.preload_frames_for()
+        self.preload_frames_live(None)
     }
 
-    /// `preload_frames`: the memo's entries are not frames (decision 0240 §4); a run admits its plan's
+    /// The frames a run reads before its first wave (decision 0104, Q19), the first run of a process installing the
+    /// snapshot. The memo's entries are not frames (decision 0240 §4); a run admits its plan's
     /// (`admit_memo_entries`).
-    pub fn preload_frames_live(&self) -> StoreResult<(usize, usize)> {
-        self.preload_frames()
+    ///
+    /// Of `cross` (the root's cross part's space), when it is the run's own and no run of the process read it: the
+    /// frames of the identities its programs can read (every part of each), not every kept run's (an earlier build's,
+    /// an earlier edit's: a relation's identity is of the engine and its rules, `plan::identities`); without them, all
+    /// of it. A run of a phase does not read it. A frame of it outside the set is absent to the process, as one never
+    /// kept is: its relation is derived again. The snapshot's install leaves every recorded root's cross space out
+    /// (`CrossSpace::cross_of`), whichever run installs it; every other space is read whole.
+    pub fn preload_frames_live(&self, cross: Option<CrossSpace<'_>>) -> StoreResult<(usize, usize)> {
+        let (mut frames, mut bytes) = match self.snapshot() {
+            Some(_) => (0, 0),
+            None => self.install_snapshot(cross.as_ref())?,
+        };
+        let snapshot = self.snapshot().expect("the snapshot, installed");
+        if let Some(c) = cross.filter(|c| c.own)
+            && snapshot.lock().expect("the frames' snapshot").preloaded.insert(c.space)
+        {
+            let (got, left) = self.read_cross_space(&c)?;
+            frames += got.len();
+            bytes += got.values().map(|f| f.encoded_bytes()).sum::<usize>();
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            if let Some(left) = left {
+                snapshot.left_out = Some((c.space, left));
+            }
+            let held = snapshot.frames.entry(c.space).or_default();
+            // What this process wrote since is newer, and stays.
+            for (k, f) in got {
+                held.entry(k).or_insert(f);
+            }
+        }
+        Ok((frames, bytes))
     }
 
-    fn preload_frames_for(&self) -> StoreResult<(usize, usize)> {
-        if self.snapshot().is_some() {
-            return Ok((0, 0));
-        }
+    /// The snapshot, read: every frame but the memo's of before decision 0240 (`MEMO_RELS`), which nothing reads,
+    /// and, with `cross`, every recorded root's cross space (`CrossSpace::cross_of`) and the run's own.
+    fn install_snapshot(&self, cross: Option<&CrossSpace<'_>>) -> StoreResult<(usize, usize)> {
         let mut snapshot = Snapshot::default();
         let (mut frames, mut bytes) = (0, 0);
         {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            // Every frame but the memo's of before decision 0240 (`MEMO_RELS`), which nothing reads.
-            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames WHERE rel NOT IN (?1, ?2)")?;
+            let mut skip: Vec<[u8; 32]> = Vec::new();
+            if let Some(c) = cross {
+                let roots: Vec<String> = connection.prepare("SELECT path FROM corpus_roots")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+                skip.extend(roots.iter().map(|r| (c.cross_of)(std::path::Path::new(r))));
+                skip.push(c.space);
+            }
+            let skip: rusqlite::vtab::array::Array = std::rc::Rc::new(skip.iter().map(|s| rusqlite::types::Value::from(s.to_vec())).collect());
+            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames WHERE rel NOT IN (?1, ?2) AND space NOT IN rarray(?3)")?;
             let mut chains: HashMap<[u8; 32], HashMap<Rel, u32>> = HashMap::new();
-            let rows = st.query_map(params![MEMO_RELS[0], MEMO_RELS[1]], |row| {
+            let rows = st.query_map(params![MEMO_RELS[0], MEMO_RELS[1], skip], |row| {
                 let (space, ident): (Vec<u8>, Vec<u8>) = (row.get(0)?, row.get(2)?);
                 let space: [u8; 32] = space.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -441,6 +494,61 @@ impl ContentStore {
         Ok((frames, bytes))
     }
 
+    /// `cross`'s frames (`preload_frames_live`): those of its identities, every part; all of them when it names none.
+    /// One scan of the space in its key's order, the frames of other identities let go as they are read: a seek for
+    /// each identity reads the file's pages at random (1.5 s against 0.7 s, ep2). With a dev trace
+    /// (`RERAIL_FRAMES_TRACE`), the identities of the space's frames left out, so a read of one names a reader the set
+    /// missed (`read_frame_parts_from`).
+    fn read_cross_space(&self, cross: &CrossSpace<'_>) -> StoreResult<(HashMap<(Rel, i64), Arc<Admitted>>, Option<HashSet<Rel>>)> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let space = cross.space;
+        let atoms = self.atoms_handle();
+        let mut got: HashMap<(Rel, i64), Arc<Admitted>> = HashMap::new();
+        let mut chains: HashMap<Rel, u32> = HashMap::new();
+        {
+            let mut st = connection.prepare("SELECT rel, ident, part, digest, reads, rows, types, data FROM frames WHERE space = ?1")?;
+            let mut rows = st.query([&space[..]])?;
+            while let Some(row) = rows.next()? {
+                let ident: [u8; 32] = row.get::<_, Vec<u8>>(1)?.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let rel = Rel { name: row.get(0)?, ident };
+                if cross.rels.is_some_and(|k| !k.contains(&rel)) {
+                    continue;
+                }
+                let part: i64 = row.get(2)?;
+                let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(4)?);
+                if k > 0 && part == 0 {
+                    chains.insert(rel.clone(), k);
+                }
+                got.insert((rel, part), Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads },
+                    data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(Arc::clone(&atoms)) },
+                }));
+            }
+        }
+        let left = match cross.rels.filter(|_| std::env::var_os("RERAIL_FRAMES_TRACE").is_some()) {
+            Some(rels) => {
+                let mut st = connection.prepare("SELECT DISTINCT rel, ident FROM frames WHERE space = ?1")?;
+                let keys = st.query_map([&space[..]], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+                let mut left: HashSet<Rel> = HashSet::new();
+                for key in keys {
+                    let (name, ident) = key?;
+                    if let Ok(ident) = <[u8; 32]>::try_from(ident.as_slice()) {
+                        let rel = Rel { name, ident };
+                        if !rels.contains(&rel) {
+                            left.insert(rel);
+                        }
+                    }
+                }
+                eprintln!("RERAIL_FRAMES_TRACE preload by identity: {} identities asked, {} frames read, {} identities of the space left out", rels.len(), got.len(), left.len());
+                Some(left)
+            }
+            None => None,
+        };
+        drop(connection);
+        hold_symbols(&self.atoms, got.values())?;
+        compose_chains(&mut got, Some(&chains))?;
+        Ok((got, left))
+    }
 
     /// The stored frames of `rels` in `space`, partition `part`, without their rows.
     /// The space's confirmations (decision 0117 step 5): each frame whose rows were found unchanged by a run that
@@ -491,13 +599,19 @@ impl ContentStore {
             }
         }
         if missing.is_empty() { return Ok(out); }
-        // Read before the first wave (`preload_frames`): from memory.
+        // Read before the first wave (`preload_frames_live`), or written by this process since: from memory. Inside
+        // the waves no SQL is run (decision 0104), so a key the snapshot does not hold is absent.
         if snapshot && let Some(snapshot) = self.snapshot() {
             let snapshot = snapshot.lock().expect("the frames' snapshot");
             if let Some(held) = snapshot.get(space) {
                 for key in missing {
                     if let Some(frame) = held.get(&key) {
                         out.insert(key, Arc::clone(frame));
+                    } else if let Some((at, left)) = &snapshot.left_out
+                        && at == space
+                        && left.contains(&key.0)
+                    {
+                        eprintln!("RERAIL_FRAMES_TRACE a frame left out by the preload is read: {} part {}", key.0.name, key.1);
                     }
                 }
             }
@@ -1667,8 +1781,45 @@ mod tests {
         for (part, blob) in &before {
             assert_eq!(after[part].bytes, blob.bytes, "part {part} reads the same from the new pack");
         }
-        let (frames, _) = store.preload_frames_live().unwrap();
+        let (frames, _) = store.preload_frames_live(None).unwrap();
         assert_eq!(frames, 0, "no memo entry is a frame");
+    }
+
+    /// Q19: a new process reads before its run's first wave, of its cross part's space, the frames of the identities
+    /// its programs can read (every part), not another identity's (an earlier build's, an earlier edit's); every
+    /// other space whole. Whichever run reads first (phase 0's, a root of its own, on a rule edit), the store's first
+    /// read leaves out every recorded root's cross space.
+    #[test]
+    fn a_run_reads_its_cross_space_by_identity_whichever_run_reads_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let cross = [9u8; 32];
+        let put = |rel: &Rel, v: i64| Put { rel: rel.clone(), part: 0, digest: v as u64, reads: vec![("-".into(), 0)], rows: Rows { types: vec![0], rows: vec![v], n: 1 } };
+        let (kept, stale, elsewhere) = (rel("x", 1), rel("x", 2), [11u8; 32]);
+        {
+            let store = ContentStore::open(&path).unwrap();
+            let granule = Put { part: 3, ..put(&kept, 11) };
+            store.keep_frames(&cross, &[put(&kept, 10), granule, put(&stale, 20)], &[], None).unwrap();
+            store.keep_frames(&elsewhere, &[put(&stale, 30)], &[], None).unwrap();
+            store.connection.lock().unwrap().execute("INSERT INTO corpus_roots(path) VALUES ('/corpus'), ('/rules')", []).unwrap();
+        }
+        let store = ContentStore::open(&path).unwrap();
+        let rels = HashSet::from([kept.clone(), rel("y", 3)]);
+        let held = |space: &[u8; 32], rel: &Rel, part: i64| store.admit_frames(space, std::slice::from_ref(rel), part).unwrap().get(rel).map(|f| f.rows().unwrap().rows);
+        fn cross_of(root: &std::path::Path) -> [u8; 32] {
+            if root == std::path::Path::new("/corpus") { [9; 32] } else { [12; 32] }
+        }
+        // A phase's run first (phase 0, over the rule files: a root of its own, before the corpus run starts).
+        let phase = CrossSpace { space: [12; 32], own: true, rels: None, cross_of };
+        assert_eq!(store.preload_frames_live(Some(phase)).unwrap().0, 1, "the other space's frame");
+        assert_eq!(held(&cross, &kept, 0), None, "the corpus root's cross space is not read by a phase's run");
+        assert_eq!(held(&elsewhere, &stale, 0), Some(vec![30]), "another space is read whole");
+        // Then the run of no phase: of its cross space, its identities' frames, every part.
+        let own = CrossSpace { space: cross, own: true, rels: Some(&rels), cross_of };
+        assert_eq!(store.preload_frames_live(Some(own)).unwrap().0, 2, "both parts of the kept identity");
+        assert_eq!((held(&cross, &kept, 0), held(&cross, &kept, 3)), (Some(vec![10]), Some(vec![11])));
+        assert_eq!(held(&cross, &stale, 0), None, "an identity no program of the run reads is not read");
+        assert_eq!(store.preload_frames_live(Some(own)).unwrap().0, 0, "once a process");
     }
 
     /// Decision 0280: what a later run keeps over an entry (its identities) is read with it, from the store and from

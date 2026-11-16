@@ -52,7 +52,7 @@ fn vars_all(ts: &[Term]) -> BTreeSet<String> {
 }
 
 fn is_const(t: &Term) -> bool {
-    matches!(t, Term::Int(_) | Term::Str(_))
+    matches!(t, Term::Int(_) | Term::Branded(_) | Term::Str(_))
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {

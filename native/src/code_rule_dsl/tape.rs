@@ -44,10 +44,13 @@ pub mod navigation;
 pub use index::IndexImage;
 pub mod wire;
 pub mod tokens;
+mod token_automata;
 // tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `token_readers` is rerail-w's (it mounts it)
 pub mod resident;
 pub mod validated;
+/// A document's tape through one API, in the run's format (decision 0293).
+pub mod formats;
 pub mod token_census;
 /// Python's tape from the lean parser (`rerail_python_lean`).
 pub mod python_lean;
@@ -1937,6 +1940,8 @@ pub struct TapeDoc {
     digest: Arc<std::sync::OnceLock<[u8; 32]>>,
     /// The document's path, as a run's matchers read it (`with_path`: what a `filePath` test inside a matcher tests).
     path: Option<Arc<str>>,
+    /// The image's tape through the one API, in each format a run reads (`tape()`, decision 0293): the same image.
+    held: Arc<formats::DocTape>,
 }
 
 #[derive(Clone)]
@@ -2214,6 +2219,7 @@ impl TapeDoc {
             nodes[parent].children += 1;
         }
         checked(budget)?;
+        let image = Arc::new(image.clone());
         Ok(Self {
             source_digest: digest,
             points: Arc::new(Points {
@@ -2231,7 +2237,8 @@ impl TapeDoc {
             texts: Arc::default(),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
-            image: Arc::new(image.clone()),
+            held: Arc::new(formats::DocTape::new(Arc::clone(&image))),
+            image,
             digest: Arc::default(),
             path: None,
         })
@@ -2361,6 +2368,17 @@ impl TapeDoc {
         Ok(*self.digest.get_or_init(|| digest))
     }
 
+    /// `tape_digest`, and the image as stored when computing it serialized the image (the digest
+    /// not known yet): admission copies those bytes, not a second serialization.
+    pub fn tape_digest_and_image(&self) -> Result<([u8; 32], Option<Vec<u8>>), String> {
+        if let Some(digest) = self.digest.get() {
+            return Ok((*digest, None));
+        }
+        let image = self.image.to_bytes()?;
+        let digest = tape_identity(&self.source_digest, &image);
+        Ok((*self.digest.get_or_init(|| digest), Some(image)))
+    }
+
     /// The SHA-256 of this document's source.
     pub fn source_digest(&self) -> &[u8; 32] {
         &self.source_digest
@@ -2378,9 +2396,14 @@ impl TapeDoc {
         self.tape_digest()
     }
 
-    /// This document's image as stored, its source and its grammar: what residency admits.
-    pub fn resident_parts(&self) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
-        Ok((self.image.to_bytes()?, self.source.as_str(), &self.grammar))
+    /// This document's image as stored (`image`, when the caller has it already), its source and
+    /// its grammar: what residency admits.
+    pub fn resident_parts(&self, image: Option<Vec<u8>>) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
+        let image = match image {
+            Some(image) => image,
+            None => self.image.to_bytes()?,
+        };
+        Ok((image, self.source.as_str(), &self.grammar))
     }
 
     pub fn transducer_kind(&self, node: u32) -> u16 {

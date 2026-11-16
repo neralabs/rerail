@@ -140,6 +140,41 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// An edit of a file-local rule leaves the cross-file part's program as it was: the session finds its part kept
+/// under that program (not the whole program, whose key the edit changes), and runs no cross-file stratum; the rows
+/// are a full run's.
+#[test]
+fn a_session_keeps_its_cross_part_across_a_file_local_edit() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-local-edit");
+    let (src, out) = (base.join("src"), base.join("out"));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("a.py"), "def helper(x):\n    assert x\n    return x\n\ndef other(y):\n    while y:\n        assert y\n    return helper(y)\n").unwrap();
+    std::fs::write(src.join("b.py"), "from a import helper, other\n\ndef main():\n    assert True\n    helper(1)\n    other(2)\n").unwrap();
+    // `at` is the cross-file part; `flagged`, file-local, is the rule edited.
+    let program = |kind: &str| format!(
+        "#include \"core.rr\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number)\nat(x, k) :- called(c, x), defined(_, x), col(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), line(n, l).\n.output at, flag_line\n"
+    );
+    let program = |kind: &str| crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&program(kind)).unwrap()).unwrap();
+    let run = |text: &str| super::super::run(text, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rows = || ["at", "flag_line"].map(|r| {
+        let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+        v.sort();
+        v
+    });
+    let expected = full(|| { run(&program("while_statement")); rows() });
+    let session = start(&base.join("session")).unwrap();
+    let first = run(&program("try_statement"));
+    let (_, all) = first.cross_strata.expect("a session's run");
+    assert!(all > 0, "the program has a cross-file part");
+    let edited = run(&program("while_statement"));
+    assert_eq!(rows(), expected, "the edited run's rows are a full run's");
+    assert!(edited.cross_changed.is_empty(), "no input of the cross part changed: {:?}", edited.cross_changed);
+    assert_eq!(edited.cross_strata, Some((0, all)), "the cross part's program is as it was: no stratum runs");
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A recursive cross-file stratum (import reachability) is maintained by delete-and-rederive (decision 0077 §3):
 /// an edit that breaks a cycle deletes the rows that lost every derivation, one that closes it again inserts them,
 /// and every run's findings are a full run's.

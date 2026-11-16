@@ -66,26 +66,28 @@ pub struct Slice<'a> {
     stop: &'a AtomicBool,
     /// The file the job works on ([`Job::file`]): a run over it, in any process, stops the step.
     file: Option<std::path::PathBuf>,
+    /// Whether a run stops the step: not once the job's work is past its deadline ([`Settings::deadline`]).
+    yields: bool,
 }
 
 impl<'a> Slice<'a> {
     /// Whether the step should return now: its time is up, the process is stopping, or a run began (in this
     /// process, or over the job's file in another: [`runs_active`]). A step stopped by a run leaves its work due.
     pub fn over(&self) -> bool {
-        Instant::now() >= self.until || self.stop.load(Ordering::Acquire) || runs_active(self.file.as_deref())
+        Instant::now() >= self.until || self.stop.load(Ordering::Acquire) || (self.yields && runs_active(self.file.as_deref()))
     }
 
     /// Whether a run began, or the process is stopping, as an owned check for what outlives a borrow of the slice
     /// and does not split at the step's time bound: a SQLite progress handler interrupting a transaction that is one
     /// piece (`SQLITE_INTERRUPT`, rolled back), a training given up between its phases.
     pub fn stopper(&self) -> impl Fn() -> bool + Send + Sync + 'static {
-        let file = self.file.clone();
-        move || STOP.load(Ordering::Acquire) || runs_active(file.as_deref())
+        let (file, yields) = (self.file.clone(), self.yields);
+        move || STOP.load(Ordering::Acquire) || (yields && runs_active(file.as_deref()))
     }
 
     /// A slice of `d` from now (tests, and jobs run by hand).
     pub fn for_test(d: Duration, memory: usize, stop: &AtomicBool) -> Slice<'_> {
-        Slice { until: Instant::now() + d, memory, stop, file: None }
+        Slice { until: Instant::now() + d, memory, stop, file: None, yields: true }
     }
 
     /// The slice of a job over `file`: it yields to the runs over that file too ([`run_begins`]).
@@ -183,6 +185,43 @@ fn others_run_over(file: &std::path::Path) -> bool {
     }
 }
 
+/// The file beside `file` that records when each job over it last finished (`<file>.upkeep`: `name\tunix seconds`
+/// lines). A process's runs are short, so the time work has waited for them is counted across processes from here.
+fn finishes(file: &std::path::Path) -> std::path::PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(".upkeep");
+    std::path::PathBuf::from(name)
+}
+
+/// When job `name` over `file` last finished: its record, else the file's creation (a job that never finished).
+fn last_finished(file: &std::path::Path, name: &str) -> Option<std::time::SystemTime> {
+    let recorded = std::fs::read_to_string(finishes(file)).ok().and_then(|text| {
+        text.lines().find_map(|l| l.split_once('\t').filter(|(n, _)| *n == name).and_then(|(_, t)| t.parse::<u64>().ok()))
+    });
+    match recorded {
+        Some(t) => Some(std::time::UNIX_EPOCH + Duration::from_secs(t)),
+        None => std::fs::metadata(file).ok().and_then(|m| m.created().or_else(|_| m.modified()).ok()),
+    }
+}
+
+/// Records that job `name` over `file` finished now: the record rewritten whole, then renamed into place.
+fn record_finish(file: &std::path::Path, name: &str) {
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let path = finishes(file);
+    let mut text: String = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.split_once('\t').is_some_and(|(n, _)| n != name))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    text.push_str(&format!("{name}\t{at}\n"));
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".{}", std::process::id()));
+    if std::fs::write(&tmp, text).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
 /// A maintenance job. `due` is called at every poll and must be cheap; `step` does a bounded part of the work.
 pub trait Job: Send {
     /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v4.sqlite`). The kind is
@@ -227,6 +266,10 @@ pub struct Settings {
     pub without: Vec<String>,
     /// Each step printed to standard error (`RERAIL_UPKEEP_LOG=1`).
     pub log: bool,
+    /// How long due work yields to runs (`RERAIL_UPKEEP_DEADLINE`, seconds; 600): past it, counted from the job's
+    /// last finish, its steps run through the runs (decision 0190 §9). Idle work's deadline is its `starve`, when
+    /// that is longer.
+    pub deadline: Duration,
 }
 
 impl Default for Settings {
@@ -242,6 +285,7 @@ impl Default for Settings {
             only: None,
             without: Vec::new(),
             log: false,
+            deadline: Duration::from_secs(600),
         }
     }
 }
@@ -287,7 +331,23 @@ impl Settings {
             s.only = (!only.is_empty()).then(|| only.iter().map(|j| j.to_string()).collect());
         }
         s.log = var("RERAIL_UPKEEP_LOG").is_some_and(|v| v != "0");
+        if let Some(v) = var("RERAIL_UPKEEP_DEADLINE") {
+            match v.parse::<u64>() {
+                Ok(secs) => s.deadline = Duration::from_secs(secs),
+                _ => eprintln!("rerail: RERAIL_UPKEEP_DEADLINE={v} is not a number of seconds; left out"),
+            }
+        }
         s
+    }
+
+    /// How long work due as `due` yields to runs; `None`: always (a whole `VACUUM`, whose `starve` is unbounded).
+    pub fn deadline_of(&self, due: Due) -> Option<Duration> {
+        match due {
+            Due::No => None,
+            Due::Urgent => Some(self.deadline),
+            Due::Idle { starve } if starve == Duration::MAX => None,
+            Due::Idle { starve } => Some(starve.max(self.deadline)),
+        }
     }
 
     /// Whether jobs of this name's kind run.
@@ -643,7 +703,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
     let all = pass != Pass::Scheduler;
     let now = Instant::now();
     // Which jobs to run, oldest run first; the lock is not held while a job steps.
-    let mut order: Vec<(Option<Instant>, u64, bool)> = Vec::new();
+    let mut order: Vec<(Option<Instant>, u64, bool, bool)> = Vec::new();
     {
         let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
         for e in jobs.iter_mut() {
@@ -654,10 +714,6 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
             if pass == Pass::Utility && !utility {
                 continue;
             }
-            // A run under way comes first: the job's work waits for it, still due.
-            if runs_active(e.job.file().as_deref()) {
-                continue;
-            }
             let due = e.job.due();
             let since = match due {
                 Due::No => {
@@ -666,30 +722,45 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
                 }
                 _ => *e.due_since.get_or_insert(now),
             };
-            let urgent = utility || match due {
+            // A run under way comes first: the job's work waits for it, still due, until its deadline. Past that
+            // (counted from the job's last finish, in any process) its steps run through the runs.
+            let file = e.job.file();
+            let yields = if runs_active(file.as_deref()) {
+                let waited = match file.as_deref().and_then(|f| last_finished(f, &e.report.name)) {
+                    Some(t) => t.elapsed().unwrap_or_default(),
+                    None => now.duration_since(since),
+                };
+                if s.deadline_of(due).is_none_or(|d| waited < d) {
+                    continue;
+                }
+                false
+            } else {
+                true
+            };
+            let urgent = utility || !yields || match due {
                 Due::Urgent => true,
                 Due::Idle { starve } => now.duration_since(since) >= starve,
                 Due::No => false,
             };
             if all || urgent || idle {
-                order.push((e.last_ran, e.id, urgent));
+                order.push((e.last_ran, e.id, urgent, yields));
             }
         }
     }
-    order.sort_by_key(|&(last, id, _)| (last, id));
+    order.sort_by_key(|&(last, id, ..)| (last, id));
     let mut ran = false;
     let pass_end = now + s.poll;
-    for (_, id, urgent) in order {
+    for (_, id, urgent, yields) in order {
         loop {
             if STOP.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
                 return ran;
             }
-            let Some((step, file)) = step_job(id, s, pass != Pass::Utility) else { break };
+            let Some((step, file)) = step_job(id, s, pass != Pass::Utility, yields) else { break };
             ran = true;
             if step != Step::More {
                 break;
             }
-            if runs_active(file.as_deref()) {
+            if yields && runs_active(file.as_deref()) {
                 return ran;
             }
             // Idle work stops once the machine is busy again.
@@ -703,7 +774,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
 
 /// One step of job `id` (taken out of the list while it runs), at its priority, then the CPU share's pause (with
 /// `pause`). `None`: the job is gone, or failed.
-fn step_job(id: u64, s: &Settings, pause: bool) -> Option<(Step, Option<std::path::PathBuf>)> {
+fn step_job(id: u64, s: &Settings, pause: bool, yields: bool) -> Option<(Step, Option<std::path::PathBuf>)> {
     let stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
     let mut e = {
         let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
@@ -720,7 +791,7 @@ fn step_job(id: u64, s: &Settings, pause: bool) -> Option<(Step, Option<std::pat
     }
     let (c0, t0) = (crate::score::thread_cpu(), Instant::now());
     let file = e.job.file();
-    let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &STOP, file: file.clone() };
+    let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &STOP, file: file.clone(), yields };
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|_| Err("panicked".into()));
     let (wall, cpu) = (t0.elapsed().as_secs_f64(), crate::score::thread_cpu() - c0);
     if scheduler && qos != Qos::Background {
@@ -735,6 +806,9 @@ fn step_job(id: u64, s: &Settings, pause: bool) -> Option<(Step, Option<std::pat
             e.report.failures = 0;
             if step == Step::Done {
                 e.due_since = None;
+                if let Some(f) = &file {
+                    record_finish(f, &e.report.name);
+                }
             }
             Some((step, file))
         }
@@ -799,6 +873,25 @@ mod tests {
         left: u32,
         due: Due,
         qos: Qos,
+    }
+
+    /// A job over a file: a run over the file stops it until its deadline.
+    struct OverFile(Counter, std::path::PathBuf);
+
+    impl Job for OverFile {
+        fn name(&self) -> String {
+            self.0.name()
+        }
+        fn due(&mut self) -> Due {
+            self.0.due()
+        }
+        fn step(&mut self, slice: &Slice) -> Result<Step, String> {
+            assert!(!slice.over() || Instant::now() >= slice.until, "past its deadline, a run does not stop the step");
+            self.0.step(slice)
+        }
+        fn file(&self) -> Option<std::path::PathBuf> {
+            Some(self.1.clone())
+        }
     }
 
     impl Job for Counter {
@@ -901,7 +994,7 @@ mod tests {
         assert_eq!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_SH) }, 0);
         std::thread::sleep(Duration::from_millis(30));
         assert!(others_run_over(&store), "the other run's shared lock is seen");
-        let slice = Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &STOP, file: Some(store.clone()) };
+        let slice = Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &STOP, file: Some(store.clone()), yields: true };
         assert!(slice.over() && slice.stopper()(), "a step over the file stops");
         drop(other);
         std::thread::sleep(Duration::from_millis(30));
@@ -917,7 +1010,7 @@ mod tests {
         // Utility work runs at once though it says it can wait; `finish_soon` finishes it, and only it.
         let _c = register(Box::new(Counter { name: "test-c one", left: 2, due: idle, qos: Qos::Utility }));
         let _e = register(Box::new(Counter { name: "test-e one", left: 2, due: idle, qos: Qos::Background }));
-        configure(Settings { only: Some(["test-a", "test-b", "test-c", "test-d", "test-e"].map(String::from).to_vec()), ..Settings::default() });
+        configure(Settings { only: Some(["test-a", "test-b", "test-c", "test-d", "test-e", "test-f"].map(String::from).to_vec()), ..Settings::default() });
         let mut ticks = cpu_ticks();
         // Not idle: only the urgent job runs.
         run_due(&settings(), false, &mut ticks, Pass::Scheduler);
@@ -935,6 +1028,28 @@ mod tests {
         assert_eq!((steps("test-d one"), steps("test-e one")), (Some(2), Some(0)));
         let r = run_now();
         assert_eq!(r.iter().find(|r| r.name == "test-a one").map(|r| r.steps), Some(3));
+        // Decision 0190 §9: work over a file that another process's run holds waits for the run until its
+        // deadline, counted from the job's last finish (in any process: `<file>.upkeep`), then runs through it.
+        #[cfg(unix)]
+        {
+            let dir = std::env::temp_dir().join(format!("rerail-upkeep-deadline-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let file = dir.join("store.sqlite");
+            std::fs::write(&file, b"").unwrap();
+            let other = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(&file)).unwrap();
+            other.lock_shared().unwrap();
+            std::thread::sleep(Duration::from_millis(30));
+            let _f = register(Box::new(OverFile(Counter { name: "test-f one", left: 2, due: Due::Urgent, qos: Qos::Background }, file.clone())));
+            run_due(&settings(), true, &mut ticks, Pass::Scheduler);
+            assert_eq!(steps("test-f one"), Some(0), "the file is new: within its deadline, the work waits for the run");
+            std::fs::write(finishes(&file), "test-f one\t0\n").unwrap();
+            run_due(&settings(), true, &mut ticks, Pass::Scheduler);
+            assert_eq!(steps("test-f one"), Some(2), "last finished long ago: past its deadline, it runs through the run");
+            let finished = last_finished(&file, "test-f one").unwrap();
+            assert!(finished.elapsed().unwrap() < Duration::from_secs(60), "its finish is recorded");
+            drop(other);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
         configure(Settings::default());
     }
 }

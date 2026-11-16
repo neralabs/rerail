@@ -1107,12 +1107,151 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Decision 0284: the directory a run writes its outputs into is rerail's own: the observer leaves it out of a
+/// listing, beside the corpus it read.
+#[test]
+fn a_runs_output_directory_is_rerails_own() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.py"), "def f():\n    return 1\n").unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
+    let out = dir.path().join("out");
+    super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    // One output image, no csv (decision 0239): the run wrote its rows there.
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "defs").unwrap_or_default(), [["f"]]);
+    let names: Vec<String> = super::observe(|o| o.listing(dir.path()).unwrap().iter().map(|(n, _)| n.clone()).collect());
+    assert_eq!(names, ["a.py"], "the outputs are not in the listing");
+}
+
+/// The run after a cold one, over what the cold run read unchanged, writes nothing (`RERAIL_WARM`): it names the same
+/// sources and plans, so it records no manifest of its own, and it makes no choice the cold run did not keep. It was
+/// news three ways: the cold run named a source no later run reads (a chunk's tree counts, still written though frames
+/// carry their own statistics since); a nested run reused whole (`reuse::reused`) named none of its plans; and the
+/// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
+/// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
+#[test]
+fn the_run_after_a_cold_one_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
+    let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
+    let base = kept.as_deref().unwrap_or(temp.path());
+    let src = base.join("src");
+    std::fs::create_dir_all(src.join("pkg")).unwrap();
+    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+    std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
+    std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+    // Past the observer's racy window: a file changed within it of its answer is hashed again by the next run, and
+    // its answer recorded again (`RACY_NS`). The claim is of sources older than that; a cold run fast enough to read
+    // them inside it made the warm run's writes (the answers, the manifest, the statistics).
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
+    let store = base.join("store.sqlite");
+    let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
+        let db = rusqlite::Connection::open(&store).unwrap();
+        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
+        rows.sort();
+        rows
+    };
+    // `warm`: the run under `RERAIL_WARM=list`, which ends its process with status 3 if it wrote anything.
+    let run = |warm: bool| {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
+            .env("RERAIL_TAPE_CACHE", &store)
+            .env("RERAIL_CHILD_RUN", &src)
+            .env("RERAIL_CHILD_OUT", base.join("out"));
+        if warm {
+            child.env("RERAIL_WARM", "list");
+        }
+        let output = child.output().unwrap();
+        // Each fault and the line after it, which says what was written.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = stderr.lines().collect();
+        let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines.get(i + 1).map_or(String::new(), |n| format!(" ({})", n.trim())))).collect();
+        assert!(output.status.success(), "the run's process: {}; {}", output.status, faults.join("; "));
+    };
+    run(false);
+    let cold = manifests();
+    assert!(!cold.is_empty(), "the cold run recorded its manifests");
+    run(true);
+    let warm = manifests();
+    let new: Vec<&(Vec<u8>, Vec<u8>)> = warm.iter().filter(|m| !cold.contains(m)).collect();
+    assert!(new.is_empty(), "the warm run named what the cold run named: no manifest of its own ({} new)", new.len());
+}
+
+/// One corpus run in a process of its own, for `the_run_after_a_cold_one_writes_nothing`.
+#[test]
+#[ignore = "a parent test runs it in a process of its own"]
+fn one_corpus_run_for_a_parent() {
+    let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rules.join("bandit-b301-pickle.rr")).unwrap();
+    // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
+    // runs of one session.
+    let runs: usize = std::env::var("RERAIL_CHILD_RUNS").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
+    let _session = std::env::var_os("RERAIL_CHILD_SESSION").map(|dir| super::session::start(std::path::Path::new(&dir)).unwrap());
+    for _ in 0..runs {
+        super::run_all(&[program.as_str()], std::path::Path::new(&src), std::path::Path::new(&out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    }
+}
+
+/// A second run in one process names what the first named: no manifest of its own. Its process-memory answers (the
+/// planning choices kept, the groups of automata kept) skipped the store reads that named their sources, so its
+/// manifest left them out, and the next process's run, naming them again, recorded one more.
+#[test]
+fn a_second_run_in_one_process_records_the_first_runs_manifest() {
+    let temp = tempfile::tempdir().unwrap();
+    let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
+    let base = kept.as_deref().unwrap_or(temp.path());
+    let src = base.join("src");
+    std::fs::create_dir_all(src.join("pkg")).unwrap();
+    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+    std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
+    std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+    let store = base.join("store.sqlite");
+    let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
+        let db = rusqlite::Connection::open(&store).unwrap();
+        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
+        rows.sort();
+        rows
+    };
+    let run = |runs: usize| {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
+            .env("RERAIL_TAPE_CACHE", &store)
+            .env("RERAIL_CHILD_RUN", &src)
+            .env("RERAIL_CHILD_OUT", base.join("out"))
+            .env("RERAIL_CHILD_RUNS", runs.to_string())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "the runs' process: {}", output.status);
+    };
+    // A process of one run: what a run names.
+    run(1);
+    let one = manifests();
+    // A process of two: the second names the same.
+    run(2);
+    let two = manifests();
+    let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
+    assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());
+}
+
+/// Decision 0275: one program handed to its run (`run_read`) is hidden once and kept under its texts' digest, as a
+/// pack is: the hidden program read back is the one hiding makes, and a second combine is the store's.
+#[test]
+fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
+    let src = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+    let read = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
+    let (made, hidden, kept) = super::combine_handed(&read).unwrap();
+    assert_eq!(format!("{made:?}"), format!("{hidden:?}"), "a miss hides the program handed");
+    assert_eq!(kept.map(|k| format!("{k:?}")), Some(format!("{hidden:?}")), "kept under the texts' digest, read back as hidden");
+    let (again, _, _) = super::combine_handed(&read).unwrap();
+    assert_eq!(format!("{again:?}"), format!("{hidden:?}"), "the store's, the second time");
+}
+
 /// Two programs combined with the library they share stratify (decision 0174, E32): PYI062's `literal_down` negates
 /// `typing_subscript`, which reads `value` through `exports`. The node attributes are answered on request over
 /// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
 /// with `value` through that negation, and the pair was refused as not stratifiable.
 #[test]
-#[ignore = "the answer rule for `value` runs in the cross-file part, which binds no batch: since decision 0268 `@rr_node_value` there is an error (open item O-cross-file-answers)"]
 fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));
@@ -1263,6 +1402,8 @@ fn every_switch_lowering_reads_is_classified() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
+    // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
+    let test_module = regex::Regex::new(r"\n#\[cfg\([^\]]*\btest\b[^\]]*\)\]\n(?:pub(?:\([^)]*\))? )?mod tests\b").unwrap();
     let sources = |places: &[&str]| -> Vec<(String, String)> {
         let mut files = Vec::new();
         let mut pending: Vec<std::path::PathBuf> = places.iter().map(|p| root.join(p)).collect();
@@ -1272,7 +1413,13 @@ fn every_switch_lowering_reads_is_classified() {
             if p.is_dir() {
                 pending.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
             } else if p.extension().is_some_and(|e| e == "rs") && !p.file_name().unwrap().to_string_lossy().contains("tests") {
-                files.push((p.strip_prefix(&root).unwrap().display().to_string(), std::fs::read_to_string(&p).unwrap()));
+                // Up to its own test module, as a test file is left out: a test's switches (a child process's) key
+                // no program.
+                let mut text = std::fs::read_to_string(&p).unwrap();
+                if let Some(m) = test_module.find(&text) {
+                    text.truncate(m.start());
+                }
+                files.push((p.strip_prefix(&root).unwrap().display().to_string(), text));
             }
         }
         files

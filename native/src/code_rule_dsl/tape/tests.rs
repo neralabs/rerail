@@ -4214,6 +4214,11 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         // from x)`: no unit; `begin; …; end`: a `block`.
         "CREATE TABLE t (\"a\" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL, b int DEFAULT (current_timestamp));\nCREATE INDEX i ON t (\"a\" DESC, b);\n",
         "SELECT trim(BOTH FROM name) FROM t;\nBEGIN;\nSELECT 1;\nEND;\n",
+        // Backtick names (MySQL, BigQuery): an `identifier` over its two backticks; ``` `` ``` a
+        // backtick inside one. Where `op_other` takes more than the backtick, the operator.
+        "SELECT `a`.`b` AS `c`, `d` `e` FROM `s`.`t` `x` WHERE `a` = 1;\nSELECT `a``b` FROM t;\n",
+        "CREATE TABLE `t` (`id` int NOT NULL, `n` varchar(20));\nINSERT INTO `t` (`a`, `b`) VALUES (1, 2);\n",
+        "SELECT a `| b FROM t;\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Sql).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -4246,6 +4251,11 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         "SELECT a FROM t GROUP BY grouping, a;\n",
         "SELECT a FROM t WHERE ((SELECT 1) > 0 OR b);\n",
         "CREATE TABLE t (a int DEFAULT current_timestamp + 1);\n",
+        // A backtick where an alias may follow is a name's, as tree-sitter's lexer takes it (a
+        // string token wins its tie with `op_other`): not an operator between `a`, `b` and `c`.
+        "SELECT a`b`c FROM t;\n",
+        "SELECT \"a\"`b`\"c\" FROM t;\n",
+        "SELECT `a FROM t;\n",
     ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(sql_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
@@ -4773,5 +4783,35 @@ fn markdown_inline_parse_costs() {
             t * 1e9 / bytes as f64,
             t
         );
+    }
+}
+
+/// Decision 0293: every format a run reads (`RERAIL_TAPE`) answers as the restored records do: kind, field, span,
+/// subtree, parent and children. The Python file is past two of 16z's fixed blocks, so its reads cross them.
+#[test]
+fn every_tape_format_reads_the_document_as_restored() {
+    use super::formats::Format;
+    use rerail_tape_format::f16::Z;
+    use rerail_tape_format::tape::{Tape, children};
+    let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
+    let (_, doc, _, _) = fixture(&source, GrammarDialect::Python);
+    let n = doc.transducer_len();
+    assert!(n > 2 * Z, "{n} nodes");
+    for (format, name) in [(Format::F15, "15"), (Format::F16, "16"), (Format::F16Z, "16z")] {
+        let t = doc.tape_in(format);
+        assert_eq!(t.format(), name, "Python has format 16's table");
+        rerail_tape_format::with_tape!(t, |t| {
+            assert_eq!(t.len(), n);
+            for i in 0..n {
+                let node = i as u32;
+                let e = t.table().entry(t.code(i));
+                assert_eq!((e.kind, e.field), (doc.transducer_kind(node), doc.transducer_field(node)), "{name}: code of {i}");
+                let span = doc.transducer_span(node);
+                assert_eq!((t.start(i), t.end(i)), (span.start as u64, span.end as u64), "{name}: span of {i}");
+                assert_eq!(t.subtree_end(i), doc.transducer_descendants(node).end as usize, "{name}: subtree of {i}");
+                assert_eq!(t.parent(i), doc.transducer_parent(node).map(|p| p as usize), "{name}: parent of {i}");
+                assert_eq!(children(&t, i).collect::<Vec<_>>(), doc.transducer_children(node).map(|c| c as usize).collect::<Vec<_>>(), "{name}: children of {i}");
+            }
+        });
     }
 }

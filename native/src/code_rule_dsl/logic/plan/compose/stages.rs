@@ -97,7 +97,7 @@ fn simplify(p: &mut Placed, db: &Connection, inputs: &mut Inputs, resident: &mut
             by_head.entry(head(p, k)).or_default().push(k);
         }
         let mut quiet = Vec::new();
-        for scc in p.components()? {
+        for scc in p.components()?.iter() {
             if scc.len()!=1 { continue; }
             let rel=scc.iter().next().unwrap();
             if f.is_input(rel) || f.native(rel).is_some() || f.has_facts(rel) { continue; }
@@ -165,6 +165,7 @@ fn same_term(v: &Version, x: TermRef<'_>, y: TermRef<'_>) -> bool {
         (TermRef::Var(s), TermRef::Var(t)) => s == t,
         (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
         (TermRef::Int(i), TermRef::Int(j)) => i == j,
+        (TermRef::Branded(a), TermRef::Branded(b)) => a == b,
         (TermRef::Str(a), TermRef::Str(b)) => v.text(a) == v.text(b),
         (TermRef::Call(f, xs), TermRef::Call(g, ys)) => v.text(f) == v.text(g) && same_terms(v, xs, ys),
         _ => false,

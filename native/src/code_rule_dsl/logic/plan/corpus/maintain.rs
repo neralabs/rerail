@@ -108,10 +108,10 @@ pub(in crate::code_rule_dsl) fn input_views(prog: &front::Program) -> BTreeMap<S
                 return None;
             }
             let head: BTreeSet<&str> = rule.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
-            let terms_ok = rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_)));
+            let terms_ok = rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Branded(_) | Term::Str(_)));
             let one_to_one = a.args.iter().all(|t| match t {
                 Term::Var(v) => head.contains(v.as_str()),
-                Term::Int(_) | Term::Str(_) => true,
+                Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
                 _ => false,
             });
             (terms_ok && one_to_one).then(|| (rel.to_owned(), (*rule).clone()))
@@ -168,7 +168,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     };
     let f = Fields::of(&p).ok_or_else(|| Error::Plan("the cut program has no image".into()))?;
     let gates = match &cross.version {
-        Some(v) if !cross.tree_maintained() => crate::code_rule_dsl::logic::program_image::About::of(v).gates > 0,
+        Some(v) if !cross.tree_maintained() => crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(v).map_err(Error::Plan)?.gates > 0,
         _ => !cross.program.gates.is_empty(),
     };
     let src = match of_version {
@@ -351,7 +351,7 @@ impl<'v> Named<'v> {
     }
     /// Whether its (named) head is of variables and constants only.
     fn plain_head(&self) -> bool {
-        self.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Call(..)))
+        self.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) | TermRef::Call(..)))
     }
 }
 
@@ -362,6 +362,7 @@ fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Wild => T::Wild,
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
     }
@@ -504,7 +505,7 @@ fn head_ir(src: &Part<'_>, ir: &Ir) -> String {
 /// rule unguarded.
 fn insert_ir(rules: &mut Vec<Ir>, n: &Named<'_>, k: usize, h: &str, body: Vec<L>, gone: &str) {
     let head = H::Named(named(h, "ins"));
-    if !n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Call(..))) {
+    if !n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) | TermRef::Call(..))) {
         rules.push(Ir::Rule { src: Some(k), head, body });
         return;
     }
@@ -561,10 +562,10 @@ fn input_views_over(src: &Part<'_>) -> BTreeMap<String, usize> {
                 return None;
             }
             let head: BTreeSet<_> = n.r.head().args().filter_map(|t| t.var()).collect();
-            let terms_ok = n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_)));
+            let terms_ok = n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_)));
             let one_to_one = a.args().all(|t| match t {
                 TermRef::Var(s) => head.contains(&s),
-                TermRef::Int(_) | TermRef::Str(_) => true,
+                TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
                 _ => false,
             });
             (terms_ok && one_to_one).then(|| (rel.to_owned(), *k))

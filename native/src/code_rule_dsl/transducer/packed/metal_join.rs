@@ -237,6 +237,219 @@ impl Stage {
     }
 }
 
+/// The chunk views' kernel (decision 0289 §2): the chunk's structures as `rerail-blocks` generates them, then
+/// `view_expand`, which makes each row as `Viewed::value_at` does.
+fn chunk_views_source() -> String {
+    let mut s = String::from("#include <metal_stdlib>\nusing namespace metal;\n");
+    s += &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::msl();
+    s += CHUNK_VIEWS;
+    s
+}
+
+const CHUNK_VIEWS: &str = r#"
+constant uint CH_NONE = 0xffffffffu;
+// A span's items: its own address plus its offset (`rerail_blocks::Span`).
+template <typename T> inline device const T* items(device const Span& s) { return (device const T*)((device const char*)&s + s.off); }
+
+inline uint view_start(device const ChunkDoc& d, uint view) {
+    return view == 1u ? d.child_row : (view == 2u ? d.field_row : d.node_row);
+}
+inline long global_of(device const ChunkDoc& d, uint l) {
+    uint low = d.preorder != 0u ? l : items<uint>(d.low)[l];
+    return long(ulong(d.key) << 32 | ulong(low));
+}
+// The projection's parent (`Projected::parent`): a node left out of it has the root for parent.
+inline uint parent_of(device const ChunkDoc& d, uint l) {
+    uint id = items<uint>(d.core)[l];
+    uint p = items<uint>(d.parent)[id];
+    uint q = p == CH_NONE ? CH_NONE : items<uint>(d.local)[p];
+    return (q == CH_NONE && l != 0u) ? 0u : q;
+}
+// The kind column (`Dialect::kind`): the canonical code's atom.
+inline long kind_of(device const ChunkDoc& d, uint id) {
+    uint code = items<uint>(d.kind)[id] % 1024u;
+    if (code == 0u) return long(d.tag * 1024u);
+    uint c = code < uint(d.canonical.len) ? uint(items<ushort>(d.canonical)[code]) : code;
+    return long(d.tag * 1024u + (c == 0xffffu ? 0u : c));
+}
+
+// A node's or span's id (`Projected::global`): past the locals with ids by definition, a span's (`granules::span_low`).
+inline long loc_global(device const ChunkDoc& d, uint l) {
+    uint low;
+    if (d.preorder != 0u) {
+        low = l;
+    } else if (l < uint(d.low.len)) {
+        low = items<uint>(d.low)[l];
+    } else {
+        uint i = l - uint(d.low.len);
+        uint slot = (GR_SLOTS - 1u) - min(i >> GR_INDEX_BITS, GR_SPAN_SLOTS - 1u);
+        low = slot << GR_INDEX_BITS | (i & ((1u << GR_INDEX_BITS) - 1u));
+    }
+    return long(ulong(d.key) << 32 | ulong(low));
+}
+// The lines starting at or before byte `at` (`core_rr::Lines::line`, before its `max(1)`).
+inline uint line_of(device const ChunkDoc& d, uint at) {
+    device const uint* st = items<uint>(d.lines);
+    uint lo = 0u, hi = uint(d.lines.len);
+    while (lo < hi) {
+        uint m = (lo + hi) / 2u;
+        if (st[m] <= at) lo = m + 1u; else hi = m;
+    }
+    return lo;
+}
+
+// The document holding node row `row` (of `node`): the last whose rows start at or before it.
+inline uint doc_of_node(device const ChunkDoc* docs, uint ndocs, uint row) {
+    uint lo = 0u, hi = ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (docs[m].node_row <= row) lo = m; else hi = m;
+    }
+    return lo;
+}
+
+// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, an axis's pairs' offset (else 0),
+// then each column's index.
+kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[buffer(1)]], constant uint* p [[buffer(2)]],
+                        uint r [[thread_position_in_grid]]) {
+    uint n = p[2];
+    if (r >= n) return;
+    device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
+    device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
+    uint view = p[1];
+    if (view == 4u) {
+        // An axis read whole (`Within`): a pair of node rows, inner << 32 | outer; each column the node's id.
+        ulong pair = ((device const ulong*)(B + p[4]))[r];
+        for (uint c = 0u; c < p[3]; c++) {
+            uint row = p[5 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
+            device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, row)];
+            out[ulong(c) * n + r] = global_of(d, row - d.node_row);
+        }
+        return;
+    }
+    if (view >= 5u) {
+        // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
+        uint lo = 0u, hi = root->ndocs;
+        while (hi - lo > 1u) {
+            uint m = (lo + hi) / 2u;
+            if (docs[m].loc_row <= r) lo = m; else hi = m;
+        }
+        device const ChunkDoc& d = docs[lo];
+        uint l = r - d.loc_row;
+        uint s, e;
+        if (l < d.nodes) {
+            uint id = items<uint>(d.core)[l];
+            s = items<uint>(d.start)[id];
+            e = items<uint>(d.end)[id];
+        } else {
+            s = items<uint>(d.spans)[2u * (l - d.nodes)];
+            e = items<uint>(d.spans)[2u * (l - d.nodes) + 1u];
+        }
+        for (uint c = 0u; c < p[3]; c++) {
+            long v;
+            if (p[5 + c] == 0u) {
+                v = loc_global(d, l);
+            } else if (view == 8u) {
+                v = long(d.key);
+            } else {
+                uint line = max(line_of(d, s), 1u);
+                if (view == 5u) v = long(line);
+                else if (view == 6u) v = long(e > s ? max(line_of(d, e - 1u), 1u) : line);
+                else v = long(s - items<uint>(d.lines)[line - 1u]);
+            }
+            out[ulong(c) * n + r] = v;
+        }
+        return;
+    }
+    // The last document whose rows start at or before `r` holds it (an empty one starts where the next does).
+    uint lo = 0u, hi = root->ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (view_start(docs[m], view) <= r) lo = m; else hi = m;
+    }
+    device const ChunkDoc& d = docs[lo];
+    uint i = r - view_start(d, view);
+    uint l = view == 1u ? i + 1u : (view == 2u ? items<uint>(d.fielded)[i] : i);
+    uint id = items<uint>(d.core)[l];
+    for (uint c = 0u; c < p[3]; c++) {
+        uint col = p[5 + c];
+        long v;
+        if ((view == 0u || view == 3u) && col == 0u) {
+            v = long(d.key);
+        } else if (view == 3u && col == 1u) {
+            v = long(id);
+        } else if (view == 0u && col == 2u) {
+            v = kind_of(d, id);
+        } else if (view == 0u && col == 3u) {
+            v = long(items<uint>(d.start)[id]);
+        } else if (view == 0u && col == 4u) {
+            v = long(items<uint>(d.end)[id]);
+        } else if ((view == 1u || view == 2u) && col == 0u) {
+            uint q = parent_of(d, l);
+            v = q == CH_NONE ? -1 : global_of(d, q);
+        } else if (view == 1u && col == 2u) {
+            // `child`'s columns are parent, child, index (`Viewed::columns`).
+            v = long(items<uint>(d.ord)[l]);
+        } else if (view == 2u && col == 1u) {
+            v = long(d.tag << 16 | uint(items<ushort>(d.field)[id]));
+        } else {
+            v = global_of(d, l);
+        }
+        out[ulong(c) * n + r] = v;
+    }
+}
+
+// A kind-set axis's batch solve in the chunk (decision 0289 §2, `Within::solved_in_chunk`), a thread per node row.
+// p: the root's offset, the node rows, the members' offset (0: every kind is one), 1 for every ancestor in the set
+// (`inside`, containment) or 0 for the nearest. The climb is bounded by the document's nodes.
+inline bool axis_member(device const char* B, uint bits_at, device const ChunkDoc& d, uint l) {
+    if (bits_at == 0u) return true;
+    uint at = d.tag * 1024u + items<uint>(d.kind)[items<uint>(d.core)[l]] % 1024u;
+    return ((((device const uint*)(B + bits_at))[at >> 5] >> (at & 31u)) & 1u) != 0u;
+}
+
+// Each node row's rows (its ancestors in the set), into `start`; the extra value past the last row is 0, so the
+// scan after leaves the total there.
+kernel void axis_count(device const char* B [[buffer(0)]], device uint* start [[buffer(1)]], constant uint* p [[buffer(2)]],
+                       uint v [[thread_position_in_grid]]) {
+    uint n = p[1];
+    if (v > n) return;
+    if (v == n) { start[v] = 0u; return; }
+    device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
+    device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
+    device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
+    uint count = 0u;
+    uint up = parent_of(d, v - d.node_row);
+    for (uint k = 0u; k < d.nodes && up != CH_NONE; k++) {
+        if (axis_member(B, p[2], d, up)) {
+            count++;
+            if (p[3] == 0u) break;
+        }
+        up = parent_of(d, up);
+    }
+    start[v] = count;
+}
+
+// Each node row's rows from its start (the scanned counts): inner << 32 | outer, nearest first. p[4] is the rows
+// the pairs' space holds: when the total (`start[n]`) is more, nothing is written, and the host writes again.
+kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device ulong* pairs [[buffer(2)]],
+                       constant uint* p [[buffer(3)]], uint v [[thread_position_in_grid]]) {
+    if (v >= p[1] || start[p[1]] > p[4]) return;
+    device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
+    device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
+    device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
+    uint at = start[v];
+    uint up = parent_of(d, v - d.node_row);
+    for (uint k = 0u; k < d.nodes && up != CH_NONE; k++) {
+        if (axis_member(B, p[2], d, up)) {
+            pairs[at++] = ulong(v) << 32 | ulong(d.node_row + up);
+            if (p[3] == 0u) break;
+        }
+        up = parent_of(d, up);
+    }
+}
+"#;
+
 const SOURCE: &str = r#"#include <metal_stdlib>
 using namespace metal;
 
@@ -1532,6 +1745,86 @@ pub(in crate::code_rule_dsl) fn hash_keys(kv: &[i64], mask: u32) -> u32 {
     (h as u32) & mask
 }
 
+/// A kind-set axis's batch solve on the device, written into `chunk` (decision 0289 §2, `facts::nearest::ChunkAxis`):
+/// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written,
+/// in one submission. The pairs' space is sized before the count: a nearest axis has at most a row per node, so its
+/// bound is exact; containment's is `INSIDE_ROWS` a node, and the rare batch past it writes again once its total is
+/// read. The space past the total is given back to the block. The starts and the pairs are page-aligned in the
+/// block, each bound as a buffer of its own with no copy; the block reserves address space, so the bound's pages
+/// the device never writes are never memory.
+pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, bits: Option<&[u32]>, inside: bool)
+                     -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+    axis_in_chunk_bounded(chunk, bits, inside, INSIDE_ROWS)
+}
+
+/// Containment's rows a node that the pairs' space is sized for before the count.
+const INSIDE_ROWS: usize = 8;
+
+/// `axis_in_chunk`, with containment's space sized for `inside_rows` a node (a test makes it 0, to write again).
+pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk,
+                                                      bits: Option<&[u32]>, inside: bool, inside_rows: usize)
+                                                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+    use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
+    const PAGE: usize = 16384;
+    let b = &chunk.block;
+    // SAFETY: the chunk's root, which `device_chunk::build` wrote.
+    let n = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).nodes } as usize;
+    let full = || "the chunk block cannot hold the axis".to_string();
+    let bits_at = match bits {
+        Some(words) => {
+            let p: *mut u32 = b.try_alloc_t(words.len()).ok_or_else(full)?;
+            // SAFETY: just allocated for `words.len()` values.
+            unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), p, words.len()) };
+            b.offset_of(p)
+        }
+        None => 0,
+    };
+    let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
+    let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
+    let cap = if inside { inside_rows * n } else { n }.min(u32::MAX as usize);
+    let cap_bytes = (8 * cap).max(8).next_multiple_of(PAGE);
+    let pairs_at = b.try_alloc(cap_bytes, PAGE).ok_or_else(full)?;
+    let device = rerail_accel::gpu::join::device()?;
+    let whole = b.gpu_buffer(device);
+    let part = |at: usize, bytes: usize| {
+        device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(at) as *const std::ffi::c_void, bytes as u64, metal::MTLResourceOptions::StorageModeShared, None)
+    };
+    let starts = part(start_at, start_bytes);
+    let pairs = part(pairs_at, cap_bytes);
+    let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
+    let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
+    let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
+    let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), cap as u32];
+    let scan = Scan::owned(n + 1)?;
+    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+    let pass = batch.pass(17).map_err(|e| format!("{e:?}"))?;
+    pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
+    scan.encode(pass, &starts)?;
+    if n > 0 {
+        pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
+    }
+    batch.finish().map_err(|e| format!("{e:?}"))?;
+    // SAFETY: the scan completed: its last value is the total.
+    let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
+    if len <= cap {
+        b.shrink_last(pairs_at, cap_bytes, (8 * len).max(8).next_multiple_of(PAGE));
+        return Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len });
+    }
+    // Past the bound: the write was skipped, and is made again into space of the total's size.
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("containment past {inside_rows} rows a node: written again"));
+    b.shrink_last(pairs_at, cap_bytes, 0);
+    let pairs_bytes = (8 * len).next_multiple_of(PAGE);
+    let pairs_at = b.try_alloc(pairs_bytes, PAGE).ok_or_else(full)?;
+    let pairs = part(pairs_at, pairs_bytes);
+    let whole = b.gpu_buffer(device);
+    let p = [p[0], p[1], p[2], p[3], len as u32];
+    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+    let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+    pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
+    batch.finish().map_err(|e| format!("{e:?}"))?;
+    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len })
+}
+
 /// A relation's columns on the device: `rows` 64-bit values each, column-major.
 pub(in crate::code_rule_dsl) struct DevRel {
     buffer: Held,
@@ -1954,6 +2247,21 @@ impl Batch {
         let parts = encode_sort(pass, &words.buffer, Width::W32, bits, n)?;
         self.keep.push(words);
         Ok(DevIndex { parts, mask, rows: n })
+    }
+
+    /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
+    /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
+    /// `pairs`: an axis's pairs' offset in the block (`device_chunk::VIEW_AXIS`), else 0.
+    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
+        let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
+        let pass = self.pass(1)?;
+        let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
+        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, at(pairs)?];
+        p.extend(cols.iter().map(|&c| c as u32));
+        if out.rows > 0 {
+            pass.run(&expand, &[block, &out.buffer.buffer], &p, &[], groups(out.rows));
+        }
+        Ok(())
     }
 
     /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index): count, scan,
