@@ -243,6 +243,21 @@ type ByteRange = { start: number; end: number };
 type ReportBase = Pick<CodeRuleEdit, "previousText" | "previousReadError">;
 /** The nested checkouts a walk skips (judged by their own rules), and the ones it reached. */
 type NestedCheckoutWalk = { readonly pruned: ReadonlySet<string>; readonly reached: string[] };
+/** One `#runScopeAudit`: what it audits and how, and what it has gathered so far. */
+type ScopeAuditRun = {
+  readonly scope: "repository" | "touched-files";
+  readonly mode: AuditMode;
+  readonly paths: string[];
+  readonly generatedEdit: boolean;
+  readonly revision: number;
+  readonly startedAt: number;
+  readonly failures: AuditFailure[];
+  readonly nested: NestedCheckoutWalk;
+  auditId?: string | undefined;
+};
+
+/** The audit ids an audit that may not have started returns. */
+const startedAudits = (auditId: string | undefined): readonly string[] => (auditId === undefined ? [] : [auditId]);
 /** One audit walk's budget and what it has read; `facts` holds each directory's nearest `package.json` and server graphs. */
 type ScopeAuditState = {
   bytes: number;
@@ -951,26 +966,29 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     options: { scope: "repository" | "touched-files"; mode: AuditMode; paths?: string[]; audit?: RepositoryAuditHooks },
   ): Promise<readonly string[]> {
     if (sessionId !== this.#sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
-    const paths = options.paths ?? [];
-    if (options.scope === "repository" && paths.length > 0)
-      throw new Error("Repository scope always covers the full repository");
-    if (options.scope === "touched-files" && paths.length === 0)
-      throw new Error("Touched-files policy scan requires paths");
-    if (options.scope === "repository") {
-      if (options.audit !== undefined && !options.audit.claim(this.#workspaceRoot, this.catalogRevision())) return [];
-      const { auditId } = await this.auditRepository(sessionId, options.mode);
-      options.audit?.finish(this.#workspaceRoot, auditId);
-      return auditId === undefined ? [] : [auditId];
-    }
-    const scope = paths.map((path) => {
+    if (options.scope === "repository") return await this.#scanRepository(sessionId, options);
+    const task = this.#runScopeAudit("touched-files", options.mode, this.#scanPaths(options.paths), false, [], "scan");
+    this.#trackAudit(task);
+    return startedAudits(await task);
+  }
+
+  /** `audit` of the whole checkout, once its `audit` hooks (the first repository audit's) claim it. */
+  async #scanRepository(sessionId: string, options: { mode: AuditMode; paths?: string[]; audit?: RepositoryAuditHooks }): Promise<readonly string[]> {
+    if ((options.paths ?? []).length > 0) throw new Error("Repository scope always covers the full repository");
+    if (options.audit !== undefined && !options.audit.claim(this.#workspaceRoot, this.catalogRevision())) return [];
+    const { auditId } = await this.auditRepository(sessionId, options.mode);
+    options.audit?.finish(this.#workspaceRoot, auditId);
+    return startedAudits(auditId);
+  }
+
+  /** A touched-files scan's paths, relative to the checkout; an empty list, or a path outside the checkout, is refused. */
+  #scanPaths(paths: readonly string[] | undefined): string[] {
+    if (paths === undefined || paths.length === 0) throw new Error("Touched-files policy scan requires paths");
+    return paths.map((path) => {
       const absolute = resolve(this.#workspaceRoot, path);
       if (!withinCheckout(this.#workspaceRoot, absolute)) throw new Error("Policy scan path escapes workspace");
       return relative(this.#workspaceRoot, absolute).split(sep).join("/");
     });
-    const task = this.#runScopeAudit(options.scope, options.mode, scope, false, [], "scan");
-    this.#trackAudit(task);
-    const auditId = await task;
-    return auditId === undefined ? [] : [auditId];
   }
 
   /**
@@ -1394,48 +1412,58 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   ): Promise<string | undefined> {
     const startedAt = performance.now();
     this.refreshCodeRules();
-    const revision = this.#revision;
-    let auditId: string | undefined;
-    const failures: AuditFailure[] = [];
+    const run: ScopeAuditRun = {
+      scope, mode, paths, generatedEdit, revision: this.#revision, startedAt, failures: [],
+      nested: { pruned: new Set(this.#nestedCheckouts()), reached },
+    };
     let workspace: NativeCodeRuleDslWorkspace | undefined;
-    const nested: NestedCheckoutWalk = { pruned: new Set(this.#nestedCheckouts()), reached };
     try {
       await yieldToHost();
-      if (this.#closing) return auditId;
+      if (this.#closing) return undefined;
       const prepared = this.#prepareWorkspace();
       workspace = prepared.workspace;
-      auditId = this.#startAudit(scope, mode, revision, paths, prepared, undefined, origin);
-      const indexed = scope === "repository" && (await prepared.storage);
-      const indexStartedAt = performance.now();
-      const walked = indexed
-        ? await this.#indexRepository(workspace, auditId, failures, nested)
-        : await this.#walkAuditSources(workspace, scope, auditId, paths, failures, nested);
-      const indexMilliseconds = performance.now() - indexStartedAt;
-      if (this.#closing) return auditId;
-      const summary = await this.#finishScopeAudit({
-        workspace,
-        auditId,
-        revision,
-        scope,
-        mode,
-        sourcePaths: walked.sourcePaths,
-        failures,
-        stopped: walked.stopped,
-        generatedEdit,
-        indexed,
-      });
-      if (scope === "repository" && summary !== undefined)
-        this.#logRepositoryAudit(summary.status, startedAt, indexMilliseconds, summary.resultPagesMilliseconds, walked.files, summary.violations, summary.failures);
-      return auditId;
+      run.auditId = this.#startAudit(scope, mode, run.revision, paths, prepared, undefined, origin);
+      await this.#evaluateScopeAudit(run, prepared);
     } catch (error) {
-      const all = [...failures, failure("scan", "adapter-error", errorMessage(error), undefined, "scan")];
-      if (scope === "repository") this.#logRepositoryAudit("failed", startedAt, 0, 0, 0, 0, all.length);
-      const listed = auditFailureCap(scope)(all);
-      this.#finishAudit(auditId, "failed", [], listed, all.length - listed.length);
-      return auditId;
+      this.#failScopeAudit(run, error);
     } finally {
       if (workspace !== undefined) this.#disposeWorkspace(workspace);
     }
+    return run.auditId;
+  }
+
+  /** Reads `run`'s files, evaluates them and records the result, unless the evaluator closes meanwhile. */
+  async #evaluateScopeAudit(run: ScopeAuditRun, prepared: PreparedWorkspace): Promise<void> {
+    const { workspace } = prepared;
+    const indexed = run.scope === "repository" && (await prepared.storage);
+    const indexStartedAt = performance.now();
+    const walked = indexed
+      ? await this.#indexRepository(workspace, run.auditId, run.failures, run.nested)
+      : await this.#walkAuditSources(workspace, run.scope, run.auditId, run.paths, run.failures, run.nested);
+    const indexMilliseconds = performance.now() - indexStartedAt;
+    if (this.#closing) return;
+    const summary = await this.#finishScopeAudit({
+      workspace,
+      auditId: run.auditId,
+      revision: run.revision,
+      scope: run.scope,
+      mode: run.mode,
+      sourcePaths: walked.sourcePaths,
+      failures: run.failures,
+      stopped: walked.stopped,
+      generatedEdit: run.generatedEdit,
+      indexed,
+    });
+    if (run.scope === "repository" && summary !== undefined)
+      this.#logRepositoryAudit(summary.status, run.startedAt, indexMilliseconds, summary.resultPagesMilliseconds, walked.files, summary.violations, summary.failures);
+  }
+
+  /** Records `run` failed for `error`, with the failures it gathered first. */
+  #failScopeAudit(run: ScopeAuditRun, error: unknown): void {
+    const all = [...run.failures, failure("scan", "adapter-error", errorMessage(error), undefined, "scan")];
+    if (run.scope === "repository") this.#logRepositoryAudit("failed", run.startedAt, 0, 0, 0, 0, all.length);
+    const listed = auditFailureCap(run.scope)(all);
+    this.#finishAudit(run.auditId, "failed", [], listed, all.length - listed.length);
   }
 
   /** One line per repository audit in the daemon log: where its time went, so a slow audit can be told from a stuck one. */

@@ -256,15 +256,16 @@ function scopedSessions(column: SQLiteColumn, repositoryId: Repository): SQL {
   return repositoryId === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(repositoryId)})`;
 }
 
+/** The `AuditQuery` filters that match one column exactly, and their columns. */
+const EXACT_FILTERS = [
+  ["auditId", audits.auditId], ["sessionId", audits.sessionId], ["status", audits.status],
+  ["scope", audits.scope], ["mode", audits.mode], ["origin", audits.origin],
+] as const;
+
 function conditions(query: AuditQuery, repositoryId: Repository): SQL | undefined {
   return and(
     repositoryId === undefined ? undefined : scopedSessions(audits.sessionId, repositoryId),
-    query.auditId === undefined ? undefined : eq(audits.auditId, query.auditId),
-    query.sessionId === undefined ? undefined : eq(audits.sessionId, query.sessionId),
-    query.status === undefined ? undefined : eq(audits.status, query.status),
-    query.scope === undefined ? undefined : eq(audits.scope, query.scope),
-    query.mode === undefined ? undefined : eq(audits.mode, query.mode),
-    query.origin === undefined ? undefined : eq(audits.origin, query.origin),
+    ...EXACT_FILTERS.map(([filter, column]) => (query[filter] === undefined ? undefined : eq(column, query[filter]))),
   );
 }
 

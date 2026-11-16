@@ -153,17 +153,14 @@ const repositoryAuditEntrySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failure"), failure: auditFailureSchema }).strict(),
 ]);
 
+/** `fields` without the ones that are undefined: a query takes an absent filter as no filter, never as `undefined`. */
+function definedOnly<T extends object>(fields: { [K in keyof T]-?: T[K] | undefined }): T {
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as T;
+}
+
 function auditQuery(input: z.infer<typeof auditQuerySchema>): AuditQuery {
-  return {
-    ...(input.auditId === undefined ? {} : { auditId: input.auditId }),
-    ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-    ...(input.status === undefined ? {} : { status: input.status }),
-    ...(input.scope === undefined ? {} : { scope: input.scope }),
-    ...(input.mode === undefined ? {} : { mode: input.mode }),
-    ...(input.origin === undefined ? {} : { origin: input.origin }),
-    ...(input.limit === undefined ? {} : { limit: input.limit }),
-    ...(input.offset === undefined ? {} : { offset: input.offset }),
-  };
+  const { auditId, sessionId, status, scope, mode, origin, limit, offset } = input;
+  return definedOnly<AuditQuery>({ auditId, sessionId, status, scope, mode, origin, limit, offset });
 }
 function repositoryAuditQuery(input: z.infer<typeof repositoryAuditQuerySchema>): RepositoryAuditQuery {
   return {

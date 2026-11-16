@@ -160,29 +160,39 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
   {
     // An audit's `origin`: `ongoing`, or `scan` for one someone asked for, whose violations the dashboard leaves out.
     // The four triggers that derive history from `audits` are dropped, and the DDL right after creates them again
-    // skipping scans. The scans a file already holds are the audits its scan requests and first repository audits
-    // name; each is marked and what was derived from it removed (`SCAN_HISTORY_REPAIR`). No floor: an older build
-    // never reads the column, its inserts take the default, and it creates a trigger only when the trigger is missing,
-    // so it keeps these.
+    // skipping scans. The scans a file already holds are marked where it still names them (`markRecordedScans`). No
+    // floor: an older build never reads the column, its inserts take the default, and it creates a trigger only when
+    // the trigger is missing, so it keeps these.
     id: "audits-origin",
     up(database) {
       for (const trigger of ["audits_history_insert", "audits_history_violations_append", "audits_history_violations_update", "audits_history_rule_set_update"])
         database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
       addColumn(database, "audits", "origin", `text DEFAULT 'ongoing' NOT NULL CONSTRAINT "audits_origin" CHECK("audits"."origin" IN ('ongoing', 'scan'))`);
-      const tables = new Set(database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`).map(row => row.name));
-      if (!tables.has("audits")) return;
-      if (tables.has("audit_requests")) database.run(sql.raw(MARK_REQUESTED_SCANS));
-      if (tables.has("repository_audits")) database.run(sql.raw(MARK_REPOSITORY_AUDIT_SCANS));
-      if (tables.has("audit_violations")) for (const statement of SCAN_HISTORY_REPAIR) database.run(sql.raw(statement));
+      markRecordedScans(database);
     },
   },
 ];
+
+/**
+ * `audits-origin`: marks the scans a file recorded before audits had an origin, and removes what was derived from them
+ * (`SCAN_HISTORY_REPAIR`). Those are the audits its scan requests name (`audit_ids_json`) and the one each checkout's
+ * `repository_audits` row names now. That row keeps one audit id: a scan request finished later, or a retry of an
+ * interrupted or failed first repository audit, replaced it, and the first audit it named stays `ongoing`. Nothing
+ * else tells such an audit apart: an ongoing audit of the repository scope looks the same.
+ */
+function markRecordedScans(database: RerailDatabase): void {
+  const tables = new Set(database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`).map(row => row.name));
+  if (!tables.has("audits")) return;
+  if (tables.has("audit_requests")) database.run(sql.raw(MARK_REQUESTED_SCANS));
+  if (tables.has("repository_audits")) database.run(sql.raw(MARK_REPOSITORY_AUDIT_SCANS));
+  if (tables.has("audit_violations")) for (const statement of SCAN_HISTORY_REPAIR) database.run(sql.raw(statement));
+}
 
 /** `audits-origin`: the audits `rerail scan --session` (an audit request) recorded are scans. */
 const MARK_REQUESTED_SCANS = `UPDATE audits SET origin = 'scan' WHERE audit_id IN (
     SELECT requested.value FROM audit_requests request, json_each(request.audit_ids_json) requested)`;
 
-/** `audits-origin`: the first repository audit of each checkout is a scan. */
+/** `audits-origin`: the first repository audit each checkout's row still names is a scan. */
 const MARK_REPOSITORY_AUDIT_SCANS = `UPDATE audits SET origin = 'scan'
     WHERE audit_id IN (SELECT audit_id FROM repository_audits WHERE audit_id IS NOT NULL)`;
 

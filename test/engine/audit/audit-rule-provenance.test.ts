@@ -18,7 +18,7 @@ import {
 } from "../../../src/engine/storage/rule-provenance-move.js";
 import { tableColumns } from "../../../src/engine/storage/table-probe.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { SqliteAuditStore as MainAuditStore } from "../support/main-audit-store.js";
+import { SqliteAuditStore as MainAuditStore, type MainAuditRecord } from "../support/main-audit-store.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -333,7 +333,7 @@ const OLDER_STEPS = RERAIL_MIGRATIONS.filter(step => step.id !== RULE_PROVENANCE
  * The audits `auditIds` name as an older Rerail sharing the file reads them: `main`'s audit store (its read path, in
  * `main-audit-store.ts`), on the file opened with the older build's steps.
  */
-function readAsOlder(path: string, auditIds: readonly string[]): (AuditRecord | undefined)[] {
+function readAsOlder(path: string, auditIds: readonly string[]): (MainAuditRecord | undefined)[] {
   const older = new MainAuditStore(path, openRerailDatabase(path, { migrations: OLDER_STEPS }));
   try {
     return auditIds.map(auditId => older.get(auditId));
@@ -343,15 +343,18 @@ function readAsOlder(path: string, auditIds: readonly string[]): (AuditRecord | 
 }
 
 /** Each audit's rule provenance as JSON text; undefined for an audit not found. */
-function provenanceTexts(audits: readonly (AuditRecord | undefined)[]): (string | undefined)[] {
+function provenanceTexts(audits: readonly (MainAuditRecord | undefined)[]): (string | undefined)[] {
   return audits.map(audit => audit && JSON.stringify(audit.ruleProvenance));
 }
 
-/** Each audit record without its rule provenance; undefined for an audit not found. */
-function withoutProvenance(audits: readonly (AuditRecord | undefined)[]): (Omit<AuditRecord, "ruleProvenance"> | undefined)[] {
+/**
+ * Each audit record without its rule provenance, and without the `origin` an older Rerail never reads; undefined for
+ * an audit not found.
+ */
+function withoutProvenance(audits: readonly (MainAuditRecord | undefined)[]): (Omit<MainAuditRecord, "ruleProvenance"> | undefined)[] {
   return audits.map(audit => {
     if (audit === undefined) return undefined;
-    const { ruleProvenance: _provenance, ...rest } = audit;
+    const { ruleProvenance: _provenance, origin: _origin, ...rest } = audit as MainAuditRecord & { origin?: unknown };
     return rest;
   });
 }

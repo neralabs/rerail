@@ -121,6 +121,26 @@ describe("remote sink outbox", () => {
     expect(scanned[0]!.violationKey).toBe(ongoing[0]!.violationKey);
   });
 
+  // The update that adds `origin` marks the scans a database already holds, some of them sent already.
+  it("sends again an audit marked a scan after it was sent, and no audit that stays ongoing", async () => {
+    const { sessionId, auditId } = seed();
+    const audits = new SqliteAuditStore(databasePath());
+    const otherId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "touched-files", mode: "steer", revision: 1, catalogRevision: "c1", ruleRevisions: [], paths: ["b.ts"] });
+    audits.finish(otherId, { status: "completed", violations: [] });
+    audits.close();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+
+    const database = new Database(databasePath());
+    database.prepare("UPDATE audits SET origin = 'scan' WHERE audit_id = ?").run(auditId);
+    database.close();
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    // Its violation is keyed and logged as before, so the remote holds it already.
+    expect(sink.requests[1]!.records.map(item => [item.type, item.id, item.origin])).toEqual([["audit", auditId, "scan"]]);
+  });
+
   it("names this machine by the remote's --label when it has one", async () => {
     seed();
     addRemote({ url: sink.url, token: "test-token", content: true, label: "Jeff's laptop" }, home);

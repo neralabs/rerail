@@ -683,7 +683,7 @@ describe("mechanical code rule regressions", () => {
       const [repositoryScan] = await enforcer.audit("audit-origin", { scope: "repository", mode: "log" });
       const [pathScan] = await enforcer.audit("audit-origin", { scope: "touched-files", mode: "log", paths: ["api/a.py"] });
       expect(ongoing.length).toBeGreaterThan(0);
-      expect(ongoing.map(auditId => audits.get(auditId)?.origin ?? "ongoing")).toEqual(ongoing.map(() => "ongoing"));
+      expect(ongoing.map(auditId => audits.get(auditId)?.origin)).toEqual(ongoing.map(() => "ongoing"));
       expect([repositoryScan, pathScan].map(auditId => audits.get(auditId!)?.origin)).toEqual(["scan", "scan"]);
       expect(audits.get(pathScan!)?.result?.violations).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
     } finally { await enforcer.close(); }
