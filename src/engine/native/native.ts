@@ -300,6 +300,42 @@ export interface NativeExclusiveFileLock {
   release(): void;
 }
 
+/** What changed under one watched root since the last `take` (`NativeTreeWatcher`). */
+export interface NativeTreeNotice {
+  root: string;
+  /** Changed entries (content, size, attributes), relative `/`-paths. Capped (see `lost`). */
+  changed: string[];
+  /** Created, deleted or renamed entries, relative `/`-paths. Capped (see `lost`). */
+  renamed: string[];
+  /** Notices were dropped (an OS overflow, or more than 16,384 entries between two takes): read the whole root. */
+  lost: boolean;
+  /**
+   * The watch stopped (the root or a folder above it renamed, moved or deleted, a Windows oplock broke, a watch error).
+   * The root is no longer watched: read it whole and watch it again.
+   */
+  ended: boolean;
+}
+
+/**
+ * The engine's file-system event bus: one OS watch per root (FSEvents, inotify per folder, ReadDirectoryChangesW with a
+ * read-handle oplock), whose notices wait in the engine until `take`. Nothing calls into JavaScript.
+ */
+export interface NativeTreeWatcher {
+  /**
+   * Starts watching `root` (an absolute physical path). `folders`: the folders the last read walked into, relative
+   * `/`-paths with `""` for the root; only the Linux adapter uses them. False when this root cannot be watched here (a
+   * network or remote file system, a WSL path, past Linux's watch budget, Windows with no oplock, an OS with no
+   * adapter). Watching a root already watched replaces its folder set.
+   */
+  watch(root: string, folders: string[]): boolean;
+  /** Stops watching `root` and releases every handle on it, so `git worktree remove` and renames work at once. */
+  unwatch(root: string): void;
+  /** Takes every notice since the last take, at most one per root. Never blocks on the OS. */
+  take(): NativeTreeNotice[];
+  /** Stops the adapter's thread and releases every handle. Idempotent; a later `watch` is false. */
+  close(): void;
+}
+
 export interface NativeBinding {
   /** The message of a workspace task's failure while another apply holds the engine's one slot: pause and call again. */
   readonly WORKSPACE_BUSY: string;
@@ -351,6 +387,8 @@ export interface NativeBinding {
   PackageFactsReader: new (root: string) => NativePackageFactsReader;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
+  /** The file-system event bus; an engine built before it lacks it. */
+  TreeWatcher?: new () => NativeTreeWatcher;
 }
 
 const require = createRequire(import.meta.url);
