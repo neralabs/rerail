@@ -416,8 +416,11 @@ def diagnose(checkout, sizes=True, sibling_cache=None):
     # --- scripts
     r.section("Scripts that set build variables")
     files = run(["git", "ls-files", "*.sh", "*.py", "*.zsh", "*.bash", "scripts/**", "Makefile", "justfile"], checkout).split()
+    # (not inside another checkout under tmp/: a scratch clone's scripts are its own)
+    nested = [os.path.dirname(g) for g in glob.glob(os.path.join(checkout, "tmp", "**", ".git"), recursive=True)]
     files += [os.path.relpath(p, checkout) for p in glob.glob(os.path.join(checkout, "tmp", "**", "*"), recursive=True)
-              if p.endswith((".sh", ".py", ".zsh")) or (os.path.isfile(p) and os.access(p, os.X_OK) and "." not in os.path.basename(p))]
+              if not any(p.startswith(n + os.sep) for n in nested)
+              and (p.endswith((".sh", ".py", ".zsh")) or (os.path.isfile(p) and os.access(p, os.X_OK) and "." not in os.path.basename(p)))]
     hits = []
     for f in sorted(set(files)):
         if f.startswith(("scripts/build/farm/", "scripts/dev/relax/", "target/", "node_modules/")) or "/vendor/" in f \
