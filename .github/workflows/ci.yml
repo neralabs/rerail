@@ -774,7 +774,7 @@ jobs:
         env:
           CARGO_PROFILE_DEV_DEBUG: line-tables-only
           CARGO_INCREMENTAL: "0"
-        run: "cargo test --manifest-path native/Cargo.toml --lib -- --show-output process:: code_rule_dsl::import_target:: tree_watch::"
+        run: "cargo test --manifest-path native/Cargo.toml --lib -- process:: code_rule_dsl::import_target:: tree_watch::"
 
       - name: Build the package
         run: npm run build:js

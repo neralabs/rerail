@@ -4,9 +4,10 @@
 //! A plain handle on a folder makes renaming, moving or deleting it, or any folder above it, fail
 //! ("access denied"). Each handle therefore holds a read-handle oplock on its folder, and the
 //! thread acts on each break as what broke it needs:
-//! - A change among the folder's entries breaks it to none, advisory only: the handle stays, its
-//!   read goes on, and the thread takes the oplock again at once. (In that moment a rename of the
-//!   folder or one above it would fail as it would with no oplock.)
+//! - A change among the folder's entries (a file at its top written, created or deleted, a folder
+//!   at its top changed) breaks it to none: the thread acknowledges the break, which the change
+//!   waits for, and takes the oplock again; the handle and its read go on. (In that moment a
+//!   rename of the folder or one above it would fail as it would with no oplock.)
 //! - A rename or deletion of the folder or one above it breaks its handle part and waits for the
 //!   handle: the thread closes it at once, which lets that go on, and opens the path again
 //!   `REOPEN_DELAY` later. The same folder there (its volume and file id) is watched on and `lost`,
@@ -92,11 +93,31 @@ enum Command {
 /// What the thread's I/O writes into while it is in flight; boxed, so it stays put.
 struct Io {
     read: OVERLAPPED,
+    /// The oplock held: its completion is the oplock's break.
     oplock: OVERLAPPED,
     oplock_in: REQUEST_OPLOCK_INPUT_BUFFER,
     oplock_out: REQUEST_OPLOCK_OUTPUT_BUFFER,
+    /// The acknowledgment of a break to none, which holds no oplock.
+    release: OVERLAPPED,
+    release_in: REQUEST_OPLOCK_INPUT_BUFFER,
+    release_out: REQUEST_OPLOCK_OUTPUT_BUFFER,
     /// `ReadDirectoryChangesW` wants a DWORD-aligned buffer.
     buffer: Vec<u32>,
+}
+
+impl Io {
+    fn new(buffer_words: usize) -> Box<Self> {
+        Box::new(Self {
+            read: OVERLAPPED::default(),
+            oplock: OVERLAPPED::default(),
+            oplock_in: REQUEST_OPLOCK_INPUT_BUFFER::default(),
+            oplock_out: REQUEST_OPLOCK_OUTPUT_BUFFER::default(),
+            release: OVERLAPPED::default(),
+            release_in: REQUEST_OPLOCK_INPUT_BUFFER::default(),
+            release_out: REQUEST_OPLOCK_OUTPUT_BUFFER::default(),
+            buffer: vec![0; buffer_words],
+        })
+    }
 }
 
 /// A folder as the file system knows it: a rename keeps it, a new folder at the path is another.
@@ -106,8 +127,9 @@ struct Identity {
     file: [u8; 16],
 }
 
-/// One root's handle and its two operations: the read and the oplock. Each flag holds while that
-/// operation's completion is still to come, so its OVERLAPPED stays put until then.
+/// One root's handle and its operations: the read, the oplock and the acknowledgment of a break to
+/// none. Each flag holds while that operation's completion is still to come, so its OVERLAPPED
+/// stays put until then.
 struct Watch {
     root: String,
     identity: Identity,
@@ -115,6 +137,7 @@ struct Watch {
     io: Box<Io>,
     reading: bool,
     oplocked: bool,
+    releasing: bool,
     /// When the handle, let go for a rename or deletion, is to be opened again.
     reopen_at: Option<Instant>,
     /// When the handle was opened again, within the last `REOPEN_WINDOW`.
@@ -123,28 +146,22 @@ struct Watch {
 
 impl Watch {
     fn open(root: String, identity: Identity, handle: HANDLE) -> Self {
-        let io = Box::new(Io {
-            read: OVERLAPPED::default(),
-            oplock: OVERLAPPED::default(),
-            oplock_in: REQUEST_OPLOCK_INPUT_BUFFER::default(),
-            oplock_out: REQUEST_OPLOCK_OUTPUT_BUFFER::default(),
-            buffer: vec![0; BUFFER_BYTES / 4],
-        });
         Self {
             root,
             identity,
             handle,
-            io,
+            io: Io::new(BUFFER_BYTES / 4),
             reading: false,
             oplocked: false,
+            releasing: false,
             reopen_at: None,
             reopens: VecDeque::new(),
         }
     }
 
-    /// Whether a completion of either operation is still to come.
+    /// Whether a completion of any operation is still to come.
     fn pending(&self) -> bool {
-        self.reading || self.oplocked
+        self.reading || self.oplocked || self.releasing
     }
 
     fn open_handle(&self) -> bool {
@@ -165,37 +182,45 @@ impl Watch {
     }
 
     /// Requests the oplock at `level` (`flags` `REQUEST_OPLOCK_INPUT_FLAG_REQUEST`) or
-    /// acknowledges its break to `level` (`REQUEST_OPLOCK_INPUT_FLAG_ACK`); true when an oplock
-    /// is then held (its completion is the next break).
+    /// acknowledges its break to `level` (`REQUEST_OPLOCK_INPUT_FLAG_ACK`), which holds it on; true
+    /// when an oplock is then held (its completion is the next break).
     fn oplock(&mut self, flags: u32, level: u32) -> bool {
         let io = &mut *self.io;
-        io.oplock_in = REQUEST_OPLOCK_INPUT_BUFFER {
-            StructureVersion: REQUEST_OPLOCK_CURRENT_VERSION as u16,
-            StructureLength: size_of::<REQUEST_OPLOCK_INPUT_BUFFER>() as u16,
-            RequestedOplockLevel: level,
-            Flags: flags,
-        };
-        io.oplock_out = REQUEST_OPLOCK_OUTPUT_BUFFER {
-            StructureVersion: REQUEST_OPLOCK_CURRENT_VERSION as u16,
-            StructureLength: size_of::<REQUEST_OPLOCK_OUTPUT_BUFFER>() as u16,
-            ..REQUEST_OPLOCK_OUTPUT_BUFFER::default()
-        };
         // SAFETY: the boxed buffers and OVERLAPPED stay put until the completion is dequeued.
         let done = unsafe {
-            DeviceIoControl(
+            request_oplock(
                 self.handle,
-                FSCTL_REQUEST_OPLOCK,
-                (&raw const io.oplock_in).cast(),
-                size_of::<REQUEST_OPLOCK_INPUT_BUFFER>() as u32,
-                (&raw mut io.oplock_out).cast(),
-                size_of::<REQUEST_OPLOCK_OUTPUT_BUFFER>() as u32,
-                std::ptr::null_mut(),
+                flags,
+                level,
+                &mut io.oplock_in,
+                &mut io.oplock_out,
                 &mut io.oplock,
             )
-        } != 0;
+        };
         self.oplocked = completion_comes(done);
         // One that finished at once holds no oplock.
         !done && self.oplocked
+    }
+
+    /// Acknowledges a break to none, which holds no oplock; true when it was taken.
+    fn release(&mut self) -> bool {
+        if self.releasing {
+            return false;
+        }
+        let io = &mut *self.io;
+        // SAFETY: the boxed buffers and OVERLAPPED stay put until the completion is dequeued.
+        let done = unsafe {
+            request_oplock(
+                self.handle,
+                REQUEST_OPLOCK_INPUT_FLAG_ACK,
+                0,
+                &mut io.release_in,
+                &mut io.release_out,
+                &mut io.release,
+            )
+        };
+        self.releasing = completion_comes(done);
+        self.releasing
     }
 
     /// Starts the next read of the tree's changes.
@@ -239,16 +264,7 @@ impl Drop for Watch {
         self.close_handle();
         if self.pending() {
             // The kernel may still write into it; leak it rather than free it under the kernel.
-            std::mem::forget(std::mem::replace(
-                &mut self.io,
-                Box::new(Io {
-                    read: OVERLAPPED::default(),
-                    oplock: OVERLAPPED::default(),
-                    oplock_in: REQUEST_OPLOCK_INPUT_BUFFER::default(),
-                    oplock_out: REQUEST_OPLOCK_OUTPUT_BUFFER::default(),
-                    buffer: Vec::new(),
-                }),
-            ));
+            std::mem::forget(std::mem::replace(&mut self.io, Io::new(0)));
         }
     }
 }
@@ -262,26 +278,70 @@ fn completion_comes(done: bool) -> bool {
     done || unsafe { GetLastError() } == ERROR_IO_PENDING
 }
 
+/// Calls `FSCTL_REQUEST_OPLOCK` on `handle` with `flags` and `level`; whether it finished at once.
+///
+/// # Safety
+///
+/// `input`, `output` and `overlapped` must stay put until the call's completion is dequeued.
+unsafe fn request_oplock(
+    handle: HANDLE,
+    flags: u32,
+    level: u32,
+    input: &mut REQUEST_OPLOCK_INPUT_BUFFER,
+    output: &mut REQUEST_OPLOCK_OUTPUT_BUFFER,
+    overlapped: &mut OVERLAPPED,
+) -> bool {
+    *input = REQUEST_OPLOCK_INPUT_BUFFER {
+        StructureVersion: REQUEST_OPLOCK_CURRENT_VERSION as u16,
+        StructureLength: size_of::<REQUEST_OPLOCK_INPUT_BUFFER>() as u16,
+        RequestedOplockLevel: level,
+        Flags: flags,
+    };
+    *output = REQUEST_OPLOCK_OUTPUT_BUFFER {
+        StructureVersion: REQUEST_OPLOCK_CURRENT_VERSION as u16,
+        StructureLength: size_of::<REQUEST_OPLOCK_OUTPUT_BUFFER>() as u16,
+        ..REQUEST_OPLOCK_OUTPUT_BUFFER::default()
+    };
+    // SAFETY: the caller keeps the buffers and OVERLAPPED put until the completion is dequeued.
+    unsafe {
+        DeviceIoControl(
+            handle,
+            FSCTL_REQUEST_OPLOCK,
+            (&raw const *input).cast(),
+            size_of::<REQUEST_OPLOCK_INPUT_BUFFER>() as u32,
+            (&raw mut *output).cast(),
+            size_of::<REQUEST_OPLOCK_OUTPUT_BUFFER>() as u32,
+            std::ptr::null_mut(),
+            overlapped,
+        ) != 0
+    }
+}
+
 /// What a broken oplock asks of its handle.
 #[derive(Debug, PartialEq, Eq)]
 enum Break {
     /// The handle part stays and the break waits: acknowledge it at this level.
     Acknowledge(u32),
-    /// An advisory break (the folder's entries changed): take the oplock again.
-    Request,
-    /// The handle part goes and the break waits for the handle (the folder or one above it is
-    /// renamed or deleted), or the oplock failed: close the handle.
+    /// The folder's entries changed (a break to none): acknowledge the break if it waits, then
+    /// take the oplock again.
+    Renew { acknowledge: bool },
+    /// The handle part goes, keeping the read part (the folder or one above it is renamed or
+    /// deleted), or the oplock failed: close the handle.
     LetGo,
 }
 
 /// What the oplock's completion with `error` and `out` asks of the handle.
 fn oplock_break(error: u32, out: &REQUEST_OPLOCK_OUTPUT_BUFFER) -> Break {
-    let keeps_handle = out.NewOplockLevel & OPLOCK_LEVEL_CACHE_HANDLE != 0;
+    let level = out.NewOplockLevel;
     let waits = out.Flags & REQUEST_OPLOCK_OUTPUT_FLAG_ACK_REQUIRED != 0;
-    match (error, keeps_handle, waits) {
-        (0, true, true) => Break::Acknowledge(out.NewOplockLevel),
-        (0, _, false) => Break::Request,
-        _ => Break::LetGo,
+    if error != 0 {
+        Break::LetGo
+    } else if level & OPLOCK_LEVEL_CACHE_HANDLE != 0 && waits {
+        Break::Acknowledge(level)
+    } else if level & OPLOCK_LEVEL_CACHE_HANDLE != 0 || level == 0 {
+        Break::Renew { acknowledge: waits }
+    } else {
+        Break::LetGo
     }
 }
 
@@ -485,17 +545,20 @@ impl Loop {
     }
 
     /// One operation of `key` completed. A completion of an operation not in flight (posted by a
-    /// call that failed at once) is dropped: the watch goes only once neither can still come, and
-    /// not while its handle is to be opened again.
+    /// call that failed at once) is dropped: the watch goes only once none can still come, and not
+    /// while its handle is to be opened again. An acknowledgment's completion asks nothing more.
     fn completed(&mut self, key: usize, overlapped: *mut OVERLAPPED, bytes: u32, error: u32) {
         let Some(watch) = self.watches.get_mut(&key) else {
             return;
         };
         let oplock = std::ptr::eq(overlapped, &raw mut watch.io.oplock);
+        let read = std::ptr::eq(overlapped, &raw mut watch.io.read);
         let in_flight = if oplock {
             &mut watch.oplocked
-        } else if std::ptr::eq(overlapped, &raw mut watch.io.read) {
+        } else if read {
             &mut watch.reading
+        } else if std::ptr::eq(overlapped, &raw mut watch.io.release) {
+            &mut watch.releasing
         } else {
             return;
         };
@@ -511,7 +574,10 @@ impl Loop {
         if oplock {
             let kept = match oplock_break(error, &watch.io.oplock_out) {
                 Break::Acknowledge(level) => watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_ACK, level),
-                Break::Request => watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE),
+                Break::Renew { acknowledge } => {
+                    (!acknowledge || watch.release())
+                        && watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE)
+                }
                 Break::LetGo => false,
             };
             if !kept {
@@ -521,7 +587,9 @@ impl Loop {
             }
             return;
         }
-        self.read_completed(key, bytes, error);
+        if read {
+            self.read_completed(key, bytes, error);
+        }
     }
 
     fn read_completed(&mut self, key: usize, bytes: u32, error: u32) {
@@ -870,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    fn a_break_that_waits_for_the_handle_lets_it_go_and_an_advisory_one_keeps_it() {
+    fn a_break_that_takes_the_handle_part_lets_it_go_and_one_to_none_renews_the_oplock() {
         let broken = |new, flags| REQUEST_OPLOCK_OUTPUT_BUFFER {
             OriginalOplockLevel: READ_HANDLE,
             NewOplockLevel: new,
@@ -879,13 +947,19 @@ mod tests {
         };
         let waits = REQUEST_OPLOCK_OUTPUT_FLAG_ACK_REQUIRED;
         // A change among the folder's entries.
-        assert_eq!(oplock_break(0, &broken(0, 0)), Break::Request);
+        assert_eq!(
+            oplock_break(0, &broken(0, waits)),
+            Break::Renew { acknowledge: true }
+        );
+        assert_eq!(
+            oplock_break(0, &broken(0, 0)),
+            Break::Renew { acknowledge: false }
+        );
         // A rename or deletion of the folder or one above it.
         assert_eq!(
             oplock_break(0, &broken(OPLOCK_LEVEL_CACHE_READ, waits)),
             Break::LetGo
         );
-        assert_eq!(oplock_break(0, &broken(0, waits)), Break::LetGo);
         assert_eq!(
             oplock_break(0, &broken(READ_HANDLE, waits)),
             Break::Acknowledge(OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE)
@@ -962,97 +1036,87 @@ mod tests {
         );
     }
 
-    /// What one oplock break carried, or none in `milliseconds`.
-    fn next_break(port: HANDLE, watch: &mut Watch, milliseconds: u32) -> String {
-        let Dequeued::Completion(_, overlapped, _, error) = dequeue(port, milliseconds) else {
-            return "no break".to_owned();
-        };
-        if !std::ptr::eq(overlapped, &raw mut watch.io.oplock) {
-            return "another completion".to_owned();
-        }
-        watch.oplocked = false;
-        let out = &watch.io.oplock_out;
-        format!(
-            "error {error} status {:#x} original {} new {} flags {:#x} access {:#x} share {:#x}",
-            watch.io.oplock.Internal,
-            out.OriginalOplockLevel,
-            out.NewOplockLevel,
-            out.Flags,
-            out.AccessMode,
-            out.ShareMode
-        )
+    /// A watch of `scratch`'s `base/checkout` holding the oplock, its handle on a port of its own.
+    fn oplocked(scratch: &Scratch) -> (HANDLE, Watch) {
+        let root = scratch.path("base/checkout").to_string_lossy().into_owned();
+        // SAFETY: a new port, closed by the caller.
+        let port =
+            unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1) };
+        let (handle, identity) = open_directory(&root).expect("open the root");
+        let mut watch = Watch::open(root, identity, handle);
+        // SAFETY: the watch's handle, bound to the port above.
+        unsafe { CreateIoCompletionPort(handle, port, 1, 0) };
+        assert!(watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE));
+        (port, watch)
     }
 
-    /// Prints what the oplock break of each change carries (CI's log shows it).
-    #[test]
-    fn what_an_oplock_break_carries() {
-        type Change = fn(&Scratch) -> std::io::Result<()>;
-        let changes: [(&str, Change); 7] = [
-            ("nothing", |_| Ok(())),
-            ("write a.txt", |scratch| {
-                std::fs::write(scratch.path("base/checkout/a.txt"), "b")
-            }),
-            ("write src/a.txt", |scratch| {
-                std::fs::write(scratch.path("base/checkout/src/a.txt"), "b")
-            }),
-            ("write src/deep/a.ts", |scratch| {
-                std::fs::write(scratch.path("base/checkout/src/deep/a.ts"), "b")
-            }),
-            ("rename the root's parent", |scratch| {
-                std::fs::rename(scratch.path("base"), scratch.path("moved"))
-            }),
-            ("rename the root", |scratch| {
-                std::fs::rename(scratch.path("base/checkout"), scratch.path("base/moved"))
-            }),
-            ("delete the root", |scratch| {
-                std::fs::remove_dir_all(scratch.path("base/checkout"))
-            }),
-        ];
-        for (name, change) in changes {
-            let scratch = Scratch::new("oplock-break");
-            for file in [
-                "base/checkout/a.txt",
-                "base/checkout/src/a.txt",
-                "base/checkout/src/deep/a.ts",
-            ] {
-                scratch.write(file, "a");
+    /// What `change` (run on a thread of its own, as it may wait for the break) asks of `watch`'s
+    /// oplock, with the levels and flags it broke with; none within a few seconds.
+    fn break_of(
+        port: HANDLE,
+        watch: &mut Watch,
+        change: impl FnOnce() + Send,
+    ) -> Option<(Break, String)> {
+        std::thread::scope(|scope| {
+            let changing = scope.spawn(change);
+            let started = Instant::now();
+            let mut broke = None;
+            while broke.is_none() && started.elapsed() < Duration::from_secs(5) {
+                let Dequeued::Completion(_, overlapped, _, error) = dequeue(port, 100) else {
+                    continue;
+                };
+                if std::ptr::eq(overlapped, &raw mut watch.io.release) {
+                    watch.releasing = false;
+                } else if std::ptr::eq(overlapped, &raw mut watch.io.oplock) {
+                    watch.oplocked = false;
+                    let out = &watch.io.oplock_out;
+                    let levels = format!(
+                        "{} to {}, flags {:#x}",
+                        out.OriginalOplockLevel, out.NewOplockLevel, out.Flags
+                    );
+                    broke = Some((oplock_break(error, out), levels));
+                }
             }
-            std::thread::sleep(Duration::from_millis(500));
-            let root = scratch.path("base/checkout").to_string_lossy().into_owned();
-            // SAFETY: a new port, closed below.
-            let port =
-                unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1) };
-            let (handle, identity) = open_directory(&root).expect("open the root");
-            let mut watch = Watch::open(root, identity, handle);
-            // SAFETY: the watch's handle, bound to the port above.
-            unsafe { CreateIoCompletionPort(handle, port, 1, 0) };
-            let granted = watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE);
-            let early = next_break(port, &mut watch, 300);
-            if watch.oplocked {
-                eprintln!("oplock [{name}]: granted {granted}, before the change {early}");
-            } else {
-                let again = watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE);
-                eprintln!(
-                    "oplock [{name}]: granted {granted}, before the change {early}, again {again}"
-                );
-            }
-            std::thread::scope(|scope| {
-                let started = Instant::now();
-                let changing = scope.spawn(|| change(&scratch));
-                let first = next_break(port, &mut watch, 3_000);
-                let at = started.elapsed();
-                let waiting = !changing.is_finished();
+            if !matches!(broke, Some((Break::Renew { .. }, _))) {
+                // Let a change that waits for the handle go on.
                 watch.close_handle();
-                let result = changing.join().expect("change");
-                eprintln!(
-                    "oplock [{name}]: {first} after {at:?}, change waiting {waiting}, {result:?} after {:?}",
-                    started.elapsed()
-                );
+            }
+            changing.join().expect("change");
+            broke
+        })
+    }
+
+    /// The adapter's answer to each break rests on what Windows breaks a folder's oplock with: a
+    /// change among its entries breaks it to none, which an acknowledgment and a new request
+    /// renew on the same handle; a rename of the folder above breaks its handle part.
+    #[test]
+    fn a_change_among_a_folders_entries_renews_its_oplock_and_a_rename_above_lets_it_go() {
+        let scratch = Scratch::new("oplock-break");
+        scratch.write("base/checkout/a.txt", "a");
+        scratch.write("base/checkout/src/a.txt", "a");
+        let (port, mut watch) = oplocked(&scratch);
+        for round in 0..2 {
+            let written = break_of(port, &mut watch, || {
+                scratch.write("base/checkout/a.txt", &format!("written {round}"));
             });
-            let _ = next_break(port, &mut watch, 1_000);
-            // SAFETY: the port created above; its one handle is closed.
-            unsafe { CloseHandle(port) };
+            let Some((Break::Renew { acknowledge }, levels)) = written else {
+                panic!("a write at the top: {written:?}");
+            };
+            assert!(
+                (!acknowledge || watch.release())
+                    && watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE),
+                "the oplock renews after a break of {levels}"
+            );
         }
+        let renamed = break_of(port, &mut watch, || {
+            std::fs::rename(scratch.path("base"), scratch.path("moved")).expect("rename");
+        });
+        assert!(
+            matches!(renamed, Some((Break::LetGo, _))),
+            "a rename above: {renamed:?}"
+        );
+        // SAFETY: the port `oplocked` created; its one handle is closed.
+        unsafe { CloseHandle(port) };
     }
 
     #[test]
