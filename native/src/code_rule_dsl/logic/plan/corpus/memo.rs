@@ -752,15 +752,16 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
 pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
-    remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+    remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false, None)).collect())
 }
 
 /// `remember_all`, each entry with whether its rows stand as stored (decision 0225 §2): its relations were derived
 /// again and found as they were, so only the identities they now hold are written, kept over the stored entry
-/// (decision 0280).
-pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
+/// (decision 0280). Each with its content's SHA-256 where the run read it (a miss's source, hashed before the first
+/// wave): a stored source's digest is read from the store only where it is not given, which in the waves it is.
+pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool, Option<[u8; 32]>)>) -> StoreResult<()> {
     let standing: HashSet<(String, i64)> = entries.iter().filter(|e| e.4).map(|e| (e.1.clone(), e.2)).collect();
-    let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
+    let entries: Vec<(Content, String, i64, Entry, Option<[u8; 32]>)> = entries.into_iter().map(|(c, p, k, e, _, d)| (c, p, k, e, d)).collect();
     off();
     let plan = plan_digest(program);
     // The atom table the entries' symbols are numbered by: the writer reads their strings from it.
@@ -774,7 +775,8 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         tally(entries.iter().map(|e| &e.3));
     }
     let _queue = crate::code_rule_dsl::logic::profile::span(|| "write the entries into their segments".into());
-    let held: Vec<(Content, String, Entry)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, Entry { key, ..entry })).collect();
+    let (held, given): (Vec<(Content, String, Entry)>, Vec<Option<[u8; 32]>>) =
+        entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry, d)| ((content, path, Entry { key, ..entry }), d)).unzip();
     // Nothing to keep is no job: an empty one still takes the writer's transaction (`RERAIL_WARM`).
     if held.is_empty() {
         return Ok(());
@@ -797,14 +799,16 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         let top: Vec<String> = by.iter().take(12).map(|(r, (n, b))| format!("{r}: {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", estimate as f64 / 2097152.0, held.len(), top.join("; "));
     }
-    // Each content's digest, which names its entry's part: a stored source's read, in one statement. A source
-    // collected since the run found it leaves the entry unwritten: the next run misses it.
-    let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
-    let mut stored = store.source_digests(&ids)?.into_iter();
+    // Each content's digest, which names its entry's part: given where the run hashed the source, else a stored
+    // source's read, in one statement (no SQL in the waves, decision 0104: their entries' digests are given). A
+    // source collected since the run found it leaves the entry unwritten: the next run misses it.
+    let ids: Vec<SourceId> = held.iter().zip(&given).filter_map(|((c, _, _), d)| match c { Content::Stored(id) if d.is_none() => Some(*id), _ => None }).collect();
+    let mut stored = if ids.is_empty() { Vec::new() } else { store.source_digests(&ids)? }.into_iter();
     let digests: Vec<Option<[u8; 32]>> = held
         .iter()
-        .map(|(c, _, _)| match c {
-            Content::Stored(_) => stored.next().flatten(),
+        .zip(&given)
+        .map(|((c, _, _), d)| match c {
+            Content::Stored(_) => d.or_else(|| stored.next().flatten()),
             Content::Unstored(d) => Some(*d),
             Content::Held(_) => None,
         })
@@ -1048,16 +1052,15 @@ impl Memo<'_> {
 
     /// `remember` of many documents, stored ones written as one wave (`remember_all`), behind the run.
     pub(super) fn remember_all(self, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
-        self.remember_all_but(program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+        self.remember_all_but(program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false, None)).collect())
     }
 
     /// `remember_all`, each with whether its stored rows frame stands (`remember_all_but`).
-    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
-        let entries: Vec<(Content, String, i64, Entry, bool)> = entries;
+    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool, Option<[u8; 32]>)>) -> StoreResult<()> {
         if let Memo::Stored(store) = self {
             return remember_all_but(store, program, entries);
         }
-        let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
+        let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, ..)| (c, p, k, e)).collect();
         match self {
             Memo::Stored(store) => remember_all(store, program, entries),
             Memo::Held(_) => {

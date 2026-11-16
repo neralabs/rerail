@@ -762,6 +762,21 @@ pass.
   20 suggestions here. The lab is its own workspace, so CI does not see them.
 - **Done when**: the lab's library is clean under clippy, with its timing loops keeping what they time.
 
+### Q40. The memo's publish read its sources' digests by SQL in the waves (phased-facts' to take)
+
+- **Found** (2026-11-16, after merging cost-classifier at 609a95d91): a cold hogql run under `RERAIL_SQL_STRICT=1`
+  aborted in phase 1. `memo::remember_all_but` (0295 step 4, entries written into mapped segments by the run) read
+  each stored source's digest with `store.source_digests`, under the span "write the entries into their
+  segments", which runs in the waves (decision 0104).
+- **Fixed here, narrowly**: every entry the run publishes is a miss, whose source was read and hashed before the
+  first wave (`Unbuilt::digest`). The digest now goes with the document (`Made`, the chunk's documents, the
+  publish's entries), and `remember_all_but` reads from the store only the digests it is not given: none in the
+  waves. The same run passes strict, with its 1,629 findings.
+- **For phased-facts**: take the fix with the next merge, or replace it where 0295's later steps name entries
+  otherwise. Callers that give no digest (`remember_all`, `Memo::remember`) still read them, outside the waves.
+- **Done when**: phased-facts holds the fix or its replacement, and a strict cold run writes its entries with no
+  SQL in the waves.
+
 
 ## Questions for the user
 
