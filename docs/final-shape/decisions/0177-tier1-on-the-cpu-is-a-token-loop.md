@@ -3190,3 +3190,52 @@ the number's run off the block, for its rarity. That tradeoff is
 open.
 
 Test: `the_next_start_is_the_blocks` (the generated Rust).
+
+## A number's run: three forms tried
+
+**Intro.** After the next start stopped waiting on the token before
+it, numbers were still about 1.5× lean's cycles at the same
+instruction count. A number's end came from a 16-byte load at
+`s + 1`, a compare, a narrowing shift, a lane move and a `ctz`. That
+is about 15 cycles of data dependency, and the next start waits on
+it. Lean's `while digit { end += 1 }` is one add a digit: its branch
+is predicted, so the core runs ahead.
+
+The user asked for both ways to be tried: lean's byte loop, and the
+digits word made once a block. One switch chooses
+(`RERAIL_RUN_FORM`, `native_cpu_block::run_form`).
+
+- **`window`** (the default): the 16-byte vector, as before.
+- **`block`**: the split's term set is one more byte set in the
+  refill's window (`words_with`'s extras, beside `rare`), kept as a
+  block register (`BlockRegs::terms`). The run is
+  `ctz(!(word >> (sh + 1)))`, up to the block's end; a run past that
+  takes the long way. Tokens of up to 64 bytes are inline.
+- **`bytes`**: lean's two `while` loops, a byte at a time. Their
+  heads are `Step::Bytes`, the one loop the shape guard accepts that
+  steps bytes, and only in this form. The zero bytes past the file
+  end the loop, since zero is not in the set.
+
+Each form passes the CPU vs interpreter, corpus tapes, Metal vs
+Cranelift, number checks and AOT vs JIT tests.
+
+Measured, as information (cycles a token, AOT ÷ lean, two runs each,
+load average 40–65):
+
+| | window | block | bytes |
+|---|---|---|---|
+| numbers | 1.45, 1.66 | 1.00, 1.18 | 1.00, 0.97 |
+| numbers, instructions a token | 101.7 | 108.6 | 138.8 |
+| words, instructions a token | 94.2 | 96.7 | 97.9 |
+| strings, instructions a token | 232.7 | 241.1 | 228.8 |
+
+`block` adds the term's word to every block's refill, used or not:
+about 8 instructions more a string and 2.5 a word. `bytes` adds
+nothing a block, and its loop is lean's source.
+
+Metal's tier 1 has no such arm, so none of these forms changes it. A
+byte loop in a GPU lane would diverge from its neighbours; a block
+mask is what a GPU makes anyway. If Metal gets a number arm, the
+`block` form is the one to try there.
+
+The default stays `window` until the user chooses.

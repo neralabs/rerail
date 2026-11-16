@@ -3300,7 +3300,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = r.checks.iter().zip(&t.filters).filter(|(c, _)| usize::from(c.rule) == k).map(|(c, &b)| (*c, b)).collect();
         // A short run's token is 16 bytes at most (`RuleMode::Short`).
         let short = (arm || matches!(mode, RuleMode::Short(_))) && matches!(rule, EndRule::Run(o) if rd.bytewise(o)) && rd.calls.iter().any(|x| x.0 == LONG_CALL | k as u16);
-        let most = short.then_some(16);
+        // (Its longest by the split's form: `term_form`'s, below.)
+        let most16 = short.then_some(16);
         // A run read from the bytes (`short_word`) and its count tests of a byte set its first
         // bytes never are (`run_tests`): their bits from one window, the run's, as the lean
         // lexer's number arm finds its `.` among its digits.
@@ -3330,8 +3331,22 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             let first = split.map_or_else(|| term(o), |(y, d, _)| (y, d));
             std::iter::once(first).chain(run_outs.iter().map(|&o| term(o))).collect()
         };
+        // The split's term by the experiment's form (`run_form`), where its counts are by way:
+        // its block's word (`BlockRegs::terms`), or its bytes one at a time.
+        let term_form = match (split, by_way, run_form()) {
+            (Some((_, _, set)), Some(_), RunForm::Block) if regs.is_some_and(|g| g.terms.iter().any(|t| t.0 == set)) => RunForm::Block,
+            (Some((_, _, set)), Some(_), RunForm::Bytes) if set[0] & 1 == 0 => RunForm::Bytes,
+            _ => RunForm::Window,
+        };
+        // A token of the window's 16 bytes at most; of the block's 64 by its word; any by its
+        // bytes.
+        let most = match term_form {
+            RunForm::Window => most16,
+            RunForm::Block => most16.map(|_| 64),
+            RunForm::Bytes => None,
+        };
         let window: Option<Vec<Value>> = match (rule, rd.bytes) {
-            (EndRule::Run(o), Some((b, file))) if !run_outs.is_empty() || split.is_some() => {
+            (EndRule::Run(o), Some((b, file))) if !run_outs.is_empty() || split.is_some() && term_form == RunForm::Window => {
                 let i = f.ins().iadd_imm(s, 1);
                 let w = b.short_terms(f, &file, &run_terms(b, o), i, heads);
                 // `tested` from a block of its own, empty (its blocks first).
@@ -3348,14 +3363,34 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             (EndRule::Run(o), Some((b, _))) if window.is_some() => b.short_stride_x(&run_terms(b, o).iter().map(|t| t.0).collect::<Vec<_>>()),
             _ => 1,
         };
-        // The split's term's lanes, for the tests of the token's bytes (`Bytewise::bit_on_run`).
-        let lanes = match (split, &window) {
-            (Some((_, _, set)), Some(w)) => Some(crate::native_cpu_bytes::RunLanes { mask: w[0], stride: pre_stride, set }),
+        // The split's term's lanes, for the tests of the token's bytes (`Bytewise::bit_on_run`):
+        // the window's (its 16 lanes all known).
+        let lanes = match (split, &window, term_form) {
+            (Some((_, _, set)), Some(w), RunForm::Window) => Some(crate::native_cpu_bytes::RunLanes { mask: w[0], stride: pre_stride, set }),
             _ => None,
         };
         let firsts_k = first_bytes(r, k);
         let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, lanes.map(|l| (l, firsts_k)), heads) };
         debug_assert!(by_way.is_none() || rest.is_some(), "a split's counts by way with no tests' tail");
+        // The split's term as the arm runs it, made after `tested`'s blocks (it starts from an
+        // empty one).
+        let term: Option<TermRun> = match (split, term_form, &window) {
+            (Some(_), RunForm::Window, Some(w)) => {
+                let cap = f.ins().iconst(types::I64, 16);
+                Some(TermRun::Mask { x: w[0], stride: pre_stride, cap })
+            }
+            (Some((_, _, set)), RunForm::Block, _) => {
+                let word = regs.and_then(|g| g.terms.iter().find(|t| t.0 == set)).map(|t| t.1).expect("the term's word");
+                let sh = f.ins().band_imm(s, 63);
+                let sh1 = f.ins().iadd_imm(sh, 1);
+                let x = f.ins().ushr(word, sh1);
+                // Its lanes to the block's last byte; a run there takes the long way.
+                let cap = f.ins().irsub_imm(sh, 63);
+                Some(TermRun::Mask { x, stride: 1, cap })
+            }
+            (Some(_), RunForm::Bytes, _) => Some(TermRun::Bytes),
+            _ => None,
+        };
         match rule {
             // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
             // `pair P`: the first byte's row (its entry's), then the next byte's bit in the
@@ -3428,31 +3463,9 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         // (`Bytewise::short_word`), as a lexer reads a number's few digits;
                         // the run on past them, the word's way below (cold).
                         if let Some((b, file)) = rd.bytes.filter(|(b, _)| b.can(o)) {
-                            let terms = run_terms(b, o);
-                            let x = match &window {
-                                Some(w) => w[0],
-                                None => b.short_terms(f, &file, &terms[..1], i, heads)[0],
-                            };
-                            let stride = b.short_stride_x(&terms.iter().map(|t| t.0).collect::<Vec<_>>());
-                            let ones = lanes_set(f, x, stride);
-                            let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
-                            let l = f.ins().iadd(s, ones);
                             let long = f.create_block();
-                            match split {
-                                None => {
-                                    f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], long, &[]);
-                                }
-                                Some((a, _, set)) => {
-                                    // The byte term's run ended inside the window: the rest asked
-                                    // at its end (lean's `b[end] == b'.' && digit(b[end + 1])`),
-                                    // the byte before it the term's or the token's first.
-                                    let (at_end, on, end2) = (f.create_block(), f.create_block(), f.create_block());
-                                    f.ins().brif(short, at_end, &[], long, &[]);
-                                    f.switch_to_block(at_end);
-                                    let e = f.ins().iadd(i, ones);
-                                    let firsts = first_bytes(r, k);
-                                    let before: [u64; 4] = std::array::from_fn(|w| set[w] | firsts[w]);
-                                    let more = b.rest_after(f, &file, o, a, e, before, heads);
+                            match (split, term) {
+                                (Some((a, _, set)), Some(term)) => {
                                     // A way's end: its counts known (`by_way`), on to the tests'
                                     // tail with them, else the tests from the start.
                                     let way_end = |f: &mut FunctionBuilder<'_>, way: usize, l: Value| -> (cranelift_codegen::ir::Block, Vec<BlockArg>) {
@@ -3467,33 +3480,95 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                             _ => (ended, vec![l.into(), untag.into(), nohits.into()]),
                                         }
                                     };
-                                    let (to, args) = way_end(f, 0, l);
-                                    f.ins().brif(more, on, &[], to, &args);
-                                    // On past it: the term's run from the byte after, in the same
-                                    // window's mask (lean's second `while digit`), the token in
-                                    // the window, else the whole rule's way.
-                                    f.switch_to_block(on);
-                                    let n1 = f.ins().iadd_imm(ones, 1);
-                                    let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, n1, 16);
-                                    let second = f.create_block();
-                                    f.ins().brif(inside, second, &[], long, &[]);
-                                    f.switch_to_block(second);
-                                    let sh = f.ins().imul_imm(n1, i64::from(stride));
-                                    let gone = f.ins().bnot(x);
-                                    let gone = f.ins().ushr(gone, sh);
-                                    let z = f.ins().ctz(gone);
-                                    let ones2 = if stride > 1 { f.ins().ushr_imm(z, i64::from(stride.trailing_zeros())) } else { z };
-                                    let total = f.ins().iadd(n1, ones2);
-                                    let fits = f.ins().icmp_imm(IntCC::UnsignedLessThan, total, 16);
-                                    f.ins().brif(fits, end2, &[], long, &[]);
-                                    // Its end: where the rest holds again, the whole rule's way.
-                                    f.switch_to_block(end2);
-                                    let e2 = f.ins().iadd(i, total);
+                                    let firsts = first_bytes(r, k);
+                                    let before: [u64; 4] = std::array::from_fn(|w| set[w] | firsts[w]);
                                     let before2 = b.split_before_again(o, a, set);
-                                    let again = b.rest_after(f, &file, o, a, e2, before2, heads);
-                                    let l2 = f.ins().iadd(s, total);
-                                    let (to, args) = way_end(f, 1, l2);
-                                    f.ins().brif(again, long, &[], to, &args);
+                                    match term {
+                                        TermRun::Mask { x, stride, cap } => {
+                                            // The byte term's run ended inside the mask's known
+                                            // lanes: the rest asked at its end (lean's
+                                            // `b[end] == b'.' && digit(b[end + 1])`).
+                                            let ones = lanes_set(f, x, stride);
+                                            let short = f.ins().icmp(IntCC::UnsignedLessThan, ones, cap);
+                                            let l = f.ins().iadd(s, ones);
+                                            let (at_end, on, end2) = (f.create_block(), f.create_block(), f.create_block());
+                                            f.ins().brif(short, at_end, &[], long, &[]);
+                                            f.switch_to_block(at_end);
+                                            let e = f.ins().iadd(i, ones);
+                                            let more = b.rest_after(f, &file, o, a, e, before, heads);
+                                            let (to, args) = way_end(f, 0, l);
+                                            f.ins().brif(more, on, &[], to, &args);
+                                            // On past it: the term's run from the byte after, in
+                                            // the same mask (lean's second `while digit`), else
+                                            // the whole rule's way.
+                                            f.switch_to_block(on);
+                                            let n1 = f.ins().iadd_imm(ones, 1);
+                                            let inside = f.ins().icmp(IntCC::UnsignedLessThan, n1, cap);
+                                            let second = f.create_block();
+                                            f.ins().brif(inside, second, &[], long, &[]);
+                                            f.switch_to_block(second);
+                                            let sh = f.ins().imul_imm(n1, i64::from(stride));
+                                            let gone = f.ins().bnot(x);
+                                            let gone = f.ins().ushr(gone, sh);
+                                            let z = f.ins().ctz(gone);
+                                            let ones2 = if stride > 1 { f.ins().ushr_imm(z, i64::from(stride.trailing_zeros())) } else { z };
+                                            let total = f.ins().iadd(n1, ones2);
+                                            let fits = f.ins().icmp(IntCC::UnsignedLessThan, total, cap);
+                                            f.ins().brif(fits, end2, &[], long, &[]);
+                                            // Its end: where the rest holds again, the whole
+                                            // rule's way.
+                                            f.switch_to_block(end2);
+                                            let e2 = f.ins().iadd(i, total);
+                                            let again = b.rest_after(f, &file, o, a, e2, before2, heads);
+                                            let l2 = f.ins().iadd(s, total);
+                                            let (to, args) = way_end(f, 1, l2);
+                                            f.ins().brif(again, long, &[], to, &args);
+                                        }
+                                        TermRun::Bytes => {
+                                            // Lean's `while digit { end += 1 }`, twice: a byte a
+                                            // time to the first not in the set (the zeros past
+                                            // the file are none of it).
+                                            let run_bytes = |f: &mut FunctionBuilder<'_>, from: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| -> Value {
+                                                let (lp, out) = (f.create_block(), f.create_block());
+                                                f.append_block_param(lp, types::I64);
+                                                f.append_block_param(out, types::I64);
+                                                f.ins().jump(lp, &[from.into()]);
+                                                f.switch_to_block(lp);
+                                                heads.push((lp, Step::Bytes));
+                                                let e = f.block_params(lp)[0];
+                                                let isin = b.byte_in(f, &file, e, set);
+                                                let e1 = f.ins().iadd_imm(e, 1);
+                                                f.ins().brif(isin, lp, &[e1.into()], out, &[e.into()]);
+                                                f.switch_to_block(out);
+                                                f.block_params(out)[0]
+                                            };
+                                            let e = run_bytes(f, i, heads);
+                                            let l = f.ins().iadd_imm(e, -1);
+                                            let more = b.rest_after(f, &file, o, a, e, before, heads);
+                                            let on = f.create_block();
+                                            let (to, args) = way_end(f, 0, l);
+                                            f.ins().brif(more, on, &[], to, &args);
+                                            f.switch_to_block(on);
+                                            let from = f.ins().iadd_imm(e, 1);
+                                            let e2 = run_bytes(f, from, heads);
+                                            let again = b.rest_after(f, &file, o, a, e2, before2, heads);
+                                            let l2 = f.ins().iadd_imm(e2, -1);
+                                            let (to, args) = way_end(f, 1, l2);
+                                            f.ins().brif(again, long, &[], to, &args);
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    let terms = run_terms(b, o);
+                                    let x = match &window {
+                                        Some(w) => w[0],
+                                        None => b.short_terms(f, &file, &terms[..1], i, heads)[0],
+                                    };
+                                    let stride = b.short_stride_x(&terms.iter().map(|t| t.0).collect::<Vec<_>>());
+                                    let ones = lanes_set(f, x, stride);
+                                    let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
+                                    let l = f.ins().iadd(s, ones);
+                                    f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], long, &[]);
                                 }
                             }
                             f.switch_to_block(long);
@@ -4426,6 +4501,34 @@ fn run_tests(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<
     v
 }
 
+/// How a split run's byte term runs (`Bytewise::run_split`), an experiment's switch
+/// (`RERAIL_RUN_FORM`): `window`, a 16-byte vector from the token's second byte (the default);
+/// `block`, the term's word made once a block with the loop's (`BlockRegs::terms`); `bytes`,
+/// a byte at a time, as lean's `while digit { end += 1 }` (a `Step::Bytes` loop).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunForm {
+    Window,
+    Block,
+    Bytes,
+}
+
+pub fn run_form() -> RunForm {
+    static FORM: std::sync::OnceLock<RunForm> = std::sync::OnceLock::new();
+    *FORM.get_or_init(|| match std::env::var("RERAIL_RUN_FORM").as_deref() {
+        Ok("block") => RunForm::Block,
+        Ok("bytes") => RunForm::Bytes,
+        _ => RunForm::Window,
+    })
+}
+
+/// A split run's term as the arm runs it (`run_form`): a mask of its lanes from the token's
+/// second byte, `stride` bits a lane, `cap` lanes of it known; or its bytes one at a time.
+#[derive(Clone, Copy)]
+enum TermRun {
+    Mask { x: Value, stride: u32, cap: Value },
+    Bytes,
+}
+
 /// A split run's count tests (`Bytewise::run_split`, its byte term's `set`) on each of its
 /// two inline ways: the term's run alone, and the term's, the rest's one byte, the term's
 /// again. Where each count's bytes (`native_cpu_bytes::exact`, at the token's bytes) are none
@@ -4952,6 +5055,8 @@ struct BlockRegs {
     /// The block's first byte's position: the next start's base, the block's, as lean's
     /// `base + q`, not the token's end's (which chained each start to the token before).
     base: Value,
+    /// Split runs' term words, by their byte sets (`RunForm::Block`).
+    terms: Vec<([u64; 4], Value)>,
 }
 
 
@@ -5233,13 +5338,29 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 }
                 _ => None,
             };
-            let (got, rare_got) = match (rare_need, rd.bytes.filter(|(b, _)| all.iter().all(|&x| b.can(x)))) {
+            // Split runs' term sets (`RunForm::Block`): their words in the same window.
+            let term_sets: Vec<[u64; 4]> = match (run_form(), rd.bytes) {
+                (RunForm::Block, Some((b, _))) => {
+                    let mut v: Vec<[u64; 4]> = r.rules.iter().filter_map(|rule| match rule {
+                        crate::records::EndRule::Run(o) if b.can(*o) => b.run_split(*o).map(|x| x.2),
+                        _ => None,
+                    }).collect();
+                    v.sort_unstable();
+                    v.dedup();
+                    v
+                }
+                _ => Vec::new(),
+            };
+            let (got, rare_got, term_words) = match (rare_need, rd.bytes.filter(|(b, _)| all.iter().all(|&x| b.can(x)))) {
                 (Some(need), Some((b, file))) => {
                     let p = f.ins().ishl_imm(q, 6);
-                    let (w, more) = b.words_with(f, &file, &all, &[need], p, heads);
-                    (w, Some(more[0]))
+                    let as_set = |set: &[u64; 4]| -> crate::class_pack::ByteSet { *set };
+                    let extras: Vec<crate::class_pack::Need> = std::iter::once(need).chain(term_sets.iter().map(|set| crate::class_pack::Need { set: as_set(set), care: [u64::MAX; 4] })).collect();
+                    let (w, more) = b.words_with(f, &file, &all, &extras, p, heads);
+                    let tw: Vec<([u64; 4], Value)> = term_sets.iter().copied().zip(more[1..].iter().copied()).collect();
+                    (w, Some(more[0]), tw)
                 }
-                _ => (rd.words_inline(f, c, q, &all, heads), None),
+                _ => (rd.words_inline(f, c, q, &all, heads), None, Vec::new()),
             };
             let (x, mut words) = (got[0], got[1..].to_vec());
             if let (Some(n), Some((_, file))) = (&pairs, rd.bytes) {
@@ -5428,7 +5549,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 f.append_block_param(token_r, types::I64);
                 let hr: Vec<Value> = rp[2..].iter().copied().chain(std::iter::once(rp[1])).chain(words.iter().copied()).collect();
                 f.ins().jump(token_r, &[rp[0].into()]);
-                rare_part = Some((token_r, hr, BlockRegs { cand: rp[1], runs: runs.iter().copied().zip(words.iter().copied()).collect(), base: q64 }));
+                rare_part = Some((token_r, hr, BlockRegs { cand: rp[1], runs: runs.iter().copied().zip(words.iter().copied()).collect(), base: q64, terms: term_words.clone() }));
             }
             // The start: a token, or past the file.
             f.switch_to_block(from_word);
@@ -5437,7 +5558,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let fw = f.block_params(from_word).to_vec();
             // Every start is inside the file (the refill's `valid`).
             let s = fw[0];
-            regs = Some(BlockRegs { cand: fw[1], runs: runs.iter().copied().zip(words.iter().copied()).collect(), base: q64 });
+            regs = Some(BlockRegs { cand: fw[1], runs: runs.iter().copied().zip(words.iter().copied()).collect(), base: q64, terms: term_words.clone() });
             // The token's state, the inner loop's: what the code after reads as the head's.
             h = fw[2..].iter().copied().chain(std::iter::once(fw[1])).chain(words.iter().copied()).collect();
             (pending_in, from_in) = (h[3], h[4]);

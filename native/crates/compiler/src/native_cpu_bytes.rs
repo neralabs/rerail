@@ -694,6 +694,12 @@ impl<'a> Bytewise<'a> {
         b
     }
 
+    /// Whether the byte at `p` is in `set`, 0 or 1, by one load (`RunForm::Bytes`' loop).
+    pub fn byte_in(&self, f: &mut FunctionBuilder<'_>, at: &File, p: Value, set: [u64; 4]) -> Value {
+        let b = byte_at(f, at, p);
+        in_set(f, b, set)
+    }
+
     /// Whether output `o` at a token's first byte reads only that byte and bytes a split run's
     /// lanes of `set` give (`bit_on_run`): no other byte read.
     pub fn on_run_only(&self, o: u16, set: [u64; 4]) -> bool {

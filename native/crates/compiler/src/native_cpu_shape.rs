@@ -39,6 +39,9 @@ pub enum Step {
     Word,
     Node,
     Return,
+    /// A token's bytes, one at a time (lean's `while digit { end += 1 }`): only where the
+    /// experiment asks for it (`native_cpu_block::RunForm::Bytes`).
+    Bytes,
 }
 
 /// Why a function was refused.
