@@ -1427,6 +1427,17 @@ pub mod tests {
         assert_eq!(shape.reads_back, 0, "the token loop reads a record back");
     }
 
+    /// A run rule with a short form (a number: its 16 bytes from one window, its tests from the
+    /// same bits) is read in the token loop's arm for its first byte, no call, as the lean
+    /// lexer reads a number in its `match` arm (`PassShape::arms`). A longer one calls the
+    /// rule's whole function (`a_numbers_checks_are_at_its_token` reads those).
+    #[test]
+    fn a_short_run_is_the_loops_arm() {
+        let c = crate::compiled().expect("compiles");
+        let shape = c.parser.tier1.passes.last().expect("a pass");
+        assert!(shape.arms >= 1, "no run rule read in its arm");
+    }
+
     /// Decision 0177, stage 2a: the tokens by the loop, each at the first byte after the one
     /// before that `skip` does not hold, are the starts' and lasts' masks, on every file the
     /// masks take (a file they refuse, its totals' flag set, is the engine's either way).

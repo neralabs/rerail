@@ -2626,3 +2626,63 @@ tier 2 and taken by the interpreter, with or without this change
 
 Counts, reported: words 98.1, punctuation 53.3, mixed 55.0,
 strings 264.0, numbers 156.5, comments 229.4.
+
+## A short run is read in its arm
+
+The lean lexer reads a number inside its main loop. The number is an
+arm of the `match` on a rare token's first byte: it reads the digits
+and the `.` there, then writes the token.
+
+Ours called a function for every number. That was the run rule's
+short form (`RuleMode::Short`, f38): a 16-byte window at the token,
+then the run's end and the count tests from the same lanes, and the
+whole function only for a longer run. The loop saved and reloaded its
+live values around each call.
+
+Two shapes were weighed:
+- **Block words.** The refill makes the number's run and its tests'
+  words for every block. Lean makes no such word, so every block
+  would pay for them.
+- **The arm.** The short form's body goes in the arm, as lean's.
+
+The user chose the arm.
+
+**The change** (`rule_last`'s `arm`):
+
+- **Which rules.** In the loop's calls mode (`RuleMode::Calls`), a
+  run rule from the bytes that has a short form (its whole function,
+  `LONG_CALL`) gets that form's body in its arm. The window, the end,
+  and the tests that `run_tests` gives are as they were in f38.
+- **A long run** calls the whole function. The arm unpacks its
+  results like any call's and goes on to `done`.
+- **No short function.** None is made or declared for such a rule:
+  only the whole one is.
+- **Readers keep their call.** Lean's string calls `string_end` too.
+- **Calls mode** now also holds when the only calls are whole
+  functions (`LONG_CALL`).
+
+```rust
+// generated (tier1_aot.rs), the loop's rare `match`:
+48..=57 => { break 'm50; }          // a digit: the number's arm
+// …
+v977 = vld1q_u8(s + 1);             // its 16 bytes
+v983 = vcleq_u8(v977 - b'0', 9);    // digit
+v986 = vceqq_u8(v977, b'.');        // the run's `.`, the tests' too
+// …
+v1078 = (!run).trailing_zeros();    // the run's end
+if v1078 < 16 { /* the token, the `.` counts from v986's bits */ }
+else { /* the rule's whole function */ }
+```
+
+Three short functions are gone (24 functions to 21). `PassShape::arms`
+counts the rules read in their arm.
+
+Tests:
+- `a_short_run_is_the_loops_arm`;
+- `a_numbers_checks_are_at_its_token`, which reads the long path: a
+  number across a block's edge, and one longer than a block;
+- `the_cpus_records_are_the_interpreters`, with a word right after a
+  number (`12abc`) and `1.5x`.
+
+Counts, reported: words 99.2, punctuation 54.3, mixed 56.1,
+strings 264.0, numbers 133.5, comments 233.4.
