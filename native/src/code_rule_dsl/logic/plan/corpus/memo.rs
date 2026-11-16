@@ -828,7 +828,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         rows.push(crate::content_store::MemoRow { part: part_of(&digest, &path), path, digest, key, over });
         contents.push(content);
     }
-    let mut segments = w.seal();
+    let segments = w.seal();
     if rows.is_empty() {
         return Ok(());
     }
@@ -854,15 +854,9 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         .collect();
     // The queue's measure: what the job holds in memory, its rows; the images are the OS's pages.
     let bytes = rows.iter().map(|r| r.path.len() + 96).sum();
-    store.write_back_syms(
-        crate::content_store::write_back::Syms::None,
-        "the memo's entries",
-        bytes,
-        keys,
-        // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for one
-        // file of the 20, was kept 32 runs: 450 MB of one space).
-        Box::new(move |store| store.put_memo_segments(&space, &mut segments, &rows, MEMO_CONTENTS)),
-    );
+    // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for one file
+    // of the 20, was kept 32 runs: 450 MB of one space).
+    store.queue_memo_segments("the memo's entries", bytes, keys, space, segments, rows, MEMO_CONTENTS);
     Ok(())
 }
 

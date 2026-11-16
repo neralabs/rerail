@@ -2,7 +2,7 @@
 
 Status: decided (2026-11-16), by the user ("can we use a really simple encoding for small records like JSON and just
 jam them in a single string at the end of the data flow?"; "go ahead. We may want to change JSON for something
-else"). Building: steps 1 and 2 done. Builds 0259's guard (no queued write is a closure) for the small writes; replaces the typed-rows
+else"). Building: steps 1 to 3 done. Builds 0259's guard (no queued write is a closure) for the small writes; replaces the typed-rows
 proposal for them (P1–P6, below). Keeps 0295's segments for the bulk writes, and 0104 (no SQL inside the waves).
 
 ## Intro
@@ -92,7 +92,13 @@ a one-file edit (`scratchpad/wal/run.sh`, not kept):
    instead: the rule images and their leases (droppable when the queue is full, and the image store's, not the
    run's: bulk), and the kept statistics that name symbols (mapped to the store's ids in the writer's transaction,
    decision 0170, as frames are).
-3. The bulk and store-internal jobs as data variants; `Job` (the closure) removed.
+3. The bulk and store-internal jobs as data variants; `Job` (the closure) removed. **Done (2026-11-16):** the queue
+   takes a `Work`, opaque, made only by the store: a record, a space's frames, a batch of memo entries, sources and
+   tapes (placed, each in its own rows, or one alone), a flush of the atoms, and in the store's own tests a test's
+   job. The boxed closure is private to the writer, its own wrapper of a `Work`. The logic's writes that are not
+   the run's record (a rule image and its lease, dropped when the queue is full; the kept statistics that name
+   symbols, mapped in the writer's transaction) are records of their own (`queue_record`), their applies registered
+   functions with data bodies: the statistics' symbol columns are asked on the run's side.
 4. The run-start holds: a running run holds the shared collection lease, which collectors skip, so the holds may be
    redundant. A test that collection never takes a run's plan or source while the run lives, without them, decides
    whether they go.

@@ -676,11 +676,14 @@ fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static
     use crate::content_store::write_back::{Key, Syms};
     images::export(key, &bytes);
     let Some(store) = store else { return false };
-    let n = bytes.len();
-    store.write_back_unless_full(Syms::None, what, n, vec![(Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
-        let id = store.put_source(&bytes, &[key])?;
-        store.pin_source(id, IMAGE_OWNER, image_lease())
-    }))
+    // A record of its own (decision 0306), dropped where the queue is full: the image in its byte area.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body("an image", body)?;
+        let id = cx.store.put_source(cx.bytes, &[key])?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    let queued = Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
+    store.queue_record(Syms::None, what, vec![queued], &key, Some(bytes), apply, true)
 }
 
 /// The text tests' compiled groups of automata as images (decisions 0075, 0264): each under its key, read from the
@@ -727,7 +730,11 @@ fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_st
     if store.source_lease(id, IMAGE_OWNER).ok().flatten().is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
         return;
     }
-    store.write_back_unless_full(Syms::None, "an image's lease", 0, Vec::new(), Box::new(move |store| store.pin_source(id, IMAGE_OWNER, image_lease())));
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let id: crate::content_store::SourceId = crate::content_store::record::codec::from_body("an image's lease", body)?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    store.queue_record(Syms::None, "an image's lease", Vec::new(), &id, None, apply, true);
 }
 
 /// Adds to `program`, which derives library relations `asked`, the linked library's part a request copies (decision

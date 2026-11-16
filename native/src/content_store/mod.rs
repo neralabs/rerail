@@ -17,7 +17,7 @@ mod connection;
 pub use compression::set_language_tags;
 pub use connection::set_connection_functions;
 mod corpus_runs;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 mod cross_rows;
@@ -200,7 +200,7 @@ pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
     )
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct HashKey {
     algorithm: i64,
     lanes: [i64; 4],
@@ -687,7 +687,7 @@ impl Drop for ContentStore {
         // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
         // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
         if self.atoms.flush_wanted() && self.write_back.is_some() {
-            self.write_back_syms(crate::content_store::write_back::Syms::None, "the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+            self.queue_atoms("the atoms at a handle's close");
             self.end_writer();
         } else {
             self.end_writer();

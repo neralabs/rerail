@@ -7501,16 +7501,19 @@ fn run_observed(
             // patches it. A run that could not keep them writes it empty, so the next counts every file in.
             (None, Some(k), Some(memo::Memo::Stored(store))) if kept.is_none() || k.counted != (0, 0) => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "write the kept statistics, queued".into());
-                // Its constants as the store numbers them, in the writer's transaction (decision 0170).
-                let syms = memo_plan.syms.clone();
-                store.queue_stat_blob_mapped(memo_whole, k.encode(), Box::new(move |store, blob| {
-                    if !store.atoms_handle().forked() {
-                        return Ok(blob.to_vec());
+                // Its constants as the store numbers them, in the writer's transaction (decision 0170): a record of its
+                // own (decision 0306), its relations' symbol columns asked here.
+                let columns = k.symbol_columns(&|key, names| memo_plan.syms.columns_named(key, names));
+                fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+                    let (plan, columns): ([u8; 32], std::collections::BTreeMap<String, Option<Vec<bool>>>) = crate::content_store::record::codec::from_body("the kept statistics, mapped", body)?;
+                    if !cx.store.atoms_handle().forked() {
+                        return cx.store.put_stat_blob(plan, cx.bytes);
                     }
-                    let mut k = keptstats::Keeper::decode(blob).ok_or_else(|| crate::content_store::StoreError::Invalid("the kept statistics do not read back".into()))?;
-                    k.map_symbols(&|key, names| syms.columns_named(key, names), true, |v| store.symbols_to_store(crate::content_store::ProcessIds::of_process(v)).map(drop))?;
-                    Ok(k.encode())
-                }));
+                    let mut k = keptstats::Keeper::decode(cx.bytes).ok_or_else(|| crate::content_store::StoreError::Invalid("the kept statistics do not read back".into()))?;
+                    k.map_symbols(&|key, _| columns.get(key).cloned().flatten(), true, |v| cx.store.symbols_to_store(crate::content_store::ProcessIds::of_process(v)).map(drop))?;
+                    cx.store.put_stat_blob(plan, &k.encode())
+                }
+                store.queue_record(crate::content_store::write_back::Syms::Mapped, "the kept statistics, mapped", vec![crate::content_store::stat_blob_key(&memo_whole)], &(memo_whole, columns), Some(k.encode()), apply, false);
             }
             _ => {}
         }
@@ -9118,7 +9121,7 @@ fn run_observed(
     // write did. The profile says how often they were.
     // None pending is nothing to write: no job (a warm run makes no atom, decision 0211).
     if store.atoms_handle().pending() {
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "the run's atoms", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+        store.queue_atoms("the run's atoms");
     }
     let ((segments, atoms, bytes), pending) = store.atom_writes();
     crate::code_rule_dsl::logic::profile::decision("atoms", || {

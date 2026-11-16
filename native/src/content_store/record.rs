@@ -8,7 +8,7 @@
 //!
 //! The encoding is [`codec`]'s alone, so changing it (JSON now) changes that module.
 
-use super::write_back::{Closed, Gather, Held, Key, Syms};
+use super::write_back::{Closed, Gather, Held, Key, Syms, Work};
 use super::{ContentStore, SourceId, StoreError, StoreResult};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -85,9 +85,13 @@ pub type ApplyFn = fn(&Apply<'_>, codec::Body) -> StoreResult<()>;
 
 static KINDS: LazyLock<Mutex<HashMap<String, ApplyFn>>> = LazyLock::new(Default::default);
 
-/// Registers `kind`'s apply (again: the same function).
+/// Registers `kind`'s apply (again: the same function). A kind is one function: a second under its name would apply
+/// the first's items with the wrong body.
 pub fn register(kind: &'static str, apply: ApplyFn) {
-    KINDS.lock().expect("the record's kinds").insert(kind.to_owned(), apply);
+    let mut kinds = KINDS.lock().expect("the record's kinds");
+    if let Some(had) = kinds.insert(kind.to_owned(), apply) {
+        assert!(std::ptr::fn_addr_eq(had, apply), "two record kinds named {kind:?}: give each its own name");
+    }
 }
 
 /// Applies `text` (and `bytes`, its byte area) in order. A record of another format is not applied; an item of a kind
@@ -150,9 +154,7 @@ impl Gather for Record {
             return None;
         }
         let bytes = self.weight();
-        let text = codec::encode(&self.items);
-        let area = self.bytes;
-        Some(Closed { what: "the run's record", bytes, keys: Vec::new(), syms: Syms::None, holder: None, job: Box::new(move |store| apply(store, &text, &area)) })
+        Some(Closed { what: "the run's record", bytes, keys: Vec::new(), syms: Syms::None, holder: None, job: Work::record(codec::encode(&self.items), self.bytes) })
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
@@ -175,11 +177,25 @@ impl ContentStore {
             return;
         }
         let (body, bytes) = once.take().expect("not gathered");
+        self.queue_item(Syms::None, kind, keys, body, bytes, false);
+    }
+
+    /// Queues an item of `kind` (its apply `f`, registered) as a record of its own, never gathered: for a write that
+    /// is not the run's record's (dropped where the queue is full when `droppable`, as a cache's; or holding symbols
+    /// mapped as it is written, `syms`). Whether it was queued.
+    #[allow(clippy::too_many_arguments)]
+    pub fn queue_record<T: serde::Serialize>(&self, syms: Syms, kind: &'static str, keys: Vec<Key>, body: &T, bytes: Option<Vec<u8>>, f: ApplyFn, droppable: bool) -> bool {
+        register(kind, f);
+        self.queue_item(syms, kind, keys, codec::body(body), bytes, droppable)
+    }
+
+    fn queue_item(&self, syms: Syms, kind: &'static str, keys: Vec<Key>, body: codec::Body, bytes: Option<Vec<u8>>, droppable: bool) -> bool {
         let mut r = Record::default();
         r.push(kind, &[], body, bytes);
         let weight = r.weight();
-        let (text, area) = (codec::encode(&r.items), r.bytes);
-        self.write_back_syms(Syms::None, kind, weight, keys.into_iter().map(|k| (k, None)).collect(), Box::new(move |store| apply(store, &text, &area)));
+        let work = Work::record(codec::encode(&r.items), r.bytes);
+        let keys = keys.into_iter().map(|k| (k, None)).collect();
+        if droppable { self.write_back_unless_full(syms, kind, weight, keys, work) } else { self.write_back_syms(syms, kind, weight, keys, work); true }
     }
 }
 
@@ -251,10 +267,10 @@ mod tests {
             let _waves = super::super::write_back::run_waves();
             store.record("test/log", vec![], &"names", None, logged);
             store.record("test/log", vec![], &"bytes", Some(vec![1, 2, 3]), logged);
-            store.write_back("a wave's job", 0, vec![], Box::new(|_| {
+            store.write_back("a wave's job", 0, vec![], Work::test(Box::new(|_| {
                 LOG.lock().unwrap().push("a wave's job".into());
                 Ok(())
-            }));
+            })));
             super::super::write_back::end_wave(super::super::write_back::Boundary::Chunk);
             store.record("test/log", vec![], &"takes", None, logged);
             store.written().unwrap();

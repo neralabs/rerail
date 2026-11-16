@@ -9,7 +9,7 @@
 
 use super::rows::{generation, intern_hash};
 use super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter, segment_path};
-use super::write_back::{Closed, Gather, Held, Key, Syms};
+use super::write_back::{Closed, Gather, Held, Key, Kind, Syms, Work};
 use super::{CODEC_ZSTD, ContentStore, HashKey, SourceId, StoreError, StoreResult, TapeId, TapePayload};
 use rusqlite::{Connection, params};
 use std::collections::HashMap;
@@ -145,7 +145,7 @@ impl ObjectMaps {
 pub struct QueuedTape(pub ObjectBytes);
 
 
-struct Item {
+pub(super) struct Item {
     key: Key,
     canonical: HashKey,
     grammar_id: i64,
@@ -168,7 +168,7 @@ pub(super) struct ObjectGather {
 }
 
 /// What the writer inserts of a placed file: its source's and tape's entries are `2 i` and `2 i + 1`.
-struct Row {
+pub(super) struct Row {
     canonical: HashKey,
     grammar_id: i64,
     grammar_version: i64,
@@ -230,23 +230,7 @@ impl Gather for ObjectGather {
             drop(segments);
             let keys = self.items.iter().map(|i| (i.key, Some(Self::held(i)))).collect();
             let bytes = self.bytes;
-            let items = self.items;
-            return Some(Closed {
-                what,
-                bytes,
-                keys,
-                syms: Syms::None,
-                holder: self.holder,
-                job: Box::new(move |store| {
-                    for i in &items {
-                        let (id, _) = store.put_source_and_tape(i.source.as_bytes(), i.canonical, i.grammar_id, i.grammar_version, i.tape_format_version, &i.tape)?;
-                        if i.named {
-                            store.name_sources([id]);
-                        }
-                    }
-                    Ok(())
-                }),
-            });
+            return Some(Closed { what, bytes, keys, syms: Syms::None, holder: self.holder, job: ObjectsWrite::Each(self.items).work() });
         }
         let keys = self.items.iter().enumerate().map(|(i, item)| (item.key, Some(Arc::new(QueuedTape(ObjectBytes::Mapped(segments.entry(2 * i + 1)))) as Held))).collect();
         let rows: Vec<Row> = self
@@ -265,19 +249,47 @@ impl Gather for ObjectGather {
             .collect();
         // The queue holds the rows; the bytes are the OS's pages.
         let bytes = rows.len() * 96;
-        let mut segments = segments;
-        Some(Closed {
-            what,
-            bytes,
-            keys,
-            syms: Syms::None,
-            holder: self.holder,
-            job: Box::new(move |store| {
-                let ids = store.put_objects_placed(&rows, &mut segments)?;
+        Some(Closed { what, bytes, keys, syms: Syms::None, holder: self.holder, job: ObjectsWrite::Placed { rows, segments }.work() })
+    }
+}
+
+/// Sources and tapes as the writer writes them (decision 0306 §8).
+pub(super) enum ObjectsWrite {
+    /// A gather's, in its segments.
+    Placed { rows: Vec<Row>, segments: SealedSegments },
+    /// A gather's where no segment could be placed: each compressed into its own rows.
+    Each(Vec<Item>),
+    /// One file's, queued outside a run's waves.
+    Lone { canonical: HashKey, grammar: (i64, i64, i64), frames: Arc<super::SourceAndTapeFrames>, named: bool },
+}
+
+impl ObjectsWrite {
+    fn work(self) -> Work {
+        Work(Kind::Objects(Box::new(self)))
+    }
+
+    pub(super) fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
+        match self {
+            ObjectsWrite::Placed { rows, segments } => {
+                let ids = store.put_objects_placed(rows, segments)?;
                 store.name_sources(rows.iter().zip(ids).filter(|(row, _)| row.named).map(|(_, id)| id));
-                Ok(())
-            }),
-        })
+            }
+            ObjectsWrite::Each(items) => {
+                for i in items.iter() {
+                    let (id, _) = store.put_source_and_tape(i.source.as_bytes(), i.canonical, i.grammar_id, i.grammar_version, i.tape_format_version, &i.tape)?;
+                    if i.named {
+                        store.name_sources([id]);
+                    }
+                }
+            }
+            ObjectsWrite::Lone { canonical, grammar: (gid, gv, fv), frames, named } => {
+                let (id, _) = store.put_source_and_tape_framed(*canonical, *gid, *gv, *fv, frames)?;
+                if *named {
+                    store.name_sources([id]);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -299,21 +311,8 @@ impl ContentStore {
         }
         let item = item.take().expect("the file, not gathered");
         let frames = Arc::new(self.source_and_tape_frames(item.source.as_bytes(), canonical, &item.tape)?);
-        let held = Arc::clone(&frames);
-        let (named, (gid, gv, fv)) = (item.named, (grammar_id, grammar_version, tape_format_version));
-        self.write_back_unless_full(
-            Syms::None,
-            "a tape and its source",
-            frames.bytes(),
-            vec![(key, Some(frames as Held))],
-            Box::new(move |store| {
-                let (id, _) = store.put_source_and_tape_framed(canonical, gid, gv, fv, &held)?;
-                if named {
-                    store.name_sources([id]);
-                }
-                Ok(())
-            }),
-        );
+        let write = ObjectsWrite::Lone { canonical, grammar: (grammar_id, grammar_version, tape_format_version), frames: Arc::clone(&frames), named: item.named };
+        self.write_back_unless_full(Syms::None, "a tape and its source", frames.bytes(), vec![(key, Some(frames as Held))], write.work());
         Ok(())
     }
 

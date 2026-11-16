@@ -84,9 +84,68 @@ pub enum Syms {
     Unmapped,
 }
 
-/// A queued write: run on the writer's handle, its own transactions. Run again whole if it finds
-/// the store busy (`run_job`), so it writes what it holds without consuming it.
-pub type Job = Box<dyn FnMut(&ContentStore) -> StoreResult<()> + Send>;
+/// A queued write, as the writer runs it: its own transactions, run again whole if it finds the store busy
+/// (`run_job`), so it writes what it holds without consuming it. Made only from a [`Work`] (decision 0306 §8).
+type Job = Box<dyn FnMut(&ContentStore) -> StoreResult<()> + Send>;
+
+/// A write queued for the store's writer (decision 0306 §8): data of a closed set of kinds, each run by the store's
+/// code. A run's small writes are its record's; the bulk and store-internal writes are the store's own variants. No
+/// caller hands the queue code: what it writes is what it holds.
+pub struct Work(pub(super) Kind);
+
+pub(super) enum Kind {
+    /// A record (decision 0306): its string and byte area, applied by its items' registered kinds.
+    Record { text: String, bytes: Vec<u8> },
+    /// A space's frames (`queue_frames`).
+    Frames(Box<super::frames::FramesWrite>),
+    /// A space's memo entries in their segments (`queue_memo_segments`).
+    Memo(Box<super::frames::memo_pack::MemoWrite>),
+    /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
+    Objects(Box<super::object_segments::ObjectsWrite>),
+    /// The pending atoms; `queued` clears the flag that keeps a second flush from being queued meanwhile.
+    Atoms { queued: bool },
+    /// A test's job: the queue's own tests block or order the writer.
+    #[cfg(test)]
+    Test(Job),
+}
+
+impl Work {
+    /// A record's string and byte area (`record`).
+    pub(super) fn record(text: String, bytes: Vec<u8>) -> Work {
+        Work(Kind::Record { text, bytes })
+    }
+
+    /// A flush of the pending atoms.
+    pub(super) fn atoms(queued: bool) -> Work {
+        Work(Kind::Atoms { queued })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test(job: Job) -> Work {
+        Work(Kind::Test(job))
+    }
+
+    fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
+        match &mut self.0 {
+            Kind::Record { text, bytes } => super::record::apply(store, text, bytes),
+            Kind::Frames(w) => w.run(store),
+            Kind::Memo(w) => w.run(store),
+            Kind::Objects(w) => w.run(store),
+            Kind::Atoms { queued } => {
+                if *queued {
+                    store.atoms.flush_queued.store(false, std::sync::atomic::Ordering::Release);
+                }
+                store.flush_atoms()
+            }
+            #[cfg(test)]
+            Kind::Test(job) => job(store),
+        }
+    }
+
+    fn into_job(mut self) -> Job {
+        Box::new(move |store| self.run(store))
+    }
+}
 
 /// Writes a run gathers, many small ones made one job (decision 0295 step 5: a batch's bytes in one segment). Held
 /// beside the run's wave still being written, and closed (placed, then queued in that wave as one job) once it holds
@@ -120,7 +179,7 @@ pub struct Closed {
     pub keys: Vec<(Key, Option<Held>)>,
     pub syms: Syms,
     pub holder: Option<(String, i64)>,
-    pub job: Job,
+    pub job: Work,
 }
 
 /// The bytes a gather holds in memory before it is closed: 16 MB of the default 1 GB budget, scaled with it.
@@ -403,7 +462,7 @@ impl Writer {
         for (keys, g) in gathers {
             match g.close() {
                 Some(c) => {
-                    let job = accounted(c.what, c.bytes, guarded(c.syms, c.job));
+                    let job = accounted(c.what, c.bytes, guarded(c.syms, c.job.into_job()));
                     let mut s = self.shared.state.lock().expect("the writer's state");
                     s.bytes += c.bytes;
                     s.jobs += 1;
@@ -552,33 +611,33 @@ impl ContentStore {
     ///
     /// The job joins the wave the run is writing (`WAVES`), and the store takes the wave whole, in one transaction
     /// (`ContentStore::in_one_transaction`), each job a savepoint in it, once a boundary seals it (`end_wave`).
-    pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::InWave, false);
+    pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Work) {
+        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job.into_job()), Run::InWave, false);
     }
 
     /// [`Self::write_back`] of a job whose rows hold `syms` (decision 0170).
-    pub fn write_back_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(syms, job), Run::InWave, false);
+    pub fn write_back_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Work) {
+        self.queue(what, bytes, keys, guarded(syms, job.into_job()), Run::InWave, false);
     }
 
     /// [`Self::write_back_alone`] of a job whose rows hold `syms` (decision 0170).
-    pub fn write_back_alone_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(syms, job), Run::Alone, false);
+    pub fn write_back_alone_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Work) {
+        self.queue(what, bytes, keys, guarded(syms, job.into_job()), Run::Alone, false);
     }
 
     /// [`Self::write_back`] for a job that must commit before it goes on (it starts work on another connection that
     /// reads what it wrote): the run's wave before it is sealed, and it is a wave of its own, run in transactions of
     /// its own.
-    pub fn write_back_alone(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Alone, false);
+    pub fn write_back_alone(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Work) {
+        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job.into_job()), Run::Alone, false);
     }
 
     /// [`write_back`](Self::write_back) for a cache's write that may go missing (a tape and its source: the next run
     /// parses the file again): where the queue is full it is dropped, counted (`dropped`), rather than waited for, so
     /// no wave waits for the writer (decision 0104). Whether it was queued.
     /// Its rows hold `syms` (decision 0170).
-    pub fn write_back_unless_full(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) -> bool {
-        self.queue(what, bytes, keys, guarded(syms, job), Run::InWave, true)
+    pub fn write_back_unless_full(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Work) -> bool {
+        self.queue(what, bytes, keys, guarded(syms, job.into_job()), Run::InWave, true)
     }
 
     /// The cache writes dropped for a full queue since the writer started: how many, and their bytes.
@@ -1060,6 +1119,10 @@ fn thread_cpu() -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// A test's job, queued as the queue's tests queue them (`Work::test`).
+    fn job(job: impl FnMut(&ContentStore) -> StoreResult<()> + Send + 'static) -> Work {
+        Work::test(Box::new(job))
+    }
     use super::*;
 
     /// A job that finds the store busy is run again at once, then after waits that double: three busy runs, then
@@ -1112,12 +1175,12 @@ mod tests {
         let (go_tx, go_rx) = mpsc::channel::<()>();
         let key = Key::of(&[b"t", b"1"]);
         let (o1, o2) = (Arc::clone(&order), Arc::clone(&order));
-        store.write_back("one", 8, vec![(key, Some(Arc::new(7u64) as Held))], Box::new(move |_| {
+        store.write_back("one", 8, vec![(key, Some(Arc::new(7u64) as Held))], job(move |_| {
             go_rx.recv().unwrap();
             o1.lock().unwrap().push(1);
             Ok(())
         }));
-        store.write_back("two", 8, vec![], Box::new(move |_| {
+        store.write_back("two", 8, vec![], job(move |_| {
             o2.lock().unwrap().push(2);
             Err(StoreError::Invalid("second".into()))
         }));
@@ -1144,14 +1207,14 @@ mod tests {
         let (dir, store) = store("drop");
         let (open, gate) = std::sync::mpsc::channel::<()>();
         let gate = Mutex::new(gate);
-        store.write_back("slow", super::cap_bytes(), vec![], Box::new(move |_| {
+        store.write_back("slow", super::cap_bytes(), vec![], job(move |_| {
             let _ = gate.lock().unwrap().recv();
             Ok(())
         }));
         let ran = Arc::new(Mutex::new(0));
         let r = Arc::clone(&ran);
         let t = std::time::Instant::now();
-        let queued = store.write_back_unless_full(Syms::None, "cache", small_job(), vec![], Box::new(move |_| {
+        let queued = store.write_back_unless_full(Syms::None, "cache", small_job(), vec![], job(move |_| {
             *r.lock().unwrap() += 1;
             Ok(())
         }));
@@ -1161,7 +1224,7 @@ mod tests {
         assert_eq!(*ran.lock().unwrap(), 0, "a dropped write never runs");
         assert_eq!(store.dropped(), (1, small_job()));
         let r = Arc::clone(&ran);
-        assert!(store.write_back_unless_full(Syms::None, "cache", small_job(), vec![], Box::new(move |_| {
+        assert!(store.write_back_unless_full(Syms::None, "cache", small_job(), vec![], job(move |_| {
             *r.lock().unwrap() += 1;
             Ok(())
         })));
@@ -1185,7 +1248,7 @@ mod tests {
         let (go_tx, go_rx) = mpsc::channel::<()>();
         let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let r = Arc::clone(&runs);
-        store.write_back_syms(Syms::None, "forks", 0, vec![], Box::new(move |s| {
+        store.write_back_syms(Syms::None, "forks", 0, vec![], job(move |s| {
             if r.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                 go_rx.recv().unwrap();
                 s.intern_atoms(&["b"])?;
@@ -1199,7 +1262,7 @@ mod tests {
         let later = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for _ in 0..2 {
             let l = Arc::clone(&later);
-            store.write_back_syms(Syms::None, "later", 0, vec![], Box::new(move |_| { l.fetch_add(1, std::sync::atomic::Ordering::SeqCst); Ok(()) }));
+            store.write_back_syms(Syms::None, "later", 0, vec![], job(move |_| { l.fetch_add(1, std::sync::atomic::Ordering::SeqCst); Ok(()) }));
         }
         go_tx.send(()).unwrap();
         let (done_tx, done_rx) = mpsc::channel();
@@ -1221,7 +1284,7 @@ mod tests {
         let (dir, store) = store("waves");
         let other = ContentStore::open(&store.database_path).unwrap();
         let kept = |s: &ContentStore, i: u8| s.stat_blob([i; 32]).unwrap().is_some();
-        let put = |s: &ContentStore, i: u8| s.write_back("blob", 0, vec![], Box::new(move |s| s.put_stat_blob([i; 32], b"kept")));
+        let put = |s: &ContentStore, i: u8| s.write_back("blob", 0, vec![], job(move |s| s.put_stat_blob([i; 32], b"kept")));
         let waves = run_waves();
         for i in 0..3 {
             put(&store, i);
@@ -1262,7 +1325,7 @@ mod tests {
         let hold = hold(&path);
         let done = Arc::new(Mutex::new(false));
         let d = Arc::clone(&done);
-        store.write_back("blob", 0, vec![], Box::new(move |s| {
+        store.write_back("blob", 0, vec![], job(move |s| {
             std::thread::sleep(std::time::Duration::from_millis(50));
             s.put_stat_blob([1; 32], b"kept")?;
             *d.lock().unwrap() = true;

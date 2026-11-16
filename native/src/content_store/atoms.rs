@@ -377,7 +377,7 @@ pub struct Atoms {
     /// memory is not interned, and is found without reading the store (decision 0104).
     complete: AtomicBool,
     /// A flush is queued to the store's writer and has not run yet (`queue_atoms_flush`).
-    flush_queued: AtomicBool,
+    pub(super) flush_queued: AtomicBool,
 }
 
 /// A store's atoms of at most this many bytes of text are read whole before a run's first wave (`ready_for_run`).
@@ -1771,11 +1771,12 @@ impl super::ContentStore {
 
     /// The pending atoms, appended by the store's writer behind the run (decision 0104).
     pub fn queue_atoms_flush(&self) {
-        let atoms = std::sync::Arc::clone(&self.atoms);
-        self.write_back_syms(crate::content_store::write_back::Syms::None, "the pending atoms", 0, Vec::new(), Box::new(move |store| {
-            atoms.flush_queued.store(false, Ordering::Release);
-            store.flush_atoms()
-        }));
+        self.write_back_syms(crate::content_store::write_back::Syms::None, "the pending atoms", 0, Vec::new(), crate::content_store::write_back::Work::atoms(true));
+    }
+
+    /// The pending atoms, appended by the store's writer behind the run's other writes, as `what`.
+    pub fn queue_atoms(&self, what: &'static str) {
+        self.write_back_syms(crate::content_store::write_back::Syms::None, what, 0, Vec::new(), crate::content_store::write_back::Work::atoms(false));
     }
 
     /// Appends the pending atoms now, unless another writer holds the store (a later write will).
