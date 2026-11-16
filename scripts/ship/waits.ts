@@ -550,6 +550,9 @@ function upgradeGroup(settings: WaitsSettings, side: WaitSide, rep: number, phas
   cpSync(snapshot, dir, { recursive: true });
   rmSync(join(dir, ".ready"), { force: true });
   const home = new Home(settings, side, dir);
+  // The baseline's session left its first edit in the repository: the tracked files restored (the ledger is kept), so
+  // this session's first edit changes the file.
+  home.git(["checkout", "-qf", "HEAD", "--", "."]);
   const dropped = dropPageCache();
   try {
     const { firstMs, startMs, reason } = firstVerdict(home, `w4-${side}-${phase}-${rep}`);
