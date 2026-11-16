@@ -36,11 +36,11 @@ pub struct TreeNotice {
     pub changed: Vec<String>,
     /// Created, deleted or renamed entries, relative `/`-paths. Capped (see `lost`).
     pub renamed: Vec<String>,
-    /// Notices were dropped (an OS overflow, or more than 16,384 entries between two takes):
-    /// read the whole root.
+    /// Notices were dropped (an OS overflow, more than 16,384 entries between two takes, or a
+    /// Windows handle let go for a rename above the root and opened again): read the whole root.
     pub lost: bool,
-    /// The watch stopped (the root or a folder above it renamed, moved or deleted, a Windows oplock
-    /// broke, a watch error). The root is no longer watched: read it whole and watch it again.
+    /// The watch stopped (the root or a folder above it renamed, moved or deleted, a watch error).
+    /// The root is no longer watched: read it whole and watch it again.
     pub ended: bool,
 }
 

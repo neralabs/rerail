@@ -116,7 +116,7 @@ pub(super) fn wait_for_watcher(
     wait_with(root, || watcher.take().expect("take"), done)
 }
 
-fn names(paths: &[String], path: &str) -> bool {
+pub(super) fn names(paths: &[String], path: &str) -> bool {
     paths.iter().any(|seen| seen == path)
 }
 
@@ -213,8 +213,7 @@ mod adapter {
     use crate::tree_watch::TreeWatcher;
     use std::time::{Duration, Instant};
 
-    /// Watches `scratch`'s root and its `src` folder. Tests change files under `src`: on Windows a
-    /// change among the root's own entries breaks the oplock and ends the watch.
+    /// Watches `scratch`'s root and its `src` folder.
     fn watched(scratch: &Scratch) -> (TreeWatcher, String) {
         std::fs::create_dir_all(scratch.path("src")).expect("create src");
         let mut watcher = TreeWatcher::new();
@@ -227,15 +226,32 @@ mod adapter {
         (watcher, root)
     }
 
+    /// Waits for `root`'s notices to name `path` changed, the watch neither lost nor ended (on
+    /// Windows the write breaks the root's oplock, which must keep the watch).
+    fn wait_for_changed(watcher: &mut TreeWatcher, root: &str, path: &str) {
+        let notice = wait_for_watcher(watcher, root, |notice| names(&notice.changed, path));
+        assert!(!notice.lost && !notice.ended, "{notice:?}");
+    }
+
     #[test]
     fn a_write_is_a_changed_path() {
         let scratch = Scratch::new("write");
         scratch.write("src/a.txt", "a");
         let (mut watcher, root) = watched(&scratch);
         scratch.write("src/a.txt", "written");
-        wait_for_watcher(&mut watcher, &root, |notice| {
-            names(&notice.changed, "src/a.txt")
-        });
+        wait_for_changed(&mut watcher, &root, "src/a.txt");
+        watcher.close().expect("close");
+    }
+
+    #[test]
+    fn a_write_among_the_roots_own_entries_is_a_changed_path() {
+        let scratch = Scratch::new("write-root");
+        scratch.write("a.txt", "a");
+        let (mut watcher, root) = watched(&scratch);
+        scratch.write("a.txt", "written");
+        wait_for_changed(&mut watcher, &root, "a.txt");
+        scratch.write("a.txt", "written again");
+        wait_for_changed(&mut watcher, &root, "a.txt");
         watcher.close().expect("close");
     }
 
@@ -261,9 +277,7 @@ mod adapter {
         let folders = ["", "src", "src/deep"].map(str::to_owned).to_vec();
         assert!(watcher.watch(root.clone(), folders).expect("watch"));
         scratch.write("src/deep/a.ts", "b");
-        wait_for_watcher(&mut watcher, &root, |notice| {
-            names(&notice.changed, "src/deep/a.ts")
-        });
+        wait_for_changed(&mut watcher, &root, "src/deep/a.ts");
         watcher.close().expect("close");
     }
 
@@ -282,9 +296,7 @@ mod adapter {
         std::fs::rename(scratch.path("moved"), scratch.path("checkout")).expect("rename back");
         assert!(watcher.watch(root.clone(), folders).expect("watch again"));
         scratch.write("checkout/src/a.txt", "again");
-        wait_for_watcher(&mut watcher, &root, |notice| {
-            names(&notice.changed, "src/a.txt")
-        });
+        wait_for_changed(&mut watcher, &root, "src/a.txt");
         watcher.close().expect("close");
     }
 

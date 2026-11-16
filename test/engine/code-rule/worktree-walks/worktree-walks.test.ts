@@ -742,7 +742,8 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([3, 3, 3]);
   });
 
-  it("reads a worktree a filesystem was mounted in, named as the mount table escapes it", async () => {
+  // Only Linux has a mount table: the look reads one there alone, and its mount points are POSIX paths.
+  it.runIf(process.platform === "linux")("reads a worktree a filesystem was mounted in, named as the mount table escapes it", async () => {
     const { main, worktrees, checkouts } = await repository();
     const w3 = worktrees[2]!;
     let table = "22 1 8:1 / / rw - ext4 /dev/sda1 rw\n";

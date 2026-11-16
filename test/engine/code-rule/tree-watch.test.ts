@@ -42,7 +42,6 @@ async function noticeNaming(watch: TreeWatch, root: string, path: string): Promi
 }
 
 describe("the engine's tree watch", () => {
-  // Under a folder of the root: on Windows a change among the root's own entries ends its watch (its oplock breaks).
   it("names a file written under a watched root, '/'-separated, and nothing once the root is unwatched", async () => {
     const root = scratch();
     mkdirSync(join(root, "src"));

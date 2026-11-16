@@ -2,12 +2,22 @@
 //! tree, every handle on one I/O completion port served by one thread, `rerail-tree-watch`.
 //!
 //! A plain handle on a folder makes renaming, moving or deleting it, or any folder above it, fail
-//! ("access denied"). Each handle therefore holds a read-handle oplock: such a rename breaks it,
-//! the thread closes the handle at once (which lets the rename go on) and the root's watch ends.
-//! The oplock also breaks on a change among the root's own entries, which ends the watch the same
-//! way. A root the file system grants no oplock on, a network path, a mapped remote drive and a
-//! WSL path are not watched. An overflow of the 64 KiB buffer (`ERROR_NOTIFY_ENUM_DIR`, or a read
-//! that returns nothing) makes the root `lost`.
+//! ("access denied"). Each handle therefore holds a read-handle oplock on its folder, and the
+//! thread acts on each break as what broke it needs:
+//! - A change among the folder's entries breaks it to none, advisory only: the handle stays, its
+//!   read goes on, and the thread takes the oplock again at once. (In that moment a rename of the
+//!   folder or one above it would fail as it would with no oplock.)
+//! - A rename or deletion of the folder or one above it breaks its handle part and waits for the
+//!   handle: the thread closes it at once, which lets that go on, and opens the path again
+//!   `REOPEN_DELAY` later. The same folder there (its volume and file id) is watched on and `lost`,
+//!   since what changed while no handle was open is unknown; none there, or another folder, ends
+//!   the watch. A root reopened `REOPENS` times within `REOPEN_WINDOW` ends at the next, so a
+//!   folder renamed over and over is read whole rather than chased.
+//! - A break that keeps the handle part is acknowledged at its new level, and the handle stays.
+//!
+//! A root the file system grants no oplock or file id on, a network path, a mapped remote drive
+//! and a WSL path are not watched. An overflow of the 64 KiB buffer (`ERROR_NOTIFY_ENUM_DIR`, or a
+//! read that returns nothing) makes the root `lost`.
 //!
 //! The host's calls run on the thread, which answers each before the host goes on: `unwatch`
 //! returns with the handle closed, so `git worktree remove` and renames work at once.
@@ -20,16 +30,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_IO_PENDING, ERROR_NOTIFY_ENUM_DIR, GetLastError, HANDLE,
-    INVALID_HANDLE_VALUE,
+    INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ACTION_MODIFIED, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OVERLAPPED,
-    FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_ATTRIBUTES, FILE_NOTIFY_CHANGE_CREATION,
+    FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_ATTRIBUTES, FILE_NOTIFY_CHANGE_CREATION,
     FILE_NOTIFY_CHANGE_DIR_NAME, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE,
     FILE_NOTIFY_CHANGE_SIZE, FILE_NOTIFY_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, GetDriveTypeW, GetVolumePathNameW, OPEN_EXISTING, ReadDirectoryChangesW,
+    FILE_SHARE_WRITE, FileIdInfo, GetDriveTypeW, GetFileInformationByHandleEx, GetVolumePathNameW,
+    OPEN_EXISTING, ReadDirectoryChangesW,
 };
 use windows_sys::Win32::System::IO::{
     CreateIoCompletionPort, DeviceIoControl, GetQueuedCompletionStatus, OVERLAPPED,
@@ -37,8 +49,9 @@ use windows_sys::Win32::System::IO::{
 };
 use windows_sys::Win32::System::Ioctl::{
     FSCTL_REQUEST_OPLOCK, OPLOCK_LEVEL_CACHE_HANDLE, OPLOCK_LEVEL_CACHE_READ,
-    REQUEST_OPLOCK_CURRENT_VERSION, REQUEST_OPLOCK_INPUT_BUFFER, REQUEST_OPLOCK_INPUT_FLAG_REQUEST,
-    REQUEST_OPLOCK_OUTPUT_BUFFER,
+    REQUEST_OPLOCK_CURRENT_VERSION, REQUEST_OPLOCK_INPUT_BUFFER, REQUEST_OPLOCK_INPUT_FLAG_ACK,
+    REQUEST_OPLOCK_INPUT_FLAG_REQUEST, REQUEST_OPLOCK_OUTPUT_BUFFER,
+    REQUEST_OPLOCK_OUTPUT_FLAG_ACK_REQUIRED,
 };
 use windows_sys::Win32::System::Threading::INFINITE;
 
@@ -49,12 +62,23 @@ const FILTER: u32 = FILE_NOTIFY_CHANGE_FILE_NAME
     | FILE_NOTIFY_CHANGE_LAST_WRITE
     | FILE_NOTIFY_CHANGE_CREATION
     | FILE_NOTIFY_CHANGE_ATTRIBUTES;
+/// The oplock each handle holds: read and handle caching, the most a folder is granted.
+const READ_HANDLE: u32 = OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE;
 /// `GetDriveTypeW`'s answer for a network drive.
 const DRIVE_REMOTE: u32 = 4;
 /// The completion key that wakes the thread for the host's calls; roots' keys start at 1.
 const WAKE: usize = 0;
 /// How long `close` waits for the cancelled reads of closed handles to complete.
 const DRAIN_MILLISECONDS: u32 = 5_000;
+/// How long after letting go of a root's handle the thread opens its path again: time for the
+/// rename or deletion that broke the oplock to finish.
+const REOPEN_DELAY: Duration = Duration::from_millis(200);
+/// How soon the thread tries again to reopen a root whose closed handle's cancelled operations
+/// have not completed yet.
+const REOPEN_RETRY: Duration = Duration::from_millis(20);
+/// How many reopens of one root `REOPEN_WINDOW` allows; the next ends its watch.
+const REOPENS: usize = 8;
+const REOPEN_WINDOW: Duration = Duration::from_secs(60);
 
 /// A call of the host's for the thread, with where to answer it.
 enum Command {
@@ -75,40 +99,46 @@ struct Io {
     buffer: Vec<u32>,
 }
 
+/// A folder as the file system knows it: a rename keeps it, a new folder at the path is another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Identity {
+    volume: u64,
+    file: [u8; 16],
+}
+
 /// One root's handle and its two operations: the read and the oplock. Each flag holds while that
 /// operation's completion is still to come, so its OVERLAPPED stays put until then.
 struct Watch {
     root: String,
+    identity: Identity,
     handle: HANDLE,
     io: Box<Io>,
     reading: bool,
     oplocked: bool,
+    /// When the handle, let go for a rename or deletion, is to be opened again.
+    reopen_at: Option<Instant>,
+    /// When the handle was opened again, within the last `REOPEN_WINDOW`.
+    reopens: VecDeque<Instant>,
 }
 
 impl Watch {
-    fn open(root: String, handle: HANDLE) -> Self {
+    fn open(root: String, identity: Identity, handle: HANDLE) -> Self {
         let io = Box::new(Io {
             read: OVERLAPPED::default(),
             oplock: OVERLAPPED::default(),
-            oplock_in: REQUEST_OPLOCK_INPUT_BUFFER {
-                StructureVersion: REQUEST_OPLOCK_CURRENT_VERSION as u16,
-                StructureLength: size_of::<REQUEST_OPLOCK_INPUT_BUFFER>() as u16,
-                RequestedOplockLevel: OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE,
-                Flags: REQUEST_OPLOCK_INPUT_FLAG_REQUEST,
-            },
-            oplock_out: REQUEST_OPLOCK_OUTPUT_BUFFER {
-                StructureVersion: REQUEST_OPLOCK_CURRENT_VERSION as u16,
-                StructureLength: size_of::<REQUEST_OPLOCK_OUTPUT_BUFFER>() as u16,
-                ..REQUEST_OPLOCK_OUTPUT_BUFFER::default()
-            },
+            oplock_in: REQUEST_OPLOCK_INPUT_BUFFER::default(),
+            oplock_out: REQUEST_OPLOCK_OUTPUT_BUFFER::default(),
             buffer: vec![0; BUFFER_BYTES / 4],
         });
         Self {
             root,
+            identity,
             handle,
             io,
             reading: false,
             oplocked: false,
+            reopen_at: None,
+            reopens: VecDeque::new(),
         }
     }
 
@@ -124,18 +154,32 @@ impl Watch {
     /// Binds the handle to `port` under `key`, takes the oplock and starts the first read; true
     /// when all three hold. Otherwise the handle is closed.
     fn start(&mut self, port: HANDLE, key: usize) -> bool {
-        // SAFETY: this watch's handle, bound to the thread's port under a fresh key.
+        // SAFETY: this watch's handle, bound to the thread's port under its key.
         let bound = !unsafe { CreateIoCompletionPort(self.handle, port, key, 0) }.is_null();
-        let started = bound && self.request_oplock() && self.read();
+        let started =
+            bound && self.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE) && self.read();
         if !started {
             self.close_handle();
         }
         started
     }
 
-    /// Requests the read-handle oplock; true when it is granted (its completion is the break).
-    fn request_oplock(&mut self) -> bool {
+    /// Requests the oplock at `level` (`flags` `REQUEST_OPLOCK_INPUT_FLAG_REQUEST`) or
+    /// acknowledges its break to `level` (`REQUEST_OPLOCK_INPUT_FLAG_ACK`); true when an oplock
+    /// is then held (its completion is the next break).
+    fn oplock(&mut self, flags: u32, level: u32) -> bool {
         let io = &mut *self.io;
+        io.oplock_in = REQUEST_OPLOCK_INPUT_BUFFER {
+            StructureVersion: REQUEST_OPLOCK_CURRENT_VERSION as u16,
+            StructureLength: size_of::<REQUEST_OPLOCK_INPUT_BUFFER>() as u16,
+            RequestedOplockLevel: level,
+            Flags: flags,
+        };
+        io.oplock_out = REQUEST_OPLOCK_OUTPUT_BUFFER {
+            StructureVersion: REQUEST_OPLOCK_CURRENT_VERSION as u16,
+            StructureLength: size_of::<REQUEST_OPLOCK_OUTPUT_BUFFER>() as u16,
+            ..REQUEST_OPLOCK_OUTPUT_BUFFER::default()
+        };
         // SAFETY: the boxed buffers and OVERLAPPED stay put until the completion is dequeued.
         let done = unsafe {
             DeviceIoControl(
@@ -218,6 +262,45 @@ fn completion_comes(done: bool) -> bool {
     done || unsafe { GetLastError() } == ERROR_IO_PENDING
 }
 
+/// What a broken oplock asks of its handle.
+#[derive(Debug, PartialEq, Eq)]
+enum Break {
+    /// The handle part stays and the break waits: acknowledge it at this level.
+    Acknowledge(u32),
+    /// An advisory break (the folder's entries changed): take the oplock again.
+    Request,
+    /// The handle part goes and the break waits for the handle (the folder or one above it is
+    /// renamed or deleted), or the oplock failed: close the handle.
+    LetGo,
+}
+
+/// What the oplock's completion with `error` and `out` asks of the handle.
+fn oplock_break(error: u32, out: &REQUEST_OPLOCK_OUTPUT_BUFFER) -> Break {
+    let keeps_handle = out.NewOplockLevel & OPLOCK_LEVEL_CACHE_HANDLE != 0;
+    let waits = out.Flags & REQUEST_OPLOCK_OUTPUT_FLAG_ACK_REQUIRED != 0;
+    match (error, keeps_handle, waits) {
+        (0, true, true) => Break::Acknowledge(out.NewOplockLevel),
+        (0, _, false) => Break::Request,
+        _ => Break::LetGo,
+    }
+}
+
+/// Records a reopen at `now` in `reopens`; false when `REOPENS` were already made within
+/// `REOPEN_WINDOW`.
+fn may_reopen(reopens: &mut VecDeque<Instant>, now: Instant) -> bool {
+    while reopens
+        .front()
+        .is_some_and(|at| now.duration_since(*at) >= REOPEN_WINDOW)
+    {
+        reopens.pop_front();
+    }
+    if reopens.len() >= REOPENS {
+        return false;
+    }
+    reopens.push_back(now);
+    true
+}
+
 /// The wide, NUL-terminated form of `text`.
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
@@ -259,8 +342,8 @@ fn remote(root: &str) -> bool {
     found != 0 && unsafe { GetDriveTypeW(volume.as_ptr()) } == DRIVE_REMOTE
 }
 
-/// A handle on the folder `root` for reading its changes, or none.
-fn open_directory(root: &str) -> Option<HANDLE> {
+/// A handle on the folder `root` for reading its changes, with the folder's identity, or none.
+fn open_directory(root: &str) -> Option<(HANDLE, Identity)> {
     // SAFETY: a NUL-terminated path; the handle is owned by the caller.
     let handle = unsafe {
         CreateFileW(
@@ -273,7 +356,29 @@ fn open_directory(root: &str) -> Option<HANDLE> {
             std::ptr::null_mut(),
         )
     };
-    (handle != INVALID_HANDLE_VALUE).then_some(handle)
+    if handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let mut info = FILE_ID_INFO::default();
+    // SAFETY: an open handle and a buffer of the size passed.
+    let identified = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&raw mut info).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    } != 0;
+    if !identified {
+        // SAFETY: the handle opened above, used nowhere else.
+        unsafe { CloseHandle(handle) };
+        return None;
+    }
+    let identity = Identity {
+        volume: info.VolumeSerialNumber,
+        file: info.FileId.Identifier,
+    };
+    Some((handle, identity))
 }
 
 /// Calls `entry` with each record of a read's `bytes`: the path (relative, `/`-separated) and
@@ -334,12 +439,13 @@ impl Loop {
         if self.keys.contains_key(&root) {
             return true;
         }
-        let Some(handle) = (!remote(&root)).then(|| open_directory(&root)).flatten() else {
+        let Some((handle, identity)) = (!remote(&root)).then(|| open_directory(&root)).flatten()
+        else {
             return false;
         };
         let key = self.next_key;
         self.next_key += 1;
-        let mut watch = Watch::open(root, handle);
+        let mut watch = Watch::open(root, identity, handle);
         let started = watch.start(self.port, key);
         if started {
             self.keys.insert(watch.root.clone(), key);
@@ -357,6 +463,7 @@ impl Loop {
             return;
         };
         watch.close_handle();
+        watch.reopen_at = None;
         self.keys.remove(&watch.root);
         if !watch.pending() {
             self.watches.remove(&key);
@@ -378,7 +485,8 @@ impl Loop {
     }
 
     /// One operation of `key` completed. A completion of an operation not in flight (posted by a
-    /// call that failed at once) is dropped: the watch goes only once neither can still come.
+    /// call that failed at once) is dropped: the watch goes only once neither can still come, and
+    /// not while its handle is to be opened again.
     fn completed(&mut self, key: usize, overlapped: *mut OVERLAPPED, bytes: u32, error: u32) {
         let Some(watch) = self.watches.get_mut(&key) else {
             return;
@@ -395,14 +503,22 @@ impl Loop {
             return;
         }
         if !watch.open_handle() {
-            if !watch.pending() {
+            if !watch.pending() && watch.reopen_at.is_none() {
                 self.watches.remove(&key);
             }
             return;
         }
         if oplock {
-            // The oplock broke: let go of the handle so whatever broke it goes on.
-            self.end(key);
+            let kept = match oplock_break(error, &watch.io.oplock_out) {
+                Break::Acknowledge(level) => watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_ACK, level),
+                Break::Request => watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE),
+                Break::LetGo => false,
+            };
+            if !kept {
+                // Let go of the handle so whatever broke the oplock goes on; open it again later.
+                watch.close_handle();
+                watch.reopen_at = Some(Instant::now() + REOPEN_DELAY);
+            }
             return;
         }
         self.read_completed(key, bytes, error);
@@ -429,6 +545,61 @@ impl Loop {
         }
     }
 
+    /// How long the thread may wait for a completion before a handle is due to be opened again.
+    fn wait_milliseconds(&self, now: Instant) -> u32 {
+        self.watches
+            .values()
+            .filter_map(|watch| watch.reopen_at)
+            .min()
+            .map_or(INFINITE, |at| {
+                let wait = at.saturating_duration_since(now).as_millis();
+                u32::try_from(wait).unwrap_or(INFINITE - 1)
+            })
+    }
+
+    /// Opens again every handle due, once its closed handle's operations have all completed.
+    fn reopen_due(&mut self, now: Instant) {
+        let due: Vec<usize> = self
+            .watches
+            .iter()
+            .filter(|(_, watch)| watch.reopen_at.is_some_and(|at| at <= now))
+            .map(|(key, _)| *key)
+            .collect();
+        for key in due {
+            self.reopen(key, now);
+        }
+    }
+
+    /// Opens `key`'s root again: the same folder is watched on and lost; none there, another
+    /// folder, or one reopen too many ends the watch.
+    fn reopen(&mut self, key: usize, now: Instant) {
+        let Some(watch) = self.watches.get_mut(&key) else {
+            return;
+        };
+        if watch.pending() {
+            // The closed handle's OVERLAPPEDs are still the kernel's.
+            watch.reopen_at = Some(now + REOPEN_RETRY);
+            return;
+        }
+        watch.reopen_at = None;
+        if !may_reopen(&mut watch.reopens, now) {
+            return self.end(key);
+        }
+        let Some((handle, identity)) = open_directory(&watch.root) else {
+            return self.end(key);
+        };
+        if identity != watch.identity {
+            // SAFETY: the handle opened above, used nowhere else.
+            unsafe { CloseHandle(handle) };
+            return self.end(key);
+        }
+        watch.handle = handle;
+        if !watch.start(self.port, key) {
+            return self.end(key);
+        }
+        self.notices.lost(&watch.root);
+    }
+
     /// Closes every handle and waits for their cancelled operations, so nothing is freed under the
     /// kernel.
     fn shut(&mut self) {
@@ -437,7 +608,8 @@ impl Loop {
             self.close(key);
         }
         while !self.watches.is_empty() {
-            let Some((key, overlapped, bytes, error)) = dequeue(self.port, DRAIN_MILLISECONDS)
+            let Dequeued::Completion(key, overlapped, bytes, error) =
+                dequeue(self.port, DRAIN_MILLISECONDS)
             else {
                 return;
             };
@@ -448,21 +620,33 @@ impl Loop {
     }
 }
 
-/// The next completion on `port`: its key, OVERLAPPED (null for a wake), bytes and error. None
-/// when none came in `milliseconds` or the port failed.
-fn dequeue(port: HANDLE, milliseconds: u32) -> Option<(usize, *mut OVERLAPPED, u32, u32)> {
+/// What waiting on the port gave.
+enum Dequeued {
+    /// A completion: its key, OVERLAPPED (null for a wake), bytes and error.
+    Completion(usize, *mut OVERLAPPED, u32, u32),
+    /// None came in time.
+    TimedOut,
+    /// The port failed.
+    Failed,
+}
+
+/// The next completion on `port`, waiting at most `milliseconds`.
+fn dequeue(port: HANDLE, milliseconds: u32) -> Dequeued {
     let (mut bytes, mut key, mut overlapped) = (0_u32, 0_usize, std::ptr::null_mut());
     // SAFETY: the port lives until the thread is joined; the out-parameters are locals.
     let done = unsafe {
         GetQueuedCompletionStatus(port, &mut bytes, &mut key, &mut overlapped, milliseconds)
     };
+    if done != 0 {
+        return Dequeued::Completion(key, overlapped, bytes, 0);
+    }
     // SAFETY: reads the calling thread's last error.
-    let error = if done == 0 {
-        unsafe { GetLastError() }
-    } else {
-        0
-    };
-    (done != 0 || !overlapped.is_null()).then_some((key, overlapped, bytes, error))
+    let error = unsafe { GetLastError() };
+    match (overlapped.is_null(), error) {
+        (false, _) => Dequeued::Completion(key, overlapped, bytes, error),
+        (true, WAIT_TIMEOUT) => Dequeued::TimedOut,
+        (true, _) => Dequeued::Failed,
+    }
 }
 
 /// What the host's thread and the watch thread share.
@@ -529,14 +713,18 @@ fn run(shared: &Shared, notices: &Arc<Notices>) {
 
 fn serve(shared: &Shared, state: &mut Loop) {
     loop {
-        let Some((key, overlapped, bytes, error)) = dequeue(shared.port, INFINITE) else {
-            return;
-        };
-        if !overlapped.is_null() {
-            state.completed(key, overlapped, bytes, error);
-        } else if key == WAKE && !run_commands(shared, state) {
-            return;
+        match dequeue(shared.port, state.wait_milliseconds(Instant::now())) {
+            Dequeued::Completion(key, overlapped, bytes, error) => {
+                if !overlapped.is_null() {
+                    state.completed(key, overlapped, bytes, error);
+                } else if key == WAKE && !run_commands(shared, state) {
+                    return;
+                }
+            }
+            Dequeued::TimedOut => {}
+            Dequeued::Failed => return,
         }
+        state.reopen_due(Instant::now());
     }
 }
 
@@ -632,14 +820,24 @@ impl Drop for DirectoryChanges {
 
 #[cfg(test)]
 mod tests {
-    use super::{Loop, ReadOutcome, WAKE, Watch, parse, read_outcome, remote};
+    use super::{
+        Break, Dequeued, Identity, Loop, READ_HANDLE, REOPEN_WINDOW, REOPENS, ReadOutcome, WAKE,
+        Watch, dequeue, may_reopen, open_directory, oplock_break, parse, read_outcome, remote,
+    };
     use crate::tree_watch::TreeWatcher;
     use crate::tree_watch::notices::Notices;
-    use crate::tree_watch::tests::{Scratch, wait_for_watcher};
-    use std::collections::HashMap;
+    use crate::tree_watch::tests::{Scratch, names, wait_for_watcher};
+    use std::collections::{HashMap, VecDeque};
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        ERROR_ACCESS_DENIED, ERROR_NOTIFY_ENUM_DIR, ERROR_OPERATION_ABORTED, INVALID_HANDLE_VALUE,
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_NOTIFY_ENUM_DIR, ERROR_OPERATION_ABORTED, HANDLE,
+        INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::IO::CreateIoCompletionPort;
+    use windows_sys::Win32::System::Ioctl::{
+        OPLOCK_LEVEL_CACHE_HANDLE, OPLOCK_LEVEL_CACHE_READ, REQUEST_OPLOCK_INPUT_FLAG_REQUEST,
+        REQUEST_OPLOCK_OUTPUT_BUFFER, REQUEST_OPLOCK_OUTPUT_FLAG_ACK_REQUIRED,
     };
 
     #[test]
@@ -652,7 +850,11 @@ mod tests {
             next_key: WAKE + 1,
         };
         // The oplock was granted, then the read failed at once and the handle was closed.
-        let mut watch = Watch::open(r"C:\r".to_owned(), INVALID_HANDLE_VALUE);
+        let mut watch = Watch::open(
+            r"C:\r".to_owned(),
+            Identity::default(),
+            INVALID_HANDLE_VALUE,
+        );
         watch.oplocked = true;
         state.watches.insert(1, watch);
         let watch = state.watches.get_mut(&1).expect("watch");
@@ -665,6 +867,50 @@ mod tests {
         );
         state.completed(1, oplock, 0, ERROR_OPERATION_ABORTED);
         assert!(state.watches.is_empty());
+    }
+
+    #[test]
+    fn a_break_that_waits_for_the_handle_lets_it_go_and_an_advisory_one_keeps_it() {
+        let broken = |new, flags| REQUEST_OPLOCK_OUTPUT_BUFFER {
+            OriginalOplockLevel: READ_HANDLE,
+            NewOplockLevel: new,
+            Flags: flags,
+            ..REQUEST_OPLOCK_OUTPUT_BUFFER::default()
+        };
+        let waits = REQUEST_OPLOCK_OUTPUT_FLAG_ACK_REQUIRED;
+        // A change among the folder's entries.
+        assert_eq!(oplock_break(0, &broken(0, 0)), Break::Request);
+        // A rename or deletion of the folder or one above it.
+        assert_eq!(
+            oplock_break(0, &broken(OPLOCK_LEVEL_CACHE_READ, waits)),
+            Break::LetGo
+        );
+        assert_eq!(oplock_break(0, &broken(0, waits)), Break::LetGo);
+        assert_eq!(
+            oplock_break(0, &broken(READ_HANDLE, waits)),
+            Break::Acknowledge(OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE)
+        );
+        assert_eq!(
+            oplock_break(ERROR_ACCESS_DENIED, &broken(0, 0)),
+            Break::LetGo
+        );
+    }
+
+    #[test]
+    fn a_root_is_reopened_at_most_the_bound_times_within_the_window() {
+        let mut reopens = VecDeque::new();
+        let start = Instant::now();
+        for index in 0..REOPENS {
+            assert!(may_reopen(
+                &mut reopens,
+                start + Duration::from_secs(index as u64)
+            ));
+        }
+        assert!(!may_reopen(
+            &mut reopens,
+            start + Duration::from_secs(REOPENS as u64)
+        ));
+        assert!(may_reopen(&mut reopens, start + REOPEN_WINDOW));
     }
 
     #[test]
@@ -716,6 +962,99 @@ mod tests {
         );
     }
 
+    /// What one oplock break carried, or none in `milliseconds`.
+    fn next_break(port: HANDLE, watch: &mut Watch, milliseconds: u32) -> String {
+        let Dequeued::Completion(_, overlapped, _, error) = dequeue(port, milliseconds) else {
+            return "no break".to_owned();
+        };
+        if !std::ptr::eq(overlapped, &raw mut watch.io.oplock) {
+            return "another completion".to_owned();
+        }
+        watch.oplocked = false;
+        let out = &watch.io.oplock_out;
+        format!(
+            "error {error} status {:#x} original {} new {} flags {:#x} access {:#x} share {:#x}",
+            watch.io.oplock.Internal,
+            out.OriginalOplockLevel,
+            out.NewOplockLevel,
+            out.Flags,
+            out.AccessMode,
+            out.ShareMode
+        )
+    }
+
+    /// Prints what the oplock break of each change carries (CI's log shows it).
+    #[test]
+    fn what_an_oplock_break_carries() {
+        type Change = fn(&Scratch) -> std::io::Result<()>;
+        let changes: [(&str, Change); 7] = [
+            ("nothing", |_| Ok(())),
+            ("write a.txt", |scratch| {
+                std::fs::write(scratch.path("base/checkout/a.txt"), "b")
+            }),
+            ("write src/a.txt", |scratch| {
+                std::fs::write(scratch.path("base/checkout/src/a.txt"), "b")
+            }),
+            ("write src/deep/a.ts", |scratch| {
+                std::fs::write(scratch.path("base/checkout/src/deep/a.ts"), "b")
+            }),
+            ("rename the root's parent", |scratch| {
+                std::fs::rename(scratch.path("base"), scratch.path("moved"))
+            }),
+            ("rename the root", |scratch| {
+                std::fs::rename(scratch.path("base/checkout"), scratch.path("base/moved"))
+            }),
+            ("delete the root", |scratch| {
+                std::fs::remove_dir_all(scratch.path("base/checkout"))
+            }),
+        ];
+        for (name, change) in changes {
+            let scratch = Scratch::new("oplock-break");
+            for file in [
+                "base/checkout/a.txt",
+                "base/checkout/src/a.txt",
+                "base/checkout/src/deep/a.ts",
+            ] {
+                scratch.write(file, "a");
+            }
+            std::thread::sleep(Duration::from_millis(500));
+            let root = scratch.path("base/checkout").to_string_lossy().into_owned();
+            // SAFETY: a new port, closed below.
+            let port =
+                unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1) };
+            let (handle, identity) = open_directory(&root).expect("open the root");
+            let mut watch = Watch::open(root, identity, handle);
+            // SAFETY: the watch's handle, bound to the port above.
+            unsafe { CreateIoCompletionPort(handle, port, 1, 0) };
+            let granted = watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE);
+            let early = next_break(port, &mut watch, 300);
+            if watch.oplocked {
+                eprintln!("oplock [{name}]: granted {granted}, before the change {early}");
+            } else {
+                let again = watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE);
+                eprintln!(
+                    "oplock [{name}]: granted {granted}, before the change {early}, again {again}"
+                );
+            }
+            std::thread::scope(|scope| {
+                let started = Instant::now();
+                let changing = scope.spawn(|| change(&scratch));
+                let first = next_break(port, &mut watch, 3_000);
+                let at = started.elapsed();
+                let waiting = !changing.is_finished();
+                watch.close_handle();
+                let result = changing.join().expect("change");
+                eprintln!(
+                    "oplock [{name}]: {first} after {at:?}, change waiting {waiting}, {result:?} after {:?}",
+                    started.elapsed()
+                );
+            });
+            let _ = next_break(port, &mut watch, 1_000);
+            // SAFETY: the port created above; its one handle is closed.
+            unsafe { CloseHandle(port) };
+        }
+    }
+
     #[test]
     fn renaming_the_folder_above_a_watched_root_succeeds_and_ends_the_watch() {
         let scratch = Scratch::new("parent-rename");
@@ -729,6 +1068,47 @@ mod tests {
         let notice = wait_for_watcher(&mut watcher, &root, |notice| notice.ended);
         assert!(notice.ended);
         std::fs::rename(&moved, &parent).expect("rename back");
+        watcher.close().unwrap();
+    }
+
+    /// Renames `scratch`'s `checkout` away and back, then waits for the notice it makes.
+    fn rename_away_and_back(watcher: &mut TreeWatcher, scratch: &Scratch, root: &str) -> bool {
+        std::fs::rename(scratch.path("checkout"), scratch.path("moved")).expect("rename away");
+        std::fs::rename(scratch.path("moved"), scratch.path("checkout")).expect("rename back");
+        let notice = wait_for_watcher(watcher, root, |notice| notice.lost || notice.ended);
+        assert!(notice.lost != notice.ended, "{notice:?}");
+        notice.ended
+    }
+
+    #[test]
+    fn a_root_renamed_away_and_back_before_it_is_opened_again_is_lost_and_still_watched() {
+        let scratch = Scratch::new("rename-back");
+        scratch.write("checkout/src/a.txt", "a");
+        let root = scratch.path("checkout").to_string_lossy().into_owned();
+        let mut watcher = TreeWatcher::new();
+        assert!(watcher.watch(root.clone(), vec![String::new()]).unwrap());
+        assert!(!rename_away_and_back(&mut watcher, &scratch, &root));
+        assert_eq!(watcher.held_roots(), 1);
+        scratch.write("checkout/src/a.txt", "b");
+        let notice = wait_for_watcher(&mut watcher, &root, |notice| {
+            names(&notice.changed, "src/a.txt")
+        });
+        assert!(!notice.ended && !notice.lost, "{notice:?}");
+        watcher.close().unwrap();
+    }
+
+    #[test]
+    fn a_root_renamed_away_and_back_more_often_than_the_bound_ends() {
+        let scratch = Scratch::new("rename-bound");
+        scratch.write("checkout/a.txt", "a");
+        let root = scratch.path("checkout").to_string_lossy().into_owned();
+        let mut watcher = TreeWatcher::new();
+        assert!(watcher.watch(root.clone(), vec![String::new()]).unwrap());
+        for _ in 0..REOPENS {
+            assert!(!rename_away_and_back(&mut watcher, &scratch, &root));
+        }
+        assert!(rename_away_and_back(&mut watcher, &scratch, &root));
+        assert_eq!(watcher.held_roots(), 0);
         watcher.close().unwrap();
     }
 

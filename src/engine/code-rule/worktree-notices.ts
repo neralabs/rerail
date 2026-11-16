@@ -199,8 +199,8 @@ export class WorktreeNotices {
   #notice(notice: TreeNotice): void {
     const watched = this.#watched.get(notice.root);
     if (watched === undefined) return;
-    // The watch let go (the worktree or a folder above it moved or went, a Windows oplock broke): read it whole, and
-    // watch it again as the next walk asks.
+    // The watch let go (the worktree or a folder above it moved or went, a watch error): read it whole, and watch it
+    // again as the next walk asks.
     if (notice.ended) {
       this.#watched.delete(notice.root);
       this.#ended.set(notice.root, this.#now());
