@@ -190,9 +190,9 @@ about 30, so time is CPU and instructions retired, not wall:
 
 The chunk's build lost the projection's copy (about 1 ms of its 3 to 4). The projection itself is within the runs'
 spread; its first writes into a fresh block are page faults where a `Vec` reused freed memory (`identity maps` and
-`projection fields`, a few ms higher). The 12 to 13 G fewer instructions are far more than either: most of the
-difference is not the copy, and is not explained here (system CPU fell 0.6 s in both pairs; placement differed,
-the second run before §3 read no view on the device).
+`projection fields`, a few ms higher). The 12 to 13 G fewer instructions are not §3's: a later cold run of the §3
+build took 90.7 G, as the runs before it did. They are the spread of a cold run (placement put 8 to 12 strata on
+the GPU in these runs), and §3 is not measurable in the whole run's instructions.
 
 No device reads the arrays on targets without Metal: there `cells` is a heap array with the same
 API (no address space to reserve on WASM). `rerail-accel`'s dependency on `rerail-blocks` is Metal's only (its

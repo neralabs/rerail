@@ -631,6 +631,39 @@ pass.
   bytes. Red with that branch's own binary at its head (23:01), green at 19:32. Theirs to settle, their area.
 - **Done when**: the test states the set the token loop reads codes for, and passes.
 
+### Q27. Placement's CPU estimates miss by their planned work, so the GPU is not chosen
+
+- **Found** (2026-11-16, Native-and-GPU-strata, `placement.tsv` of five cold runs of the light run over PostHog's
+  `posthog/hogql`, the same 1,629 findings each): the strata cost 2.2–3.7 s of CPU against 1.3–1.6 s estimated, in
+  every run, loaded or not. Split per stratum into planned work and price per unit of work:
+
+  | Stratum | Planned work | Work done | ns a unit, measured / priced |
+  |---|---|---|---|
+  | `pre_120` | 0.49 M | 5.04 M | 67 / 71 |
+  | `tgt` (recursive) | 0.04 M | 0.12 M | 1,274 / 159 |
+  | `walk` (recursive) | 0.46 M | 0.60 M | 146 / 51 |
+  | `kind` | 3.52 M | 3.52 M | 79 / 30 (priced as a scan) |
+
+  So the work estimate misses by up to 10× (`pre_120`), and the price of a recursive stratum's unit by 3–8×. The
+  GPU's estimates are within 2–3× of its measured runs either way, with no bias (per run: host part and command
+  buffers' time, against `gpu_estimate_s` over the runs it took). A stratum whose CPU is underestimated stays on the
+  CPU: `pre_120`'s 0.34–0.58 s against a GPU estimate of 0.08 s.
+- **With the costs store kept** (a second run, cold store, `RERAIL_COSTS` from the first): 69.7 G instructions
+  against 90.7 G cold; `pre_120`'s plan did 0.36 M units, not 5 M. Placement still put 8 strata on the GPU.
+- **Whose**: the planned work is the planner's (cost-classifier's estimates and trials, 0226; their 0297 is open).
+  The per-unit prices are placement's (Native-and-GPU-strata: `CPU_PER_SCANNED` of 0277 prices `kind`'s scan of a
+  view at 30 ns, measured then on a stored copy).
+- **Done when**: placement's CPU estimate is within 2× of the measured CPU for the costliest strata of this run, and
+  the strata the GPU then runs cheaper move there.
+
+### Q28. A rule that copies a view's columns is a stratum
+
+- **Found** (2026-11-16, Native-and-GPU-strata): `kind(n, k) :- node(_, n, k, _, _).` (`typing/programs/calls.rr`)
+  copies the `node` view: 3.5 M rows, 0.28–0.41 s of CPU a cold run of hogql, the costliest stratum with an exact
+  estimate. A rule whose body is one view atom, binding distinct variables, is that view's columns.
+- **Whose**: lowering (a request and what its readers read, 0291), where cost-classifier works now. Not taken here.
+- **Done when**: such a rule is bound as a view of its source, and no stratum copies it.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
