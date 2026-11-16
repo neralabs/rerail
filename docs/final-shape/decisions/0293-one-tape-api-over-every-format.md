@@ -196,8 +196,7 @@ This record is steps 2, 3 and 4, and the API they need.
      (16 bytes a node). The interpreter's children are hops in both its resident and packed builds; its node
      record carries no parent or sibling links (`node_parent`, `node_next`). Where it pushed a node's later
      matching children last-first, it pushes them in order and reverses the run it pushed: the stack is the same.
-   - **A pass's roots** are listed from the tape's code bytes, 64 at a time (`TapeDoc::transducer_nodes_where`
-     over `Tape::match_groups`), each code tested once; the host's own root list (`Roots::nodes`) is the same.
+   - **A pass's roots** were listed on the host from the tape's code bytes at first; §10 replaced the lists.
 
    Checked (2026-11-16): the device reads every node of a batch (one document of several side-list parts, with
    gaps and lengths past a byte) as its document does, in 15, 16 and 16z, admitted from a store
@@ -211,6 +210,31 @@ This record is steps 2, 3 and 4, and the API they need.
    work limit, as at 6afcddb0a before this (work queue Q19); the CLI's device run (`logic --metal`, the Vue rules
    over the mixed files) gives the same findings in the three formats, cold and warm.
 
+10. **A pass's roots are a rule, not a list** (built, 2026-11-16, the user: "yes, please do that. It's a better
+    shape"). §9's lists (4 bytes a root, a run's at the median 20 bytes a node, 85 KB a wave over 24 files, built
+    on the host for every rule and run) are gone. The run's root table (`RootTable`, `root_mask` on the device)
+    holds the batch's file count and each file's first group of 64 nodes, and per distinct rule: over codes, a
+    bit per file it runs in and its test (kinds, then kind and class tests: the sweeps' `code_admits`); listed (a
+    clause's prefilter candidates), a row of bits over the batch's nodes. Nothing is kept per root.
+    - **A thread is a pass and a group of 64 of a document's nodes**: it reads the group's codes from the tape,
+      makes the group's roots a 64-bit mask, and walks from each (`ROOTS_EACH`). The micro walks, the fused
+      groups (a lane every `width`th group of its file), the pattern kernels and the resident interpreter's tasks
+      (a task a group; the lane runs each root in it) all take their roots so. A group's roots run one after
+      another in its thread: a long walk is still the spill queue's to split.
+    - **The host lists nothing**: a rule is a few words, sized from the batch's node counts. The CPU's readers
+      (`Roots::nodes`) still list a document's roots from the code bytes 64 at a time; the profile's per-depth
+      root counts do so only when profiling.
+    - **Not changed:** a wave's final root walks (`root_records`) take their starts from the wave's jobs, a list
+      the wave's prefilter made.
+
+    Checked (2026-11-16, on the build farm's M3 and M1 Max, 15, 16 and 16z): on the matcher's fixtures the
+    device's roots equal the CPU's on all 491 clauses, the resident interpreter's on 114 of 122 with the D416
+    clause past its work limit as before (Q19); in 15 and 16, with the pack's files restored (618, from
+    236fc98d2~1), the micro walks, the combined graph, the widened-walk catch, the device conformance test and the
+    `waves::matches` tests pass, and with every walk spilling the device's roots equal the CPU's on all 491 clauses (the spill
+    test's floor of 1,000 roots still wants the full test data). The two per-clause tests over all 618 files run
+    past nextest's 240 s limit.
+
 ## Interim, until step 5
 
 - **What reads the image's tape through the API** in whichever format it is held: the checks a restore makes
@@ -221,8 +245,6 @@ This record is steps 2, 3 and 4, and the API they need.
   `waves::matches`), the grid and register machines and the non-resident interpreter read it. The resident path
   (§9) does not.
 - **The core facts' digest** serializes a format 15 image to hash it (format 16's bytes are hashed as held).
-- **A pass's roots are listed on the host** (§9), from the code bytes 64 at a time a rule and a run, where the
-  residency's nodes by code were read in place: a device scan of the code bytes (the lab's E30, E31) replaces it.
 - **The tape tests** (`tape::tests`) are format 15's: they assert the run stores format 15, and fail under
   `RERAIL_TAPE=16`.
 

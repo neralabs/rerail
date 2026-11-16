@@ -101,16 +101,48 @@ inline uint tape_child(thread const Slabs& s,DocView d,uint i,uint k){uint end=t
 inline uchar tape_byte(thread const Slabs& s,DocView d,uint at){return (tape_slab(s,d.slab)+d.source)[at];}
 inline device const uchar* tape_source(thread const Slabs& s,DocView d){return tape_slab(s,d.slab)+d.source;}
 inline uint tape_line_start(thread const Slabs& s,DocView d,uint line){return ((device const uint*)(tape_slab(s,d.slab)+d.lines))[line];}
-// A pass's roots (`label_passes::Roots`, decision 0033): at `at` in `segs`, a header (x: the
-// segment count, y: the roots) and its segments, each a document's run of roots: x the document,
-// y where its nodes start in `segs` (bit 31 set: listed local nodes, found by the host from the
-// tape's code bytes, 64 at a time), z how many, w the first root's index in the pass. Segments
-// ascend by document, then index.
-struct RootSeg{uint doc,from,count,first;};
-constant uint ROOT_LISTED=0x80000000u;
-// The `i`-th root's segment, by binary search over the pass's segments.
-inline uint root_segment(device const uint4* segs,uint at,uint i){uint low=at+1u,high=at+1u+segs[at].x;while(high-low>1u){uint middle=(low+high)/2u;if(segs[middle].w<=i)low=middle;else high=middle;}return low;}
-// The node `k` of a segment (document-local).
-inline uint root_local(thread const Slabs& s,DocView d,device const uint4* segs,uint4 seg,uint k){return ((device const uint*)segs)[(seg.y&~ROOT_LISTED)+k];}
-// The first segment at or after document `doc` in the pass at `at`.
-inline uint root_doc_segment(device const uint4* segs,uint at,uint doc){uint low=at+1u,high=at+1u+segs[at].x;while(low<high){uint middle=(low+high)/2u;if(segs[middle].x<doc)low=middle+1u;else high=middle;}return low;}
+// A pass's roots (`label_passes::Roots`; decisions 0033, 0293 §10), with no list of them. In
+// `roots`: word 0 the batch's file count F, words 1..=F+1 each file's first group of 64 nodes
+// (groups start at each document's first node) and the total. A rule at word `at`: its kind (0
+// over codes, 1 listed); over codes, a bit per file it runs in (ceil(F/32) words), then its test
+// (`code_admits`); listed, its nodes as a row of bits over the batch's nodes. A thread takes a
+// pass and a group, finds the group's roots as a 64-bit mask, and walks from each.
+constant uint ROOT_GROUP=64u;
+inline uint roots_groups(device const uint* roots){return roots[1u+roots[0]];}
+inline uint roots_first_group(device const uint* roots,uint file){return roots[1u+file];}
+inline uint roots_file_groups(device const uint* roots,uint file){return roots[2u+file]-roots[1u+file];}
+// The file holding the batch's group `group`.
+inline uint roots_file(device const uint* roots,uint group){uint low=0u,high=roots[0];while(high-low>1u){uint middle=(low+high)/2u;if(roots[1u+middle]<=group)low=middle;else high=middle;}return low;}
+// Whether a code passes a rule over codes: {kind count or NONE, kinds, test count, tests (op << 16 | argument)}.
+inline bool code_admits(device const uint* rule,device const DeviceCode& code){
+ uint kinds=rule[0],at=1u;
+ if(kinds!=0xffffffffu){bool found=false;for(uint k=0u;k<kinds;k++)if(rule[1u+k]==code.kind){found=true;break;}if(!found)return false;at+=kinds;}
+ for(uint k=0u,tests=rule[at];k<tests;k++){
+  uint test=rule[at+1u+k],op=test>>16u,arg=test&0xffffu;
+  if(op==1u){if(code.kind!=arg)return false;}
+  else{bool found=false;for(uint m=0u;m<code.classCount;m++)if(code.classes[m]==arg){found=true;break;}if(!found)return false;}
+ }
+ return true;
+}
+// The roots of the rule at `at` among document `d`'s nodes 64*group.. (file `file` of the batch), as bits.
+inline ulong root_mask(thread const Slabs& s,DocView d,device const uint* roots,uint at,uint file,uint group){
+ uint from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;
+ uint count=min(ROOT_GROUP,d.nodes-from);
+ ulong mask=0ul;
+ if(roots[at]!=0u){
+  device const uint* row=roots+at+1u;uint b=d.nodeBase+from,w=b/32u,sh=b%32u;
+  mask=ulong(row[w])|(ulong(row[w+1u])<<32u);
+  if(sh!=0u)mask=(mask>>sh)|(ulong(row[w+2u])<<(64u-sh));
+ }else{
+  uint files=roots[0];
+  if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
+  device const uint* rule=roots+at+1u+(files+31u)/32u;
+  for(uint k=0u;k<count;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
+ }
+ return count==ROOT_GROUP?mask:(mask&((1ul<<count)-1ul));
+}
+// The lowest set bit of a mask.
+inline uint root_ctz(ulong m){uint low=uint(m);return low!=0u?ctz(low):32u+ctz(uint(m>>32u));}
+// Each root of a mask, document-local: `ROOTS_EACH(mask, group, local) { ... }`. One loop over the
+// mask (a fixed two-trip loop over its halves was unrolled, the body compiled twice).
+#define ROOTS_EACH(MASK,GROUP,LOCAL) for(ulong rootBits=(MASK);rootBits!=0ul;rootBits&=rootBits-1ul)for(uint LOCAL=(GROUP)*ROOT_GROUP+root_ctz(rootBits),rootOnce=0u;rootOnce==0u;rootOnce=1u)

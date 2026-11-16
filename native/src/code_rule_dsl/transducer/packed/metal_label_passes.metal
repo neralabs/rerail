@@ -93,8 +93,8 @@ inline uint tree_parent(thread const Tree& t,uint node){return tree_global(t,tap
 inline uint tree_next_in(thread const Tree& t,uint node,uint end,bool named){uint local=tree_local(t,node),last=end-t.d.nodeBase;return tree_global(t,named?tape_next_named_in(t.s,t.d,local,last):tape_next_in(t.s,t.d,local,last));}
 // The end of `node`'s parent's subtree (NONE at the root).
 inline uint tree_parent_end(thread const Tree& t,uint node){uint parent=tree_parent(t,node);return parent==TAPE_NONE?TAPE_NONE:tree_end(t,parent);}
-// A pass: its words, its scratch label, whether it marks captures, and its roots: their segments
-// at `itemStart` in `items` (`RootSeg`, decision 0033) and how many.
+// A pass: its words, its scratch label, whether it marks captures, and its roots: its rule at
+// `itemStart` in `items` (`root_mask`) and its threads, a group of 64 nodes each.
 struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,textStart,threadStart; };
 // A path's state, and for a move's frame (resume 1 children, 2 descendants, 3 following
 // siblings; 0 a forked path) where its candidates continue: `next` the next candidate (a child or
@@ -141,19 +141,22 @@ template<uint FRAMES,typename Stack>
 static void micro_walk(device const DocView* docs,thread const Slabs& slabs,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid,device atomic_uint* wstats,MicroQ q){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   if(tid>=shape.itemCount)return;
-  // A pass's threads are contiguous from its threadStart; its roots are segments that passes of
-  // one domain share, read in place.
+  // A pass's threads are contiguous from its threadStart, one a group of 64 nodes of the batch;
+  // a thread walks from each of its group's roots (`root_mask`, read from the code bytes).
   uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].threadStart<=tid)low=middle;else high=middle;}
-  device const uint4* segs=(device const uint4*)items;
-  uint i=tid-passes[low].threadStart;
-  uint4 seg=segs[root_segment(segs,passes[low].itemStart,i)];
-  Tree t={slabs,docs[seg.x]};
-  uint start=t.d.nodeBase+root_local(slabs,t.d,segs,seg,i-seg.w);
-  uint steps=0u;
-  q.pass=low;q.doc=seg.x;
-  micro_from<FRAMES>(t,head,passes[low],words,start,scratch,flags,texts,counts,shape,stack,steps,q,0u);
+  uint group=tid-passes[low].threadStart,file=roots_file(items,group);
+  Tree t={slabs,docs[file]};
+  group-=roots_first_group(items,file);
+  ulong mask=root_mask(slabs,t.d,items,passes[low].itemStart,file,group);
+  q.pass=low;q.doc=file;
+  uint walks=0u,total=0u,longest=0u;
+  ROOTS_EACH(mask,group,local){
+    uint steps=0u;
+    micro_from<FRAMES>(t,head,passes[low],words,t.d.nodeBase+local,scratch,flags,texts,counts,shape,stack,steps,q,0u);
+    walks++;total+=steps;longest=max(longest,steps);
+  }
   // Profiling (`RERAIL_GPU_WALK_STEPS`): the pass's walks, their steps, its longest walk's.
-  if(shape.profile!=0u){device atomic_uint* w=wstats+3u*(shape.profile-1u+low);atomic_fetch_add_explicit(&w[0],1u,memory_order_relaxed);atomic_fetch_add_explicit(&w[1],steps,memory_order_relaxed);atomic_fetch_max_explicit(&w[2],steps,memory_order_relaxed);}
+  if(shape.profile!=0u&&walks!=0u){device atomic_uint* w=wstats+3u*(shape.profile-1u+low);atomic_fetch_add_explicit(&w[0],walks,memory_order_relaxed);atomic_fetch_add_explicit(&w[1],total,memory_order_relaxed);atomic_fetch_max_explicit(&w[2],longest,memory_order_relaxed);}
 }
 
 // The queue's spilled frames (`MicroQ`), each walked from its frame, until none is left or the
@@ -323,14 +326,10 @@ static void label_group_run(Stack stack,device const DocView* docs,thread const 
       GroupLevel at=levels[level];
       for(uint p=0u;p<at.passCount;p++){
         MicroPass pass=passes[at.passStart+p];
-        // The pass's roots in this file: its segments of this document.
-        device const uint4* segs=(device const uint4*)items;
-        uint last=pass.itemStart+1u+segs[pass.itemStart].x;
-        for(uint k=root_doc_segment(segs,pass.itemStart,file);k<last&&segs[k].x==file;k++){
-          uint4 seg=segs[k];
-          for(uint item=lane;item<seg.z;item+=width){
-            {uint steps=0u;micro_from<FRAMES>(t,head,pass,words,own.nodeBase+root_local(slabs,own,segs,seg,item),scratch,flags,texts,counts,shape,stack,steps,MicroQ{flags,flags,(device atomic_uint*)flags,0u,0u,0u},0u);}
-          }
+        // The pass's roots in this file: its groups, a lane's every `width`th.
+        for(uint group=lane,groups=roots_file_groups(items,file);group<groups;group+=width){
+          ulong mask=root_mask(slabs,own,items,pass.itemStart,file,group);
+          ROOTS_EACH(mask,group,local){uint steps=0u;micro_from<FRAMES>(t,head,pass,words,own.nodeBase+local,scratch,flags,texts,counts,shape,stack,steps,MicroQ{flags,flags,(device atomic_uint*)flags,0u,0u,0u},0u);}
         }
       }
       threadgroup_barrier(mem_flags::mem_device);

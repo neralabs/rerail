@@ -31,7 +31,7 @@ struct Status { uint error,resultCount,captureCount,programCounter,finalCaptureC
 struct SharedArena { uint start,capacity; atomic_uint cursor; };
 struct EvaluationQuota { atomic_uint used; uint limit; };
 struct LazyArenaBlock { uint start,limit; atomic_uint state; uint reserved; };
-struct Evaluation { atomic_uint outcome; uint generation,failureArena,failureTask,failurePc; atomic_uint workUsed; uint workLimit,taskStart,taskCount,program,file,rootSegment,rootBase; EvaluationQuota quotas[14]; LazyArenaBlock pending,capture,cursor,repeat,valueState,candidate,queryBucket,queryMember,queuedState,greedyEntry; };
+struct Evaluation { atomic_uint outcome; uint generation,failureArena,failureTask,failurePc; atomic_uint workUsed; uint workLimit,taskStart,taskCount,program,file,rootRule,rootReserved; EvaluationQuota quotas[14]; LazyArenaBlock pending,capture,cursor,repeat,valueState,candidate,queryBucket,queryMember,queuedState,greedyEntry; };
 struct GlobalArenas { SharedArena arenas[14]; atomic_uint taskCursor; uint reserved[3]; };
 struct Task { uint evaluation,ordinal,file,program,root,workLimit; };
 
@@ -205,14 +205,10 @@ inline uint resident_work(thread const Slabs& slabs,DocView doc,uint perNode,uin
  ulong nodes=(perNode&0x80000000u)!=0u?doc.nodes:tape_size(slabs,doc,local);
  return uint(clamp(nodes*ulong(perNode&0x7fffffffu),ulong(4096u),ulong(1u<<26u)));
 }
-// A resident label batch's task `index` (decision 0033): no task records. Its evaluation names
-// its program, its document and its roots' segments in `segs` (the run's, bound in place of the
-// tasks); the root is its evaluation's next, read in place.
-inline Task resident_task(device const uint4* segs,K_FILES files,thread const Slabs& slabs,device const Evaluation& evaluation,uint evaluationIndex,uint index){
- DocView doc=files[evaluation.file];
- uint i=evaluation.rootBase+(index-evaluation.taskStart);
- uint4 seg=segs[root_segment(segs,evaluation.rootSegment,i)];
- uint local=root_local(slabs,doc,segs,seg,i-seg.w);
+// A resident label batch's task (decision 0033): no task records. Its evaluation names its
+// program, its document and its roots' rule in `roots` (the run's, bound in place of the tasks);
+// task `index` is a group of 64 of the document's nodes, and a root of it (`root_mask`) is `local`.
+inline Task resident_task(thread const Slabs& slabs,DocView doc,device const Evaluation& evaluation,uint evaluationIndex,uint index,uint local){
  return Task{evaluationIndex,index,evaluation.file,evaluation.program,doc.nodeBase+local,resident_work(slabs,doc,evaluation.workLimit,local)};
 }
 // The evaluation holding task `index`: tasks are numbered through the evaluations in order.
@@ -265,12 +261,17 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
 #ifdef RERAIL_RESIDENT
   uint evaluationIndex=resident_evaluation(evaluations,header.evaluationCount,task);
   device Evaluation& evaluation=evaluations[evaluationIndex];
-  Task own=resident_task((device const uint4*)tasks,files,slabs,evaluation,evaluationIndex,task);
+  DocView rootDoc=files[evaluation.file];
+  uint rootGroup=task-evaluation.taskStart;
+  ulong rootMask=root_mask(slabs,rootDoc,(device const uint*)tasks,evaluation.rootRule,evaluation.file,rootGroup);
   device Status& status=statuses[tid];
+  ROOTS_EACH(rootMask,rootGroup,rootLocal){
+  Task own=resident_task(slabs,rootDoc,evaluation,evaluationIndex,task,rootLocal);
 #else
   device Evaluation& evaluation=evaluations[tasks[task].evaluation];
   Task own=tasks[task];
   device Status& status=statuses[task];
+  {
 #endif
   lane.generation+=2u;
   for(uint kind=0u;kind<=9u;kind++)lane.quotas[kind].limit=evaluation.quotas[kind].limit;
@@ -287,6 +288,7 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
 #ifdef RERAIL_RESIDENT
   if(firstError==0u)firstError=status.error;
 #endif
+  }
  }
 #ifdef RERAIL_RESIDENT
  statuses[tid].error=firstError;
