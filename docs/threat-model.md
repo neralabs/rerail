@@ -292,13 +292,18 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
 - State files go through a 0600 temp file and rename; logs open 0600.
 - The daemon's last answers of stopped that hooks repeat (`stopped-answers/`, `src/runtime/stopped-answers.ts`) are
   written 0600 in folders made 0700, hold no path, and are never read, written or removed through a link; the daemon
-  removes those of the daemons before it. A hook reads an answer, and the checkout's `.git`, `commondir` and clone id
-  files, only as small plain files opened without waiting, and opens the database only where it, its WAL and the WAL's
-  index are plain files, so a named pipe planted at one's name cannot hold the hook. A hook repeats an answer only
-  while the checkout's clone id file names the clone
-  it names, the database places the checkout by that clone id in its repository and records it as stopped, and the
-  folder, the checkout's top and its `.git` keep the device and file ids it names, so a changed or planted file cannot
-  turn Rerail off in a checkout the database records as started.
+  removes those of the daemons before it. The hook's own check reads an answer, and the checkout's `.git`, `commondir`
+  and clone id files, only as small plain files opened without waiting, and opens the database only where it, its WAL
+  and the WAL's index are plain files, so a named pipe planted at one of those names never holds the check. A pipe at a
+  Git folder's clone id file, at a linked worktree's `commondir` or at `daemon.json` still holds the hook through the
+  daemon's and Git's own reads of those files. A hook repeats an answer only while the checkout's clone id file names
+  the clone it names, the database places the checkout by that clone id in its repository and records it as stopped,
+  the folder, the checkout's top and its `.git` keep the device and file ids it names, and the database, its WAL and
+  the WAL's index are still the files it names by device and file id, those the hook found at their names when it kept
+  the answer (on Linux, only files the daemon held open then). So a file planted or swapped at one of those names
+  cannot turn Rerail off in a checkout the daemon reads as started. A copy written over the live database file in place
+  can, for up to 30 minutes, where the daemon still answers from what it read before; `docs/reference.md` lists what a
+  kept answer leaves unseen.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
