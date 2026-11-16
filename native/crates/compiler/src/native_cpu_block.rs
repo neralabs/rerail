@@ -3309,11 +3309,23 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => run_tests(r, b, k, &tests),
             _ => Vec::new(),
         };
+        // A run of a byte set with a rarer way on (`Bytewise::run_split`): the set's run from
+        // the window, the rest asked at its end, as the lean lexer's number arm runs its digits
+        // and then asks for `.` and a digit.
+        let split = match (rule, rd.bytes) {
+            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => b.run_split(o),
+            _ => None,
+        };
+        // The window's terms: the run's (its split's byte term, else its output), its tests'.
+        let run_terms = |b: &crate::native_cpu_bytes::Bytewise<'_>, o: u16| -> Vec<(usize, i64)> {
+            let term = |o: u16| (usize::from(b.native.outputs[usize::from(o)]), i64::from(b.native.output_delays[usize::from(o)]));
+            let first = split.map_or_else(|| term(o), |(y, d, _)| (y, d));
+            std::iter::once(first).chain(run_outs.iter().map(|&o| term(o))).collect()
+        };
         let window: Option<Vec<Value>> = match (rule, rd.bytes) {
             (EndRule::Run(o), Some((b, file))) if !run_outs.is_empty() => {
                 let i = f.ins().iadd_imm(s, 1);
-                let os: Vec<u16> = std::iter::once(o).chain(run_outs.iter().copied()).collect();
-                let w = b.short_words(f, &file, &os, i, heads);
+                let w = b.short_terms(f, &file, &run_terms(b, o), i, heads);
                 // `tested` from a block of its own, empty (its blocks first).
                 let after = f.create_block();
                 f.ins().jump(after, &[]);
@@ -3325,7 +3337,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let pre: Vec<(u16, Value)> = window.as_ref().map(|w| run_outs.iter().copied().zip(w[1..].iter().copied()).collect()).unwrap_or_default();
         // The window's bits a lane (`short_stride`).
         let pre_stride = match (rule, rd.bytes) {
-            (EndRule::Run(o), Some((b, _))) if window.is_some() => b.short_stride(&std::iter::once(o).chain(run_outs.iter().copied()).collect::<Vec<_>>()),
+            (EndRule::Run(o), Some((b, _))) if window.is_some() => b.short_stride_x(&run_terms(b, o).iter().map(|t| t.0).collect::<Vec<_>>()),
             _ => 1,
         };
         let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, heads) };
@@ -3401,16 +3413,58 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         // (`Bytewise::short_word`), as a lexer reads a number's few digits;
                         // the run on past them, the word's way below (cold).
                         if let Some((b, file)) = rd.bytes.filter(|(b, _)| b.can(o)) {
+                            let terms = run_terms(b, o);
                             let x = match &window {
                                 Some(w) => w[0],
-                                None => b.short_word(f, &file, o, i, heads),
+                                None => b.short_terms(f, &file, &terms[..1], i, heads)[0],
                             };
-                            let stride = b.short_stride(&std::iter::once(o).chain(run_outs.iter().copied()).collect::<Vec<_>>());
+                            let stride = b.short_stride_x(&terms.iter().map(|t| t.0).collect::<Vec<_>>());
                             let ones = lanes_set(f, x, stride);
                             let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
                             let l = f.ins().iadd(s, ones);
                             let long = f.create_block();
-                            f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], long, &[]);
+                            match split {
+                                None => {
+                                    f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], long, &[]);
+                                }
+                                Some((a, _, set)) => {
+                                    // The byte term's run ended inside the window: the rest asked
+                                    // at its end (lean's `b[end] == b'.' && digit(b[end + 1])`),
+                                    // the byte before it the term's or the token's first.
+                                    let (at_end, on, end2) = (f.create_block(), f.create_block(), f.create_block());
+                                    f.ins().brif(short, at_end, &[], long, &[]);
+                                    f.switch_to_block(at_end);
+                                    let e = f.ins().iadd(i, ones);
+                                    let firsts = first_bytes(r, k);
+                                    let before: [u64; 4] = std::array::from_fn(|w| set[w] | firsts[w]);
+                                    let more = b.rest_after(f, &file, o, a, e, before, heads);
+                                    f.ins().brif(more, on, &[], ended, &[l.into(), untag.into(), nohits.into()]);
+                                    // On past it: the term's run from the byte after, in the same
+                                    // window's mask (lean's second `while digit`), the token in
+                                    // the window, else the whole rule's way.
+                                    f.switch_to_block(on);
+                                    let n1 = f.ins().iadd_imm(ones, 1);
+                                    let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, n1, 16);
+                                    let rest = f.create_block();
+                                    f.ins().brif(inside, rest, &[], long, &[]);
+                                    f.switch_to_block(rest);
+                                    let sh = f.ins().imul_imm(n1, i64::from(stride));
+                                    let gone = f.ins().bnot(x);
+                                    let gone = f.ins().ushr(gone, sh);
+                                    let z = f.ins().ctz(gone);
+                                    let ones2 = if stride > 1 { f.ins().ushr_imm(z, i64::from(stride.trailing_zeros())) } else { z };
+                                    let total = f.ins().iadd(n1, ones2);
+                                    let fits = f.ins().icmp_imm(IntCC::UnsignedLessThan, total, 16);
+                                    f.ins().brif(fits, end2, &[], long, &[]);
+                                    // Its end: where the rest holds again, the whole rule's way.
+                                    f.switch_to_block(end2);
+                                    let e2 = f.ins().iadd(i, total);
+                                    let before2 = b.split_before_again(o, a, set);
+                                    let again = b.rest_after(f, &file, o, a, e2, before2, heads);
+                                    let l2 = f.ins().iadd(s, total);
+                                    f.ins().brif(again, long, &[], ended, &[l2.into(), untag.into(), nohits.into()]);
+                                }
+                            }
                             f.switch_to_block(long);
                             f.set_cold_block(long);
                             // The short function's long run: its whole function's, returned.

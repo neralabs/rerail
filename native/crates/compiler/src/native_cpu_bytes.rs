@@ -487,18 +487,24 @@ impl<'a> Bytewise<'a> {
     ///
     /// Each mask has `short_stride(os)` bits a lane: lane `i` at bit `stride * i`.
     pub fn short_words(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
-        let stride = self.short_stride(os);
-        let mut carry = Carry { short: true, stride, pack: Some(self.pack_for(&self.roots(os), &[])), ..Carry::default() };
+        let terms: Vec<(usize, i64)> = os.iter().map(|&o| (usize::from(self.native.outputs[usize::from(o)]), i64::from(self.native.output_delays[usize::from(o)]))).collect();
+        self.short_terms(f, at, &terms, p, heads)
+    }
+
+    /// `short_words` of instructions at delays, `(x, d)` each: `x` at the window's byte `i`
+    /// read at stream position `p + i + d`, as an output of delay `d` is. A run's split
+    /// (`run_split`) so reads its byte term in the window its tests share.
+    pub fn short_terms(&self, f: &mut FunctionBuilder<'_>, at: &File, terms: &[(usize, i64)], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
+        let xs: Vec<usize> = terms.iter().map(|t| t.0).collect();
+        let stride = self.short_stride_x(&xs);
+        let mut carry = Carry { short: true, stride, pack: Some(self.pack_for(&xs, &[])), ..Carry::default() };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
-        let Some((&first, rest)) = os.split_first() else { return Vec::new() };
-        let mut got = vec![self.short_in(f, at, first, p, &mut windows, &mut memo, &mut carry, heads)];
-        // The first output's window (its delay's): an output of one lane's instruction read in
-        // it, `lag` bytes back, its loads and compares the first's.
-        let d0 = i64::from(self.native.output_delays[usize::from(first)]);
-        for &o in rest {
-            let x = usize::from(self.native.outputs[usize::from(o)]);
-            let d = i64::from(self.native.output_delays[usize::from(o)]);
+        let Some((&(x0, d0), rest)) = terms.split_first() else { return Vec::new() };
+        let mut got = vec![self.short_x(f, at, x0, d0, p, &mut windows, &mut memo, &mut carry, heads)];
+        // The first term's window (its delay's): a term of one lane's instruction read in it,
+        // `lag` bytes back, its loads and compares the first's.
+        for &(x, d) in rest {
             let lag = d0 - d;
             let shared = self.plan.lanes[x] && (0..=8).contains(&lag) && windows.contains_key(&-d0);
             let m = if shared {
@@ -511,7 +517,7 @@ impl<'a> Bytewise<'a> {
                     Sym::Slot(..) => unreachable!("a window's mask is a value"),
                 }
             } else {
-                self.short_in(f, at, o, p, &mut windows, &mut memo, &mut carry, heads)
+                self.short_x(f, at, x, d, p, &mut windows, &mut memo, &mut carry, heads)
             };
             got.push(if shared { self.short_cut(f, at, x, d, p, m, stride) } else { m });
         }
@@ -522,6 +528,12 @@ impl<'a> Bytewise<'a> {
     /// every output is made of its lanes and of their lane-wise logic and `prev`s (a shift by
     /// the stride); one where a constant's pattern or an escape's run reads bit positions.
     pub fn short_stride(&self, os: &[u16]) -> u32 {
+        let xs: Vec<usize> = os.iter().map(|&o| usize::from(self.native.outputs[usize::from(o)])).collect();
+        self.short_stride_x(&xs)
+    }
+
+    /// `short_stride` of instructions `xs` (`short_terms`).
+    pub fn short_stride_x(&self, xs: &[usize]) -> u32 {
         fn lanewise(b: &Bytewise<'_>, x: usize, seen: &mut Vec<bool>) -> bool {
             if b.plan.lanes[x] || std::mem::replace(&mut seen[x], true) {
                 return true;
@@ -533,11 +545,11 @@ impl<'a> Bytewise<'a> {
             }
         }
         let mut seen = vec![false; self.native.insts.len()];
-        let all = os.iter().all(|&o| lanewise(self, usize::from(self.native.outputs[usize::from(o)]), &mut seen));
+        let all = xs.iter().all(|&x| lanewise(self, x, &mut seen));
         if all { crate::native_cpu_block::SHORT_STRIDE } else { 1 }
     }
 
-    /// `short_in`'s cut of mask `m` (output instruction `x`, delay `d`, from `p`): none past the
+    /// `short_x`'s cut of mask `m` (output instruction `x`, delay `d`, from `p`): none past the
     /// file's end. Where the output is false on a zero byte (`zero_kills`), none past it
     /// already: the bytes there are zeros, more than the 16 and its delay
     /// (`native_cpu_block::Batch`). Else the file's bytes' bits: `len - p`, at most 16.
@@ -555,9 +567,7 @@ impl<'a> Bytewise<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn short_in<'s>(&'s self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, p: Value, windows: &mut HashMap<i64, Lanes<'s>>, memo: &mut HashMap<(usize, i64), Value>, carry: &mut Carry, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
-        let x = usize::from(self.native.outputs[usize::from(o)]);
-        let d = i64::from(self.native.output_delays[usize::from(o)]);
+    fn short_x<'s>(&'s self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, d: i64, p: Value, windows: &mut HashMap<i64, Lanes<'s>>, memo: &mut HashMap<(usize, i64), Value>, carry: &mut Carry, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         let m = self.mask_at(f, at, x, p, -d, windows, memo, carry, heads);
         let stride = carry.stride;
         self.short_cut(f, at, x, d, p, m, stride)
@@ -634,6 +644,80 @@ impl<'a> Bytewise<'a> {
         let inside = f.ins().icmp(IntCC::SignedLessThan, p, at.len);
         let inside = f.ins().uextend(types::I64, inside);
         f.ins().band(b, inside)
+    }
+
+    /// A run's split, as the lean lexer reads a number: output `o` as `a | rest`, `a` its one
+    /// `Or` term that is the bytes of a set at the output's own byte (`exact_at`, under its
+    /// `prev`s), `rest` the others. The run of `a` from one window, `rest` asked only at that
+    /// run's end, of the bytes there: lean's `while digit` then `b[end] == b'.' &&
+    /// digit(b[end + 1])`, where the run's whole output reads three windows (a byte's `prev`
+    /// and next). `(x, d, set)`: `a`'s instruction, its delay the output's (`short_terms`),
+    /// its bytes. None where no term or every term is such.
+    pub fn run_split(&self, o: u16) -> Option<(usize, i64, [u64; 4])> {
+        // The term's byte, `back` before the instruction's position, and its set.
+        fn at_byte(native: &BlockNative, x: usize) -> Option<(i64, [u64; 4])> {
+            match native.insts[x] {
+                BlockInst::Prev(a, k) => at_byte(native, usize::from(a)).map(|(b, set)| (b + i64::from(k), set)),
+                _ => exact_at(native, x).filter(|n| n.lo == n.hi).map(|n| (-i64::from(n.lo), n.set)),
+            }
+        }
+        let x = usize::from(*self.native.outputs.get(usize::from(o))?);
+        let d = i64::from(self.native.output_delays[usize::from(o)]);
+        let all = or_terms(self.native, x);
+        let own: Vec<(usize, [u64; 4])> = all.iter().filter_map(|&y| at_byte(self.native, y).filter(|b| b.0 == d).map(|b| (y, b.1))).collect();
+        match own[..] {
+            [(y, set)] if all.len() > 1 => Some((y, d, set)),
+            _ => None,
+        }
+    }
+
+    /// A split run's rest (`run_split`, its byte term `a`) at the file's byte `p`, 0 or 1, by
+    /// scalar loads: `a` known false there (the run of it ended), so only the other terms,
+    /// and the byte at `p - 1` known in `before`. Lean's `b[end] == b'.' &&
+    /// digit(b[end + 1])`, its digit test at `end` not asked again.
+    pub fn rest_after(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, a: usize, p: Value, before: [u64; 4], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        let x = usize::from(self.native.outputs[usize::from(o)]);
+        let d = i64::from(self.native.output_delays[usize::from(o)]);
+        let pos = f.ins().iadd_imm(p, d);
+        let mut memo = HashMap::new();
+        let mut v: Option<Value> = None;
+        for y in or_terms(self.native, x).into_iter().filter(|&y| y != a) {
+            let b = self.scalar(f, at, y, pos, 0, Some(d), Some((d + 1, before)), &mut memo, heads);
+            v = Some(match v {
+                Some(v) => f.ins().bor(v, b),
+                None => b,
+            });
+        }
+        let b = v.unwrap_or_else(|| f.ins().iconst(types::I64, 0));
+        // Past the file's end, none (`bit_first`'s).
+        if crate::native_cpu_lanes::zero_kills(self.native, x, d as u32) {
+            return b;
+        }
+        let inside = f.ins().icmp(IntCC::SignedLessThan, p, at.len);
+        let inside = f.ins().uextend(types::I64, inside);
+        f.ins().band(b, inside)
+    }
+
+    /// The bytes before a split run's second end (`run_split`): the byte term's where its
+    /// rest's next byte is always one of its own (lean's `.` then a digit, so its second run
+    /// is never empty), else those or the rest's own byte.
+    pub fn split_before_again(&self, o: u16, a: usize, set: [u64; 4]) -> [u64; 4] {
+        let x = usize::from(self.native.outputs[usize::from(o)]);
+        let d = i32::from(self.native.output_delays[usize::from(o)]);
+        let rest: Vec<usize> = or_terms(self.native, x).into_iter().filter(|&y| y != a).collect();
+        let union = |off: i32| -> [u64; 4] {
+            rest.iter().fold([0u64; 4], |acc, &y| {
+                let b = inst_bytes_at(self.native, y, off - d);
+                std::array::from_fn(|k| acc[k] | b[k])
+            })
+        };
+        let next = union(1);
+        if (0..4).all(|k| next[k] & !set[k] == 0) {
+            set
+        } else {
+            let here = union(0);
+            std::array::from_fn(|k| set[k] | here[k])
+        }
     }
 
     /// Instruction `x`'s word for stream positions `start .. start + 64`.
@@ -863,19 +947,20 @@ impl<'a> Bytewise<'a> {
             BlockInst::EqByte(c) => {
                 let mut s = [0u64; 4];
                 s[usize::from(c) / 64] |= 1 << (c % 64);
-                let b = byte_at(f, at, i);
+                let b = byte_once(f, at, i, back, memo);
                 in_set(f, b, s)
             }
             BlockInst::Class { table, bits } => {
-                let b = byte_at(f, at, i);
+                let b = byte_once(f, at, i, back, memo);
                 in_set(f, b, set_of(table, bits))
             }
             BlockInst::Pair { before, table, bits } => {
                 // A shared class of `bits`: each bit's two sets.
-                let (b, p) = (byte_at(f, at, i), {
+                let b = byte_once(f, at, i, back, memo);
+                let p = {
                     let j = f.ins().iadd_imm(i, -1);
-                    byte_at(f, at, j)
-                });
+                    byte_once(f, at, j, back + 1, memo)
+                };
                 let mut acc = f.ins().iconst(types::I64, 0);
                 for k in (0..8).filter(|k| bits >> k & 1 == 1) {
                     let x = in_set(f, p, set_of(before, 1 << k));
@@ -886,13 +971,13 @@ impl<'a> Bytewise<'a> {
                 acc
             }
             BlockInst::Plane(k) => {
-                let b = byte_at(f, at, i);
+                let b = byte_once(f, at, i, back, memo);
                 let b = f.ins().ushr_imm(b, i64::from(k));
                 f.ins().band_imm(b, 1)
             }
             BlockInst::PlaneBefore(k) => {
                 let j = f.ins().iadd_imm(i, -1);
-                let b = byte_at(f, at, j);
+                let b = byte_once(f, at, j, back + 1, memo);
                 let b = f.ins().ushr_imm(b, i64::from(k));
                 f.ins().band_imm(b, 1)
             }
@@ -1130,13 +1215,29 @@ fn byte_at(f: &mut FunctionBuilder<'_>, at: &File, i: Value) -> Value {
 }
 
 /// Whether byte `b` is in the 256-bit set, 0 or 1.
+/// The byte at `i`, `back` before a scalar test's position, read once among its tests
+/// (`scalar`'s memo, under a key no instruction has), as a lexer reads `b[end]` once.
+fn byte_once(f: &mut FunctionBuilder<'_>, at: &File, i: Value, back: i64, memo: &mut HashMap<(usize, i64), Value>) -> Value {
+    if let Some(&v) = memo.get(&(usize::MAX, back)) {
+        return v;
+    }
+    let v = byte_at(f, at, i);
+    memo.insert((usize::MAX, back), v);
+    v
+}
+
 fn in_set(f: &mut FunctionBuilder<'_>, b: Value, set: [u64; 4]) -> Value {
-    // One byte: a compare, as a lexer's `b == c`. (A run of bytes stays the set's word: as a
-    // subtract and a compare in the token loop's cold tests, rustc allocated the loop's
-    // registers worse, an instruction more a token on every kind.)
-    if let Some((lo, _)) = crate::native_cpu_lanes::set_range(set).filter(|(lo, hi)| lo == hi) {
-        let same = f.ins().icmp_imm(IntCC::Equal, b, i64::from(lo));
-        return f.ins().uextend(types::I64, same);
+    // One byte: a compare, as a lexer's `b == c`. A run of bytes: a subtract and a compare,
+    // as lean's `is_ascii_digit` (0177, "A number's run ends as lean's": the set's word was
+    // kept for a count, an instruction a token, and is not lean's source).
+    if let Some((lo, hi)) = crate::native_cpu_lanes::set_range(set) {
+        if lo == hi {
+            let same = f.ins().icmp_imm(IntCC::Equal, b, i64::from(lo));
+            return f.ins().uextend(types::I64, same);
+        }
+        let off = f.ins().iadd_imm(b, -i64::from(lo));
+        let inside = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, off, i64::from(hi - lo));
+        return f.ins().uextend(types::I64, inside);
     }
     let zero = f.ins().iconst(types::I64, 0);
     let used: Vec<usize> = (0..4).filter(|&w| set[w] != 0).collect();
@@ -1223,10 +1324,33 @@ impl Needs {
     }
 }
 
+/// The `Or` terms of instruction `x`: its operands' through every `Or`, else itself.
+fn or_terms(native: &BlockNative, x: usize) -> Vec<usize> {
+    fn walk(native: &BlockNative, x: usize, out: &mut Vec<usize>) {
+        match native.insts[x] {
+            BlockInst::Or(a, b) => {
+                walk(native, usize::from(a), out);
+                walk(native, usize::from(b), out);
+            }
+            _ => out.push(x),
+        }
+    }
+    let mut out = Vec::new();
+    walk(native, x, &mut out);
+    out
+}
+
 /// The bytes that can be at offset `at` from where output `o` holds: every byte where its
 /// instructions do not say (an over-set), as `needs` at one offset, but at any of them: a
 /// conjunction's sets met, a `prev`'s and a delay's offsets followed.
 pub fn bytes_at(native: &BlockNative, o: u16, at: i32) -> [u64; 4] {
+    let Some(&x) = native.outputs.get(usize::from(o)) else { return [u64::MAX; 4] };
+    // The output at `p` is its instruction at `p + delay`.
+    inst_bytes_at(native, usize::from(x), at - i32::from(native.output_delays[usize::from(o)]))
+}
+
+/// `bytes_at` of instruction `x`: the bytes at offset `at` from its own position.
+fn inst_bytes_at(native: &BlockNative, x: usize, at: i32) -> [u64; 4] {
     fn go(native: &BlockNative, x: usize, d: i32, depth: u32) -> [u64; 4] {
         let all = [u64::MAX; 4];
         if depth > 64 {
@@ -1253,9 +1377,7 @@ pub fn bytes_at(native: &BlockNative, o: u16, at: i32) -> [u64; 4] {
             _ => all,
         }
     }
-    let Some(&x) = native.outputs.get(usize::from(o)) else { return [u64::MAX; 4] };
-    // The output at `p` is its instruction at `p + delay`.
-    go(native, usize::from(x), at - i32::from(native.output_delays[usize::from(o)]), 0)
+    go(native, x, at, 0)
 }
 
 /// What output `o` needs of the bytes (`Needs`), where its instructions say: byte tests, their

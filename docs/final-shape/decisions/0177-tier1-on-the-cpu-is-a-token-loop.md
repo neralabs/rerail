@@ -3043,3 +3043,73 @@ Tests: `a_strings_arm_reads_nothing_before_its_quote`,
 `a_slashs_arm_is_leans` (the generated Rust, `rr_aot`). Functions 19
 to 18.
 
+
+## A number's run ends as lean's
+
+**Intro.** Lean's number arm runs the digits, then asks the two
+bytes at the run's end:
+
+```rust
+// lean.rs, the number arm
+while end < n && CLASS[b[end] as usize] & DIGIT != 0 { end += 1; }
+if end + 1 < n && b[end] == b'.' && b[end + 1].is_ascii_digit() {
+    end += 2;
+    while end < n && CLASS[b[end] as usize] & DIGIT != 0 { end += 1; }
+}
+```
+
+The rule says the same thing as one run: a byte of the number is
+`digit | (. & prev(digit) & next(digit))`. Our arm computed that for
+all 16 bytes at once. It loaded three windows (the bytes from `s`,
+`s + 1` and `s + 2`) so that every byte had a `prev` and a next.
+
+**The change** (`Bytewise::run_split`). A run's output that is an
+`Or` with exactly one term that tests its own byte (the digits) is
+split:
+
+- **The term's run** comes from one window, as lean's `while digit`.
+- **The other terms** are asked only where that run ends
+  (`rest_after`), by scalar loads. The term itself is known false
+  there and is not asked. The byte before is known to be in the
+  term's set or the token's first byte, so the rest's
+  `prev(digit)` folds away. What is left is lean's
+  `b[end] == b'.' && digit(b[end + 1])`.
+- **On past it**, the term's run continues from the same window's
+  mask: one shift and one `ctz`, lean's second `while`. The rest's
+  next byte is always one of the term's (`split_before_again`), so
+  the byte before the second end is known too.
+- **A token past the window**, or a second `.`, takes the whole
+  rule's way, as before.
+- **The count tests** (the `.` count) read the same window. The
+  token's lanes cut them, as before.
+
+Two scalar helpers changed with it:
+
+- **A test of a byte range** is now a subtract and a compare, as
+  `is_ascii_digit` is. The set's word was kept before because of an
+  instruction count, not because lean's source reads that way. That
+  decision is reversed on shape.
+- **Each byte is read once** among one scalar test's terms
+  (`byte_once`).
+
+```rust
+// generated, the number arm, after: one window from s + 1
+let w = vld1q_u8(b + s + 1); let digits = mask(w - b'0' <= 9); let dots = mask(w == b'.');
+let n = ctz(!digits) / 4; let e = s + 1 + n;
+if b[e] == b'.' && b[e + 1] - b'0' <= 9 { let n2 = n + 1 + ctz(!digits >> 4 * (n + 1)) / 4; … }
+// before: three windows
+let w0 = vld1q_u8(b + s); let w1 = vld1q_u8(b + s + 1); let w2 = vld1q_u8(b + s + 2);
+let run = d(w1) | (w1 == b'.') & d(w0) & d(w2); …
+```
+
+Test: `a_numbers_arm_reads_one_window` (the generated Rust, `rr_aot`).
+
+Two older `rr_aot` tests checked the short functions' shape. Those
+functions are the loop's arms since "A reader's short form is read in
+its arm", and the tests have failed since then:
+
+- **`a_returned_call_is_the_return`** moved to `clif_rust`'s own
+  tests, on a two-function module.
+- **`a_short_tokens_function_calls_only_its_whole`** became
+  `a_short_tokens_arm_calls_only_its_whole`. It checks the string's
+  and the `/` arms instead.
