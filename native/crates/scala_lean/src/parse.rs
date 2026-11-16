@@ -52,6 +52,8 @@ pub(crate) struct P<'a> {
     right_operand: bool,
     /// Reading a type parameter's bound: `<:`, `>:`, `<%` end it.
     in_bound: bool,
+    /// In an enum's body: `case` starts its cases.
+    enum_cases: bool,
     /// The statements the last `statements` read.
     count: u32,
 }
@@ -87,6 +89,7 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             right_operand: false,
             count: 0,
             in_bound: false,
+            enum_cases: false,
         };
         if let Err(r) = p.compilation_unit() {
             return Err(match r {
@@ -411,11 +414,7 @@ impl<'a> P<'a> {
         loop {
             let mut sc = self.sc.clone();
             let pos = self.sp as usize;
-            let dbg = sc.scan(self.src, pos, valid);
-            if std::env::var_os("RERAIL_SCALA_LAYOUT").is_some() {
-                eprintln!("layout at {pos} valid {valid:#x} -> {dbg:?}");
-            }
-            match dbg {
+            match sc.scan(self.src, pos, valid) {
                 Some((Ext::BlockComment, s, e)) => {
                     self.fit_comment(s as u32, e as u32)?;
                     self.sc = sc;

@@ -997,10 +997,21 @@ impl P<'_> {
             self.take();
             let c = self.open(K::CatchClause);
             self.tk(K::TCatch)?;
-            if self.is_word(w::CASE) {
-                return self.refuse();
+            if self.is_word(w::CASE) && !self.tok().nl {
+                // `catch case p => body` (`_expr_case_clause`: `pattern`, `body`).
+                self.tk(K::TCase)?;
+                self.pattern_f(f::PATTERN)?;
+                if self.is_word(w::IF) {
+                    self.guard()?;
+                }
+                if !self.is_op(op::ARROW) {
+                    return self.refuse();
+                }
+                self.tk(K::TFatArrow)?;
+                self.with_fol(fol | v::GATE, |p| p.indentable_f(f::BODY))?;
+            } else {
+                self.with_fol(fol | v::GATE, |p| p.indentable_f(f::NONE))?;
             }
-            self.with_fol(fol | v::GATE, |p| p.indentable_f(f::NONE))?;
             self.close(c);
         }
         if self.layout(v::GATE)? == Some(Ext::Gate) && self.word_at(0) == w::FINALLY {

@@ -19,7 +19,7 @@ impl P<'_> {
         Ok(match t.code {
             w::ABSTRACT | w::FINAL | w::SEALED | w::IMPLICIT | w::LAZY | w::OVERRIDE | w::PRIVATE | w::PROTECTED => true,
             w::CLASS | w::OBJECT | w::TRAIT | w::DEF | w::VAL | w::VAR | w::TYPE | w::IMPORT | w::EXPORT | w::PACKAGE | w::ENUM | w::GIVEN => true,
-            w::CASE => matches!(self.word_at(1), w::CLASS | w::OBJECT),
+            w::CASE => self.enum_cases || matches!(self.word_at(1), w::CLASS | w::OBJECT),
             w::EXTENSION => matches!(self.kind_at(1), T::LParen | T::LBracket),
             w::INLINE | w::OPAQUE | w::OPEN | w::INFIX | w::TRANSPARENT | w::ERASED | w::INTO | w::TRACKED | w::UPDATE | w::CONSUME => {
                 matches!(self.layout(v::MODS)?, Some(Ext::Modifier(_)))
@@ -54,12 +54,16 @@ impl P<'_> {
                 (kind, Self::val_rest)
             }
             w::TYPE => (K::TypeDefinition, Self::type_rest),
+            w::CASE if self.enum_cases => (K::EnumCaseDefinitions, Self::enum_case_rest),
+            w::ENUM => (K::EnumDefinition, Self::enum_rest),
+            w::GIVEN => (K::GivenDefinition, Self::given_rest),
+            w::EXTENSION => (K::ExtensionDefinition, Self::extension_rest),
             _ => return self.refuse(),
         };
         let s = self.tok().start;
         let n = self.t.wrap_from(m, kind, field, s);
         rest(self)?;
-        if matches!(kind, K::PackageObject | K::ClassDefinition | K::ObjectDefinition | K::TraitDefinition | K::FunctionDefinition | K::ValDefinition | K::VarDefinition | K::TypeDefinition) {
+        if matches!(kind, K::EnumDefinition | K::GivenDefinition | K::PackageObject | K::ClassDefinition | K::ObjectDefinition | K::TraitDefinition | K::FunctionDefinition | K::ValDefinition | K::VarDefinition | K::TypeDefinition) {
             self.end_marker()?;
         }
         let id = self.close(n);
@@ -225,11 +229,30 @@ impl P<'_> {
                     self.tk(K::TDot)?;
                     return self.namespace_selectors();
                 }
-                T::Id | T::BackId => {
-                    if self.word_at(2) == w::AS {
-                        return self.refuse();
+                T::Id | T::BackId if self.word_at(2) == w::AS => {
+                    // `a.B as C` (`as_renamed_identifier`; its `.` of no field).
+                    self.tk(K::TDot)?;
+                    let x = self.open(K::AsRenamedIdentifier);
+                    self.identifier(f::NAME)?;
+                    self.tk(K::TAs)?;
+                    if self.is_word(w::UNDERSCORE) {
+                        let y = self.open_field(K::Wildcard, f::ALIAS);
+                        self.tk(K::TUnderscore)?;
+                        self.close(y);
+                    } else {
+                        self.identifier(f::ALIAS)?;
                     }
+                    self.close(x);
+                    return Ok(());
+                }
+                T::Id | T::BackId => {
                     self.tkf(K::TDot, f::PATH)?;
+                }
+                // `cats.~>`: an operator's name.
+                T::Op if !op::is_reserved(nx.code) => {
+                    self.tkf(K::TDot, f::PATH)?;
+                    self.leaf(K::OperatorIdentifier, f::PATH)?;
+                    return Ok(());
                 }
                 _ => return self.refuse(),
             }
@@ -375,20 +398,7 @@ impl P<'_> {
         // What the header's state takes after it: `extends`, `derives`, a body.
         const HEAD: crate::scan::V = v::EXTENDS | v::DERIVES | v::COLON_EOL;
         if self.is_word(w::EXTENDS) && self.continues(HEAD)? {
-            let n = self.open_field(K::ExtendsClause, f::EXTEND);
-            self.tk(K::TExtends)?;
-            self.constructor_application(f::TYPE)?;
-            loop {
-                if self.is_word(w::WITH) && self.continues(v::WITH | HEAD)? {
-                    self.tkf(K::TWith, f::TYPE)?;
-                    self.constructor_application(f::TYPE)?;
-                } else if self.peek() == T::Comma {
-                    return self.refuse();
-                } else {
-                    break;
-                }
-            }
-            self.close(n);
+            self.extends_clause()?;
         }
         if self.is_word(w::DERIVES) && self.continues(HEAD)? {
             return self.refuse();
@@ -412,6 +422,191 @@ impl P<'_> {
         Ok(())
     }
 
+    /// `extends A(x) with B` (`extends_clause`, field `extend`: each type `type`).
+    fn extends_clause(&mut self) -> R<()> {
+        const HEAD: crate::scan::V = v::EXTENDS | v::DERIVES | v::COLON_EOL;
+        let n = self.open_field(K::ExtendsClause, f::EXTEND);
+        self.tk(K::TExtends)?;
+        self.constructor_application(f::TYPE)?;
+        while self.is_word(w::WITH) && self.continues(v::WITH | HEAD)? {
+            self.tkf(K::TWith, f::TYPE)?;
+            self.constructor_application(f::TYPE)?;
+        }
+        if self.peek() == T::Comma {
+            return self.refuse();
+        }
+        self.close(n);
+        Ok(())
+    }
+
+    /// `enum E[T](p) extends B: cases` (`enum_definition`: `name`, `type_parameters`,
+    /// `class_parameters`, `extend`, `body` an `enum_body`).
+    fn enum_rest(&mut self) -> R<()> {
+        self.tk(K::TEnum)?;
+        self.identifier(f::NAME)?;
+        if self.peek() == T::LBracket {
+            self.type_parameters(f::TYPE_PARAMETERS)?;
+        }
+        while self.peek() == T::LParen && !self.tok().nl {
+            self.class_parameters()?;
+        }
+        if self.is_word(w::EXTENDS) && !self.tok().nl {
+            self.extends_clause()?;
+        }
+        if self.is_word(w::DERIVES) {
+            return self.refuse();
+        }
+        let saved = std::mem::replace(&mut self.enum_cases, true);
+        let r = if self.is_op(op::COLON) && !self.tok().nl {
+            self.indented_body(K::EnumBody)
+        } else if self.peek() == T::LBrace && !self.tok().nl {
+            let n = self.open_field(K::EnumBody, f::BODY);
+            self.tk(K::TLBrace)?;
+            let r = self.statements(Region::Brace, f::NONE);
+            self.enum_cases = saved;
+            r?;
+            self.expect(T::RBrace)?;
+            self.close(n);
+            Ok(())
+        } else {
+            self.refuse()
+        };
+        self.enum_cases = saved;
+        r
+    }
+
+    /// `case A, B extends C` (`simple_enum_case`s: `name`, `extend`), or `case A(x) extends B`
+    /// (`full_enum_case`: `name`, `class_parameters`, `extend`); `case` and the commas left out.
+    fn enum_case_rest(&mut self) -> R<()> {
+        self.tk(K::TCase)?;
+        if matches!(self.kind_at(1), T::LParen | T::LBracket) && self.adjacent(0) {
+            let n = self.open(K::FullEnumCase);
+            self.identifier(f::NAME)?;
+            if self.peek() == T::LBracket {
+                self.type_parameters(f::TYPE_PARAMETERS)?;
+            }
+            while self.peek() == T::LParen && !self.tok().nl {
+                self.class_parameters()?;
+            }
+            if self.is_word(w::EXTENDS) && !self.tok().nl {
+                self.extends_clause()?;
+            }
+            self.close(n);
+            return Ok(());
+        }
+        loop {
+            let n = self.open(K::SimpleEnumCase);
+            self.identifier(f::NAME)?;
+            if self.is_word(w::EXTENDS) && !self.tok().nl {
+                self.extends_clause()?;
+            }
+            self.close(n);
+            if self.peek() == T::Comma {
+                self.tk(K::TComma)?;
+            } else {
+                return Ok(());
+            }
+        }
+    }
+
+    /// `given T = e`, `given n: T = e`, `given n: T with` and an indented body (`given_definition`:
+    /// `name`, `return_type`, `body`). Other forms are refused.
+    fn given_rest(&mut self) -> R<()> {
+        self.tk(K::TGiven)?;
+        if matches!(self.peek(), T::LBracket | T::LParen) {
+            return self.refuse();
+        }
+        if Self::is_name(self.tok()) && self.is_op_at(1, op::COLON) {
+            self.identifier(f::NAME)?;
+            self.tk(K::TColon)?;
+        } else if Self::is_name(self.tok()) && matches!(self.kind_at(1), T::LBracket | T::LParen) && self.adjacent(0) && self.lambda_or_colon_after_params() {
+            return self.refuse();
+        }
+        let t = self.annotated_type()?;
+        self.t.refield(t, f::RETURN_TYPE);
+        if self.is_op(op::EQ) {
+            self.tk(K::TEq)?;
+            self.indentable_f(f::BODY)?;
+        } else if self.is_word(w::WITH) && !self.tok().nl {
+            // `_structural_instance`: its `with` in the return type's field, then the body.
+            self.tkf(K::TWith, f::RETURN_TYPE)?;
+            if self.peek() == T::LBrace {
+                return self.refuse();
+            }
+            match self.layout(v::INDENT)? {
+                Some(Ext::Indent) => {}
+                _ => return self.refuse(),
+            }
+            let at = self.take();
+            let n = self.t.open(K::WithTemplateBody, f::BODY, at);
+            let saved = std::mem::replace(&mut self.enum_cases, false);
+            let r = self.statements(Region::Indent, f::NONE);
+            self.enum_cases = saved;
+            r?;
+            match self.layout(v::OUTDENT | v::COMMA_OUTDENT)? {
+                Some(Ext::Outdent | Ext::CommaOutdent) => {
+                    let at = self.take();
+                    self.close_at(n, at);
+                }
+                _ => return self.refuse(),
+            }
+        } else {
+            return self.refuse();
+        }
+        Ok(())
+    }
+
+    /// Whether `name[…](…)` then `:` or `=>` (a given's signature, refused for now) comes next,
+    /// rather than a type `M[T]`.
+    fn lambda_or_colon_after_params(&mut self) -> bool {
+        let mut j = 1;
+        while matches!(self.kind_at(j), T::LParen | T::LBracket) {
+            j = self.matching(j) + 1;
+        }
+        let t = self.peek_at(j);
+        t.kind == T::Op && matches!(t.code, op::COLON | op::ARROW | op::QARROW)
+    }
+
+    /// `extension (x: T) def …`, or its definitions indented (`extension_definition`:
+    /// `type_parameters`, `parameters`, each definition `body`).
+    fn extension_rest(&mut self) -> R<()> {
+        self.tk(K::TExtension)?;
+        if self.peek() == T::LBracket {
+            self.type_parameters(f::TYPE_PARAMETERS)?;
+        }
+        while self.peek() == T::LParen {
+            if self.tok().nl {
+                return self.refuse();
+            }
+            self.parameters()?;
+        }
+        if self.tok().nl {
+            match self.layout(v::INDENT)? {
+                Some(Ext::Indent) => {
+                    self.take();
+                }
+                _ => return self.refuse(),
+            }
+            self.statements(Region::Indent, f::BODY)?;
+            match self.layout(v::OUTDENT | v::COMMA_OUTDENT)? {
+                Some(Ext::Outdent | Ext::CommaOutdent) => {
+                    let at = self.take();
+                    self.t.flush(at);
+                    self.t.last_end = self.t.last_end.max(at);
+                }
+                _ => return self.refuse(),
+            }
+            return Ok(());
+        }
+        if self.peek() == T::LBrace {
+            return self.refuse();
+        }
+        if !self.definition_ahead()? {
+            return self.refuse();
+        }
+        self.definition(f::BODY)
+    }
+
     /// Whether the token next is the construct's where it starts a line: the scanner's choice where
     /// the state takes `own` (a semicolon or an outdent there ends the construct).
     fn continues(&mut self, own: crate::scan::V) -> R<bool> {
@@ -428,10 +623,18 @@ impl P<'_> {
     /// `:` at a line's end, then indented statements (`template_body`, field `body`: from the `:` to
     /// the outdent).
     fn indented_template_body(&mut self) -> R<()> {
+        let saved = std::mem::replace(&mut self.enum_cases, false);
+        let r = self.indented_body(K::TemplateBody);
+        self.enum_cases = saved;
+        r
+    }
+
+    /// `:` at a line's end, an indent, statements, the outdent: a node of `kind`, field `body`.
+    fn indented_body(&mut self, kind: K) -> R<()> {
         if self.layout(v::COLON_EOL)? != Some(Ext::ColonEol) {
             return self.refuse();
         }
-        let n = self.open_field(K::TemplateBody, f::BODY);
+        let n = self.open_field(kind, f::BODY);
         self.take();
         // The lexer's token for the same `:`.
         self.tk(K::TColon)?;
@@ -457,6 +660,13 @@ impl P<'_> {
 
     /// `{ … }` (`template_body`), given `field`: a self type, then statements.
     pub(super) fn template_body(&mut self, field: u8) -> R<u32> {
+        let saved = std::mem::replace(&mut self.enum_cases, false);
+        let r = self.template_body_in(field);
+        self.enum_cases = saved;
+        r
+    }
+
+    fn template_body_in(&mut self, field: u8) -> R<u32> {
         let n = self.open_field(K::TemplateBody, field);
         self.tk(K::TLBrace)?;
         // An indent inside the braces (`_braced_template_body2`: an indent before or after the self
@@ -543,9 +753,22 @@ impl P<'_> {
         let n = self.open_field(K::ClassParameters, f::CLASS_PARAMETERS);
         self.tk(K::TLParen)?;
         if self.is_word(w::USING) {
-            return self.refuse();
-        }
-        if self.is_word(w::IMPLICIT) {
+            self.tk(K::TUsing)?;
+            if !(Self::is_name(self.tok()) && self.is_op_at(1, op::COLON)) {
+                // `(using A, B)`: types alone, each `type`, their commas stored.
+                loop {
+                    self.param_type(f::TYPE)?;
+                    if self.peek() == T::Comma {
+                        self.tk(K::TComma)?;
+                    } else {
+                        break;
+                    }
+                }
+                self.expect(T::RParen)?;
+                self.close(n);
+                return Ok(());
+            }
+        } else if self.is_word(w::IMPLICIT) {
             self.tk(K::TImplicit)?;
         }
         while self.peek() != T::RParen {
