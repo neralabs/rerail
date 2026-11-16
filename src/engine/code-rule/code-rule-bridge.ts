@@ -130,11 +130,23 @@ interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
 }
-/** A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none when absent). */
+/**
+ * A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none
+ * when absent). `fromCapture` when finish read every file against the call's own capture: an edit read otherwise,
+ * against what the tool's result says the file held or over the whole file, has a capture that may hold the tool's
+ * write, as when the call reached Rerail only after the tool ran. Written back, it would undo only what changed the file
+ * since and say the edit was rolled back, so such an edit is never rolled back.
+ */
 interface RewindableEdit {
   readonly revision: number;
   readonly preimages: ReadonlyMap<string, Preimage>;
   readonly after: ReadonlyMap<string, string | undefined>;
+  readonly fromCapture: boolean;
+}
+/** What `finish` takes besides the call: whether `rewind` may roll its edit back, and what its result says the file held. */
+interface FinishOptions {
+  readonly rewindable?: boolean;
+  readonly reported?: ReportedPreimage | undefined;
 }
 /** A source as a preimage: a file named like one holding secrets keeps only its digest and size. Undefined when it is none. */
 function preimageOf(source: Source): Preimage | undefined {
@@ -1018,15 +1030,10 @@ export class CodeRuleBridge {
    * A failed command may still have written files, so command results reconcile regardless of `failed`. With
    * `rewindable` the call's own captures are kept for `rewind` until `release`. `reported` is what the tool's result
    * says the file it wrote held before (`ReportedPreimage`): the edit is read against that where the call's own capture
-   * already holds the write, as it does when the call reached Rerail only after the tool ran. That text is never
-   * rewindable: `rewind` writes a preimage back as the whole file, and this one was not read from the file, so a rewind
-   * of such an edit leaves the file as the tool left it.
+   * already holds the write, as it does when the call reached Rerail only after the tool ran. Such an edit is never
+   * rolled back (`RewindableEdit`), so a rewind of it leaves the file as it is.
    */
-  async finish(
-    toolCallId: string,
-    failed = false,
-    options: { rewindable?: boolean; reported?: ReportedPreimage | undefined } = {},
-  ): Promise<readonly CodeRuleResponse[]> {
+  async finish(toolCallId: string, failed = false, options: FinishOptions = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
     discovery.toolCalls.finish(toolCallId, await filesystemClock());
     if (this.#commands.delete(toolCallId)) {
@@ -1034,23 +1041,26 @@ export class CodeRuleBridge {
       await this.#noteIgnoreRules([]);
       return responses;
     }
-    return await this.#enqueue(async () => {
-      this.#assertDiscovery(discovery);
-      const pending = this.#pending.get(toolCallId);
-      this.#pending.delete(toolCallId);
-      if (pending === undefined || failed) return [];
-      this.refreshCodeRules();
-      this.#reportIgnoredEdits(discovery.root, pending.paths);
-      await this.#noteIgnoreRules(pending.paths);
-      const { edits, uncaptured } = await this.#readEdits(discovery, pending, options.reported);
-      if (edits.length === 0) return [];
-      // Kept before the audit starts, so a steer its evaluation publishes finds it.
-      if (options.rewindable === true) {
-        const after = new Map([...pending.preimages.keys()].map(path => [path, this.#observed.get(path)?.digest]));
-        this.#rewindable.set(toolCallId, { revision: this.#revision + 1, preimages: pending.preimages, after });
-      }
-      return [await this.#auditEdits(discovery, edits, ["edit", "function"], uncaptured)];
-    });
+    return await this.#enqueue(async () => await this.#finishEdit(discovery, toolCallId, failed, options));
+  }
+
+  /** The queued part of `finish` for a call that edits files: its edits read against their preimages and audited. */
+  async #finishEdit(discovery: SourceDiscovery, toolCallId: string, failed: boolean, options: FinishOptions): Promise<readonly CodeRuleResponse[]> {
+    this.#assertDiscovery(discovery);
+    const pending = this.#pending.get(toolCallId);
+    this.#pending.delete(toolCallId);
+    if (pending === undefined || failed) return [];
+    this.refreshCodeRules();
+    this.#reportIgnoredEdits(discovery.root, pending.paths);
+    await this.#noteIgnoreRules(pending.paths);
+    const { edits, uncaptured, notFromCapture } = await this.#readEdits(discovery, pending, options.reported);
+    if (edits.length === 0) return [];
+    // Kept before the audit starts, so a steer its evaluation publishes finds it.
+    if (options.rewindable === true) {
+      const after = new Map([...pending.preimages.keys()].map(path => [path, this.#observed.get(path)?.digest]));
+      this.#rewindable.set(toolCallId, { revision: this.#revision + 1, preimages: pending.preimages, after, fromCapture: notFromCapture.size === 0 });
+    }
+    return [await this.#auditEdits(discovery, edits, ["edit", "function"], uncaptured)];
   }
 
   /** Ends the window in which `rewind` may roll the call's edit back. */
@@ -1096,14 +1106,15 @@ export class CodeRuleBridge {
   }
 
   /**
-   * The call's edit, out of the window `rewind` may roll it back in, when a steer at `revision` over `scope` may: the scope
-   * lies within its captured paths and each preimage was read. One holding secrets has no copy to put back, and throws.
+   * The call's edit, out of the window `rewind` may roll it back in, when a steer at `revision` over `scope` may: the edit
+   * was read against its captures (`RewindableEdit`), the scope lies within its captured paths and each preimage was
+   * read. One holding secrets has no copy to put back, and throws.
    */
   #takeRewindable(toolCallId: string, revision: number, scope: readonly string[]): RewindableEdit | undefined {
     const rewindable = this.#rewindable.get(toolCallId);
     if (rewindable === undefined || rewindable.revision !== revision) return undefined;
     this.#rewindable.delete(toolCallId);
-    if (!coversScope(rewindable.preimages, scope)) return undefined;
+    if (!rewindable.fromCapture || !coversScope(rewindable.preimages, scope)) return undefined;
     const secret = [...rewindable.preimages].find(([, preimage]) => preimage.withheld !== undefined);
     if (secret !== undefined)
       throw new Error(`${secret[0]} holds secrets, by its name or its text, so Rerail kept no copy of it to put back; the edit stays as it is`);
@@ -1378,22 +1389,23 @@ export class CodeRuleBridge {
 
   /**
    * The tool call's edits, each read against its preimage (`editPreimage`): the call's own, or the one its result
-   * reports. And the digest each source had before it where the call's start captured no preimage.
+   * reports. And the digest each source had before it where the call's start captured no preimage, and the sources
+   * whose edit was read against anything but the call's own capture.
    */
   async #readEdits(
     discovery: SourceDiscovery,
     pending: PendingEdit,
     reported: ReportedPreimage | undefined,
-  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string> }> {
+  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string>; notFromCapture: Set<string> }> {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
     const uncaptured = new Map<string, string>();
-    const preimages = { captured: pending.preimages, reported: this.#locatedReport(root, reported) };
+    const preimages = { captured: pending.preimages, reported: this.#locatedReport(root, reported), notFromCapture: new Set<string>() };
     for (const configuredPath of [...pending.paths].sort(compareDeterministicStrings)) {
       const edit = await this.#readToolEdit(discovery, root, configuredPath, preimages, uncaptured);
       if (edit !== undefined) edits.push(edit);
     }
-    return { edits, uncaptured };
+    return { edits, uncaptured, notFromCapture: preimages.notFromCapture };
   }
 
   /** `reported` with its path as the session names its sources; undefined when it names none the auditor takes. */
@@ -1404,20 +1416,25 @@ export class CodeRuleBridge {
 
   /**
    * The edit of the source at `configuredPath`, read against its preimage (`editPreimage`): the call's own capture, or
-   * what the tool's result reports for that source.
+   * what the tool's result reports for that source. A source whose edit is read against anything but its capture joins
+   * `notFromCapture`.
    */
   async #readToolEdit(
     discovery: SourceDiscovery,
     root: string,
     configuredPath: string,
-    preimages: { readonly captured: ReadonlyMap<string, Preimage>; readonly reported: ReportedPreimage | undefined },
+    preimages: {
+      readonly captured: ReadonlyMap<string, Preimage>; readonly reported: ReportedPreimage | undefined; readonly notFromCapture: Set<string>;
+    },
     uncaptured: Map<string, string>,
   ): Promise<CodeRuleEdit | undefined> {
     const source = await this.#readSource(root, configuredPath);
     if (source === undefined) return undefined;
     this.#touchSource(discovery, source.path);
     const reported = preimages.reported?.path === source.path ? preimages.reported : undefined;
-    const preimage = editPreimage(source, preimages.captured.get(source.path), reported);
+    const captured = preimages.captured.get(source.path);
+    const preimage = editPreimage(source, captured, reported);
+    if (preimage !== captured) preimages.notFromCapture.add(source.path);
     const before = this.#observed.get(source.path)?.digest;
     const edit = this.#readEdit(source, preimage);
     if (edit === undefined) return undefined;

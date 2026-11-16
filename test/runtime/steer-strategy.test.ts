@@ -247,11 +247,33 @@ describe("The rewind steer strategy", () => {
     }
   });
 
+  // The call's own capture holds what the tool wrote; written back, it would undo only what changed the file since, and
+  // the steer would say the edit was rolled back.
+  it("leaves a late call's file as it is, and steers as a message, when the file changed again before the result", async () => {
+    const before = "X = 0\n";
+    const written = "X = 0\nNEEDLE = 1\n";
+    const formatted = "X = 0\nNEEDLE = 1  # fmt\n";
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "existing.py": before } });
+    try {
+      const path = join(session.root, "existing.py");
+      await writeFile(path, written);
+      await session.call("w1", "existing.py");
+      // A formatter rewrites the tool's line before the result reaches Rerail.
+      await writeFile(path, formatted);
+      const output = { type: "update", filePath: path, content: written, structuredPatch: [], originalFile: before };
+      const deliveries = await session.result("w1", output);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(path, "utf8")).toBe(formatted);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
   it("keeps no copy of what a late call's result says a secret-like file held, and steers as a message", async () => {
     const before = "TOKEN = 'sk-live-0123456789'\n";
     const written = `${before}NEEDLE = 1\n`;
     const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "secrets.py": before } });
-    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     try {
       await writeFile(join(session.root, "secrets.py"), written);
       await session.call("w1", "secrets.py");
@@ -260,11 +282,9 @@ describe("The rewind steer strategy", () => {
       expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
       expect(deliveries[0]).not.toHaveProperty("rewound");
       expect(await readFile(join(session.root, "secrets.py"), "utf8")).toBe(written);
-      expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/secrets\.py .*no copy/u));
       const directory = createHash("sha256").update("strategy").digest("hex");
       expect(await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).not.toContain("sk-live-0123456789");
     } finally {
-      stderr.mockRestore();
       await session.runtime.dispose();
     }
   });
