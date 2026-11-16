@@ -1953,15 +1953,12 @@ impl Drop for HeldPlan<'_> {
 pub type Late = Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
 
 /// The store's collection (decision 0053), started once the run's manifest is written: `join` waits for it.
-pub struct Collecting(std::sync::mpsc::Receiver<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>>);
+pub struct Collecting(std::thread::JoinHandle<Option<(usize, std::result::Result<String, String>)>>);
 
 impl Collecting {
     /// The passes and their outcome, once the manifest is written and the passes ran; `None` when no pass was due.
     pub fn join(self) -> std::thread::Result<Option<(usize, std::result::Result<String, String>)>> {
-        match self.0.recv() {
-            Ok(Some(thread)) => thread.join().map(Some),
-            _ => Ok(None),
-        }
+        self.0.join()
     }
 }
 
@@ -2052,43 +2049,51 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
         (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
     }
-    let (tx, rx) = std::sync::mpsc::channel();
+    // The sources stored by writes queued before the manifest's, and the texts named meanwhile: the record's item
+    // takes them as the writer applies it (`take_named_sources`), with these, named on the run's side.
+    let mut sources = sources;
+    sources.extend(late.lock().expect("the late sources").iter().copied());
+    let key = manifest_key(&root, &plan);
+    let manifest = Manifest {
+        root,
+        sources,
+        grammar_version: crate::code_rule_dsl::build_ids::grammar_version(),
+        tape_format: i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION),
+        plan,
+        also,
+        lane,
+        now,
+        relations,
+    };
+    // The run's record's item (decision 0306), after every write the run queued: the manifest names only what is
+    // written, and the lease on collection is let go once it is (below).
+    store.record("the run's manifest", vec![key], &manifest, None, apply_manifest);
+    if !collect {
+        // A run that collects nothing does not wait for its manifest: the writer lets its lease go once the run's
+        // writes are applied. Waiting was phase 1's run waiting on every write it queued (0.23 s of an edit).
+        if let Some(reading) = reading {
+            store.keep_until_written(reading);
+        }
+        return Ok(None);
+    }
+    // Collection works behind the run, as the writer does: on its own connection, beside the waves, which read
+    // nothing it writes and wait for none of it (decision 0053). It starts once the manifest is written, which it
+    // reads, and the run's lease (which kept collection from what the manifest now names) is let go.
     let path = store.database_path().to_path_buf();
-    let late = Arc::clone(late);
-    let mut reading = reading;
-    // Alone: collection, on its own connection, reads the manifest it starts after.
-    store.write_back_alone_syms(
-        crate::content_store::write_back::Syms::None, "the run's manifest",
-        0,
-        Vec::new(),
-        Box::new(move |store| {
-            // The sources of the writes queued before this one, written now (run again if the store was busy).
-            let mut sources = sources.clone();
-            sources.extend(late.lock().expect("the late sources").iter().copied());
-            let recorded = store
-                .record_corpus_run_lane(&root, &sources, crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), plan, &also, lane, now)
-                .and_then(|new| {
-                    // A warm run may move an identical manifest's timestamps (`profile::WARM_WRITES_ALLOWED`), never
-                    // record a new one.
-                    if new {
-                        crate::code_rule_dsl::logic::profile::warm_fault("a new manifest recorded", || format!("{root}, {} sources", sources.len()));
-                    }
-                    store.record_corpus_relations(plan, &relations)
-                });
-            // The manifest now protects the sources. Release before collection, including warm runs
-            // that must resume a pass deferred by another active reader.
-            drop(reading.take());
-            recorded?;
-            // No thread, no second connection, unless a pass has work (a run of fresh roots decides rarely).
-            if !collect || !store.corpus_pass_wanted(&policy, now)? {
-                let _ = tx.send(None);
-                return Ok(());
-            }
-            let path = path.clone();
-            let _ = tx.send(Some(rerail_accel::exec::service("rerail-collect", None, move || {
-        // Collection works behind the run, as the writer does: on its own connection, beside the waves, which read
-        // nothing it writes and wait for none of it (decision 0053). Its statements are not a wave's.
+    let thread = rerail_accel::exec::service("rerail-collect", None, move || -> Option<(usize, std::result::Result<String, String>)> {
         crate::code_rule_dsl::logic::profile::behind_the_run();
+        let store = match ContentStore::open(&path) {
+            Ok(store) => store,
+            Err(e) => return Some((0, Err(e.to_string()))),
+        };
+        store.settle(&key);
+        drop(reading);
+        match store.corpus_pass_wanted(&policy, now) {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(e) => return Some((0, Err(e.to_string()))),
+        }
+        drop(store);
         let started = std::time::Instant::now();
         let mut passes = 0;
         let outcome = (|| -> std::result::Result<String, crate::content_store::StoreError> {
@@ -2119,15 +2124,41 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
             })
         })()
         .map_err(|e| e.to_string());
-        (passes, outcome)
-            }).expect("a collection thread")));
-            Ok(())
-        }),
-    );
-    // A run that collects nothing does not wait for its manifest: the writer writes it in order, before any later
-    // write, and a failure is the writer's to report (`written`). Waiting was phase 1's run waiting on every write it
-    // queued (0.23 s of an edit).
-    Ok(collect.then_some(Collecting(rx)))
+        Some((passes, outcome))
+    })
+    .map_err(|e| Error::Plan(format!("a collection thread: {e}")))?;
+    Ok(Some(Collecting(thread)))
+}
+
+/// The key a run's manifest's item is queued under: its root's and plan's.
+fn manifest_key(root: &str, plan: &[u8; 32]) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"the run's manifest", root.as_bytes(), plan])
+}
+
+/// A run's manifest, as its record holds it (decision 0306).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Manifest {
+    root: String,
+    sources: Vec<crate::content_store::SourceId>,
+    grammar_version: i64,
+    tape_format: i64,
+    plan: [u8; 32],
+    also: Vec<[u8; 32]>,
+    lane: Option<[u8; 32]>,
+    now: i64,
+    relations: Vec<(String, String)>,
+}
+
+/// Records a run's manifest and its relations, naming the sources the run's writes stored before it.
+fn apply_manifest(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+    let mut m: Manifest = crate::content_store::record::codec::from_body("the run's manifest", body)?;
+    m.sources.extend(cx.store.take_named_sources());
+    let new = cx.store.record_corpus_run_lane(&m.root, &m.sources, m.grammar_version, m.tape_format, m.plan, &m.also, m.lane, m.now)?;
+    // A warm run may move an identical manifest's timestamps (`profile::WARM_WRITES_ALLOWED`), never record a new one.
+    if new {
+        crate::code_rule_dsl::logic::profile::warm_fault("a new manifest recorded", || format!("{}, {} sources", m.root, m.sources.len()));
+    }
+    cx.store.record_corpus_relations(m.plan, &m.relations)
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -3286,7 +3317,7 @@ fn run_observed(
     let keep_durably = |prepared: &Arc<Prepared>| {
         let (Some(stored), Some(text)) = (durable, durable_text.clone()) else { return };
         let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the prepared program in the store (decision 0073), queued".into());
-        let (kept, key, late) = (Arc::clone(prepared), prepared_key, Arc::clone(&late_sources));
+        let (kept, key) = (Arc::clone(prepared), prepared_key);
         store.write_back_syms(
             crate::content_store::write_back::Syms::None, "the prepared program",
             0,
@@ -3296,13 +3327,13 @@ fn run_observed(
                     Some(id) => id,
                     None => {
                         let id = memo::source(store, &text)?;
-                        late.lock().expect("the late sources").push(id);
+                        store.name_sources([id]);
                         id
                     }
                 };
                 if let Some(documents) = prepared::remember(store, source, &key, &kept)? {
                     kept.keep_documents(store.database_path(), &documents);
-                    late.lock().expect("the late sources").extend(documents);
+                    store.name_sources(documents);
                 }
                 Ok(())
             }),
@@ -4961,7 +4992,7 @@ fn run_observed(
             // In the waves no SQL is read or written (decision 0104): the tape was found before the first wave, or the
             // file is parsed and its source and tape are the writer's, behind the run; the manifest names the sources
             // it stores (`late_sources`).
-            Some(cache) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), Some(&late_sources), keep_tapes),
+            Some(cache) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), true, keep_tapes),
             Some(_) => unreachable!("no tape cache without `tape-cache`"),
             None => core::build_with_tape(&file, keep_tapes),
         };

@@ -97,6 +97,8 @@ pub fn apply(store: &ContentStore, text: &str, bytes: &[u8]) -> StoreResult<()> 
     for item in items {
         let f = *KINDS.lock().expect("the record's kinds").get(&item.kind).ok_or_else(|| StoreError::Invalid(format!("a record's item of kind {}: none registered", item.kind)))?;
         let range = item.bytes.map_or(&[][..], |(at, len)| &bytes[at..at + len]);
+        // Judged by its kind in a warm run, as a job of its own was (`profile::WARM_WRITES_ALLOWED`).
+        super::hazards::warm_job(&item.kind);
         f(&Apply { store, bytes: range }, item.body)?;
     }
     Ok(())
@@ -164,7 +166,8 @@ impl ContentStore {
         register(kind, f);
         let body = codec::body(body);
         let mut once = Some((body, bytes));
-        let gathered = self.gather("the run's record", Record::default, |r| {
+        // Asked of a warm run by the item's kind, as a job of its own is.
+        let gathered = self.gather(kind, Record::default, |r| {
             let (body, bytes) = once.take().expect("added once");
             r.push(kind, &keys, body, bytes);
         });

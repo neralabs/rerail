@@ -72,7 +72,7 @@ pub mod hazards;
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
 pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
-pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, StoredIds};
+pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape};
 pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
@@ -361,7 +361,9 @@ impl From<std::io::Error> for StoreError {
 
 pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+/// Serialized as its number (a run's record names a source this store holds by it, decision 0306).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct SourceId(i64);
 
 impl SourceId {

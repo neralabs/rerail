@@ -269,6 +269,8 @@ struct State {
     gathers: HashMap<(u64, std::any::TypeId), Box<dyn Gather>>,
     /// Each run's named sources, as its writes are applied: the manifest's item names them (decision 0306).
     named: HashMap<u64, Vec<super::SourceId>>,
+    /// What each run keeps until its writes are applied (`ContentStore::keep_until_written`): its collection lease.
+    kept: HashMap<u64, Vec<Box<dyn Any + Send>>>,
 }
 
 impl State {
@@ -361,7 +363,7 @@ impl Writer {
             let mut s = self.shared.state.lock().expect("the writer's state");
             let jobs = s.open.remove(&run).unwrap_or_default();
             // A finished run with nothing to write and nothing kept for it sends nothing.
-            if jobs.is_empty() && !(finished && s.named.contains_key(&run)) {
+            if jobs.is_empty() && !(finished && (s.named.contains_key(&run) || s.kept.contains_key(&run))) {
                 return;
             }
             s.sealed_bytes += jobs.iter().map(|q| q.1).sum::<usize>();
@@ -757,8 +759,10 @@ impl ContentStore {
                     if batch.is_empty() {
                         let mut s = w.shared.state.lock().expect("the writer's state");
                         s.named.remove(&of);
+                        let kept = s.kept.remove(&of);
                         s.applied += 1;
                         drop(s);
+                        drop(kept);
                         w.shared.changed.notify_all();
                         continue;
                     }
@@ -836,11 +840,16 @@ impl ContentStore {
                         finish(&w.shared, bytes, &keys, outcome, cpu, true);
                     }
                     let mut s = w.shared.state.lock().expect("the writer's state");
-                    if finished {
+                    let kept = if finished {
                         s.named.remove(&of);
-                    }
+                        s.kept.remove(&of)
+                    } else {
+                        None
+                    };
                     s.applied += 1;
                     drop(s);
+                    // A lease let go once its run's writes are in the store (outside the state's lock).
+                    drop(kept);
                     w.shared.changed.notify_all();
                 }
                 // The queue is closed (the last handle's drop): the checkpointer ends with the writer.
@@ -866,6 +875,15 @@ impl ContentStore {
         let (run, w) = self.applying.lock().clone();
         let Some(w) = w.filter(|_| run != 0) else { return Vec::new() };
         w.shared.state.lock().expect("the writer's state").named.remove(&run).unwrap_or_default()
+    }
+
+    /// Keeps `thing` (a run's collection lease) until every write of this thread's run is applied (its last wave):
+    /// the manifest, which names what the lease protected, is in the store by then. Outside a run, or with no writer,
+    /// let go now (what was queued is written already).
+    pub fn keep_until_written(&self, thing: impl Any + Send) {
+        let run = WAVES.with(std::cell::Cell::get);
+        let Some(w) = self.writer().filter(|_| run != 0 && !cfg!(target_family = "wasm")) else { return };
+        w.shared.state.lock().expect("the writer's state").kept.entry(run).or_default().push(Box::new(thing));
     }
 
     /// The value a queued job left for `key`, while the job is queued.

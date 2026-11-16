@@ -315,22 +315,18 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
     crate::content_store::write_back::Key::of(&[b"tape", source, &tag.to_le_bytes(), &gv.to_le_bytes(), &fv.to_le_bytes()])
 }
 
-/// The sources a run's tape writes store, filled by the store's writer as it writes them: the run's manifest, queued
-/// after them, names them.
-pub(crate) type Stored = std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
-
 /// [`build`] in a run's waves (decision 0104): no SQL is read or written. The tape is `found` (read before the
 /// first wave), or one still queued by this process, else the file is parsed and its source and tape are handed to
-/// the store's writer, behind the run (the id it stores the source under goes to `stored`). `digest` is the source's
+/// the store's writer, behind the run (`named`: the run's manifest names the source it stores, decision 0306). `digest` is the source's
 /// SHA-256, when the caller has it.
 pub fn build_in_wave(
     file: &dyn SourceFile,
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
-    stored: Option<&Stored>,
+    named: bool,
 ) -> Result<Built, String> {
-    build_in_wave_with_tape(file, cache, digest, found, stored, false).map(|(built, _)| built)
+    build_in_wave_with_tape(file, cache, digest, found, named, false).map(|(built, _)| built)
 }
 
 /// [`build_in_wave`], with the tape the facts were read off where `keep` (a program's matchers run over it, decision
@@ -340,7 +336,7 @@ pub fn build_in_wave_with_tape(
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
-    stored: Option<&Stored>,
+    named: bool,
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::lines::Terminators;
@@ -391,7 +387,7 @@ pub fn build_in_wave_with_tape(
             // when it is full or the wave ends, and read there until written (decision 0295 step 5). No wave waits for
             // the writer (decision 0104).
             let canonical = HashKey::from_sha256_digest(digest);
-            cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, stored.cloned()).map_err(|e| e.to_string())?;
+            cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named).map_err(|e| e.to_string())?;
             image.primary
         }
     };
@@ -480,7 +476,7 @@ pub(crate) fn build_cached_with_tape(
             let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
             // Queued as `build_in_wave` queues it: gathered in a run's waves, else compressed here and queued alone.
             let canonical = HashKey::from_sha256_digest(digest);
-            cache.queue_source_and_tape(queued_tape(&digest, tag, gv, fv), canonical, tag, gv, fv, file.source(), tape, None).map_err(|e| e.to_string())?;
+            cache.queue_source_and_tape(queued_tape(&digest, tag, gv, fv), canonical, tag, gv, fv, file.source(), tape, false).map_err(|e| e.to_string())?;
             image.primary
         }
     };

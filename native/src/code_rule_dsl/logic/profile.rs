@@ -1435,6 +1435,7 @@ pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("the run's hold released", "a lock: the lease's release"),
     ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
+    ("the run's record", "no write of its own: a run's small writes as one job (decision 0306), each item judged by its kind as it is applied (`warm_job` of the item's kind)"),
     ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
     ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
     ("the cost statistics", "the cost statistics' own file (`costs`): the samples, SQL plan reports and kernel forms a run measured, and the model trained on them; what a run costs is never a result it recomputes (approved 2026-11-15)"),

@@ -243,15 +243,15 @@ pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::syn
     if !cache.queued(&queued(key)) {
         return;
     }
-    let (key, late) = (*key, std::sync::Arc::clone(late));
+    let key = *key;
     cache.write_back_syms(
         crate::content_store::write_back::Syms::None, "the combined program's text, named",
         0,
         Vec::new(),
         Box::new(move |store| {
             let found = program_source(store, &key, true)?;
-            late.lock().expect("the late sources").extend(found);
-            late.lock().expect("the late sources").extend(image_sources(store, &key)?);
+            store.name_sources(found);
+            store.name_sources(image_sources(store, &key)?);
             Ok(())
         }),
     );

@@ -422,7 +422,6 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
     if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
         return;
     }
-    let late = std::sync::Arc::clone(late);
     cache.write_back_syms(
         crate::content_store::write_back::Syms::None,
         "a source the manifest names",
@@ -435,7 +434,7 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
                 None if store => Some(s.put_source_hashed(text.as_bytes(), hash, &[])?),
                 None => None,
             };
-            late.lock().expect("the late sources").extend(found);
+            s.name_sources(found);
             Ok(())
         }),
     );
