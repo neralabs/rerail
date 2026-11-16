@@ -7,7 +7,8 @@ use super::body::Placed;
 use std::collections::BTreeSet;
 
 /// What a version's fields read once: its `About`, and its inputs and outputs. Held by its `Placed`, and shared by
-/// every clone of it.
+/// every clone of it; or a pipeline's analysis (decision 0281 §2).
+#[derive(Debug, PartialEq, Eq)]
 pub struct FieldsData {
     pub about: About,
     inputs: Vec<AtomId>,
@@ -35,6 +36,17 @@ pub struct Fields<'v> {
     d: &'v FieldsData,
 }
 
+impl super::super::program_image::manager::Analysis for FieldsData {
+    const NAME: &'static str = "fields";
+    const READS: super::super::program_image::manager::Reads = {
+        use super::super::program_image::manager::Reads;
+        Reads::RULES.or(Reads::ABOUT).or(Reads::INPUTS).or(Reads::OUTPUTS)
+    };
+    fn compute(cx: &super::super::program_image::manager::Cx<'_>) -> Result<FieldsData, String> {
+        Ok(FieldsData::of(cx.v()))
+    }
+}
+
 impl Placed {
     /// This version's fields (`Fields::of`), or an error where it is its rules alone: a program the image has no form
     /// for.
@@ -52,6 +64,10 @@ impl<'v> Fields<'v> {
         let v: &Version = &p.v;
         let d: &FieldsData = p.fields.get_or_init(|| std::sync::Arc::new(FieldsData::of(v)));
         Some(Fields { v, about: &d.about, d })
+    }
+    /// The fields of `v` as `d` read them: a pipeline's (`cx.get::<FieldsData>()`), for a whole version.
+    pub fn over(v: &'v Version, d: &'v FieldsData) -> Fields<'v> {
+        Fields { v, about: &d.about, d }
     }
     fn atom(&self, name: &str) -> Option<AtomId> {
         self.v.find(name)

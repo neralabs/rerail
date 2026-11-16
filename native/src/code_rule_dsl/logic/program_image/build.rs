@@ -207,6 +207,15 @@ impl<'p> Builder<'p> {
         self.enc.end_rule(at);
         id
     }
+    /// Adds a copy of `rule`, one of a derivation's input's, recording it as the copy's source (§9): a rule a pass
+    /// kept as it was (`manager`'s derivations).
+    pub fn keep(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+        let id = self.copy(from, rule);
+        if self.parent.is_none() {
+            self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
+        }
+        id
+    }
     fn same(&self, rule: RuleRef<'_>) -> bool {
         self.ids.is_some_and(|v| v.holds_image(rule.image()))
     }

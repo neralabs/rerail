@@ -36,7 +36,7 @@ impl Edges {
 }
 
 /// The program's components, dependencies first, each sorted by id; and its dependency edges.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Strata {
     pub sccs: Vec<Vec<RelId>>,
     pub edges: Edges,
@@ -322,4 +322,39 @@ pub fn accepts(v: &Version, about: &About) -> Result<bool, Error> {
         }
     }
     Ok(true)
+}
+
+// ---- the analyses behind the pass manager's trait (decision 0281 §2) ----
+
+use super::manager::{Analysis, Cx, Reads, RelSet};
+
+impl Analysis for About {
+    const NAME: &'static str = "about";
+    const READS: Reads = Reads::ABOUT;
+    fn compute(cx: &Cx<'_>) -> Result<About, String> {
+        Ok(About::of(cx.v()))
+    }
+}
+
+impl Analysis for Strata {
+    const NAME: &'static str = "strata";
+    const READS: Reads = Reads::RULES.or(Reads::ABOUT);
+    fn compute(cx: &Cx<'_>) -> Result<Strata, String> {
+        strata(cx.v(), &*cx.get::<About>()?).map_err(|e| e.to_string())
+    }
+}
+
+/// The relations the outputs read, directly or through rules and natives, the outputs included (`needed`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Needed(pub RelSet);
+
+impl Analysis for Needed {
+    const NAME: &'static str = "needed";
+    const READS: Reads = Reads::RULES.or(Reads::ABOUT).or(Reads::OUTPUTS);
+    fn compute(cx: &Cx<'_>) -> Result<Needed, String> {
+        let v = cx.v();
+        let roots: Vec<RelId> = v.outputs().filter_map(|a| v.rel_of(a)).collect();
+        let need = needed(v, &*cx.get::<About>()?, roots);
+        Ok(Needed(need.iter().enumerate().filter(|(_, n)| **n).map(|(k, _)| RelId(k as u32)).collect()))
+    }
 }

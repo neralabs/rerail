@@ -47,6 +47,7 @@ mod encoder;
 pub mod extents;
 pub mod grouped;
 pub mod handles;
+pub mod manager;
 pub mod passes;
 mod show;
 pub mod strings;

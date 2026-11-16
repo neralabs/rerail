@@ -1,6 +1,6 @@
 # 0281: Program passes run under a pass manager: rule rewriters and program edits over cached, maintained analyses
 
-Status: draft (2026-11-15), a proposal of the API's shape, for review before the passes of 0276 steps 3–5 move.
+Status: accepted (2026-11-15); step 1 in progress (see Path).
 Builds on 0173 §9 (a pass is an edit or a derivation, and a derived rule records its sources), 0225 §5 and 0246 §3
 (the whole-program questions are rules over the image), 0266 (blocks: a writer, a merged view, base + delta), 0269
 (a step's decisions are rows of what it made), 0275 (a step is rederived until its key hits) and 0276 (one form from
@@ -287,6 +287,17 @@ step 3 replaces what is under the writer.
 1. **The framework,** with the passes that already make versions ported to it: `normalize`, `stated_apart`,
    supports, `answers::gate`, the split, `RoundProgram::of`, `qualify` and the cut. Check: their tests, plus a
    driver test that a pass costs its selection.
+   - Done: `program_image::manager` (the traits, `Select`, the driver, `Delta`, the analysis store, `Pipeline`, the
+     dense `IdSet`/`IdMap` columns); `About`, `Strata`, `Needed` and `FieldsData` as analyses; `normalize` and
+     supports as rule passes, `stated_apart` as a program pass. Tests: `a_rule_pass_costs_the_rules_it_selects`,
+     `analyses_carry_over_edits_that_miss_what_they_read`, `a_pass_that_writes_for_a_kept_rule_fails`, and the
+     passes' own.
+   - As built: `RulePass::finish` takes the `Builder` itself (no separate `FieldsW`); `Delta` is read off the
+     version the writer made (an overlay is its delta, a view its ranges; fields by their hashes); a derivation that
+     changes nothing returns its input, so its analyses carry. A rule pass selecting all rules runs as a derivation
+     (the program's order kept); one selecting fewer, as an edit.
+   - Not yet: the gate, the split, `RoundProgram::of`, `qualify` and the cut; morsels (§3); re-running a rule pass
+     on a delta alone (§3), which needs a stored step to re-run from (step 6).
 2. **The analyses** behind the trait: `Fields`, `Heads`, `Readers`, `Strata`, `Components`, `Needed`, `Domains`, and
    the split's columns. Each is checked by the debug build's recompute-and-compare.
 3. **0276 step 3's preparation passes** as `ProgramPass`es: `locate`, the merges, `demand_exports`,
