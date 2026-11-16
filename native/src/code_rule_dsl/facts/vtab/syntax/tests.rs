@@ -615,7 +615,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     // An ERROR node (its atom's slot 0) is a member, since the set names ERROR (`Within::member`).
     let error = |k: i64| k % i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE) == 0;
     assert!(set.iter().any(|&k| error(k)), "the set names ERROR");
-    let member: Vec<bool> = (0..nodes).map(|r| kind(r)).map(|k| set.contains(&k)).collect();
+    let member: Vec<bool> = (0..nodes).map(&kind).map(|k| set.contains(&k)).collect();
     assert!((0..nodes).any(|r| error(kind(r)) && member[r]), "an ERROR node is a member");
     let below = |n: usize, a: usize| {
         let ((dn, ln, _), (da, la, za)) = (place[n], place[a]);

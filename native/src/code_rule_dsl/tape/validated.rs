@@ -217,6 +217,5 @@ fn visit_tape<T: rerail_tape_format::tape::Tape>(
             child_end: None,
         });
     }
-    drop(admit);
     Ok(aliases)
 }

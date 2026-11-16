@@ -477,10 +477,10 @@ impl Graph {
             if seen_rules.contains(&from) {
                 for (_, n, path) in self.includes.get(&from).into_iter().flatten() {
                     candidate(&from, n);
-                    if let Some(d) = self.digests.get(path) {
-                        if !g.digests.contains_key(path) {
-                            g.rules.insert(path.clone(), *d);
-                        }
+                    if let Some(d) = self.digests.get(path)
+                        && !g.digests.contains_key(path)
+                    {
+                        g.rules.insert(path.clone(), *d);
                     }
                     let next = path.to_string_lossy().into_owned();
                     if seen_rules.insert(next.clone()) && !seen.contains(&next) {

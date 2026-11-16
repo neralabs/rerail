@@ -1136,8 +1136,8 @@ pub fn assemble(
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = version.part(&local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
-        let cross = version.part(&in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
+        let local = version.part(local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
+        let cross = version.part(in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
         Parts { local, cross }
     };
     crate::code_rule_dsl::logic::version_trace::note_versions("split.local", &version, &versions.local);

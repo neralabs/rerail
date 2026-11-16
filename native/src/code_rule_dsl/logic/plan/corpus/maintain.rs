@@ -1497,9 +1497,9 @@ fn drivers(p: &Placed, scc: &BTreeSet<String>, reads: &BTreeSet<String>) -> Vec<
             *e = None;
         }
     }
-    for i in 0..n {
-        if out[i].is_none() {
-            out[i] = positive(i).iter().find_map(|r| groups.get(r.as_str()).cloned().flatten().flatten());
+    for (i, o) in out.iter_mut().enumerate().take(n) {
+        if o.is_none() {
+            *o = positive(i).iter().find_map(|r| groups.get(r.as_str()).cloned().flatten().flatten());
         }
     }
     out

@@ -351,7 +351,9 @@ struct Cells {
     side: [Vec<(u32, u64)>; 4],
 }
 
-/// Where `write` puts each finished block: format 16's regions and side lists, or 16z's compressed blocks.
+/// Where `write` puts each finished block: format 16's regions and side lists, or 16z's compressed blocks. One per
+/// write, never moved after it is made: its variants' sizes do not matter.
+#[allow(clippy::large_enum_variant)]
 enum Out {
     Plain { regions: [Vec<u8>; 5], side: [(Vec<u8>, Vec<u32>); 4] },
     Blocks { comp: Vec<u8>, at: Vec<u32>, sides: Vec<[u32; 4]>, raw: Vec<u8> },
@@ -501,8 +503,8 @@ pub fn write(lang: &Lang, n: usize, source_len: u64, tag: u8, z: bool, mut node:
             c.codes.push((lang.cut + t / lang.per) as u8);
             c.side[0].push((j as u32, u64::from(t % lang.per)));
         }
-        for a in 0..3 {
-            c.arrays[a].resize((j + 1) * w[a], 0);
+        for (array, &width) in c.arrays.iter_mut().zip(&w) {
+            array.resize((j + 1) * width, 0);
         }
         put(&mut c, 1, j, if i == 0 { 0 } else { x.start - prev_start });
         put(&mut c, 2, j, x.end - x.start);

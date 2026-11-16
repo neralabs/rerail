@@ -2027,7 +2027,7 @@ mod tests {
             collect_unreachable_frames(&c).unwrap()
         };
         assert_eq!(swept.maintained, 0, "the reusing program holds the frame: {swept:?}");
-        assert!(store.frames(&maintained, &[kept.clone()], 0).unwrap().contains_key(&kept));
+        assert!(store.frames(&maintained, std::slice::from_ref(&kept), 0).unwrap().contains_key(&kept));
     }
 
     fn rel(name: &str, i: u8) -> Rel {

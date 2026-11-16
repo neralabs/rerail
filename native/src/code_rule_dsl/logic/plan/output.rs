@@ -1324,7 +1324,7 @@ pub fn write(dir: &Path, image: &[u8]) -> std::io::Result<()> {
     }
     // The blocks below as they are in the file, then the image's.
     let (head, tail) = rerail_blocks::block::frame(rerail_blocks::block::kind::OUTPUTS, image.len());
-    let mut bytes: Vec<&[u8]> = below.first().map(|b| &b.buf.bytes()[..]).into_iter().collect();
+    let mut bytes: Vec<&[u8]> = below.first().map(|b| b.buf.bytes()).into_iter().collect();
     bytes.extend([&head[..], image, &tail[..]]);
     put(dir, &bytes)
 }

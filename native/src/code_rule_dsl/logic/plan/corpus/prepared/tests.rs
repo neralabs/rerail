@@ -61,7 +61,7 @@
         assert_ne!(moved.digest(), prepared.lowered.version.digest(), "the moved image names other atoms");
         // The pointer's rows name this store's atoms, so the program read again is the store's.
         let strings: Vec<String> = facts["prepared_interned_atom"].iter().map(|r| match &r[2] { crate::code_rule_dsl::logic::front::Value::Str(s) => s.to_string(), other => panic!("{other:?}") }).collect();
-        let here: Vec<i64> = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>()).unwrap().into_iter().map(|a| i64::from(u32::from(a))).collect();
+        let here: Vec<i64> = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>()).unwrap().into_iter().map(i64::from).collect();
         let kept: Vec<i64> = facts["prepared_interned_atom"].iter().map(|r| r[3].integer().unwrap()).collect();
         assert_eq!(kept, here);
         assert!(super::relocate(&store, &mut facts, &moved, &lists).expect("read").is_none(), "already this store's");

@@ -233,7 +233,9 @@ impl TapeImage {
 }
 
 /// A `.rr` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
-/// writer, as `lean` writes the other languages', else format 15's image.
+/// writer, as `lean` writes the other languages', else format 15's image. One per file, moved once: its variants'
+/// sizes do not matter.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum RrTape {
     Image(Vec<u8>),
     Written(f16::Written),

@@ -3568,7 +3568,7 @@ fn run_observed(
             let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
             let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
             let mut lowered = lower::lower_tree(&prog, dialect, &mut |s| {
-                let atoms: Vec<u32> = store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(u32::from).collect();
+                let atoms: Vec<u32> = store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect();
                 interned.push((s.iter().map(|x| (*x).to_owned()).collect(), atoms.clone()));
                 Ok(atoms)
             })?;
@@ -3796,7 +3796,7 @@ fn run_observed(
     // itself (decision 0046); relations no rule reads are not made. Made before the memo's identities: an entry's
     // rows are its relations' only under the projection they were made under (`Projection::rows_digest`).
     let read: BTreeSet<String> = prepared_placed.v.rules().flat_map(|r| r.reads().map(|a| prepared_placed.v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect();
-    let projection = syntax::Projection::of(&prog, read.clone()).with_long_text(&prog, &matchers);
+    let projection = syntax::Projection::of(prog, read.clone()).with_long_text(prog, matchers);
     let base_rows = projection.rows_digest();
     let memo_ids = {
         let rels: BTreeSet<String> = split.exports.iter().cloned().chain(local_v.outputs().map(|o| local_v.text(o).to_owned())).collect();
@@ -3865,7 +3865,7 @@ fn run_observed(
     });
     // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
     // built, and linked once they all are (`references`). W's graph is Python's.
-    let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect::<Vec<_>>())?, None => None };
+    let references = match CROSS_FILE.get() { Some(make) => make(label, prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect::<Vec<_>>())?, None => None };
     let part_of = |version| lowered.with_version(version);
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -3900,10 +3900,10 @@ fn run_observed(
         // Each of the cross-file part's version.
         let cone = match cross_declared.is_none() {
             true => shared_cone
-                .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, &prog).map(Arc::new).map_err(|e| e.to_string()))
+                .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, prog).map(Arc::new).map_err(|e| e.to_string()))
                 .clone()
                 .map_err(Error::Plan)?,
-            false => Arc::new(cone_of(&super::body::Placed::whole(cross_version.clone()), &split.exports, &split.base, &prog)?),
+            false => Arc::new(cone_of(&super::body::Placed::whole(cross_version.clone()), &split.exports, &split.base, prog)?),
         };
         cross_version = cone.rest.clone();
         Some((cone.load.clone(), cone.reads.clone()))
@@ -3993,7 +3993,7 @@ fn run_observed(
             let outputs: Vec<String> = once.iter().cloned().collect();
             let v = &local_v;
             let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
-            let made = v.part(&in_cone, &inputs, &outputs, PartFields { natives: &all, lattice: &in_cone, gates: &in_cone }).map_err(Error::Plan)?;
+            let made = v.part(in_cone, &inputs, &outputs, PartFields { natives: &all, lattice: &in_cone, gates: &in_cone }).map_err(Error::Plan)?;
             for part in [&mut local, &mut cross] {
                 let v = part.version.clone();
                 let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
@@ -4003,7 +4003,7 @@ fn run_observed(
                     }
                 }
                 let outputs: Vec<String> = v.outputs().map(|a| v.text(a).to_owned()).collect();
-                let kept = v.part(&not_once, &inputs, &outputs, PartFields { natives: &all, lattice: &all, gates: &all }).map_err(Error::Plan)?;
+                let kept = v.part(not_once, &inputs, &outputs, PartFields { natives: &all, lattice: &all, gates: &all }).map_err(Error::Plan)?;
                 part.version = kept;
             }
             crate::code_rule_dsl::logic::profile::decision("constants of the phases' exports", || {
@@ -4085,12 +4085,12 @@ fn run_observed(
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "statistics read or measured".into()));
     let t_stats = match &t {
         Some(t) => {
-            atomized_statistics(t, &db, &store, &first, dialect)?;
-            super::Stats::of_schema(&db, &prepared_placed, "s")?
+            atomized_statistics(t, db, store, &first, dialect)?;
+            super::Stats::of_schema(db, &prepared_placed, "s")?
         }
         None => {
             // A document's nodes are `d << 32 | index`: the SQL strata's range reads compute its interval (no table).
-            super::docs_by_shift(&db);
+            super::docs_by_shift(db);
             super::Stats::empty_of(&pf)
         }
     };
@@ -7863,8 +7863,8 @@ fn run_observed(
     if let Some(plan) = &cross_plan {
         let components_span = crate::code_rule_dsl::logic::profile::span(|| "import components".into());
         let held: BTreeSet<String> = cross_memo::HELD.iter().map(|r| (*r).to_owned()).collect();
-        let got = texts_run(&part_of(plan.components.clone()), &db, cross_stats.clone(), held, modes, &vocabulary)?;
-        let edges: Vec<(i64, i64)> = held_rows(&db, &got, cross_memo::HELD[1], 2)?.into_iter().map(|r| (r[0], r[1])).collect();
+        let got = texts_run(&part_of(plan.components.clone()), db, cross_stats.clone(), held, modes, &vocabulary)?;
+        let edges: Vec<(i64, i64)> = held_rows(db, &got, cross_memo::HELD[1], 2)?.into_iter().map(|r| (r[0], r[1])).collect();
         let mut keys: HashMap<i64, String> = HashMap::new();
         let mut rows = Vec::new();
         for r in held_rows(db, &got, cross_memo::COMPONENT, 3)? {
@@ -8178,7 +8178,7 @@ fn run_observed(
                     let mut seeds: Vec<String> = Vec::new();
                     let mut given_rels: BTreeSet<String> = BTreeSet::new();
                     let mut maintained = if driven {
-                        let mut part = cut.program(&cross)?;
+                        let mut part = cut.program(cross)?;
                         let mut sources = Vec::new();
                         // Each delta input made, and the relation it is a delta of.
                         let mut added: Vec<(String, String)> = Vec::new();
@@ -8519,7 +8519,7 @@ fn run_observed(
                         let mut counts = [0usize; 6];
                         let olds: HashMap<&str, usize> = maintained.sources.iter().map(|(rel, s, _)| (rel.as_str(), s.len())).collect();
                         let derived_here: BTreeSet<&str> = placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
-                        let rows_of = |rel: &str| held_rows(&db, &got, rel, fields.width(rel)).unwrap_or_default();
+                        let rows_of = |rel: &str| held_rows(db, &got, rel, fields.width(rel)).unwrap_or_default();
                         for (rel, cols) in fields.decls_by_name() {
                             if !derived_here.contains(rel) || cols.is_empty() {
                                 continue;
@@ -8541,7 +8541,7 @@ fn run_observed(
                                 let gone = del.iter().filter(|r| !after.contains(*r)).count();
                                 let old = olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0);
                                 if std::env::var("RERAIL_CROSS_DELTA_COUNTS").is_ok_and(|v| v == "each") {
-                                    let ins = fields.declared(&format!("{rel}__ins")).then(|| rows_of(&format!("{rel}__ins")).len()).unwrap_or(0);
+                                    let ins = if fields.declared(&format!("{rel}__ins")) { rows_of(&format!("{rel}__ins")).len() } else { 0 };
                                     eprintln!("O125 delta rows {rel}: old {old}, overdeleted {}, gone {gone}, inserted {ins}, after {}", del.len(), after.len());
                                 }
                                 counts[0] += del.len();
@@ -8558,7 +8558,7 @@ fn run_observed(
                             .decls_by_name()
                             .into_iter()
                             .filter(|(r, c)| (r.ends_with("__del") || r.ends_with("__ins")) && !c.is_empty() && derived_here.contains(r))
-                            .map(|(r, c)| (r.to_string(), held_rows(&db, &got, r, c.len()).unwrap_or_default().into_iter().collect()))
+                            .map(|(r, c)| (r.to_string(), held_rows(db, &got, r, c.len()).unwrap_or_default().into_iter().collect()))
                             .collect()
                     } else {
                         HashMap::new()
@@ -8595,7 +8595,7 @@ fn run_observed(
                     // `RERAIL_CROSS_VERIFY`: derive the run's strata again (the cut's program, no maintenance) and name the
                     // first relations, in stratum order, whose maintained rows differ (spike O125).
                     if let Some(vstats) = verify_stats.filter(|_| maintained.maintained > 0) {
-                        let plain = cut.program(&cross)?;
+                        let plain = cut.program(cross)?;
                         // `O125_VERIFY_RULES=<rel>`: the rules for `rel` the verifier derives with, and the maintained ones.
                         if let Ok(r) = std::env::var("O125_VERIFY_RULES") {
                             for (name, v) in [("plain", &plain.version), ("maintained", &placed.v)] {
@@ -8608,7 +8608,7 @@ fn run_observed(
                         let plain_placed = plain.placed()?;
                         let plain_f = plain_placed.fields()?;
                         vkeep.extend(derived.iter().filter(|rel| !plain_f.is_output(rel)).cloned());
-                        let again = texts_run(&plain, &db, vstats, vkeep, modes, &vocabulary)?;
+                        let again = texts_run(&plain, db, vstats, vkeep, modes, &vocabulary)?;
                         let mut shown = 0;
                         let rows_of = |h: &Arc<crate::code_rule_dsl::logic::native::component::InRel>, width: usize| -> Vec<Vec<i64>> {
                             let s = h.source((0..width).map(|c| format!("c{c}")).collect());

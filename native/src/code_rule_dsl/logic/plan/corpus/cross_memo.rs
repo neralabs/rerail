@@ -280,11 +280,11 @@ pub(super) fn split(
     let inputs: Vec<&str> = cross.inputs().map(|a| cross.text(a)).collect();
     let outputs: Vec<&str> = cross.outputs().map(|a| cross.text(a)).collect();
     let components = cross
-        .part(&in_cone, &inputs, &[COMPONENT], PartFields { natives: &in_cone, lattice: &all_rels, gates: &all_rels })
+        .part(in_cone, &inputs, &[COMPONENT], PartFields { natives: &in_cone, lattice: &all_rels, gates: &all_rels })
         .map_err(Error::Plan)?;
     let kept = |rel: &str| !cone.contains(rel) || shared.contains(rel);
     let kept_outputs: Vec<&str> = outputs.iter().copied().filter(|o| *o != COMPONENT).collect();
-    let part = cross.part(&kept, &inputs, &kept_outputs, PartFields { natives: &kept, lattice: &all_rels, gates: &all_rels }).map_err(Error::Plan)?;
+    let part = cross.part(kept, &inputs, &kept_outputs, PartFields { natives: &kept, lattice: &all_rels, gates: &all_rels }).map_err(Error::Plan)?;
     let placed = super::super::body::Placed::whole(Arc::clone(&part));
     let f = placed.fields()?;
     // The plan: the engine, the grammars, the file-local part (what the exports are) and the cross-file part.

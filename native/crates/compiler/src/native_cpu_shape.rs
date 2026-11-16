@@ -149,10 +149,10 @@ fn run_of_bytes(func: &Function, head: Block) -> bool {
             if !seen.insert(v) {
                 continue;
             }
-            if let cranelift_codegen::ir::ValueDef::Result(i, _) = dfg.value_def(v) {
-                if func.layout.inst_block(i) == Some(head) {
-                    stack.extend(dfg.inst_values(i));
-                }
+            if let cranelift_codegen::ir::ValueDef::Result(i, _) = dfg.value_def(v)
+                && func.layout.inst_block(i) == Some(head)
+            {
+                stack.extend(dfg.inst_values(i));
             }
         }
         false

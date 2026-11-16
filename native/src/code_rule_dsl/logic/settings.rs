@@ -116,7 +116,7 @@ fn module_text(
                 let Some(found) = found else {
                     return Err(format!("{}: #include {name:?}: no such file", path.display()));
                 };
-                if found.starts_with(&library) {
+                if found.starts_with(library) {
                     out.push_str(line);
                 } else if !seen.contains(&found) {
                     seen.push(found.clone());

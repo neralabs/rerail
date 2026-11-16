@@ -568,6 +568,7 @@ impl<'a> Bytewise<'a> {
     /// file's end. Where the output is false on a zero byte (`zero_kills`), none past it
     /// already: the bytes there are zeros, more than the 16 and its delay
     /// (`native_cpu_block::Batch`). Else the file's bytes' bits: `len - p`, at most 16.
+    #[allow(clippy::too_many_arguments)]
     fn short_cut(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, d: i64, p: Value, m: Value, stride: u32) -> Value {
         if crate::native_cpu_lanes::zero_kills(self.native, x, d as u32) {
             return m;
@@ -689,6 +690,7 @@ impl<'a> Bytewise<'a> {
     /// `bit` at a token's first byte `s`, known in `first`, where the token's bytes from `s + 1`
     /// are a split run's term's `lanes` (`RunLanes`): a test of those bytes of the term's set is
     /// a lane of its mask, as lean's number arm asks `b[pos] == b'0'` of its digits' first.
+    #[allow(clippy::too_many_arguments)]
     pub fn bit_on_run(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, s: Value, first: Option<[u64; 4]>, lanes: RunLanes, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         self.run_lanes.set(Some(lanes));
         let b = self.bit_first(f, at, o, s, first, heads);
@@ -725,6 +727,7 @@ impl<'a> Bytewise<'a> {
     /// scalar loads: `a` known false there (the run of it ended), so only the other terms,
     /// and the byte at `p - 1` known in `before`. Lean's `b[end] == b'.' &&
     /// digit(b[end + 1])`, its digit test at `end` not asked again.
+    #[allow(clippy::too_many_arguments)]
     pub fn rest_after(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, a: usize, p: Value, before: [u64; 4], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         let x = usize::from(self.native.outputs[usize::from(o)]);
         let d = i64::from(self.native.output_delays[usize::from(o)]);
@@ -2201,7 +2204,7 @@ mod tests {
                 x ^= x >> 7;
                 x ^= x << 17;
                 // Rare bytes in a round in four, one a 16 there.
-                *byte = if round % 4 == 0 && x % 16 == 0 { rare[(x >> 8) as usize % rare.len()] } else { common[(x >> 8) as usize % common.len()] };
+                *byte = if round % 4 == 0 && x.is_multiple_of(16) { rare[(x >> 8) as usize % rare.len()] } else { common[(x >> 8) as usize % common.len()] };
             }
             let p = (round % 5).min(n - 1);
             let mut out = [0u64; 9];

@@ -1398,7 +1398,7 @@ impl Numbering {
 
 pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     // A document read as text only has no nodes.
-    if doc.facts.len() == 0 {
+    if doc.facts.is_empty() {
         return Ok(Numbering { nodes: Vec::new(), back: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);

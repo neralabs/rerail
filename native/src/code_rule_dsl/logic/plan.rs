@@ -2013,7 +2013,7 @@ impl Model {
         {
             cap = cap.min(n.max(1.0));
         }
-        (0..b.args(i).len()).map(|c| self.ndv.at(&rel, c).map(|n| n.min(cap))).collect()
+        (0..b.args(i).len()).map(|c| self.ndv.at(rel, c).map(|n| n.min(cap))).collect()
     }
 
     /// Complete small value sets already in statistics. SQL can load only the constants requested by a rule,
@@ -4421,7 +4421,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
             }).collect())
             .collect();
         let n = rows.len() as f64;
-        stats.card.insert(rel.to_owned(), n);
+        stats.card.insert(rel, n);
         for col in 0..rows[0].len() {
             let mut counts: HashMap<Constant, i64> = HashMap::new();
             for r in &rows {

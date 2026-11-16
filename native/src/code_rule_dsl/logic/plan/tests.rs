@@ -2418,7 +2418,7 @@ fn a_filter_is_priced_at_the_rows_it_passes_on() {
     model.ndv.insert(("a", 0), 1_000.0);
     model.stats.fan.insert(("a", 0), 1.0);
     let r = &p.rules[0];
-    let (order, work, rows) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (order, work, rows) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     let shown: Vec<String> = order.iter().map(|s| r.body[s.at].to_string()).collect();
     let want = 1_000.0 + 1_000.0 * 0.97 + 1_000.0 * 0.97 * 0.98;
     assert!((work - want).abs() < 1e-6 * want, "work {work}, wanted {want}: {shown:?}");
@@ -2435,7 +2435,7 @@ fn bare_model(p: &Program) -> Model {
 /// `(order shown, work)` of `p`'s first rule.
 fn priced_first_rule(model: &Model, p: &Program) -> (Vec<String>, f64) {
     let r = &p.rules[0];
-    let (order, work, _) = model.plan_rule(body::Placed::of_program(p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (order, work, _) = model.plan_rule(body::Placed::of_program(p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     (order.iter().map(|s| r.body[s.at].to_string()).collect(), work)
 }
 
