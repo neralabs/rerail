@@ -289,6 +289,23 @@ mod adapter {
     }
 
     #[test]
+    fn removing_a_watched_root_succeeds_ends_its_watch_and_lets_go_of_it() {
+        let scratch = Scratch::new("root-remove");
+        scratch.write("checkout/src/a.txt", "a");
+        let mut watcher = TreeWatcher::new();
+        let root = scratch.path("checkout").to_string_lossy().into_owned();
+        let folders = vec![String::new(), "src".to_owned()];
+        assert!(watcher.watch(root.clone(), folders).expect("watch"));
+        assert_eq!(watcher.held_roots(), 1);
+        // `git worktree remove`: on Windows the handle must not keep the folder.
+        std::fs::remove_dir_all(scratch.path("checkout")).expect("a watched root is removed");
+        let notice = wait_for_watcher(&mut watcher, &root, |notice| notice.ended);
+        assert!(notice.ended);
+        assert_eq!(watcher.held_roots(), 0, "an ended root holds no handle");
+        watcher.close().expect("close");
+    }
+
+    #[test]
     fn an_unwatched_root_reports_nothing() {
         let scratch = Scratch::new("unwatch");
         scratch.write("src/a.txt", "a");

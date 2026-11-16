@@ -366,6 +366,11 @@ impl Backend for FsEvents {
         unsafe { dispatch_release(self.queue) };
         self.queue = std::ptr::null_mut();
     }
+
+    #[cfg(test)]
+    fn roots(&self) -> usize {
+        self.streams.len()
+    }
 }
 
 #[cfg(test)]

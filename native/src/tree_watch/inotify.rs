@@ -124,6 +124,15 @@ impl Watches {
             }
         }
     }
+
+    /// How many roots hold a watch.
+    #[cfg(test)]
+    fn root_count(&self) -> usize {
+        self.roots
+            .values()
+            .filter(|folders| !folders.is_empty())
+            .count()
+    }
 }
 
 /// What the reading thread and the host's thread share.
@@ -386,6 +395,11 @@ impl Backend for Inotify {
         unsafe { libc::write(self.wake.as_raw_fd(), (&raw const one).cast(), 8) };
         let _ = thread.join();
         *self.shared.watches() = Watches::default();
+    }
+
+    #[cfg(test)]
+    fn roots(&self) -> usize {
+        self.shared.watches().root_count()
     }
 }
 

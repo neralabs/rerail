@@ -60,6 +60,8 @@ const DRAIN_MILLISECONDS: u32 = 5_000;
 enum Command {
     Watch(String, SyncSender<bool>),
     Unwatch(String, SyncSender<bool>),
+    #[cfg(test)]
+    Roots(SyncSender<usize>),
     Stop,
 }
 
@@ -477,10 +479,13 @@ impl Shared {
     }
 
     /// Runs `command` (made with the answer's sender) on the thread and waits for its answer;
-    /// false when the thread is gone.
-    fn call(&self, command: impl FnOnce(SyncSender<bool>) -> Command) -> bool {
+    /// the default (false) when the thread is gone.
+    fn call<T: Default>(&self, command: impl FnOnce(SyncSender<T>) -> Command) -> T {
         let (answer, answered) = sync_channel(1);
-        self.send(command(answer)) && answered.recv().unwrap_or(false)
+        if !self.send(command(answer)) {
+            return T::default();
+        }
+        answered.recv().unwrap_or_default()
     }
 }
 
@@ -532,6 +537,10 @@ fn run_commands(shared: &Shared, state: &mut Loop) -> bool {
             Command::Unwatch(root, answer) => {
                 state.unwatch(&root);
                 let _ = answer.send(true);
+            }
+            #[cfg(test)]
+            Command::Roots(answer) => {
+                let _ = answer.send(state.keys.len());
             }
             Command::Stop => return false,
         }
@@ -591,6 +600,11 @@ impl Backend for DirectoryChanges {
         let _ = thread.join();
         // SAFETY: the port, which the joined thread no longer uses.
         unsafe { CloseHandle(self.shared.port) };
+    }
+
+    #[cfg(test)]
+    fn roots(&self) -> usize {
+        self.shared.call(Command::Roots)
     }
 }
 

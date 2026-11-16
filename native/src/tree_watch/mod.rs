@@ -55,6 +55,9 @@ pub(crate) trait Backend {
     fn unwatch(&mut self, root: &str);
     /// Releases every root and stops the adapter's thread, waiting for it.
     fn close(&mut self);
+    /// How many roots the adapter holds a handle on.
+    #[cfg(test)]
+    fn roots(&self) -> usize;
 }
 
 /// The adapter of this OS, or none where there is none or it cannot start.
@@ -136,9 +139,17 @@ impl TreeWatcher {
     }
 
     /// Takes every notice since the last take, at most one per root. Never blocks on the OS.
+    /// A root whose watch ended is let go of here: the adapter that ended it may still hold it
+    /// (an FSEvents stream cannot stop itself from its callback).
     #[napi(catch_unwind)]
     pub fn take(&mut self) -> Result<Vec<TreeNotice>> {
-        Ok(self.notices.take())
+        let taken = self.notices.take();
+        if let Some(backend) = self.backend.as_mut() {
+            for notice in taken.iter().filter(|notice| notice.ended) {
+                backend.unwatch(&notice.root);
+            }
+        }
+        Ok(taken)
     }
 
     /// Stops the adapter's thread and releases every handle. Later calls do nothing; a later
@@ -169,6 +180,12 @@ impl TreeWatcher {
             backend.close();
         }
         self.notices.clear();
+    }
+
+    /// How many roots the adapter holds a handle on.
+    #[cfg(test)]
+    fn held_roots(&self) -> usize {
+        self.backend.as_ref().map_or(0, |backend| backend.roots())
     }
 }
 
