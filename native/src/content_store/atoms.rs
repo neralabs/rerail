@@ -21,7 +21,7 @@
 #[allow(unused_imports)]
 use crate::content_store::connection::Cached as _;
 use super::{StoreError, StoreResult};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, ffi};
 use std::collections::HashMap;
 use std::fs::{File, TryLockError};
@@ -59,10 +59,39 @@ impl Held {
     }
 }
 
+/// The held segments, by first id: their starts in one sorted array, searched in place. A stored atom's string is
+/// read on every text a join reads (and on every hash hit, to compare): a tree of the ~1,800 segments a PostHog run
+/// holds cost a pointer chase per level on each.
+#[derive(Default)]
+struct Segments {
+    starts: Vec<Sym>,
+    held: Vec<Held>,
+}
+
+impl Segments {
+    /// The segment `s` falls in, by its first id (its atom may lie past the segment's end).
+    #[inline]
+    fn at(&self, s: Sym) -> Option<(Sym, &Held)> {
+        let i = self.starts.partition_point(|&first| first <= s).checked_sub(1)?;
+        Some((self.starts[i], &self.held[i]))
+    }
+
+    fn insert(&mut self, first: Sym, held: Held) {
+        let i = self.starts.partition_point(|&f| f < first);
+        assert!(self.starts.get(i) != Some(&first), "atom segment {first} held twice");
+        self.starts.insert(i, first);
+        self.held.insert(i, held);
+    }
+
+    fn values(&self) -> impl Iterator<Item = &Held> {
+        self.held.iter()
+    }
+}
+
 /// The atoms a process holds: the stored segments it has read (not all of them, decision 0111), and the atoms from
 /// `base` on, given out here and not yet written (pending), back to back. Ids below `base` are in the database.
 pub struct Interner {
-    held: std::collections::BTreeMap<Sym, Held>,
+    held: Segments,
     base: Sym,
     buf: Vec<u8>,
     /// ends[i] = end offset of pending atom `base + i` in `buf`.
@@ -93,7 +122,7 @@ impl Interner {
             // SAFETY: only whole `&str`s are appended to `buf`.
             return Some(unsafe { std::str::from_utf8_unchecked(&self.buf[start..end as usize]) });
         }
-        let (first, held) = self.held.range(..=s).next_back()?;
+        let (first, held) = self.held.at(s)?;
         let i = (s - first) as usize;
         (i < held.ends.len()).then(|| held.str(i))
     }
@@ -103,7 +132,7 @@ impl Interner {
         if s >= self.base {
             return self.hashes.get((s - self.base) as usize).copied();
         }
-        let (first, held) = self.held.range(..=s).next_back()?;
+        let (first, held) = self.held.at(s)?;
         held.hashes.get((s - first) as usize).copied()
     }
 
@@ -224,7 +253,7 @@ impl Interner {
 
     /// Whether this process holds stored atom `s`'s string.
     fn holds(&self, s: Sym) -> bool {
-        s >= self.base || self.held.range(..=s).next_back().is_some_and(|(first, h)| ((s - first) as usize) < h.ends.len())
+        s >= self.base || self.held.at(s).is_some_and(|(first, h)| ((s - first) as usize) < h.ends.len())
     }
 
     /// Holds a stored segment read from the database: atoms `first..`. Those already held are skipped. A string held
@@ -275,13 +304,12 @@ impl Interner {
                     return Err(corrupt("a string is stored twice"));
                 }
             }
-            let n = held.hashes.len();
-            self.held.insert(at, held);
-            for k in 0..n {
+            for (k, &h) in held.hashes.iter().enumerate() {
                 let id = at + k as Sym;
-                let tag = Self::tag(self.held[&at].hashes[k]);
+                let tag = Self::tag(h);
                 self.table.insert_unique(Self::placed(tag), (tag, id), |&(t, _)| Self::placed(t));
             }
+            self.held.insert(at, held);
         }
         Ok(())
     }
@@ -316,7 +344,7 @@ pub struct Atoms {
     /// The store's identity (`store_identity`) when these are a store's own atoms: a store created again at the
     /// path has another, and atoms of its own (`for_store`).
     identity: Option<i64>,
-    state: RwLock<State>,
+    state: rerail_accel::sharded::Sharded<State>,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
     lease: Mutex<Option<File>>,
@@ -575,7 +603,7 @@ impl Atoms {
             path,
             identity,
             // Atom 0, the empty string, is the schema's first segment.
-            state: RwLock::new(State { atoms: Interner::default(), since: None, all_held: 1, map: None }),
+            state: rerail_accel::sharded::Sharded::new(State { atoms: Interner::default(), since: None, all_held: 1, map: None }),
             lease: Mutex::new(None),
             leased: AtomicBool::new(false),
             wanted: Mutex::new((None, false)),
@@ -797,7 +825,9 @@ impl Atoms {
         if let Some(atom) = self.state.read().atoms.get(value) {
             return Some(atom);
         }
-        if self.provisional() || self.forked() {
+        // Where `lookup` would read nothing and find nothing (`misses_are_final`), it is not asked: its locks are a
+        // join's cost per text it misses.
+        if self.misses_are_final() {
             return None;
         }
         self.lookup(value).ok().flatten()
@@ -833,13 +863,17 @@ impl Atoms {
         }
     }
 
-    /// `f` of atom `atom`'s string, if the database or this process holds it: a stored atom not held yet is read
-    /// with its segment.
     /// Whether a text not held in memory has no atom `existing` would find (it reads nothing then): inside a run's
     /// provisional ids, forked, or every stored atom held while this process holds the lease. Atomic loads only, no
     /// lock: a walk in morsels asks it for each text it misses.
     pub fn misses_are_final(&self) -> bool {
         self.provisional() || self.forked() || (self.complete.load(Ordering::Acquire) && self.leased.load(Ordering::Acquire))
+    }
+
+    /// `f` over the atoms held in memory, under one read of the arena: a join step that reads several texts of a
+    /// row (a split's whole and each part) reads them under it, not one read each.
+    pub fn in_memory<R>(&self, f: impl FnOnce(&Interner) -> R) -> R {
+        f(&self.state.read().atoms)
     }
 
     /// `a . "." . b` as a join's `@cat` makes it, under one read of the arena (not one per text and one for the
@@ -860,6 +894,8 @@ impl Atoms {
         Some(Ok(state.atoms.get(buf)))
     }
 
+    /// `f` of atom `atom`'s string, if the database or this process holds it: a stored atom not held yet is read
+    /// with its segment.
     pub fn with_str<R>(&self, atom: Sym, f: impl FnOnce(&str) -> R) -> Option<R> {
         {
             let state = self.state.read();

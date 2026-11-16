@@ -25,10 +25,14 @@ fn a_maintained_relation_starts_from_its_kept_rows_without_copying_them() {
     open(&db, &format!("name gun8_kept\nrel gun8_kept ii empty\nseed 0 {}", hex(&seed))).unwrap();
     run(&db, "gun8_kept", 0).unwrap();
     close(&db, "gun8_kept").unwrap();
-    let old = DERIVED.lock().unwrap().iter().find(|((_, t), _)| t == "gun8_kept").map(|(_, r)| Arc::clone(r)).expect("the kept relation");
+    let mut old = None;
+    DERIVED.each(|d| old = old.take().or_else(|| d.iter().find(|((_, t), _)| t == "gun8_kept").map(|(_, r)| Arc::clone(r))));
+    let old = old.expect("the kept relation");
     assert_eq!(old.n, n as usize);
     open(&db, &format!("name gun8_next\nrel gun8_next ii base {} -", hex("gun8_kept"))).unwrap();
-    let comp = COMPONENTS.lock().unwrap().iter().find(|((_, name), _)| name == "gun8_next").map(|(_, c)| Arc::clone(c)).expect("the maintained component");
+    let mut comp = None;
+    COMPONENTS.each(|m| comp = comp.take().or_else(|| m.iter().find(|((_, name), _)| name == "gun8_next").map(|(_, c)| Arc::clone(c))));
+    let comp = comp.expect("the maintained component");
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
     let rel = &store.rels[0];
@@ -52,7 +56,9 @@ fn a_start_from_a_relation_read_from_the_frames_shares_its_rows() {
     adopt(&db, "gun8f_kept", Arc::clone(&old));
     adopt(&db, "gun8f_gone", InRel::from_flat(vec![7, 7 % 13], 1, b"ii".to_vec()));
     open(&db, &format!("name gun8f_next\nrel gun8f_next ii base {} {}", hex("gun8f_kept"), hex("gun8f_gone"))).unwrap();
-    let comp = COMPONENTS.lock().unwrap().iter().find(|((_, name), _)| name == "gun8f_next").map(|(_, c)| Arc::clone(c)).expect("the maintained component");
+    let mut comp = None;
+    COMPONENTS.each(|m| comp = comp.take().or_else(|| m.iter().find(|((_, name), _)| name == "gun8f_next").map(|(_, c)| Arc::clone(c))));
+    let comp = comp.expect("the maintained component");
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
     let rel = &store.rels[0];

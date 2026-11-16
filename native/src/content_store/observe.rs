@@ -365,7 +365,7 @@ impl Observer {
         if k.loaded.iter().any(|u| path.starts_with(u)) {
             return;
         }
-        let unit = match self.stored_roots.iter().filter(|r| path.starts_with(r)).min_by_key(|r| r.as_os_str().len()) {
+        let unit = match self.stored_roots.iter().filter(|r| under(&path, r)).min_by_key(|r| r.as_os_str().len()) {
             Some(r) => r.clone(),
             None => path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(path).to_path_buf(),
         };
@@ -430,7 +430,7 @@ impl Observer {
     /// recording run took, so the journal names it: neither the racy rule nor a stat check is needed.
     fn trusted(&mut self, path: &Path) -> Option<Entry> {
         self.watch_above(path);
-        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && path.starts_with(&r.path)) {
+        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&path, &r.path)) {
             return None;
         }
         let e = self.known(path)?;
@@ -445,12 +445,12 @@ impl Observer {
         if self.missing(path) {
             return None;
         }
-        if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && path.starts_with(&r.path)) {
+        if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && under(&path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
         static SHOW: OnceLock<bool> = OnceLock::new();
         if *SHOW.get_or_init(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
-            let under = self.roots.iter().find(|r| path.starts_with(&r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
+            let under = self.roots.iter().find(|r| under(&path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
             eprintln!("rerail: stat {} ({under})", path.display());
         }
         self.counts.stats += 1;
@@ -466,7 +466,7 @@ impl Observer {
     }
 
     fn remember(&mut self, path: &Path, entry: Entry) {
-        if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && path.starts_with(&r.path)) {
+        if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && under(&path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
         // The same answer, already trusted, is kept as it is: recording it again writes the store for nothing (a clean
@@ -501,7 +501,7 @@ impl Observer {
             return false;
         }
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return false };
-        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && dir.starts_with(&r.path)) || self.known(path).is_some() {
+        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&dir, &r.path)) || self.known(path).is_some() {
             return false;
         }
         let listing = match self.known(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
@@ -524,26 +524,69 @@ impl Observer {
     /// there). Under a root the journal speaks for (decision 0105), the answer kept is used as it is: a symlink made,
     /// moved or retargeted under the root is an event that forgets it. Elsewhere, one `realpath`, kept for the next run.
     pub fn canonical(&mut self, path: &Path) -> Option<PathBuf> {
+        match self.canonical_kept(path) {
+            Ok(answer) => answer,
+            Err(path) => {
+                let c = std::fs::canonicalize(&path).ok()?;
+                Some(self.canonical_resolved(path, c))
+            }
+        }
+    }
+
+    /// Each of `paths`' canonical forms ([`Observer::canonical`]), the `realpath`s needed run at once on the pool: on
+    /// a cold store the journal vouches for no path, and one `realpath` after another was the main thread's for 29,885
+    /// files (notes/t40). `observe` reaches the observer (the process's, under its lock): the `realpath`s run with it
+    /// released, since a thread waiting on the pool may run another job, and that job may observe.
+    pub fn canonical_all(observe: impl Fn(&mut dyn FnMut(&mut Observer)), paths: &[PathBuf]) -> Vec<Option<PathBuf>> {
+        use rayon::prelude::*;
+        let mut out: Vec<Option<PathBuf>> = vec![None; paths.len()];
+        let mut todo: Vec<(usize, PathBuf)> = Vec::new();
+        observe(&mut |o| {
+            for (i, p) in paths.iter().enumerate() {
+                match o.canonical_kept(p) {
+                    Ok(answer) => out[i] = answer,
+                    Err(path) => todo.push((i, path)),
+                }
+            }
+        });
+        if todo.is_empty() {
+            return out;
+        }
+        let got: Vec<Option<PathBuf>> = todo.par_iter().with_min_len(64).map(|(_, p)| std::fs::canonicalize(p).ok()).collect();
+        observe(&mut |o| {
+            for ((i, path), c) in std::mem::take(&mut todo).into_iter().zip(&got) {
+                out[i] = c.clone().map(|c| o.canonical_resolved(path, c));
+            }
+        });
+        out
+    }
+
+    /// `path`'s canonical form where the observer can answer for it (`Ok`), else its absolute form, to resolve (`Err`).
+    fn canonical_kept(&mut self, path: &Path) -> std::result::Result<Option<PathBuf>, PathBuf> {
         let path = self.abs(path);
         self.ensure(&path);
         self.watch_above(&path);
         let asked = self.flushes;
-        let trusted = |p: &Path, roots: &[Root]| roots.iter().any(|r| r.trusted && r.asked == asked && (p.starts_with(&r.path) || p.starts_with(&r.real)));
+        let trusted = |p: &Path, roots: &[Root]| roots.iter().any(|r| r.trusted && r.asked == asked && (under(&p, &r.path) || under(&p, &r.real)));
         if plain(&path) && trusted(&path, &self.roots) {
             // An answer through a symlink is trusted only where its target is watched too.
             if let Some(c) = self.kept_canonical(&path).filter(|c| trusted(c, &self.roots)) {
                 self.counts.trusted += 1;
-                return Some(c);
+                return Ok(Some(c));
             }
             if self.missing(&path) {
-                return None;
+                return Ok(None);
             }
         }
-        if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && path.starts_with(&r.path)) {
+        if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && under(&path, &r.path)) {
             root.resolved.insert(path.clone());
         }
         self.counts.resolved += 1;
-        let c = std::fs::canonicalize(&path).ok()?;
+        Err(path)
+    }
+
+    /// Records `path`'s canonical form `c`, resolved: kept for the next run.
+    fn canonical_resolved(&mut self, path: PathBuf, c: PathBuf) -> PathBuf {
         if self.canon.get(&path) != Some(&c) {
             super::hazards::warm_fault("the observer resolved a canonical form it did not hold", || {
                 format!("{} -> {} (held {:?}; {} forms held, store {})", path.display(), c.display(), self.canon.get(&path), self.canon.len(), self.db.is_some())
@@ -551,7 +594,7 @@ impl Observer {
             self.canon.insert(path.clone(), c.clone());
             self.new_canon.push((path, c.clone()));
         }
-        Some(c)
+        c
     }
 
     /// The canonical form kept for `path` (its root's read from the store first, `ensure`).
@@ -662,7 +705,7 @@ impl Observer {
         }
         for root in roots {
             let root = self.outermost(&self.abs(root));
-            if self.roots.iter().any(|r| r.asked == self.flushes && root.starts_with(&r.path)) {
+            if self.roots.iter().any(|r| r.asked == self.flushes && under(&root, &r.path)) {
                 continue;
             }
             // Asked for an earlier run: asked again (its pending cursor, if any, was settled at that run's end).
@@ -700,7 +743,7 @@ impl Observer {
     /// asked on its own started a stream of its own, whose cookie could miss its wait (2 s, then lost), or had no
     /// cursor of its own (lost at once), and each lost root was settled and written again every run.
     fn outermost(&mut self, root: &Path) -> PathBuf {
-        let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| root.starts_with(r) && r.as_path() != root).cloned().collect();
+        let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| under(&root, r) && r.as_path() != root).cloned().collect();
         above.sort_by_key(|r| r.as_os_str().len());
         let here = self.volume(root);
         above.into_iter().find(|r| here.is_some() && self.volume(r) == here).unwrap_or_else(|| root.to_path_buf())
@@ -725,7 +768,7 @@ impl Observer {
             .iter()
             .map(|root| {
                 let root = self.abs(root);
-                self.roots.iter().find(|r| r.asked == self.flushes && root.starts_with(&r.path))?.cursor.clone()
+                self.roots.iter().find(|r| r.asked == self.flushes && under(&root, &r.path))?.cursor.clone()
             })
             .collect()
     }
@@ -753,7 +796,7 @@ impl Observer {
         for (i, (root, cursor)) in roots.iter().zip(cursors).enumerate() {
             // A root under another of `roots` with the same cursor (one ask gave both, `mark`: a corpus and its
             // `.git`, a `.git` named as the repository's own and its common one) is named in the other's answer.
-            let covered = roots.iter().zip(cursors).enumerate().any(|(j, (r, c))| c == cursor && root.starts_with(r) && (r != root || j < i));
+            let covered = roots.iter().zip(cursors).enumerate().any(|(j, (r, c))| c == cursor && under(&root, r) && (r != root || j < i));
             if covered {
                 continue;
             }
@@ -800,10 +843,10 @@ impl Observer {
     /// store has a cursor for), else its directory, which a later run then trusts. So every path read is under a
     /// root, and asked of the journal once a run.
     fn watch_above(&mut self, path: &Path) {
-        if self.db.is_none() || self.roots.iter().any(|r| r.asked == self.flushes && path.starts_with(&r.path)) {
+        if self.db.is_none() || self.roots.iter().any(|r| r.asked == self.flushes && under(&path, &r.path)) {
             return;
         }
-        let root = match self.stored_roots.iter().filter(|r| path.starts_with(r)).min_by_key(|r| r.as_os_str().len()) {
+        let root = match self.stored_roots.iter().filter(|r| under(&path, r)).min_by_key(|r| r.as_os_str().len()) {
             Some(r) => r.clone(),
             None => match path.parent() {
                 Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
@@ -1273,6 +1316,20 @@ impl Drop for Writer {
 const CANONICAL: &str = "canonical:";
 
 /// Whether `path` has no `.` or `..` component: its last name is a name in its directory's listing.
+/// Whether `path` is `root` or under it, as `Path::starts_with` answers, by its bytes: a root's prefix ending at a
+/// separator. `Path::starts_with` parses both into components at each call, and the observer asks it of each root for
+/// each path several times (on PostHog its scans were most of the main thread's own time in phase 1's loads, notes/t40).
+/// Paths whose components would normalize away bytes (`//`, `/.`, a trailing `/`) are asked of `Path::starts_with`.
+fn under(path: impl AsRef<Path>, root: impl AsRef<Path>) -> bool {
+    let (path, root) = (path.as_ref(), root.as_ref());
+    let (p, r) = (path.as_os_str().as_encoded_bytes(), root.as_os_str().as_encoded_bytes());
+    let odd = |b: &[u8]| b.windows(2).any(|w| w == b"//" || w == b"/.") || (b.len() > 1 && b.ends_with(b"/"));
+    if odd(p) || odd(r) || r.is_empty() || p.first() == Some(&b'.') {
+        return path.starts_with(root);
+    }
+    p.starts_with(r) && (p.len() == r.len() || p[r.len()] == b'/' || r == b"/")
+}
+
 fn plain(path: &Path) -> bool {
     !path.components().any(|c| matches!(c, std::path::Component::CurDir | std::path::Component::ParentDir))
 }
@@ -1525,6 +1582,17 @@ pub fn hex(d: &[u8; 32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `under` answers as `Path::starts_with` for every pair of a set of paths, odd spellings among them.
+    #[test]
+    fn under_answers_as_path_starts_with() {
+        let paths = ["/", "/a", "/a/", "/a/b", "/ab", "/a/b/c", "/a//b", "/a/./b", "/a/.b", "a", "a/b", "ab", "./a", "", "/b/a"];
+        for p in paths {
+            for r in paths {
+                assert_eq!(under(Path::new(p), Path::new(r)), Path::new(p).starts_with(r), "{p:?} under {r:?}");
+            }
+        }
+    }
 
     /// Decision 0105: a run that watches a root does no `stat` of what the journal says is unchanged. A first run
     /// checks every path; the next, with nothing changed, none, and its answers are the same; after an edit, the
