@@ -456,17 +456,29 @@ function runGitWith(executable: string, args: readonly string[], options: RunGit
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
+/** What {@link runGitAsync} takes: {@link RunGitOptions}, and the text written to Git's stdin. */
+type RunGitAsyncOptions = RunGitOptions & { input?: string };
+
 /**
  * {@link runGit} without blocking: the same safe configuration, environment and timeout, and `input` written to Git's
  * stdin. Rejects with {@link GitUnavailableError} when Git is missing, never on a non-zero exit; a Git that could not
- * start, timed out or overflowed `maxBuffer` (1 MiB by default) answers a null status with its error.
+ * start, timed out or overflowed `maxBuffer` (1 MiB by default) answers a null status with its error. When the Git kept
+ * for the process is gone, it runs once more with the Git found again ({@link ProcessGit.afterMissing}), as `runGit` does.
  */
-export async function runGitAsync(cwd: string, args: readonly string[], options: RunGitOptions & { input?: string } = {}): Promise<GitResult> {
+export async function runGitAsync(cwd: string, args: readonly string[], options: RunGitAsyncOptions = {}): Promise<GitResult> {
+  const run = async (executable: string): Promise<GitResult> => await runGitAsyncWith(executable, [...SAFE_CONFIG, "-C", cwd, ...args], options);
   const executable = gitExecutable();
+  const result = await run(executable);
+  const again = programMissing(result.error) ? processGit.afterMissing(executable) : undefined;
+  return again === undefined ? result : await run(again);
+}
+
+/** One start of the Git at `executable` with `args`, as {@link runGitAsync} makes it. */
+async function runGitAsyncWith(executable: string, args: readonly string[], options: RunGitAsyncOptions): Promise<GitResult> {
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
   const child = execFile(
     executable,
-    [...SAFE_CONFIG, "-C", cwd, ...args],
+    args,
     { encoding: "utf8", maxBuffer: options.maxBuffer ?? 1024 * 1024, timeout: options.timeout ?? DEFAULT_TIMEOUT_MS, env: gitEnvironment() },
     (error, stdout, stderr) => {
       if (error === null) {

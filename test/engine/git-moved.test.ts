@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
-import { findGit, gitExecutable, gitHead, readGitBlobs, runGit } from "../../src/engine/git.js";
+import { findGit, gitExecutable, gitHead, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -93,6 +93,15 @@ describe("the Git a process keeps, gone under it", () => {
     const result = runGit(repository, ["rev-parse", "HEAD"]);
     expect([result.status, result.stdout.trim()]).toEqual([0, head]);
     expect(started(spawnSync)).toEqual([kept, now]);
+    expect(gitExecutable()).toBe(now);
+  });
+
+  it("runs a Git call that does not block once more with the Git found again", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(execFile);
+    const result = await runGitAsync(repository, ["rev-parse", "HEAD"]);
+    expect([result.status, result.stdout.trim()]).toEqual([0, head]);
+    expect(started(execFile)).toEqual([kept, now]);
     expect(gitExecutable()).toBe(now);
   });
 
