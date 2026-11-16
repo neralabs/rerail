@@ -98,6 +98,15 @@ pub trait Gather: Any + Send {
     fn held(&self, key: &Key) -> Option<Held>;
     /// The bytes it holds in memory.
     fn bytes(&self) -> usize;
+    /// Whether it holds `key` (a key may hold no value for reads: a run's record's).
+    fn holds(&self, key: &Key) -> bool {
+        self.held(key).is_some()
+    }
+    /// Closed only at its run's end (or a `settle` of a key it holds), not at every seal: a run's record (decision
+    /// 0306), queued after the run's other writes.
+    fn until_end(&self) -> bool {
+        false
+    }
     /// Placed and made one job; `None` when it gathered nothing.
     fn close(self: Box<Self>) -> Option<Closed>;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -194,7 +203,7 @@ pub fn run_waves() -> Waves {
 
 impl Drop for Waves {
     fn drop(&mut self) {
-        seal_everywhere(self.run);
+        seal_everywhere(self.run, Seal::Finished);
         WAVES.with(|w| w.set(self.before));
     }
 }
@@ -204,15 +213,26 @@ impl Drop for Waves {
 pub fn end_wave(boundary: Boundary) {
     let run = WAVES.with(std::cell::Cell::get);
     if run != 0 && seals(boundary) {
-        seal_everywhere(run);
+        seal_everywhere(run, if boundary == Boundary::End { Seal::End } else { Seal::Wave });
     }
 }
 
+/// What a seal closes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Seal {
+    /// The run's wave, and its gathers but its record.
+    Wave,
+    /// Its record too: the run's end, or a read of a key it holds (decision 0306).
+    End,
+    /// The run is over: its record, and then what the writer keeps for it (its named sources).
+    Finished,
+}
+
 /// Seals `run`'s wave still being written in every store's writer.
-fn seal_everywhere(run: u64) {
+fn seal_everywhere(run: u64, how: Seal) {
     let all: Vec<Arc<Writer>> = writers().lock().expect("the writers").values().cloned().collect();
     for w in all {
-        w.seal(run);
+        w.seal(run, how);
     }
 }
 
@@ -247,13 +267,17 @@ struct State {
     dropped: (usize, usize),
     /// Each run's gathers (`Gather`), by their type: closed into its wave once full or when it is sealed.
     gathers: HashMap<(u64, std::any::TypeId), Box<dyn Gather>>,
+    /// Each run's named sources, as its writes are applied: the manifest's item names them (decision 0306).
+    named: HashMap<u64, Vec<super::SourceId>>,
 }
 
 impl State {
     /// Takes `run`'s gathers (all, or the one of type `kind`) out, their keys queued in `run`'s wave: a read finds
     /// them while they are placed (`Writer::close_gathers`).
-    fn take_gathers(&mut self, run: u64, kind: Option<std::any::TypeId>) -> Vec<(Vec<Key>, Box<dyn Gather>)> {
-        let ids: Vec<(u64, std::any::TypeId)> = self.gathers.keys().filter(|(r, k)| *r == run && kind.is_none_or(|t| t == *k)).copied().collect();
+    /// A run's record (`until_end`) only where `end`, and after the others: it is the run's last job.
+    fn take_gathers(&mut self, run: u64, kind: Option<std::any::TypeId>, end: bool) -> Vec<(Vec<Key>, Box<dyn Gather>)> {
+        let mut ids: Vec<(u64, std::any::TypeId)> = self.gathers.iter().filter(|((r, k), g)| *r == run && kind.is_none_or(|t| t == *k) && (end || !g.until_end())).map(|(id, _)| *id).collect();
+        ids.sort_by_key(|id| self.gathers[id].until_end());
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             let g = self.gathers.remove(&id).expect("a gather");
@@ -268,9 +292,9 @@ impl State {
         }
         out
     }
-    /// The run whose gather holds `key`.
-    fn gathered(&self, key: &Key) -> Option<(u64, Held)> {
-        self.gathers.iter().find_map(|((run, _), g)| g.held(key).map(|h| (*run, h)))
+    /// The run whose gather holds `key`, the value a read gets, and whether it is the run's record.
+    fn gathered(&self, key: &Key) -> Option<(u64, Option<Held>, bool)> {
+        self.gathers.iter().find(|(_, g)| g.holds(key)).map(|((run, _), g)| (*run, g.held(key), g.until_end()))
     }
 }
 
@@ -292,10 +316,13 @@ enum Run {
     Alone,
 }
 
-/// A sealed wave, sent to the writer: its jobs, in their order, and whether it is one job run alone.
+/// A sealed wave, sent to the writer: its jobs, in their order, whether it is one job run alone, its run (0: none),
+/// and whether it is the run's last (its named sources then dropped).
 struct Wave {
     jobs: Vec<Queued>,
     alone: bool,
+    run: u64,
+    finished: bool,
 }
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
@@ -324,20 +351,25 @@ pub(crate) struct Writer {
 impl Writer {
     /// Seals `run`'s wave still being written: sent to the writer, behind every wave sealed before it. Under the
     /// lane's lock, so two seals of a run send its waves in the order they were taken.
-    fn seal(&self, run: u64) {
+    fn seal(&self, run: u64, how: Seal) {
         let mut lane = self.lane.lock().expect("the writer");
-        // The run's gathers first, each placed and made one job of the wave.
-        let gathers = self.shared.state.lock().expect("the writer's state").take_gathers(run, None);
+        // The run's gathers first, each placed and made one job of the wave; its record last, at its end.
+        let gathers = self.shared.state.lock().expect("the writer's state").take_gathers(run, None, how != Seal::Wave);
         self.close_gathers(run, gathers);
+        let finished = how == Seal::Finished;
         let jobs = {
             let mut s = self.shared.state.lock().expect("the writer's state");
-            let Some(jobs) = s.open.remove(&run).filter(|j| !j.is_empty()) else { return };
+            let jobs = s.open.remove(&run).unwrap_or_default();
+            // A finished run with nothing to write and nothing kept for it sends nothing.
+            if jobs.is_empty() && !(finished && s.named.contains_key(&run)) {
+                return;
+            }
             s.sealed_bytes += jobs.iter().map(|q| q.1).sum::<usize>();
             s.sealed += 1;
             jobs
         };
         // A writer with a wave open has its lane: the wave's first job started it (`queue`).
-        let wave = Wave { jobs, alone: false };
+        let wave = Wave { jobs, alone: false, run, finished };
         match lane.as_mut() {
             Some(lane) => {
                 if let Err(mpsc::SendError(wave)) = lane.tx.send(wave) {
@@ -358,7 +390,7 @@ impl Writer {
             runs
         };
         for run in runs {
-            self.seal(run);
+            self.seal(run, Seal::Finished);
         }
     }
 
@@ -568,7 +600,7 @@ impl ContentStore {
             let mut s = w.shared.state.lock().expect("the writer's state");
             let g = s.gathers.entry((run, kind)).or_insert_with(|| Box::new(make()));
             add(g.as_any_mut().downcast_mut::<G>().expect("a gather of its type"));
-            if g.bytes() >= gather_cap() { s.take_gathers(run, Some(kind)) } else { Vec::new() }
+            if g.bytes() >= gather_cap() { s.take_gathers(run, Some(kind), true) } else { Vec::new() }
         };
         if !full.is_empty() {
             let _lane = w.lane.lock().expect("the writer");
@@ -659,11 +691,11 @@ impl ContentStore {
                 if let Some(jobs) = before {
                     s.sealed_bytes += jobs.iter().map(|q| q.1).sum::<usize>();
                     s.sealed += 1;
-                    waves.push(Wave { jobs, alone: false });
+                    waves.push(Wave { jobs, alone: false, run: wave, finished: false });
                 }
                 s.sealed_bytes += bytes;
                 s.sealed += 1;
-                waves.push(Wave { jobs: vec![queued], alone: run == Run::Alone });
+                waves.push(Wave { jobs: vec![queued], alone: run == Run::Alone, run: wave, finished: false });
                 waves
             }
             (wave, Run::InWave) => {
@@ -718,8 +750,18 @@ impl ContentStore {
                 if let Ok(connection) = store.connection.lock() {
                     let _ = connection.pragma_update(None, "wal_autocheckpoint", 0);
                 }
-                while let Ok(Wave { jobs: mut batch, alone }) = rx.recv() {
+                while let Ok(Wave { jobs: mut batch, alone, run: of, finished }) = rx.recv() {
                     let before = thread_cpu();
+                    // The run whose writes these are: their named sources are its (`ContentStore::name_sources`).
+                    *store.applying.lock() = (of, Some(Arc::clone(&w)));
+                    if batch.is_empty() {
+                        let mut s = w.shared.state.lock().expect("the writer's state");
+                        s.named.remove(&of);
+                        s.applied += 1;
+                        drop(s);
+                        w.shared.changed.notify_all();
+                        continue;
+                    }
                     if alone {
                         for (job, bytes, keys, holder, _, what) in batch {
                             // Each job's own CPU and frames: a wave of several jobs alone counts each once.
@@ -793,7 +835,12 @@ impl ContentStore {
                     for ((_, bytes, keys, _, _, _), outcome) in batch.into_iter().zip(outcomes) {
                         finish(&w.shared, bytes, &keys, outcome, cpu, true);
                     }
-                    w.shared.state.lock().expect("the writer's state").applied += 1;
+                    let mut s = w.shared.state.lock().expect("the writer's state");
+                    if finished {
+                        s.named.remove(&of);
+                    }
+                    s.applied += 1;
+                    drop(s);
                     w.shared.changed.notify_all();
                 }
                 // The queue is closed (the last handle's drop): the checkpointer ends with the writer.
@@ -806,12 +853,27 @@ impl ContentStore {
         Lane { tx, thread }
     }
 
+    /// Adds `ids` to the named sources of the run whose writes the writer is applying (decision 0306): its manifest's
+    /// item names them. Outside the writer, or of no run, nothing.
+    pub fn name_sources(&self, ids: impl IntoIterator<Item = super::SourceId>) {
+        let (run, w) = self.applying.lock().clone();
+        let Some(w) = w.filter(|_| run != 0) else { return };
+        w.shared.state.lock().expect("the writer's state").named.entry(run).or_default().extend(ids);
+    }
+
+    /// The named sources of the run whose writes the writer is applying, taken.
+    pub fn take_named_sources(&self) -> Vec<super::SourceId> {
+        let (run, w) = self.applying.lock().clone();
+        let Some(w) = w.filter(|_| run != 0) else { return Vec::new() };
+        w.shared.state.lock().expect("the writer's state").named.remove(&run).unwrap_or_default()
+    }
+
     /// The value a queued job left for `key`, while the job is queued.
     pub fn pending<T: Any + Send + Sync>(&self, key: &Key) -> Option<Arc<T>> {
         let s = self.writer()?.shared.state.lock().expect("the writer's state");
         match s.keys.get(key) {
             Some((_, held, _)) => held.clone(),
-            None => s.gathered(key).map(|(_, h)| h),
+            None => s.gathered(key).and_then(|(_, h, _)| h),
         }
         .and_then(|h| h.downcast::<T>().ok())
     }
@@ -830,10 +892,14 @@ impl ContentStore {
         let Some(w) = self.writer() else { return };
         let open = {
             let s = w.shared.state.lock().expect("the writer's state");
-            s.keys.get(key).map(|k| k.2).or_else(|| s.gathered(key).map(|(run, _)| run)).filter(|&run| run != 0)
+            match s.keys.get(key) {
+                Some(k) => Some((k.2, Seal::Wave)),
+                None => s.gathered(key).map(|(run, _, record)| (run, if record { Seal::End } else { Seal::Wave })),
+            }
+            .filter(|&(run, _)| run != 0)
         };
-        if let Some(run) = open {
-            w.seal(run);
+        if let Some((run, how)) = open {
+            w.seal(run, how);
         }
         let mut s = w.shared.state.lock().expect("the writer's state");
         let t = s.keys.contains_key(key).then(std::time::Instant::now);
@@ -851,7 +917,7 @@ impl ContentStore {
         let Some(w) = self.writer() else { return Ok(()) };
         let run = WAVES.with(std::cell::Cell::get);
         if run != 0 {
-            w.seal(run);
+            w.seal(run, Seal::End);
         }
         let mut s = w.shared.state.lock().expect("the writer's state");
         let target = s.sealed;

@@ -46,6 +46,7 @@ mod private_files;
 mod publication;
 mod read_cache;
 mod reclamation;
+pub mod record;
 mod relationships;
 mod results;
 mod rows;
@@ -659,6 +660,8 @@ pub struct ContentStore {
     working_set: working_set::WorkingSet,
     /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
     holder: parking_lot::Mutex<Option<(String, i64)>>,
+    /// On the writer's handle, the run whose wave it applies (`write_back::Wave`; 0: none): decision 0306's named sources.
+    applying: parking_lot::Mutex<(u64, Option<std::sync::Arc<write_back::Writer>>)>,
     /// The store's writer, shared by its handles in this process (`write_back`, decision 0102); `None` for the
     /// writer's own handle, which writes at once.
     write_back: Option<std::sync::Arc<write_back::Writer>>,
@@ -722,6 +725,7 @@ impl ContentStore {
             atoms: std::sync::Arc::clone(&self.atoms),
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
+            applying: parking_lot::Mutex::new((0, None)),
             write_back: None,
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
@@ -782,6 +786,7 @@ impl ContentStore {
             atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
+            applying: parking_lot::Mutex::new((0, None)),
             // A store created again at its path has a writer of its own too.
             write_back: Some(write_back::register_store(path, identity)),
             #[cfg(not(target_family = "wasm"))]
