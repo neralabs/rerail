@@ -1466,6 +1466,17 @@ pub mod tests {
         assert!(shape.arms >= 1, "no run rule read in its arm");
     }
 
+    /// A rare start's arms each write their own token, as the lean lexer's `match` arms: a
+    /// tail an arm (a string's, `#`'s, a comment's, a backtick's, a number's), each knowing its
+    /// first bytes' entry where they share one (`PassShape::known_entries`), so its kind and
+    /// whether it is a word are constants of its tail, not tests of a loaded entry.
+    #[test]
+    fn a_rare_arm_knows_its_entry() {
+        let c = crate::compiled().expect("compiles");
+        let shape = c.parser.tier1.passes.last().expect("a pass");
+        assert!(shape.known_entries >= 5, "rare arms with their entry known: {}", shape.known_entries);
+    }
+
     /// Decision 0177, stage 2a: the tokens by the loop, each at the first byte after the one
     /// before that `skip` does not hold, are the starts' and lasts' masks, on every file the
     /// masks take (a file they refuse, its totals' flag set, is the engine's either way).

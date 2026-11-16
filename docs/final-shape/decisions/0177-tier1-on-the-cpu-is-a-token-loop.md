@@ -2876,3 +2876,38 @@ after the end, with no padding), and
 tapes).
 
 Counts, reported: unchanged (the default's source is the same).
+
+## A rare arm writes its own token
+
+**Intro.** In the lean lexer each `match` arm writes its own token,
+and its kind is a constant there. Ours sent several arms into a
+shared tail per class of ending. That tail tested a loaded table
+entry at run time: `& 255` for the kind, `& 65536` for "look the
+token up as a word", `& 262144` for a number check. So a number ran
+the word lookup's test, and `#`'s lookup sat behind a flag.
+
+**The change.**
+
+- **One arm, one tail.** A rare class is now one rule's (`RareClass`:
+  its end, its tag, its rule; `NO_RULE` for the bytes with none). Each
+  arm has its own exit and its own tail.
+- **The arm knows its entry.** `rare_bytes` gives the first bytes that
+  reach a rule: the table's, and those a reader with no opener goes on
+  from (`first_bytes`). Where they all share one entry (`rare_entry`),
+  the entry is a constant in the arm (`rule_last`) and in its tail. The
+  tail's tests of it fold.
+- **Not where a byte's pair bit is in its entry** (`by_pair`): there
+  the entry is not the byte's alone.
+
+```rust
+// generated (tier1_aot.rs), the rare match, after: each arm ends in its own
+//   continue 'b11; the hash probe is in `#`'s arm alone, unconditional;
+//   a number's tail has no word lookup.
+// before: 35 => { …; break 'm66 }  48..=57 => { …; break 'm66 }
+//   'm66: … if entry & 65536 != 0 { /* hash probe */ } …
+```
+
+Left, and right to be: the number arm's `& 262144` (`0`'s entry is
+not the other digits'), and the cold arm of bytes with no rule.
+
+Test: `a_rare_arm_knows_its_entry` (`PassShape::known_entries`).

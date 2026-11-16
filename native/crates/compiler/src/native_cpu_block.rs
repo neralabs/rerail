@@ -123,6 +123,9 @@ pub struct PassShape {
     /// The run rules its token loop reads in their arm (`RuleMode::Short`'s form there, no
     /// call), as the lean lexer reads a number in its `match` arm.
     pub arms: usize,
+    /// The rare arms whose tail knows its first bytes' entry (`rare_entry`), as the lean
+    /// lexer's arm knows its kind.
+    pub known_entries: usize,
 }
 
 /// A function a pass calls, made from the same program: its Cranelift IR and machine code.
@@ -1599,7 +1602,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         context.func.signature = signature.clone();
         context.set_disasm(true);
         let mut hot = Vec::new();
-        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0, reads_back: 0, arms: 0 };
+        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0, reads_back: 0, arms: 0, known_entries: 0 };
         match pass {
             Pass::Forward { body, stores } => {
                 // The general body, outlined (`general`): declared, built with the pass, defined
@@ -1610,7 +1613,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 general_context.func.signature = signature.clone();
                 general_context.set_disasm(true);
                 let regions;
-                (shape.ascii_branch, shape.gate_branches, shape.round_branches, regions, shape.region_calls, shape.inlined_regions, shape.reads_back, shape.arms) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot, native.records.as_ref().zip(tables.as_ref()).filter(|_| merged && k + 1 == passes.passes.len()).map(|(r, t)| (r, t, native.outputs.len())), made)?;
+                (shape.ascii_branch, shape.gate_branches, shape.round_branches, regions, shape.region_calls, shape.inlined_regions, shape.reads_back, shape.arms, shape.known_entries) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot, native.records.as_ref().zip(tables.as_ref()).filter(|_| merged && k + 1 == passes.passes.len()).map(|(r, t)| (r, t, native.outputs.len())), made)?;
                 shape.extracts = body.extracts.len();
                 general_context.func.srclocs.clear();
                 let clif = general_context.func.display().to_string();
@@ -2049,6 +2052,8 @@ struct FileCols {
     /// The run rules whose short form is the loop's arm (`rule_last`'s `arm`), for its shape
     /// (`PassShape::arms`).
     arms: std::cell::Cell<usize>,
+    /// The rare arms whose entry is a constant (`PassShape::known_entries`).
+    known_entries: std::cell::Cell<usize>,
 }
 
 /// The record function's parameters (`record_fn`): `FileCols`' fields, in order.
@@ -2060,7 +2065,7 @@ impl FileCols {
     }
 
     fn of(p: &[Value], layout: crate::records::RecordLayout) -> Self {
-        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12], layout, reads_back: Default::default(), arms: Default::default() }
+        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12], layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() }
     }
 
     /// As `of`, the grammar's tables, their slots and the word table's multiplier constants
@@ -2406,10 +2411,42 @@ const RULES_CALL: u16 = 0x0800;
 enum Side {
     Both,
     Fused,
-    /// The rare starts', all their rules (`None`); or, as the lean lexer's `match` arms, the
-    /// rules whose tokens end one way (`TokenEnd`) and whose reader tags its token or not
-    /// (`Reader::retag`, `tagged`), each class with its own tail.
-    Rare(Option<(TokenEnd, bool)>),
+    /// The rare starts', all their rules (`None`); or, as the lean lexer's `match` arms, one
+    /// rule's (`RareClass`), each with its own tail.
+    Rare(Option<RareClass>),
+}
+
+/// A rare start's arm (`Side::Rare`), as the lean lexer's `match` arm writes its own token:
+/// one rule (`NO_RULE`: the bytes with none), how its tokens end (`TokenEnd`), and whether its
+/// reader tags its token (`Reader::retag`, `tagged`). Its tail knows its first bytes
+/// (`rare_bytes`), and their entry where they share one (`rare_entry`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RareClass {
+    end: TokenEnd,
+    tagged: bool,
+    rule: usize,
+}
+
+/// `RareClass::rule` of the rare bytes with no rule.
+const NO_RULE: usize = usize::MAX;
+
+/// The rare first bytes whose tokens reach arm `x`'s rule: those `rule_last`'s table sends
+/// to it, and those a reader with no opener there goes on to it from (`first_bytes`). The
+/// arm with no rule: every rare byte, as many reach it.
+fn rare_bytes(r: &crate::records::Records, t: &RecordTables, x: RareClass) -> Vec<u8> {
+    let reach = (x.rule != NO_RULE).then(|| first_bytes(r, x.rule));
+    (0..=255u8).filter(|&b| t.is_rare(b) && reach.is_none_or(|s| s[usize::from(b) / 64] >> (b % 64) & 1 == 1)).collect()
+}
+
+/// Arm `x`'s first bytes' entry (`RecordTables::token`) where they share one: the arm's
+/// constant, as the lean lexer's arm knows its byte's kind. None for the arm with no rule.
+fn rare_entry(r: &crate::records::Records, t: &RecordTables, x: RareClass) -> Option<u64> {
+    if x.rule == NO_RULE {
+        return None;
+    }
+    let bytes = rare_bytes(r, t, x);
+    let e = t.words[t.token / 8 + usize::from(*bytes.first()?)];
+    bytes.iter().all(|&b| t.words[t.token / 8 + usize::from(b)] == e).then_some(e)
 }
 
 /// Where `rule_last` builds the rules' blocks.
@@ -2702,10 +2739,10 @@ fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let (tables, mult, slots) = tables_consts(&mut f, t);
     // The records' columns: not read by the rules.
     let zero = f.ins().iconst(types::I64, 0);
-    let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout, reads_back: Default::default(), arms: Default::default() };
+    let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() };
     let rd = Reads { bytes: Some((bw, crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even })), outputs, calls };
     let mut heads = vec![];
-    let (exits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, mode, Side::Both, &mut heads);
+    let (exits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, (first, false), None, None, mode, Side::Both, &mut heads);
     let (l, refuse, tag, hits) = exit_values(&mut f, exits[0].1);
     if packs(r) {
         let got = pack_rule(&mut f, l, refuse, tag, hits);
@@ -2805,7 +2842,7 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let blocks = f.ins().load(types::I64, ro, at, 8);
     let len = f.ins().load(types::I64, ro, at, 16);
     let (tables, mult, slots) = tables_consts(f, t);
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout, reads_back: Default::default(), arms: Default::default() }
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() }
 }
 
 /// The record pass's tables' address, its word table's multiplier and its slots' address, as
@@ -2946,15 +2983,15 @@ impl Reads<'_> {
 /// that finds no last gives `s - 1`, which the order check refuses.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, side: Side, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<(Side, cranelift_codegen::ir::Block)>, Option<cranelift_codegen::ir::Block>) {
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, (entry, pure): (Value, bool), limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, side: Side, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<(Side, cranelift_codegen::ir::Block)>, Option<cranelift_codegen::ir::Block>) {
     use crate::records::EndRule;
     // The exits: one; or the rare starts' (`Side::Rare`), one a class of how their tokens end
     // (`TokenEnd`), each rule's arms going to its class's, as the lean lexer's arms each set
     // their `cursor` (the class's tail after it, `record_tokens`). The others' last.
     let forms: Vec<Side> = match side {
         Side::Rare(_) => {
-            let mut v: Vec<Side> = (0..r.rules.len()).map(|k| Side::Rare(Some((t.ends.get(k).copied().unwrap_or(TokenEnd::Any), tagged(r, k))))).collect();
-            v.push(Side::Rare(Some((TokenEnd::Any, false))));
+            let mut v: Vec<Side> = (0..r.rules.len()).map(|k| Side::Rare(Some(RareClass { end: t.ends.get(k).copied().unwrap_or(TokenEnd::Any), tagged: tagged(r, k), rule: k }))).collect();
+            v.push(Side::Rare(Some(RareClass { end: TokenEnd::Any, tagged: false, rule: NO_RULE })));
             let mut seen = Vec::new();
             v.retain(|x| !seen.contains(x) && {
                 seen.push(*x);
@@ -2981,9 +3018,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     }).collect();
     let exit_of = |k: usize| match side {
         Side::Rare(_) => {
-            let e = t.ends.get(k).filter(|_| k < r.rules.len()).copied().unwrap_or(TokenEnd::Any);
-            let want = Side::Rare(Some((e, k < r.rules.len() && tagged(r, k))));
-            let x = exits.iter().find(|x| x.0 == want).expect("the class's exit");
+            let rule = if k < r.rules.len() { k } else { NO_RULE };
+            let x = exits.iter().find(|x| matches!(x.0, Side::Rare(Some(c)) if c.rule == rule)).expect("the arm's exit");
             (x.1, x.2)
         }
         _ => (exits[0].1, exits[0].2),
@@ -3130,6 +3166,15 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             continue;
         }
         f.switch_to_block(b);
+        // A rare arm whose first bytes share one entry (`rare_entry`): that entry, as the lean
+        // lexer's arm knows its byte, its tests of it the compiler's.
+        let entry = match (side, pure) {
+            (Side::Rare(_), true) => match rare_entry(r, t, RareClass { end: TokenEnd::Any, tagged: false, rule: k }) {
+                Some(e) => f.ins().iconst(types::I64, e as i64),
+                None => entry,
+            },
+            _ => entry,
+        };
         // The rule's exits: its class's (`exit_of`).
         let (ended, done) = exit_of(k);
         // A run rule with a short form (`RuleMode::Short`, its whole function `LONG_CALL`): that
@@ -5232,7 +5277,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // puts no byte back.
     let (exits, fused_exit) = if ruled {
         let mode = if rd.calls.iter().any(|x| x.0 & !0xff == RULES_CALL || x.0 & !0xff == LONG_CALL) { RuleMode::Calls } else { RuleMode::Inline };
-        let (exits, fx) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), mode, side, heads);
+        let (exits, fx) = rule_last(f, r, t, &rd, c, s, raw, (entry, by_pair.is_none()), limit, regs.as_ref(), mode, side, heads);
         (exits.into_iter().map(|(x, d)| (x, Some(d))).collect(), fx)
     } else {
         (vec![(side, None)], None)
@@ -5240,6 +5285,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let classes = exits.len();
     for (at, (side, done)) in exits.into_iter().enumerate() {
     let general = done.map(|d| exit_values(f, d));
+    // A rare arm whose first bytes share one entry (`rare_entry`): that entry, a constant its
+    // tail's tests fold, as the lean lexer's arm knows its kind and whether it is a word.
+    let entry = match side {
+        Side::Rare(Some(x)) if by_pair.is_none() => match rare_entry(r, t, x) {
+            Some(e) => {
+                c.known_entries.set(c.known_entries.get() + 1);
+                f.ins().iconst(types::I64, e as i64)
+            }
+            None => entry,
+        },
+        _ => entry,
+    };
     let fused_exit = fused_exit.filter(|_| at + 1 == classes);
     for common in std::iter::once(false).chain(fused_exit.map(|_| true)) {
     let (l, refused, retag, hits) = if common {
@@ -5304,7 +5361,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let kind = f.ins().band_imm(entry, 0xff);
     // A reader's token's kind and marks (`Reader::retag`), where it gives them.
     // None in a rare class of no tagging reader's rules (`Side::Rare`).
-    let retag = retag.filter(|_| r.readers.iter().any(|rd| rd.retag.is_some()) && !matches!(side, Side::Rare(Some((_, false)))));
+    let retag = retag.filter(|_| r.readers.iter().any(|rd| rd.retag.is_some()) && !matches!(side, Side::Rare(Some(RareClass { tagged: false, .. }))));
     // A punctuation of the fused pair rule (`TOKEN_PUNCT`): its code bits by its first byte
     // and its length, a load beside the entry's, no word looked up, as the lean lexer's.
     if common {
@@ -5339,13 +5396,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         // (`known_tail`), as that arm writes its own token: the constants reach the marks'
         // merge and the code's store, not a join with the class's other tokens.
         let fixed = match side {
-            Side::Rare(Some((e, true))) => {
-                let known: Vec<Option<(i64, u32)>> = (0..r.rules.len()).filter(|&j| tagged(r, j) && t.ends.get(j) == Some(&e)).map(|j| tag_known(r, j)).collect();
-                match known.first() {
-                    Some(&Some((tc, hc))) if known.iter().all(|&x| x == Some((tc, hc))) => Some((tc, i64::from(hc))),
-                    _ => None,
-                }
-            }
+            Side::Rare(Some(RareClass { tagged: true, rule, .. })) if rule < r.rules.len() => tag_known(r, rule).map(|(tc, hc)| (tc, i64::from(hc))),
             _ => None,
         };
         let target = match fixed {
@@ -5366,7 +5417,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // rare table sends to its rules): no word to look up, its code the kind, as the lean
     // lexer's `/` arm writes its punctuation.
     let class_bytes: Vec<u8> = match side {
-        Side::Rare(Some((e, tg))) => (0..=255u8).filter(|&b| t.is_rare(b) && t.end_at(b) == e && tagged(r, t.rule_at(b)) == tg).collect(),
+        Side::Rare(Some(x)) => rare_bytes(r, t, x),
         _ => Vec::new(),
     };
     let entry_of = |b: u8| t.words[t.token / 8 + usize::from(b)];
@@ -5375,7 +5426,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // alone, the comment reader's other): their code bits by the first byte and the length,
     // no word looked up, as the lean lexer's `/` arm writes its punctuation. A tagged class's
     // alone, where a token not tagged is its reader's other rule's.
-    let punct = matches!(side, Side::Rare(Some((_, true)))) && !class_bytes.is_empty() && class_bytes.iter().all(|&b| entry_of(b) >> TOKEN_PUNCT & 1 == 1);
+    let punct = matches!(side, Side::Rare(Some(RareClass { tagged: true, .. }))) && !class_bytes.is_empty() && class_bytes.iter().all(|&b| entry_of(b) >> TOKEN_PUNCT & 1 == 1);
     if punct {
         let two = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
         let pc = f.ins().load(types::I64, ro, ea, t.punct as i32);
@@ -5662,7 +5713,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // past it, as the lean lexer's after its string's arm; else the bytes put back, as
             // its number's arm reads the word after it.
             let form = match side {
-                Side::Rare(Some((e, _))) => e,
+                Side::Rare(Some(x)) => x.end,
                 _ => TokenEnd::Any,
             };
             if let (Some((wi, _)), TokenEnd::Word) = (lean.map(|(wi, pi, _)| (wi, pi)), form) {
@@ -6288,7 +6339,7 @@ fn general_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
 /// branches on ASCII, the gated regions' branches and the fixed points' loops.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
-fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize, usize, usize), Error> {
+fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize, usize, usize, usize), Error> {
     // The outputs the token loop makes from the bytes (`native_cpu_bytes`), from the program
     // before its CPU form.
     let mut bytewise = crate::native_cpu_bytes::Bytewise::of(made);
@@ -6305,7 +6356,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let walks = crate::native_cpu_walk::WalkCalls::declare(module, name, native)?;
     // The records the token loop reads back (`PassShape::reads_back`).
     let mut reads_back = 0;
-    let mut arms = 0;
+    let (mut arms, mut known_entries) = (0, 0);
     // On the CPU, no row of an output the record pass makes (`records_made`).
     let unmade = if records.is_some() && made.outputs.len() == native.outputs.len() { made.records_made() } else { Vec::new() };
     let stored: Vec<bool> = (0..native.outputs.len()).map(|k| !unmade.contains(&k)).collect();
@@ -6706,6 +6757,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);
             reads_back += cols.reads_back.get();
             arms += cols.arms.get();
+            known_entries += cols.known_entries.get();
             f.switch_to_block(after);
             let st = f.block_params(after).to_vec();
             let st_args: Vec<BlockArg> = st.iter().map(|&v| v.into()).collect();
@@ -6868,7 +6920,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             regions.push((walks.ids[w], func));
         }
     }
-    Ok((ascii_branch, gate_branches, round_branches, regions, kept, inlined, reads_back, arms))
+    Ok((ascii_branch, gate_branches, round_branches, regions, kept, inlined, reads_back, arms, known_entries))
 }
 
 /// The last pass's body makes nothing but constants and stores none (`forward`): every output
