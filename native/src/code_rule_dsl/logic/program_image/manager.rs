@@ -4,8 +4,8 @@
 //!   or write what replaces it through its `RuleOut`.
 //! - A **program pass** (`ProgramPass`) reads analyses of the whole program and states an edit through its
 //!   `ProgramW`: a filter, rule passes over a selection, or a derivation written rule by rule.
-//! - An **analysis** (`Analysis`) is asked for by type (`cx.get::<Strata>()`), computed once per version for as long
-//!   as a pipeline runs, and carried to the next version when the edit's `Delta` misses what it reads.
+//! - An **analysis** (`Analysis`) is asked for by type (`cx.get::<Strata>()`), computed once per version and held by
+//!   it (`Version::analyses`), and carried to the next version when the edit's `Delta` misses what it reads.
 //! - A **pipeline** (`Pipeline`) runs passes in order and owns what every pass did for itself before: the profile
 //!   span, the walk over the rules, the writer's form, the delta, the decisions and the stage trace.
 //!
@@ -288,6 +288,7 @@ pub trait Analysis: Sized + Send + Sync + PartialEq + std::fmt::Debug + 'static 
 type Value = Arc<dyn Any + Send + Sync>;
 
 /// A cached analysis, with what the store needs of its type to carry it.
+#[derive(Clone)]
 struct Entry {
     value: Value,
     reads: Reads,
@@ -303,43 +304,64 @@ fn agrees_as<A: Analysis>(v: &Value, cx: &Cx<'_>) -> Result<bool> {
     Ok(v.downcast_ref::<A>().is_some_and(|a| A::compute(cx).is_ok_and(|fresh| fresh == *a)))
 }
 
-/// The analyses of the pipeline's current version. Not a process cache (0103): it ends with its pipeline.
+/// A version's analyses (`Version::analyses`), held by the version beside its indexes and dropped with it: not a
+/// process cache (0103), and never keyed by anything but the version that holds it. A pipeline carries them from a
+/// pass's input to its output (`carry`).
 #[derive(Default)]
 pub struct Store {
-    of: RefCell<HashMap<TypeId, Entry>>,
-    /// How many times each analysis was computed, by name: what a test of the cache reads.
-    computed: RefCell<HashMap<&'static str, usize>>,
+    of: parking_lot::Mutex<HashMap<TypeId, Entry>>,
+    /// How many times each analysis was computed for this version, by name: what a test of the cache reads.
+    computed: parking_lot::Mutex<HashMap<&'static str, usize>>,
 }
 
 impl Store {
-    /// How many times analysis `name` was computed in this pipeline.
+    /// How many times analysis `name` was computed for this version (not carried to it).
     pub fn computed(&self, name: &str) -> usize {
-        self.computed.borrow().get(name).copied().unwrap_or(0)
+        self.computed.lock().get(name).copied().unwrap_or(0)
     }
-    /// The analyses carried from `input` to `output` (whose context is `cx`, over this store) across `delta`: those
-    /// whose `READS` it misses as they are, then those it touches that `maintain` gives; the rest are dropped, to be
-    /// computed again when asked for. A debug build checks each against a fresh computation in a scratch store.
-    fn step(&self, cx: &Cx<'_>, delta: &Delta) -> Result<()> {
-        let old = std::mem::take(&mut *self.of.borrow_mut());
-        let (carried, touched): (Vec<_>, Vec<_>) = old.into_iter().partition(|(_, e)| !e.reads.meets(delta.touched));
-        self.of.borrow_mut().extend(carried);
-        for (t, e) in touched {
-            if let Some(value) = (e.maintain)(&e.value, cx, delta) {
-                self.of.borrow_mut().insert(t, Entry { value, ..e });
+    /// Whether analysis `A` is held.
+    pub fn holds<A: Analysis>(&self) -> bool {
+        self.of.lock().contains_key(&TypeId::of::<A>())
+    }
+    /// `from`'s analyses (an edit's input's) carried into this store (its output's, whose context is `cx`) across
+    /// `delta`: those whose `READS` it misses as they are, then those it touches that `maintain` gives; the rest are
+    /// left to be computed when asked for. A debug build checks each against a fresh computation in a scratch store.
+    fn carry(&self, from: &Store, cx: &Cx<'_>, delta: &Delta) -> Result<()> {
+        if std::ptr::eq(self, from) {
+            return Ok(());
+        }
+        let old: Vec<(TypeId, Entry)> = from.of.lock().iter().map(|(t, e)| (*t, e.clone())).collect();
+        let mut carried = Vec::new();
+        for (t, e) in old {
+            if self.of.lock().contains_key(&t) {
+                continue;
+            }
+            let value = if !e.reads.meets(delta.touched) { Some(e.value.clone()) } else { (e.maintain)(&e.value, cx, delta) };
+            if let Some(value) = value {
+                carried.push((t, Entry { value, ..e }));
             }
         }
         if cfg!(debug_assertions) {
             let scratch = Store::default();
             let fresh = Cx { v: cx.v, store: &scratch, pass: cx.pass, decided: cx.decided };
-            let of = self.of.borrow();
-            for e in of.values() {
+            for (_, e) in &carried {
                 if !(e.agrees)(&e.value, &fresh)? {
                     return Err(format!("analysis {} carried over {}'s edit ({:?}) is not what it computes", e.name, cx.pass, delta.touched));
                 }
             }
         }
+        let mut of = self.of.lock();
+        for (t, e) in carried {
+            of.entry(t).or_insert(e);
+        }
         Ok(())
     }
+}
+
+/// Analysis `A` of `v`, held by `v` (`Version::analyses`): for a reader outside a pipeline (a run's `Placed`).
+pub fn analysis<A: Analysis>(v: &Arc<Version>) -> Result<Arc<A>> {
+    let decided = RefCell::new(Vec::new());
+    Cx { v, store: v.analyses(), pass: "reader", decided: &decided }.get::<A>()
 }
 
 /// A decision a pass made, as a row of its step (0269): the pass, what, and its detail.
@@ -365,14 +387,16 @@ impl<'a> Cx<'a> {
     }
     /// Analysis `A` of the version: the one cached, else computed now and cached.
     pub fn get<A: Analysis>(&self) -> Result<Arc<A>> {
-        if let Some(e) = self.store.of.borrow().get(&TypeId::of::<A>()) {
+        if let Some(e) = self.store.of.lock().get(&TypeId::of::<A>()) {
             return Ok(e.value.clone().downcast::<A>().expect("an entry of its type"));
         }
+        // Computed with no lock held: it may ask for other analyses. Two threads asking at once both compute it; the
+        // first one stored is kept.
         let a = Arc::new(A::compute(self)?);
-        *self.store.computed.borrow_mut().entry(A::NAME).or_default() += 1;
+        *self.store.computed.lock().entry(A::NAME).or_default() += 1;
         let e = Entry { value: a.clone(), reads: A::READS, name: A::NAME, maintain: maintain_as::<A>, agrees: agrees_as::<A> };
-        self.store.of.borrow_mut().insert(TypeId::of::<A>(), e);
-        Ok(a)
+        let kept = self.store.of.lock().entry(TypeId::of::<A>()).or_insert(e).value.clone();
+        Ok(kept.downcast::<A>().expect("an entry of its type"))
     }
     /// Records a decision of the pass.
     pub fn decide(&self, what: &'static str, detail: impl FnOnce() -> String) {
@@ -633,7 +657,6 @@ pub struct Stage {
 pub struct Pipeline {
     name: &'static str,
     v: Arc<Version>,
-    store: Store,
     decided: RefCell<Vec<Decided>>,
     stages: Vec<Stage>,
     failed: Option<String>,
@@ -641,7 +664,7 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline {
-        Pipeline { name, v, store: Store::default(), decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None }
+        Pipeline { name, v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None }
     }
     /// The current version.
     pub fn version(&self) -> &Arc<Version> {
@@ -653,15 +676,16 @@ impl Pipeline {
     pub fn decisions(&self) -> Vec<Decided> {
         self.decided.borrow().clone()
     }
+    /// The current version's analyses.
     pub fn store(&self) -> &Store {
-        &self.store
+        self.v.analyses()
     }
     /// Analysis `A` of the current version.
     pub fn get<A: Analysis>(&self) -> Result<Arc<A>> {
         self.cx("pipeline").get::<A>()
     }
     fn cx(&self, pass: &'static str) -> Cx<'_> {
-        Cx { v: &self.v, store: &self.store, pass, decided: &self.decided }
+        Cx { v: &self.v, store: self.v.analyses(), pass, decided: &self.decided }
     }
 
     /// One step: `f` writes the pass's edit; the pipeline records it and carries the analyses to its output.
@@ -684,8 +708,8 @@ impl Pipeline {
         };
         let delta = Delta::of(&self.v, &out);
         let stage = Stage { pass, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched };
-        let carried = Cx { v: &out, store: &self.store, pass, decided: &self.decided };
-        if let Err(e) = self.store.step(&carried, &delta) {
+        let carried = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided };
+        if let Err(e) = out.analyses().carry(self.v.analyses(), &carried, &delta) {
             self.failed = Some(format!("{}: {e}", self.name));
             return self;
         }

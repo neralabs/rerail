@@ -168,7 +168,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     };
     let f = Fields::of(&p).ok_or_else(|| Error::Plan("the cut program has no image".into()))?;
     let gates = match &cross.version {
-        Some(v) if !cross.tree_maintained() => crate::code_rule_dsl::logic::program_image::About::of(v).gates > 0,
+        Some(v) if !cross.tree_maintained() => crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(v).map_err(Error::Plan)?.gates > 0,
         _ => !cross.program.gates.is_empty(),
     };
     let src = match of_version {

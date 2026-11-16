@@ -298,6 +298,7 @@ impl ProgramPass for GateFields<'_, '_> {
 /// A program split at its requests (`split`): `cone`, the relations every request depends on (the load part's
 /// rules, with its gates and answers), and the rest, which reads what it needs of the cone as inputs (`reads`). The
 /// cone runs first, pausing for its answers; the rest runs once over every document it loaded.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct Loading {
     pub(in crate::code_rule_dsl) cone: BTreeSet<String>,
     pub(in crate::code_rule_dsl) reads: BTreeSet<String>,
@@ -329,8 +330,32 @@ pub(in crate::code_rule_dsl) fn cone<'r>(p: &Placed, requests: impl IntoIterator
     cone
 }
 
-/// [`Loading`] of `p` (a whole program's version, its answers stated), or `None` for a program without answers.
+/// [`Loading`] of `p` (a whole program's version, its answers stated), or `None` for a program without answers:
+/// the version's (`Split`, decision 0281 §2).
 pub(in crate::code_rule_dsl) fn split(p: &Placed) -> Option<Loading> {
+    if !p.whole {
+        return None;
+    }
+    super::program_image::manager::analysis::<Split>(&p.v).ok()?.0.clone()
+}
+
+/// The split at the requests of a whole version (`split`), as an analysis: what 0225 §5's split rules compute.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct Split(pub(in crate::code_rule_dsl) Option<Loading>);
+
+impl super::program_image::manager::Analysis for Split {
+    const NAME: &'static str = "split";
+    const READS: super::program_image::manager::Reads = {
+        use super::program_image::manager::Reads;
+        Reads::RULES.or(Reads::ABOUT).or(Reads::INPUTS).or(Reads::OUTPUTS)
+    };
+    fn compute(cx: &Cx<'_>) -> Result<Split, String> {
+        Ok(Split(split_of(&Placed::whole(cx.v().clone()))))
+    }
+}
+
+/// [`Loading`] of `p`, computed.
+fn split_of(p: &Placed) -> Option<Loading> {
     let f = Fields::of(p)?;
     let v: &Version = &p.v;
     if f.answers().is_empty() {

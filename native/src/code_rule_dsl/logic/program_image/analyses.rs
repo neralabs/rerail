@@ -358,3 +358,23 @@ impl Analysis for Needed {
         Ok(Needed(need.iter().enumerate().filter(|(_, n)| **n).map(|(k, _)| RelId(k as u32)).collect()))
     }
 }
+
+/// The components, dependencies first, in the tree form's order, each by name (`components_by_name`, no sets run
+/// together): what the run's readers of a version's strata read (`Placed::components`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Components(pub Vec<BTreeSet<String>>);
+
+impl std::ops::Deref for Components {
+    type Target = [BTreeSet<String>];
+    fn deref(&self) -> &[BTreeSet<String>] {
+        &self.0
+    }
+}
+
+impl Analysis for Components {
+    const NAME: &'static str = "components";
+    const READS: Reads = Reads::RULES.or(Reads::ABOUT);
+    fn compute(cx: &Cx<'_>) -> Result<Components, String> {
+        components_by_name(cx.v(), &*cx.get::<About>()?, &[]).map(Components).map_err(|e| e.to_string())
+    }
+}

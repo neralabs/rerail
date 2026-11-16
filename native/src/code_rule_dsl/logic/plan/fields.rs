@@ -62,7 +62,8 @@ impl<'v> Fields<'v> {
             return None;
         }
         let v: &Version = &p.v;
-        let d: &FieldsData = p.fields.get_or_init(|| std::sync::Arc::new(FieldsData::of(v)));
+        // The version's (decision 0281 §2), so every `Placed` of it shares one.
+        let d: &FieldsData = p.fields.get_or_init(|| super::super::program_image::manager::analysis::<FieldsData>(&p.v).expect("a version's fields are read"));
         Some(Fields { v, about: &d.about, d })
     }
     /// The fields of `v` as `d` read them: a pipeline's (`cx.get::<FieldsData>()`), for a whole version.

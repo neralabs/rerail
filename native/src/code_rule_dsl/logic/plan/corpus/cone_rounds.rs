@@ -44,7 +44,7 @@ pub(in crate::code_rule_dsl) struct RoundProgram {
     /// Its inputs, in order.
     inputs: Vec<String>,
     /// Its components, dependencies first (`Placed::components`).
-    sccs: Vec<BTreeSet<String>>,
+    sccs: Arc<crate::code_rule_dsl::logic::program_image::analyses::Components>,
     /// Each gate's `done` relation and its `ask` (none: the whole relation's gate, `done_N(0)`).
     gates: Vec<(String, Option<String>)>,
     /// Each request relation and its width.

@@ -1192,9 +1192,9 @@ impl super::manager::ProgramPass for DropQ {
     }
 }
 
-/// An analysis is computed once per version and carried over an edit that misses what it reads: the strata over a
-/// facts edit, not over a rules edit; a pass that keeps every rule leaves the version as it was. A debug build
-/// checks each carried one against a fresh computation.
+/// An analysis is computed once per version, held by it, and carried to an edit's output when the edit misses what
+/// it reads: the strata over a facts edit, not over a rules edit; a pass that keeps every rule leaves the version as
+/// it was. A debug build checks each carried one against a fresh computation.
 #[test]
 fn analyses_carry_over_edits_that_miss_what_they_read() {
     use super::analyses::{Needed, Strata};
@@ -1203,22 +1203,39 @@ fn analyses_carry_over_edits_that_miss_what_they_read() {
     let mut p = Pipeline::new("test", v.clone());
     let s0 = p.get::<Strata>().unwrap();
     p.get::<Needed>().unwrap();
+    assert_eq!(v.analyses().computed("strata"), 1);
     p.rules(&mut Keep);
     assert!(Arc::ptr_eq(p.version(), &v), "a pass that keeps every rule makes no version");
     p.program(&mut DropFacts);
     assert_eq!(p.stages()[1].touched, Reads::FACTS);
+    let facts_edit = p.version().clone();
     let s1 = p.get::<Strata>().unwrap();
     assert!(Arc::ptr_eq(&s0, &s1), "carried, not computed again");
-    assert_eq!(p.store().computed("strata"), 1);
+    assert_eq!(facts_edit.analyses().computed("strata"), 0);
     p.program(&mut DropQ);
     assert_eq!((p.stages()[2].form, p.stages()[2].touched), (Form::View, Reads::RULES));
+    assert!(!p.store().holds::<Strata>() && p.store().holds::<super::About>(), "a rules edit drops the strata, keeps the about rows");
     p.get::<Strata>().unwrap();
-    assert_eq!(p.store().computed("strata"), 2, "a rules edit computes it again");
-    assert_eq!(p.store().computed("about"), 1, "the about rows carried through all three");
+    assert_eq!(p.store().computed("strata"), 1, "a rules edit computes it again");
+    assert_eq!(p.store().computed("about"), 0, "the about rows carried through all three");
     assert_eq!(p.decisions().len(), 1);
     let (out, stages) = p.finish().unwrap();
     assert_eq!(stages.iter().map(|s| s.form).collect::<Vec<_>>(), [Form::Unchanged, Form::Overlay, Form::View]);
     assert_eq!(out.size(), 11);
+}
+
+/// A version's analyses are its own: every `Placed` of it reads one computation of its components and fields, as
+/// the run's readers make a `Placed` of a version again and again (`Lowered::placed`).
+#[test]
+fn every_placed_of_a_version_shares_its_analyses() {
+    use crate::code_rule_dsl::logic::plan::{body::Placed, fields::Fields};
+    let v = managed();
+    let a = Placed::whole(v.clone()).components().unwrap();
+    let b = Placed::whole(v.clone()).components().unwrap();
+    assert!(Arc::ptr_eq(&a, &b));
+    Fields::of(&Placed::whole(v.clone())).unwrap();
+    Fields::of(&Placed::whole(v.clone())).unwrap();
+    assert_eq!((v.analyses().computed("components"), v.analyses().computed("fields"), v.analyses().computed("about")), (1, 1, 1));
 }
 
 /// A rule pass that writes for a rule it says it kept fails its pipeline, named by the pass.

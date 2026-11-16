@@ -88,7 +88,9 @@ impl RulePass for Supports<'_> {
     fn begin(&mut self, cx: &Cx<'_>) -> Result<Select, String> {
         let v = cx.v();
         let f = cx.get::<FieldsData>()?;
-        let Ok(sccs) = analyses::components_by_name(v, &f.about, &self.together) else {
+        // The version's components where nothing runs together (most programs), else its own with the sets merged.
+        let sccs = if self.together.is_empty() { cx.get::<analyses::Components>().map(|c| c.0.clone()) } else { analyses::components_by_name(v, &f.about, &self.together).map_err(|e| e.to_string()) };
+        let Ok(sccs) = sccs else {
             self.skipped = true;
             cx.decide("skipped", || "its components are not found: every rule keeps its form".into());
             return Ok(Select::Rules(Default::default()));

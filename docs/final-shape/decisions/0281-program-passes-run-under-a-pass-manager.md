@@ -1,6 +1,6 @@
 # 0281: Program passes run under a pass manager: rule rewriters and program edits over cached, maintained analyses
 
-Status: accepted (2026-11-15); step 1 in progress (see Path).
+Status: accepted (2026-11-15); steps 1 and 2 built, step 3 next (see Path and Alignment).
 Builds on 0173 §9 (a pass is an edit or a derivation, and a derived rule records its sources), 0225 §5 and 0246 §3
 (the whole-program questions are rules over the image), 0266 (blocks: a writer, a merged view, base + delta), 0269
 (a step's decisions are rows of what it made), 0275 (a step is rederived until its key hits) and 0276 (one form from
@@ -138,9 +138,9 @@ pub trait Analysis: Sized + Send + Sync + 'static {
 let strata: &Strata = cx.get::<Strata>()?;
 ```
 
-- **Cached by version.** An analysis is kept per version digest for as long as a pipeline runs. It is the
-  pipeline's state, dropped when the pipeline ends. It is not a process map, so 0103's rule (no static memo maps,
-  caches are rules) holds: what outlives a run is a fact, kept by the steps' keys (§6).
+- **Held by the version.** An analysis is held by the version it is of (`Version::analyses`), beside its indexes,
+  and dropped with it (as built in step 2; first drafted as a pipeline's). It is not a process map, so 0103's rule
+  (no static memo maps, caches are rules) holds: what outlives a run is a fact, kept by the steps' keys (§6).
 - **Invalidated by what the edit touched, not by what the pass promises.** LLVM asks each pass to say what it
   preserves, and a pass that says it wrongly makes a silent bug. Here the edit is a delta the writer recorded:
   which rules were removed and added, which declarations changed, and whether the inputs, outputs or `.about` rows
@@ -305,13 +305,43 @@ step 3 replaces what is under the writer.
      (step 6).
 2. **The analyses** behind the trait: `Fields`, `Heads`, `Readers`, `Strata`, `Components`, `Needed`, `Domains`, and
    the split's columns. Each is checked by the debug build's recompute-and-compare.
-3. **0276 step 3's preparation passes** as `ProgramPass`es: `locate`, the merges, `demand_exports`,
-   `factorize_exports` and `push_local_joins`.
-4. **0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`, the matchers and
+   - Done: analyses are held by the version (`Version::analyses`, beside its CSR indexes, dropped with it), not by
+     one pipeline: every `Placed` the run makes of a version again (`Lowered::placed`) reads one computation. A
+     pipeline carries them from a pass's input to its output across the delta. `Components` is an analysis, and
+     `Placed::components()` (21 readers) returns the version's; `Placed`'s fields come from the version's
+     `FieldsData`; the run's `About::of` reads go through the store; the split is the `Split` analysis; `supports`
+     reads `Components`. Test: `every_placed_of_a_version_shares_its_analyses`.
+   - `Heads` and `Readers` need no analysis: they are the image's own CSR indexes, which an overlay's delta carries.
+   - The cut reads the components, but depends on a run's inputs, so it is not a version's analysis.
+   - Left for the steps that move their passes: `Domains` and the 11 `front::components_of` readers, which read
+     the tree (lowering, `magic`, `simplify`, `emit`: 0276 steps 4 and 5); the retired rounds and spike (0276 §9).
+3. **Rerunning on a delta (§3, Q18).** A pipeline kept with its last output (the passes' stages and states), run
+   again on an input that is a delta of its last input: each rule pass visits the delta's added rules alone and
+   drops what came from its removed ones (through `from`); a program pass reruns from its maintained analyses.
+   Measured on ep2's edit (Q18).
+4. **0276 step 3's preparation passes** as `ProgramPass`es: `locate`, the merges, `demand_exports`,
+   `factorize_exports` and `push_local_joins` (Q18's `prepare` and `merge the programs`).
+5. **0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`, the matchers and
    the strings. Each is checked against its `TreePass` by digest, and the `TreePass` is deleted once it agrees on
    dl1 and the pack.
-5. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5).
-6. **Steps keyed (§6),** then analyses as rules (0225 §5), one at a time behind the trait.
+6. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`.
+7. **Steps keyed (§6),** then analyses as rules (0225 §5), one at a time behind the trait. Morsels (§3) with the
+   first stateless pass measured to want them.
+
+## Alignment (2026-11-15, after merging final-rerail-shape-rr-align)
+
+- **Q18 (work queue) is this decision's measurement.** An edit's whole-program passes, run again from scratch on
+  ep2: `merge the programs` 0.47 s (hiding's bound 0.20 s, the fact spaces 0.13 s, merging equal relations
+  0.07 s) and `prepare` 0.59 s (pushing file-local joins 0.14 s, prune, simplify and demand 0.10 s, the memo's
+  program 0.04 s, nine more of 0.02–0.04 s); unprofiled, `combine` 13.0 G and `prepare` 9.8 G of 82.9 G. Q18 was
+  handed here: "the driver reruns passes on a delta only". So rerunning on a delta (§3) comes next, before the
+  remaining preparation passes move: step 3 below.
+- **0266 §6's roll-up rule replaces the fold at half.** A version rolls up when its delta has cost what a roll-up
+  costs (ski rental), not at a fixed fraction. The writer's fold at half its parent (`Builder::finish`) moves to
+  that rule when the program image is 0266's `Program` block; the pipeline's per-pass delta sizes (`Stage`) are
+  the cost it counts.
+- **0266's `Program` block holds modules whole, a delta the replaced ones.** An edit's input delta to the
+  pipeline is the rules of the modules it replaced: what step 3 reruns the rule passes on.
 
 ## Agreement with prior work
 
