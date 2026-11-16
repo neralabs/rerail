@@ -1838,6 +1838,14 @@ impl Projected {
             p => p,
         }
     }
+    /// What `parent` answers without `up`: the parent read off the tape, mapped to its core id. For the measurement
+    /// of `up` (native/examples/kept_parents.rs).
+    pub fn parent_off_tape(&self, local: usize) -> u32 {
+        match self.facts.parent(self.core[local]).map_or(NONE, |p| self.local[p as usize]) {
+            NONE if local != 0 => 0,
+            p => p,
+        }
+    }
     /// The node above core id `local`, as a node id: the parent the walk found, or read off the tape where the
     /// projection leaves it out (an anchor's, a guest's root's).
     pub fn parent_node(&self, local: usize) -> Option<u32> {

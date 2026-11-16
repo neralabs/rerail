@@ -98,7 +98,20 @@ This record is steps 2, 3 and 4, and the API they need.
    everything that asked for parents node by node:
 
    - a projection keeps the parent of each node it numbers (`Projected::up`), found in the walk that numbers them,
-     as it keeps `core` and `local`; the tape stores no parent;
+     as it keeps `core` and `local`; the tape stores no parent. Kept on measurement (2026-11-16, the user: "drop
+     the parent projections: yes, probably, but measure first"; `native/examples/kept_parents.rs`, profiling
+     build, 50 Python files, 136k nodes, least of 5 rounds). One pass of every node's parent, as `sizes`,
+     `depths`, `ordinals` and the granules each make, costs:
+
+     | tape | walk (numbers, keeps parents) | a pass, kept | a pass, off the tape |
+     |---|---|---|---|
+     | 15 | 200 M instructions, 15.3 ms | 1.2 M, 0.23 ms | 120 M, 7.6 ms |
+     | 16 | 453 M, 28.6 ms | 1.2 M, 0.23 ms | 54 M, 3.7 ms |
+     | 16z | 463 M, 27.0 ms | 1.2 M, 0.22 ms | 71 M, 4.4 ms |
+
+     Keeping them costs 4 bytes a projected node (0.5 MB here) and a push in the walk; each pass off the tape
+     costs 45 (format 16) to 100 (format 15) times a pass over them. The same run shows the walk itself reading
+     format 16 at 2.3 times format 15's instructions: a cost for the lab to weigh;
    - a Python call's execution context is the innermost body that holds it, from the bodies' ranges
      (`families::Contexts`), not a climb of the call's parents;
    - "an ERROR or MISSING node around this one" is a test against those few nodes' subtrees
