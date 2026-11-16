@@ -62,11 +62,11 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
     return locatedByGit(requested).location;
   }
   const held = heldTopLevels.get(requested);
-  if (held?.stamp === inputs.stamp) return held.location;
+  if (held?.stamp === inputs.stamp) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
   const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false };
   holdTopLevel(requested, inputs.stamp, located);
-  return located.location;
+  return { ...located.location };
 }
 
 function locatedByGit(requested: string): { location: RepositoryIdentityLocation; byGit: boolean } {
@@ -86,13 +86,16 @@ function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | u
  * and the Git folders it names, all in its stamp. Any other answer depends on the folders above too, and is not kept.
  */
 function holdTopLevel(folder: string, stamp: string, located: { location: RepositoryIdentityLocation; byGit: boolean }): void {
+  heldTopLevels.delete(folder);
   const { location } = located;
-  if (!location.git || physicalPath(location.workspaceRoot) !== physicalPath(folder)) {
-    heldTopLevels.delete(folder);
-    return;
+  try {
+    if (!location.git || physicalPath(location.workspaceRoot) !== physicalPath(folder)) return;
+    const common = located.byGit ? storedPath(dirname(location.identityPath)) : undefined;
+    heldTopLevels.set(folder, { stamp, location });
+    if (common !== undefined) gitPlacedCommons.add(common);
+  } catch {
+    // A folder whose real path cannot be read now is asked of Git again next time.
   }
-  heldTopLevels.set(folder, { stamp, location });
-  if (located.byGit) gitPlacedCommons.add(storedPath(dirname(location.identityPath)));
 }
 
 /** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
