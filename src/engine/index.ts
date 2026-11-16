@@ -69,6 +69,7 @@ export { type ConversationRule, parseConversationRule } from "./catalog/rule-sch
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
+export { RepositoryWorktreeWalks } from "./code-rule/worktree-walks.js";
 export {
   bundledCodeRuleDslDirectory,
   CheckoutCatalogs,

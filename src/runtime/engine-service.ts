@@ -530,8 +530,9 @@ async function listenOnSocket(
 /**
  * The walks of the repositories' other worktrees, which read only those the engine's file-system watch says may have
  * changed. An engine built before that watch has none: every walk then reads every worktree, and the log says so once.
+ * `close` releases the watch.
  */
-function engineWorktreeWalks(): RepositoryWorktreeWalks {
+export function engineWorktreeWalks(): RepositoryWorktreeWalks {
   let treeWatch: TreeWatch | undefined;
   try {
     treeWatch = nativeTreeWatch();
@@ -604,14 +605,18 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     closeIdleSessions: sweepIdleSessions,
     async close() {
       clearInterval(idleSweep);
-      const closed = Promise.withResolvers<void>();
-      server.close((error) => (error ? closed.reject(error) : closed.resolve()));
-      await closed.promise;
-      for (const timer of routing.idle.values()) clearTimeout(timer);
-      routing.idle.clear();
-      await Promise.allSettled(routing.pending);
-      await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
-      closeWalks();
+      try {
+        const closed = Promise.withResolvers<void>();
+        server.close((error) => (error ? closed.reject(error) : closed.resolve()));
+        await closed.promise;
+        for (const timer of routing.idle.values()) clearTimeout(timer);
+        routing.idle.clear();
+        await Promise.allSettled(routing.pending);
+        await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+      } finally {
+        // The engine's watch thread and its handles go however the sessions' close went.
+        closeWalks();
+      }
     },
   };
   server.requestTimeout = 30_000;
@@ -623,8 +628,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   } catch (error) {
     clearInterval(idleSweep);
     server.close();
-    await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
-    closeWalks();
+    try {
+      await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+    } finally {
+      closeWalks();
+    }
     throw error;
   }
   return engineService;

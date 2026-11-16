@@ -1877,8 +1877,10 @@ export class CodeRuleBridge {
    * Reads, off the lane, the text of each changed source the walk kept none of for this session (its snapshot was older
    * than the walk's last, or a tool call saw the source otherwise), as the session reads it now (`#reread`), and the
    * first-sight text of each source new to the session that its checkout's Git lists as changed, taken only while the
-   * source holds the digest observed. Returns the sources it leaves to the next walk, with what it saw of each before
-   * (`WorktreeTake.views`).
+   * source holds the digest observed. A source the session saw that the walk's snapshot lacks is gone only if it is gone
+   * now: a walk that did not read its worktree (the notice of the write came after the walk took the notices) hands on
+   * a snapshot from before the session's tool call made it. Returns the sources it leaves to the next walk, with what
+   * it saw of each before (`WorktreeTake.views`).
    */
   async #readTakenTexts(
     discovery: SourceDiscovery,
@@ -1887,6 +1889,13 @@ export class CodeRuleBridge {
     found: ReadonlyMap<string, WorktreeFindings>,
   ): Promise<Map<string, ObservedSource | undefined>> {
     const kept = new Map<string, ObservedSource | undefined>();
+    for (const [path, before] of walk.previous) {
+      // Only what the session saw itself: one its last snapshot held and this one lacks, a later read found gone.
+      if (scan.sources.has(path) || !this.#observed.has(path)) continue;
+      if (this.#abandoned(discovery)) return kept;
+      const read = await this.#readSource(discovery.root, path);
+      if (read !== undefined && read.deleted !== true) kept.set(path, before);
+    }
     for (const [path, after] of scan.sources) {
       if (this.#abandoned(discovery)) return kept;
       if (!this.#textMissing(discovery, walk, after)) continue;

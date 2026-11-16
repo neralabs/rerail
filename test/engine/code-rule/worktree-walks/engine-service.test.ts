@@ -136,6 +136,8 @@ describe("the engine service and the other worktrees of a repository", () => {
       const entered = Promise.withResolvers<void>();
       const released = Promise.withResolvers<void>();
       releases.push(released.resolve);
+      // A write in the first repository's worktree: its next walk reads that worktree, and is held there.
+      await writeFile(join(slow.worktrees[0]!, "deep", "d.py"), "d = 1\n");
       counted.held.set(join(slow.worktrees[0]!, "deep"), async () => {
         entered.resolve();
         await released.promise;

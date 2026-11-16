@@ -35,6 +35,14 @@ export const WORKTREE_WALK_GAP_MS = 5_000;
 export const WORKTREE_FULL_WALK_MS = 600_000;
 
 /**
+ * How often walks take the change notices while they watch a worktree, between walks too. A notice comes some time
+ * after its write (FSEvents holds them up to a tenth of a second, inotify and ReadDirectoryChangesW hand them over on a
+ * thread of their own), so one may come just after a walk took the notices and decided not to read its worktree: the
+ * walk it asks for then reads it, once each session watching it is past its gap.
+ */
+export const WORKTREE_NOTICE_MS = 250;
+
+/**
  * What one walk saw of a worktree, each source by its path in the worktree (`/`-separated). A snapshot never changes: a
  * walk that finds a change makes a new one and keeps the observation of every source it found unchanged, so a session
  * finds what changed since the snapshot it took last by comparing observations by identity.
@@ -300,16 +308,29 @@ export class WorktreeWalks {
   #wake: (() => void) | undefined;
   /** Times the walk that reads the worktree whose last read is next due (`WORKTREE_FULL_WALK_MS`). */
   #reread: NodeJS.Timeout | undefined;
+  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree is watched. */
+  #pump: NodeJS.Timeout | undefined;
+  /** Whether a walk is reading: it takes the notices itself, and asks for the walk they call for as it ends. */
+  #walking = false;
+  readonly #onWatching: ((watching: boolean) => void) | undefined;
 
   /**
    * `notices`: none by default, so every worktree is read on every walk; `RepositoryWorktreeWalks` gives each walk the
-   * engine's. `looks`: what each walk looks at in a watched worktree (`WorktreeLooks`).
+   * engine's. `looks`: what each walk looks at in a watched worktree (`WorktreeLooks`). `onWatching`: told `true` as a
+   * first session starts watching, and `false` as the last stops.
    */
-  constructor(options: { gapMs?: number; fullWalkMs?: number; notices?: WorktreeNotices; looks?: WorktreeLooks } = {}) {
+  constructor(options: {
+    gapMs?: number;
+    fullWalkMs?: number;
+    notices?: WorktreeNotices;
+    looks?: WorktreeLooks;
+    onWatching?: (watching: boolean) => void;
+  } = {}) {
     this.#gapMs = options.gapMs ?? WORKTREE_WALK_GAP_MS;
     this.#fullWalkMs = options.fullWalkMs ?? WORKTREE_FULL_WALK_MS;
     this.#notices = options.notices ?? new WorktreeNotices();
     this.#looks = options.looks ?? new WorktreeLooks();
+    this.#onWatching = options.onWatching;
   }
 
   watch(watcher: WorktreeWatcher): WorktreeWatch {
@@ -317,6 +338,7 @@ export class WorktreeWalks {
       watcher, requested: false, asked: 0, answered: 0, nextWalkAt: 0, taking: undefined, waiting: undefined, worktrees: new Set(), closed: false,
     };
     this.#watching.push(watching);
+    if (this.#watching.length === 1) this.#onWatching?.(true);
     return {
       request: () => this.#request(watching),
       pending: () => !watching.closed && watching.answered < watching.asked,
@@ -371,48 +393,92 @@ export class WorktreeWalks {
   /**
    * Waits until a session asking for a walk may have one, then walks; returns without one once none is left asking. The
    * walk starts when its timer fires, as timed: only a wake before it (an ask already due, a session gone) times it
-   * again.
+   * again. However it ends, the reread and the notices are timed again.
    */
   async #walkWhenDue(): Promise<void> {
-    for (let due = this.#dueAt(); due !== undefined && due > Date.now(); due = this.#dueAt()) {
-      if (!(await this.#sleep(due - Date.now()))) break;
-    }
-    if (this.#dueAt() === undefined) return;
-    const startedAt = Date.now();
-    let askers: readonly Watching[] = [];
     try {
-      askers = await this.#walkOnce();
+      for (let due = this.#dueAt(); due !== undefined && due > Date.now(); due = this.#dueAt()) {
+        if (!(await this.#sleep(due - Date.now()))) break;
+      }
+      if (this.#dueAt() === undefined) return;
+      const startedAt = Date.now();
+      let askers: readonly Watching[] = [];
+      this.#walking = true;
+      try {
+        askers = await this.#walkOnce();
+      } finally {
+        this.#walking = false;
+        const end = Date.now();
+        for (const watching of askers) watching.nextWalkAt = end + Math.max(this.#gapMs, end - startedAt);
+        this.#askNoticed();
+      }
     } finally {
-      const end = Date.now();
-      for (const watching of askers) watching.nextWalkAt = end + Math.max(this.#gapMs, end - startedAt);
       this.#armReread();
+      this.#armPump();
     }
   }
 
   /**
-   * Times a walk for when the oldest read kept is `WORKTREE_FULL_WALK_MS` old, so the reread comes though every session
-   * watching that worktree is idle. Walks that read every worktree (no period) need no timer.
+   * Times a walk for when the oldest read kept of a watched worktree is `WORKTREE_FULL_WALK_MS` old, so the reread
+   * comes though every session watching that worktree is idle. Walks that read every worktree (no period), and
+   * worktrees no notice tells of, which every walk reads, need no timer.
    */
   #armReread(): void {
     clearTimeout(this.#reread);
     this.#reread = undefined;
-    if (this.#fullWalkMs <= 0 || this.#kept.size === 0) return;
-    const oldest = Math.min(...[...this.#kept.values()].map(kept => kept.readAt));
+    const trusted = this.#trusted();
+    if (this.#fullWalkMs <= 0 || trusted.length === 0) return;
+    const oldest = Math.min(...trusted.map(([, kept]) => kept.readAt));
     this.#reread = setTimeout(() => this.#rereadDue(), Math.max(0, oldest + this.#fullWalkMs - Date.now()));
     this.#reread.unref?.();
+  }
+
+  /** Each worktree kept whose read was taken while it was watched, so walks read it again only as notices say. */
+  #trusted(): Array<[string, Kept]> {
+    return [...this.#kept].filter(([, kept]) => kept.look !== undefined);
   }
 
   /** Has each session watching a worktree whose read is due take part in a walk, which it did not ask for. */
   #rereadDue(): void {
     this.#reread = undefined;
-    const due = new Set([...this.#kept].filter(([, kept]) => this.#due(kept)).map(([root]) => root));
+    const due = new Set(this.#trusted().filter(([, kept]) => this.#due(kept)).map(([root]) => root));
     for (const watching of this.#watching) if ([...watching.worktrees].some(root => due.has(root))) watching.requested = true;
     // The walk, or the one running, times the next reread as it ends.
     this.#schedule();
+    // Fired before any read was due (a timer may fire a little early): time it again.
+    if (this.#walk === undefined) this.#armReread();
   }
 
   #due(kept: Kept): boolean {
     return Date.now() - kept.readAt >= this.#fullWalkMs;
+  }
+
+  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree is watched, and stops once not. */
+  #armPump(): void {
+    const pumping = this.#watching.length > 0 && this.#notices.watchingAny();
+    if (pumping && this.#pump === undefined) {
+      this.#pump = setInterval(() => {
+        this.#notices.collect();
+        // A walk reading asks for what its notices call for as it ends.
+        if (!this.#walking) this.#askNoticed();
+        this.#armPump();
+      }, WORKTREE_NOTICE_MS);
+      this.#pump.unref?.();
+    } else if (!pumping && this.#pump !== undefined) {
+      clearInterval(this.#pump);
+      this.#pump = undefined;
+    }
+  }
+
+  /**
+   * Has each session watching a worktree a notice counted in since its last read began take part in a walk, which it
+   * did not ask for: the change reaches every session watching it, once each is past its gap.
+   */
+  #askNoticed(): void {
+    const noticed = this.#notices.noticed();
+    if (noticed.size === 0) return;
+    for (const watching of this.#watching) if ([...watching.worktrees].some(root => noticed.has(root))) watching.requested = true;
+    this.#schedule();
   }
 
   /** Waits `ms`, or until `#wake` is called; resolves whether it was woken first. */
@@ -450,6 +516,8 @@ export class WorktreeWalks {
     if (this.#watching.length > 0) return;
     clearTimeout(this.#reread);
     this.#reread = undefined;
+    this.#armPump();
+    this.#onWatching?.(false);
     const git = this.#git;
     this.#git = new GitReads();
     await git.stop();
@@ -534,6 +602,8 @@ export class WorktreeWalks {
       const files = this.#looks.begin();
       const found = new Map<string, WorktreeFindings>();
       for (const root of roots) {
+        // Every session watching it closed meanwhile: watching it now would hold it for nobody.
+        if (!this.#watched(root)) continue;
         const kept = this.#kept.get(root);
         // Asked first, of every worktree: it starts the watch before a first read.
         const noticed = this.#notices.changed(root);
@@ -663,7 +733,10 @@ export class WorktreeWalks {
 export class RepositoryWorktreeWalks {
   readonly #options: { gapMs?: number; fullWalkMs?: number };
   readonly #treeWatch: SharedTreeWatch | undefined;
-  /** Kept for the service's life: an idle walk holds no snapshot, and there is one per repository sessions opened in. */
+  /**
+   * By repository, the walk its sessions watch, dropped once none does: nothing of an idle walk is worth keeping, and
+   * a folder the catalog does not know is a repository of its own.
+   */
   readonly #walks = new Map<string, WorktreeWalks>();
 
   constructor(options: { gapMs?: number; fullWalkMs?: number; treeWatch?: TreeWatch | undefined } = {}) {
@@ -674,11 +747,18 @@ export class RepositoryWorktreeWalks {
 
   /** The walk of the repository `repository` names, the same for every checkout of it (its clone id). */
   of(repository: string): WorktreeWalks {
-    let walks = this.#walks.get(repository);
-    if (walks === undefined) {
-      walks = new WorktreeWalks({ ...this.#options, notices: new WorktreeNotices({ treeWatch: this.#treeWatch?.user() }) });
-      this.#walks.set(repository, walks);
-    }
+    const known = this.#walks.get(repository);
+    if (known !== undefined) return known;
+    const walks: WorktreeWalks = new WorktreeWalks({
+      ...this.#options,
+      notices: new WorktreeNotices({ treeWatch: this.#treeWatch?.user() }),
+      // A session handed this walk before it was dropped brings it back while no other took its place.
+      onWatching: watching => {
+        if (!watching && this.#walks.get(repository) === walks) this.#walks.delete(repository);
+        else if (watching && !this.#walks.has(repository)) this.#walks.set(repository, walks);
+      },
+    });
+    this.#walks.set(repository, walks);
     return walks;
   }
 

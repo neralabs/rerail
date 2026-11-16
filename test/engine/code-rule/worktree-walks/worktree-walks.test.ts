@@ -10,7 +10,7 @@ import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buff
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
-import { WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
 import type * as Git from "../../../../src/engine/git.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 
@@ -647,6 +647,39 @@ describe("a walk of the other worktrees with change notices", () => {
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 3, 0]);
     expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"], [["written ../w2/src/a.py"], "log"]]);
   });
+
+  it("records a shell write in another worktree whose notice came after the walk took the notices, with no later event of the session", async () => {
+    const { worktrees, checkouts } = await repository();
+    const watch = new StampTreeWatch();
+    const watching = await session(worktrees[0]!, checkouts, noticedWalks(watch));
+    const w3 = worktrees[2]!;
+    watch.hold(w3);
+    await shell(watching.bridge, "shell-1", () => writeFile(join(w3, "src", "a.py"), "old\nmine\n"));
+    await turn(watching);
+    // The walk the command asked for took the notices before this one came.
+    expect(audited(watching)).toEqual([]);
+    watch.release(w3);
+    await vi.waitFor(() => expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]), { timeout: 5_000 });
+  });
+
+  it("records no deletion of a file its tool call made in another worktree when the walk after it had no notice of it yet", async () => {
+    const { worktrees, checkouts } = await repository();
+    const watch = new StampTreeWatch();
+    const watching = await session(worktrees[0]!, checkouts, noticedWalks(watch));
+    const w3 = worktrees[2]!;
+    const path = join(w3, "src", "new.py");
+    watch.hold(w3);
+    await watching.bridge.begin("write-1", "write", { path });
+    await writeFile(path, "n = 1\n");
+    await watching.bridge.finish("write-1");
+    await turn(watching);
+    const recorded = [[["written ../w3/src/new.py"], undefined]];
+    expect(audited(watching)).toEqual(recorded);
+    watch.release(w3);
+    await turn(watching);
+    await turn(watching);
+    expect(audited(watching)).toEqual(recorded);
+  });
 });
 
 describe("a session's close and the watches of the other worktrees", () => {
@@ -743,6 +776,34 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
   });
 });
 
+/** A session watching `roots` whose reads find nothing, each read of a root put in `scans`, and which takes nothing. */
+function watcherOf(roots: readonly string[], scans: string[]): WorktreeWatcher {
+  return {
+    clock: async () => Date.now(),
+    start: () => ({
+      worktrees: new Set(roots), checkout: undefined, firstSight: new Set(), startedAt: 0,
+      scan: async ({ root }) => {
+        scans.push(root);
+        return {
+          sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set([root]),
+          unmerged: new Map(), seen: { folders: new Set([""]), leftOut: new Set() },
+        };
+      },
+      take: async () => undefined,
+    }),
+  };
+}
+
+/**
+ * Resolves `ms` after `startedAt` (`Date.now()`). The reread is timed by the walks' own timers against the wall clock,
+ * between reads that spawn Git: fake timers would hold those back, so these tests wait in real time.
+ */
+function until(startedAt: number, ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, Math.max(0, startedAt + ms - Date.now()));
+  return promise;
+}
+
 describe("the reread of a worktree no notice told of a change in", () => {
   it("reads a worktree whose last read is the period old though every session watching it is idle", async () => {
     const { worktrees, checkouts } = await repository();
@@ -753,6 +814,78 @@ describe("the reread of a worktree no notice told of a change in", () => {
     watch.silence(worktrees[2]!);
     // No event of the session's asks for a walk from here on.
     await vi.waitFor(() => expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]), { timeout: 5_000 });
+  });
+
+  it("walks no worktree while every session is idle when no notice tells of a change, as every walk reads them all", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const scans: string[] = [];
+    const watch = new WorktreeWalks({ gapMs: 0, fullWalkMs: 300 }).watch(watcherOf([worktrees[0]!], scans));
+    watch.request();
+    await watch.settled();
+    await until(Date.now(), 1_000);
+    expect(scans).toHaveLength(1);
+    await watch.close();
+  });
+
+  it("rereads in time though the timer fired before the read was due", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const scans: string[] = [];
+    const watch = noticedWalks(new StampTreeWatch(), { fullWalkMs: 600 }).watch(watcherOf([worktrees[0]!], scans));
+    watch.request();
+    await watch.settled();
+    // The clock the reads are timed by runs 300 ms behind the timer from here on.
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now() - 300);
+    try {
+      await vi.waitFor(() => expect(scans).toHaveLength(2), { timeout: 3_000 });
+    } finally {
+      clock.mockRestore();
+      await watch.close();
+    }
+  });
+
+  it("rereads for the sessions left when the one a reread was timed for closes before its walk began", async () => {
+    const { worktrees } = await repository(["w1", "w2"]);
+    const [w1, w2] = [worktrees[0]!, worktrees[1]!];
+    const scans: string[] = [];
+    const walks = new WorktreeWalks({
+      gapMs: 1_500, fullWalkMs: 3_000, notices: new WorktreeNotices({ treeWatch: new StampTreeWatch(), platform: "darwin" }),
+    });
+    const [first, second] = [walks.watch(watcherOf([w1], scans)), walks.watch(watcherOf([w2], scans))];
+    const startedAt = Date.now();
+    const at = (ms: number): Promise<void> => until(startedAt, ms);
+    first.request();
+    await first.settled();
+    await at(750);
+    second.request();
+    await second.settled();
+    // A walk that reads nothing: the first session's next may begin only once its gap is over, at 3,750 ms.
+    await at(2_250);
+    first.request();
+    await first.settled();
+    // At 3,000 ms the first session's worktree is due, and the reread waits for its gap; it closes meanwhile.
+    await at(3_350);
+    await first.close();
+    // The second session's worktree is due at 3,750 ms.
+    await vi.waitFor(() => expect(scans.filter(root => root === w2)).toHaveLength(2), { timeout: 3_000 });
+    expect(Date.now() - startedAt).toBeGreaterThan(3_700);
+    await second.close();
+  });
+});
+
+describe("the walks of each repository", () => {
+  it("drops a repository's walk once no session watches it, and takes it back for a session it was handed to", async () => {
+    const repositories = new RepositoryWorktreeWalks();
+    const walks = repositories.of("r");
+    const watch = walks.watch(watcherOf([], []));
+    expect(repositories.of("r")).toBe(walks);
+    await watch.close();
+    const handed = repositories.of("r");
+    expect(handed).not.toBe(walks);
+    await handed.watch(watcherOf([], [])).close();
+    // Dropped again, then watched by a session it was handed to before that.
+    handed.watch(watcherOf([], []));
+    expect(repositories.of("r")).toBe(handed);
   });
 });
 
