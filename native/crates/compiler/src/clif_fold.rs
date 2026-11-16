@@ -444,7 +444,7 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
                         match (x.value(w), y.value(w)) {
                             (None, Some(_)) => decided(opcode, a, x, y, true, w),
                             (Some(_), None) => decided(opcode, c, y, x, false, w),
-                            (None, None) if a == c && matches!(opcode, Opcode::Band | Opcode::Bor) => Some(Folded::Same(a)),
+                            (None, None) if dfg.resolve_aliases(a) == dfg.resolve_aliases(c) && matches!(opcode, Opcode::Band | Opcode::Bor | Opcode::Smax | Opcode::Smin | Opcode::Umax | Opcode::Umin) => Some(Folded::Same(a)),
                             (None, None) if a == c && matches!(opcode, Opcode::Bxor | Opcode::Isub | Opcode::BandNot) => Some(Folded::Const(0)),
                             // `(c + x) - c`, `(x + c) - c`: `x`.
                             (None, None) if opcode == Opcode::Isub && added(func, a, c).is_some() => added(func, a, c).map(Folded::Same),
@@ -940,6 +940,25 @@ mod tests {
         verified(&func);
         let cmps = func.layout.blocks().flat_map(|b| func.layout.block_insts(b)).filter(|&i| matches!(func.dfg.insts[i].opcode(), Opcode::Icmp | Opcode::IcmpImm)).count();
         assert_eq!(cmps, 1, "only `len < 16` is open: {}", func.display());
+    }
+
+    /// A max or a min of a value and itself is the value.
+    #[test]
+    fn a_max_of_a_value_and_itself_is_it() {
+        for op in [Opcode::Smax, Opcode::Smin, Opcode::Umax, Opcode::Umin] {
+            let mut func = function(1, |f, p| {
+                let m = match op {
+                    Opcode::Smax => f.ins().smax(p[0], p[0]),
+                    Opcode::Smin => f.ins().smin(p[0], p[0]),
+                    Opcode::Umax => f.ins().umax(p[0], p[0]),
+                    _ => f.ins().umin(p[0], p[0]),
+                };
+                f.ins().return_(&[m]);
+            });
+            fold(&mut func);
+            verified(&func);
+            assert_eq!(ops(&func), vec![Opcode::Return], "{op}: {}", func.display());
+        }
     }
 
     /// A complement's complement is the value: both `bnot`s go, where the inner one has no

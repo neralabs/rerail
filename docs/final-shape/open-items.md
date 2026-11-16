@@ -4778,3 +4778,36 @@ would be a block, as the slab's margin was. The user asked to look at 256 agains
 - Whether Metal's kernels can take the padding instead of their length cuts.
 - What a file read in place from an mmap needs: past its end, only the rest of its last page is
   zeros, so a file ending near a page boundary needs a copy of that page, as simdjson checks.
+
+## O-refusal-leaves-loop. A refusal leaves the token loop, as lean's `break 'read`
+
+Opened 2026-11-16 (decision 0177, shape list item 4). On a refusal the lean lexer writes `BAD`
+and leaves its loop. Ours sets the file's flag (a load, an or, a store) and reads on. Jumping to
+the loop's `finish` with the refusal set was tried and reverted: two tests hold a refused file's
+records equal to the interpreter's and to Metal's, and Metal's blocks cannot stop early.
+
+**Closure:** the user decides whether a refused file's records are part of the contract (they go
+to the fallback, unread). If not, the tests compare only the flag on refused files, and the CPU
+leaves its loop.
+
+## O-escape-carry-at-opener. A string's first window tests the byte before its quote
+
+Opened 2026-11-16 (decision 0177, shape list item 3). The string arm starts by testing whether
+the byte before the opening quote is a `\`, and on one calls the carry function. Lean's
+`string_end` starts with no carry. The grammar's escape is read one byte back (`a` at a position
+reads the byte before it), so `Bytewise::apart`, which proves "never both" at one offset only,
+cannot show the opener starts no run.
+
+**Closure:** decide what the carry into a string's first byte should be from the grammar (an
+opener is never escaped) and teach `apart` the escape's offset, or define the carry at an opener
+as none.
+
+## O-reader-last-at-start. A reader's tail takes `max(last, start)`
+
+Opened 2026-11-16 (decision 0177, shape list item 3). Every walked token's next start is
+`max(last, start) + 1`: "a search that finds no last gives `start - 1`". In a reader's arm every
+found closer is after the start, but the long call's result may not be. Lean's cursor is always
+past the start.
+
+**Closure:** make each rule's exits carry whether their last is at the start at least (the long
+function taking the max itself, off the hot path), so an arm whose exits all are needs no max.
