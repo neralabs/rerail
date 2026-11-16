@@ -177,12 +177,21 @@ load of 35–75. The full tables are in t37.
 | The same turns before change 5 | 115–183 s | 242–272 s |
 | Two cold runs at once | 152 s, 156 s | 471 s, 328 s |
 | The same two runs again, at once | 28 s, 70 s | — |
+| Same code, after the fixtures fix: C after A, then A | 10 s, 6 s | 27 s, 19 s |
+| Two `--live` sessions side by side: first verdicts | 110 s, 111 s | — |
+| … then a body edit saved in one (the other sees nothing) | 3–10 s to its verdict | — |
+| `live-test-remote` on the M3 Max, cold in its new home: first verdict | 160 s | — |
+| … then a body edit saved here | 2–3 s to its verdict | — |
 | One cold run, a new Relax build | 87–157 s | 354–409 s |
 
-What a switch still redoes:
-- the engine crate's own store, because its build script writes the checkout's absolute path
-  into `RERAIL_FIXTURES_DIR` and `RERAIL_ORACLES_DIR`, and its build ID changes with any source;
+What a switch between different code still redoes:
+- the engine crate's own store, because its build ID (`RERAIL_ENGINE_BUILD_ID`) hashes all its
+  sources. (Its build script no longer writes the checkout's path into `RERAIL_FIXTURES_DIR`:
+  without an override that comes from `.cargo/config.toml`, the same path under the mount.)
 - the native cargo step, about 7 s, because a slot keeps only its last native build.
+
+Two live sessions, one per worktree, run side by side: each patches the edits saved in its own
+checkout, though both are mounted at one path, and the other's session sees no event.
 
 ## How the caches stay bounded
 
@@ -230,7 +239,8 @@ These must hold. A change to the fork, the patches or the commands that breaks o
    (link order, host/target order, directory order).
 7. **Concurrent runs are safe and share.** Two runs at once in different worktrees both pass. One
    waits on the other's build-script claim and takes its outputs instead of running the script
-   twice. Neither deletes a store the other holds.
+   twice. Neither deletes a store the other holds. Two live sessions side by side each patch only
+   their own checkout's edits.
 8. **The caches stay bounded.** Each run dir's stores stay under their cap; native builds and
    script outputs are kept by reachability alone; a run dir no run uses goes after 6 idle hours;
    two installed versions stay. Nothing is removed while a Relax process uses it.
@@ -241,9 +251,14 @@ These must hold. A change to the fork, the patches or the commands that breaks o
 
 ## Known limits
 
-- `--live` sessions in two worktrees at once have not been tested side by side; single runs at
-  once have (invariant 7).
-- A live session holds about 6 GB.
-- `live-test-remote` does not set `RELAX_SHARED_OPEN` or `RELAX_SHARE` on the host yet.
+- A live session holds about 6.5–7.5 GB.
+- A change in the set of native packages (a new `-sys` crate or grammar) moves every native
+  package's OUT_DIR (cargo's target for the selection is named by the set), so every build script
+  that reaches one runs again once, and the crates above them recompile.
+- `live-test-remote` runs Relax on the host as here (`RELAX_SHARE`, `RELAX_SHARED_OPEN`,
+  `RELAX_CACHE_MAX`), with its home under the host's farm root
+  (`<farm root>/<this machine's ~/Library/Caches/rerail-farm/relax-home>`), never the host's
+  `~/.relax`. `clean-target` does not run on hosts; there the cap bounds the live run dir, and
+  the farm's own prune keeps the disk free.
 - Relax checks only the functions a test reaches. A variant that a test never calls compiles
   "fine" under Relax.

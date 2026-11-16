@@ -106,8 +106,9 @@ worktree's first run of code another has run takes about 15 s, and runs in two w
 whose code differs take turns at 25–40 s. Without it a worktree's first run is cold (5–10 min). The patch
 keys a build script's rerun on the native outputs it reaches, not the whole native receipt, so
 an engine edit no longer reruns every script and drops the stores of every crate above them. The build
-script does not switch versions while a Relax session runs. A live session holds about 6 GB, and `target/relax` grows to
-about 13 GB per worktree, so run `relax clean` when a worktree's work ends.
+script does not switch versions while a Relax session runs. A live session holds about 6 GB. The shared run dir's stores
+stay under `RELAX_CACHE_MAX` (8 GB), and `clean-target` removes a run dir no run has used for 6
+hours (scripts/dev/relax/README.md, "How the caches stay bounded").
 
 ### Special builds
 
