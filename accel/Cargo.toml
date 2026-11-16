@@ -14,6 +14,7 @@ ane = []
 
 [dependencies]
 rayon = "=1.12.0"
+parking_lot = "0.12"
 sha2 = "0.10"
 libc = "0.2.189"
 rerail-forest = { path = "../forest" }

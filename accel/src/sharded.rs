@@ -1,8 +1,9 @@
-//! The atom arena's lock, sharded by reader (decision 0279 §7). A shared read lock is still a write of one word
+//! A lock sharded by reader (decision 0279 §7), for state read far more than written: the atom arena and the
+//! planner's relation names. A shared read lock is still a write of one word
 //! that every reader shares: a join that reads texts row by row on 16 threads spent its time on that word
 //! (`lock_shared_slow`, 0278 §4). Here each thread reads under a shard of its own, given round-robin at its first
 //! read, so the pool's threads write no word another reads. A writer takes every shard, in order: writes are rare
-//! (a batch of interned atoms, a stored segment), reads are per text.
+//! (a batch of interned atoms, a stored segment, a relation named for the first time), reads are per text or name.
 //!
 //! As `parking_lot::RwLock`, which it replaces: not reentrant for a reader while a writer waits, no poisoning.
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -14,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[repr(align(128))]
 struct Shard(RwLock<()>);
 
-pub(super) struct Sharded<T> {
+pub struct Sharded<T> {
     shards: Box<[Shard]>,
     value: UnsafeCell<T>,
 }
@@ -32,23 +33,23 @@ std::thread_local! {
 
 impl<T> Sharded<T> {
     /// As many shards as threads can run at once (rounded up to a power of two, 8 to 64).
-    pub(super) fn new(value: T) -> Self {
+    pub fn new(value: T) -> Self {
         let n = std::thread::available_parallelism().map_or(8, |n| n.get()).next_power_of_two().clamp(8, 64);
         Sharded { shards: (0..n).map(|_| Shard(RwLock::new(()))).collect(), value: UnsafeCell::new(value) }
     }
 
     #[inline]
-    pub(super) fn read(&self) -> ReadGuard<'_, T> {
+    pub fn read(&self) -> ReadGuard<'_, T> {
         let shard = &self.shards[SHARD.with(|s| *s) & (self.shards.len() - 1)];
         ReadGuard { _shard: shard.0.read(), value: self.value.get() }
     }
 
-    pub(super) fn write(&self) -> WriteGuard<'_, T> {
+    pub fn write(&self) -> WriteGuard<'_, T> {
         WriteGuard { _shards: self.shards.iter().map(|s| s.0.write()).collect(), value: self.value.get() }
     }
 }
 
-pub(super) struct ReadGuard<'a, T> {
+pub struct ReadGuard<'a, T> {
     _shard: RwLockReadGuard<'a, ()>,
     value: *const T,
 }
@@ -62,7 +63,7 @@ impl<T> Deref for ReadGuard<'_, T> {
     }
 }
 
-pub(super) struct WriteGuard<'a, T> {
+pub struct WriteGuard<'a, T> {
     _shards: Vec<RwLockWriteGuard<'a, ()>>,
     value: *mut T,
 }

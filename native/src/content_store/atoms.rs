@@ -32,7 +32,6 @@ use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, Instant};
 
 mod map;
-mod sharded;
 mod vtab;
 pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
@@ -345,7 +344,7 @@ pub struct Atoms {
     /// The store's identity (`store_identity`) when these are a store's own atoms: a store created again at the
     /// path has another, and atoms of its own (`for_store`).
     identity: Option<i64>,
-    state: sharded::Sharded<State>,
+    state: rerail_accel::sharded::Sharded<State>,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
     lease: Mutex<Option<File>>,
@@ -604,7 +603,7 @@ impl Atoms {
             path,
             identity,
             // Atom 0, the empty string, is the schema's first segment.
-            state: sharded::Sharded::new(State { atoms: Interner::default(), since: None, all_held: 1, map: None }),
+            state: rerail_accel::sharded::Sharded::new(State { atoms: Interner::default(), since: None, all_held: 1, map: None }),
             lease: Mutex::new(None),
             leased: AtomicBool::new(false),
             wanted: Mutex::new((None, false)),

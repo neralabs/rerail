@@ -3153,6 +3153,7 @@ dependencies = [
  "libc",
  "metal",
  "objc",
+ "parking_lot",
  "rayon",
  "rerail-forest",
  "sha2 0.10.9",
