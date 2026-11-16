@@ -29,6 +29,8 @@ pub mod program;
 pub mod refs;
 pub mod relation;
 pub mod rows;
+pub mod scratch;
+pub mod sort;
 #[cfg(target_os = "macos")]
 pub mod gpu;
 

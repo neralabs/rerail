@@ -106,10 +106,12 @@ impl Relation {
         }
     }
 
+    #[inline]
     pub fn is_frozen(&self) -> bool {
         self.flags.load(Acquire) & FROZEN != 0
     }
 
+    #[inline]
     pub fn is_delta(&self) -> bool {
         self.flags.load(Relaxed) & DELTA != 0
     }
@@ -131,11 +133,13 @@ impl Relation {
         w < d.len() && (d[w] >> (id & 63)) & 1 == 1
     }
 
+    #[inline]
     pub fn index(&self, i: usize) -> &Index {
         &self.indexes.as_slice()[i]
     }
 
     /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket.
+    #[inline]
     pub fn group(&self, i: usize, h: u64) -> &[u32] {
         let ix = self.index(i);
         let o = ix.offs.as_slice();
@@ -277,163 +281,266 @@ pub struct FreezeStats {
 }
 
 /// Freezes an open relation: set semantics, the canonical order, indexes, dead bits and statistics (see the
-/// module's comment). `base` is the delta's base. After this, the relation only changes by a new delta.
+/// module's comment). `base` is the delta's base. After this, the relation only changes by a new delta. Its
+/// temporaries come from this thread's scratch (`scratch::with`).
 pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation>) -> FreezeStats {
+    crate::scratch::with(|s| freeze_in(block, rel, spec, base, s))
+}
+
+/// Bits a value range needs.
+fn bits_for(range: u64) -> u32 {
+    64 - range.leading_zeros()
+}
+
+/// Sorts `ids` (rows of `cols`: column `c`'s `n` values at `cols[c * n..]`, ranging over `lo[c]..=hi[c]`) into the
+/// canonical order of `key`. When the key packs into 64 bits (each column less its minimum, in the bits its range
+/// needs, the first highest), the packed keys are radix sorted with the ids and returned alongside them: equal
+/// keys are equal rows. Else the ids are sorted by comparing the rows.
+pub(crate) fn sort_canonical<'s>(
+    scratch: &'s crate::scratch::Scratch,
+    cols: &[i64],
+    n: usize,
+    key: &[usize],
+    lo: &[i64],
+    hi: &[i64],
+    ids: &mut [u32],
+) -> Option<&'s [u64]> {
+    let m = ids.len();
+    let kbits: Vec<u32> = key.iter().map(|&c| if n == 0 { 0 } else { bits_for((hi[c] as i128 - lo[c] as i128) as u64) }).collect();
+    let packed_bits: u32 = kbits.iter().sum();
+    let val = |c: usize, i: usize| cols[c * n + i];
+    if packed_bits > 64 {
+        ids.sort_unstable_by(|&x, &y| {
+            for &c in key {
+                let o = val(c, x as usize).cmp(&val(c, y as usize));
+                if o != Ordering::Equal {
+                    return o;
+                }
+            }
+            Ordering::Equal
+        });
+        return None;
+    }
+    let keys: &mut [u64] = scratch.take(m);
+    for (k, &i) in keys.iter_mut().zip(ids.iter()) {
+        let mut x = 0u64;
+        for (j, &c) in key.iter().enumerate() {
+            // A column of one value takes no bits; `checked_shl` keeps a 64-bit shift of an empty key defined.
+            x = x.checked_shl(kbits[j]).unwrap_or(0) | (val(c, i as usize) as i128 - lo[c] as i128) as u64;
+        }
+        *k = x;
+    }
+    let (tk, ti) = (scratch.take::<u64>(m), scratch.take::<u32>(m));
+    crate::sort::radix_pairs(keys, ids, packed_bits, tk, ti);
+    Some(keys)
+}
+
+/// Whether the row at sorted place `p` equals the one before it (`sort_canonical`'s keys, or the rows).
+#[inline]
+pub(crate) fn same_row(cols: &[i64], n: usize, key: &[usize], keys: Option<&[u64]>, ids: &[u32], p: usize) -> bool {
+    match keys {
+        Some(k) => k[p] == k[p - 1],
+        None => key.iter().all(|&c| cols[c * n + ids[p] as usize] == cols[c * n + ids[p - 1] as usize]),
+    }
+}
+
+/// The canonical order's columns: the order key's, then the rest.
+pub(crate) fn canonical_cols(spec: &Spec, a: usize) -> Vec<usize> {
+    spec.order.iter().map(|&c| c as usize).chain((0..a).filter(|c| !spec.order.contains(&(*c as u16)))).collect()
+}
+
+/// `freeze`, its temporaries from `scratch`. How, for `n` rows of `a` columns:
+///
+/// - each column is read once, a chunk at a time, into `n` values;
+/// - the order key is packed into a `u64` (each column less its minimum, in the bits its range needs) and radix
+///   sorted with the row ids, when it fits 64 bits; else the ids are sorted by comparing the rows;
+/// - a duplicate is a row whose packed key equals the one before it;
+/// - each column is written back in order, a chunk at a time;
+/// - an index's buckets are filled by one counting pass over the rows in order, its bucket count from the
+///   number of distinct keys (a bitmap of the key's range, when that is small).
+pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation>, scratch: &crate::scratch::Scratch) -> FreezeStats {
     assert!(!rel.is_frozen());
     let a = rel.arity as usize;
     let n = rel.rows.len() as usize;
     let before = block.used();
+    let br = rel.base_rows as usize;
 
     // Dead bits: its kills, over the base's rows and its own.
-    let total = rel.base_rows as usize + n;
-    let mut dead = vec![0u64; total.div_ceil(64).max(1)];
-    for k in 0..rel.killed.len() {
+    let total = br + n;
+    let dead: &mut [u64] = scratch.zeroed(total.div_ceil(64).max(1));
+    let nkilled = rel.killed.len();
+    let mut kills_base = false;
+    for k in 0..nkilled {
         let id = rel.killed.get(k, 0) as usize;
         dead[id >> 6] |= 1 << (id & 63);
+        kills_base |= id < br;
     }
+    let is_dead = |dead: &[u64], id: usize| dead[id >> 6] >> (id & 63) & 1 == 1;
 
-    // The canonical order of its own rows, read once into a sort key.
-    let key: Vec<usize> = spec.order.iter().map(|&c| c as usize).chain((0..a).filter(|c| !spec.order.contains(&(*c as u16)))).collect();
-    let mut vals = vec![0i64; n * a];
-    for i in 0..n {
-        for (j, &c) in key.iter().enumerate() {
-            vals[i * a + j] = rel.rows.get(i as u32, c);
+    // Each column read once, and its range over the rows.
+    let cols: &mut [i64] = scratch.take(n * a);
+    let mut lo = vec![i64::MAX; a];
+    let mut hi = vec![i64::MIN; a];
+    for c in 0..a {
+        let col = &mut cols[c * n..(c + 1) * n];
+        rel.rows.read_col(c, n as u32, col);
+        for &v in col.iter() {
+            lo[c] = lo[c].min(v);
+            hi[c] = hi[c].max(v);
         }
     }
-    let row = |i: usize| &vals[i * a..i * a + a];
-    let mut ids: Vec<u32> = (0..n as u32).filter(|&i| dead[(rel.base_rows + i) as usize >> 6] >> ((rel.base_rows + i) & 63) & 1 == 0).collect();
-    ids.sort_unstable_by(|&x, &y| row(x as usize).cmp(row(y as usize)));
+    let val = |c: usize, i: usize| cols[c * n + i];
+
+    // The canonical order: the order key's columns, then the rest.
+    let key = canonical_cols(spec, a);
+    let ids: &mut [u32] = scratch.take(n);
+    let mut m = 0;
+    for i in 0..n {
+        if nkilled == 0 || !is_dead(dead, br + i) {
+            ids[m] = i as u32;
+            m += 1;
+        }
+    }
+    let ids = &mut ids[..m];
+    let keys = sort_canonical(scratch, cols, n, &key, &lo, &hi, ids);
+    let same = |p: usize| same_row(cols, n, &key, keys, ids, p);
 
     // Set semantics: a row once, and in a delta, not a row its base still holds live.
-    let mut order = Vec::with_capacity(ids.len());
-    let mut dropped = 0u64;
-    let base_live = |r: &[i64]| -> bool {
+    let base_live = |i: usize| -> bool {
         let Some(b) = base else { return false };
-        let (mut lo, mut hi) = (0u32, b.rows.len());
-        while lo < hi {
-            let m = (lo + hi) / 2;
+        let (mut l, mut h) = (0u32, b.rows.len());
+        while l < h {
+            let mid = (l + h) / 2;
             let mut o = Ordering::Equal;
-            for (j, &c) in key.iter().enumerate() {
-                o = b.rows.get(m, c).cmp(&r[j]);
+            for &c in &key {
+                o = b.rows.get(mid, c).cmp(&val(c, i));
                 if o != Ordering::Equal {
                     break;
                 }
             }
             match o {
-                Ordering::Less => lo = m + 1,
-                Ordering::Greater => hi = m,
-                Ordering::Equal => return !b.dead_bit(m) && dead[m as usize >> 6] >> (m & 63) & 1 == 0,
+                Ordering::Less => l = mid + 1,
+                Ordering::Greater => h = mid,
+                Ordering::Equal => return !b.dead_bit(mid) && !is_dead(dead, mid as usize),
             }
         }
         false
     };
     // Decided against the kills alone: a duplicate dropped here is one of its own rows, never a base row.
-    let drops: Vec<bool> = ids
-        .iter()
-        .enumerate()
-        .map(|(p, &i)| (p > 0 && row(ids[p - 1] as usize) == row(i as usize)) || base_live(row(i as usize)))
-        .collect();
-    for (&i, drop) in ids.iter().zip(drops) {
-        if drop {
-            let id = (rel.base_rows + i) as usize;
-            dead[id >> 6] |= 1 << (id & 63);
-            dropped += 1;
-        } else {
-            order.push(rel.base_rows + i);
+    let order: &mut [u32] = scratch.take(m);
+    let mut live = 0;
+    for p in 0..m {
+        let i = ids[p] as usize;
+        if (p > 0 && same(p)) || base_live(i) {
+            continue;
         }
+        order[live] = i as u32;
+        live += 1;
     }
-    // Sorted in place: the live rows moved into canonical order, so an own row's id is its place in that order.
-    // No order array, and no dead bits for its own rows (the dropped ones are gone).
-    let live = order.len();
+    let order = &order[..live];
+    let dropped = (m - live) as u64;
+
+    // Sorted in place: each column written back in canonical order, so an own row's id is its place in that
+    // order. No order array, and no dead bits for its own rows (the dropped ones are gone). The statistics are
+    // each column's range over the live rows.
+    let moved: &mut [i64] = scratch.take(live);
+    let sp: *mut ColStats = block.alloc_t(a);
     for c in 0..a {
-        let moved: Vec<i64> = order.iter().map(|&id| rel.rows.get(id - rel.base_rows, c)).collect();
-        for (j, &v) in moved.iter().enumerate() {
-            unsafe { rel.rows.put(j as u32, c, v) };
+        let (mut l, mut h) = (i64::MAX, i64::MIN);
+        for (d, &i) in moved.iter_mut().zip(order) {
+            let v = val(c, i as usize);
+            *d = v;
+            l = l.min(v);
+            h = h.max(v);
         }
+        rel.rows.write_col(c, moved);
+        unsafe { *sp.add(c) = ColStats { min: l, max: h } };
     }
     rel.rows.len.store(live as u32, Release);
-    for (j, id) in order.iter_mut().enumerate() {
-        *id = rel.base_rows + j as u32;
-    }
-    // Dead bits: only the base's rows a delta killed.
-    let base_words = if (0..rel.killed.len()).any(|k| (rel.killed.get(k, 0) as u32) < rel.base_rows) {
-        (rel.base_rows as usize).div_ceil(64)
-    } else {
-        0
-    };
 
     // Indexes: each key's rows grouped, in canonical order within a group.
     let ixp: *mut crate::relation::Index = block.alloc_t(spec.indexes.len().max(1));
-    for (x, cols) in spec.indexes.iter().enumerate() {
-        assert!(cols.len() <= MAX_KEY);
-        let lead = &spec.order[..cols.len().min(spec.order.len())];
-        if cols.len() <= spec.order.len() && cols.iter().all(|c| lead.contains(c)) {
-            unsafe {
-                let ix = ixp.add(x);
-                (*ix).ncols = cols.len() as u32;
-                (*ix).ordered = 1;
-                for (j, &c) in cols.iter().enumerate() {
-                    (*ix).key[j] = c;
-                }
-            }
+    for (x, icols) in spec.indexes.iter().enumerate() {
+        assert!(icols.len() <= MAX_KEY);
+        let lead = &spec.order[..icols.len().min(spec.order.len())];
+        let ix = unsafe { &mut *ixp.add(x) };
+        ix.ncols = icols.len() as u32;
+        for (j, &c) in icols.iter().enumerate() {
+            ix.key[j] = c;
+        }
+        if icols.len() <= spec.order.len() && icols.iter().all(|c| lead.contains(c)) {
+            ix.ordered = 1;
             continue;
         }
-        let mut keyed: Vec<(u64, u32)> = order
-            .iter()
-            .map(|&id| {
-                let mut k = [0i64; MAX_KEY];
-                for (j, &c) in cols.iter().enumerate() {
-                    k[j] = rel.own(id, c as usize);
+        let kv = |j: usize| -> [i64; MAX_KEY] {
+            let mut k = [0i64; MAX_KEY];
+            for (t, &c) in icols.iter().enumerate() {
+                k[t] = val(c as usize, order[j] as usize);
+            }
+            k
+        };
+        let nk = icols.len();
+        // Distinct keys: a bitmap over the key's packed range when it is at most 2^24, else the hashes sorted.
+        let ibits: Vec<u32> = icols.iter().map(|&c| bits_for((hi[c as usize] as i128 - lo[c as usize] as i128) as u64)).collect();
+        let span: u32 = ibits.iter().sum();
+        let distinct = if live == 0 {
+            0
+        } else if span <= 24 {
+            let words: &mut [u64] = scratch.zeroed((1usize << span).div_ceil(64));
+            let mut d = 0usize;
+            for j in 0..live {
+                let k = kv(j);
+                let mut p = 0u64;
+                for (t, &c) in icols.iter().enumerate() {
+                    p = (p << ibits[t]) | (k[t] - lo[c as usize]) as u64;
                 }
-                (key_hash(&k[..cols.len()]), id)
-            })
-            .collect();
-        let mut hs: Vec<u64> = keyed.iter().map(|x| x.0).collect();
-        hs.sort_unstable();
-        hs.dedup();
-        let cap = hs.len().next_power_of_two().max(1);
+                let (w, b) = ((p >> 6) as usize, p & 63);
+                d += (words[w] >> b & 1 == 0) as usize;
+                words[w] |= 1 << b;
+            }
+            d
+        } else {
+            let hs: &mut [u64] = scratch.take(live);
+            for (j, h) in hs.iter_mut().enumerate() {
+                *h = key_hash(&kv(j)[..nk]);
+            }
+            hs.sort_unstable();
+            1 + hs.windows(2).filter(|w| w[0] != w[1]).count()
+        };
+        let cap = distinct.next_power_of_two().max(1);
         let mask = (cap - 1) as u64;
-        keyed.sort_by_key(|&(h, _)| h & mask); // stable: canonical order within a bucket
+        // One counting pass: each row's bucket, the buckets' sizes, then the rows placed in order.
+        let bucket: &mut [u32] = scratch.take(live);
         let bp: *mut u32 = block.alloc_t(cap + 1);
-        let rp: *mut u32 = block.alloc_t(keyed.len().max(1));
+        let rp: *mut u32 = block.alloc_t(live.max(1));
         let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };
-        for &(h, _) in &keyed {
-            offs[(h & mask) as usize + 1] += 1;
+        for (j, b) in bucket.iter_mut().enumerate() {
+            *b = (key_hash(&kv(j)[..nk]) & mask) as u32;
+            offs[*b as usize + 1] += 1;
         }
         for b in 0..cap {
             offs[b + 1] += offs[b];
         }
-        for (j, &(_, id)) in keyed.iter().enumerate() {
-            unsafe { *rp.add(j) = id };
+        let at: &mut [u32] = scratch.take(cap);
+        at.copy_from_slice(&offs[..cap]);
+        let rows_out = unsafe { std::slice::from_raw_parts_mut(rp, live.max(1)) };
+        for (j, &b) in bucket.iter().enumerate() {
+            rows_out[at[b as usize] as usize] = (br + j) as u32;
+            at[b as usize] += 1;
         }
+        ix.mask = mask;
         unsafe {
-            let ix = ixp.add(x);
-            (*ix).ncols = cols.len() as u32;
-            for (j, &c) in cols.iter().enumerate() {
-                (*ix).key[j] = c;
-            }
-            (*ix).mask = mask;
-            Span::set(&raw mut (*ix).offs, bp, cap + 1);
-            Span::set(&raw mut (*ix).rows, rp, keyed.len());
+            Span::set(&raw mut ix.offs, bp, cap + 1);
+            Span::set(&raw mut ix.rows, rp, live);
         }
     }
 
-    // Statistics: each column's range over its live rows.
-    let sp: *mut ColStats = block.alloc_t(a);
-    for c in 0..a {
-        let (mut lo, mut hi) = (i64::MAX, i64::MIN);
-        for &id in &order {
-            let v = rel.own(id, c);
-            lo = lo.min(v);
-            hi = hi.max(v);
-        }
-        unsafe { *sp.add(c) = ColStats { min: lo, max: hi } };
-    }
-
+    // Dead bits: only the base's rows a delta killed.
     unsafe {
-        if base_words > 0 {
+        if kills_base {
+            let base_words = br.div_ceil(64);
             // The last word's bits past the base are own ids, which moved: none of them is dead.
-            let tail = rel.base_rows as usize % 64;
+            let tail = br % 64;
             if tail != 0 {
                 dead[base_words - 1] &= (1u64 << tail) - 1;
             }
@@ -445,9 +552,9 @@ pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation
         Span::set(&rel.stats, sp, a);
     }
     rel.nindex.store(spec.indexes.len() as u32, Relaxed);
-    rel.live.store(order.len() as u32, Relaxed);
+    rel.live.store(live as u32, Relaxed);
     rel.flags.fetch_or(FROZEN, Release);
-    FreezeStats { rows: n as u64, live: order.len() as u64, dropped, bytes: (block.used() - before) as u64 }
+    FreezeStats { rows: n as u64, live: live as u64, dropped, bytes: (block.used() - before) as u64 }
 }
 
 /// A relation as readers see it: a full relation alone, or a base and its delta read as one. Ids `..base_rows`
@@ -463,11 +570,13 @@ impl<'a> View<'a> {
         View { base: None, top: r }
     }
 
+    #[inline]
     pub fn arity(&self) -> usize {
         self.top.arity as usize
     }
 
     /// Every id, live or not: `0 .. total`.
+    #[inline]
     pub fn total(&self) -> u32 {
         self.top.base_rows + self.top.rows.len()
     }
@@ -539,21 +648,22 @@ impl<'a> View<'a> {
         self.probe_iter(i, key).collect()
     }
 
-    /// `probe`, read in place: both hash groups filtered and merged as they are walked, no allocation.
-    pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> impl Iterator<Item = u32> + 'k {
-        let h = key_hash(key);
+    /// `probe`, read in place: both groups filtered and merged as they are walked, no allocation.
+    pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> Probe<'k> {
         let ix = self.top.index(i);
         let cols = &ix.key[..ix.ncols as usize];
-        let matches = move |id: &u32| self.live(*id) && cols.iter().zip(key).all(|(&c, &k)| self.get(*id, c as usize) == k);
-        if ix.ordered == 1 {
+        let (own, based, exact) = if ix.ordered == 1 {
             let own = leading(self.top, cols, key);
-            let own = Ids::Range(self.top.base_rows + own.start..self.top.base_rows + own.end).filter(matches);
             let based = self.base.map_or(0..0, |b| leading(b, cols, key));
-            return Merge::new(self, Ids::Range(based).filter(matches), own);
-        }
-        let own = Ids::Slice(self.top.group(i, h).iter()).filter(matches);
-        let based: &[u32] = self.base.map_or(&[], |b| b.group(i, h));
-        Merge::new(self, Ids::Slice(based.iter()).filter(matches), own)
+            (Ids::Range(self.top.base_rows + own.start..self.top.base_rows + own.end), Ids::Range(based), true)
+        } else {
+            let h = key_hash(key);
+            let based: &[u32] = self.base.map_or(&[], |b| b.group(i, h));
+            (Ids::Slice(self.top.group(i, h).iter()), Ids::Slice(based.iter()), false)
+        };
+        let own0 = self.top.rows.reader(cols[0] as usize);
+        let base0 = self.base.map_or(own0, |b| b.rows.reader(cols[0] as usize));
+        Probe { v: *self, key, cols, own0, base0, exact, own, based, ha: None, hb: None, primed: false }
     }
 
     /// A digest of the live rows in canonical order: the same for the same set, whatever wrote it, in any order.
@@ -567,6 +677,94 @@ impl<'a> View<'a> {
             n += 1;
         }
         crate::mix(h, n as i64)
+    }
+}
+
+/// A probe's answer, in canonical order: a frozen relation's own rows (always live: its dead bits name only its
+/// base's rows), and when it is a delta, its base's live rows, merged. A leading key's ranges are exact; a bucket's
+/// rows are checked against the key.
+pub struct Probe<'k> {
+    v: View<'k>,
+    /// The key, and its first column resolved once: the delta's (or the full relation's) own, and its base's. A
+    /// key of more columns checks the rest by `cols` (`rest_match`).
+    key: &'k [i64],
+    cols: &'k [u16],
+    own0: crate::rows::ColRead,
+    base0: crate::rows::ColRead,
+    exact: bool,
+    own: Ids<'k>,
+    based: Ids<'k>,
+    ha: Option<u32>,
+    hb: Option<u32>,
+    primed: bool,
+}
+
+/// A key's columns past its first, checked on `rows` at `row`.
+#[cold]
+#[inline(never)]
+fn rest_match(rows: &Rows, cols: &[u16], key: &[i64], row: u32) -> bool {
+    cols.iter().zip(key).skip(1).all(|(&c, &k)| rows.get(row, c as usize) == k)
+}
+
+impl Probe<'_> {
+    #[inline(always)]
+    fn next_own(&mut self) -> Option<u32> {
+        let br = self.v.top.base_rows;
+        loop {
+            let id = self.own.next()?;
+            if self.exact {
+                return Some(id);
+            }
+            let row = id - br;
+            if self.own0.get(row) == self.key[0] && (self.cols.len() == 1 || rest_match(&self.v.top.rows, self.cols, self.key, row)) {
+                return Some(id);
+            }
+        }
+    }
+
+    #[inline]
+    fn next_based(&mut self) -> Option<u32> {
+        let b = self.v.base?;
+        loop {
+            let id = self.based.next()?;
+            if self.v.top.dead_bit(id) {
+                continue;
+            }
+            if self.exact || (self.base0.get(id) == self.key[0] && (self.cols.len() == 1 || rest_match(&b.rows, self.cols, self.key, id))) {
+                return Some(id);
+            }
+        }
+    }
+}
+
+impl Iterator for Probe<'_> {
+    type Item = u32;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<u32> {
+        if self.v.base.is_none() {
+            return self.next_own();
+        }
+        if !self.primed {
+            self.primed = true;
+            self.ha = self.next_based();
+            self.hb = self.next_own();
+        }
+        let take_a = match (self.ha, self.hb) {
+            (Some(x), Some(y)) => self.v.cmp(x, y) != Ordering::Greater,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => return None,
+        };
+        if take_a {
+            let x = self.ha;
+            self.ha = self.next_based();
+            x
+        } else {
+            let y = self.hb;
+            self.hb = self.next_own();
+            y
+        }
     }
 }
 
@@ -594,15 +792,8 @@ fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> std::ops::Range<u32> {
     let (mut lo, mut hi) = (0u32, rel.rows.len());
     for &oc in &rel.okey[..cols.len()] {
         let k = key[cols.iter().position(|&c| c == oc).expect("a leading column")];
-        let lb = |mut a: u32, mut b: u32, k: i64| {
-            while a < b {
-                let m = (a + b) / 2;
-                if rel.rows.get(m, oc as usize) < k { a = m + 1 } else { b = m }
-            }
-            a
-        };
-        let a = lb(lo, hi, k);
-        hi = lb(a, hi, k.saturating_add(1));
+        let a = rel.rows.lower_bound(oc as usize, lo, hi, k);
+        hi = rel.rows.upper_from(oc as usize, a, hi, k);
         lo = a;
     }
     lo..hi
@@ -636,3 +827,78 @@ impl<A: Iterator<Item = u32>, B: Iterator<Item = u32>> Iterator for Merge<'_, A,
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::kind;
+    use std::collections::BTreeSet;
+
+    fn rows_of(v: &View) -> Vec<Vec<i64>> {
+        v.ordered_iter().map(|id| v.row(id)).collect()
+    }
+
+    /// Freeze keeps a set in canonical order, a delta's set being its base's less its kills plus its own rows; the
+    /// probes answer as a scan does. Both sorts: the packed key, and a key too wide to pack.
+    #[test]
+    fn freeze_and_probes_agree_with_a_set() {
+        for wide in [false, true] {
+            let spec = Spec { widths: vec![8, 4, 4], order: vec![1, 0], indexes: vec![vec![1], vec![2]], min_log: 4 };
+            let big = if wide { 1i64 << 50 } else { 1 };
+            let mut x = 7u64;
+            let mut next = |m: u64| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x % m) as i64
+            };
+            let rows: Vec<[i64; 3]> = (0..3_000).map(|_| [next(40) * big, next(30), next(500)]).collect();
+            let block = Block::anon(kind::FACTS, 64 << 20);
+            let lock = Mutex::new(());
+            let rel = Relation::create(&block, &spec, None);
+            RelW { block: &block, rel, lock: &lock }.extend(&rows.iter().flatten().copied().collect::<Vec<_>>());
+            freeze(&block, rel, &spec, None);
+            let set: BTreeSet<(i64, i64, i64)> = rows.iter().map(|r| (r[1], r[0], r[2])).collect();
+            let v = View::full(rel);
+            let want: Vec<Vec<i64>> = set.iter().map(|&(b, a, c)| vec![a, b, c]).collect();
+            assert_eq!(rows_of(&v), want, "wide {wide}: the set, in canonical order");
+
+            // A delta: kills of base rows and of its own, repeats of base rows, new rows.
+            let dblock = Block::anon(kind::FACTS, 16 << 20);
+            let d = Relation::create(&dblock, &spec, Some(rel));
+            let w = RelW { block: &dblock, rel: d, lock: &lock };
+            let mut now = set.clone();
+            for id in (0..rel.rows.len()).step_by(97) {
+                w.kill(id);
+                let r = v.row(id);
+                now.remove(&(r[1], r[0], r[2]));
+            }
+            for id in (5..rel.rows.len()).step_by(211) {
+                let r = v.row(id);
+                w.push(&r);
+                now.insert((r[1], r[0], r[2]));
+            }
+            for i in 0..300 {
+                let r = [next(50) * big, 30 + next(5), i];
+                let own = w.push(&r);
+                if i % 7 == 0 {
+                    w.kill(own);
+                } else {
+                    now.insert((r[1], r[0], r[2]));
+                }
+            }
+            freeze(&dblock, d, &spec, Some(rel));
+            let dv = View { base: Some(rel), top: d };
+            let want: Vec<Vec<i64>> = now.iter().map(|&(b, a, c)| vec![a, b, c]).collect();
+            assert_eq!(rows_of(&dv), want, "wide {wide}: the delta's set");
+            assert_eq!(dv.live_len(), now.len());
+            for (ix, col) in [(0usize, 1usize), (1, 2)] {
+                for k in [0i64, 3, 17, 31, 33, 250, 499, 1_000] {
+                    let got: Vec<Vec<i64>> = dv.probe_iter(ix, &[k]).map(|id| dv.row(id)).collect();
+                    let scan: Vec<Vec<i64>> = want.iter().filter(|r| r[col] == k).cloned().collect();
+                    assert_eq!(got, scan, "wide {wide}: probe of column {col} for {k}");
+                }
+            }
+        }
+    }
+}

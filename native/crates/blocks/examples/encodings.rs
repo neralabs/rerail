@@ -185,6 +185,62 @@ kernel void scan_group(device const uint* w [[buffer(0)]], device atomic_uint* o
     s = simd_sum(s);
     if (simd_is_first()) atomic_fetch_add_explicit(out, s, memory_order_relaxed);
 }
+// Packing (frame of reference): the column's minimum and maximum first, then each thread packs one group of 32
+// values, `PB` bits each (compiled in), into exactly PB words: no word is shared between threads, so no atomics.
+kernel void minmax(device const uint* v [[buffer(0)]], device atomic_uint* mm [[buffer(1)]], constant uint& n [[buffer(2)]],
+                   uint i [[thread_position_in_grid]], uint t [[threads_per_grid]]) {
+    uint lo = 0xFFFFFFFFu, hi = 0u;
+    for (uint j = i; j < n; j += t) { uint x = v[j]; lo = min(lo, x); hi = max(hi, x); }
+    lo = simd_min(lo);
+    hi = simd_max(hi);
+    if (simd_is_first()) { atomic_fetch_min_explicit(&mm[0], lo, memory_order_relaxed); atomic_fetch_max_explicit(&mm[1], hi, memory_order_relaxed); }
+}
+constant uint PB [[function_constant(1)]];
+// One group's 32 values into PB words at `o`, word k at o[k * stride].
+inline void pack_group(device const uint* v, uint base, uint n, uint lo, device uint* o, uint stride) {
+    uint cur = 0u, have = 0u, k = 0u;
+    #pragma unroll
+    for (uint r = 0u; r < 32u; r++) {
+        uint j = base + r;
+        uint x = (j < n ? v[j] : lo) - lo;
+        cur |= x << have;
+        have += PB;
+        if (have >= 32u) { o[k * stride] = cur; k++; have -= 32u; cur = have == 0u ? 0u : x >> (PB - have); }
+    }
+}
+// The CPU's layout: group g's words at g * PB (the same bit stream as 64-bit words).
+kernel void pack_seq(device const uint* v [[buffer(0)]], device uint* w [[buffer(1)]], constant uint& n [[buffer(2)]],
+                     constant uint& lo [[buffer(3)]], uint g [[thread_position_in_grid]]) {
+    pack_group(v, g * 32u, n, lo, w + g * PB, 1u);
+}
+// The scan's layout: word k of group g at k * groups + g, so a simdgroup's stores are coalesced.
+kernel void pack_inter(device const uint* v [[buffer(0)]], device uint* w [[buffer(1)]], constant uint& n [[buffer(2)]],
+                       constant uint& lo [[buffer(3)]], uint g [[thread_position_in_grid]], uint groups [[threads_per_grid]]) {
+    pack_group(v, g * 32u, n, lo, w + g, groups);
+}
+// Loads coalesced through threadgroup memory: 64 threads load their 64 groups (8 KB, rows padded to 33 words so
+// a thread's reads fall in distinct banks), then each packs its own.
+kernel void pack_tg(device const uint* v [[buffer(0)]], device uint* w [[buffer(1)]], constant uint& n [[buffer(2)]],
+                    constant uint& lo [[buffer(3)]], uint g [[thread_position_in_grid]], uint l [[thread_position_in_threadgroup]],
+                    uint tg [[threadgroup_position_in_grid]]) {
+    threadgroup uint vals[64 * 33];
+    uint base = tg * 64u * 32u;
+    for (uint r = 0u; r < 32u; r++) {
+        uint j = base + r * 64u + l;
+        uint q = r * 64u + l;
+        vals[(q >> 5) * 33u + (q & 31u)] = j < n ? v[j] : lo;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint cur = 0u, have = 0u, k = 0u;
+    device uint* o = w + g * PB;
+    #pragma unroll
+    for (uint r = 0u; r < 32u; r++) {
+        uint x = vals[l * 33u + r] - lo;
+        cur |= x << have;
+        have += PB;
+        if (have >= 32u) { o[k] = cur; k++; have -= 32u; cur = have == 0u ? 0u : x >> (PB - have); }
+    }
+}
 inline uint at(uint i, uint n) { return (i * 2654435761u) % n; }
 kernel void gather_plain(device const uint* v [[buffer(0)]], device atomic_uint* out [[buffer(1)]], constant uint& n [[buffer(2)]],
                          uint i [[thread_position_in_grid]]) {
@@ -262,6 +318,76 @@ kernel void gather_packed(device const uint* w [[buffer(0)]], device atomic_uint
     let (gp, a) = run(&pipe("gather_plain"), &bp, g, None);
     let (gk, b) = run(&pipe("gather_packed"), &bk, g, Some(e.bits));
     assert_eq!(a, b, "the packed gather sums the same");
+    // Packing on the GPU against the CPU's, the same column: the bit stream must be the CPU's, word for word.
+    let pipe_pb = |name: &str, bits: u32| {
+        let fc = FunctionConstantValues::new();
+        fc.set_constant_value_at_index((&raw const bits).cast(), MTLDataType::UInt, 1);
+        device.new_compute_pipeline_state_with_function(&lib.get_function(name, Some(fc)).unwrap()).unwrap()
+    };
+    let mm = device.new_buffer(8, opts);
+    let mmp = pipe("minmax");
+    let time = |f: &dyn Fn(&ComputeCommandEncoderRef)| -> f64 {
+        let mut best = f64::MAX;
+        for _ in 0..6 {
+            let cmd = queue.new_command_buffer();
+            let enc = cmd.new_compute_command_encoder();
+            f(enc);
+            enc.end_encoding();
+            let t = Instant::now();
+            cmd.commit();
+            cmd.wait_until_completed();
+            best = best.min(t.elapsed().as_secs_f64() * 1e3);
+        }
+        best
+    };
+    let t_mm = time(&|enc| {
+        unsafe { *(mm.contents() as *mut [u32; 2]) = [u32::MAX, 0] };
+        enc.set_compute_pipeline_state(&mmp);
+        enc.set_buffer(0, Some(&bp), 0);
+        enc.set_buffer(1, Some(&mm), 0);
+        enc.set_bytes(2, 4, (&raw const n).cast());
+        enc.dispatch_threads(MTLSize::new(1 << 20, 1, 1), MTLSize::new(256, 1, 1));
+    });
+    let [lo, hi] = unsafe { *(mm.contents() as *const [u32; 2]) };
+    let pbits = 32 - (hi - lo).leading_zeros();
+    assert_eq!((lo as i64, pbits), (e.base, e.bits), "the GPU's range is the CPU's");
+    let groups = (n as u64).div_ceil(32);
+    let out_seq = device.new_buffer(groups * pbits as u64 * 4 + 8, opts);
+    let out_inter = device.new_buffer(groups * pbits as u64 * 4 + 8, opts);
+    let out_tg = device.new_buffer(groups * pbits as u64 * 4 + 8, opts);
+    let packing = |name: &str, out: &Buffer, tgs: u64| {
+        let p = pipe_pb(name, pbits);
+        time(&|enc| {
+            enc.set_compute_pipeline_state(&p);
+            enc.set_buffer(0, Some(&bp), 0);
+            enc.set_buffer(1, Some(out), 0);
+            enc.set_bytes(2, 4, (&raw const n).cast());
+            enc.set_bytes(3, 4, (&raw const lo).cast());
+            enc.dispatch_threads(MTLSize::new(groups, 1, 1), MTLSize::new(tgs, 1, 1));
+        })
+    };
+    let t_seq = packing("pack_seq", &out_seq, 256);
+    let t_inter = packing("pack_inter", &out_inter, 256);
+    let t_tg = packing("pack_tg", &out_tg, 64);
+    let seq: &[u32] = unsafe { std::slice::from_raw_parts(out_seq.contents().cast(), groups as usize * bits) };
+    assert_eq!(seq, &words32[..groups as usize * bits], "the GPU packs the CPU's bit stream");
+    let tgw: &[u32] = unsafe { std::slice::from_raw_parts(out_tg.contents().cast(), groups as usize * bits) };
+    assert_eq!(tgw, seq, "through threadgroup memory, the same");
+    let iw: &[u32] = unsafe { std::slice::from_raw_parts(out_inter.contents().cast(), groups as usize * bits) };
+    assert_eq!(iw, &inter[..], "the interleaved layout is the scan's");
+    // The CPU, one thread: the range and the packing of the same values (`choose` + `write`, as packing a column).
+    let vals: Vec<i64> = plain.iter().map(|&x| x as i64).collect();
+    let t = Instant::now();
+    let i0 = retired();
+    let ch = col::choose(&vals);
+    let mut data = vec![0u64; ch.data_words];
+    let mut tmp = vec![0u64; vals.len()];
+    let t_choose = t.elapsed().as_secs_f64() * 1e3;
+    let t = Instant::now();
+    col::write(&ch, &vals, &mut data, &mut [], &mut tmp);
+    let t_write = t.elapsed().as_secs_f64() * 1e3;
+    let cpu_insn = retired() - i0;
+    assert_eq!(data, e.data);
     let gbs = |bytes: usize, ms: f64| bytes as f64 / ms / 1e6;
     println!("GPU, 64M values under 2^18 (best of 6, warm, buffers kept):");
     println!("  scan   plain  {:>8} MB {:>7.2} ms  {:>6.1} GB/s", plain.len() * 4 >> 20, sp, gbs(plain.len() * 4, sp));
@@ -269,4 +395,11 @@ kernel void gather_packed(device const uint* w [[buffer(0)]], device atomic_uint
     println!("  scan   grouped{:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes (bits compiled in, 32 a thread)", inter.len() * 4 >> 20, sg, gbs(inter.len() * 4, sg));
     println!("  gather plain  16M reads {:>7.2} ms", gp);
     println!("  gather packed 16M reads {:>7.2} ms", gk);
+    println!("packing 64M values ({} MB in, {} MB out, {} bits):", plain.len() * 4 >> 20, seq.len() * 4 >> 20, pbits);
+    println!("  GPU min/max                  {:>7.2} ms", t_mm);
+    println!("  GPU pack, CPU layout         {:>7.2} ms  {:>6.1} GB/s read+written", t_seq, gbs(plain.len() * 4 + seq.len() * 4, t_seq));
+    println!("  GPU pack, interleaved        {:>7.2} ms  {:>6.1} GB/s", t_inter, gbs(plain.len() * 4 + seq.len() * 4, t_inter));
+    println!("  GPU pack, loads via tg mem   {:>7.2} ms  {:>6.1} GB/s", t_tg, gbs(plain.len() * 4 + seq.len() * 4, t_tg));
+    println!("  CPU choose (range, runs, line), one thread {:>7.2} ms", t_choose);
+    println!("  CPU write (pack_into), one thread          {:>7.2} ms  ({} insn for both, {:.1} a value)", t_write, cpu_insn, cpu_insn as f64 / vals.len() as f64);
 }

@@ -47,12 +47,13 @@ inline ulong mix(ulong h, long v) { h ^= ulong(v); h *= 0x9E3779B97F4A7C15ul; re
 // A self-relative reference: the field's own address plus its offset.
 inline device char* follow(device const void* f, long off) { return (device char*)((device const char*)f + off); }
 
-// Rows: chunk k holds 2^(min_log + k) rows; row i's chunk is one clz.
+// Rows: group k holds 2^(min_log + k) rows in four chunks of a quarter each; row i's group is one clz.
 inline uint2 chunk_of(uint i, uint min_log) {
     ulong q = (ulong(i) >> min_log) + 1ul;
     uint k = 63u - uint(clz(q));
-    ulong first = ((1ul << k) - 1ul) << min_log;
-    return uint2(k, uint(ulong(i) - first));
+    ulong l = ulong(i) - (((1ul << k) - 1ul) << min_log);
+    uint qlog = min_log + k - 2u;
+    return uint2(4u * k + uint(l >> qlog), uint(l & ((1ul << qlog) - 1ul)));
 }
 inline device ColDir* rows_col(device const Rows* r, uint c) { return (device ColDir*)follow(&r->cols, r->cols.off) + c; }
 inline device char* rows_at(device const Rows* r, uint i, uint c, thread uint& w) {

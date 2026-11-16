@@ -102,8 +102,11 @@ fn make_doc(d: u32, ver: u32) -> Src {
     Src { key: d + 1, kind, parent, name, digest: h }
 }
 
+/// A node's atom: its document's key and its place in it, in 4 bytes (a document has under 4,096 nodes, a run under
+/// 2^20 documents).
 fn nid(doc: u32, i: u32) -> i64 {
-    ((doc as i64) << 32) | i as i64
+    debug_assert!(i < 1 << 12 && doc < 1 << 20);
+    ((doc as i64) << 12) | i as i64
 }
 
 // ---- schemas ----
@@ -147,9 +150,9 @@ struct Schemas {
 
 fn schemas() -> Schemas {
     let pair = |ml| spec(&[4, 4], &[&[0], &[1]], ml);
-    let doc_node = |ml| spec(&[4, 8], &[&[0]], ml);
+    let doc_node = |ml| spec(&[4, 4], &[&[0]], ml);
     let chunk = schema(&[
-        ("node", 0, spec(&[4, 8, 4, 8], &[&[1]], 12)),
+        ("node", 0, spec(&[4, 4, 4, 4], &[&[1]], 12)),
         ("assert_at", 1, doc_node(8)),
         ("call_in_assert", 1, doc_node(8)),
         ("defines", 1, pair(8)),

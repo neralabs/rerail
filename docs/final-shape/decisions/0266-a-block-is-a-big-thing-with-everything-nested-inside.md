@@ -673,6 +673,130 @@ class, and a room in it reads zero past the bytes written. Also by the accel poo
 sources test, and `tapes_are_tape`, in which tier 1 on Metal reads its sources from the slabs and its tapes equal
 the CPU's.
 
+### 17. Costs cut: freeze, probes, chunk room, atoms, scratch
+
+The list from §12–§14, each fixed and measured in instructions retired. The 1M-row comparison against setfix
+(`blocks_compare_tests`, the same 1M rows of a call-edge shape):
+
+| Step, 1M rows | Before | Now | setfix |
+|---|---|---|---|
+| build | 0.14 G | 0.14 G | 0.42 G |
+| freeze (setfix: close) | 1.66 G | 0.43 G | 0.74 G |
+| 1M probes on col 1, with a read per hit | 1.23 G | 0.79 G | 0.75 G |
+| 1M leading-key probes (`encodings`) | 1.77 G | 0.98 G | - |
+
+- **Freeze sorts packed keys by radix** (`sort::radix_pairs`, `relation::sort_canonical`):
+  - each column is read once, a chunk at a time (`Rows::read_col`), and its range taken;
+  - the order key is packed into a `u64`: each column less its minimum, in the bits its range needs, the first
+    highest. Packed keys sort as the rows do, and equal keys are equal rows, so dedup compares one word;
+  - the sort is a least-significant-digit radix of 11 bits a pass, with every pass's counts taken in one read,
+    and a pass whose digit is the same for every key skipped;
+  - a key past 64 bits falls back to comparing rows;
+  - the columns are written back in order, a chunk at a time (`Rows::write_col`);
+  - an index's buckets are filled by one counting pass over the rows in canonical order, which keeps them in
+    canonical order within a bucket. Before, the buckets took a stable sort of `(hash, id)` pairs. The bucket
+    count comes from the number of distinct keys: a bitmap of the key's packed range when it is at most 2^24,
+    else the hashes sorted.
+- **Freeze's temporaries come from scratch** (`scratch::Scratch`), not the heap. A thread's region is mapped
+  once, a take is a bump, and the region is emptied per use; past 64 MB, what a use touched is given back with
+  `MADV_FREE`. `rerail_accel::gpu::shared::lease_scratch` makes a scratch region in a pooled slab, inside the one
+  budget (§16). A freeze of 1M rows now makes 5 small mallocs and holds no heap after (it held 45 MB).
+- **Probes:**
+  - a frozen relation's own rows are always live (its dead bits name only its base's rows), so a probe of a full
+    relation checks the key alone and merges nothing;
+  - a leading key's range is exact, so its rows are not checked;
+  - the probe resolves its first key column once (`ColRead`: directory, width and `min_log`); a wider key's other
+    columns are checked off the hot path;
+  - the reference and row accessors are `#[inline]`. In the profiling build's 256 codegen units, a call to one
+    was a call;
+  - the hash probe was within a few percent of a hand-written bucket loop once the iterator reloaded nothing
+    per row. Its yield reloaded eight resolved columns; it now holds two.
+- **Leading-key search:**
+  - `Rows::lower_bound` binary-searches the chunks' first values, then one chunk's slice (`partition_point`), so
+    there is no chunk arithmetic per step;
+  - the upper bound gallops forward from the lower one (`upper_from`): a key's rows are few.
+- **Chunk room unwritten:** chunks grow by quarter steps. A doubling group of rows is four chunks of a quarter
+  each (`chunk_of`, the same in MSL), so a relation's unwritten room is at most an eighth of its rows; whole
+  doubling chunks left up to half. The directory is 96 slots a column (24 groups), and `min_log` is at least 4.
+  Chunk room per row:
+
+  | | Before | Now |
+  |---|---|---|
+  | Phase facts | 7.5 B | 1.9 B |
+  | Chunk relations | 10.9 B | 1.8 B |
+
+- **4-byte atoms:** `paces`'s node ids were `doc << 32 | i` in 8-byte columns. They are now `doc << 12 | i` in 4
+  bytes: a document has under 4,096 nodes, and a run under 2^20 documents. The chunk relations' values went from
+  23.4 to 15.7 B/row.
+
+At 3,000 documents (`paces 3000 3`; 3,485 checks pass):
+
+| | Before | Now |
+|---|---|---|
+| Chunk relations in place | 43.7 B/row | 27.2 B/row |
+| Phase facts in place | 19.2 B/row | 15.5 B/row |
+| The cold run | 14.9 G | 8.6 G |
+| Packing every block | 4.6 G | 2.8 G |
+
+At 300 documents, 498 checks pass. Packed, the chunk relations went from 13.2 to 5.8 B/row at 3,000 documents:
+their node ids now take 12 bits of a document's place, not 32. In place, the phase facts are now 4.8x their
+packed size at 3,000 documents (5.4x at 300).
+
+Tests: the chunk geometry covers every row once; both searches agree with a scan; the radix sort agrees with a
+stable sort; and freeze agrees with a `BTreeSet` for a full relation and a delta with kills and repeats, with
+the packed key and with a key too wide to pack, with probes on both kinds of index.
+
+### 18. Packing fast, on the CPU and on the GPU
+
+- **Choose, then pack in place.** A column's encoding is chosen first (`col::choose`), without packing anything.
+  The block is then made exactly the size of all of them, and each column packed straight into it
+  (`IntCol::place_chosen`): there are no per-column word vectors and no copy.
+- **A packer per width** (`pack_into` → `pack_fixed::<B>`): 64 values of `B` bits are `B` whole words, so a group
+  of 64 is packed by a loop whose shifts and word boundaries are constants once unrolled. There is one
+  instantiation per width (64), and the input is a slice of `u64`, so callers do not multiply them.
+- **Choosing in fewer passes:**
+  - the range and the run count are one branch-free pass;
+  - the LINE residual pass runs only when a sample (every 64th row) leaves the line a chance. The sample's
+    residual range is inside the full one, so a sample that already needs PACK's bits proves LINE cannot win;
+  - the pass runs in `i64` when `slope * n` cannot overflow it, else in `i128`.
+
+  On 64M values, one thread: choose 106 → 41 ms, 44 → 25 instructions a value with the write.
+- **Packing from open rows** uses freeze's packed-key radix sort (`sort_canonical`). The permutation index takes a
+  radix sort of the column's values. Both come from scratch.
+- **Overflow fixed:** a column spanning more than 2^63 (`[i64::MIN, i64::MAX, 0]`) overflowed the encoder. PACK
+  and RUNS now subtract and add the base wrapping, which is exact modulo 2^64. LINE's residuals are computed in
+  `i128` when they could overflow, and a column whose residuals need more than 64 bits never takes LINE.
+
+Measured, in instructions retired:
+
+| | Before | Now |
+|---|---|---|
+| Pack from the frozen view, 1M rows | 0.68 G | 0.19 G |
+| Pack straight from open rows | 1.41 G | 0.47 G |
+
+A full frozen relation is already in canonical order, so its columns are read a chunk at a time with no merge.
+
+**On the GPU** (`encodings`; 64M values of 18 bits, best of 6, warm):
+
+- A min/max reduction (grid-stride, `simd_min`/`simd_max`, one atomic per simdgroup) takes 0.64 ms.
+- Each thread then packs one group of 32 values into exactly `B` 32-bit words (`B` compiled in as a function
+  constant). No word is shared between threads, so there are no atomics.
+- In sequential order, the words are the CPU's bit stream: a stream of 64-bit words is the same bits as 32-bit
+  words on a little-endian machine. The example checks that every word equals the CPU's.
+
+| Layout | ms | Read + written |
+|---|---|---|
+| CPU layout (`g * B`) | 1.10 | 383 GB/s |
+| Interleaved (word `k` of group `g` at `k * groups + g`: the scan's layout, coalesced stores) | 1.02 | 412 GB/s |
+| Loads through threadgroup memory (64 groups, rows padded to 33 words) | 1.09 | 385 GB/s |
+
+That is about 1.7 ms with the range against about 125 ms on one CPU thread, and at the device's bandwidth: the
+plain scan reads 256 MB in 0.74 ms. Coalescing the loads through threadgroup memory gains nothing, because a
+thread's 32 values are one 128-byte line, which L1 serves. So a block bound for the GPU (a slab of later reads)
+can be packed there in its interleaved layout, which its scans read at 0.52–0.78 ms against 0.74 for plain. The
+CPU packs what leaves for disk. RUNS and LINE on the GPU need a run count (a prefix sum) and a second reduction;
+they come with the first kernel that wants them.
+
 ## Path
 
 Each step leaves the engine working and is measured in retired instructions against the access it replaces:
