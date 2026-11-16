@@ -4167,7 +4167,12 @@ fn run_observed(
     // The space's last program (`memo::last_program`) is this run's already: "none" is marked only before the run's
     // first entry is written, and the program again at its end only then. A run that writes no entry writes neither
     // (decision 0250; the run after a cold one wrote both).
-    let last_unmarked = std::cell::Cell::new(false);
+    // Read once, before the first wave (decision 0104), with the kept statistics.
+    let last_before = match memo {
+        Some(memo::Memo::Stored(store)) if memoised => memo::last_program(store, &memo_program),
+        _ => None,
+    };
+    let last_unmarked = std::cell::Cell::new(last_before == Some(memo_whole));
     let mut keeper: Option<keptstats::Keeper> = match (session.as_ref(), memo) {
         _ if !keeping => None,
         // Kept under the whole program, and valid while it is the last whose entries the memo's space holds: another
@@ -4175,11 +4180,9 @@ fn run_observed(
         (Some(s), _) => Some(s.stats.lock().expect("the session's statistics").remove(&memo_program).filter(|(whole, _)| *whole == memo_whole).map(|(_, k)| k).unwrap_or_default()),
         (None, Some(memo::Memo::Stored(store))) => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "read the kept statistics".into());
-            let last = memo::last_program(store, &memo_program);
+            let last = last_before;
             // Unknown until this run ends: a run that stops before leaves the next one counting every file in.
-            if last == Some(memo_whole) {
-                last_unmarked.set(true);
-            } else {
+            if !last_unmarked.get() {
                 memo::set_last_program(store, &memo_program, None);
             }
             let mut k = (last == Some(memo_whole)).then(|| store.stat_blob(memo_whole).ok().flatten()).flatten().and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
@@ -7295,11 +7298,7 @@ fn run_observed(
             _ => {}
         }
         // The space's entries are this program's now, the statistics just kept with them.
-        // A space whose last program this one already is (a run that kept no statistics did not ask at its start)
-        // is not marked again.
-        if let Some(memo::Memo::Stored(store)) = memo.filter(|_| memoised && !last_unmarked.get())
-            && memo::last_program(store, &memo_program) != Some(memo_whole)
-        {
+        if let Some(memo::Memo::Stored(store)) = memo.filter(|_| memoised && !last_unmarked.get()) {
             memo::set_last_program(store, &memo_program, Some(memo_whole));
         }
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
