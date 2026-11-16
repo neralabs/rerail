@@ -3,10 +3,12 @@ name = "rerail-tape-format"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's tape (v9np, format 15) as bytes: its constants, and a writer a parser writes the tape with as it parses."
+description = "The engine's tape as bytes: format 15 (v9np), its constants and a writer a parser writes it with; format 16 and its fixed blocks; one API over them, read in place (0293)."
 
 [dependencies]
 sha2 = "0.10"
+# Format 16 in fixed blocks (16z), at the version the lab measured it with.
+lz4-sys = "=1.11.1"
 
 # SHA-256 on the CPU's SHA instructions, as the engine has it (its Cargo.toml says why).
 [target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]

@@ -301,11 +301,13 @@ pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> 
 
 // ---- every format ------------------------------------------------------------------------------------------
 
-/// A document's tape in whichever format it is held.
-#[derive(Clone, Copy)]
+/// A document's tape in whichever format it is held. A 16z reader keeps the blocks it decoded, so it is one
+/// thread's.
+#[derive(Clone)]
 pub enum AnyTape<'a> {
     F15(F15<'a>),
     F16(crate::f16::F16<'a>),
+    F16Z(crate::f16::F16Z<'a>),
 }
 
 /// `$body` with `$t` bound to the tape behind `$tape` as its own type: one dispatch a document, the reads inside
@@ -316,6 +318,7 @@ macro_rules! with_tape {
         match $tape {
             $crate::tape::AnyTape::F15($t) => $body,
             $crate::tape::AnyTape::F16($t) => $body,
+            $crate::tape::AnyTape::F16Z($t) => $body,
         }
     };
 }
@@ -326,6 +329,7 @@ impl AnyTape<'_> {
         match self {
             AnyTape::F15(_) => "15",
             AnyTape::F16(_) => "16",
+            AnyTape::F16Z(_) => "16z",
         }
     }
 }

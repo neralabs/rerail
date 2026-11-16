@@ -41,8 +41,10 @@ This record is steps 2 and 3, and the API they need.
    - **format 15**: the image's columns (`code`, `size`, `base`, `off`, `tail`) at their widths. The tape's own code
      table is mapped to the language's once a tape (one entry a code the tape uses, not a node);
    - **format 16**: the writer's five arrays and their side-list parts (0156 §1);
-   - **format 16 in fixed blocks** (0156 §2.1): LZ4 blocks of 1,024 nodes over the language's dictionary, with the
-     block index. A read decodes the one block it falls in, to the tape's own bytes, never to an array of nodes.
+   - **format 16 in fixed blocks** (0156 §2.1, `16z`): LZ4 blocks of 1,024 nodes, with the block index. A block is
+     one side-list part, so a read's arrays and side lists are all in its block (only a parent's sibling steps
+     cross back). A read decodes the one block it falls in, to the tape's own bytes for it, never to an array of
+     nodes, and reads it in place as format 16 is read; the reader keeps the last two blocks it decoded.
 
    `AnyTape` holds one of them and dispatches once a document (`with_tape!`), so the per-node reads are
    monomorphised. A format the lab drops is removed from `AnyTape`; a candidate it adds goes in the same way.
@@ -72,4 +74,5 @@ This record is steps 2 and 3, and the API they need.
 ## Not done
 
 - The writer's calls from every parser (0156 §7), and the store's format-16-only rows.
+- 16z's blocks over the language's dictionary: each block is compressed alone for now.
 - The text stream (0156 §6), hashes per algorithm (§5), edits (§4).
