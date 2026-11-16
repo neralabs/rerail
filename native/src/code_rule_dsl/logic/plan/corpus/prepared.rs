@@ -396,6 +396,7 @@ pub fn prepared_of(
         parts: Default::default(),
         decided: indexed(facts, "prepared_decided")?.iter().map(|(_, r)| Ok(((text(&r[0])?, text(&r[1])?), int(&r[2])? as u64))).collect::<Result<_, String>>()?,
         memo_strata,
+        general: Default::default(),
     })
 }
 

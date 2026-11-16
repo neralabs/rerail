@@ -715,6 +715,12 @@ impl Retained {
     }
 
     /// Whether the last run's rows of a relation or an input are kept.
+    /// Whether `rel`'s old rows are kept, read or not yet: a derived relation the part holds or the frames hold, or an
+    /// input whose source the last run kept (decision 0298: what a general form takes as kept).
+    pub(in crate::code_rule_dsl) fn holds_old(&self, rel: &str) -> bool {
+        self.keeps(rel) || self.input_srcs.contains_key(rel)
+    }
+
     pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
         self.rels.contains_key(rel) || self.late.borrow().contains_key(rel) || self.input_srcs.contains_key(rel)
     }

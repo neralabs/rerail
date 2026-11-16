@@ -187,12 +187,6 @@ impl<'v> Fields<'v> {
         let about: &'v About = self.about;
         about.qualifiers.iter().filter(|q| q.0 == r).map(|q| self.v.text(q.1)).collect()
     }
-    /// The relations qualified `word` (`Program::qualifiers`), in atom order.
-    pub fn qualified_with(&self, word: &str) -> Vec<&'v str> {
-        let Some(w) = self.atom(word) else { return Vec::new() };
-        let about: &'v About = self.about;
-        about.qualifiers.iter().filter(|q| q.1 == w).map(|q| self.v.text(q.0)).collect()
-    }
     /// Whether `rel` is demanded (`Program::demand`) or a gate (`Program::gates`' keys).
     pub fn demanded_or_gate(&self, rel: &str) -> bool {
         self.demanded(rel) || self.gate(rel)

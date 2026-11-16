@@ -2011,14 +2011,14 @@ pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<
 /// The qualifier `locate` gives a relation whose rows name no document: the split holds it cross-file (decision 0290).
 pub const CROSS_FILE: &str = "cross_file";
 
-/// The relations `locate` moved to the cross-file part (`CROSS_FILE`).
+/// The relations `locate` moved to the cross-file part (`CROSS_FILE`), of the tree the preparation edits.
 pub fn moved(prog: &crate::code_rule_dsl::logic::front::Program) -> Vec<&str> {
     prog.qualifiers.iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r.as_str()).collect()
 }
 
-/// `moved` of a version's fields (`Fields`): the relations moved to the cross-file part, read from the image.
-pub fn moved_in(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>) -> Vec<String> {
-    f.qualified_with(CROSS_FILE).into_iter().map(str::to_owned).collect()
+/// The relations `locate` moved to the cross-file part (`CROSS_FILE`), read from the program's version.
+pub fn moved_in<'v>(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'v>) -> Vec<&'v str> {
+    f.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| f.qualified(r, CROSS_FILE)).collect()
 }
 
 /// One round of `locate`: the relations located, and in the `Err` those left beside them.
