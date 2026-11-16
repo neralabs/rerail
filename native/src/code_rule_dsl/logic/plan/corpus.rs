@@ -4058,7 +4058,7 @@ fn run_observed(
     // kept inputs' key is made of is made once, here, and handed to them.
     let mut early_maintained: Option<(lower::Lowered, Option<(usize, usize)>)> = None;
     let kept_route = kept_route && {
-        let maintained = maintained_cross_of(shared_maintained, &cross);
+        let maintained = maintained_cross_of(shared_maintained, &cross)?;
         let (ckey, binds) = retain::keys(&prepared_key, maintained.0.digest()?);
         part_keys.lock().expect("the parts' keys").push(ckey);
         let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
@@ -6315,7 +6315,8 @@ fn run_observed(
                 match ran {
                     Ok(done) => {
                         let mut out = Vec::new();
-                        for rel in kept_in.iter().filter(|r| !lowered_round.as_ref().is_some_and(|l| l.program.inputs.contains(*r))) {
+                        let round_inputs: BTreeSet<&str> = round.as_ref().map(|r| r.placed.v.inputs().map(|a| r.placed.v.text(a)).collect()).unwrap_or_default();
+                        for rel in kept_in.iter().filter(|r| !round_inputs.contains(r.as_str())) {
                             let store = cone_handle.as_ref().expect("rounds run with a store");
                             out.push((rel.clone(), done.next.read_derived(store, rel)?.ok_or_else(|| Error::Plan(format!("{rel}: not kept by the cone's rounds")))?));
                         }
@@ -6826,7 +6827,10 @@ fn run_observed(
         if !kept_hits.is_empty() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs".into());
             let installed: std::result::Result<(usize, usize), String> = (|| {
-                let maintained = early_maintained.take().unwrap_or_else(|| maintained_cross_of(shared_maintained, &cross));
+                let maintained = match early_maintained.take() {
+                    Some(m) => m,
+                    None => maintained_cross_of(shared_maintained, &cross).map_err(|e| e.to_string())?,
+                };
                 let (_, binds) = retain::keys(&prepared_key, maintained.0.digest().map_err(|e| e.to_string())?);
                 // The run reads the program's version, not its tree (t36 item 7).
                 let placed = maintained.0.placed().map_err(|e| e.to_string())?;
@@ -7435,7 +7439,7 @@ fn run_observed(
     if run_placed.v.rules().next().is_some() {
         // RERAIL_DUMP_CROSS=<file>: the cross-file part's rules, one per line (a debugging aid).
         if let Ok(path) = std::env::var("RERAIL_DUMP_CROSS") {
-            let _ = std::fs::write(path, cross.program.rules.iter().map(|r| format!("{r}\n")).collect::<String>());
+            let _ = std::fs::write(path, run_placed.v.rules().map(|r| format!("{}\n", run_placed.v.show_rule(r))).collect::<String>());
         }
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         {
@@ -7460,7 +7464,7 @@ fn run_observed(
                     let declared_inline: BTreeSet<String> = run_f.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| run_f.qualified(r, "inline")).map(String::from).collect();
                     let maintained_part = match maintained_early.borrow_mut().take() {
                         Some(m) => m,
-                        None => maintained_cross_of(shared_maintained, &cross),
+                        None => maintained_cross_of(shared_maintained, &cross)?,
                     };
                     if let Some((through, kept)) = maintained_part.1 {
                         crate::code_rule_dsl::logic::profile::decision("maintenance by counting (supports)", || format!("{through} rules through support relations, {kept} kept their form"));
@@ -7663,7 +7667,7 @@ fn run_observed(
                     let mut seeds: Vec<String> = Vec::new();
                     let mut given_rels: BTreeSet<String> = BTreeSet::new();
                     let mut maintained = if driven {
-                        let mut part = cut.program(&cross);
+                        let mut part = cut.program(&cross)?;
                         let mut sources = Vec::new();
                         // Each delta input made, and the relation it is a delta of.
                         let mut added: Vec<(String, String)> = Vec::new();
@@ -7686,9 +7690,10 @@ fn run_observed(
                             given_rels.insert(rel.clone());
                         }
                         // The deltas' inputs, each declared as its relation (decision 0244): over the cut's version, an
-                        // overlay of fields, and its tree the overlay's (`lower::Tree::of`); else on its tree.
-                        match part.version.clone() {
-                            Some(v) => {
+                        // overlay of fields, and its tree the overlay's (`lower::Tree::of`).
+                        {
+                            let v = part.version.clone().ok_or_else(|| Error::Plan("the session's cut has no version".into()))?;
+                            {
                                 let placed = super::body::Placed::whole(v.clone());
                                 let f = placed.fields()?;
                                 let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
@@ -7704,19 +7709,9 @@ fn run_observed(
                                 }
                                 b.add_nullary(&nullary);
                                 b.set_inputs(&inputs);
-                                part.version = made_from(true, b.finish_overlay().ok(), "the input deltas");
-                                part.program = lower::Tree::of(part.version.clone().expect("an overlay of the input deltas"));
-                            }
-                            None => {
-                                for (name, rel) in &added {
-                                    if let Some(d) = part.program.decls.get(rel.as_str()).cloned() {
-                                        part.program.decls.insert(name.clone().into(), d);
-                                    }
-                                    if part.program.nullary.contains(rel) {
-                                        part.program.nullary.insert(name.clone());
-                                    }
-                                    part.program.inputs.push(name.clone());
-                                }
+                                let made = b.finish_overlay().map_err(Error::Plan)?;
+                                part.program = lower::Tree::of(made.clone());
+                                part.version = Some(made);
                             }
                         }
                         maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
@@ -7728,7 +7723,7 @@ fn run_observed(
                             for rel in heads {
                                 qualifiers.entry(rel.clone()).or_default().insert("levels".to_owned());
                             }
-                        });
+                        })?;
                     }
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_owners} inputs' deltas kept beside them; {from_entries} read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
@@ -7748,7 +7743,8 @@ fn run_observed(
                         let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
                         let mut stored: BTreeSet<String> = cut.derived(&cross_sccs)?.into_iter().chain(wanted.iter().cloned()).collect();
                         if aids {
-                            stored.extend(maintained.program.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).map(|r| r.to_string()));
+                            let placed = maintained.program.placed()?;
+                            stored.extend(placed.fields()?.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).map(str::to_owned));
                         }
                         qualify(&mut maintained.program, |_, qualifiers| {
                             for rel in stored.into_iter().filter(|r| !declared_inline.contains(r)) {
@@ -7756,15 +7752,17 @@ fn run_observed(
                                 q.remove("inline");
                                 q.insert("no_inline".to_owned());
                             }
-                        });
+                        })?;
                     }
                     // RERAIL_DUMP_MAINTAINED=<file>: the maintained program's rules, appended each run (a debugging aid).
                     if let Ok(path) = std::env::var("RERAIL_DUMP_MAINTAINED") {
                         use std::io::Write as _;
                         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
                             let _ = writeln!(f, "=== run");
-                            for r in &maintained.program.program.rules {
-                                let _ = writeln!(f, "{r}");
+                            if let Some(v) = &maintained.program.version {
+                                for r in v.rules() {
+                                    let _ = writeln!(f, "{}", v.show_rule(r));
+                                }
                             }
                         }
                     }
@@ -8085,7 +8083,7 @@ fn run_observed(
                     // `RERAIL_CROSS_VERIFY`: derive the run's strata again (the cut's program, no maintenance) and name the
                     // first relations, in stratum order, whose maintained rows differ (spike O125).
                     if let Some(vstats) = verify_stats.filter(|_| maintained.maintained > 0) {
-                        let plain = cut.program(&cross);
+                        let plain = cut.program(&cross)?;
                         // `O125_VERIFY_RULES=<rel>`: the rules for `rel` the verifier derives with, and the maintained ones.
                         if let Ok(r) = std::env::var("O125_VERIFY_RULES") {
                             for x in plain.program.rules.iter().filter(|x| x.head.rel == r) {
@@ -10484,13 +10482,12 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     Ok(Cone { load, reads: parts.reads, rest, trees })
 }
 
-/// `part`'s version, its qualifiers stated as its tree's (an overlay of that field, decision 0244), after the run
-/// edits the tree's qualifiers.
-/// `part` with its qualifiers edited by `edit` (given its rules' heads): on its version where it has one (a part's
-/// version is its tree's program, `lower::Lowered::version`), the tree then the new version's (`lower::Tree`), so
-/// none is decoded or copied; else on its tree.
-fn qualify(part: &mut lower::Lowered, edit: impl FnOnce(&BTreeSet<String>, &mut BTreeMap<String, BTreeSet<String>>)) {
-    if let (false, Some(v)) = (part.tree_maintained(), part.version.clone()) {
+/// `part` with its qualifiers edited by `edit` (given its rules' heads): on its version (an overlay of that field,
+/// decision 0244), the tree then the new version's (`lower::Tree`), so none is decoded or copied.
+fn qualify(part: &mut lower::Lowered, edit: impl FnOnce(&BTreeSet<String>, &mut BTreeMap<String, BTreeSet<String>>)) -> Result<()> {
+    {
+        let v = part.version.clone().ok_or_else(|| Error::Plan("a part to qualify has no version".into()))?;
+        debug_assert!(!part.tree_maintained(), "a part's maintained parts are its `maint`");
         let about = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(&v).expect("a version's about rows are read");
         let mut qualifiers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (r, w) in &about.qualifiers {
@@ -10499,22 +10496,11 @@ fn qualify(part: &mut lower::Lowered, edit: impl FnOnce(&BTreeSet<String>, &mut 
         let heads: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
         edit(&heads, &mut qualifiers);
         let words: Vec<(&str, &str)> = qualifiers.iter().flat_map(|(r, ws)| ws.iter().map(move |w| (r.as_str(), w.as_str()))).collect();
-        let made = made_from(true, set_qualifiers(&v, &words).ok(), "the qualifiers");
-        part.program = lower::Tree::maintained(made.clone().expect("an overlay of the qualifiers"), part.maint.clone());
-        part.version = made;
-        return;
+        let made = set_qualifiers(&v, &words).map_err(Error::Plan)?;
+        part.program = lower::Tree::maintained(made.clone(), part.maint.clone());
+        part.version = Some(made);
+        Ok(())
     }
-    let heads: BTreeSet<String> = part.program.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    edit(&heads, &mut part.program.qualifiers);
-    requalified(part);
-}
-
-fn requalified(part: &mut lower::Lowered) {
-    let had = part.version.is_some();
-    part.version = made_from(had, part.version.take().and_then(|v| {
-        let words: Vec<(&str, &str)> = part.program.qualifiers.iter().flat_map(|(r, ws)| ws.iter().map(move |w| (r.as_str(), w.as_str()))).collect();
-        set_qualifiers(&v, &words).ok()
-    }), "the qualifiers");
 }
 
 /// `v` with its qualifiers `words` (`passes::SetQualifiers`): an overlay of that field, never folded.
@@ -10527,16 +10513,17 @@ fn set_qualifiers(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>, 
 
 /// `maintained_cross(cross)`, made once for a prepared program (`Prepared::maintained`) and shared: made again only
 /// for another part than the one kept (another digest) or other settings, and then not kept.
-fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, (lower::Lowered, Option<(usize, usize)>))>, cross: &lower::Lowered) -> (lower::Lowered, Option<(usize, usize)>) {
+fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, (lower::Lowered, Option<(usize, usize)>))>, cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(usize, usize)>)> {
     let settings = [std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on"), maintain::levels_wanted(), supports::counting()];
-    let Ok(digest) = cross.digest() else { return maintained_cross(cross) };
+    let digest = cross.digest()?;
     if let Some((of, made)) = slot.get() {
         if *of == (digest, settings) {
-            return made.clone();
+            return Ok(made.clone());
         }
         return maintained_cross(cross);
     }
-    slot.get_or_init(|| ((digest, settings), maintained_cross(cross))).1.clone()
+    let made = maintained_cross(cross)?;
+    Ok(slot.get_or_init(|| ((digest, settings), made)).1.clone())
 }
 
 /// The cross-file part as a run that keeps it maintains it (decision 0077): each derived relation stored, not
@@ -10549,18 +10536,15 @@ fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, (lower::Lowered
 ///
 /// The supports are made first, then the qualifiers set on the cross part's own heads (`qualify`): neither reads the
 /// other, and so each is made on the version where the part has one, copying no tree.
-fn maintained_cross(cross: &lower::Lowered) -> (lower::Lowered, Option<(usize, usize)>) {
+fn maintained_cross(cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(usize, usize)>)> {
     let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
-    // Read from the part's version, not its tree; a program the image has no form for (its rules alone) from its tree.
-    let of_version = cross.placed().ok().and_then(|p| {
-        let f = p.fields().ok()?;
+    // Read from the part's version, not its tree.
+    let (declared_inline, heads) = {
+        let p = cross.placed()?;
+        let f = p.fields()?;
         let declared_inline: BTreeSet<String> = f.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| f.qualified(r, "inline")).map(String::from).collect();
-        Some((declared_inline, p.v.rules().map(|r| p.v.rel_name(r.head().rel()).to_owned()).collect::<BTreeSet<String>>()))
-    });
-    let (declared_inline, heads) = of_version.unwrap_or_else(|| {
-        let declared_inline = cross.program.decls.keys().filter(|r| cross.program.qualified(r, "inline")).cloned().map(String::from).collect();
-        (declared_inline, cross.program.rules.iter().map(|r| r.head.rel.to_string()).collect())
-    });
+        (declared_inline, p.v.rules().map(|r| p.v.rel_name(r.head().rel()).to_owned()).collect::<BTreeSet<String>>())
+    };
     let levels = maintain::levels_wanted();
     let (mut stored, counts) = if supports::counting() {
         let (counted, through, kept) = supports::supports(cross);
@@ -10577,11 +10561,13 @@ fn maintained_cross(cross: &lower::Lowered) -> (lower::Lowered, Option<(usize, u
                 qualifiers.entry(rel).or_default().insert("no_inline".to_owned());
             }
         }
-    });
-    if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note("session.maintained", &cross.program, &stored.program);
+    })?;
+    if crate::code_rule_dsl::logic::version_trace::on()
+        && let (Some(from), Some(to)) = (&cross.version, &stored.version)
+    {
+        crate::code_rule_dsl::logic::version_trace::note_versions("session.maintained", from, to);
     }
-    (stored, counts)
+    Ok((stored, counts))
 }
 
 /// An input's change by owner (decision 0117 step 2, `patch_owners`): each changed owner's rows now, the rows the
