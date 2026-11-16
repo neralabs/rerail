@@ -97,7 +97,9 @@ pub fn emit(
         given: None,
         kept: BTreeSet::new(),
     };
-    let mut emitted = emit_inputs(&lowered.program,db,name,counts,inputs)?;
+    // The SQL emitter reads a tree: a program as `lower::lower` gives it (its tree given), never a version's.
+    let prog = lowered.program.given_tree().ok_or_else(|| Error::Plan("the SQL emitter reads a lowered program's given tree".into()))?;
+    let mut emitted = emit_inputs(prog,db,name,counts,inputs)?;
     // Lowering distinguishes grammar IDs from interned names even when both
     // columns were declared symbolic. Retain that domain after integer lowering.
     emitted.value_types = std::sync::Arc::new(lowered.domains.iter().map(|(r,ds)| {
@@ -380,8 +382,10 @@ pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vec<usize>>)> {
-    let prog = &lowered.program;
-    let outputs: Vec<&str> = prog.outputs.iter().map(String::as_str).collect();
-    let (outputs, nodes) = decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
+    // Read from the program's version (its fields), as the run reads it.
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
+    let outputs: Vec<&str> = f.outputs().collect();
+    let (outputs, nodes) = decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
     Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.shown())).collect(), nodes))
 }

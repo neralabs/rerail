@@ -530,7 +530,7 @@ pass.
 - **Done when**: every edit after the first finds its kept inputs, and taking them costs less than decoding the
   hits whole.
 
-### Q21. Two red tests that predate 0281 step 4
+### Q21. Red tests that predate 0281 step 4
 
 - **Found** (2026-11-16, while testing 0281 step 4's slices; both fail at 38d1272f5, before them):
   - `corpus::phases::tests::a_phase_hands_on_its_exports_and_its_reader_follows_each_edit`: phase `p1` reads
@@ -540,8 +540,13 @@ pass.
   - `corpus::tests::every_switch_lowering_reads_is_classified`: `RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`,
     `RERAIL_SHIPPED_IMAGES` (`rr/images.rs`) and `RERAIL_MODULE_IMAGES` (`combine_read`) are read in combining but
     are in neither list. Each needs classifying: does it change a prepared program (`COMBINING`) or not?
-- **Done when**: both pass, the first by binding the long-text nodes before whichever part reads them (or by the
-  part not reading node text), the second by classifying each switch from what it does.
+  - `sql_executor::tests::rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding` (red at aa36f9104):
+    running a rule file after binding a snapshot fails with `value: SQL output already exists; rebind inputs to
+    clear derived results` (`sql_executor/session.rs`): the core prelude's `value` is taken for an output that
+    clashes with a table the session holds.
+  - Also: `sql_executor` as a whole, in parallel, passes 3 GB RSS (`tmp/capped.sh 3000`); with four threads too.
+- **Done when**: each passes, the first by binding the long-text nodes before whichever part reads them (or by the
+  part not reading node text), the second by classifying each switch from what it does, the third from the cause.
 
 ## Questions for the user
 

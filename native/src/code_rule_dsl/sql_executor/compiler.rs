@@ -107,8 +107,10 @@ impl CodeRuleSqlExecutor {
                 .map_err(|e| plan::Error::Plan(e.to_string()))
         })
         .map_err(error)?;
+        // The SQL emitter's program is the lowered tree `lower::lower` gives (`emit::emit`), never a version's.
+        let tree = lowered.program.given_tree().ok_or_else(|| error("a lowered program has no given tree".to_owned()))?;
         let mut batch = HashMap::new();
-        let has_wave_stats: bool = if lowered.program.inputs.iter().all(|name| {
+        let has_wave_stats: bool = if tree.inputs.iter().all(|name| {
             self.inputs.contains_key(name)
                 || self.executions.iter().any(|e| e.counts.contains_key(name))
         }) {
@@ -124,7 +126,7 @@ impl CodeRuleSqlExecutor {
                 )
                 .map_err(error)?
         };
-        for name in &lowered.program.inputs {
+        for name in &tree.inputs {
             if !identifier(name) || reserved(name) {
                 return Err(error(format!("invalid input relation: {name}")));
             }
@@ -133,7 +135,7 @@ impl CodeRuleSqlExecutor {
                 .prepare(&format!("SELECT * FROM {}", quote(name)))
                 .map_err(error)?;
             let columns: Vec<&str> = statement.column_names().collect();
-            if columns.len() != lowered.program.decls[name.as_str()].len() {
+            if columns.len() != tree.decls[name.as_str()].len() {
                 return Err(error(format!(
                     "{name}: input arity differs from its declaration"
                 )));

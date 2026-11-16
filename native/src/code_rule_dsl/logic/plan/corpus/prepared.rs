@@ -440,15 +440,14 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     let mut facts = rest_of(prepared);
     let mut documents = Vec::new();
     for (name, prog) in [("front", Some(&prepared.prog)), ("lowered", None)] {
-        // The lowered program's image is its version's, stored as it is (no encode of its tree); its tree where it
-        // has none.
-        let stored = match (prog, prepared.lowered.program.version()) {
-            (Some(p), _) => program_text::store(store, p)?,
-            (None, Some(v)) => match program_text::store_version(store, v)? {
-                Some(s) => Some(s),
-                None => program_text::store(store, &prepared.lowered.program)?,
-            },
-            (None, None) => program_text::store(store, &prepared.lowered.program)?,
+        // The lowered program's image is its version's, stored as it is (no encode of its tree). With images off
+        // (`RERAIL_PROGRAM_IMAGE=off`) it is not kept, as a version has no text form: the program is prepared again.
+        let stored = match prog {
+            Some(p) => program_text::store(store, p)?,
+            None => {
+                let Some(v) = prepared.lowered.program.version() else { return Ok(None) };
+                program_text::store_version(store, v)?
+            }
         };
         let Some((digest, sources)) = stored else { return Ok(None) };
         facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&digest).into())].into());

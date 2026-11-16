@@ -777,8 +777,21 @@ impl Lowered {
     /// the input atom `nearest_<set>($n, $a)`, which the run binds beside the base relations
     /// (`facts::vtab::syntax::with_nearest`). The relations the run must make (`nearest_<set>`, and the tree
     /// axes' `rr_inside_<set>` and `rr_has_<set>`), each with its set's kind atoms.
+    ///
+    /// A pass of preparation, before the program's one image (decision 0281's path, step 4): over the lowered tree,
+    /// taken out of the `Lowered` and given back, never a version's.
     pub fn transduce_nearest(&mut self) -> Vec<(String, Vec<i64>)> {
-        let prog = &mut self.program;
+        debug_assert!(self.version.is_none() && self.program.version().is_none(), "nearest is transduced before the program is imaged");
+        let mut prog = std::mem::replace(&mut self.program, Tree::given(Program::default())).into_program();
+        let sets = transduce_nearest(&mut prog, &mut self.domains);
+        self.program = Tree::given(prog);
+        sets
+    }
+}
+
+/// `Lowered::transduce_nearest` over the tree `prog` and its domains.
+fn transduce_nearest(prog: &mut Program, domains: &mut Domains) -> Vec<(String, Vec<i64>)> {
+    {
         let mut used = std::collections::BTreeSet::new();
         for rule in &mut prog.rules {
             for literal in &mut rule.body {
@@ -798,7 +811,7 @@ impl Lowered {
         use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS};
         for rel in prog.inputs.iter().filter(|r| crate::code_rule_dsl::logic::front::is_axis(r)) {
             let set = rel.strip_prefix(AXIS).or_else(|| rel.strip_prefix(DESCENDANTS)).expect("an axis");
-            self.domains.insert(rel.clone(), vec![Domain::Node, Domain::Node]);
+            domains.insert(rel.clone(), vec![Domain::Node, Domain::Node]);
             let kinds = prog.kindsets.get(set).into_iter().flatten().filter_map(|k| k.parse::<i64>().ok()).collect();
             sets.push((rel.clone(), kinds));
         }
@@ -808,7 +821,7 @@ impl Lowered {
             if !prog.inputs.contains(&rel) {
                 prog.inputs.push(rel.clone());
             }
-            self.domains.insert(rel.clone(), vec![Domain::Node, Domain::Node]);
+            domains.insert(rel.clone(), vec![Domain::Node, Domain::Node]);
             let kinds = prog.kindsets.get(&set).into_iter().flatten().filter_map(|k| k.parse::<i64>().ok()).collect();
             sets.push((rel, kinds));
         }
