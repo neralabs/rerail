@@ -122,6 +122,12 @@ const TAKEN_LOG = new RegExp(`^${HOOK_FAILURES_FILE.replaceAll(".", "\\.")}\\.(\
  * On Windows a rename opens the file by name, then renames what it opened: a hook that opened the log before this one
  * took it still moves it on, out from under this hook's name. So each step gives up once the file is gone from that
  * name, leaving it to the hook that holds it last.
+ *
+ * A live name that is a link, as a person can make it to keep the log elsewhere, moves on to `.1` as the link, as `main`
+ * moves it right after its one size check, which found the log full through the link; hooks begin no log as a link. The
+ * move opens, reads, sizes and copies nothing through the link after that check: a person can point it elsewhere in the
+ * meantime, a share it leads to can stop answering, and a copy could fill the Rerail home's disk. Status follows no link
+ * at `.1` ({@link listLog}), so from then on the line counts the failures since the move.
  */
 function moveAside(path: string, movedAside: string): boolean {
   const taken = takenName(path);
@@ -132,6 +138,12 @@ function moveAside(path: string, movedAside: string): boolean {
     return false;
   }
   try {
+    // A `.1` another program holds is waited out for the 2 s a rename retries, as `main`'s move waits: given back, the
+    // link would take this hook's own failure to the file it leads to, or lose it where that file takes no writes.
+    if (lstatSync(taken).isSymbolicLink()) {
+      renameWithRetrySync(taken, movedAside);
+      return true;
+    }
     // No wait for a `.1` another program holds: the log goes back at once and a later hook moves it, so it stays under
     // this hook's name for the moment of one rename, not for the 2 s of retries.
     if (sizeOf(taken) > MAX_FAILURE_BYTES) {
@@ -475,7 +487,8 @@ type LogNames = Map<string, string | null>;
  * a name gone before it was looked at, would make every status read wait out all its pauses for as long as the link
  * stays. A named pipe, opened to read, waits for a program to write to it, and a folder at `.1`, read as a part that
  * holds nothing, would make the line count from the live part's start though no part was dropped. A status read opens
- * the live log before it lists, so a link at the live name is still read through.
+ * the live log before it lists, so a link at the live name is still read through, until a hook moves it to `.1` as the
+ * link ({@link moveAside}).
  */
 function listLog(home: string): LogNames {
   let listed: string[];

@@ -917,6 +917,46 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
   });
 
+  // The size check found a full log through the live name's link, and by the time the hook has taken the link, it leads
+  // to a named pipe no program writes to, or to a folder, as when a person points it elsewhere in that moment; here the
+  // size check is told the log is full. The link moves on to `.1` as it is, as `main` moves it right after its one size
+  // check. A second size check through the link would find no full log and give the link back, and the hook's own
+  // failure would follow it: into the folder, where it is lost, or into the pipe, where the hook waits for a reader. On
+  // Windows the link to a folder is a junction.
+  it.for(NOT_FILES)("moves the live name's link to .1 at once when it leads to $kind by the time the hook has taken it", async ({ kind, make }, context) => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    const target = join(await home(), "target");
+    make(context, target);
+    if (kind === "a folder") linkFolder(target, live);
+    else symlinkOrSkip(context, target, live, "file");
+    await recordWithWrapped(rerailHome, 2, { statSync: `stat => (path, ...rest) => {
+      const stats = stat(path, ...rest);
+      if (String(path) === ${JSON.stringify(live)}) stats.size = ${300 * 1024};
+      return stats;
+    }` });
+    expect(afterTheMove(rerailHome)).toEqual(movedAsTheLink(1));
+  });
+
+  // Another program holds `.1` for a moment, as a backup or a virus scan can on Windows, while a hook moves a full log a
+  // person linked at the live name. The link's move retries, as `main`'s one rename does: given back at once, the link
+  // would take the hook's own failure into the person's file, or lose it where that file takes no writes. Only Windows
+  // retries a refused rename.
+  it("moves a full log linked at the live name to .1 once another program lets go of .1", async context => {
+    if (process.platform !== "win32") context.skip("only Windows retries a refused rename");
+    const rerailHome = await home();
+    const { elsewhere, text } = await linkLogElsewhere(context, rerailHome, 256 * 1024 + 1);
+    const refused = await recordWithRename(rerailHome, 2, `rename => (from, to) => {
+      if (!to.endsWith(".1") || globalThis.refused) return rename(from, to);
+      globalThis.refused = true;
+      fs.writeSync(1, "refused ");
+      throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+    }`);
+    expect({ refused, ...afterTheMove(rerailHome), leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({
+      refused: "refused ", ...movedAsTheLink(1), leftAsItWas: true,
+    });
+  });
+
   // A hook that took a log and finds it small gives it back: it makes the live name a second name of the file, a hard
   // link, then removes its own. Status finds no live log, then lists the home between those two steps, so it meets the
   // log only under those two names, each a file of its own and no link.
