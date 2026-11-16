@@ -1110,8 +1110,8 @@ describe("audit rule provenance", () => {
     const clock = (): number => 10 * day;
 
     // The move runs on a thread of its own; on the calling thread, the daemon's, which answers hooks, the start's check
-    // and the check once the move's thread ends each read one audit row at most. Taken up to the first audit that began
-    // after the time the step recorded, the move stopped at the 16th: it and the 14 after it kept their copy for good.
+    // and the check once the move's thread ends each read one audit row at most. Bounded by the time the step recorded
+    // alone, the move would stop at the 16th: it and the 14 after it would keep their copy for good.
     const moving = timeAuditReads();
     try {
       expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(30);
