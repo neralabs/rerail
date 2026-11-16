@@ -33,6 +33,9 @@ export const WATCH_RETRY_MS = 600_000;
  */
 export const REWATCH_MS = 5_000;
 
+/** At most this many paths are kept of the notices of one root queued for one walk, as the engine's watch keeps per take; past it they are lost. */
+export const NOTICE_PATHS_CAP = 16_384;
+
 /**
  * Whether a notice of `event` (`change`: a file's text, size or attributes; `rename`: an entry created, deleted or
  * renamed) for `path` (relative to the worktree) names something the last read cared about.
@@ -79,6 +82,8 @@ export class WorktreeNotices {
   readonly #failed = new Map<string, number>();
   /** When the watch of each worktree last ended. */
   readonly #ended = new Map<string, number>();
+  /** The watched worktrees a notice counted in since a read of each began, until `noticed` hands them on. */
+  readonly #noticed = new Set<string>();
 
   constructor(options: { treeWatch?: TreeWatch | undefined; platform?: NodeJS.Platform; now?: () => number } = {}) {
     this.#watch = options.treeWatch;
@@ -106,10 +111,27 @@ export class WorktreeNotices {
     return this.#watched.has(root);
   }
 
+  /** Whether any worktree is watched now, so a notice may come. */
+  watchingAny(): boolean {
+    return this.#watched.size > 0;
+  }
+
+  /**
+   * Takes the worktrees a notice counted in since the last call, and since a read of each began: each may hold a
+   * change no read has seen, which a notice taken as the read began, or while it ran, would not.
+   */
+  noticed(): Set<string> {
+    const noticed = new Set(this.#noticed);
+    this.#noticed.clear();
+    return noticed;
+  }
+
   /** A read of `root` begins: what `changed` said is answered, and from now until `read` every notice counts. */
   reading(root: string): void {
     this.collect();
     const watched = this.#watched.get(root);
+    // Every notice taken so far is the read's to answer.
+    this.#noticed.delete(root);
     if (watched === undefined) return;
     watched.changed = false;
     watched.seen = undefined;
@@ -134,6 +156,7 @@ export class WorktreeNotices {
     }
     for (const root of this.#failed.keys()) if (!roots.has(root)) this.#failed.delete(root);
     for (const root of this.#ended.keys()) if (!roots.has(root)) this.#ended.delete(root);
+    for (const root of this.#noticed) if (!roots.has(root)) this.#noticed.delete(root);
   }
 
   /** Starts watching `root`, its root folder alone until a read names its folders; undefined when it cannot be watched now. */
@@ -182,8 +205,34 @@ export class WorktreeNotices {
       this.#watched.delete(notice.root);
       this.#ended.set(notice.root, this.#now());
     }
-    if (notice.ended || notice.lost || watched.seen === undefined || counts(watched.seen, notice)) watched.changed = true;
+    if (this.#byFolder) this.#replaced(watched, notice.renamed);
+    if (notice.ended || notice.lost || watched.seen === undefined || counts(watched.seen, notice)) {
+      watched.changed = true;
+      this.#noticed.add(notice.root);
+    }
   }
+
+  /**
+   * Drops from the folders watched each one that came or went, and every folder under it: a folder put back at the
+   * same path is another folder, which the watch of the old one never tells of, so the next read's folders watch it.
+   */
+  #replaced(watched: Watched, renamed: readonly string[]): void {
+    const gone = renamed.filter(path => watched.folders.has(path));
+    if (gone.length === 0) return;
+    watched.folders = new Set([...watched.folders].filter(folder => !gone.some(path => folder === path || folder.startsWith(`${path}/`))));
+  }
+}
+
+/** `queued` and `notice`, of one root, as one notice: past `NOTICE_PATHS_CAP` paths, or with either lost, one that lost its paths. */
+function mergedNotice(queued: TreeNotice | undefined, notice: TreeNotice): TreeNotice {
+  if (queued === undefined) return notice;
+  const ended = queued.ended || notice.ended;
+  const changed = [...new Set([...queued.changed, ...notice.changed])];
+  const renamed = [...new Set([...queued.renamed, ...notice.renamed])];
+  if (queued.lost || notice.lost || changed.length + renamed.length > NOTICE_PATHS_CAP) {
+    return { root: notice.root, changed: [], renamed: [], lost: true, ended };
+  }
+  return { root: notice.root, changed, renamed, lost: false, ended };
 }
 
 /**
@@ -195,8 +244,12 @@ export class SharedTreeWatch {
   readonly #watch: TreeWatch;
   /** By root, the folders each user watches it with. */
   readonly #roots = new Map<string, Map<object, readonly string[]>>();
-  /** By user, the notices taken from the watch for it and not yet taken by it. */
-  readonly #queues = new Map<object, TreeNotice[]>();
+  /**
+   * By user, the notices taken from the watch for it and not yet taken by it, one per root as the engine's take hands
+   * them: a walk that takes them rarely holds no more than the engine would. A user that watches nothing and took its
+   * last notices has none.
+   */
+  readonly #queues = new Map<object, Map<string, TreeNotice>>();
   #closed = false;
 
   constructor(watch: TreeWatch) {
@@ -206,7 +259,6 @@ export class SharedTreeWatch {
   /** A `TreeWatch` for one walk; closing it lets go of every root it watches. */
   user(): TreeWatch {
     const user = {};
-    this.#queues.set(user, []);
     return {
       watch: (root, folders) => this.#watchFor(user, root, folders),
       unwatch: root => this.#unwatchFor(user, root),
@@ -229,7 +281,15 @@ export class SharedTreeWatch {
     const users = this.#roots.get(root) ?? new Map<object, readonly string[]>();
     users.set(user, folders);
     this.#roots.set(root, users);
-    return this.#watch.watch(root, unionOf(users));
+    if (this.#watch.watch(root, unionOf(users))) {
+      if (!this.#queues.has(user)) this.#queues.set(user, new Map());
+      return true;
+    }
+    // A user refused a root does not hold it: it reads that root on every walk, and no watch of it stays up for it.
+    users.delete(user);
+    if (users.size === 0) this.#roots.delete(root);
+    else this.#watch.watch(root, unionOf(users));
+    return false;
   }
 
   #unwatchFor(user: object, root: string): void {
@@ -249,11 +309,17 @@ export class SharedTreeWatch {
       const users = [...this.#roots.get(notice.root)?.keys() ?? []];
       // An ended watch watches nothing: each user watching the root watches it again as its walk asks.
       if (notice.ended) this.#roots.delete(notice.root);
-      for (const other of users) this.#queues.get(other)?.push(notice);
+      for (const other of users) {
+        const queue = this.#queues.get(other);
+        queue?.set(notice.root, mergedNotice(queue.get(notice.root), notice));
+      }
     }
-    const queue = this.#queues.get(user) ?? [];
-    this.#queues.set(user, []);
-    return queue;
+    const queue = this.#queues.get(user);
+    if (queue === undefined) return [];
+    const notices = [...queue.values()];
+    queue.clear();
+    if (![...this.#roots.values()].some(users => users.has(user))) this.#queues.delete(user);
+    return notices;
   }
 
   #closeFor(user: object): void {

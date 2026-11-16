@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TreeNotice, TreeWatch } from "../../../../src/engine/code-rule/tree-watch.js";
-import { noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
+import { NOTICE_PATHS_CAP, noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
 
 /** A read that walked the worktree, `src` and `src/deep`, and left out an ignored folder, an ignored file and a worktree. */
 const seen = { folders: new Set(["", "src", "src/deep"]), leftOut: new Set(["node_modules", "src/cache.tmp", "nested"]) };
@@ -152,6 +152,35 @@ describe("WorktreeNotices", () => {
     expect(subject.changed("/w")).toBe(false);
   });
 
+  it("watches again on Linux a folder that went and came back at the same path, and reads the worktree again", () => {
+    const watch = new ScriptedWatch();
+    const { notices: subject } = notices(watch, "linux");
+    const walked = { folders: new Set(["", "a"]), leftOut: new Set<string>() };
+    read(subject, "/w", walked);
+    read(subject, "/w", walked);
+    expect(subject.changed("/w")).toBe(false);
+    // `rm -rf a && mkdir a`: the watch of the old `a` tells of nothing in the new one.
+    watch.notice("/w", { renamed: ["a"] });
+    subject.collect();
+    read(subject, "/w", walked);
+    expect(watch.calls.filter(call => call.startsWith("watch"))).toEqual(["watch /w []", "watch /w [,a]", "watch /w [,a]"]);
+    expect(subject.changed("/w")).toBe(true);
+  });
+
+  it("hands on each worktree a notice counted in since a read of it began, once", () => {
+    const watch = new ScriptedWatch();
+    const { notices: subject } = notices(watch);
+    read(subject, "/a");
+    read(subject, "/b");
+    expect(subject.noticed()).toEqual(new Set());
+    watch.notice("/a", { changed: ["src/a.py"] });
+    watch.notice("/b", { changed: ["src/b.py"] });
+    subject.collect();
+    // The read of `/b` that begins now answers its notice.
+    subject.reading("/b");
+    expect([subject.noticed(), subject.noticed()]).toEqual([new Set(["/a"]), new Set()]);
+  });
+
   it("reads on every walk a Linux worktree whose folders the watch budget cannot hold, until the retry", () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch, "linux");
@@ -193,5 +222,37 @@ describe("SharedTreeWatch", () => {
     expect(watch.calls.at(-1)).toBe("unwatch /both");
     shared.close();
     expect(watch.closed).toBe(true);
+  });
+
+  it("lets go of a root a walk was refused, so another walk's watch of it ends as that walk lets go", () => {
+    const watch = new ScriptedWatch();
+    const shared = new SharedTreeWatch(watch);
+    const [first, second] = [shared.user(), shared.user()];
+    watch.refused.add("/r");
+    expect(first.watch("/r", [""])).toBe(false);
+    watch.refused.delete("/r");
+    expect(second.watch("/r", [""])).toBe(true);
+    second.unwatch("/r");
+    expect(watch.calls.at(-1)).toBe("unwatch /r");
+  });
+
+  it("holds one notice per root for a walk that takes its notices rarely, losing its paths past the engine's cap", () => {
+    const watch = new ScriptedWatch();
+    const shared = new SharedTreeWatch(watch);
+    const [busy, idle] = [shared.user(), shared.user()];
+    busy.watch("/r", [""]);
+    idle.watch("/r", [""]);
+    for (const name of ["a", "b", "a"]) {
+      watch.notice("/r", { changed: [`${name}.py`] });
+      busy.take();
+    }
+    watch.notice("/r", { renamed: ["c.py"] });
+    busy.take();
+    expect(idle.take()).toEqual([{ root: "/r", changed: ["a.py", "b.py"], renamed: ["c.py"], lost: false, ended: false }]);
+    watch.notice("/r", { changed: Array.from({ length: NOTICE_PATHS_CAP }, (_, index) => `f${index}.py`) });
+    busy.take();
+    watch.notice("/r", { changed: ["g.py"] });
+    busy.take();
+    expect(idle.take()).toEqual([{ root: "/r", changed: [], renamed: [], lost: true, ended: false }]);
   });
 });

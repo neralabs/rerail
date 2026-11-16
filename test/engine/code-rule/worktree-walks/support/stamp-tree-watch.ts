@@ -28,8 +28,8 @@ function entriesOf(root: string): Map<string, string> {
 /**
  * A `TreeWatch` that sees every write, as the engine's watch is meant to: each `take` compares each watched root's
  * entries with those of the last take, through `node:fs` calls a test's counted `node:fs/promises` never sees. A test
- * makes it miss writes (`silence`), lose notices (`lose`), end a watch (`end`) or refuse roots (`unwatchable`), and
- * reads which roots it watches and with which folders.
+ * makes it miss writes (`silence`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`) or refuse
+ * roots (`unwatchable`), and reads which roots it watches and with which folders.
  */
 export class StampTreeWatch implements TreeWatch {
   readonly #entries = new Map<string, Map<string, string>>();
@@ -40,6 +40,7 @@ export class StampTreeWatch implements TreeWatch {
   readonly #unwatchable = new Set<string>();
   readonly #lost = new Set<string>();
   readonly #ended = new Set<string>();
+  readonly #held = new Set<string>();
   closed = false;
 
   watch(root: string, folders: readonly string[]): boolean {
@@ -58,6 +59,8 @@ export class StampTreeWatch implements TreeWatch {
   take(): TreeNotice[] {
     const notices: TreeNotice[] = [];
     for (const [root, before] of this.#entries) {
+      // Seen at a later take, as a notice the system hands over late.
+      if (this.#held.has(root)) continue;
       const after = entriesOf(root);
       this.#entries.set(root, after);
       const notice = noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root));
@@ -82,6 +85,15 @@ export class StampTreeWatch implements TreeWatch {
   lose(root: string): void {
     this.silence(root);
     this.#lost.add(root);
+  }
+
+  /** Holds back the notices of `root` until `release`: each take until then hands none, as though none had come yet. */
+  hold(root: string): void {
+    this.#held.add(root);
+  }
+
+  release(root: string): void {
+    this.#held.delete(root);
   }
 
   /** Makes the next take of `root` say its watch ended. */
