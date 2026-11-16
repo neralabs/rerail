@@ -402,7 +402,7 @@ rerail state                   # prints started, stopped, or not-set-up for this
 rerail status                  # whether Rerail is on here, then the daemon, its engine and its model (Model: ok, or the problem and file, e.g. checksum mismatch (model.safetensors)); exit 3 when the daemon is not running, 4 when it does not answer, 5 when its engine or model is not ok
 rerail manage [--print]        # prints the dashboard's Overview URL and opens it; --print only prints, and so does BROWSER=none
 rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it, unless BROWSER=none
-rerail daemon stop             # shut the daemon down for every checkout and coding agent; a graceful stop (SIGTERM, or on Windows a request over its API); forced termination after 10 s, and an error if the process outlives that by 5 s. A coding agent's session in a checkout where Rerail is started starts it again with its next event, unless RERAIL_AUTOSTART=0
+rerail daemon stop             # shut the daemon down for every checkout and coding agent; a graceful stop (SIGTERM, or on Windows a request over its API), which goes on running the events the daemon took in, answers each one that ends, and cuts off a coding agent's request that stops arriving partway once it has sent nothing for a second or two; forced termination after 10 s, and an error if the process outlives that by 5 s. A coding agent's session in a checkout where Rerail is started starts it again with its next event, unless RERAIL_AUTOSTART=0
 ```
 
 <details>
@@ -557,7 +557,7 @@ A daemon reachable from other machines (off loopback, or answering a `--public-h
 <details>
 <summary>Certificate rules and pinning</summary>
 
-`--tls-cert` takes the certificate, or a chain with the server's first. Both files are read once at start, and also work on loopback. A key file with any group or other permission bit (such as `0644`) is refused; `chmod 600` it.
+`--tls-cert` takes the certificate, or a chain with the server's first. Both files are read once at start, and also work on loopback. The key must be readable by its owner only: a key file with any group or other permission bit (such as `0644`), or on Windows one whose ACL lets another account read it (as a key under `C:\certs` inherits), is never served with; `chmod 600` it, or run the `icacls` command Rerail prints. With such a key, when you can read it, it parses as a private key and `--tls-cert` names its certificate, the daemon still starts, for this computer alone: it serves `127.0.0.1` over http and leaves out `--host`, `--public-host` and the TLS files, so hooks keep recording and steering, and `rerail daemon start`, `rerail status`, `daemon.log` and `daemon.json` (`remoteRefused`) say why. A start that asked for other machines (`--allow-remote`, `--public-host`) still exits 1, with the refusal on stderr, as does a later one that finds this daemon running; the loopback daemon keeps running, and comes back from a restart at its heap ceiling on loopback, still saying why, even once the key is fixed. Fix the key, then run `rerail daemon stop` and start it again.
 
 Without TLS such a daemon won't start, since the access capability would cross the network in clear. `--insecure-http` overrides this for a trusted network: a container port published only on host loopback, or a local TLS-terminating proxy.
 

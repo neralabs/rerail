@@ -1,0 +1,1 @@
+When Git takes too long to list the files changed before a session, Rerail now asks again in the background, and a shell edit made after Git answers is steered only on the lines the agent changed. On a busy computer, Rerail no longer ends a Git command that already finished as if it hung.
