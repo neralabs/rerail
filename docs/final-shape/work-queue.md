@@ -644,6 +644,15 @@ pass.
   merges of 0286 and 0294), as does the corpus test ignored for O-cross-file-answers. `every_operation_runs_on_every_executor`
   still fails: python-main's programs meeting "a cat's text read by rx has no device form" are 462, the ledger says
   432, with the pack's files unchanged since 692cc9772 (so it is the lowering's, not traced; not re-blessed).
+- **`every_operation_runs_on_every_executor` traced and re-blessed** (2026-11-16). The packs ledger counts a
+  program toward a gap by the operations its `.rr` syntax names (`census`, no lowering), so the 30 are files, not
+  the lowering. The pack's files were unchanged since 692cc9772, but they changed before it: 27b616adc (2026-11-14,
+  "ast-grep any/field/compare semantics in the translator") regenerated python-main, and the files naming `match(`
+  went from 388 to 418 (token tests such as `b307_tok_has_1(n) :- op(n, t2), match("eval", t2)` in
+  `bandit-b307-eval.rr`, `ruff-b905-…`, `ruff-dtz001-…`). The ledger counts a file toward every probe of an
+  operation it names, so all 30 land on the bound-pattern row, the one `match` probe not on the device. The
+  ledger was last blessed at a9291fadd, before that commit. Re-blessed: `packs.tsv`'s one line moves (668 to 698,
+  python-main 432 to 462), `matrix.tsv` is unchanged, and no new kind of gap appears. Passes.
 
 - **Done when**: each passes on the hub, fixed at its cause.
 
@@ -685,6 +694,16 @@ pass.
   adds none.
 - **Done when**: the test passes with fresh files, traced to which of the three sources the second run leaves out
   and why (the racy-mtime window is the lead).
+- **Record**: done (2026-11-16, b40d89145). The three left out were the three `.py` files (sources 26-28: 55, 39
+  and 0 bytes). In the waves the store is not asked, so a file the stat index does not trust yet (inside the racy
+  window) is read as `Content::Unstored(digest)`, which `Content::stored` dropped from the run's sources. A
+  process's first run named those sources anyway, through the tape writes that store them (`late_sources`). Its
+  second run found the tapes held in the process and wrote none, so nothing named them; older files the stat index
+  knows (`Content::Stored`) and the run names directly. Now the chunk builder keeps those digests
+  (`Cut::read_unstored`), and `memo::named_digests` looks them up together on the store's writer, behind the run's
+  queued writes and before the manifest's, pins them as `stored_source` does, and adds them to `late_sources`. A
+  warm run whose files the index knows has no such digest and queues nothing. Passes, as does
+  `the_run_after_a_cold_one_writes_nothing`.
 
 ### Q25. `rrs_records_are_rows_on_the_cpu` expects no `/` among the punctuation bytes
 
@@ -733,6 +752,8 @@ pass.
   pack differ from `gate/executor-coverage/packs.tsv`).
 - **At the hub's merge of this branch** (2026-11-16): all pass there but `every_operation_runs_on_every_executor`
   (Q21): `every_stored_table…`'s and the four others' causes were fixed on the hub's side.
+- **Record** (2026-11-16): `every_operation_runs_on_every_executor` passes too, its count traced to 27b616adc's
+  pack regeneration and re-blessed (Q21). All seven pass.
 - **Done when**: each passes, traced to its cause; the hub's own fix taken at the next merge where it has one.
 
 ### Q29. Two of rr_aot's shape tests check shapes 0177 retired
