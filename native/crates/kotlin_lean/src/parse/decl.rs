@@ -450,7 +450,11 @@ impl<'a> P<'a> {
         loop {
             let n = self.open(K::DelegationSpecifier);
             let m = self.mark();
-            if self.peek() == T::LParen || self.is_word(w::SUSPEND) {
+            if self.is_word(w::SUSPEND) && matches!(self.kind_at(1), T::LParen | T::Name) {
+                // `"suspend" function_type`: the keyword is the specifier's.
+                self.tk(K::TSuspend)?;
+                self.ty()?;
+            } else if self.peek() == T::LParen {
                 self.ty()?;
             } else {
                 self.user_type()?;

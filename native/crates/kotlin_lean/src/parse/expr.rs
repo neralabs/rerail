@@ -66,11 +66,17 @@ impl<'a> P<'a> {
     }
 
     fn expr_in(&mut self, m: Mark, min: u8) -> R<()> {
-        self.unary(m)?;
+        self.unary(m, min)?;
         loop {
             let t = self.tok();
             if t.nl && self.ends() {
                 return Ok(());
+            }
+            // A generic call or navigation over what is read since `m` (an operand's, deferred to
+            // here: see `postfix`).
+            if t.kind == T::Lt && min <= prec::COMPARISON && self.generic_suffix(m)? {
+                self.postfix(m, usize::MAX, true)?;
+                continue;
             }
             let (kind, p) = match t.kind {
                 T::Star | T::Slash | T::Percent => (K::MultiplicativeExpression, prec::MUL),
@@ -102,11 +108,13 @@ impl<'a> P<'a> {
                     } else {
                         self.tk(K::TIs)?;
                         self.ty()?;
+                        self.type_args_at_line_end()?;
                     }
                 }
                 K::AsExpression => {
                     self.as_operator()?;
                     self.ty()?;
+                    self.type_args_at_line_end()?;
                 }
                 K::InfixExpression => {
                     self.simple_identifier()?;
@@ -120,6 +128,19 @@ impl<'a> P<'a> {
             }
             self.close(n);
         }
+    }
+
+    /// Refused: a type closing its type arguments at a line's end, a generic call's name and `<`
+    /// on the next. tree-sitter's GLR parse keeps the reading where the type's `<` and `>` are
+    /// comparisons (the next line their operand), and which reading it takes depends on more than
+    /// this parser follows.
+    fn type_args_at_line_end(&mut self) -> R<()> {
+        let t = self.tok();
+        let closed = self.src[..t.start as usize].iter().rev().find(|c| !c.is_ascii_whitespace()) == Some(&b'>');
+        if closed && t.nl && t.kind == T::Name && self.kind_at(1) == T::Lt {
+            return self.refuse();
+        }
+        Ok(())
     }
 
     /// `as` or `as?` (one token where the `?` touches it).
@@ -145,7 +166,7 @@ impl<'a> P<'a> {
 
     /// A prefix operator, an annotation or label before an expression, a spread, or a primary
     /// expression and its suffixes.
-    fn unary(&mut self, m: Mark) -> R<()> {
+    fn unary(&mut self, m: Mark, min: u8) -> R<()> {
         let t = self.tok();
         match t.kind {
             T::PlusPlus | T::MinusMinus | T::Minus | T::Plus | T::Bang => {
@@ -178,7 +199,7 @@ impl<'a> P<'a> {
             }
             _ => {
                 self.primary()?;
-                self.postfix(m, usize::MAX)
+                self.postfix(m, usize::MAX, min <= prec::COMPARISON)
             }
         }
     }
@@ -220,9 +241,26 @@ impl<'a> P<'a> {
         }
     }
 
+    /// A call or navigation with type arguments (`<` next) over what is read since `m`, where the
+    /// type arguments close before what such a suffix continues with: whether it was read.
+    fn generic_suffix(&mut self, m: Mark) -> R<bool> {
+        let Some(e) = self.type_args_end(0) else { return Ok(false) };
+        match self.kind_at(e) {
+            T::LParen => self.call(m, true)?,
+            T::LBrace if !self.no_lambda => self.call(m, true)?,
+            T::Dot | T::QuestionDot | T::ColonColon => self.navigation(m)?,
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
     /// The suffixes after a primary expression (calls, navigations, indexes, postfix operators),
-    /// each node put over what is read since `m`; none from token `limit` on.
-    pub(super) fn postfix(&mut self, m: Mark, limit: usize) -> R<()> {
+    /// each node put over what is read since `m`; none from token `limit` on. A generic call's
+    /// (`f<T>()`) only where `generic`: in an operand of an operator that binds tighter than a
+    /// comparison, tree-sitter's GLR parse keeps the reading where `<` is a comparison's, the operand
+    /// reduced first, and the type arguments end up over the whole operation
+    /// (`a ?: f<T>()` is `call(elvis(a, f), <T>())`), its symbol the lower.
+    pub(super) fn postfix(&mut self, m: Mark, limit: usize, generic: bool) -> R<()> {
         loop {
             if self.i >= limit {
                 return Ok(());
@@ -235,13 +273,9 @@ impl<'a> P<'a> {
                 T::LParen => self.call(m, false)?,
                 T::LBrace if !self.no_lambda => self.call(m, false)?,
                 T::Name if !self.no_lambda && self.label_ahead() && self.kind_at(2) == T::LBrace => self.call(m, false)?,
-                T::Lt => {
-                    let Some(e) = self.type_args_end(0) else { return Ok(()) };
-                    match self.kind_at(e) {
-                        T::LParen => self.call(m, true)?,
-                        T::LBrace if !self.no_lambda => self.call(m, true)?,
-                        T::Dot | T::QuestionDot | T::ColonColon => self.navigation(m)?,
-                        _ => return Ok(()),
+                T::Lt if generic => {
+                    if !self.generic_suffix(m)? {
+                        return Ok(());
                     }
                 }
                 T::LBracket => {
@@ -1074,7 +1108,7 @@ impl<'a> P<'a> {
         let m = self.mark();
         self.primary()?;
         if call_end > 0 {
-            self.postfix(m, limit)?;
+            self.postfix(m, limit, true)?;
         }
         self.t.unmark(m);
         // The suffixes after it, flat.
