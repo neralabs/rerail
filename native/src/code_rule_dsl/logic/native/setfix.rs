@@ -97,19 +97,50 @@ fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()
 /// through the `atoms` virtual table meanwhile. `buf`: scratch for `cat`, so joining two symbols allocates only when
 /// the result is new. `failed`: the first interning that failed (the atoms lease not obtained), returned by `check`
 /// at the run's next boundary; its symbol is -1, which matches nothing.
-pub struct Interner { pub atoms: Arc<crate::content_store::atoms::Atoms>, buf: String, failed: Option<String> }
+pub struct Interner { pub atoms: Arc<crate::content_store::atoms::Atoms>, buf: String, failed: Option<String>,
+                       /// A morsel's texts not yet atoms (`Deferred`): none is interned while it walks.
+                       deferred: Option<Box<Deferred>> }
+
+/// The texts a morsel of a walk made that are not atoms yet, each under a value of its own from `DEFERRED` on, in the
+/// order the morsel first made them. The walk's merge interns every morsel's in the morsels' order, which is the
+/// order one walk would have made them in, so each gets the atom one walk would have given it, and the morsels'
+/// rows are read with those atoms in place of these values (`morsels`). The morsels then intern nothing as they
+/// walk: no atom's id follows the threads' timing, and no morsel takes the arena's every shard to write.
+#[derive(Default)]
+struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
+
+/// The first value of a text a morsel deferred (`Deferred`): past every atom (`Sym` is 32 bits) and below every node
+/// (whose document is in the high 32 bits, from 0x6000… on).
+const DEFERRED: i64 = 1 << 40;
+
 impl Interner {
     /// A loader's scratch cursor over the same atom arena. Loading SQL may call sym_text/sym_atom,
     /// so it must not hold the registered cursor's lock across SQLite execution.
     fn for_loading(shared: &RwLock<Self>) -> Self {
-        Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None }
+        Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None, deferred: None }
+    }
+    /// The text `v` stands for if it is a text this morsel deferred.
+    fn deferred_text(&self, v: i64) -> Option<&str> {
+        let d = self.deferred.as_ref()?;
+        let at = usize::try_from(v.checked_sub(DEFERRED)?).ok()?;
+        d.texts.get(at).map(String::as_str)
     }
     /// The atom `id` would give `s`, if it would not make one (`Atoms::existing`): found as interning finds it, with
-    /// no read interning would not make.
+    /// no read interning would not make. In a morsel, a text it deferred is its deferred value.
     fn held(&self, s: &str) -> Option<i64> {
-        self.atoms.existing(s).map(i64::from)
+        self.atoms.existing(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?)))
     }
     fn id(&mut self, s: &str) -> i64 {
+        if self.deferred.is_some() {
+            if let Some(v) = self.held(s) {
+                return v;
+            }
+            let d = self.deferred.as_mut().expect("deferring");
+            let at = d.texts.len() as u32;
+            d.texts.push(s.to_owned());
+            d.at.insert(s.to_owned(), at);
+            return DEFERRED + i64::from(at);
+        }
         match self.atoms.intern(s) {
             Ok(atom) => i64::from(atom),
             Err(e) => {
@@ -121,15 +152,21 @@ impl Interner {
     /// The atom arena the symbols are in (the device interns the texts it makes into it).
     pub fn atoms(&self) -> &Arc<crate::content_store::atoms::Atoms> { &self.atoms }
     /// The atom of `s` in this process's arena (`symbols` read the database's atoms into it).
-    fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from) }
+    fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?))) }
     /// Atom `v`'s text, reading the database's atoms written since `symbols` when `v` is past the arena; "" if there
     /// is no such atom or they could not be read (a join step has no error to return: it matches as it did before).
     pub fn name(&self, v: i64) -> String {
+        if let Some(t) = self.deferred_text(v) {
+            return t.to_owned();
+        }
         let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return String::new() };
         self.atoms.with_str(atom, str::to_owned).or_else(|| self.atoms.value(atom).ok().flatten()).unwrap_or_default()
     }
     /// Whether `v` is an atom of the database, read as `name` reads it.
     fn known(&self, v: i64) -> Result<bool> {
+        if self.deferred_text(v).is_some() {
+            return Ok(true);
+        }
         let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return Ok(false) };
         Ok(self.atoms.with_str(atom, |_| ()).is_some() || self.atoms.value(atom).map_err(|e| err(e.to_string()))?.is_some())
     }
@@ -196,7 +233,7 @@ fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
     }
     // An arena made after the store was written holds none of its atoms yet: the run's SQL and joins read them.
     atoms.read_stored().map_err(|e| err(e.to_string()))?;
-    let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None }));
+    let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None, deferred: None }));
     syms.insert(key, Arc::clone(&s));
     Ok(s)
 }
@@ -2885,6 +2922,14 @@ fn cat_held(syms: &mut Interner, a: i64, b: i64) -> Option<i64> {
     cat_held_read(syms, a, b)
 }
 
+/// Value `v`'s text pushed on `s`: a text the morsel deferred, or an atom's in memory.
+fn push_text(syms: &Interner, s: &mut String, v: i64) {
+    match syms.deferred_text(v) {
+        Some(t) => s.push_str(t),
+        None => { syms.atoms.with_str(v as crate::content_store::atoms::Sym, |t| s.push_str(t)); }
+    }
+}
+
 /// `cat_held` for texts not all in memory: each read where it is.
 fn cat_held_read(syms: &mut Interner, a: i64, b: i64) -> Option<i64> {
     if syms.name(a).is_empty() {
@@ -2892,9 +2937,9 @@ fn cat_held_read(syms: &mut Interner, a: i64, b: i64) -> Option<i64> {
     }
     let mut s = std::mem::take(&mut syms.buf);
     s.clear();
-    syms.atoms.with_str(a as crate::content_store::atoms::Sym, |a| s.push_str(a));
+    push_text(syms, &mut s, a);
     s.push('.');
-    syms.atoms.with_str(b as crate::content_store::atoms::Sym, |b| s.push_str(b));
+    push_text(syms, &mut s, b);
     let id = syms.held(&s);
     syms.buf = s;
     id
@@ -2923,9 +2968,9 @@ fn cat_read(syms: &mut Interner, a: i64, b: i64) -> i64 {
     }
     let mut s = std::mem::take(&mut syms.buf);
     s.clear();
-    syms.atoms.with_str(a as crate::content_store::atoms::Sym, |a| s.push_str(a));
+    push_text(syms, &mut s, a);
     s.push('.');
-    syms.atoms.with_str(b as crate::content_store::atoms::Sym, |b| s.push_str(b));
+    push_text(syms, &mut s, b);
     let id = syms.id(&s);
     syms.buf = s;
     id
@@ -6261,9 +6306,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }
         let (j, store) = (cx.j, cx.store);
         let Some(Step::Atom { src, neg: false, keys, binds, .. }) = j.steps.first() else { return false };
-        if !keys.is_empty() || !morsels_on() || makes_atoms(j) {
+        if !keys.is_empty() || !morsels_on() {
             return false;
         }
+        // A walk that may make atoms defers its new texts in each morsel (`Deferred`), interned at the merge.
+        let defer = makes_atoms(j);
         let mut hints = [0; runs::HINTS];
         let (rows, cands) = candidates_of(src, store, &mut hints);
         let Cands::Range(lo, hi) = cands else { return false };
@@ -6296,7 +6343,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             None => Cands::Range(lo + cut(p) as u32, lo + cut(p + 1) as u32),
         }).collect();
         struct Out { n: u64, fresh: Fresh, rows: Vec<i64>, counts: Vec<[u64; 2]>, skipped: u64, work: u64, failed: Option<String>, error: Option<Error>,
-                     left: Option<Vec<u32>> }
+                     left: Option<Vec<u32>>, texts: Vec<String> }
         let (head, collecting, cut_from) = (cx.head, cx.collect.is_some(), cx.cut_from);
         let atoms = Arc::clone(&cx.syms.atoms);
         let mut outs: Vec<Option<Out>> = (0..parts).map(|_| None).collect();
@@ -6304,7 +6351,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             for (first, out) in firsts.into_iter().zip(outs.iter_mut()) {
                 let atoms = Arc::clone(&atoms);
                 jobs.spawn("a join's morsel", move |_| {
-                    let mut syms = Interner { atoms, buf: String::new(), failed: None };
+                    let mut syms = Interner { atoms, buf: String::new(), failed: None, deferred: defer.then(Default::default) };
                     let mut fresh: Vec<Fresh> = if collecting { Vec::new() } else { vec![Fresh::default(); head + 1] };
                     let mut rows = Vec::new();
                     let factor = factored(j);
@@ -6327,13 +6374,18 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let counts = w.counts.iter().map(|[a, b]| [a.get(), b.get()]).collect();
                     drop(w);
                     let mut mine = if collecting { Fresh::default() } else { std::mem::take(&mut fresh[head]) };
-                    if !collecting { mine.settle(&store.rels[head]); }
-                    *out = Some(Out { n, fresh: mine, rows, counts, skipped, work, failed: syms.failed.take(), error, left });
+                    let texts = syms.deferred.take().map_or_else(Vec::new, |d| d.texts);
+                    // Rows holding a deferred text are settled once they hold its atom (`settle_deferred`).
+                    if !collecting && texts.is_empty() { mine.settle(&store.rels[head]); }
+                    *out = Some(Out { n, fresh: mine, rows, counts, skipped, work, failed: syms.failed.take(), error, left, texts });
                 });
             }
         });
         if limited {
             cx.list0 = Some((RowsOf::of(src), list.unwrap_or_default()));
+        }
+        if outs.iter().flatten().any(|o| !o.texts.is_empty()) {
+            settle_deferred(cx, &mut outs.iter_mut().flatten().map(|o| (&mut o.texts, &mut o.fresh, &mut o.rows)).collect::<Vec<_>>());
         }
         for out in outs.into_iter().flatten() {
             if let Some(l) = out.left {
@@ -6358,10 +6410,81 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         IN_MORSELS.with(|m| m.set(m.get() + 1));
         true
     }
+    /// The morsels' deferred texts interned, in the morsels' order (one `intern_all`), and each morsel's rows read
+    /// with their atoms in place of its deferred values, in the head's columns that may hold a made text
+    /// (`made_columns`); then each morsel's rows settled, on the pool, as a morsel that made no text settles its own.
+    fn settle_deferred(cx: &mut Ctx<'_, '_>, outs: &mut [(&mut Vec<String>, &mut Fresh, &mut Vec<i64>)]) {
+        let mut order: Vec<&str> = Vec::new();
+        let mut seen: HashMap<&str, usize> = HashMap::default();
+        let at: Vec<Vec<usize>> = outs.iter().map(|(texts, _, _)| texts.iter().map(|t| *seen.entry(t.as_str()).or_insert_with(|| { order.push(t.as_str()); order.len() - 1 })).collect()).collect();
+        let atoms = match cx.syms.atoms.intern_all(&order) {
+            Ok(a) => a,
+            Err(e) => {
+                cx.syms.failed.get_or_insert_with(|| e.to_string());
+                vec![0; order.len()]
+            }
+        };
+        drop(seen);
+        let (j, store, head, collecting) = (cx.j, cx.store, cx.head, cx.collect.is_some());
+        let made = made_columns(j);
+        let width = j.out.len();
+        crate::threads::scope(|jobs| {
+            for ((texts, fresh, rows), at) in outs.iter_mut().zip(&at) {
+                if texts.is_empty() {
+                    continue;
+                }
+                let map: Vec<i64> = at.iter().map(|&i| i64::from(atoms[i])).collect();
+                let made = &made;
+                jobs.spawn("a morsel's made texts", move |_| {
+                    let swap = |data: &mut [i64]| for row in data.chunks_exact_mut(width) {
+                        for (v, _) in row.iter_mut().zip(made).filter(|(_, m)| **m) {
+                            if let Some(&a) = v.checked_sub(DEFERRED).and_then(|i| map.get(usize::try_from(i).ok()?)) {
+                                *v = a;
+                            }
+                        }
+                    };
+                    if collecting {
+                        swap(rows);
+                    } else {
+                        assert_eq!(store.rels[head].k, width, "a head row is its terms");
+                        swap(&mut fresh.data[..fresh.n * width]);
+                        // Sorted whole: the atoms' order is not the deferred values'.
+                        fresh.settled = 0;
+                        fresh.lost = true;
+                        fresh.breaks.clear();
+                        fresh.settle(&store.rels[head]);
+                    }
+                    texts.clear();
+                });
+            }
+        });
+    }
+    /// Per column of the head, whether it may hold a text the walk makes: a `@cat` of the head, or a slot a `@cat`,
+    /// a split, a text function or a joined text binds, or one a `Let` copies from such a slot.
+    fn made_columns(j: &JoinRule) -> Vec<bool> {
+        use crate::code_rule_dsl::logic::strings::functions::{signature, Kind};
+        let mut made = vec![false; j.nslots];
+        let mark = |s: usize, made: &mut Vec<bool>| if let Some(m) = made.get_mut(s) { *m = true };
+        for step in &j.steps {
+            match step {
+                Step::Cat { out, .. } | Step::StrJoin { out, .. } => mark(*out, &mut made),
+                Step::Func { name, out, .. } if signature(name).is_none_or(|(_, _, k)| matches!(k, Kind::Text)) => mark(*out, &mut made),
+                Step::Split { a, b, .. } => {
+                    for s in a.iter().chain(b) {
+                        mark(*s, &mut made);
+                    }
+                }
+                Step::Let { a, b: Key::Slot(src) } if made.get(*src).copied().unwrap_or(false) => mark(*a, &mut made),
+                _ => {}
+            }
+        }
+        j.out.iter().map(|t| match t { Term::Cat(..) => true, Term::Slot(s) => made.get(*s).copied().unwrap_or(false), Term::Const(_) => false }).collect()
+    }
     /// Whether the walk may make atoms row by row: a joined head (`@cat` in it), a joined text, or a `@cat`, text
     /// function or split part whose text is interned (neither looked up, unread, nor held as the walk's scratch:
-    /// `probes`). Such a walk stays whole: in morsels, its new atoms' ids would follow the threads' timing. A walk
-    /// that only reads texts walks in morsels (decision 0279 §7): the arena's reads take a shard of their own.
+    /// `probes`). In morsels, such a walk defers its new texts (`Deferred`), interned at the merge in the morsels'
+    /// order, so their ids are one walk's (decision 0292 §1; 0279 §7 kept such a walk whole). A walk that only
+    /// reads texts walks in morsels as it did (0279 §7): the arena's reads take a shard of their own.
     fn makes_atoms(j: &JoinRule) -> bool {
         const KEPT: u8 = PROBE_OUT | UNREAD_OUT | TEXT_OUT;
         j.out.iter().any(|t| matches!(t, Term::Cat(..)))

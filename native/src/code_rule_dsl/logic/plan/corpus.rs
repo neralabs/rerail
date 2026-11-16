@@ -6122,11 +6122,12 @@ fn run_observed(
         got
     };
     drain(&mut process, true)?;
-    // The chunks' connections are closed beside the run: what follows runs on the run's.
-    for (wdb, wmodules) in std::mem::take(&mut *worker_conns.lock()) {
+    // The chunks' connections are closed beside the run once the loads' chunks are evaluated too: what follows runs
+    // on the run's.
+    let close_workers = || for (wdb, wmodules) in std::mem::take(&mut *worker_conns.lock()) {
         drop(wmodules);
         close_beside(wdb);
-    }
+    };
     // Requests answered inside the fixpoint (decision 0065 §2a). The cone of requests runs on a connection of its
     // own, in a thread of its own, and pauses; this thread answers: a directory's entries and a file's lines from
     // `World`, and a load by sending the document through the chunk path, as any file goes (the memo by content,
@@ -6583,7 +6584,8 @@ fn run_observed(
             }
             drop(_taken);
             docs_tx.send(keys.iter().copied().zip(fresh).map(|(k, d)| (k, d.path, Some(Arc::from(d.module.as_str())))).collect()).map_err(|_| Error::Plan("the chunk builder ended".to_owned()))?;
-            // The chunks' file-local evaluation, on this thread (`process`), apart from the wait for them to be built.
+            // The chunks' file-local evaluation, at once on the pool as the run's chunks are (decision 0292 §2), each
+            // begun and filed here (`process`), apart from the wait for them to be built and evaluated.
             let t_drain = std::time::Instant::now();
             let mut evaluate = 0.0;
             let drained = drain(&mut |s: Step| {
@@ -6591,7 +6593,7 @@ fn run_observed(
                 let r = process(s);
                 evaluate += t.elapsed().as_secs_f64();
                 r
-            }, false);
+            }, true);
             {
                 let mut t = times.borrow_mut();
                 t.evaluate += evaluate;
@@ -6660,6 +6662,7 @@ fn run_observed(
             t.idle = idle;
             t.report();
         }
+        close_workers();
         (loading_rows, cone_kept, cone_rounds) = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
         // The documents the rounds loaded and took back (decision 0145): neither the run's documents nor rows of its
         // exports.
@@ -6719,6 +6722,7 @@ fn run_observed(
         // No requests: no cone, so each document reads into it nothing.
         cone_inputs = docs.iter().map(|(_, p)| (p.clone(), String::new())).collect();
     }
+    close_workers();
     // The builder ends with its channel.
     docs_out = None;
     drop(docs_out);
@@ -10563,8 +10567,8 @@ fn in_policy(text: &str, e: crate::code_rule_dsl::logic::front::Error) -> crate:
 }
 
 /// Where the requests answered inside the fixpoint spent their time (decision 0114 §6), on the thread that
-/// answers them: requests taken (resolved and ordered), chunks waited for (built on workers), chunks evaluated
-/// here, answer rows read back, and the time this thread waited for the cone's next request.
+/// answers them: requests taken (resolved and ordered), chunks waited for (built and evaluated on workers), chunks
+/// begun and filed here, answer rows read back, and the time this thread waited for the cone's next request.
 #[derive(Default)]
 struct AnswerTimes {
     calls: usize,
@@ -10583,7 +10587,7 @@ impl AnswerTimes {
     fn report(&self) {
         let text = || {
             format!(
-                "{} requests ({} rows), {} documents loaded, {} answered again: {:.3} s answering (taking {:.3} s, waiting for chunks built on workers {:.3} s, evaluating them on this thread {:.3} s, answer rows {:.3} s); {:.3} s waiting for the cone's next request",
+                "{} requests ({} rows), {} documents loaded, {} answered again: {:.3} s answering (taking {:.3} s, waiting for chunks built and evaluated on workers {:.3} s, begun and filed on this thread {:.3} s, answer rows {:.3} s); {:.3} s waiting for the cone's next request",
                 self.calls, self.rows, self.fresh, self.again, self.total, self.take, self.built, self.evaluate, self.rows_of, self.idle
             )
         };

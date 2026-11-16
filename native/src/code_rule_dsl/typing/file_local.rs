@@ -1682,6 +1682,23 @@ fn descends(atoms: &[&crate::code_rule_dsl::logic::front::Atom]) -> bool {
 }
 
 /// The relations made, and the split of the program as it is left (`split(prog)`).
+/// A node's text or value read, `x = @rr_node_text(v)` (either side, `syntax::NODE_READS`): `(x, v)`.
+fn node_read(l: &crate::code_rule_dsl::logic::front::Literal) -> Option<(String, String)> {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    let Literal::Cmp { l, op, r } = l else { return None };
+    if *op != "=" {
+        return None;
+    }
+    let read = |x: &Term, c: &Term| match (x, c) {
+        (Term::Var(x), Term::Call(f, args)) if crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&f.as_ref()) => match args.as_ref() {
+            [Term::Var(v)] => Some((x.to_string(), v.to_string())),
+            _ => None,
+        },
+        _ => None,
+    };
+    read(l, r).or_else(|| read(r, l))
+}
+
 fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrestricted: bool) -> (Vec<String>, std::collections::BTreeSet<String>) {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
@@ -1768,11 +1785,18 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             let mut body = rule.body.clone();
             let mut taken: BTreeSet<usize> = BTreeSet::new();
             let mut replaced: Vec<(usize, Literal)> = Vec::new();
-            for (component, (mut lits, vars)) in comps.into_iter().enumerate() {
+            for (component, (mut lits, mut vars)) in comps.into_iter().enumerate() {
                 let atoms: Vec<&Atom> = lits.iter().filter_map(|&j| rule.body[j].atom()).collect();
+                // A node's text or value read of a node this component binds (`t = @rr_node_text(v)`, a long-text
+                // twin's, decision 0109) goes with it: only the chunk's batch holds the node's text, so the read is
+                // answered there and its value handed on. Left to the cross part, it read no batch, or the last
+                // chunk's (0254 §2). Such a component is pushed whatever else would leave it (decision 0292 §3).
+                let node_reads: Vec<String> = rule.body.iter().filter_map(|l| node_read(l)).filter(|(_, v)| vars.contains(v)).map(|(x, _)| x).collect();
+                vars.extend(node_reads.iter().cloned());
+                let must = !node_reads.is_empty();
                 // A join of file-local relations alone is pushed too: exported, each would be held whole by the
                 // cross part (`la_leaf_target`, a row per node, for the 311 rows its join with `la_target` makes).
-                if !atoms.iter().any(|a| base(&a.rel)) && atoms.len() < 2 {
+                if !must && !atoms.iter().any(|a| base(&a.rel)) && atoms.len() < 2 {
                     continue;
                 }
                 if independent_node_groups(&atoms, &equal) > 1 {
@@ -1788,6 +1812,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 let attribute = |a: &Atom| matches!(a.rel.as_str(), "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node" | "doc") && plain(a);
                 let rest: Vec<&&Atom> = atoms.iter().filter(|a| !attribute(a)).collect();
                 if let [a] = rest[..]
+                    && !must
                     && plain(a)
                 {
                     let own: BTreeSet<String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).map(String::from).collect();
@@ -1801,13 +1826,14 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                     }
                 }
                 if let [a] = atoms[..]
+                    && !must
                     && plain(a)
                 {
                     continue;
                 }
                 // A component that holds a row for every node of the chunk (nothing in it narrows its nodes) is left
                 // when the cross part reads base relations anyway (`push_local_joins`).
-                if keep_unrestricted && (unrestricted(prog, &atoms) || descends(&atoms)) {
+                if !must && keep_unrestricted && (unrestricted(prog, &atoms) || descends(&atoms)) {
                     continue;
                 }
                 // Comparisons and negated file-local reads over only this component's variables go with it.
@@ -1855,12 +1881,16 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                         && matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(a.rel.as_str()) && !candidate(l)
                             && iface.iter().all(|v| a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))))
                 });
-                if joined_away && filtered {
+                if !must && joined_away && filtered {
                     continue;
                 }
                 let typed: Option<Vec<(String, String)>> = iface
                     .iter()
                     .map(|v| {
+                        // A node read's value is text.
+                        if node_reads.contains(v) {
+                            return Some((v.clone(), "sym".to_owned()));
+                        }
                         atoms.iter().find_map(|a| {
                             let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
                             prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| (v.clone(), t.to_string()))
