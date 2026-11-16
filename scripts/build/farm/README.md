@@ -237,6 +237,12 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   interface the connection arrived on, its free disk, its idle time and its mounts; the round
   trip is timed, and every 10 minutes (or while it is slow) a 4 MB transfer measures the
   throughput. A host short of disk or past the limits is not used.
+- **Blocked here, not down.** macOS's Local Network privacy can deny the application the agents
+  run under (and every program it starts: ssh, nc, ping) any connection to a local address, as
+  "No route to host", while the hosts answer everyone else; it happened to every host at once on
+  2026-11-16. When a host cannot be reached, the probe tries it again from a job launchd starts:
+  if that reaches it, the reason names the application and the setting (System Settings, Privacy
+  & Security, Local Network), and the host is probed again every 30 s rather than backed off.
 - **Off its link: recovered.** A host's name (often an mDNS `.local` name) resolves to whichever
   of its addresses answers first, so ssh can reach it over WiFi while its fast link is up. When
   a probe arrives on another interface than `link`, the farm asks the host, over the connection

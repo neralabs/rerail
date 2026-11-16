@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import threading
@@ -21,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 12
+VERSION = 13
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -656,7 +657,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
             # is down): back to what its name resolves to.
             set_route(name, None)
             return probe(host, cfg, fell_back=True, recovered=recovered)
-        h["why"] = "unreachable (off, asleep, or off the network)"
+        blocked = local_network_blocked(name)
+        h["why"] = blocked or "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
     client = h["client"] = (lines[0].split() or [""])[0]
@@ -744,6 +746,9 @@ def health(host, fresh=False):
         h = probe(host, config())
         if not h["ok"] and h["why"].startswith("not on its link"):
             h["down_until"] = now + OFF_LINK_SECONDS
+        elif not h["ok"] and "Local Network privacy" in h["why"]:
+            # Not the host: it is back the moment the permission is given, so no growing back-off.
+            h["down_until"] = now + DOWN_SECONDS[0]
         elif not h["ok"]:
             h["failures"] = h.get("failures", 0) + 1
             h["down_until"] = now + min(DOWN_SECONDS[0] * 2 ** (h["failures"] - 1), DOWN_SECONDS[1])
@@ -821,6 +826,60 @@ def set_route(host, address, alias=None):
             pass
     close_masters(host)
     log(f"{host}: route {'over ' + address if address else 'by name'}")
+
+
+def local_network_blocked(host):
+    """Why `host` cannot be reached from this process when the network is not the cause, or None.
+    macOS's Local Network privacy refuses an app's processes (and every program they start: ssh,
+    nc) any connection to a local address, as "No route to host", while the host answers everyone
+    else. So a connection that fails here so but succeeds when launchd starts it names the app."""
+    g = dict(line.split(" ", 1) for line in subprocess.run(["ssh", "-G", host], capture_output=True, text=True)
+             .stdout.splitlines() if " " in line)
+    try:
+        info = socket.getaddrinfo(g.get("hostname", host), 22, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return None
+    for family, _, _, _, sa in info[:4]:
+        addr = f"{sa[0]}%{socket.if_indextoname(sa[3])}" if family == socket.AF_INET6 and sa[3] else sa[0]
+        nc = ["/usr/bin/nc", "-v", "-z", "-G", "2", addr, str(g.get("port", 22))]
+        try:
+            here = subprocess.run(nc, capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired:
+            continue
+        if here.returncode == 0 or "No route to host" not in here.stderr:
+            continue
+        out = state("lnprobe", f"{os.getpid()}.txt")
+        label = f"rerail-farm.lnprobe.{os.getpid()}"
+        subprocess.run(["launchctl", "submit", "-l", label, "-o", out, "-e", out, "--"] + nc, capture_output=True)
+        time.sleep(3)
+        subprocess.run(["launchctl", "remove", label], capture_output=True)
+        try:
+            text = open(out).read()
+            os.remove(out)
+        except OSError:
+            text = ""
+        if "succeeded" in text:
+            return (f"macOS's Local Network privacy blocks {responsible_app()} from local addresses (launchd reaches "
+                    f"{host}): allow it in System Settings, Privacy & Security, Local Network")
+    return None
+
+
+def responsible_app():
+    """The application this process runs under, for messages: the outermost .app among its
+    ancestors (an interpreter's own bundle, Xcode's Python, is inside it)."""
+    pid, found = os.getppid(), None
+    for _ in range(40):
+        out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if not out:
+            break
+        ppid, comm = out.split(None, 1)
+        m = re.search(r"/Applications/([^/]+)\.app/", comm)
+        if m:
+            found = m.group(1)
+        pid = int(ppid)
+        if pid <= 1:
+            break
+    return found or "this terminal's application"
 
 
 def close_masters(host):
