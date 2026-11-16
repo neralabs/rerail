@@ -80,4 +80,56 @@ describe("CheckoutOwners", () => {
     expect(owners.ownerOf(lower(outer))?.checkoutRoot).toBe(outer);
     expect(physicalPath(lower(outer).toUpperCase())).toBe(outer);
   });
+
+  it("looks again above a file at a folder that became a checkout after a lookup passed it", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const file = join(root, "later", "src", "a.py");
+    await mkdir(join(root, "later", "src"), { recursive: true });
+    await writeFile(file, "x = 1\n");
+    const owners = new CheckoutOwners();
+    expect(owners.ownerOf(file)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(false);
+
+    const later = await repository(join(root, "later"));
+
+    // The answers kept from the first lookup name no checkout until something drops them.
+    expect(owners.ownerOf(file)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.ownerOf(file)).toEqual({ checkoutRoot: later, path: "src/a.py" });
+    expect(owners.lookAgainAt(file)).toBe(false);
+  });
+
+  it("finds the checkout a folder became after a lookup passed it once a lookup starts at that folder", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const file = join(root, "later", "src", "a.py");
+    await mkdir(join(root, "later", "src"), { recursive: true });
+    await writeFile(file, "x = 1\n");
+    const owners = new CheckoutOwners();
+    expect(owners.ownerOf(file)).toBeUndefined();
+
+    const later = await repository(join(root, "later"));
+
+    // A walk asks for each folder before the files in it, so the folder's own lookup is where it finds the checkout.
+    expect(owners.ownerOf(join(root, "later"))).toEqual({ checkoutRoot: later, path: "" });
+    expect(owners.ownerOf(file)).toEqual({ checkoutRoot: later, path: "src/a.py" });
+  });
+
+  it("looks again once at a folder that gained a .git entry Git does not take for a checkout", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const file = join(root, "stray", "a.py");
+    await mkdir(join(root, "stray"), { recursive: true });
+    await writeFile(file, "x = 1\n");
+    const owners = new CheckoutOwners();
+    expect(owners.ownerOf(file)).toBeUndefined();
+
+    // A worktree's `.git` file whose Git folder is gone: Git answers that it is no checkout, at a Git process each time.
+    await writeFile(join(root, "stray", ".git"), `gitdir: ${join(root, "gone")}\n`);
+
+    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.ownerOf(file)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(false);
+  });
 });
