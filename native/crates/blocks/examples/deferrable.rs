@@ -31,6 +31,7 @@ fn main() {
     // POOL=0: the dispatch is not inside an autorelease pool.
     let touch = std::env::var("TOUCH").is_ok_and(|v| v == "1");
     let touch_after = std::env::var("TOUCH_AFTER").is_ok_and(|v| v == "1");
+    let pwrite = std::env::var("PWRITE").is_ok_and(|v| v == "1");
     let wait_s: u64 = std::env::var("WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
     let pool = std::env::var("POOL").map_or(true, |v| v != "0");
     println!("msync {msync}, wrap released before freeze {release}, dispatch in an autorelease pool {pool}, pages touched by the host {touch}");
@@ -46,8 +47,8 @@ fn main() {
     let expect = |i: u32, seed: u32| i.wrapping_mul(2654435761) ^ seed;
 
     println!(
-        "{:>6} {:>5} {:>4} {:>8} {:>11} {:>10} {:>9} {:>9} {:>11} {:>9} {:>11} {:>6} {:>6} {:>30}",
-        "MiB", "kind", "by", "fill ms", "fill fp/rss", "freeze ms", "msync ms", "unmap ms", "unmap fp/rss", "check ms", "check fp/rss", "equal", "dirty", "written back"
+        "{:>6} {:>5} {:>4} {:>8} {:>11} {:>10} {:>9} {:>9} {:>11} {:>9} {:>11} {:>6} {:>6} {:>30} {:>10}",
+        "MiB", "kind", "by", "fill ms", "fill fp/rss", "freeze ms", "msync ms", "unmap ms", "unmap fp/rss", "check ms", "check fp/rss", "equal", "dirty", "written back", "pwrite ms"
     );
     println!("(fp/rss: MiB more than before the block was made: phys_footprint / resident size)");
     // Warm the pipeline and the driver once, so the first row does not carry their memory.
@@ -67,7 +68,7 @@ fn main() {
         cmd.wait_until_completed();
     }
     for &mib in &[64usize, 256, 1024] {
-        for (file, gpu) in [(true, true), (true, false)] {
+        for (file, gpu) in if pwrite { vec![(false, true), (false, false)] } else { vec![(true, true), (true, false)] } {
             let seed = 0x9e37_79b9u32 ^ mib as u32;
             let len = mib << 20;
             let path = dir.join(format!("seg-{mib}.blk"));
@@ -152,8 +153,18 @@ fn main() {
                 assert_eq!(r, 0, "msync");
             }
             let sync = ms(t);
+            // PWRITE=1: an anonymous block is written to the file by `pwrite` once frozen (a bounce buffer: the kernel's
+            // page cache takes a copy, and the OS writes it back), and checked from the file as a file block is.
+            let mut pw = String::from("-");
+            if pwrite && !file {
+                let t = Instant::now();
+                let f = std::fs::File::create(&path).unwrap();
+                std::os::unix::fs::FileExt::write_all_at(&f, frozen.bytes(0, frozen.used()), 0).unwrap();
+                pw = format!("{:.1}", ms(t));
+            }
+            let from_file = file || pwrite;
             // A check of the anonymous block reads it in place, before it is unmapped.
-            let anon_equal = (!file).then(|| {
+            let anon_equal = (!from_file).then(|| {
                 let p = frozen.ptr::<u32>(off);
                 (0..n as u32).all(|i| unsafe { *p.add(i as usize) } == expect(i, seed))
             });
@@ -192,7 +203,7 @@ fn main() {
             let check = ms(t);
             let f3 = footprint();
             println!(
-                "{mib:>6} {:>5} {:>4} {fill:>8.1} {:>11} {freeze:>10.1} {sync:>9.1} {unmap:>9.1} {:>11} {check:>9.1} {:>11} {equal:>6} {dirty:>6} {clean:>30}",
+                "{mib:>6} {:>5} {:>4} {fill:>8.1} {:>11} {freeze:>10.1} {sync:>9.1} {unmap:>9.1} {:>11} {check:>9.1} {:>11} {equal:>6} {dirty:>6} {clean:>30} {pw:>10}",
                 if file { "file" } else { "anon" },
                 if gpu { "gpu" } else { "cpu" },
                 mb(f1, f0),

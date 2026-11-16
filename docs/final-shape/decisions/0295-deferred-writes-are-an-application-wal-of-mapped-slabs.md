@@ -146,6 +146,27 @@ lives made the GPU's writes reach the disk. Touching after the release did at 1 
 pages is not the engine's to know. A page the OS takes as clean is dropped under pressure, and a later read gets the
 file's old bytes, so GPU writes through a wrap of file pages could be lost. Hence §1's copy.
 
+A bounce buffer (`PWRITE=1`): the block is anonymous, filled by the kernel or the host, frozen, and written to the
+file by `pwrite`. Every size reached the disk whole (64 MiB to 1 GiB, all pages clean 1–24 ms after the check), the
+GPU's writes as the host's. `pwrite` took 40 ms at 64 MiB, 99–133 ms at 256 MiB, 0.9–2.2 s at 1 GiB (load average
+18): the page cache pushes large writes out as it takes them, so it too runs on the writer thread.
+
+Why, from elsewhere:
+
+- XNU (`osfmk/vm/vm_map.c`, `vm_object.c`, `memory_object.c`): `msync(MS_ASYNC)` returns each dirty page to its
+  pager from the calling thread and only skips waiting for the I/O, so it costs the issuing of every page's write.
+  A page is written back when `vmp_dirty` or the CPU's modified bit (`pmap_is_modified`) says so; a device's writes
+  set neither after the wire.
+- Linux has the same limit, written down: a device writing page-cache pages it pinned bypasses `page_mkwrite` (the
+  file system's chance to allocate blocks, for a sparse or copy-on-write file such as APFS's) and races writeback,
+  which may clean a page the device then writes again (LPC 2018, "get_user_pages() + DMA"; the kernel's
+  `pin_user_pages` documentation leaves writeback of pinned pages a TODO). The supported ways are a bounce buffer
+  written with `write`, or a file-system-aware DMA path (NVIDIA's GPUDirect Storage), which Metal has only for
+  reads (`MTLIOCommandQueue` loads files into resources).
+- SQLite and LMDB both read through a map and write with `write`: SQLite's map is read-only (stray pointers cannot
+  corrupt the file, and changes stay private until commit); LMDB's writable map (`MDB_WRITEMAP`) is an option, "slower
+  for DBs larger than RAM", and loses that protection.
+
 `phys_footprint` did not count dirty file-backed pages the host wrote (0 MiB where an anonymous block counted
 1,024), mapped or not; resident size did while they were mapped. Neither counter saw pages a kernel wrote through a
 wrap, anonymous or file-backed, so the pool's own budget is what counts those.
