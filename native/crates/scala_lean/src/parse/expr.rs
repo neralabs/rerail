@@ -111,10 +111,6 @@ impl P<'_> {
             })?;
             return self.outdent(n);
         }
-        if self.lambda_ahead() {
-            // `x =>` then statements: the block's lambda (`_indented_block_lambda`): refused.
-            return self.refuse();
-        }
         let n = self.t.open(K::IndentedBlock, field, at);
         self.statements(Region::Indent, f::NONE)?;
         self.outdent(n)
@@ -564,8 +560,25 @@ impl P<'_> {
 
     /// A block's inside: a lambda over statements (`{ x => a; b }`), or statements.
     fn i_lambda_block(&mut self) -> R<()> {
-        let save = self.i;
-        self.i = save;
+        if self.typed_lambda_ahead() {
+            // `{ x: T => body }` (`_braced_typed_lambda`, a lambda of no class): the name, `:` and
+            // type in `parameters`, then an indentable expression.
+            let l = self.open(K::LambdaExpression);
+            if self.is_word(w::IMPLICIT) {
+                return self.refuse();
+            }
+            self.identifier(f::PARAMETERS)?;
+            self.tkf(K::TColon, f::PARAMETERS)?;
+            self.typ_x(f::PARAMETERS, super::types::Tx { no_arrow: true })?;
+            let code = self.op_at(0);
+            self.tk(if code == op::QARROW { K::TQFatArrow } else { K::TFatArrow })?;
+            self.indentable_f(f::NONE)?;
+            self.close(l);
+            if self.peek() != T::RBrace {
+                return self.refuse();
+            }
+            return Ok(());
+        }
         if self.peek() != T::RBrace && self.lambda_ahead() {
             let l = self.open(K::LambdaExpression);
             self.lambda_parameters()?;
@@ -596,6 +609,33 @@ impl P<'_> {
             return Ok(());
         }
         self.statements(Region::Brace, f::NONE)
+    }
+
+    /// Whether `name: T =>` comes next on the line (a typed lambda in braces).
+    fn typed_lambda_ahead(&mut self) -> bool {
+        if !(Self::is_name(self.tok()) && self.tok().code != w::UNDERSCORE && self.is_op_at(1, op::COLON)) {
+            return false;
+        }
+        let mut d = 0i32;
+        for j in 2..64 {
+            let t = self.peek_at(j);
+            if t.nl || t.kind == T::Eof {
+                return false;
+            }
+            match t.kind {
+                T::LParen | T::LBracket | T::LBrace => d += 1,
+                T::RParen | T::RBracket | T::RBrace => {
+                    d -= 1;
+                    if d < 0 {
+                        return false;
+                    }
+                }
+                T::Op if d == 0 && matches!(t.code, op::ARROW | op::QARROW) => return true,
+                T::Op if d == 0 && t.code == op::EQ => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// `{ case … }` (`case_block`).
@@ -693,11 +733,9 @@ impl P<'_> {
     fn if_expression(&mut self) -> R<u32> {
         let n = self.open(K::IfExpression);
         self.tk(K::TIf)?;
-        let paren = self.peek() == T::LParen && {
-            let close = self.matching(0);
-            let after = self.peek_at(close + 1);
-            !(after.kind == T::Dot || after.kind == T::Op && !op::is_reserved(after.code) && !after.nl || after.kind == T::Id && after.code == w::THEN)
-        };
+        // `if (c) a`: the parenthesized condition's form, unless a `then` follows (the one form
+        // that parses: `if (a) - 1 then …` is the other).
+        let paren = self.peek() == T::LParen && !self.then_ahead();
         let fol = self.fol;
         if paren {
             let c = self.paren_expression()?;
@@ -742,6 +780,32 @@ impl P<'_> {
             self.indentable_f(f::ALTERNATIVE)?;
         }
         Ok(self.close(n))
+    }
+
+    /// Whether a `then` comes after the condition: at its depth, before its line's end or a
+    /// closing bracket.
+    fn then_ahead(&mut self) -> bool {
+        let mut d = 0i32;
+        for j in 0..256 {
+            let t = self.peek_at(j);
+            if j > 0 && t.nl && d == 0 {
+                return t.kind == T::Id && t.code == w::THEN;
+            }
+            match t.kind {
+                T::LParen | T::LBracket | T::LBrace => d += 1,
+                T::RParen | T::RBracket | T::RBrace => {
+                    d -= 1;
+                    if d < 0 {
+                        return false;
+                    }
+                }
+                T::Id if t.code == w::THEN && d == 0 => return true,
+                T::Semi | T::Eof if d == 0 => return false,
+                T::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// The token index of the bracket closing the one `k` ahead.
@@ -1094,7 +1158,8 @@ impl P<'_> {
             }
         } else {
             self.t.unmark(m);
-            while self.peek() == T::LParen && !self.tok().nl {
+            // One argument list: a second is a call of the instance (`new A(x)(y)`).
+            if self.peek() == T::LParen && !self.tok().nl {
                 self.arguments(f::ARGUMENTS)?;
             }
             if self.is_word(w::WITH) {

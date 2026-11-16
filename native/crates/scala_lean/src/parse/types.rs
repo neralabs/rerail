@@ -55,7 +55,7 @@ impl P<'_> {
             self.t.unmark(m);
             return Ok(n);
         }
-        let first = self.infix_type()?;
+        let first = self.infix_type(tx)?;
         if !tx.no_arrow && self.type_arrow_next() {
             self.t.refield(first, f::NONE);
             let pt = self.t.wrap(m, K::ParameterTypes, f::PARAMETER_TYPES);
@@ -149,24 +149,45 @@ impl P<'_> {
         Ok(t)
     }
 
+    /// A bound's type: `<:`, `>:` and `<%` after it are the next bounds' (`A >: L <: U`).
+    fn bound_type(&mut self) -> R<u32> {
+        let saved = std::mem::replace(&mut self.in_bound, true);
+        let r = self.typ_f(f::TYPE);
+        self.in_bound = saved;
+        r
+    }
+
     /// An infix type (`A op B`, left to right), or a compound, annotated or simple one.
-    fn infix_type(&mut self) -> R<u32> {
+    /// Infix types are left-associative, all of one precedence; an alphanumeric operator is an
+    /// `identifier`, a symbolic one an `operator_identifier`. In a typed pattern (`no_arrow`) a `|`
+    /// is the pattern's alternative.
+    fn infix_type(&mut self, tx: Tx) -> R<u32> {
         let m = self.mark();
         let mut n = self.compound_type()?;
         loop {
             let t = self.tok();
-            let is_op = match t.kind {
-                T::Op => !matches!(t.code, op::ARROW | op::QARROW | op::THIN | op::QTHIN | op::EQ | op::COLON | op::LARROW | op::HASH | op::AT | op::TYPE_LAMBDA | op::STAR | op::PIPE) && !t.nl,
-                T::Id => false,
-                T::BackId => false,
-                _ => false,
-            };
-            if !is_op {
+            if t.nl {
                 break;
+            }
+            let alpha = match t.kind {
+                T::Op if self.in_bound && matches!(t.code, op::SUBTYPE | op::SUPERTYPE | op::VIEW) => break,
+                T::Op if t.code == op::PIPE && tx.no_arrow => break,
+                T::Op if matches!(t.code, op::ARROW | op::QARROW | op::THIN | op::QTHIN | op::EQ | op::COLON | op::LARROW | op::HASH | op::AT | op::TYPE_LAMBDA | op::STAR) => break,
+                T::Op => false,
+                T::Id if w::is_reserved(t.code) || matches!(t.code, w::WITH | w::FORSOME | w::MATCH | w::IF | w::THEN | w::ELSE | w::DERIVES | w::USES | w::AS | w::UNDERSCORE) => break,
+                T::Id | T::BackId => true,
+                _ => break,
+            };
+            if alpha {
+                // A type must follow on the line.
+                let nx = self.peek_at(1);
+                if nx.nl || !(Self::is_name(nx) || matches!(nx.kind, T::LParen)) {
+                    break;
+                }
             }
             self.t.refield(n, f::LEFT);
             let w = self.t.wrap(m, K::InfixType, f::NONE);
-            self.leaf(K::OperatorIdentifier, f::OPERATOR)?;
+            self.leaf(if alpha { K::Identifier } else { K::OperatorIdentifier }, f::OPERATOR)?;
             let r = self.compound_type()?;
             self.t.refield(r, f::RIGHT);
             n = self.close(w);
@@ -319,6 +340,14 @@ impl P<'_> {
 
     /// `[A, B]` (`type_arguments`), given `field`.
     pub(super) fn type_arguments(&mut self, field: u8) -> R<u32> {
+        // Inside the brackets a bound's operators are infix ones again (`A <: F[_ <: B]`).
+        let saved = std::mem::replace(&mut self.in_bound, false);
+        let r = self.type_arguments_in(field);
+        self.in_bound = saved;
+        r
+    }
+
+    fn type_arguments_in(&mut self, field: u8) -> R<u32> {
         let n = self.open_field(K::TypeArguments, field);
         self.tk(K::TLBracket)?;
         loop {
@@ -394,13 +423,13 @@ impl P<'_> {
         if self.is_op(op::SUPERTYPE) {
             let b = self.open_field(K::LowerBound, f::BOUND);
             self.tk(K::TSupertype)?;
-            self.typ_f(f::TYPE)?;
+            self.bound_type()?;
             self.close(b);
         }
         if self.is_op(op::SUBTYPE) {
             let b = self.open_field(K::UpperBound, f::BOUND);
             self.tk(K::TSubtype)?;
-            self.typ_f(f::TYPE)?;
+            self.bound_type()?;
             self.close(b);
         }
         while self.is_op(op::VIEW) {

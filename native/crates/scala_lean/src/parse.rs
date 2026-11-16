@@ -50,6 +50,8 @@ pub(crate) struct P<'a> {
     retype: Option<K>,
     /// Reading an infix expression's right operand: type arguments after it are the infix's.
     right_operand: bool,
+    /// Reading a type parameter's bound: `<:`, `>:`, `<%` end it.
+    in_bound: bool,
     /// The statements the last `statements` read.
     count: u32,
 }
@@ -84,6 +86,7 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             retype: None,
             right_operand: false,
             count: 0,
+            in_bound: false,
         };
         if let Err(r) = p.compilation_unit() {
             return Err(match r {
@@ -408,7 +411,11 @@ impl<'a> P<'a> {
         loop {
             let mut sc = self.sc.clone();
             let pos = self.sp as usize;
-            match sc.scan(self.src, pos, valid) {
+            let dbg = sc.scan(self.src, pos, valid);
+            if std::env::var_os("RERAIL_SCALA_LAYOUT").is_some() {
+                eprintln!("layout at {pos} valid {valid:#x} -> {dbg:?}");
+            }
+            match dbg {
                 Some((Ext::BlockComment, s, e)) => {
                     self.fit_comment(s as u32, e as u32)?;
                     self.sc = sc;

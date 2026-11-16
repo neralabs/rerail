@@ -329,7 +329,8 @@ impl P<'_> {
         if self.is_op(op::AT) {
             return self.refuse();
         }
-        if matches!(self.word(), w::PRIVATE | w::PROTECTED) {
+        // A constructor's access modifier (`class A private (…)`), on the header's line.
+        if matches!(self.word(), w::PRIVATE | w::PROTECTED) && !self.tok().nl {
             let a = self.open(K::AccessModifier);
             let code = self.word();
             self.tk(if code == w::PRIVATE { K::TPrivate } else { K::TProtected })?;
