@@ -152,7 +152,7 @@ impl ProgramPass for FactorizeExports {
         if !self.on {
             return Ok(());
         }
-        let v: &Version = cx.v();
+        let v: &std::sync::Arc<Version> = cx.v();
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
@@ -380,10 +380,7 @@ impl ProgramPass for FactorizeExports {
                 }
             }
             let round = Round { decls, undeclared: stands.keys().cloned().collect(), rules: out, no_inline };
-            let mut cb = Builder::derive(v);
-            write(&mut cb, v, &round)?;
-            let (candidate, _) = cb.finish()?;
-            let now = manager::analysis::<FileLocal>(&candidate)?;
+            let (_, now) = super::candidate(v, &round)?;
             let failed: Vec<String> = made.iter().filter(|(_, parts)| parts.iter().any(|p| !now.local.contains(p))).map(|(r, _)| r.clone()).collect();
             if failed.is_empty() {
                 self.lines = lines;

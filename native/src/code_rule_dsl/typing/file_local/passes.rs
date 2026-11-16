@@ -249,6 +249,30 @@ pub(super) struct Round<'v> {
 }
 
 pub(super) fn write(b: &mut Builder<'_>, input: &Version, round: &Round<'_>) -> Result<(), String> {
+    write_onto(b, input, round, false)
+}
+
+/// A round's program as an overlay of `input` holding only what the round changes (the rules it rewrites or drops
+/// removed, the ones it makes added), and its split, carried from `input`'s across that edit: a round costs its
+/// change, as the tree's rounds did through `split_memo`, where a derivation of the whole program split it whole.
+pub(super) fn candidate(input: &std::sync::Arc<Version>, round: &Round<'_>) -> Result<(std::sync::Arc<Version>, std::sync::Arc<FileLocal>), String> {
+    let mut b = Builder::on(input);
+    write_onto(&mut b, input, round, true)?;
+    let candidate = b.finish_overlay()?;
+    let split = crate::code_rule_dsl::logic::program_image::manager::carried::<FileLocal>(input, &candidate)?;
+    Ok((candidate, split))
+}
+
+/// `write`, into a derivation of `input` (`onto` false: every rule written, in order), or onto an edit of it (`onto`:
+/// the rules kept are there already, and the others are removed).
+fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: bool) -> Result<(), String> {
+    if onto {
+        let kept: HashSet<u32> = round.rules.iter().filter(|m| m.kept).map(|m| m.src.id().0).collect();
+        let gone: Vec<_> = input.rules().map(|r| r.id()).filter(|id| !kept.contains(&id.0)).collect();
+        for id in gone {
+            b.remove(id);
+        }
+    }
     for (rel, cols) in &round.decls {
         let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         b.declare(rel, &cols);
@@ -258,7 +282,9 @@ pub(super) fn write(b: &mut Builder<'_>, input: &Version, round: &Round<'_>) -> 
     }
     for m in &round.rules {
         if m.kept {
-            b.keep(input, m.src);
+            if !onto {
+                b.keep(input, m.src);
+            }
             continue;
         }
         let mut rb = b.rule().source(m.src.id());

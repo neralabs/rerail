@@ -108,7 +108,7 @@ struct Pushed<'v> {
 }
 
 /// `file_local::push_with` on the version: `None` where it makes nothing.
-fn push_with<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool) -> Result<Option<Pushed<'v>>, String> {
+fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool) -> Result<Option<Pushed<'v>>, String> {
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
     let base = |rel: &str| f.is_input(rel);
@@ -254,10 +254,8 @@ fn push_with<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, keep_u
         }
         program.extend(helpers);
         let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new() };
-        let mut cb = Builder::derive(v);
-        write(&mut cb, v, &round)?;
-        let (candidate, _) = cb.finish()?;
-        let now = manager::analysis::<FileLocal>(&candidate)?.local.clone();
+        let (candidate, split) = super::candidate(v, &round)?;
+        let now = split.local.clone();
         let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
         if failed.is_empty() {
             return Ok(Some(Pushed { round, made: made.into_iter().map(|(_, n)| n).collect(), local: now, candidate }));
@@ -276,7 +274,7 @@ fn cross_reads_base(v: &Version, inputs: &BTreeSet<&str>, local: &BTreeSet<Strin
 impl ProgramPass for PushLocalJoins {
     const NAME: &'static str = "push the file-local joins into the chunks";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let v: &Version = cx.v();
+        let v: &Arc<Version> = cx.v();
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;

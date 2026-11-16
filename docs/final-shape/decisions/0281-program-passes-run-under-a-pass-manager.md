@@ -460,6 +460,30 @@ step 3 replaces what is under the writer.
      tree's by digest, exactly, not just up to helper names as planned. On the 317 B-now rules they agree. The
      names change once, so every prepared program and file-local part is a miss once. Tests:
      `an_edit_renames_only_its_own_rules_helpers`, and the three ports' tests.
+   - (c), measured first (2026-11-16, ep2 on the profiling build: corpus0 × the 317 B-now rules, one store, B101's
+     body edited by one always-true literal, a new process, findings unchanged at 427, load 26–48):
+
+     | Step | Instructions | CPU | Wall |
+     |---|---|---|---|
+     | warm | 6.1 G | 0.35 s | 0.39 s |
+     | one rule's body, a new process | 150.2–150.4 G | 9.0–9.2 s | 5.5 s |
+
+     Profiled: `local` 1.9 s, `parse` and `batch` 1.7 s (workers), `prepare` 0.72 s, `combine` 0.61 s, then `wait`,
+     `stats` and `cross` 1.0 s. The edit runs every file's file-local part again: its digest keys each file's memo
+     (0225 §7, a prepared part per module), and that is most of it. In `prepare`, the passes this step moved are
+     0.45 s: push 0.21 s, demand 0.08 s, factorize 0.07 s, locate 0.04 s, merges 0.03 s.
+   - What that means for (c): storing the steps buys this edit nothing yet. The edit changes the pipeline's input,
+     so every step's input changes, and a program pass runs whole on a changed input (`Pipeline::program_step`
+     takes no prior step). Only a rule pass reruns on a delta. A stored step is reused only when its input is
+     unchanged, and then the prepared program's own key (0073) already hits.
+     - **Lever 1 (0225 §7):** key the file-local part per module, so an edit doesn't run every file again.
+     - **Lever 2:** passes that cost their delta. Push's components are per rule given the split, so it can become a
+       rule pass. Factorize and demand decide per relation, then check the split once per round.
+     - **Done meanwhile:** each round's candidate program is an overlay of the input holding the round's change,
+       not a derivation of the whole program (`passes::candidate`), and its split is carried across that edit
+       (`manager::carried`). That cut push's own time from 0.19 s to 0.13 s. The splits stay whole: round 1
+       rewrites hundreds of rules, past what `maintain` keeps. Chaining each round on the last round's candidate
+       would make rounds 2 and later cost their retries.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

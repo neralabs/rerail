@@ -428,15 +428,20 @@ impl Rewrite for ReadCut<'_> {
     }
 }
 
-fn write(b: &mut Builder<'_>, input: &Version, plan: &Plan<'_>) -> Result<(), String> {
+/// The round's program, into a derivation of `input` (`onto` false: every rule, in order), or onto an edit of it
+/// (`onto`: the readers removed and written again, the rest left as they are).
+fn write(b: &mut Builder<'_>, input: &Version, plan: &Plan<'_>, onto: bool) -> Result<(), String> {
     for (rel, cols) in &plan.decls {
         let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         b.declare(rel, &cols);
     }
     for r in input.rules() {
         if r.body().any(|l| plan.renamed.contains_key(&l.node())) {
+            if onto {
+                b.remove(r.id());
+            }
             b.rewrite(input, r, &mut ReadCut(&plan.renamed)).finish()?;
-        } else {
+        } else if !onto {
             b.keep(input, r);
         }
     }
@@ -691,10 +696,11 @@ impl ProgramPass for DemandExports {
             }
             plan.keys = keys_of.keys().cloned().collect();
             // The cut and its supersets must split as file-local: this round's program, split.
-            let mut cb = Builder::derive(v);
-            write(&mut cb, v, &plan)?;
-            let (candidate, _) = cb.finish()?;
-            let after = manager::analysis::<FileLocal>(&candidate)?;
+            // An overlay of the input holding the round's change, its split carried across it (`passes::candidate`).
+            let mut cb = Builder::on(v);
+            write(&mut cb, v, &plan, true)?;
+            let candidate = cb.finish_overlay()?;
+            let after = manager::carried::<FileLocal>(v, &candidate)?;
             let stray: Vec<String> = cut.iter().map(|r| format!("xd_{r}")).chain(needed.iter().map(may_name)).chain(keys_of.keys().cloned()).filter(|r| !after.local.contains(r)).collect();
             if !stray.is_empty() {
                 if first_stray.is_none() {
@@ -726,7 +732,7 @@ impl ProgramPass for DemandExports {
                 ),
             );
             self.lines = lines;
-            write(w.derive()?, v, &plan)?;
+            write(w.derive()?, v, &plan, false)?;
             return Ok(());
         }
         self.lines = vec![format!("undone: still not file-local after {ROUNDS} rounds ({} cuts, {} supersets left out)", excluded.len(), forced.len())];

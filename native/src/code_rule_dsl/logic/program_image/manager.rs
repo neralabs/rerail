@@ -380,6 +380,17 @@ pub fn analysis<A: Analysis>(v: &Arc<Version>) -> Result<Arc<A>> {
     Cx { v, store: v.analyses(), pass: "reader", decided: &decided, asked: None }.get::<A>()
 }
 
+/// Analysis `A` of `to`, an edit of `from` (an overlay or view of it): `from`'s analyses carried across the edit
+/// (`Delta::of`), maintained where they can be, as a pipeline's step carries them. A pass that tries a program of
+/// its own (a round's candidate) reads its analyses so at the round's cost.
+pub fn carried<A: Analysis>(from: &Arc<Version>, to: &Arc<Version>) -> Result<Arc<A>> {
+    let d = Delta::of(from, to);
+    let decided = RefCell::new(Vec::new());
+    let cx = Cx { v: to, store: to.analyses(), pass: "carried", decided: &decided, asked: None };
+    to.analyses().carry(from.analyses(), &cx, &d)?;
+    cx.get::<A>()
+}
+
 /// A decision a pass made, as a row of its step (0269): the pass, what, and its detail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decided {
