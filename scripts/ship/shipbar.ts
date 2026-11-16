@@ -481,6 +481,10 @@ interface RunRow {
   reason: string | null;
   /** Where a failed run stopped: the phase (product path) or the policy it had started (run-policies). */
   stoppedOn: string | null;
+  /** run-policies: the rule a failed run stopped on, when the engine names it or it was the last one started. */
+  culprit: string | null;
+  /** run-policies: how many rules the run was given. */
+  rules: number | null;
   exit: number;
   wallMs: number;
   cpuMs: number;
@@ -516,20 +520,41 @@ function readRows(path: string): RunRow[] {
   return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter((line) => line !== "").map((line) => JSON.parse(line) as RunRow) : [];
 }
 
-/** The side's command, its working directory and its result file. */
-function sideCommand(settings: Settings, side: Side, pack: string, corpus: string, result: string, rundir: string, rr: RrRules | undefined): { command: string[]; cwd: string } {
-  if (side === "rr") {
-    const paths = Object.values(rr!.rules).filter((rule) => rule.unavailable === null).map((rule) => rule.path!);
-    return { command: [settings.engine!, "run-policies", corpus, rundir, ...paths], cwd: settings.candidate.dir };
-  }
+/** <cell>/rr-excluded.json: the `.rr` rules that failed alone on this corpus, each with why, left out of its runs. */
+function readExcluded(cell: string): Record<string, string> {
+  const path = join(cell, "rr-excluded.json");
+  return existsSync(path) ? readJson(path) : {};
+}
+
+/** The `.rr` rules a cell runs: every runnable rewrite of a rule main ships, less those that failed alone here. */
+function rrIds(rr: RrRules, cell: string): string[] {
+  const excluded = readExcluded(cell);
+  return Object.entries(rr.rules).filter(([id, rule]) => rule.unavailable === null && excluded[id] === undefined).map(([id]) => id);
+}
+
+/** The side's command and its working directory. */
+function sideCommand(settings: Settings, side: Side, pack: string, corpus: string, result: string, rundir: string, rrPaths: readonly string[]): { command: string[]; cwd: string } {
+  if (side === "rr") return { command: [settings.engine!, "run-policies", corpus, rundir, ...rrPaths], cwd: settings.candidate.dir };
   const checkout = side === "main" ? settings.baseline.dir : settings.candidate.dir;
   return { command: ["node", "--import", "tsx", join(HERE, "product-run.ts"), checkout, corpus, result, join(checkout, "packs", pack, "rules")], cwd: checkout };
 }
 
-/** One process of one side, pinned and capped, measured by GNU time; its row is appended to the cell's runs.jsonl. */
-function measure(settings: Settings, cell: string, side: Side, mode: "cold" | "warm", rep: number, pack: string, corpus: string, rr: RrRules | undefined): RunRow {
-  const tag = `${side}.${mode}${rep}`;
-  const store = join(cell, `${side}.r${rep}.store`);
+interface Process {
+  side: Side;
+  mode: "cold" | "warm";
+  rep: number;
+  tag: string;
+  /** The store directory: emptied for a cold run, reused by the warm run after it. */
+  store: string;
+  /** The cell file its row goes to: runs.jsonl, or alone.jsonl for a `.rr` rule's run alone. */
+  log: string;
+  /** run-policies: the rule ids it runs, in order. */
+  rules: readonly string[];
+}
+
+/** One process of one side, pinned and capped, measured by GNU time; its row is appended to the cell's log. */
+function measure(settings: Settings, cell: string, p: Process, pack: string, corpus: string, rr: RrRules | undefined): RunRow {
+  const { side, mode, rep, tag, store } = p;
   if (mode === "cold") {
     rmSync(store, { recursive: true, force: true });
     mkdirSync(join(store, "tmp"), { recursive: true });
@@ -537,7 +562,7 @@ function measure(settings: Settings, cell: string, side: Side, mode: "cold" | "w
   const result = join(cell, `${tag}.json`);
   const rundir = join(cell, `${tag}.out`);
   rmSync(rundir, { recursive: true, force: true });
-  const { command, cwd } = sideCommand(settings, side, pack, corpus, result, rundir, rr);
+  const { command, cwd } = sideCommand(settings, side, pack, corpus, result, rundir, p.rules.map((id) => rr!.rules[id]!.path!));
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !key.startsWith("RERAIL_") && !key.startsWith("SHIPBAR_")) env[key] = value;
   env.RERAIL_TAPE_CACHE = join(store, "store.sqlite");
@@ -577,6 +602,7 @@ function measure(settings: Settings, cell: string, side: Side, mode: "cold" | "w
       reason = "exited 0 with no readable result";
     }
   }
+  let culprit: string | null = null;
   if (exit !== 0) {
     reason =
       exit === 137 || exit === 128 + 9
@@ -585,29 +611,50 @@ function measure(settings: Settings, cell: string, side: Side, mode: "cold" | "w
     if (side === "rr") {
       const started = existsSync(rundir) ? readdirSync(rundir).filter((name) => /^\d+$/.test(name)).length : 0;
       const named = /\/([^/]+)\.rr: /.exec(errorText)?.[1];
-      const policies = Object.entries(rr!.rules).filter(([, rule]) => rule.unavailable === null).map(([id]) => id);
-      stoppedOn = `${named ?? policies[started - 1] ?? "before the first policy"} (policy ${started} of ${policies.length})`;
+      culprit = named !== undefined && p.rules.includes(named) ? named : (p.rules[started - 1] ?? null);
+      stoppedOn = `${culprit ?? "before the first policy"} (policy ${started} of ${p.rules.length})`;
     } else {
       stoppedOn = [...errorText.matchAll(/^shipbar: phase (\S+)/gm)].at(-1)?.[1] ?? "start-up";
     }
   }
   const row: RunRow = {
-    tag, side, mode, rep, completed, reason, stoppedOn, exit,
+    tag, side, mode, rep, completed, reason, stoppedOn, culprit, rules: side === "rr" ? p.rules.length : null, exit,
     wallMs: Math.round(wall * 1000), cpuMs: Math.round((user + sys) * 1000), rssKB: rss,
     load, pinnedBusy: busiest(before, after, settings.cpus), siblingBusy: busiest(before, after, settings.siblings),
     cpus: settings.cpus.join(","), threads: settings.cpus.length, host: hostname(),
     memCap: settings.memCap, timeCapS: settings.timeCapS, command: command.join(" "), started,
   };
-  appendFileSync(join(cell, "runs.jsonl"), `${JSON.stringify(row)}\n`);
+  appendFileSync(join(cell, p.log), `${JSON.stringify(row)}\n`);
   // Kept: the first cold run's findings (and every failure's stderr). The rest is scratch.
   rmSync(rundir, { recursive: true, force: true });
   rmSync(timeFile, { force: true });
   rmSync(join(cell, `${tag}.stdout`), { force: true });
-  if (tag === `${side}.cold1` && completed) renameSync(result, join(cell, `${side}.findings.json`));
+  if (tag === `${side}.cold1` && p.log === "runs.jsonl" && completed) renameSync(result, join(cell, `${side}.findings.json`));
   else rmSync(result, { force: true });
   if (completed) rmSync(stderrFile, { force: true });
   console.log(`shipbar: ${pack} ${relative(settings.corpora, corpus)} ${tag}: ${completed ? "ok" : `FAILED (${reason})`} wall ${wall}s cpu ${(user + sys).toFixed(2)}s rss ${(rss / 1024).toFixed(0)}MB`);
   return row;
+}
+
+/**
+ * After a `.rr` cold run that exits with an error, the rule it stopped on is run alone on the same corpus under the
+ * same caps. Failing alone too, it is left out of this corpus's runs with that reason (rr-excluded.json), and the
+ * caller runs the rest again; running alone, the failure belongs to running the pack's rules together and stands. A
+ * content store limit is the batch's by nature, and a run the caps killed is not tried again (each try could take the
+ * whole time cap): both stand as the pack's failure, with the rule it stopped on.
+ */
+function excludeIfFailsAlone(settings: Settings, cell: string, pack: string, corpus: string, rr: RrRules, failed: RunRow): boolean {
+  if (failed.culprit === null || failed.exit === 137 || /content store hard limit/.test(failed.reason ?? "")) return false;
+  const store = join(cell, "rr.alone.store");
+  const alone = measure(settings, cell, { side: "rr", mode: "cold", rep: 0, tag: `rr.alone.${failed.culprit}`, store, log: "alone.jsonl", rules: [failed.culprit] }, pack, corpus, rr);
+  rmSync(store, { recursive: true, force: true });
+  if (alone.completed) return false;
+  const excluded = readExcluded(cell);
+  excluded[failed.culprit] = `fails alone: ${alone.reason ?? ""}`;
+  writeFileSync(join(cell, "rr-excluded.json"), JSON.stringify(excluded, null, 1));
+  const kept = readRows(join(cell, "runs.jsonl")).filter((row) => row.tag !== failed.tag);
+  writeFileSync(join(cell, "runs.jsonl"), kept.map((row) => `${JSON.stringify(row)}\n`).join(""));
+  return true;
 }
 
 /** One pack and corpus: N repetitions, the side order rotating, each side cold then warm on its own fresh store. */
@@ -618,18 +665,21 @@ function measureCell(settings: Settings, pack: string, corpus: Corpus, sides: re
   for (let rep = 1; rep <= settings.runs; rep += 1) {
     const order = sides.map((_, i) => sides[(i + rep - 1) % sides.length]!);
     for (const side of order) {
-      const rows = readRows(join(cell, "runs.jsonl")).filter((row) => row.side === side);
-      if (rows.some((row) => !row.completed)) continue;
-      if (side === "rr" && !Object.values(rr!.rules).some((rule) => rule.unavailable === null)) continue;
-      if (!rows.some((row) => row.tag === `${side}.cold${rep}`)) {
-        const cold = measure(settings, cell, side, "cold", rep, pack, dir, rr);
-        if (!cold.completed) {
-          rmSync(join(cell, `${side}.r${rep}.store`), { recursive: true, force: true });
-          continue;
-        }
+      const store = join(cell, `${side}.r${rep}.store`);
+      const proc = (mode: "cold" | "warm"): Process => ({ side, mode, rep, tag: `${side}.${mode}${rep}`, store, log: "runs.jsonl", rules: side === "rr" ? rrIds(rr!, cell) : [] });
+      const done = (): RunRow[] => readRows(join(cell, "runs.jsonl")).filter((row) => row.side === side);
+      for (;;) {
+        if (done().some((row) => !row.completed) || done().some((row) => row.tag === `${side}.cold${rep}`)) break;
+        if (side === "rr" && rrIds(rr!, cell).length === 0) break;
+        const cold = measure(settings, cell, proc("cold"), pack, dir, rr);
+        if (cold.completed) break;
+        rmSync(store, { recursive: true, force: true });
+        if (side !== "rr" || !excludeIfFailsAlone(settings, cell, pack, dir, rr!, cold)) break;
       }
-      if (!rows.some((row) => row.tag === `${side}.warm${rep}`)) measure(settings, cell, side, "warm", rep, pack, dir, rr);
-      rmSync(join(cell, `${side}.r${rep}.store`), { recursive: true, force: true });
+      const rows = done();
+      if (rows.some((row) => !row.completed) || !rows.some((row) => row.tag === `${side}.cold${rep}`)) continue;
+      if (!rows.some((row) => row.tag === `${side}.warm${rep}`)) measure(settings, cell, proc("warm"), pack, dir, rr);
+      rmSync(store, { recursive: true, force: true });
     }
   }
 }
@@ -656,6 +706,8 @@ interface CellVerdict {
   load: { main: number[]; candidate: number[] };
   siblingBusyMax: number;
   runs: { main: number; candidate: number };
+  /** How many rules each side ran: main's shipped rules; the candidate's shipped rules, or the `.rr` rules that run. */
+  rules: { main: number; candidate: number };
 }
 
 interface Counts {
@@ -762,7 +814,7 @@ function metricValues(rows: readonly RunRow[], metric: (typeof METRICS)[number])
 }
 
 function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, lock: CorporaLock, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): CellVerdict {
-  const empty: CellVerdict = { corpus, status: "not-compared", note: "", completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 } };
+  const empty: CellVerdict = { corpus, status: "not-compared", note: "", completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 } };
   const fixtures = lock.fixtures[pack];
   if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) return { ...empty, note: `no fixtures corpus: ${fixtures.absent}` };
   const cell = join(settings.out, "runs", pack, corpus);
@@ -770,8 +822,8 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
   const main = all.filter((row) => row.side === "main");
   const mine = all.filter((row) => row.side === candidate);
   if (main.length === 0) return { ...empty, note: "not measured" };
-  if (candidate === "rr" && rr !== undefined && !Object.values(rr.rules).some((rule) => rule.unavailable === null)) {
-    return { ...empty, status: "fail", note: "no rule of the pack runs on the .rr side" };
+  if (candidate === "rr" && rr !== undefined && rrIds(rr, cell).length === 0) {
+    return { ...empty, status: "fail", note: "no rule of the pack runs on the .rr side on this corpus" };
   }
   if (mine.length === 0) return { ...empty, note: "candidate not measured" };
   const outcome = (rows: RunRow[]): RunOutcome[] => rows.map((row) => (row.completed ? { completed: true } : { completed: false, reason: `${row.tag}: ${row.reason ?? ""}${row.stoppedOn === null ? "" : `; stopped on ${row.stoppedOn}`}` }));
@@ -809,6 +861,7 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     load: { main: main.map((row) => row.load), candidate: mine.map((row) => row.load) },
     siblingBusyMax: Math.max(0, ...all.map((row) => row.siblingBusy)),
     runs: { main: main.length, candidate: mine.length },
+    rules: { main: shippedRules(settings.baseline.dir, pack).length, candidate: candidate === "rr" && rr !== undefined ? rrIds(rr, cell).length : shippedRules(settings.candidate.dir, pack).length },
   };
 }
 
@@ -825,6 +878,13 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
       const available = new Map<string, string | null>(
         candidate === "ships" ? shippedRules(settings.candidate.dir, pack).map((rule) => [rule, null]) : Object.entries(rr?.rules ?? {}).map(([rule, r]) => [rule, r.unavailable]),
       );
+      // A `.rr` rule that failed alone on a corpus is left out of that corpus's runs: it does not run there.
+      for (const corpus of candidate === "rr" ? corpusKinds : []) {
+        for (const [rule, reason] of Object.entries(readExcluded(join(settings.out, "runs", pack, corpus)))) {
+          const before = available.get(rule);
+          available.set(rule, `${before === null || before === undefined ? "" : `${before}; `}fails to run on ${corpus}: ${reason}`);
+        }
+      }
       const missing = candidate === "rr" && rr === undefined ? [{ rule: "*", reason: "the .rr side was not measured" }] : missingRules(mainRules, available);
       const extra = candidate === "ships" ? [...available.keys()].filter((rule) => !mainRules.includes(rule)) : [];
       for (const m of missing) failures.push({ pack, corpus: null, item: "coverage", reason: `${m.rule}: ${m.reason}` });

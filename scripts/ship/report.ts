@@ -46,7 +46,8 @@ function candidateSection(verdict: Verdict, c: CandidateVerdict): string[] {
         const m = metrics.get(name);
         return m === undefined ? "–" : cellText(m);
       };
-      const completion = cell.completion === null ? cell.note : cell.completion.kind === "both-completed" ? "both completed" : `${cell.completion.kind}: ${cell.completion.reason}`;
+      const ran = cell.rules.candidate === cell.rules.main ? "" : ` (candidate ran ${cell.rules.candidate} of main's ${cell.rules.main} rules)`;
+      const completion = (cell.completion === null ? cell.note : cell.completion.kind === "both-completed" ? "both completed" : `${cell.completion.kind}: ${cell.completion.reason}`) + (cell.completion === null ? "" : ran);
       let findings = "–";
       if (cell.findings !== null) {
         const f = cell.findings;
