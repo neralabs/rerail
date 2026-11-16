@@ -2265,6 +2265,13 @@ did not cause them:
 - `slot001`, combined with the programs it shares relations with, fails the same way as sim222 in both modes. It
   is probably the same cause.
 
+**Checked again (2026-11-15, after the hub's merge, 6a0605cf7).** Under `RERAIL_SQL_STRICT`, alone on a file of
+our own: `pyi062`, `ruf028`, `pyi034`, `pyi036`, `sim222` and `sim223` each run (exit 0, no lowering or typing
+error); `sim222` and `sim223` find `a or True` and `a and False` on their lines. pgh004 and up009 are fixed above.
+The whole pack without `b005` and `perf403` (544 rules, `slot001` and the programs it shares relations with among
+them) runs on one file within 1 GB and 120 s, with 7 findings. Left: `b005` and `perf403` (refused at reading,
+O122), and the combined pack's cost over many files (O135), not measured here.
+
 ## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 
 Found while testing decision 0073 (2026-11-07). `python_split_lines_are_lossless_and_document_local` failed with
