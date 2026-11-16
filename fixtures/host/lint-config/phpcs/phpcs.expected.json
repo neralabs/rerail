@@ -1784,6 +1784,167 @@
      "Squiz.PHP.Eval.Discouraged"
     ]
    }
+  },
+  {
+   "name": "settings-ruleset-three-parts",
+   "files": {
+    ".phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"phpcs.xml.dist\"><exclude-pattern>tests/*</exclude-pattern></rule>\n</ruleset>\n",
+    "phpcs.xml.dist": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "severity-ruleset-three-parts",
+   "files": {
+    ".phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"phpcs.xml.dist\"><severity>0</severity></rule>\n</ruleset>\n",
+    "phpcs.xml.dist": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "settings-ruleset-empty-part",
+   "files": {
+    ".phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./phpcs.xml.dist\"><exclude-pattern>build/*</exclude-pattern></rule>\n</ruleset>\n",
+    "phpcs.xml.dist": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "severity-ruleset-empty-part",
+   "files": {
+    ".phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./phpcs.xml.dist\"><severity>0</severity></rule>\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n",
+    "phpcs.xml.dist": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "settings-ruleset-zero-part",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"build/rules.0.xml\"><exclude-pattern>build/*</exclude-pattern></rule>\n</ruleset>\n",
+    "build/rules.0.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
   }
  ]
 }

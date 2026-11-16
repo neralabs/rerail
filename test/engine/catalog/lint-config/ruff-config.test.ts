@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { NOT_A_FILE, type LinterNote, type Port, type PortVerdict } from "../../../../src/engine/catalog/lint-config/linter-config.js";
+import { MAX_CONFIG_BYTES, NOT_A_FILE, type LinterNote, type Port, type PortVerdict } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import { readRuffSelection, ruffReader, ruffSelects } from "../../../../src/engine/catalog/lint-config/ruff-config.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
@@ -64,8 +64,10 @@ describe("ruffReader: the config file Ruff uses", () => {
   });
 
   it("reads none, and says so, where the config Ruff would use is not a file", async () => {
-    const root = await repository({ "ruff.toml/": "", "pyproject.toml": "[tool.ruff.lint]\nignore = [\"E722\"]\n" });
-    expect(ruff(root, "E722")).toEqual({ verdict: undefined, notes: [`ruff.toml is not read: ${NOT_A_FILE}`], read: false });
+    const pyproject = "[tool.ruff.lint]\nignore = [\"E722\"]\n";
+    expect(ruff(await repository({ "ruff.toml/": "", "pyproject.toml": pyproject }), "E722")).toEqual({ verdict: undefined, notes: ["ruff.toml is not read: it is a folder."], read: false });
+    const large = await repository({ "ruff.toml": "#".repeat(MAX_CONFIG_BYTES + 1), "pyproject.toml": pyproject });
+    expect(ruff(large, "E722")).toEqual({ verdict: undefined, notes: [`ruff.toml is not read: ${NOT_A_FILE}`], read: false });
   });
 
   it("takes .ruff.toml over ruff.toml, and ruff.toml over pyproject.toml", async () => {
@@ -85,6 +87,44 @@ describe("ruffReader: the config file Ruff uses", () => {
       notes: [unknown],
     });
   });
+
+  // Ruff 0.16.9 deserialises its options with `deny_unknown_fields`: a key it does not know fails the whole config.
+  it.each([
+    ["ruff.toml", "bogus = 1\n[lint]\nselect = [\"E\"]\n", "bogus"],
+    ["ruff.toml", "[lint]\nselect = [\"E\"]\n[lint.isort]\nbogus = 1\n", "lint.isort.bogus"],
+    ["ruff.toml", "line_length = 100\n", "line_length"],
+    ["ruff.toml", "constructor = 1\n", "constructor"],
+    ["ruff.toml", "[line-length]\nx = 1\n", "line-length.x"],
+    ["ruff.toml", "[lint.flake8-tidy-imports.banned-api.\"os.x\"]\nmsg = \"no\"\nbogus = 1\n", "lint.flake8-tidy-imports.banned-api.\"os.x\".bogus"],
+    ["pyproject.toml", "[tool.ruff]\nline_length = 100\n[tool.black]\nbogus = 1\n", "tool.ruff.line_length"],
+  ])("reads none of %s, which Ruff refuses for a key it does not know: %j", async (name, text, key) => {
+    expect(ruff(await repository({ [name]: text }), "E722")).toEqual({
+      verdict: undefined,
+      notes: [`${name} is not read: Ruff refuses its ${JSON.stringify(key)}, which is not a Ruff option.`],
+      read: false,
+    });
+  });
+
+  it("reads a config whose every key is a Ruff option, under maps of any key and deprecated top-level sections too", async () => {
+    const root = await repository({
+      "pyproject.toml": [
+        "[tool.black]\nbogus = 1",
+        "[tool.ruff]\nline-length = 100\nper-file-target-version = { \"legacy/*.py\" = \"py38\" }",
+        "[tool.ruff.isort]\nforce-single-line = true",
+        "[tool.ruff.format]\ndocstring-code-line-length = \"dynamic\"",
+        "[tool.ruff.analyze.include-dependencies]\n\"a.py\" = [\"b.py\"]",
+        "[tool.ruff.lint]\nignore = [\"E722\"]",
+        "[tool.ruff.lint.isort.import-heading]\ncustom = \"y\"",
+        "[tool.ruff.lint.flake8-tidy-imports.banned-api.\"os.x\"]\nmsg = \"no\"",
+        "[tool.ruff.lint.flake8-tidy-imports.ban-lazy]\ninclude = [\"os\"]",
+      ].join("\n"),
+    });
+    expect(ruff(root, "E722")).toEqual({
+      verdict: { decision: { on: false, explicit: true, because: "pyproject.toml: \"E722\" in tool.ruff.lint.ignore" }, folders: [], notes: [] },
+      notes: [],
+      read: true,
+    });
+  });
 });
 
 describe("ruffReader: extend", () => {
@@ -96,15 +136,13 @@ describe("ruffReader: extend", () => {
     }, "E722")).toEqual({ on: false, explicit: true, because: "base.toml: \"E722\" in lint.ignore" });
   });
 
-  it.each([
-    ["one without [tool.ruff]", "[project]\nname = \"acme\"\n"],
-    ["one that does not parse and never names Ruff", "[project\n"],
-  ])("ends the chain read whole at an extended pyproject.toml, %s, as Ruff reads no config from it", async (_, pyproject) => {
-    const root = await repository({ "ruff.toml": "extend = \"pyproject.toml\"\n", "pyproject.toml": pyproject });
+  it("ends the chain read whole at an extended pyproject.toml without [tool.ruff], as Ruff reads no config from it", async () => {
+    const root = await repository({ "ruff.toml": "extend = \"pyproject.toml\"\n", "pyproject.toml": "[project]\nname = \"acme\"\n" });
     expect(ruff(root, "E722")).toEqual({ verdict: { decision: DEFAULT_ON, folders: [], notes: [] }, notes: [], read: true });
   });
 
-  const outside = "it is outside the repository";
+  // Ruff 0.16.9 loads each of these; Rerail does not read it.
+  const outside = "it is outside the repository or names an environment variable";
   it.each([
     ["/etc/ruff.toml", outside],
     ["~/ruff.toml", outside],
@@ -112,12 +150,11 @@ describe("ruffReader: extend", () => {
     ["configs\\base.toml", outside],
     ["../base.toml", outside],
     ["configs/../../base.toml", outside],
-    ["configs/..", "it names the repository's root folder, not a config file"],
-    [".", "it names the repository's root folder, not a config file"],
-    ["missing.toml", "there is no such file"],
-    ["ruff.toml", "its extend chain loops or runs too deep"],
+    ["$CONFIGS/base.toml", outside],
+    ["${CONFIGS}/base.toml", outside],
+    ["large.toml", NOT_A_FILE.slice(0, -1)],
   ])("leaves what the config extend %j names may decide unknown, as it is not read", async (extend, why) => {
-    const root = await repository({ "ruff.toml": `extend = ${JSON.stringify(extend)}\n`, "configs/": "" });
+    const root = await repository({ "ruff.toml": `extend = ${JSON.stringify(extend)}\n`, "configs/": "", "large.toml": "#".repeat(MAX_CONFIG_BYTES + 1) });
     const named = `ruff.toml: the config it extends, ${JSON.stringify(extend)},`;
     expect(ruff(root, "E722")).toEqual({
       verdict: { decision: { on: "unknown", because: `${named} which Rerail does not read, may select it` }, folders: [], notes: [] },
@@ -126,16 +163,23 @@ describe("ruffReader: extend", () => {
     });
   });
 
-  it("stops a loop at the config that closes it, keeping what the chain decides", async () => {
-    const root = await repository({
-      "ruff.toml": "extend = \"base.toml\"\n",
-      "base.toml": "extend = \"ruff.toml\"\n[lint]\nignore = [\"E722\"]\n",
-    });
-    expect(ruff(root, "E722")).toEqual({
-      verdict: { decision: { on: false, explicit: true, because: "base.toml: \"E722\" in lint.ignore" }, folders: [], notes: [] },
-      notes: ["base.toml: the config it extends, \"ruff.toml\", is not read (its extend chain loops or runs too deep), so the rules only that config ignores stay on."],
-      read: true,
-    });
+  // Ruff 0.16.9 refuses each of these: "Failed to load extended configuration", or "Circular configuration detected".
+  const refuses = (why: string) => `ruff.toml: Ruff refuses this config (${why}), so Rerail reads none of it: the rules Rerail ports from Ruff keep the pack's values.`;
+  it.each([
+    ["missing.toml", {}, "ruff.toml: the config it extends, \"missing.toml\", fails to load: there is no such file"],
+    ["missing/base.toml", {}, "ruff.toml: the config it extends, \"missing/base.toml\", fails to load: there is no such file"],
+    [".", {}, "ruff.toml: the config it extends, \".\", fails to load: it is a folder"],
+    ["configs/..", {}, "ruff.toml: the config it extends, \"configs/..\", fails to load: it is a folder"],
+    ["configs", {}, "ruff.toml: the config it extends, \"configs\", fails to load: it is a folder"],
+    ["ruff.toml", {}, "ruff.toml: the config it extends, \"ruff.toml\", fails to load: its extend chain loops"],
+    ["base.toml", { "base.toml": "extend = \"ruff.toml\"\n[lint]\nignore = [\"E722\"]\n" }, "base.toml: the config it extends, \"ruff.toml\", fails to load: its extend chain loops"],
+    ["base.toml", { "base.toml": "extend = \"missing.toml\"\n" }, "base.toml: the config it extends, \"missing.toml\", fails to load: there is no such file"],
+    ["base.toml", { "base.toml": "[lint\n" }, "ruff.toml: the config it extends, \"base.toml\", fails to load: line 1: a table header is not closed"],
+    ["pyproject.toml", { "pyproject.toml": "[project\n" }, "ruff.toml: the config it extends, \"pyproject.toml\", fails to load: line 1: a table header is not closed"],
+    ["pyproject.toml", { "pyproject.toml": "[tool.ruff.lint]\nbogus = true\n" }, "ruff.toml: the config it extends, \"pyproject.toml\", fails to load: Ruff refuses its \"tool.ruff.lint.bogus\", which is not a Ruff option"],
+  ])("reads none of a config whose extend %j Ruff fails to load", async (extend, files, why) => {
+    const root = await repository({ "ruff.toml": `extend = ${JSON.stringify(extend)}\n[lint]\nselect = ["E"]\n`, "configs/": "", ...files });
+    expect(ruff(root, "E722")).toEqual({ verdict: undefined, notes: [refuses(why)], read: false });
   });
 
   it("reads nine configs of a chain and no more", async () => {
@@ -144,19 +188,7 @@ describe("ruffReader: extend", () => {
     const selection = readRuffSelection(await repository({ ...files, "c9.toml": "" }), notes);
     expect(selection?.layers.map(layer => layer.file)).toEqual(["c8.toml", "c7.toml", "c6.toml", "c5.toml", "c4.toml", "c3.toml", "c2.toml", "c1.toml", "ruff.toml"]);
     expect(selection?.unread).toBe("c8.toml: the config it extends, \"c9.toml\",");
-    expect(notes.map(note => note.text)).toEqual(["c8.toml: the config it extends, \"c9.toml\", is not read (its extend chain loops or runs too deep), so the rules only that config ignores stay on."]);
-  });
-
-  it.each([
-    ["does not parse", "[lint\n", ["base.toml is not read: line 1: a table header is not closed."]],
-    ["is not a file", undefined, [`base.toml is not read: ${NOT_A_FILE}`]],
-  ])("leaves what an extended config that %s may decide unknown, with only the reason it is not read", async (_, base, notes) => {
-    const root = await repository({ "ruff.toml": "extend = \"base.toml\"\n", ...(base === undefined ? { "base.toml/": "" } : { "base.toml": base }) });
-    expect(ruff(root, "E722")).toEqual({
-      verdict: { decision: { on: "unknown", because: "ruff.toml: the config it extends, \"base.toml\", which Rerail does not read, may select it" }, folders: [], notes: [] },
-      notes,
-      read: true,
-    });
+    expect(notes.map(note => note.text)).toEqual(["c8.toml: the config it extends, \"c9.toml\", is not read (its extend chain runs too deep), so the rules only that config ignores stay on."]);
   });
 });
 
@@ -217,7 +249,7 @@ describe("ruffReader: selectors", () => {
   it("reads nothing of a config Ruff may refuse, where a config Rerail does not read may leave preview off", async () => {
     const root = await repository({ "ruff.toml": "extend = \"/etc/ruff.toml\"\n[lint]\nselect = [\"suspicious\"]\n" });
     expect(ruff(root, "E722").notes).toEqual([
-      "ruff.toml: the config it extends, \"/etc/ruff.toml\", is not read (it is outside the repository), so the rules only that config ignores stay on.",
+      "ruff.toml: the config it extends, \"/etc/ruff.toml\", is not read (it is outside the repository or names an environment variable), so the rules only that config ignores stay on.",
       refused("ruff.toml: \"suspicious\" in lint.select selects by category or rule name, which Ruff takes only with preview"),
     ]);
   });

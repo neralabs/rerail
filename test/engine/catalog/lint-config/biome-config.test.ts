@@ -130,18 +130,20 @@ describe("biomeReader", () => {
     const off = verdict(CURLY)!;
     expect(off.decision).toEqual({ on: false, explicit: false, because: "biome.json: \"enabled\": false in linter" });
     const eslintOn: PortVerdict = { decision: { on: true, explicit: true, because: ".eslintrc.json: \"curly\": \"error\"" } };
-    expect(settleVerdicts({ ...port(CURLY), startsOn: false }, [off, eslintOn], []).map(setting => setting.on)).toEqual([true]);
+    expect(settleVerdicts({ ...port(CURLY), startsOn: false }, [off, eslintOn], []).settings.map(setting => setting.on)).toEqual([true]);
   });
 
-  it("sets a rule per whole folder an override is for, and notes an override for other files", async () => {
+  it("sets a rule per whole folder an override is for, and takes no override without includes holding a file", async () => {
     const { verdict, notes } = await read({
       "biome.json": json({
         linter: { rules: { suspicious: { noDebugger: "error" } } },
         overrides: [
           { includes: ["scripts/**"], linter: { rules: { suspicious: { noDebugger: "off" } } } },
           { includes: ["scripts/strict/**"], linter: { rules: { suspicious: { noDebugger: "on" } } } },
-          { includes: ["**/*.test.ts"], linter: { rules: { suspicious: { noDebugger: "off" } } } },
           { includes: ["vendor/**"], formatter: { enabled: false } },
+          { linter: { rules: { suspicious: { noDebugger: "off" } } } },
+          { includes: [], linter: { rules: { suspicious: { noDebugger: "off" } } } },
+          { includes: ["!src/**"], linter: { rules: { suspicious: { noDebugger: "off" } } } },
         ],
       }),
     });
@@ -153,9 +155,67 @@ describe("biomeReader", () => {
         { folder: "scripts/strict", on: true, explicit: true, because: "biome.json: \"noDebugger\": \"on\" in overrides[1].linter.rules.suspicious" },
       ],
     });
-    expect(notes).toEqual(["biome.json: overrides[2] is not read: its includes [\"**/*.test.ts\"] are not whole folders (<folder>/** or **)."]);
+    expect(notes).toEqual([]);
     const disabled = await read({ "biome.json": json({ overrides: [{ includes: ["legacy/**"], linter: { enabled: false } }] }) });
     expect(disabled.verdict(NO_DEBUGGER)?.folders).toEqual([{ folder: "legacy", on: false, explicit: false, because: "biome.json: \"enabled\": false in overrides[0].linter" }]);
+  });
+
+  it("leaves to the pack what an override for some files may change, deciding a folder whose files all agree", async () => {
+    const config = json({ linter: { rules: { recommended: false } }, overrides: [{ includes: ["**/*.test.ts"], linter: { rules: { suspicious: { noDebugger: "error" } } } }] });
+    const may = { on: "unknown", because: "biome.json: overrides[0] is for only some files and may set it" };
+    expect((await read({ "biome.json": config })).verdict(NO_DEBUGGER)).toEqual({ decision: may });
+    // Over an extended config it does not read, the override may change what that config leaves unknown.
+    const extended = await read({ "biome.json": json({ extends: ["@acme/biome"], overrides: [{ includes: ["**/*.test.ts"], linter: { rules: { suspicious: { noDebugger: "off" } } } }] }) });
+    expect(extended.decision(NO_DEBUGGER)).toEqual(may);
+    const { verdict } = await read({ "biome.json": config, "src/a.ts": "", "src/a.test.ts": "", "lib/a.ts": "", "tests/a.test.ts": "", "docs/a.md": "" });
+    const decided = verdict(NO_DEBUGGER)!;
+    // src/ holds a test file and another: each decides otherwise, so src/ keeps the pack's value as every file does.
+    expect(decided).toEqual({
+      decision: may,
+      folders: [
+        { folder: "lib", on: false, explicit: false, because: "biome.json does not turn it on" },
+        { folder: "tests", on: true, explicit: true, because: "biome.json: \"noDebugger\": \"error\" in overrides[0].linter.rules.suspicious" },
+      ],
+    });
+    expect(settleVerdicts({ ...port(NO_DEBUGGER), startsOn: true }, [decided], []).settings).toEqual([
+      { ruleId: NO_DEBUGGER, folder: "lib", on: false, config: null, explicit: false, because: "biome.json does not turn it on" },
+    ]);
+    const mixed = await read({ "biome.json": config, "a.ts": "", "a.test.ts": "" });
+    expect(mixed.decision(NO_DEBUGGER)).toEqual({
+      on: "unknown",
+      because: "biome.json: \"noDebugger\": \"error\" in overrides[0].linter.rules.suspicious; biome.json does not turn it on: each for only some of the files here",
+    });
+  });
+
+  it("reads groups, presets, domains and the linter's enabled in an override for some files, per file", async () => {
+    const { verdict } = await read({
+      "biome.json": json({
+        overrides: [
+          { includes: ["**/*.gen.js"], linter: { enabled: false } },
+          { includes: ["src/**/*.{test,spec}.js"], linter: { rules: { suspicious: "off", style: "error" } } },
+          { includes: ["\\{legacy\\}.js", "a,b.js"], linter: { rules: { recommended: false }, domains: { react: "all" } } },
+        ],
+      }),
+      "a.js": "",
+      "gen/x.gen.js": "",
+      "src/a.test.js": "",
+      "src/b.spec.js": "",
+      "old/{legacy}.js": "",
+      "old/sub/a,b.js": "",
+    });
+    expect(verdict(NO_DEBUGGER)).toEqual({
+      decision: { on: true, explicit: false, because: "biome.json: recommended" },
+      folders: [
+        { folder: "gen", on: false, explicit: false, because: "biome.json: \"enabled\": false in overrides[0].linter" },
+        { folder: "src", on: false, explicit: true, because: "biome.json: \"suspicious\": \"off\" in overrides[1].linter.rules" },
+      ],
+    });
+    expect(verdict(CURLY)?.folders).toEqual([{ folder: "src", on: true, explicit: true, because: "biome.json: \"style\": \"error\" in overrides[1].linter.rules" }]);
+    // The globs match from the root: old/{legacy}.js is not {legacy}.js, nor old/sub/a,b.js a,b.js; src/'s files turn the suspicious group off.
+    expect(verdict(UNKNOWN_ATTRIBUTE)).toEqual({
+      decision: { on: false, explicit: false, because: "biome.json does not turn it on" },
+      folders: [{ folder: "src", on: false, explicit: true, because: "biome.json: \"suspicious\": \"off\" in overrides[1].linter.rules" }],
+    });
   });
 
   it("merges a config it extends in the repository under its own, and the extended overrides first", async () => {
@@ -232,6 +292,12 @@ describe("biomeReader", () => {
     { config: { overrides: ["scripts/**"] }, why: "overrides[0] is not an object" },
     { config: { overrides: [{ includes: "scripts/**", linter: {} }] }, why: "overrides[0].includes is not a list of globs" },
     { config: { overrides: [{ includes: [1], linter: {} }] }, why: "overrides[0].includes is not a list of globs" },
+    { config: { overrides: [{ includes: ["src/?.js"], linter: {} }] }, why: "overrides[0].includes holds \"src/?.js\", which is not a Biome glob" },
+    { config: { linter: { includes: "src/**" } }, why: "linter.includes is not a list of globs" },
+    ...["[ab].js", "a}.js", "a{.js", "{a,{b}}.js", "a**/b.js", "**/**/a.js", "a/**b", "\\a.js", "a\\"].map(glob => ({
+      config: { files: { includes: [glob] } },
+      why: `files.includes holds ${JSON.stringify(glob)}, which is not a Biome glob`,
+    })),
   ])("refuses a config whose $why", async ({ config, why }) => {
     const { config: read_, notes } = await read({ "biome.json": json(config) });
     expect(read_).toBeUndefined();
@@ -253,16 +319,52 @@ describe("biomeReader", () => {
     expect(root.notes).toEqual([]);
   });
 
-  it("notes linter.includes, applying the rules to every file", async () => {
-    const { decision, notes } = await read({ "biome.json": json({ linter: { includes: ["src/**"], rules: { style: "error" } } }) });
-    expect(decision(CURLY)).toMatchObject({ on: true });
-    expect(notes).toEqual(["biome.json: linter.includes is not read; the rules Rerail sets apply to every file."]);
+  it("turns every rule off where files.includes or linter.includes leave the files unlinted, and leaves the rules on to the pack where it cannot tell", async () => {
+    const { verdict, notes } = await read({ "biome.json": json({ files: { includes: ["**", "!**/legacy"] } }), "src/a.js": "", "legacy/a.js": "", "src/legacy/b/a.js": "" });
+    expect(verdict(NO_DEBUGGER)).toEqual({
+      decision: { on: "unknown", because: "biome.json: files.includes may leave files here unlinted" },
+      folders: [
+        { folder: "legacy", on: false, explicit: false, because: "biome.json: files.includes leaves the files here unlinted" },
+        { folder: "src", on: true, explicit: false, because: "biome.json: recommended" },
+        { folder: "src/legacy/b", on: false, explicit: false, because: "biome.json: files.includes leaves the files here unlinted" },
+      ],
+    });
+    // A rule off stays off, whatever Biome lints.
+    expect(verdict(CURLY)).toEqual({ decision: { on: false, explicit: false, because: "biome.json does not turn it on" } });
+    expect(notes).toEqual([]);
+    const linter = await read({ "biome.json": json({ linter: { includes: ["./src/**", "!!**/*.min.js"], rules: { style: "error" } } }), "a.js": "", "src/a.js": "", "src/b.min.js": "" });
+    expect(linter.verdict(CURLY)).toEqual({
+      decision: { on: false, explicit: false, because: "biome.json: linter.includes leaves the files here unlinted" },
+      folders: [{ folder: "src", on: "unknown", because: "biome.json: \"style\": \"error\" in linter.rules; biome.json: linter.includes leaves the files here unlinted: each for only some of the files here" }],
+    });
   });
 
-  it("notes an override with a linter section but no includes", async () => {
-    const { verdict, notes } = await read({ "biome.json": json({ overrides: [{ linter: { rules: { style: "error" } } }] }) });
-    expect(verdict(CURLY)).toEqual({ decision: { on: false, explicit: false, because: "biome.json does not turn it on" } });
-    expect(notes).toEqual(["biome.json: overrides[0] is not read: its includes [] are not whole folders (<folder>/** or **)."]);
+  it("merges the includes of the configs it extends, and leaves a nested config's rules on to the pack where any includes may narrow them", async () => {
+    const { verdict } = await read({
+      "biome.json": json({ extends: ["./base.json"], linter: { includes: ["lib/**"] } }),
+      "base.json": json({ linter: { includes: ["src/**"] } }),
+      "src/a.js": "",
+      "lib/a.js": "",
+      "other/a.js": "",
+      "nested/biome.json": json({ root: false }),
+      "nested/a.js": "",
+      "merged/biome.json": json({ extends: "//", files: { includes: ["**"] } }),
+    });
+    const narrowed = "base.json: linter.includes and biome.json: linter.includes";
+    expect(verdict(NO_DEBUGGER)).toEqual({
+      decision: { on: "unknown", because: `${narrowed} may leave files here unlinted` },
+      folders: [
+        { folder: "lib", on: true, explicit: false, because: "biome.json: recommended" },
+        { folder: "other", on: false, explicit: false, because: `${narrowed} leaves the files here unlinted` },
+        { folder: "src", on: true, explicit: false, because: "biome.json: recommended" },
+      ],
+    });
+    expect(verdict(CURLY)?.folders).toBeUndefined();
+    const { verdict: own } = await read({ "biome.json": "{}", "nested/biome.json": json({ root: false, extends: "//", files: { includes: ["**"] } }), "nested/a.js": "" });
+    expect(own(NO_DEBUGGER)).toEqual({
+      decision: { on: true, explicit: false, because: "biome.json: recommended" },
+      folders: [{ folder: "nested", on: "unknown", because: "nested/biome.json: files.includes may leave files here unlinted" }],
+    });
   });
 
   it("resolves extends: a relative path or a bare file in the repository is read, as normalised", async () => {
@@ -422,8 +524,10 @@ describe("biomeReader: overrides for every file and nested configs", () => {
   });
 
   it("leaves a folder whose nested config it cannot read unknown, and reads nothing where a nested config is a root one", async () => {
-    const unread = await read({ "biome.json": "{}", "sub/biome.json": "{ // not JSON\n}" });
-    expect(unread.verdict(NO_DEBUGGER)?.folders).toEqual([{ folder: "sub", on: "unknown", because: "sub/biome.json is not read" }]);
+    for (const files of [{}, { "sub/a.js": "" }]) {
+      const unread = await read({ "biome.json": "{}", "sub/biome.json": "{ // not JSON\n}", ...files });
+      expect(unread.verdict(NO_DEBUGGER)?.folders).toEqual([{ folder: "sub", on: "unknown", because: "sub/biome.json is not read" }]);
+    }
     const nestedRoot = await read({ "biome.json": "{}", "sub/biome.json": json({ linter: { rules: { suspicious: { noDebugger: "off" } } } }) });
     expect(nestedRoot.config).toBeUndefined();
     expect(nestedRoot.notes).toEqual(["sub/biome.json is not read: it is a root config below the root's, which Biome 2.5.15 refuses, so it runs no rule."]);

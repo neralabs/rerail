@@ -102,6 +102,29 @@ const CASES = [
     "phpstan.neon": neon("includes:", "\t- base.neon", "parameters:", "\tlevel: 6", "\tignoreErrors!:", "\t\t- identifier: argument.type"),
     "base.neon": neon("parameters:", "\tignoreErrors:", "\t\t- identifier: missingType.return"),
   }],
+  // The reviewer's case: a path that is the root (`.`, `./`, `%currentWorkingDirectory%`, `..` from an included config
+  // in build/) ignores the errors in every file. An empty paths list ignores none.
+  ["ignore-root-path", {
+    "phpstan.neon": neon(
+      "includes:",
+      "\t- build/base.neon",
+      "parameters:",
+      "\tlevel: 6",
+      "\treportUnmatchedIgnoredErrors: false",
+      "\tignoreErrors:",
+      "\t\t- identifier: argument.sprintf",
+      "\t\t  path: .",
+      "\t\t- identifier: argument.type",
+      "\t\t  path: ./",
+      "\t\t- identifier: if.alwaysFalse",
+      "\t\t  path: '%currentWorkingDirectory%'",
+      "\t\t- identifier: array.duplicateKey",
+      "\t\t  paths: [src/Legacy, .]",
+      "\t\t- identifier: argument.sscanf",
+      "\t\t  paths: []",
+    ),
+    "build/base.neon": neon("parameters:", "\tignoreErrors:", "\t\t- identifier: missingType.return", "\t\t  path: .."),
+  }],
 ];
 
 /** The ported identifiers PHPStan reports at each probe path, or the error it stops with. */

@@ -187,6 +187,60 @@
    "name": "eslintrc-package-json",
    "probes": ["src/a.js"],
    "files": { "package.json": "{ \"name\": \"probe\", \"private\": true, \"eslintConfig\": { \"root\": true, \"extends\": \"eslint:recommended\", \"rules\": { \"no-unused-vars\": 0 } } }\n" }
+  },
+  {
+   "name": "flat-files-extglob",
+   "why": "Rerail does not match an extglob or a character class as minimatch does: the entry is for some files, and the pack's value stands",
+   "unknown": { "*": ["no-debugger"] },
+   "probes": ["src/a.js", "src/b.ts"],
+   "files": { "eslint.config.mjs": "export default [\n  { files: [\"**/*.?(c|m)[jt]s?(x)\"], rules: { \"no-debugger\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-files-character-class",
+   "why": "Rerail does not match a character class as minimatch does: the entry is for some files, and the pack's value stands",
+   "unknown": { "*": ["no-debugger"] },
+   "probes": ["src/a.js", "scripts/b.js"],
+   "files": { "eslint.config.mjs": "export default [\n  { files: [\"src/**/*.[jt]s\"], rules: { \"no-debugger\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-files-dot-slash",
+   "explicit": { "no-debugger": true, "no-console": false },
+   "probes": ["src/a.js", "scripts/b.js"],
+   "files": { "eslint.config.mjs": "export default [\n  { files: [\"./**/*.{js,mjs}\"], rules: { \"no-debugger\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-files-dot-slash-some",
+   "why": "./src/**/*.js holds some of the files the ports run on, not a whole folder: the pack's value stands",
+   "unknown": { "*": ["no-debugger"] },
+   "probes": ["src/a.js", "scripts/b.js"],
+   "files": { "eslint.config.mjs": "export default [\n  { files: [\"./src/**/*.js\"], rules: { \"no-debugger\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-files-negated",
+   "why": "Rerail does not read a negated glob: the entries are for some files, and the pack's value stands",
+   "unknown": { "*": ["no-debugger", "no-console"] },
+   "probes": ["src/a.js", "scripts/b.js", "scripts/keep.js"],
+   "files": { "eslint.config.mjs": "export default [\n  { files: [\"**/*.js\"], ignores: [\"scripts/**\", \"!scripts/keep.js\"], rules: { \"no-debugger\": \"error\" } },\n  { files: [\"!src/**\"], rules: { \"no-console\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-create-next-app",
+   "why": "typescript-eslint's eslint-recommended turns no-var and prefer-spread on for TypeScript files only: off in eslint.config.mjs, a file the ports also run on",
+   "unknown": { "*": ["no-var", "prefer-spread"] },
+   "probes": ["app/page.tsx", "lib/util.js"],
+   "files": { "eslint.config.mjs": "import { defineConfig, globalIgnores } from \"eslint/config\";\nimport nextVitals from \"eslint-config-next/core-web-vitals\";\nimport nextTs from \"eslint-config-next/typescript\";\n\nconst eslintConfig = defineConfig([\n  ...nextVitals,\n  ...nextTs,\n  // Override default ignores of eslint-config-next.\n  globalIgnores([\n    // Default ignores of eslint-config-next:\n    \".next/**\",\n    \"out/**\",\n    \"build/**\",\n    \"next-env.d.ts\",\n  ]),\n]);\n\nexport default eslintConfig;\n" }
+  },
+  {
+   "name": "flat-global-ignores-named",
+   "explicit": { "no-debugger": true, "no-console": true, "eqeqeq": false },
+   "probes": ["src/a.js"],
+   "files": { "eslint.config.mjs": "import { globalIgnores } from \"@eslint/config-helpers\";\n\nexport default [\n  { rules: { \"no-console\": \"error\" } },\n  globalIgnores([\"dist/**\"], \"ignore the build\"),\n  { rules: { \"no-debugger\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "eslintrc-overrides-extglob",
+   "why": "Rerail does not match an extglob as minimatch does: the override is for some files, and the pack's value stands",
+   "unknown": { "*": ["no-debugger"] },
+   "probes": ["src/a.js", "src/b.cjs"],
+   "files": { ".eslintrc.json": "{ \"root\": true, \"overrides\": [{ \"files\": [\"*.?(c)js\"], \"rules\": { \"no-debugger\": \"error\" } }] }\n" }
   }
  ]
 }

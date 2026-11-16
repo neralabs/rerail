@@ -438,6 +438,88 @@
    "files": {
     "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": {\"level\": \"off\", \"bogus\": 1}}}}}"
    }
+  },
+  {
+   "name": "overrides-some-files-on",
+   "files": {
+    "biome.json": "{\"linter\":{\"rules\":{\"recommended\":false}},\"overrides\":[{\"includes\":[\"**/*.test.js\"],\"linter\":{\"rules\":{\"suspicious\":{\"noDebugger\":\"error\"}}}}]}"
+   },
+   "probeNames": [
+    "probe.js",
+    "probe.test.js"
+   ]
+  },
+  {
+   "name": "overrides-some-files-off",
+   "files": {
+    "biome.json": "{\"overrides\":[{\"includes\":[\"**/*.test.js\",\"sub/deeper/*.js\"],\"linter\":{\"rules\":{\"suspicious\":{\"noDebugger\":\"off\"}}}}]}"
+   },
+   "probeNames": [
+    "probe.js",
+    "probe.test.js"
+   ],
+   "explicit": {
+    "sub/deeper": {
+     "suspicious/noDebugger": true
+    }
+   }
+  },
+  {
+   "name": "overrides-some-files-group",
+   "files": {
+    "biome.json": "{\"overrides\":[{\"includes\":[\"other/*.js\",\"**/*.test.js\"],\"linter\":{\"rules\":{\"suspicious\":\"off\",\"style\":{\"useBlockStatements\":\"error\"}}}}]}"
+   },
+   "probeNames": [
+    "probe.js",
+    "probe.test.js"
+   ],
+   "explicit": {
+    "other": {
+     "suspicious/noDebugger": true,
+     "suspicious/noDoubleEquals": true,
+     "style/useBlockStatements": true
+    }
+   }
+  },
+  {
+   "name": "overrides-some-files-disabled-preset",
+   "files": {
+    "biome.json": "{\"overrides\":[{\"includes\":[\"src/probe.test.js\",\"sub/**/*.test.js\"],\"linter\":{\"enabled\":false}},{\"includes\":[\"**/probe.js\",\"!sub/**\"],\"linter\":{\"rules\":{\"preset\":\"all\"}}}]}"
+   },
+   "probeNames": [
+    "probe.js",
+    "probe.test.js"
+   ]
+  },
+  {
+   "name": "includes-folders",
+   "files": {
+    "biome.json": "{\"files\":{\"includes\":[\"**\",\"!**/other\",\"!sub/deeper\"]}}"
+   },
+   "explicit": {
+    "other": {
+     "suspicious/noDebugger": false
+    },
+    "sub/deeper": {
+     "suspicious/noDebugger": false
+    }
+   }
+  },
+  {
+   "name": "linter-includes-folders",
+   "files": {
+    "biome.json": "{\"linter\":{\"includes\":[\"src/**\",\"./sub/**\",\"!!sub/deeper/**\"]}}"
+   }
+  },
+  {
+   "name": "linter-includes-some-files",
+   "files": {
+    "biome.json": "{\"linter\":{\"includes\":[\"**\",\"!**/*.test.js\"],\"rules\":{\"style\":{\"useBlockStatements\":\"error\"}}}}"
+   },
+   "probeNames": [
+    "probe.js",
+    "probe.test.js"
+   ]
   }
  ]
 }

@@ -237,7 +237,8 @@ describe("readTomlStringLists refusals", () => {
   // A dotted key of 100,000 parts looked for a wanted tree at each of its prefixes, rebuilding each: minutes of work.
   it("reads a dotted key of very many parts in one pass", () => {
     const key = `${"a.".repeat(100_000)}a`;
-    expect(readTomlTrees(`${key} = 1\n`, ["lints"])).toEqual({ trees: new Map(), paths: [key] });
+    expect(readTomlTrees(`${key} = 1\n`, ["lints"])).toEqual({ trees: new Map(), arrays: new Map(), paths: [key] });
+    expect(() => readTomlTrees(`${key} = 1\n`, [], "1.1", ["a"])).toThrow(/is set under an array of tables$/u);
     expect(readTomlStringLists(`${key} = 1\n`, ["a.a.b"], [], ["b"], ["a.c"]).paths).toEqual([key]);
     expect(() => readTomlStringLists(`${key} = 1\n`, ["a.a.a"])).toThrow("line 1: a.a.a is not a list of strings");
   });
@@ -283,5 +284,45 @@ describe("readTomlTrees", () => {
   it("refuses a key set twice in a wanted table, or a table under a value", () => {
     expect(() => readTomlTrees("[lints.clippy]\nall = \"warn\"\nall = \"deny\"\n", ["lints"])).toThrow("line 3: lints.clippy.all is set twice");
     expect(() => readTomlTrees("[lints]\nclippy = \"warn\"\n[lints.clippy]\nall = \"deny\"\n", ["lints"])).toThrow("line 4: lints.clippy.all is set under a value that is not a table");
+  });
+
+  it("reads a wanted array of tables, each element whole, however the file writes it", () => {
+    const text = [
+      "[package]",
+      "name = \"demo\"",
+      "[[bin]]",
+      "name = \"a\"",
+      "path = \"tools/a.rs\"",
+      "required-features = [\"x\"]",
+      "[[example]]",
+      "name = \"e\"",
+      "[example.e]",
+      "x = 1",
+      "[[bin]]",
+      "name = \"b\"",
+      "test.doc = false",
+      "[lib]",
+      "path = \"lib.rs\"",
+    ].join("\n");
+    const { trees, arrays, paths } = readTomlTrees(text, ["lib"], "1.1", ["bin"]);
+    expect(arrays.get("bin")?.map(plain)).toEqual([{ name: "a", path: "tools/a.rs", "required-features": ["x"] }, { name: "b", test: { doc: { scalar: "false" } } }]);
+    expect(plain(trees.get("lib"))).toEqual({ path: "lib.rs" });
+    expect(paths).not.toContain("bin.name");
+    expect(readTomlTrees("bin = [{ path = \"a.rs\" }, { name = \"b\" }]\n", [], "1.1", ["bin"]).arrays.get("bin")?.map(plain)).toEqual([{ path: "a.rs" }, { name: "b" }]);
+    expect([...readTomlTrees("[package]\n", [], "1.1", ["bin"]).arrays.keys()]).toEqual([]);
+  });
+
+  it("refuses a wanted array of tables written otherwise, or a table or key under one", () => {
+    const refused = (text: string, wanted = ["bin"]) => (): unknown => readTomlTrees(text, [], "1.1", wanted);
+    expect(refused("[bin]\nname = \"a\"\n")).toThrow("line 1: bin is not an array of tables");
+    expect(refused("bin = [{ name = \"a\" }]\n[[bin]]\nname = \"b\"\n")).toThrow("line 2: bin is not an array of tables");
+    expect(refused("[[bin]]\nname = \"b\"\n[package]\nx = 1\n[[bin]]\nname = \"b\"\nname = \"c\"\n")).toThrow("line 7: name is set twice");
+    expect(refused("[[bin]]\nname = \"a\"\n[bin.test]\ndoc = false\n")).toThrow("line 3: [bin.test] is a table under an array of tables, which Rerail does not read");
+    expect(refused("[[bin]]\nname = \"a\"\n[[bin.x]]\n")).toThrow("line 3: [bin.x] is a table under an array of tables");
+    expect(refused("bin.path = \"a.rs\"\n")).toThrow("line 1: bin.path is set under an array of tables");
+    expect(refused("[[bin]]\nname = \"a\"\n[package]\nbin = 1\n")).not.toThrow();
+    expect(refused("bin = \"a\"\n")).toThrow("line 1: bin is not an array of tables");
+    expect(refused("bin = [1]\n")).toThrow("line 1: bin is not an array of tables");
+    expect(refused("[[a.bin]]\nx = 1\n[a]\nbin = []\n", ["a.bin"])).toThrow("line 4: a.bin is set twice");
   });
 });

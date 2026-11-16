@@ -50,9 +50,9 @@ const whole = (on: boolean | null, explicit: boolean, because: string, config: R
   ({ ruleId: "r", folder: "", on, config, explicit, because });
 
 /** What `verdicts`, each a linter's, settle to for port `r` starting as `startsOn`, with the notes. */
-function settle(startsOn: boolean, verdicts: readonly PortVerdict[]): { settings: LintConfigSetting[]; notes: string[] } {
+function settle(startsOn: boolean, verdicts: readonly PortVerdict[]): { settings: readonly LintConfigSetting[]; notes: string[] } {
   const notes: string[] = [];
-  return { settings: settleVerdicts(port(startsOn), verdicts, notes), notes };
+  return { settings: settleVerdicts(port(startsOn), verdicts, notes).settings, notes };
 }
 /** One verdict per decision, each from its own linter. */
 const decided = (...decisions: PortDecision[]): PortVerdict[] => decisions.map(decision => ({ decision }));
@@ -147,33 +147,48 @@ describe("settleVerdicts", () => {
     });
   });
 
+  it("gives the outcome for every file and in each folder a linter decides in, those equal to the pack's value too", () => {
+    const outcome = (where: string, on: boolean | "unknown", explicit: boolean, because: string, config: RuleConfig | null = null) => ({ ruleId: "r", folder: where, on, config, explicit, because });
+    // On for every file with options, as the pack has it: options only as a setting, the whole state as the outcome.
+    expect(settleVerdicts(port(true), [{ decision: onX("x", mapped({ a: 1 })), folders: [folder("a", true, "fa"), folder("b", "unknown", "fb")] }], [])).toEqual({
+      settings: [whole(null, true, "x", { a: 1 })],
+      outcomes: [outcome("", true, true, "x", { a: 1 }), outcome("a", true, true, "fa"), outcome("b", "unknown", false, "fb")],
+    });
+    // An unknown for every file; no decision for every file at all: no outcome there.
+    expect(settleVerdicts(port(false), decided(offI(), unknown()), []).outcomes).toEqual([outcome("", "unknown", false, "unread")]);
+    expect(settleVerdicts(port(false), [{ folders: [folder("a", false, "fa", false)] }], []).outcomes).toEqual([outcome("a", false, false, "fa")]);
+    expect(settleVerdicts(port(false), [], []).outcomes).toEqual([]);
+  });
+
   describe("for a rule its pack holds off", () => {
     const heldOff: Port = { ...port(false), heldOff: "its steer did harm" };
     const setAside = (because: string) => `r: ${because} would turn it on, but its pack holds it off (its steer did harm); it stays off.`;
 
     it.each<[string, PortVerdict[], LintConfigSetting[], string[]]>([
-      ["never turns it on by the linter's defaults or a preset", decided(onI("default on", mapped({ a: 1 }))), [], [setAside("default on")]],
+      ["never turns it on by the linter's defaults or a preset, unremarked", decided(onI("default on", mapped({ a: 1 }))), [], []],
       ["never turns it on by name, prefix or group", decided(onX("select = [\"B009\"]"), onX("select = [\"B\"]")), [], [setAside("select = [\"B009\"]; select = [\"B\"]")]],
-      ["never turns it on in a folder", [{ folders: [folder("a", true, "fa"), folder("b", "unknown", "fb")] }], [], [setAside("fa")]],
+      ["never turns it on in a folder", [{ folders: [folder("a", true, "fa"), folder("c", true, "fc", false), folder("b", "unknown", "fb")] }], [], [setAside("fa")]],
       ["keeps an off, setting nothing new and noting no conflict", decided(offX(), onX()), [], [setAside("x on")]],
       ["keeps an off alone, unremarked", decided(offX(), offI(), unknown()), [], []],
     ])("%s", (_, verdicts, expected, notes) => {
       const settled: string[] = [];
-      expect(settleVerdicts(heldOff, verdicts, settled)).toEqual(expected);
+      expect(settleVerdicts(heldOff, verdicts, settled).settings).toEqual(expected);
       expect(settled).toEqual(notes);
     });
 
-    it("keeps Python's B009 and B010 off under a Ruff config that sets only the line length", async () => {
+    it("keeps Python's B009 and B010 off under a Ruff config, noting it only where the config selects them by name or prefix", async () => {
       const root = await mkdtemp(join(tmpdir(), "rerail-held-off-"));
       try {
-        writeFileSync(join(root, "ruff.toml"), "line-length = 100\n");
         const python = readRuleCatalog([fileURLToPath(new URL("../../../../packs/python", import.meta.url))]);
         const held = ["ruff-b009-get-attr-with-constant", "ruff-b010-set-attr-with-constant"];
         expect(portsOf(python, ["python"]).filter(found => held.includes(found.ruleId)).map(found => [found.startsOn, found.heldOff !== undefined])).toEqual([[false, true], [false, true]]);
-        const config = readRepositoryLintConfig(root, python, ["python"]);
-        // Ruff's default selection turns both on: settling notes that and sets it aside.
-        expect(config.settings.filter(setting => held.includes(setting.ruleId))).toEqual([]);
-        expect(held.map(ruleId => config.notes.some(note => note.startsWith(`${ruleId}: ruff.toml`) && note.includes("its pack holds it off")))).toEqual([true, true]);
+        // Ruff's default selection turns both on, unremarked; `select = ["B"]` names them.
+        for (const [ruffToml, noted] of [["line-length = 100\n", false], ["[lint]\nselect = [\"B\"]\n", true]] as const) {
+          writeFileSync(join(root, "ruff.toml"), ruffToml);
+          const config = readRepositoryLintConfig(root, python, ["python"]);
+          expect(config.settings.filter(setting => held.includes(setting.ruleId))).toEqual([]);
+          expect(held.map(ruleId => config.notes.some(note => note.startsWith(`${ruleId}: ruff.toml`) && note.includes("its pack holds it off")))).toEqual([noted, noted]);
+        }
       } finally {
         await removeFolder(root);
       }

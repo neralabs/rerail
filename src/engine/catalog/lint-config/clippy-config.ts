@@ -1,25 +1,46 @@
 /**
  * Clippy's config as set-up reads it (`linter-config.ts`): per package Cargo lints, the lint levels its `Cargo.toml`
- * sets in `[lints]` (or the root's `[workspace.lints]` it takes with `[lints] workspace = true`), and the inner lint
- * attributes of its crate roots `src/lib.rs` and `src/main.rs`, all read as data, never built. The root package
- * decides for every file; each member of the root's workspace (`cargo-workspace.ts`) decides for its folder. Cargo
- * gives a package `[workspace.lints]` only when it takes them: a member with its own `[lints]`, or none, does not get
- * them, and neither does the root package.
+ * sets in `[lints]` (or the root's `[workspace.lints]` it takes with `[lints] workspace = true`), the rustflags of the
+ * repository's Cargo config files, and the inner lint attributes of the crate roots `cargo clippy` checks (its
+ * library, binaries and build script, `cargo-workspace.ts`), all read as data, never built. The root package decides
+ * for every file; each member of the root's workspace (`cargo-workspace.ts`) decides for its folder. Cargo gives a
+ * package `[workspace.lints]` only when it takes them: a member with its own `[lints]`, or none, does not get them, and
+ * neither does the root package.
  *
  * Cargo passes `[lints]` to rustc as `--allow`/`--warn`/`--deny`/`--forbid` flags ordered by `priority`, then by
- * lint name in reverse (cargo `src/cargo/workspace/parser/mod.rs` `lints_to_rustflags`, Rust 1.99, lines 2826-2880);
- * rustc applies them in order, a later flag overriding an earlier one for every lint it names, a group naming each
- * of its lints, except that nothing lowers `forbid` (`rustc_lint/src/levels.rs` `add_command_line`). A crate root's
- * inner attributes apply after the flags. A lint left at `warn` takes the level of the `warnings` group when that is
- * set otherwise (`rustc_middle/src/lint.rs` `reveal_actual_level_spec`): `-A warnings` silences it, so it is off
- * here, as no finding of it reaches the person; `-D warnings` keeps it on.
+ * lint name in reverse (cargo `src/cargo/workspace/parser/mod.rs` `lints_to_rustflags`, Rust 1.99, lines 2826-2880),
+ * then the rustflags; rustc applies them in order, a later flag overriding an earlier one for every lint it names, a
+ * group naming each of its lints, except that nothing lowers `forbid` (`rustc_lint/src/levels.rs` `add_command_line`).
+ * A crate root's inner attributes apply after the flags. A lint left at `warn` takes the level of the `warnings` group
+ * when that is set otherwise (`rustc_middle/src/lint.rs` `reveal_actual_level_spec`): `-A warnings` silences it, so it
+ * is off here, as no finding of it reaches the person; `-D warnings` keeps it on.
+ *
+ * The root's `.cargo/config.toml` (or `.cargo/config`) `[build] rustflags` apply wherever Cargo runs from the root.
+ * What only may apply leaves the lints it names to the pack: a `[target.<platform>]`'s rustflags, which replace
+ * `[build]`'s on its platforms, a config below the root, which Cargo reads only when run in its folder, and a crate
+ * root Cargo checks or not by what Rerail does not match (a `[[bin]]` that may take an inferred binary's name,
+ * `required-features`). A config Rerail cannot read (a flag it does not read, `include`) leaves every lint where Cargo
+ * reads it to the pack.
  *
  * A port is matched to Clippy through its `suppress.clippy.lints` names: its lint and its groups
  * (`clippy::needless_else`, `clippy::all`, `clippy::style`, `warnings`). When nothing a package sets names them,
  * Clippy's default for the lint's group decides. `fixtures/host/lint-config/clippy/` holds what `cargo clippy` itself
  * decides over a corpus of workspaces, which the reader is tested against.
  */
-import { manifestFile, readCargoWorkspace, readManifest, type CargoManifest, type CargoTable, type UnreadFolder } from "./cargo-workspace.js";
+import {
+  crateRoots,
+  manifestFile,
+  readCargoConfigs,
+  readCargoWorkspace,
+  readManifest,
+  scalarText,
+  type CargoConfig,
+  type CargoManifest,
+  type CargoTable,
+  type CrateRootFile,
+  type UnreadCargoConfig,
+  type UnreadFolder,
+} from "./cargo-workspace.js";
 import { LintConfigFormatError, readFormat, type TomlValue } from "./formats/lint-config-formats.js";
 import { inFolder, NOT_A_FILE, readRootFile, type FolderDecision, type LinterNote, type LinterReader, type Port, type PortDecision, type PortVerdict } from "./linter-config.js";
 import { readRustLintAttributes, type RustLintLevel } from "./rust-lint-attributes.js";
@@ -50,9 +71,6 @@ const CARGO_LEVELS: Readonly<Record<string, RustLintLevel>> = { allow: "allow", 
 
 /** The tools of `[lints]` whose levels reach Clippy: Clippy's own and rustc's (`warnings`). */
 const TOOLS = ["clippy", "rust"] as const;
-
-/** The crate roots whose inner attributes are read. */
-const CRATE_ROOTS = ["src/lib.rs", "src/main.rs"] as const;
 
 /** One lint level the config sets, in the order rustc applies it. */
 interface LintFlag {
@@ -151,9 +169,6 @@ function portDecision(port: Port, { flags, roots, unset }: PackageLints): PortDe
   return agreedDecision(decisions, roots.map(root => root.file));
 }
 
-/** A number's, boolean's or date's text as TOML writes it; undefined for a string, array or table. */
-const scalarText = (value: TomlValue | undefined): string | undefined => (typeof value === "object" && "scalar" in value ? value.scalar : undefined);
-
 /**
  * TOML 1.0's integers: decimal with an optional sign and no leading zero, or unsigned `0x` (either case of digit),
  * `0o` and `0b`; an underscore only between two digits.
@@ -234,8 +249,8 @@ function cargoLints(manifest: CargoManifest, workspaceLints: CargoTable | undefi
   return { flags, label: flags.length === 0 ? undefined : `${file} [${table}.${entries.has("clippy") ? "clippy" : "rust"}]` };
 }
 
-/** Crate root `file`'s lint attributes as flags; undefined when it is absent. */
-function readCrateRoot(root: string, file: string, notes: LinterNote[]): CrateRoot | undefined {
+/** Crate root `file`'s lint attributes as flags, conditional where Cargo `maybe` checks it; undefined when it is absent. */
+function readCrateRoot(root: string, { file, maybe }: CrateRootFile, notes: LinterNote[]): CrateRoot | undefined {
   const read = readRootFile(root, file);
   if (!read.present) return undefined;
   if (read.text === undefined) {
@@ -248,23 +263,48 @@ function readCrateRoot(root: string, file: string, notes: LinterNote[]): CrateRo
     notes.push({ linter: "clippy", text: `${file}: its lint attributes are not read: ${attributes.why}.` });
     return { file, unread: true };
   }
-  return { file, flags: attributes.value.flatMap(({ level, names, conditional, text: written }) => names.map(name => ({ name, level, conditional, because: `${file}: ${written}` }))) };
+  const flags = attributes.value.flatMap(({ level, names, conditional, text: written }) => names.map(name => ({ name, level, conditional: conditional || maybe, because: `${file}: ${written}` })));
+  return { file, flags };
 }
 
-/** The package `manifest` describes: its lints, then its crate roots'. Throws `LintConfigFormatError` on lints Cargo refuses. */
-function readPackage(root: string, manifest: CargoManifest, workspaceLints: CargoTable | undefined, notes: LinterNote[]): PackageLints {
-  const cargo = cargoLints(manifest, workspaceLints);
-  const prefix = manifest.folder === "" ? "" : `${manifest.folder}/`;
-  const roots = CRATE_ROOTS.flatMap(file => readCrateRoot(root, `${prefix}${file}`, notes) ?? []);
+/** Whether `folder` is `config`'s folder or below it, where Cargo reads that config. */
+const readsConfig = (folder: string, config: { readonly folder: string }): boolean => config.folder === "" || folder === config.folder || folder.startsWith(`${config.folder}/`);
+
+/**
+ * The rustflags Cargo passes the package in `folder` after its `[lints]`, as flags, and the configs that set them: the
+ * root's config's, and a config's below the root that Cargo reads when run in its folder, which may or may not apply.
+ * Where a `[target]` sets rustflags, which replace `[build]`'s on its platforms, each may or may not apply.
+ */
+function rustflagsFor(folder: string, configs: readonly CargoConfig[]): { flags: LintFlag[]; labels: string[] } {
+  const reading = configs.filter(config => readsConfig(folder, config));
+  const targeted = reading.some(config => config.targeted);
+  const flags = reading.flatMap(config => config.lints.map(lint => ({ ...lint, conditional: targeted || config.folder !== "" })));
+  return { flags, labels: reading.flatMap(config => (config.lints.length > 0 ? [`${config.file} rustflags`] : [])) };
+}
+
+/** What every package shares: the root's `[workspace.lints]`, and the repository's Cargo configs. */
+interface Shared {
+  readonly workspaceLints: CargoTable | undefined;
+  readonly configs: readonly CargoConfig[];
+}
+
+/**
+ * The package `manifest` describes: its lints, the rustflags, then its crate roots'. Throws `LintConfigFormatError` on
+ * lints Cargo refuses and on a crate root's path Rerail cannot read.
+ */
+function readPackage(root: string, manifest: CargoManifest, shared: Shared, notes: LinterNote[]): PackageLints {
+  const cargo = cargoLints(manifest, shared.workspaceLints);
+  const rustflags = rustflagsFor(manifest.folder, shared.configs);
+  const roots = crateRoots(root, manifest).flatMap(file => readCrateRoot(root, file, notes) ?? []);
   const setting = roots.flatMap(crate => ("flags" in crate && crate.flags.length > 0 ? [crate.file] : []));
-  const labels = [...(cargo.label === undefined ? [] : [cargo.label]), ...setting];
+  const labels = [...(cargo.label === undefined ? [] : [cargo.label]), ...rustflags.labels, ...setting];
   const unset = labels.length === 0 ? undefined : `${labels.join(" and ")} ${labels.length > 1 ? "do" : "does"} not turn it on`;
-  return { folder: manifest.folder, flags: cargo.flags, roots, unset };
+  return { folder: manifest.folder, flags: [...cargo.flags, ...rustflags.flags], roots, unset };
 }
 
 /** A member: its lints, or, where Cargo refuses them, its folder as one Rerail cannot tell (noted). */
-function readMemberPackage(root: string, member: CargoManifest, workspaceLints: CargoTable | undefined, notes: LinterNote[]): PackageLints | UnreadFolder {
-  const read = readFormat(() => readPackage(root, member, workspaceLints, notes));
+function readMemberPackage(root: string, member: CargoManifest, shared: Shared, notes: LinterNote[]): PackageLints | UnreadFolder {
+  const read = readFormat(() => readPackage(root, member, shared, notes));
   if (read.ok) return read.value;
   const because = `${manifestFile(member.folder)} is not read: ${read.why}`;
   notes.push({ linter: "clippy", text: `${because}; Clippy's lints there stay as the pack has them.` });
@@ -278,28 +318,44 @@ function workspaceLintsOf(manifest: CargoManifest): CargoTable | undefined {
   return lints;
 }
 
+/** The packages Cargo lints, and the folders Rerail cannot tell. */
+interface Packages {
+  readonly packages: readonly PackageLints[];
+  readonly unread: readonly UnreadFolder[];
+}
+
 /**
- * The packages Cargo lints from root manifest `manifest`, and the folders Rerail cannot tell. Throws
- * `LintConfigFormatError` on a root manifest Cargo refuses: then Cargo lints nothing.
+ * The packages Cargo lints from root manifest `manifest`, with the rustflags of `configs`, and the folders Rerail
+ * cannot tell. Throws `LintConfigFormatError` on a root manifest Cargo refuses: then Cargo lints nothing.
  */
-function readPackages(root: string, manifest: CargoManifest, notes: LinterNote[]): { packages: PackageLints[]; unread: UnreadFolder[] } {
+function readPackages(root: string, manifest: CargoManifest, configs: readonly CargoConfig[], notes: LinterNote[]): Packages {
   if (!manifest.tables.has("package") && !manifest.tables.has("workspace")) throw new LintConfigFormatError("it has neither [package] nor [workspace], which Cargo refuses");
-  const workspaceLints = workspaceLintsOf(manifest);
-  const packages = manifest.tables.has("package") ? [readPackage(root, manifest, workspaceLints, notes)] : [];
+  const shared: Shared = { workspaceLints: workspaceLintsOf(manifest), configs };
+  const packages = manifest.tables.has("package") ? [readPackage(root, manifest, shared, notes)] : [];
   const workspace = readCargoWorkspace(root, manifest, notes);
   const unread = [...workspace.unread];
   for (const member of workspace.members) {
-    const read = readMemberPackage(root, member, workspaceLints, notes);
+    const read = readMemberPackage(root, member, shared, notes);
     if ("because" in read) unread.push(read);
     else packages.push(read);
   }
   return { packages, unread };
 }
 
-/** Files beside `Cargo.toml` that may also set Clippy's lints or their options, and why they are not read. */
+/** `found`, each package where Cargo reads a config Rerail cannot read (below the root, noted) kept as a folder it cannot tell. */
+function withUnreadConfigs(found: Packages, configs: readonly UnreadCargoConfig[], notes: LinterNote[]): Packages {
+  let { packages, unread } = found;
+  for (const config of configs) {
+    const because = `${config.file} is not read: ${config.why}`;
+    notes.push({ linter: "clippy", text: `${because}; Clippy's lints there stay as the pack has them.` });
+    unread = [...unread, ...packages.filter(lints => readsConfig(lints.folder, config)).map(({ folder }) => ({ folder, because }))];
+    packages = packages.filter(lints => !readsConfig(lints.folder, config));
+  }
+  return { packages, unread };
+}
+
+/** Files beside `Cargo.toml` that may also set Clippy's lint options, and why they are not read. */
 const UNREAD_FILES: Readonly<Record<string, string>> = {
-  ".cargo/config.toml": "rustflags it sets may turn Clippy's lints on or off",
-  ".cargo/config": "rustflags it sets may turn Clippy's lints on or off",
   "clippy.toml": "Rerail does not map Clippy's lint options onto rules' options",
   ".clippy.toml": "Rerail does not map Clippy's lint options onto rules' options",
 };
@@ -317,23 +373,33 @@ function packagesVerdict(port: Port, packages: readonly PackageLints[], unread: 
   return { ...(decision === undefined ? {} : { decision }), ...(folders.length > 0 ? { folders } : {}) };
 }
 
-/** The root manifest, read; undefined when there is none or Cargo refuses it (saying why in `notes`). */
-function readRoot(root: string, notes: LinterNote[]): { packages: PackageLints[]; unread: UnreadFolder[] } | undefined {
+/**
+ * The root manifest and the Cargo configs, read; undefined when there is no manifest, or Cargo refuses it, or Rerail
+ * cannot read the root's config (saying why in `notes`).
+ */
+function readRoot(root: string, notes: LinterNote[]): Packages | undefined {
   const manifest = readManifest(root, "");
   if (manifest === undefined) return undefined;
   if ("why" in manifest) {
     notes.push({ linter: "clippy", text: `Cargo.toml is not read: ${manifest.why}.` });
     return undefined;
   }
-  const read = readFormat(() => readPackages(root, manifest, notes));
-  if (read.ok) return read.value;
+  const { configs, unread } = readCargoConfigs(root);
+  const refused = unread.find(config => config.folder === "");
+  if (refused !== undefined) {
+    notes.push({ linter: "clippy", text: `${refused.file} is not read: ${refused.why}.` });
+    return undefined;
+  }
+  const read = readFormat(() => readPackages(root, manifest, configs, notes));
+  if (read.ok) return withUnreadConfigs(read.value, unread, notes);
   notes.push({ linter: "clippy", text: `Cargo.toml is not read: ${read.why}.` });
   return undefined;
 }
 
 /**
- * Clippy's config at a repository root: each package's `[lints]` and crate roots' lint attributes. A repository none
- * of whose packages names a Clippy or rustc lint, in `Cargo.toml` or a crate root, has none.
+ * Clippy's config at a repository root: each package's `[lints]`, the rustflags, and crate roots' lint attributes. A
+ * repository none of whose packages names a Clippy or rustc lint, in `Cargo.toml`, a Cargo config or a crate root,
+ * has none.
  */
 export const clippyReader: LinterReader = {
   linter: "clippy",

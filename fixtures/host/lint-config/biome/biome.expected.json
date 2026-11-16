@@ -773,6 +773,235 @@
   "refused-domain": "error",
   "refused-domain-value": "error",
   "refused-preset": "error",
-  "refused-rule-object-key": "error"
+  "refused-rule-object-key": "error",
+  "overrides-some-files-on": {
+   "": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "",
+     "probe.test.js": "suspicious/noDebugger"
+    }
+   },
+   "src": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "",
+     "probe.test.js": "suspicious/noDebugger"
+    }
+   },
+   "sub": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "",
+     "probe.test.js": "suspicious/noDebugger"
+    }
+   },
+   "sub/deeper": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "",
+     "probe.test.js": "suspicious/noDebugger"
+    }
+   },
+   "other": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "",
+     "probe.test.js": "suspicious/noDebugger"
+    }
+   }
+  },
+  "overrides-some-files-off": {
+   "": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": "style/useTemplate suspicious/noDoubleEquals"
+    }
+   },
+   "src": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": "style/useTemplate suspicious/noDoubleEquals"
+    }
+   },
+   "sub": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": "style/useTemplate suspicious/noDoubleEquals"
+    }
+   },
+   "sub/deeper": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDoubleEquals",
+     "probe.test.js": "style/useTemplate suspicious/noDoubleEquals"
+    }
+   },
+   "other": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": "style/useTemplate suspicious/noDoubleEquals"
+    }
+   }
+  },
+  "overrides-some-files-group": {
+   "": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": "style/useBlockStatements style/useTemplate"
+    }
+   },
+   "src": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": "style/useBlockStatements style/useTemplate"
+    }
+   },
+   "sub": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": "style/useBlockStatements style/useTemplate"
+    }
+   },
+   "sub/deeper": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": "style/useBlockStatements style/useTemplate"
+    }
+   },
+   "other": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useBlockStatements style/useTemplate",
+     "probe.test.js": "style/useBlockStatements style/useTemplate"
+    }
+   }
+  },
+  "overrides-some-files-disabled-preset": {
+   "": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "complexity/noVoid correctness/noChildrenProp style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+     "probe.test.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals"
+    }
+   },
+   "src": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "complexity/noVoid correctness/noChildrenProp style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+     "probe.test.js": ""
+    }
+   },
+   "sub": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": ""
+    }
+   },
+   "sub/deeper": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": ""
+    }
+   },
+   "other": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "complexity/noVoid correctness/noChildrenProp style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+     "probe.test.js": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals"
+    }
+   }
+  },
+  "includes-folders": {
+   "": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals"
+   },
+   "src": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals"
+   },
+   "sub": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals"
+   },
+   "sub/deeper": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": ""
+   },
+   "other": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": ""
+   }
+  },
+  "linter-includes-folders": {
+   "": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": ""
+   },
+   "src": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals"
+   },
+   "sub": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": "style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals"
+   },
+   "sub/deeper": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": ""
+   },
+   "other": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "on": ""
+   }
+  },
+  "linter-includes-some-files": {
+   "": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useBlockStatements style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": ""
+    }
+   },
+   "src": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useBlockStatements style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": ""
+    }
+   },
+   "sub": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useBlockStatements style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": ""
+    }
+   },
+   "sub/deeper": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useBlockStatements style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": ""
+    }
+   },
+   "other": {
+    "checked": "complexity/noVoid correctness/noChildrenProp nursery/noExtendNative style/useBlockStatements style/useTemplate suspicious/noConsole suspicious/noDebugger suspicious/noDoubleEquals suspicious/noVar",
+    "files": {
+     "probe.js": "style/useBlockStatements style/useTemplate suspicious/noDebugger suspicious/noDoubleEquals",
+     "probe.test.js": ""
+    }
+   }
+  }
  }
 }

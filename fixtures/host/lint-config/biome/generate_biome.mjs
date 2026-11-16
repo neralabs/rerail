@@ -5,14 +5,16 @@
 //   node fixtures/host/lint-config/biome/generate_biome.mjs <tools>
 // Any other installed version is refused.
 //
-// Each case's files are written to <tools>/cases/<name>/ with a probe.js in every probe folder, holding one line that
-// breaks each rule of `checked`, and read there. `biome lint --reporter=json` over the case gives the checked rules
-// Biome reports in each folder; a case it refuses (no report) is recorded as "error". Where Biome takes one config for
-// every file (no nested config, no `overrides`, no package.json, whose dependencies turn domains on per file) and the
-// config sets no `domains` (whose recommended rules rage leaves out of its list), each folder's record is every rule
+// Each case's files are written to <tools>/cases/<name>/ with a probe.js in every probe folder (or, where the case
+// lists `probeNames`, a file of each of those names), holding one line that breaks each rule of `checked`, and read
+// there. `biome lint --reporter=json` over the case gives the checked rules Biome reports in each folder; a case it
+// refuses (no report) is recorded as "error". Where Biome takes one config for every file (no nested config, no
+// `overrides` or `includes`, no package.json, whose dependencies turn domains on per file) and the config sets no
+// `domains` (whose recommended rules rage leaves out of its list), each folder's record is every rule
 // `biome rage --linter` lists as enabled (none where it reports the linter disabled), after checking the lint run
 // reports exactly the checked rules of that list; elsewhere it is `{ checked, on }`, the
-// checked rules and those the lint run reports. Rules are named `<group>/<rule>`, sorted and space-joined.
+// checked rules and those the lint run reports, or, for a case with `probeNames`, `{ checked, files }`, those the lint
+// run reports per probe file name. Rules are named `<group>/<rule>`, sorted and space-joined.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -39,42 +41,47 @@ function rageRules(directory) {
   return [...listed.matchAll(/^ {4}(\w+\/\w+)$/gmu)].map(match => match[1]).sort();
 }
 
-/** Per probe folder, the checked rules a lint run over the case reports; undefined when Biome refuses the case. */
-function linted(directory, probes) {
+/** Per probe folder and probe file name, the rules a lint run over the case reports; undefined when Biome refuses the case. */
+function linted(directory, probes, names) {
   const run = spawnSync(BIOME, ["lint", "--reporter=json", "--max-diagnostics=none", "."], { cwd: directory, encoding: "utf8" });
   const report = run.stdout.split("\n").find(line => line.startsWith("{\"summary\""));
   if (report === undefined) return undefined;
-  const found = Object.fromEntries(probes.map(folder => [folder, new Set()]));
+  const found = Object.fromEntries(probes.map(folder => [folder, Object.fromEntries(names.map(name => [name, new Set()]))]));
   for (const diagnostic of JSON.parse(report).diagnostics) {
     const folder = dirname(diagnostic.location?.path ?? "");
-    if (diagnostic.category.startsWith("lint/") && basename(diagnostic.location.path) === "probe.js") found[folder === "." ? "" : folder].add(diagnostic.category.slice("lint/".length));
+    const name = basename(diagnostic.location?.path ?? "");
+    if (diagnostic.category.startsWith("lint/") && names.includes(name)) found[folder === "." ? "" : folder][name].add(diagnostic.category.slice("lint/".length));
   }
   return found;
 }
 
 /**
- * Whether rage, run at the root, may not show what Biome runs: folders linted by different configs or rules, or
- * domains, whose recommended rules rage leaves out.
+ * Whether rage, run at the root, may not show what Biome runs: folders linted by different configs or rules, files
+ * `includes` leaves out, or domains, whose recommended rules rage leaves out.
  */
 const beyondRage = files => Object.keys(files).some(path => (path.includes("/") && NESTED_FILES.includes(basename(path))) || basename(path) === "package.json")
-  || Object.values(files).some(text => text.includes("\"overrides\"") || text.includes("\"domains\""));
+  || Object.values(files).some(text => text.includes("\"overrides\"") || text.includes("\"domains\"") || text.includes("\"includes\""));
 
 /** The record of every probe folder: the rules rage lists, checked against the lint run. */
 function wholeRecord(directory, probes, checked, rules, lint) {
   for (const folder of probes) {
-    const disagreeing = checked.filter(rule => rules.includes(rule) !== lint[folder].has(rule));
+    const disagreeing = checked.filter(rule => rules.includes(rule) !== lint[folder]["probe.js"].has(rule));
     if (disagreeing.length > 0) throw new Error(`${directory} ${folder}: rage and the lint run disagree on ${disagreeing.join(", ")}`);
   }
   return Object.fromEntries(probes.map(folder => [folder, rules.join(" ")]));
 }
 
-/** What Biome runs in each probe folder of the case in `directory`, or "error". */
-function caseRules(directory, probes, checked, files) {
-  const lint = linted(directory, probes);
+/** What Biome runs in each probe folder of the case in `directory`, or "error"; per probe file where the case names them. */
+function caseRules(directory, probes, checked, { files, probeNames }) {
+  const lint = linted(directory, probes, probeNames ?? ["probe.js"]);
   if (lint === undefined) return "error";
+  const on = found => [...found].filter(rule => checked.includes(rule)).sort().join(" ");
+  if (probeNames !== undefined) {
+    return Object.fromEntries(probes.map(folder => [folder, { checked: checked.join(" "), files: Object.fromEntries(probeNames.map(name => [name, on(lint[folder][name])])) }]));
+  }
   const rules = beyondRage(files) ? undefined : rageRules(directory);
   if (rules !== undefined) return wholeRecord(directory, probes, checked, rules, lint);
-  return Object.fromEntries(probes.map(folder => [folder, { checked: checked.join(" "), on: [...lint[folder]].filter(rule => checked.includes(rule)).sort().join(" ") }]));
+  return Object.fromEntries(probes.map(folder => [folder, { checked: checked.join(" "), on: on(lint[folder]["probe.js"]) }]));
 }
 
 function main() {
@@ -84,14 +91,14 @@ function main() {
   rmSync(root, { recursive: true, force: true });
   const expected = { biome: PIN, cases: {} };
   const probe = `${Object.values(corpus.checked).join("\n")}\n`;
-  for (const { name, files } of corpus.cases) {
-    const directory = join(root, name);
-    const probeFiles = Object.fromEntries(corpus.probes.map(folder => [join(folder, "probe.js"), probe]));
-    for (const [path, text] of Object.entries({ ...probeFiles, ...files })) {
+  for (const oracleCase of corpus.cases) {
+    const directory = join(root, oracleCase.name);
+    const probeFiles = Object.fromEntries(corpus.probes.flatMap(folder => (oracleCase.probeNames ?? ["probe.js"]).map(name => [join(folder, name), probe])));
+    for (const [path, text] of Object.entries({ ...probeFiles, ...oracleCase.files })) {
       mkdirSync(dirname(join(directory, path)), { recursive: true });
       writeFileSync(join(directory, path), text);
     }
-    expected.cases[name] = caseRules(directory, corpus.probes, checked, files);
+    expected.cases[oracleCase.name] = caseRules(directory, corpus.probes, checked, oracleCase);
   }
   rmSync(root, { recursive: true, force: true });
   writeFileSync(join(HERE, "biome.expected.json"), `${JSON.stringify(expected, undefined, 1)}\n`);

@@ -7,6 +7,10 @@
  *
  * A member Rerail cannot read, or that Cargo refuses, a glob it does not expand, and a package below the root that is
  * no member (Clippy lints it only when run in its folder) are kept as folders Rerail cannot tell, with why.
+ *
+ * Also how Cargo builds each package for `cargo clippy`: the crate roots of the targets it checks by default (the
+ * library, the binaries and the build script; not examples, tests or benches), and the rustflags its config files in
+ * the repository pass after the `[lints]` flags.
  */
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -14,6 +18,7 @@ import { LintConfigFormatError, readFormat, readTomlTrees, type TomlValue } from
 import { NOT_A_FILE, readRootFile, type LinterNote } from "./linter-config.js";
 import { repositoryFiles } from "./repository-files.js";
 import { repositoryPath } from "./repository-paths.js";
+import type { RustLintLevel } from "./rust-lint-attributes.js";
 
 export type CargoTable = ReadonlyMap<string, TomlValue>;
 
@@ -21,8 +26,10 @@ export type CargoTable = ReadonlyMap<string, TomlValue>;
 export interface CargoManifest {
   /** Its folder, relative to the repository root; `""` for the root. */
   readonly folder: string;
-  /** `package`, `lints`, `workspace`, `target` and the dependency tables, each the file sets. */
+  /** `package`, `lints`, `lib`, `workspace`, `target` and the dependency tables, each the file sets. */
   readonly tables: ReadonlyMap<string, CargoTable>;
+  /** Its `[[bin]]` tables, in order. */
+  readonly bins: readonly CargoTable[];
 }
 
 /** A folder whose packages Clippy may lint otherwise than Rerail can tell, and why, for the person. */
@@ -40,7 +47,7 @@ export interface CargoWorkspace {
 
 /** The tables of a package's dependencies, at the top level or under `[target.<platform>]`. */
 const DEPENDENCY_TABLES = ["dependencies", "dev-dependencies", "dev_dependencies", "build-dependencies", "build_dependencies"];
-const MANIFEST_TABLES = ["package", "lints", "workspace", "target", ...DEPENDENCY_TABLES];
+const MANIFEST_TABLES = ["package", "lints", "lib", "workspace", "target", ...DEPENDENCY_TABLES];
 
 export const manifestFile = (folder: string): string => (folder === "" ? "Cargo.toml" : `${folder}/Cargo.toml`);
 
@@ -53,8 +60,8 @@ export function readManifest(root: string, folder: string): CargoManifest | { re
   if (read.text === undefined) return { why: NOT_A_FILE.replace(/\.$/u, "") };
   const text = read.text;
   // Cargo parses manifests as TOML 1.1.
-  const parsed = readFormat(() => readTomlTrees(text, MANIFEST_TABLES, "1.1").trees);
-  return parsed.ok ? { folder, tables: parsed.value } : { why: parsed.why };
+  const parsed = readFormat(() => readTomlTrees(text, MANIFEST_TABLES, "1.1", ["bin"]));
+  return parsed.ok ? { folder, tables: parsed.value.trees, bins: parsed.value.arrays.get("bin") ?? [] } : { why: parsed.why };
 }
 
 /** `[workspace] <key>`, a list of strings; Cargo refuses anything else. */
@@ -264,4 +271,172 @@ export function readCargoWorkspace(root: string, rootManifest: CargoManifest, no
   const all = [...unread, ...nonMembers(root, known)];
   for (const folder of all) notes.push({ linter: "clippy", text: `${folder.because}; Clippy's lints there stay as the pack has them.` });
   return { root: rootManifest, members, unread: all };
+}
+
+/** A number's, boolean's or date's text as TOML writes it; undefined for a string, array or table. */
+export const scalarText = (value: TomlValue | undefined): string | undefined => (typeof value === "object" && "scalar" in value ? value.scalar : undefined);
+
+/** A crate root `cargo clippy` checks, relative to the repository root, and whether it may not check it. */
+export interface CrateRootFile {
+  readonly file: string;
+  /** Whether Cargo checks it turns on what Rerail does not match: a `[[bin]]` that may take its name, `required-features`. */
+  readonly maybe: boolean;
+}
+
+/** Target path `written`, set at `where` in the manifest in `folder`, as a repository path; refuses one Rerail cannot read. */
+function targetPath(folder: string, where: string, written: TomlValue | undefined): string {
+  if (typeof written !== "string") throw new LintConfigFormatError(`${where} is not a path`);
+  const path = repositoryPath(folder, written);
+  if (path === undefined) throw new LintConfigFormatError(`${where} ${JSON.stringify(written)} is outside the repository`);
+  return path;
+}
+
+/** The library's crate root: `[lib] path`, else `src/lib.rs`; none with `autolib = false` and no `[lib]`. */
+function libraryRoot(manifest: CargoManifest, info: CargoTable): CrateRootFile[] {
+  const lib = manifest.tables.get("lib") ?? new Map<string, TomlValue>();
+  if (lib.has("path")) return [{ file: targetPath(manifest.folder, "[lib] path", lib.get("path")), maybe: false }];
+  if (!manifest.tables.has("lib") && scalarText(info.get("autolib")) === "false") return [];
+  return [{ file: targetPath(manifest.folder, "[lib] path", "src/lib.rs"), maybe: false }];
+}
+
+/** The build script's crate root: `package.build`'s path, else `build.rs`; none with `build = false`. */
+function buildScriptRoot(manifest: CargoManifest, info: CargoTable): CrateRootFile[] {
+  const build = info.get("build") ?? "build.rs";
+  const flag = scalarText(build);
+  if (flag === "false") return [];
+  return [{ file: targetPath(manifest.folder, "package.build", flag === "true" ? "build.rs" : build), maybe: false }];
+}
+
+/** The binaries Cargo infers in the package in `folder`: `src/main.rs`, `src/bin/*.rs` and `src/bin/*\/main.rs`. */
+function inferredBinaries(root: string, folder: string): string[] {
+  const found = matching(root, repositoryPath(folder, "src/bin")!, /^/u).map(path => (path.endsWith(".rs") ? path : `${path}/main.rs`));
+  return [repositoryPath(folder, "src/main.rs")!, ...found];
+}
+
+/**
+ * The binaries' crate roots: each `[[bin]] path`, and Cargo's inferred binaries. With a `[[bin]]`, or `autobins =
+ * false`, an inferred one may or may not be checked: a `[[bin]]` may take its name, or name it.
+ */
+function binaryRoots(root: string, manifest: CargoManifest, info: CargoTable): CrateRootFile[] {
+  const autobins = scalarText(info.get("autobins")) !== "false";
+  const named = manifest.bins.some(bin => !bin.has("path"));
+  const maybe = manifest.bins.length > 0 || !autobins;
+  const inferred = autobins || named ? inferredBinaries(root, manifest.folder).map(file => ({ file, maybe })) : [];
+  const declared = manifest.bins.flatMap(bin => (bin.has("path") ? [{ file: targetPath(manifest.folder, "[[bin]] path", bin.get("path")), maybe: bin.has("required-features") }] : []));
+  return [...inferred, ...declared];
+}
+
+/**
+ * The crate roots `cargo clippy` checks by default in the package `manifest` describes, one with a `[package]` (cargo
+ * `src/ops/cargo_compile/unit_generator.rs` `filter_default_targets`, `src/util/toml/targets.rs`): its library, its
+ * binaries and its build script, each once, a `[[bin]]`'s over an inferred one. Throws `LintConfigFormatError` on a
+ * target path that is no string or lies outside the repository.
+ */
+export function crateRoots(root: string, manifest: CargoManifest): CrateRootFile[] {
+  const info = manifest.tables.get("package")!;
+  const roots = [...libraryRoot(manifest, info), ...binaryRoots(root, manifest, info), ...buildScriptRoot(manifest, info)];
+  return [...new Map(roots.map(found => [found.file, found])).values()];
+}
+
+/** A lint level a rustflag sets (`-W clippy::needless_else`), and where, for the person. */
+export interface RustflagLint {
+  /** As rustc reads it: `clippy::needless_else` for `clippy::needless-else`. */
+  readonly name: string;
+  readonly level: RustLintLevel;
+  readonly because: string;
+}
+
+/** A Cargo config file's rustflags: the lint levels they set, in order, and whether a `[target]`'s may replace `[build]`'s. */
+export interface CargoConfig {
+  readonly file: string;
+  /** The folder holding its `.cargo/`: Cargo reads it when run there or below; `""` for the root. */
+  readonly folder: string;
+  readonly lints: readonly RustflagLint[];
+  /** A `[target.<platform>]` sets rustflags: on its platforms they replace `[build]`'s. */
+  readonly targeted: boolean;
+}
+
+/** A Cargo config file Rerail cannot read, and why. */
+export interface UnreadCargoConfig {
+  readonly file: string;
+  readonly folder: string;
+  readonly why: string;
+}
+
+/** The rustc options Rerail reads in rustflags, each with the lint level it sets; `-C`, `--cfg`, `-L` and `-l` set none. */
+const RUSTFLAG_OPTIONS: Readonly<Record<string, RustLintLevel | undefined>> = {
+  "-A": "allow", "--allow": "allow", "-W": "warn", "--warn": "warn", "-D": "deny", "--deny": "deny", "-F": "forbid", "--forbid": "forbid",
+  "-C": undefined, "--codegen": undefined, "--cfg": undefined, "--check-cfg": undefined, "-L": undefined, "-l": undefined,
+};
+/**
+ * A rustflag as rustc reads it: a short option and its value written on (`-Wwarnings`), or a long one and `=value`;
+ * no option (`""`) for any other flag.
+ */
+const RUSTFLAG = /^(-[A-Za-z](?!=)|--[a-z-]+(?==|$)|)=?(.*)$/su;
+
+/**
+ * The rustflag at `index` of `flags`, set at `where`: its option, its value (written on, or the next flag) and the
+ * index after them. Refuses a flag Rerail does not read, which may set a lint level, and an option missing its value.
+ */
+function rustflagAt(flags: readonly string[], index: number, where: string): { option: string; value: string; next: number } {
+  const match = RUSTFLAG.exec(flags[index]!)!;
+  const [option, attached] = [match[1]!, match[2]!];
+  if (!Object.hasOwn(RUSTFLAG_OPTIONS, option)) throw new LintConfigFormatError(`${where} has ${JSON.stringify(flags[index])}, which Rerail does not read and which may set lint levels`);
+  const value = attached === "" ? flags[index + 1] : attached;
+  if (value === undefined) throw new LintConfigFormatError(`${where} ends in ${option} without its value`);
+  return { option, value, next: index + (attached === "" ? 2 : 1) };
+}
+
+/** The lint levels rustflags `flags`, set at `where`, set in order, as rustc reads them. */
+function rustflagLints(flags: readonly string[], where: string): RustflagLint[] {
+  const lints: RustflagLint[] = [];
+  for (let index = 0; index < flags.length;) {
+    const { option, value, next } = rustflagAt(flags, index, where);
+    const level = RUSTFLAG_OPTIONS[option];
+    if (level !== undefined) lints.push({ name: value.replaceAll("-", "_"), level, because: `${where} ${option} ${value}` });
+    index = next;
+  }
+  return lints;
+}
+
+/** `table`'s `rustflags` as Cargo reads them: a list of strings, or one string split at whitespace; none when unset. */
+function rustflagList(table: TomlValue | CargoTable | undefined, where: string): string[] {
+  const flags = table instanceof Map ? table.get("rustflags") ?? [] : [];
+  if (typeof flags === "string") return flags.split(/\s+/u).filter(flag => flag !== "");
+  if (!Array.isArray(flags) || !flags.every(flag => typeof flag === "string")) throw new LintConfigFormatError(`${where} is not a string or a list of strings`);
+  return flags as string[];
+}
+
+/** Cargo config file `file` in `folder`, whose text is `text`, its rustflags read. Throws `LintConfigFormatError` on one Rerail cannot read. */
+function readCargoConfig(file: string, folder: string, text: string | undefined): CargoConfig {
+  if (text === undefined) throw new LintConfigFormatError(NOT_A_FILE.replace(/\.$/u, ""));
+  const { trees, paths } = readTomlTrees(text, ["build", "target"], "1.1");
+  if (paths.includes("include")) throw new LintConfigFormatError("it includes other config files, which Rerail does not follow");
+  const targets = [...(trees.get("target") ?? [])].map(([platform, table]) => ({ where: `${file} [target.${platform}] rustflags`, table }));
+  const lists = [{ where: `${file} [build] rustflags`, table: trees.get("build") }, ...targets].map(({ where, table }) => ({ where, flags: rustflagList(table, where) }));
+  return { file, folder, lints: lists.flatMap(({ where, flags }) => rustflagLints(flags, where)), targeted: lists.slice(1).some(({ flags }) => flags.length > 0) };
+}
+
+const CONFIG_FILE = /(?:^|\/)\.cargo\/config(?:\.toml)?$/u;
+
+/**
+ * The Cargo config files in the repository, one per folder (`.cargo/config`, which Cargo prefers, else
+ * `.cargo/config.toml`), each read, or kept with why Rerail cannot read it.
+ */
+export function readCargoConfigs(root: string): { configs: CargoConfig[]; unread: UnreadCargoConfig[] } {
+  const candidates = [...new Set([".cargo/config", ".cargo/config.toml", ...repositoryFiles(root).filter(path => CONFIG_FILE.test(path))])].sort();
+  const chosen = new Map<string, { file: string; text: string | undefined }>();
+  for (const file of candidates) {
+    const read = readRootFile(root, file);
+    const folder = file.replace(CONFIG_FILE, "");
+    if (read.present && !chosen.has(folder)) chosen.set(folder, { file, text: read.text });
+  }
+  const configs: CargoConfig[] = [];
+  const unread: UnreadCargoConfig[] = [];
+  for (const [folder, { file, text }] of chosen) {
+    const read = readFormat(() => readCargoConfig(file, folder, text));
+    if (read.ok) configs.push(read.value);
+    else unread.push({ file, folder, why: read.why });
+  }
+  return { configs, unread };
 }

@@ -13,8 +13,11 @@
  * explicit; one none decides follows the default, an implicit on or off. A preview rule runs only with preview (and,
  * with `explicit-preview-rules`, only when selected by its code). What an extended config Rerail does not read may
  * decide is unknown, as is every rule in a folder below the root holding a Ruff config of its own, which Ruff uses
- * there instead. A config Ruff refuses (a selector it does not know, a removed rule selected) is not read at all.
+ * there instead. A config Ruff refuses (a key that names no Ruff option, a selector it does not know, a removed rule
+ * selected, an `extend` it fails to load) is not read at all.
  */
+import { lstatSync } from "node:fs";
+import { join } from "node:path";
 import { combineDecisions } from "./linter-decisions.js";
 import {
   NOT_A_FILE,
@@ -35,9 +38,11 @@ import {
   RUFF_INCOMPATIBLE,
   RUFF_LINTER_PREFIXES,
   RUFF_NAMES_WITHOUT_CODE,
+  RUFF_OPTIONS,
   RUFF_REDIRECTS,
   RUFF_RULES,
   UPSTREAM_VERSIONS,
+  type RuffOptionKeys,
   type RuffRuleInfo,
 } from "./generated/ruff-rules.generated.js";
 import { repositoryFiles } from "./repository-files.js";
@@ -243,41 +248,70 @@ function ruffFileOf(toml: RuffToml): RuffFile {
   };
 }
 
+/** A Ruff config file Rerail does not read, and why; `loads` is whether Ruff loads it, or fails to as Rerail does. */
+interface UnreadFile {
+  readonly why: string;
+  readonly loads: boolean;
+}
+
 /**
  * Ruff config file `name` (a path relative to the root), as Ruff reads it: from `[tool.ruff]` in a `pyproject.toml`,
  * from the top in any other file. `absent` when there is no such file, `not-ruff` for a `pyproject.toml` without
- * `[tool.ruff]`, undefined (with a note) when it cannot be read.
+ * `[tool.ruff]` (or, not `extended`, one that does not parse and never names Ruff), or why it is not read.
  */
-function readRuffFile(root: string, name: string, notes: LinterNote[]): RuffFile | "absent" | "not-ruff" | undefined {
+function readRuffFile(root: string, name: string, notes: LinterNote[], extended: boolean): RuffFile | "absent" | "not-ruff" | UnreadFile {
   const read = readRootFile(root, name);
   if (!read.present) return "absent";
-  if (read.text === undefined) {
-    notes.push({ linter: "ruff", text: `${name} is not read: ${NOT_A_FILE}` });
-    return undefined;
-  }
+  if (read.text === undefined) return notAFile(root, name);
   const prefix = name.split("/").at(-1) === "pyproject.toml" ? "tool.ruff." : "";
   const found = parseRuffToml(read.text, prefix);
-  if (!found.ok) return unparsedRuffFile(name, read.text, prefix, found.why, notes);
-  return hasRuffSection(prefix, found.value) ? ruffFileOf({ name, prefix, found: found.value, notes }) : "not-ruff";
+  if (!found.ok) return unparsedRuffFile(read.text, prefix, found.why, extended);
+  return parsedRuffFile({ name, prefix, found: found.value, notes });
 }
 
-/** Whether the file holds a Ruff config: any file but a pyproject.toml, or one with a [tool.ruff] section, as Ruff skips one without. */
-function hasRuffSection(prefix: string, found: TomlStringLists): boolean {
-  return prefix === "" || found.paths.some(path => path === "tool.ruff" || path.startsWith("tool.ruff."));
+/** Why the path `name` that is no regular file Rerail reads is not read: a folder, which Ruff fails to load, or what Ruff may load (a link, a large file). */
+function notAFile(root: string, name: string): UnreadFile {
+  return lstatSync(join(root, name)).isDirectory() ? { why: "it is a folder", loads: false } : { why: NOT_A_FILE.slice(0, -1), loads: true };
 }
 
-/** A Ruff file that does not parse: not read, with a note; a pyproject.toml that may hold no Ruff config is skipped. */
-function unparsedRuffFile(name: string, text: string, prefix: string, why: string, notes: LinterNote[]): "not-ruff" | undefined {
-  if (prefix === "" || text.includes("ruff")) notes.push({ linter: "ruff", text: `${name} is not read: ${why}.` });
-  return prefix === "" ? undefined : "not-ruff";
+/**
+ * The Ruff file a parsed file holds: `not-ruff` for a pyproject.toml without a [tool.ruff] section, as Ruff skips one;
+ * one with a key in its Ruff section that names no Ruff option, which Ruff refuses (`deny_unknown_fields`), is not read.
+ */
+function parsedRuffFile(toml: RuffToml): RuffFile | "not-ruff" | UnreadFile {
+  if (toml.prefix !== "" && !toml.found.paths.some(path => path === "tool.ruff" || path.startsWith("tool.ruff."))) return "not-ruff";
+  const unknown = toml.found.paths.find(path => path.startsWith(toml.prefix) && !isRuffOption(path.slice(toml.prefix.length)));
+  return unknown === undefined ? ruffFileOf(toml) : { why: `Ruff refuses its ${JSON.stringify(unknown)}, which is not a Ruff option`, loads: false };
 }
 
-/** Whether `extend` names a path outside any repository: absolute, from home, or with a drive or backslash. */
-const isOutsidePath = (extend: string): boolean => /^(?:[/~]|[A-Za-z]:)/u.test(extend) || extend.includes("\\");
+/** One part of a dotted key path as `readTomlStringLists` writes it: bare, or quoted as JSON. */
+const KEY_PART = /"(?:[^"\\]|\\.)*"|[^.]+/gu;
+
+/** Whether Ruff's options take the dotted key path `path` (`lint.isort.known-first-party`), as `RUFF_OPTIONS` holds them. */
+function isRuffOption(path: string): boolean {
+  let keys: RuffOptionKeys | undefined = RUFF_OPTIONS;
+  for (const [part] of path.matchAll(KEY_PART)) {
+    const key = part.startsWith("\"") ? (JSON.parse(part) as string) : part;
+    keys = Object.hasOwn(keys, key) ? keys[key] : keys["*"];
+    if (keys === undefined) return false;
+  }
+  return true;
+}
+
+/**
+ * A Ruff file that does not parse, which Ruff fails to load; a pyproject.toml found, not extended, that never names
+ * Ruff is skipped as one that may hold no Ruff config.
+ */
+function unparsedRuffFile(text: string, prefix: string, why: string, extended: boolean): UnreadFile | "not-ruff" {
+  return prefix === "" || extended || text.includes("ruff") ? { why, loads: false } : "not-ruff";
+}
+
+/** Whether `extend` names a path Rerail cannot place: absolute, from home, with a drive or backslash, or through an environment variable Ruff expands. */
+const isOutsidePath = (extend: string): boolean => /^(?:[/~]|[A-Za-z]:)/u.test(extend) || /[\\$]/u.test(extend);
 
 /**
  * The config `extend` names from config `from`, as a path relative to the root: `""` for the root folder itself,
- * undefined outside the repository.
+ * undefined where Rerail cannot place it.
  */
 function extendedPath(from: string, extend: string): string | undefined {
   if (isOutsidePath(extend)) return undefined;
@@ -289,47 +323,47 @@ function extendedPath(from: string, extend: string): string | undefined {
   return parts.join("/");
 }
 
-/** Why the extended config of `current` is not read, if it is not: `target` is its path, undefined outside the repository. */
-function unreadExtension(chain: readonly RuffFile[], target: string | undefined): string | undefined {
-  if (target === undefined) return "it is outside the repository";
-  if (target === "") return "it names the repository's root folder, not a config file";
-  return chain.some(file => file.name === target) || chain.length > MAX_RUFF_EXTENDS ? "its extend chain loops or runs too deep" : undefined;
+/** Why the extended config of `chain`'s last is not read before reading it, if it is not: `target` is its path, undefined where Rerail cannot place it. */
+function unreadExtension(chain: readonly RuffFile[], target: string | undefined): UnreadFile | undefined {
+  if (target === undefined) return { why: "it is outside the repository or names an environment variable", loads: true };
+  if (chain.some(file => file.name === target)) return { why: "its extend chain loops", loads: false };
+  return chain.length > MAX_RUFF_EXTENDS ? { why: "its extend chain runs too deep", loads: true } : undefined;
 }
 
-/** The config the last of `chain` extends, as read: a Ruff file, none, one that cannot be read (noted), or why it is not read. */
-function extendedFile(root: string, chain: readonly RuffFile[], notes: LinterNote[]): RuffFile | "not-ruff" | "unreadable" | { readonly why: string } {
+/** The config the last of `chain` extends, as read: a Ruff file, none, or why it is not read. */
+function extendedFile(root: string, chain: readonly RuffFile[], notes: LinterNote[]): RuffFile | "not-ruff" | UnreadFile {
   const current = chain.at(-1)!;
   const target = extendedPath(current.name, current.extend!);
   const skipped = unreadExtension(chain, target);
-  if (skipped !== undefined) return { why: skipped };
-  const base = readRuffFile(root, target!, notes);
-  if (base === "absent") return { why: "there is no such file" };
-  return base ?? "unreadable";
+  if (skipped !== undefined) return skipped;
+  const base = readRuffFile(root, target!, notes, true);
+  return base === "absent" ? { why: "there is no such file", loads: false } : base;
 }
 
-/** Why the config `current` extends ends the chain Rerail reads, or the next config in it. */
-function nextInChain(root: string, chain: readonly RuffFile[], notes: LinterNote[]): RuffFile | { unread: string | undefined } {
+/** Where the chain Rerail reads ends: at a config it does not read (`unread`, named), or one Ruff fails to load (`refused`, why). */
+type ChainEnd = { readonly unread: string | undefined; readonly refused?: never } | { readonly unread?: never; readonly refused: string };
+
+/** The next config in the chain after `current`, or where the chain ends. */
+function nextInChain(root: string, chain: readonly RuffFile[], notes: LinterNote[]): RuffFile | ChainEnd {
   const current = chain.at(-1)!;
   const named = `${current.name}: the config it extends, ${JSON.stringify(current.extend)},`;
   const base = extendedFile(root, chain, notes);
   if (base === "not-ruff") return { unread: undefined };
-  if (base === "unreadable") return { unread: named };
-  if ("why" in base) {
-    notes.push({ linter: "ruff", text: `${named} is not read (${base.why}), so the rules only that config ignores stay on.` });
-    return { unread: named };
-  }
-  return base;
+  if ("name" in base) return base;
+  if (!base.loads) return { refused: `${named} fails to load: ${base.why}` };
+  notes.push({ linter: "ruff", text: `${named} is not read (${base.why}), so the rules only that config ignores stay on.` });
+  return { unread: named };
 }
 
-/** The chain of configs `extend` names from `first`; a config Rerail cannot read ends it, named as `unread`. */
-function extendChain(root: string, first: RuffFile, notes: LinterNote[]): { chain: RuffFile[]; unread: string | undefined } {
+/** The chain of configs `extend` names from `first`, and where it ends. */
+function extendChain(root: string, first: RuffFile, notes: LinterNote[]): { chain: RuffFile[]; end: ChainEnd } {
   const chain: RuffFile[] = [first];
   while (chain.at(-1)!.extend !== undefined) {
     const next = nextInChain(root, chain, notes);
-    if (!("name" in next)) return { chain, unread: next.unread };
+    if (!("name" in next)) return { chain, end: next };
     chain.push(next);
   }
-  return { chain, unread: undefined };
+  return { chain, end: { unread: undefined } };
 }
 
 /** The per-file ignores Ruff applies: those of the nearest config that sets `per-file-ignores`, and every extension. */
@@ -392,13 +426,17 @@ function resolvedLayer(layer: RuffLayer, notes: LinterNote[]): RuffLayer {
   return { ...layer, select: layer.select === undefined ? undefined : each(layer.select), extendSelect: each(layer.extendSelect), ignore: each(layer.ignore) };
 }
 
-/** The selection `chain` (the config Ruff uses at the root first) makes, with each selector as Ruff reads it; undefined, with a note, where Ruff refuses it. */
-function selectionOf(chain: readonly RuffFile[], unread: string | undefined, notes: LinterNote[]): RuffSelection | undefined {
+/**
+ * The selection `chain` (the config Ruff uses at the root first, ending at `end`) makes, with each selector as Ruff
+ * reads it; undefined, with a note, where Ruff refuses it.
+ */
+function selectionOf(chain: readonly RuffFile[], end: ChainEnd, notes: LinterNote[]): RuffSelection | undefined {
+  const unread = end.unread;
   const whole = unread === undefined;
   // Ruff combines `lint.preview` and `preview` over the chain apart, the linter's taking `lint.preview` first.
   const preview = chain.map(file => file.lintPreview).find(value => value !== undefined) ?? chainValue(chain.map(file => file.preview), whole, false);
   const perFile = perFileIgnores(chain);
-  const refused = refusals(chain, perFile, preview);
+  const refused = end.refused === undefined ? refusals(chain, perFile, preview) : [end.refused];
   if (refused.length > 0) {
     notes.push({ linter: "ruff", text: `${chain[0]!.name}: Ruff refuses this config (${refused.join("; ")}), so Rerail reads none of it: the rules Rerail ports from Ruff keep the pack's values.` });
     return undefined;
@@ -420,11 +458,14 @@ function selectionOf(chain: readonly RuffFile[], unread: string | undefined, not
 /** Ruff's rule selection at `root`; undefined when there is no Ruff config, or (with a note) when it cannot be read or Ruff refuses it. */
 export function readRuffSelection(root: string, notes: LinterNote[]): RuffSelection | undefined {
   for (const name of RUFF_FILES) {
-    const first = readRuffFile(root, name, notes);
+    const first = readRuffFile(root, name, notes, false);
     if (first === "absent" || first === "not-ruff") continue;
-    if (first === undefined) return undefined;
-    const { chain, unread } = extendChain(root, first, notes);
-    return selectionOf(chain, unread, notes);
+    if (!("name" in first)) {
+      notes.push({ linter: "ruff", text: `${name} is not read: ${first.why}.` });
+      return undefined;
+    }
+    const { chain, end } = extendChain(root, first, notes);
+    return selectionOf(chain, end, notes);
   }
   return undefined;
 }
@@ -665,7 +706,7 @@ function nestedConfigs(root: string): NestedConfig[] {
     if (path.includes("/") && RUFF_FILES.includes(name)) byFolder.set(folderOf(path), [...byFolder.get(folderOf(path)) ?? [], path]);
   }
   return [...byFolder].flatMap(([folder, paths]) => {
-    const file = RUFF_FILES.map(name => `${folder}/${name}`).find(path => paths.includes(path) && readRuffFile(root, path, []) !== "not-ruff");
+    const file = RUFF_FILES.map(name => `${folder}/${name}`).find(path => paths.includes(path) && readRuffFile(root, path, [], false) !== "not-ruff");
     return file === undefined ? [] : [{ folder, file }];
   });
 }

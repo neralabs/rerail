@@ -7,12 +7,12 @@
  */
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
-import type { LintConfigSetting } from "../engine/catalog/lint-config/linter-config.js";
+import type { LintConfigOutcome, LintConfigSetting, RepositoryLintConfig } from "../engine/catalog/lint-config/linter-config.js";
 import { readRepositoryLintConfig } from "../engine/catalog/lint-config/repository-lint-config.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { normalizeFolder, type CheckoutContext, type RepositoryKey, type RuleConfig, type RuleSetting } from "../engine/catalog/repository-model.js";
+import { folderContains, normalizeFolder, type CheckoutContext, type RepositoryKey, type RuleConfig, type RuleSetting } from "../engine/catalog/repository-model.js";
 import { checkoutStatus, lookupCheckout } from "../engine/catalog/repository-registry.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { setRuleSetting } from "../engine/catalog/rule-configuration.js";
@@ -76,28 +76,15 @@ function holds(row: SettingRow, proposal: LintConfigSetting): boolean {
 }
 
 /**
- * Whether a person's `row` gives the rule what `proposal` gives it: on or off (a row that leaves it unset has the value
- * around it: on where `proposal` only gives options, otherwise the opposite of `proposal`, which is proposed only where
- * it differs from the pack's value or the whole repository's) and, on, the same options.
+ * Whether a person's `row` gives the rule what the lint config gives it there, `on` with `config`: on or off (a row that
+ * leaves it unset has the value around it: the opposite of `on` where the config proposes a state for the row's rule and
+ * folder, `stated`, which it does only where that differs from the pack's value or the folder's holding it; `on`
+ * otherwise) and, on, for the whole repository, the same options: only those settings' options apply.
  * Modes and suppressions are a person's alone; the lint config sets neither.
  */
-function agrees(row: SettingRow, proposal: LintConfigSetting): boolean {
-  const on = proposal.on ?? true;
-  return (row.on ?? proposal.on !== true) === on && (!on || configText(row.config) === configText(proposal.config));
-}
-
-/** Whether `row` leaves `proposal` nothing to do: the lint config's setting holds it, or a person's agrees with it. */
-function unchanged(row: SettingRow | undefined, proposal: LintConfigSetting): boolean {
-  if (row === undefined) return false;
-  return row.origin === null ? agrees(row, proposal) : holds(row, proposal);
-}
-
-/** What `proposal` does where the repository's own setting for its rule and folder is `row`; undefined: nothing. */
-function proposalChange(proposal: LintConfigSetting, row: SettingRow | undefined): CalibrationChange | undefined {
-  if (unchanged(row, proposal)) return undefined;
-  const change = { ruleId: proposal.ruleId, folder: proposal.folder, config: proposal.config, explicit: proposal.explicit, because: proposal.because };
-  if (row?.origin === null) return { kind: "kept", ...change };
-  return { kind: proposal.on === null ? "options-set" : proposal.on ? "turned-on" : "turned-off", ...change };
+function agrees(row: SettingRow, on: boolean, config: RuleConfig | null, stated: boolean): boolean {
+  const rowOn = row.on ?? (stated ? !on : on);
+  return rowOn === on && (!on || row.folder !== "" || configText(row.config) === configText(config));
 }
 
 /** A change and the write that makes it; none for a person's setting kept. */
@@ -111,14 +98,17 @@ function repositorySetting(repositoryKey: RepositoryKey, folder: string, ruleId:
   return { owner: { kind: "repository", repositoryKey }, folder, targetKind: "rule", targetId: ruleId, on: null, mode: null, ...fields };
 }
 
-/** What the lint config's `proposals` do where the repository's own rule settings are `rows`. */
+/**
+ * What the lint config's `proposals` do where the repository's own rule settings are `rows`: written, but where the
+ * lint config's setting already holds the proposal, or a person's setting has the rule and folder (`keptSteps`).
+ */
 function proposalSteps(repositoryKey: RepositoryKey, rows: ReadonlyMap<string, SettingRow>, proposals: readonly LintConfigSetting[]): Step[] {
   return proposals.flatMap(proposal => {
-    const change = proposalChange(proposal, rows.get(settingKey(proposal.folder, proposal.ruleId)));
-    if (change === undefined) return [];
-    if (change.kind === "kept") return [{ change }];
-    const { on, config } = proposal;
-    return [{ change, write: repositorySetting(repositoryKey, proposal.folder, proposal.ruleId, { on, config, origin: "lint-config" }) }];
+    const row = rows.get(settingKey(proposal.folder, proposal.ruleId));
+    if (row !== undefined && (row.origin === null || holds(row, proposal))) return [];
+    const { ruleId, folder, on, config, explicit, because } = proposal;
+    const kind = on === null ? "options-set" : on ? "turned-on" : "turned-off";
+    return [{ change: { kind, ruleId, folder, config, explicit, because }, write: repositorySetting(repositoryKey, folder, ruleId, { on, config, origin: "lint-config" }) }];
   });
 }
 
@@ -130,13 +120,36 @@ function returnedSteps(repositoryKey: RepositoryKey, rows: readonly SettingRow[]
   }));
 }
 
-/** What the repository's own rule settings `rows` and the lint config's `proposals` reconcile to. */
-function reconcile(repositoryKey: RepositoryKey, rows: readonly SettingRow[], proposals: readonly LintConfigSetting[]): Step[] {
-  const proposed = proposals.map(proposal => ({ ...proposal, folder: normalizeFolder(proposal.folder) }));
+/**
+ * A person's setting `row` kept where the lint config gives its rule otherwise: compared with the outcome in the deepest
+ * folder holding the row's that the config has one for (`outcomes`, the rule's), whether or not that outcome differs from
+ * the pack's value. Undefined where the setting agrees, or the config gives the rule nothing there, or cannot tell.
+ */
+function keptChange(row: SettingRow, outcomes: readonly LintConfigOutcome[], stated: boolean): CalibrationChange | undefined {
+  const outcome = outcomes.filter(candidate => folderContains(candidate.folder, row.folder)).sort((left, right) => right.folder.length - left.folder.length)[0];
+  if (outcome === undefined || outcome.on === "unknown" || agrees(row, outcome.on, outcome.config, stated)) return undefined;
+  const { explicit, because } = outcome;
+  return { kind: "kept", ruleId: row.targetId, folder: row.folder, config: row.folder === "" ? outcome.config : null, explicit, because };
+}
+
+/** The person's settings among `rows` the lint config's `outcomes` give otherwise, each kept; `stated`: the keys a proposal sets the state of. */
+function keptSteps(rows: readonly SettingRow[], outcomes: readonly LintConfigOutcome[], stated: ReadonlySet<string>): Step[] {
+  const byRule = Map.groupBy(outcomes, outcome => outcome.ruleId);
+  return rows.filter(row => row.origin === null).flatMap(row => {
+    const change = keptChange(row, byRule.get(row.targetId) ?? [], stated.has(settingKey(row.folder, row.targetId)));
+    return change === undefined ? [] : [{ change }];
+  });
+}
+
+/** What the repository's own rule settings `rows` and the lint config's settings and outcomes reconcile to. */
+function reconcile(repositoryKey: RepositoryKey, rows: readonly SettingRow[], lintConfig: RepositoryLintConfig): Step[] {
+  const proposed = lintConfig.settings.map(proposal => ({ ...proposal, folder: normalizeFolder(proposal.folder) }));
+  const outcomes = lintConfig.outcomes.map(outcome => ({ ...outcome, folder: normalizeFolder(outcome.folder) }));
   const byKey = new Map(rows.map(row => [settingKey(row.folder, row.targetId), row]));
   return [
     ...proposalSteps(repositoryKey, byKey, proposed),
     ...returnedSteps(repositoryKey, rows, new Set(proposed.map(proposal => settingKey(proposal.folder, proposal.ruleId)))),
+    ...keptSteps(rows, outcomes, new Set(proposed.filter(proposal => proposal.on !== null).map(proposal => settingKey(proposal.folder, proposal.ruleId)))),
   ];
 }
 
@@ -147,18 +160,18 @@ function packIdsOf(database: RerailDatabase, repositoryKey: RepositoryKey): stri
   return [...new Set(rows.map(row => row.packId))].sort();
 }
 
-/** The repository's own rule settings, every folder. */
+/** The repository's own rule settings, every folder, by rule and folder. */
 function repositoryRuleRows(database: RerailDatabase, repositoryKey: RepositoryKey): SettingRow[] {
   return database.select().from(ruleSettings).where(and(
     eq(ruleSettings.ownerKind, "repository"),
     eq(ruleSettings.ownerId, repositoryKey),
     eq(ruleSettings.targetKind, "rule"),
-  )).all();
+  )).orderBy(asc(ruleSettings.targetId), asc(ruleSettings.folder)).all();
 }
 
-/** Reconciles the lint config's `proposals` with the repository's own rule settings as stored now; writes only when `write`. */
-function reconcileIn(database: RerailDatabase, repositoryKey: RepositoryKey, proposals: readonly LintConfigSetting[], write: boolean): Step[] {
-  const steps = reconcile(repositoryKey, repositoryRuleRows(database, repositoryKey), proposals);
+/** Reconciles `lintConfig` with the repository's own rule settings as stored now; writes only when `write`. */
+function reconcileIn(database: RerailDatabase, repositoryKey: RepositoryKey, lintConfig: RepositoryLintConfig, write: boolean): Step[] {
+  const steps = reconcile(repositoryKey, repositoryRuleRows(database, repositoryKey), lintConfig);
   if (write) {
     const now = Date.now();
     for (const { write: setting } of steps) if (setting !== undefined) setRuleSetting(database, setting, now);
@@ -191,11 +204,11 @@ export function calibratePacks(repo: string, options: CalibrateOptions = {}): Ca
   try {
     const { repositoryKey } = setUpCheckout(database, workspace, name);
     const root = repositoryIdentityLocation(workspace).workspaceRoot;
-    const { settings, notes } = readRepositoryLintConfig(root, loadRuleCatalog(home), packIdsOf(database, repositoryKey));
+    const lintConfig = readRepositoryLintConfig(root, loadRuleCatalog(home), packIdsOf(database, repositoryKey));
     const steps = dryRun
-      ? reconcileIn(database, repositoryKey, settings, false)
-      : database.transaction(() => reconcileIn(database, repositoryKey, settings, true), { behavior: "immediate" });
-    return { repositoryName: name, dryRun, changes: steps.map(step => step.change), notes };
+      ? reconcileIn(database, repositoryKey, lintConfig, false)
+      : database.transaction(() => reconcileIn(database, repositoryKey, lintConfig, true), { behavior: "immediate" });
+    return { repositoryName: name, dryRun, changes: steps.map(step => step.change), notes: lintConfig.notes };
   } finally {
     database.$client.close();
   }
@@ -237,13 +250,13 @@ function sectionRows(changes: readonly CalibrationChange[]): string[] {
   ];
 }
 
-/** The first line: what calibrating changed or would change; or that nothing, but for a person's settings kept. */
+/** The first line: what calibrating changed or would change; or that nothing, and whether a person's settings differ. */
 function headline(calibration: Calibration, changed: boolean): string {
   const name = clean(calibration.repositoryName);
   if (changed) return `● ${calibration.dryRun ? "Calibrating would change" : "Calibrated"} ${name}'s rule settings from its lint config (read as data, never run):`;
   return calibration.changes.length === 0
     ? `● ${name}'s rule settings already follow its lint config (read as data, never run).`
-    : `● ${name}'s rule settings already follow its lint config (read as data, never run), except yours:`;
+    : `● Nothing to change in ${name}'s rule settings from its lint config (read as data, never run), but some of yours differ from it:`;
 }
 
 /** `calibration` as `rerail packs calibrate` prints it. */

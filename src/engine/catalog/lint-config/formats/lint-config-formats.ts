@@ -83,13 +83,21 @@ export interface TomlStringLists {
   readonly paths: readonly string[];
 }
 
-/** What `readTomlTrees` found: each wanted table the file sets, whole, and every key path the file sets. */
+/**
+ * What `readTomlTrees` found: each wanted table the file sets, whole, each wanted array of tables, and every key path
+ * the file sets.
+ */
 export interface TomlTrees {
   /**
    * Dotted table path (`lints`) → its keys (unquoted) → their values, a table however the file writes it (a header,
    * dotted keys, an inline table) as a `Map`. A wanted table the file does not set is absent.
    */
   readonly trees: ReadonlyMap<string, ReadonlyMap<string, TomlValue>>;
+  /**
+   * Dotted path (`bin`) → each element of the array of tables there, in order, as a `Map` of its keys, however the
+   * file writes it (`[[bin]]` headers, or an array of inline tables). A wanted array the file does not set is absent.
+   */
+  readonly arrays: ReadonlyMap<string, readonly ReadonlyMap<string, TomlValue>[]>;
   readonly paths: readonly string[];
 }
 
@@ -142,17 +150,18 @@ export function readTomlStringLists(
   wantedScalars: readonly string[] = [],
   version: TomlVersion = "1.0",
 ): TomlStringLists {
-  const found = new TomlReader(text, { wanted, wantedTables, wantedStrings, wantedScalars, wantedTrees: [] }, version).read();
+  const found = new TomlReader(text, { wanted, wantedTables, wantedStrings, wantedScalars, wantedTrees: [], wantedArrays: [] }, version).read();
   return { lists: found.lists, tables: found.tables, strings: found.strings, scalars: found.scalars, paths: found.paths };
 }
 
 /**
- * The tables at `wanted` dotted paths, whole: every key under each, at any depth, with its value. Reads and refuses
- * as `readTomlStringLists` does.
+ * The tables at `wanted` dotted paths, whole: every key under each, at any depth, with its value; and the arrays of
+ * tables at `wantedArrays`, each element whole. A table under an element of a wanted array (`[bin.x]` after
+ * `[[bin]]`) is refused. Reads and refuses as `readTomlStringLists` does.
  */
-export function readTomlTrees(text: string, wanted: readonly string[], version: TomlVersion = "1.0"): TomlTrees {
-  const found = new TomlReader(text, { wanted: [], wantedTables: [], wantedStrings: [], wantedScalars: [], wantedTrees: wanted }, version).read();
-  return { trees: found.trees, paths: found.paths };
+export function readTomlTrees(text: string, wanted: readonly string[], version: TomlVersion = "1.0", wantedArrays: readonly string[] = []): TomlTrees {
+  const found = new TomlReader(text, { wanted: [], wantedTables: [], wantedStrings: [], wantedScalars: [], wantedTrees: wanted, wantedArrays }, version).read();
+  return { trees: found.trees, arrays: found.arrays, paths: found.paths };
 }
 
 /** The key paths a `TomlReader` collects, by what it collects at each. */
@@ -162,6 +171,7 @@ interface TomlWanted {
   readonly wantedStrings: readonly string[];
   readonly wantedScalars: readonly string[];
   readonly wantedTrees: readonly string[];
+  readonly wantedArrays: readonly string[];
 }
 
 class TomlReader {
@@ -172,6 +182,9 @@ class TomlReader {
   readonly #strings = new Map<string, string>();
   readonly #scalars = new Map<string, string>();
   readonly #trees = new Map<string, Map<string, TomlValue>>();
+  readonly #arrays = new Map<string, Map<string, TomlValue>[]>();
+  /** The element of a wanted array of tables whose keys follow, after its `[[…]]` header. */
+  #element: Map<string, TomlValue> | undefined;
   readonly #paths = new Set<string>();
   /** The dotted paths of every array of tables (`[[a]]`), whose elements' keys and sub-tables (`[a.b]`) are read past. */
   readonly #arrayTables = new Set<string>();
@@ -184,9 +197,14 @@ class TomlReader {
   readonly wantedStrings: ReadonlySet<string>;
   readonly wantedScalars: ReadonlySet<string>;
   readonly wantedTrees: ReadonlySet<string>;
-  /** The longest wanted tree path, and the longest wanted list, string or scalar path: see `dottedPrefixes`. */
+  readonly wantedArrays: ReadonlySet<string>;
+  /**
+   * The longest wanted tree path, the longest wanted list, string or scalar path, and the longest wanted array path:
+   * see `dottedPrefixes`.
+   */
   readonly #longestTree: number;
   readonly #longestKey: number;
+  readonly #longestArray: number;
 
   constructor(readonly text: string, wanted: TomlWanted, version: TomlVersion) {
     const toml11 = version === "1.1";
@@ -198,8 +216,10 @@ class TomlReader {
     this.wantedStrings = new Set(wanted.wantedStrings);
     this.wantedScalars = new Set(wanted.wantedScalars);
     this.wantedTrees = new Set(wanted.wantedTrees);
+    this.wantedArrays = new Set(wanted.wantedArrays);
     this.#longestTree = Math.max(0, ...wanted.wantedTrees.map(path => path.length));
     this.#longestKey = Math.max(0, ...[...wanted.wanted, ...wanted.wantedStrings, ...wanted.wantedScalars].map(path => path.length));
+    this.#longestArray = Math.max(0, ...wanted.wantedArrays.map(path => path.length));
   }
 
   read(): TomlStringLists & TomlTrees {
@@ -211,7 +231,7 @@ class TomlReader {
       else this.#keyValue();
       this.#endOfLine();
     }
-    return { lists: this.#lists, tables: this.#tables, strings: this.#strings, scalars: this.#scalars, trees: this.#trees, paths: [...this.#paths] };
+    return { lists: this.#lists, tables: this.#tables, strings: this.#strings, scalars: this.#scalars, trees: this.#trees, arrays: this.#arrays, paths: [...this.#paths] };
   }
 
   #fail(problem: string): never {
@@ -248,10 +268,10 @@ class TomlReader {
     if (!this.text.startsWith(close, this.#index)) this.#fail("a table header is not closed");
     this.#index += close.length;
     this.#refuseTables(path, path.length);
-    if (arrayTable) this.#arrayTables.add(dottedPath(path));
+    this.#element = this.#arrayHeader(path, arrayTable);
     // No wanted key lives in an array of tables, nor in a table under one (`[a.b]` after `[[a]]`, a table of its last
-    // element): their keys are read past, never collected.
-    const inArray = arrayTable || this.#underArrayTable(path);
+    // element): their keys are read past, never collected, but for a wanted array's.
+    const inArray = arrayTable || this.#under(path, this.#arrayTables, Number.POSITIVE_INFINITY);
     this.#table = inArray ? undefined : path;
     if (!inArray) {
       this.#paths.add(dottedPath(path));
@@ -259,10 +279,26 @@ class TomlReader {
     }
   }
 
-  /** Whether a table holding `path` (not `path` itself) is an array of tables. */
-  #underArrayTable(path: readonly string[]): boolean {
-    for (const dotted of dottedPrefixes(path, path.length - 1, Number.POSITIVE_INFINITY)) {
-      if (this.#arrayTables.has(dotted)) return true;
+  /**
+   * Records array of tables header `[[path]]`; a new element of a wanted array, for the keys that follow, else
+   * undefined. Refuses a table at a wanted array's path (`[bin]`, or `[[bin]]` after `bin = […]`) or under one
+   * (`[bin.x]`).
+   */
+  #arrayHeader(path: readonly string[], arrayTable: boolean): Map<string, TomlValue> | undefined {
+    const dotted = dottedPath(path);
+    if (this.#under(path, this.wantedArrays, this.#longestArray)) this.#fail(`[${dotted}] is a table under an array of tables, which Rerail does not read`);
+    if (arrayTable) this.#arrayTables.add(dotted);
+    if (!this.wantedArrays.has(dotted)) return undefined;
+    if (!arrayTable || this.#paths.has(dotted)) this.#fail(`${dotted} is not an array of tables`);
+    const element = new Map<string, TomlValue>();
+    this.#arrays.set(dotted, [...(this.#arrays.get(dotted) ?? []), element]);
+    return element;
+  }
+
+  /** Whether a table holding `path` (not `path` itself) is one of `paths`, none longer than `longest`. */
+  #under(path: readonly string[], paths: ReadonlySet<string>, longest: number): boolean {
+    for (const dotted of dottedPrefixes(path, path.length - 1, longest)) {
+      if (paths.has(dotted)) return true;
     }
     return false;
   }
@@ -274,6 +310,10 @@ class TomlReader {
   }
 
   #keyValue(): void {
+    if (this.#element !== undefined) {
+      this.#inlineEntry(this.#element, 0);
+      return;
+    }
     const key = this.#key();
     if (this.text[this.#index] !== "=") this.#fail("expected =");
     this.#index += 1;
@@ -286,6 +326,7 @@ class TomlReader {
   #collect(path: readonly string[], value: TomlValue, depth = 0): void {
     this.#refuseTables(path, value instanceof Map ? path.length : path.length - 1);
     const dotted = this.#mark(path, value);
+    this.#collectArray(path, dotted, value);
     if (value instanceof Map) {
       this.#collectTable(path, dotted, value, depth);
       return;
@@ -302,6 +343,15 @@ class TomlReader {
     if (depth >= MAX_NESTING) this.#fail(`values nest more than ${MAX_NESTING} deep`);
     this.#wantedTable(dotted);
     for (const [key, inner] of value) this.#collect([...path, key], inner, depth + 1);
+  }
+
+  /** Records a wanted array of tables set as a value (`bin = [{ … }]`); refuses a key under one (`bin.path = …`). */
+  #collectArray(path: readonly string[], dotted: string, value: TomlValue): void {
+    if (this.#under(path, this.wantedArrays, this.#longestArray)) this.#fail(`${dotted} is set under an array of tables`);
+    if (!this.wantedArrays.has(dotted)) return;
+    if (this.#arrays.has(dotted)) this.#fail(`${dotted} is set twice`);
+    if (!Array.isArray(value) || !value.every(item => item instanceof Map)) this.#fail(`${dotted} is not an array of tables`);
+    this.#arrays.set(dotted, value as Map<string, TomlValue>[]);
   }
 
   /** Marks `path` set, refusing a value set twice (a table may be added to); its dotted path. */
@@ -429,11 +479,7 @@ class TomlReader {
     const lines = this.#multiLineInlineTables;
     for (;;) {
       this.#skipBlank(lines);
-      // `{}`, or in TOML 1.1 the `}` after a trailing comma.
-      if (this.text[this.#index] === "}" && (table.size === 0 || lines)) {
-        this.#index += 1;
-        return table;
-      }
+      if (this.#closesEarly(table)) return table;
       this.#inlineEntry(table, depth);
       this.#skipBlank(lines);
       const char = this.text[this.#index];
@@ -443,7 +489,17 @@ class TomlReader {
     }
   }
 
-  /** One `key = value` of an inline table, a dotted key nesting a table for each part before the last. */
+  /** Whether a `}` closes the inline table before an entry: `{}`, or in TOML 1.1 the `}` after a trailing comma. */
+  #closesEarly(table: ReadonlyMap<string, TomlValue>): boolean {
+    if (this.text[this.#index] !== "}" || (table.size > 0 && !this.#multiLineInlineTables)) return false;
+    this.#index += 1;
+    return true;
+  }
+
+  /**
+   * One `key = value` of an inline table or of a wanted array's element, a dotted key nesting a table for each part
+   * before the last.
+   */
   #inlineEntry(table: Map<string, TomlValue>, depth: number): void {
     const key = this.#key();
     if (this.text[this.#index] !== "=") this.#fail("expected =");

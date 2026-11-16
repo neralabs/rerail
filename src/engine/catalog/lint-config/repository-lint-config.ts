@@ -28,12 +28,12 @@ function settleRepository(root: string, ruleCatalog: RuleCatalog, packIds: reado
   });
   const ported = new Set(LINTER_READERS.filter(reader => ports.some(port => portsLinter(port, reader.kinds))).map(reader => reader.linter));
   const notes = fileNotes.filter(note => ported.has(note.linter)).map(note => note.text);
-  const settings = ports.flatMap(port => {
+  const settled = ports.map(port => {
     const verdicts = configs.flatMap((config): PortVerdict[] => {
       const verdict = config.verdict(port, ruleCatalog);
       return verdict === undefined ? [] : [verdict];
     });
     return settleVerdicts(port, verdicts, notes);
   });
-  return { settings, notes };
+  return { settings: settled.flatMap(port => port.settings), outcomes: settled.flatMap(port => port.outcomes), notes };
 }

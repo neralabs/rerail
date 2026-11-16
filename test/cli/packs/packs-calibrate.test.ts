@@ -228,7 +228,7 @@ describe("rerail packs calibrate", () => {
 
     expect(kinds(calibrated(where))).toEqual({ [NO_THIS_ALIAS]: "kept", [ARRAY_TYPE]: "kept" });
     expect(calibrate(where, ["--dry-run"])).toBe([
-      "● acme-api's rule settings already follow its lint config (read as data, never run), except yours:",
+      "● Nothing to change in acme-api's rule settings from its lint config (read as data, never run), but some of yours differ from it:",
       "  Kept yours (set by you, or by an earlier Rerail release's set-up; your lint config says otherwise):",
       `    ${ARRAY_TYPE}  ${because("array-type", "error")}`,
       `    ${NO_THIS_ALIAS}  ${because("no-this-alias", "off")}`,
@@ -236,6 +236,58 @@ describe("rerail packs calibrate", () => {
       `    ${EXTENDS_NOTE}`,
     ].join("\n") + "\n");
     expect(rows(where.databasePath, ids)).toEqual(stored);
+  });
+
+  it("keeps a person's setting the lint config gives otherwise where it gives the pack's value, and says so", async () => {
+    const where = await repository({
+      // Off, by a person or an earlier set-up; the config turns it on, as the pack has it.
+      [TS_COMMENT]: { on: false },
+      // On, as the config and the pack have it.
+      [NO_NAMESPACE]: { on: true },
+      // Off where the config does not name it: its shared config, not read, may.
+      [NO_THIS_ALIAS]: { on: false },
+    });
+    eslintrc(where.repo, { "@typescript-eslint/ban-ts-comment": "error", "@typescript-eslint/no-namespace": "error" });
+    const stored = rows(where.databasePath, [TS_COMMENT, NO_NAMESPACE, NO_THIS_ALIAS]);
+
+    expect(calibrated(where).changes).toEqual([
+      { kind: "kept", ruleId: TS_COMMENT, folder: "", config: null, explicit: true, because: because("ban-ts-comment", "error") },
+    ]);
+    expect(calibrate(where, [])).toBe([
+      "● Nothing to change in acme-api's rule settings from its lint config (read as data, never run), but some of yours differ from it:",
+      "  Kept yours (set by you, or by an earlier Rerail release's set-up; your lint config says otherwise):",
+      `    ${TS_COMMENT}  ${because("ban-ts-comment", "error")}`,
+      "  About your lint config:",
+      `    ${EXTENDS_NOTE}`,
+    ].join("\n") + "\n");
+    expect(rows(where.databasePath, [TS_COMMENT, NO_NAMESPACE, NO_THIS_ALIAS])).toEqual(stored);
+  });
+
+  it("compares a person's setting in a folder with what the lint config gives the folders holding it", async () => {
+    const where = await repository({
+      // Off in src/, where the config keeps it on for every file.
+      [NO_REQUIRE_IMPORTS]: { folder: "src", on: false },
+      // On in lib/: the options the config gives apply from the whole repository's settings, not a folder's.
+      [NO_EXPLICIT_ANY]: { folder: "lib", on: true },
+      // On in scripts/tools/, where the config turns it off for scripts/ though on for every file.
+      [NO_NAMESPACE]: { folder: "scripts/tools", on: true },
+      // A rule of no linter whose config the repository has.
+      "acme-own-rule": { folder: "src", on: false },
+    });
+    writeFileSync(join(where.repo, ".eslintrc.json"), JSON.stringify({
+      rules: {
+        "@typescript-eslint/no-require-imports": "error",
+        "@typescript-eslint/no-explicit-any": ["error", { ignoreRestArgs: true }],
+        "@typescript-eslint/no-namespace": "error",
+      },
+      overrides: [{ files: "scripts/**", rules: { "@typescript-eslint/no-namespace": "off" } }],
+    }));
+    const changes = calibrated(where, ["--dry-run"]).changes;
+    expect(changes.filter(change => change.kind === "kept")).toEqual([
+      { kind: "kept", ruleId: NO_NAMESPACE, folder: "scripts/tools", config: null, explicit: true, because: `${because("no-namespace", "off")} for "scripts/**"` },
+      { kind: "kept", ruleId: NO_REQUIRE_IMPORTS, folder: "src", config: null, explicit: true, because: because("no-require-imports", "error") },
+    ]);
+    expect(changes.filter(change => change.ruleId === NO_EXPLICIT_ANY).map(change => change.kind)).toEqual(["options-set"]);
   });
 
   it("names the notes on the lint config of the packs' linters, and leaves another linter's config alone", async () => {
@@ -346,7 +398,7 @@ describe("calibrationText", () => {
     [
       "only a person's settings kept, with --dry-run", [change("kept", "mine")], true,
       [
-        "● acme-api's rule settings already follow its lint config (read as data, never run), except yours:",
+        "● Nothing to change in acme-api's rule settings from its lint config (read as data, never run), but some of yours differ from it:",
         "  Kept yours (set by you, or by an earlier Rerail release's set-up; your lint config says otherwise):",
         "    mine  mine in config",
       ],

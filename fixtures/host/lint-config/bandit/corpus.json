@@ -1,8 +1,8 @@
 {
  "probes": ["", "app/migrations", "docs", "lib/scripts", "migrations", "scripts", "src", "src/tests", "tests", "tests_old", "third_party"],
  "cases": [
-  { "name": "skips-in-bandit", "files": { ".bandit": "[bandit]\nskips = B101,B602\n" } },
-  { "name": "tests-in-bandit", "files": { ".bandit": "[bandit]\ntests = B101,B303\n" } },
+  { "name": "skips-in-bandit", "files": { ".bandit": "[bandit]\nskips = B101,B602\n" }, "explicit": { "B101": true, "B102": false } },
+  { "name": "tests-in-bandit", "files": { ".bandit": "[bandit]\ntests = B101,B303\n" }, "explicit": { "B101": true, "B102": false } },
   { "name": "tests-with-spaces", "files": { ".bandit": "[bandit]\ntests = B101, B303\n" } },
   { "name": "tests-trailing-comma", "files": { ".bandit": "[bandit]\ntests = B101,\n" } },
   { "name": "skips-unknown-ids", "files": { ".bandit": "[bandit]\nskips = B999,assert_used,B303\n" } },
@@ -28,9 +28,9 @@
   { "name": "exclude-substring", "files": { ".bandit": "[bandit]\nexclude = test\n", "test_tests.py": "assert 1\n", "src/latest.py": "assert 1\n" }, "noted": ["test_tests.py", "src/latest.py"] },
   { "name": "exclude-absolute", "files": { ".bandit": "[bandit]\nexclude = /docs/\n" }, "unknown": ["docs"] },
   { "name": "exclude-outside", "files": { ".bandit": "[bandit]\nexclude = ../shared,../\n" } },
-  { "name": "exclude-dot", "files": { ".bandit": "[bandit]\nexclude = .\n" } },
+  { "name": "exclude-dot", "files": { ".bandit": "[bandit]\nexclude = .\n" }, "explicit": { "B101": true } },
   { "name": "pyproject-skips", "args": ["-c", "pyproject.toml"], "files": { "pyproject.toml": "[tool.bandit]\nskips = [\"B101\", \"B001\"]\n" } },
-  { "name": "pyproject-tests", "args": ["-c", "pyproject.toml"], "files": { "pyproject.toml": "[tool.bandit]\ntests = [\"B303\", \"B608\"]\n" } },
+  { "name": "pyproject-tests", "args": ["-c", "pyproject.toml"], "files": { "pyproject.toml": "[tool.bandit]\ntests = [\"B303\", \"B608\"]\n" }, "explicit": { "B303": true, "B101": false } },
   { "name": "pyproject-exclude-name", "args": ["-c", "pyproject.toml"], "files": { "pyproject.toml": "[tool.bandit]\nexclude_dirs = [\"tests\"]\n", "test_tests.py": "assert 1\n" }, "noted": ["test_tests.py"] },
   { "name": "pyproject-exclude-dot", "args": ["-c", "pyproject.toml"], "files": { "pyproject.toml": "[tool.bandit]\nexclude_dirs = [\"./scripts\", \"lib/scripts/\"]\n" } },
   { "name": "pyproject-exclude-scripts", "args": ["-c", "pyproject.toml"], "files": { "pyproject.toml": "[tool.bandit]\nexclude_dirs = [\"scripts\"]\n" } },

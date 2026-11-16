@@ -142,8 +142,26 @@ export interface LintConfigSetting {
   readonly because: string;
 }
 
+/**
+ * What the lint config gives a rule in one folder once every linter's say there settles, whether or not it differs from
+ * the pack's value: for every file, where any linter decides for every file, and in each folder any linter decides in.
+ */
+export interface LintConfigOutcome {
+  readonly ruleId: string;
+  /** Relative to the repository root; `""` for the whole repository. */
+  readonly folder: string;
+  /** `unknown`: something Rerail cannot read may set it there, so the pack's value stands. */
+  readonly on: boolean | "unknown";
+  /** Option values for every file, or `null`. */
+  readonly config: RuleConfig | null;
+  readonly explicit: boolean;
+  readonly because: string;
+}
+
 export interface RepositoryLintConfig {
   readonly settings: readonly LintConfigSetting[];
+  /** What the settings come from: every outcome, those equal to the pack's value too. */
+  readonly outcomes: readonly LintConfigOutcome[];
   /** Files not read, options not mapped and conflicts, for the person. */
   readonly notes: readonly string[];
 }
@@ -269,15 +287,27 @@ function settingOf(port: Port, changed: Omit<Decided, "config"> | undefined, opt
   };
 }
 
-/** The setting for every file, if any, and whether the port is on for every file once it applies. */
-function wholeSetting(port: Port, decisions: readonly PortDecision[], notes: string[]): { setting: LintConfigSetting | undefined; on: boolean } {
-  const decided = decisions.filter((decision): decision is Decided => decision.on !== "unknown");
-  noteConflict(port, decided, notes);
+/** Where `decisions` settle for `port` in `folder`, with `options` for every file; `unknown` where they do not. */
+function outcomeOf(port: Port, folder: string, decisions: readonly (PortDecision | FolderDecision)[], options?: { config: RuleConfig; because: string }): LintConfigOutcome {
   const settled = settle(decisions);
-  const on = settled?.on ?? port.startsOn;
-  const options = on ? agreedConfig(port.ruleId, decisions.filter((decision): decision is Decided => decision.on === true), notes) : undefined;
+  if (settled === undefined) {
+    const because = decisions.filter(decision => decision.on === "unknown").map(decision => decision.because).join("; ");
+    return { ruleId: port.ruleId, folder, on: "unknown", config: null, explicit: false, because };
+  }
+  const because = [...new Set([settled.because, ...options === undefined ? [] : [options.because]])].join("; ");
+  return { ruleId: port.ruleId, folder, on: settled.on, config: options?.config ?? null, explicit: settled.explicit, because };
+}
+
+/** Whether `port` is on where `outcome` applies: the pack's value where it is unknown. */
+const stateOf = (port: Port, outcome: LintConfigOutcome): boolean => (outcome.on === "unknown" ? port.startsOn : outcome.on);
+
+/** The setting for every file, if any, and the outcome for every file. */
+function wholeSetting(port: Port, decisions: readonly PortDecision[], notes: string[]): { setting: LintConfigSetting | undefined; outcome: LintConfigOutcome } {
+  noteConflict(port, decisions.filter((decision): decision is Decided => decision.on !== "unknown"), notes);
+  const settled = settle(decisions);
+  const options = (settled?.on ?? port.startsOn) ? agreedConfig(port.ruleId, decisions.filter((decision): decision is Decided => decision.on === true), notes) : undefined;
   const changed = settled?.on === !port.startsOn ? settled : undefined;
-  return { setting: changed === undefined && options === undefined ? undefined : settingOf(port, changed, options), on };
+  return { setting: changed === undefined && options === undefined ? undefined : settingOf(port, changed, options), outcome: outcomeOf(port, "", decisions, options) };
 }
 
 /** One linter's say about a port, with what held-off ports may not take set aside. */
@@ -296,42 +326,49 @@ function decisionsIn(settling: Settling, folder: string): readonly (PortDecision
 
 /**
  * Per folder any linter decides in, the outcome of every linter's decisions there (`decisionsIn`), settled as for every
- * file, an unknown leaving the pack's value. A folder the same as the nearest folder holding it (or, in none, as every
- * file) needs nothing: a rule's setting in the deepest folder holding a file applies to it.
+ * file, an unknown leaving the pack's value; and the settings they come to. A folder the same as the nearest folder
+ * holding it (or, in none, as every file, on as `whole`) needs no setting: a rule's setting in the deepest folder
+ * holding a file applies to it.
  */
-function folderSettings(port: Port, settlings: readonly Settling[], whole: boolean): LintConfigSetting[] {
+function folderSettings(port: Port, settlings: readonly Settling[], whole: boolean): { settings: LintConfigSetting[]; outcomes: LintConfigOutcome[] } {
   const folders = [...new Set(settlings.flatMap(settling => settling.folders.map(decision => decision.folder)))];
-  const outcomes = folders.map(folder => {
-    const decisions = settlings.flatMap(settling => decisionsIn(settling, folder));
-    const settled = settle(decisions);
-    const because = settled?.because ?? decisions.filter(decision => decision.on === "unknown").map(decision => decision.because).join("; ");
-    return { folder, on: settled?.on ?? port.startsOn, explicit: settled?.explicit ?? false, because };
+  const outcomes = folders.map(folder => outcomeOf(port, folder, settlings.flatMap(settling => decisionsIn(settling, folder))));
+  const settings = outcomes.flatMap(outcome => {
+    const on = stateOf(port, outcome);
+    const holder = outcomes.filter(other => outcome.folder.startsWith(`${other.folder}/`)).sort((left, right) => right.folder.length - left.folder.length)[0];
+    if (on === (holder === undefined ? whole : stateOf(port, holder))) return [];
+    return [{ ruleId: port.ruleId, folder: outcome.folder, on, config: null, explicit: outcome.explicit, because: outcome.because }];
   });
-  return outcomes.flatMap(({ folder, on, explicit, because }) => {
-    const holder = outcomes.filter(other => folder.startsWith(`${other.folder}/`)).sort((left, right) => right.folder.length - left.folder.length)[0];
-    if (on === (holder === undefined ? whole : holder.on)) return [];
-    return [{ ruleId: port.ruleId, folder, on, config: null, explicit, because }];
-  });
+  return { settings, outcomes };
 }
 
 /**
- * Each linter's say about a held-off port without what turns it on, which goes to `notes`; any other port's as it is.
+ * Each linter's say about a held-off port without what turns it on; what turns it on by name (its own, a prefix or a
+ * group the config selects) goes to `notes`, defaults and presets unremarked. Any other port's say is as it is.
  */
 function heldOffSettlings(port: Port, verdicts: readonly PortVerdict[], notes: string[]): Settling[] {
   const settlings = verdicts.map(verdict => ({ decision: verdict.decision, folders: verdict.folders ?? [] }));
   if (port.heldOff === undefined) return settlings;
-  const turnsOn = settlings.flatMap(settling => [...settling.decision === undefined ? [] : [settling.decision], ...settling.folders]).filter(decision => decision.on === true);
-  if (turnsOn.length > 0) notes.push(`${port.ruleId}: ${turnsOn.map(decision => decision.because).join("; ")} would turn it on, but its pack holds it off (${port.heldOff}); it stays off.`);
+  const named = settlings.flatMap(settling => [...settling.decision === undefined ? [] : [settling.decision], ...settling.folders]).filter(decision => decision.on === true && decision.explicit);
+  if (named.length > 0) notes.push(`${port.ruleId}: ${named.map(decision => decision.because).join("; ")} would turn it on, but its pack holds it off (${port.heldOff}); it stays off.`);
   return settlings.map(settling => ({
     decision: settling.decision?.on === true ? undefined : settling.decision,
     folders: settling.folders.filter(decision => decision.on !== true),
   }));
 }
 
-/** The settings `verdicts` (each linter's, for one port) come to, adding to `notes` what is not used. */
-export function settleVerdicts(port: Port, verdicts: readonly PortVerdict[], notes: string[]): LintConfigSetting[] {
+/**
+ * The settings `verdicts` (each linter's, for one port) come to, and the outcomes they come from, adding to `notes` what
+ * is not used.
+ */
+export function settleVerdicts(port: Port, verdicts: readonly PortVerdict[], notes: string[]): Pick<RepositoryLintConfig, "settings" | "outcomes"> {
   for (const verdict of verdicts) notes.push(...verdict.notes ?? []);
   const settlings = heldOffSettlings(port, verdicts, notes);
-  const whole = wholeSetting(port, settlings.flatMap(settling => (settling.decision === undefined ? [] : [settling.decision])), notes);
-  return [...whole.setting === undefined ? [] : [whole.setting], ...folderSettings(port, settlings, whole.on)];
+  const decisions = settlings.flatMap(settling => (settling.decision === undefined ? [] : [settling.decision]));
+  const whole = wholeSetting(port, decisions, notes);
+  const folders = folderSettings(port, settlings, stateOf(port, whole.outcome));
+  return {
+    settings: [...whole.setting === undefined ? [] : [whole.setting], ...folders.settings],
+    outcomes: [...decisions.length === 0 ? [] : [whole.outcome], ...folders.outcomes],
+  };
 }

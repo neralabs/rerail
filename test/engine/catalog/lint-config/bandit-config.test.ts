@@ -173,7 +173,7 @@ describe("banditReader", () => {
       "pyproject.toml [tool.bandit]: \"third_party/**\" in exclude_dirs skips no Python file: bandit -r . matches it against paths such as ./src/app.py, so the tests stay on.",
       "pyproject.toml [tool.bandit]: \"build\" in exclude_dirs: Bandit skips lib/build_tools.py, which Rerail cannot set rules for alone (it sets them for whole folders), so the tests stay on there.",
     ]);
-    expect(settleVerdicts(ports.get(MD5)!, result.verdicts as PortVerdict[], [])).toEqual([
+    expect(settleVerdicts(ports.get(MD5)!, result.verdicts as PortVerdict[], []).settings).toEqual([
       { ruleId: MD5, folder: "migrations", on: false, config: null, explicit: true, because: ".bandit: \"*/migrations/*\" in exclude" },
       { ruleId: MD5, folder: "src", on: false, config: null, explicit: true, because: "pyproject.toml [tool.bandit]: \"./src/*.py\" in exclude_dirs" },
       { ruleId: MD5, folder: "tests", on: false, config: null, explicit: true, because: ".bandit: \"./tests\" in exclude" },

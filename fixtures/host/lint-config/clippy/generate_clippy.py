@@ -4,13 +4,15 @@ the rust pack ports, over the Rerail-authored workspaces in corpus.json (offline
 
 Each case's files are written to a fresh folder. Every package in it (a `Cargo.toml` with `[package]`) gets the probe,
 `src/rerail_probe.rs` with one item per ported lint that the lint reports, included at the end of each of its crate
-roots (`src/lib.rs`, `src/main.rs`, a new `src/lib.rs` when it has neither; `include!`, as a module would not report
-`single_component_path_imports`). Then
+roots (`src/lib.rs`, `src/main.rs`, a new `src/lib.rs` when it has neither and declares no `[lib]`, `[[bin]]` or
+`src/bin/`; then every other target `cargo metadata` lists: a `[lib] path`, binaries, the build script; `include!`,
+as a module would not report `single_component_path_imports`). Then
 `cargo clippy --workspace --offline -v --message-format=json` runs at the case's root, with an empty CARGO_HOME so no
-user config adds flags. Per package folder it records:
-- `flags`: the lint flags Cargo passes clippy-driver (`--warn=clippy::pedantic`, …), in Cargo's order;
+user config adds flags (a case's own `.cargo/config.toml` does). Per package folder it records:
+- `flags`: the lint flags Cargo passes clippy-driver (`--warn=clippy::pedantic`, then rustflags' `-W clippy::…`), in
+  Cargo's order;
 - `on`: the ported lints the probe reports in every target of the package;
-- `mixed`: those it reports in some of its targets only (`src/lib.rs` and `src/main.rs` set them differently).
+- `mixed`: those it reports in some of its targets only (its crate roots set them differently).
 Every other ported lint is off there. A package Cargo does not lint from the root (excluded, outside the workspace)
 has no record. When Cargo refuses the workspace, `error` is its first error line and no package is linted.
 
@@ -80,7 +82,8 @@ PROBES = {
 }
 PROBE_SOURCE = "\n".join(item for item in PROBES.values() if item) + "\n"
 PROBE_FILE = "rerail_probe.rs"
-LINT_FLAG = re.compile(r"(?:^|\s)'?--(allow|warn|deny|forbid)=([^\s']+)")
+LINT_FLAG = re.compile(r"(?:^|\s)'?(?:--(allow|warn|deny|forbid)=|-([AWDF]) ?'?)([^\s']+)")
+SHORT_LEVELS = {"A": "allow", "W": "warn", "D": "deny", "F": "forbid"}
 CRATE_ROOTS = ("src/lib.rs", "src/main.rs")
 
 
@@ -104,29 +107,77 @@ def is_package(manifest: pathlib.Path) -> bool:
         return False
 
 
-def add_probes(root: pathlib.Path) -> None:
+def metadata(root: pathlib.Path, home: pathlib.Path) -> list[dict]:
+    """The workspace's packages as `cargo metadata` lists them; none when Cargo refuses the workspace."""
+    result = run(["cargo", "metadata", "--no-deps", "--offline", "--format-version", "1"], root, home)
+    return json.loads(result.stdout)["packages"] if result.returncode == 0 else []
+
+
+def include_probe(crate_root: pathlib.Path, probe: pathlib.Path) -> None:
+    text = crate_root.read_text() if crate_root.exists() else ""
+    crate_root.write_text(f'{text}include!("{os.path.relpath(probe, crate_root.parent)}");\n')
+
+
+def declares_targets(folder: pathlib.Path) -> bool:
+    """Whether the package in `folder` has crate roots other than `src/lib.rs` and `src/main.rs`."""
+    manifest = tomllib.loads((folder / "Cargo.toml").read_text())
+    return "lib" in manifest or "bin" in manifest or (folder / "src" / "bin").exists()
+
+
+def probe_package(folder: pathlib.Path) -> None:
+    """Writes the package in `folder` the probe, included in `src/lib.rs` and `src/main.rs` (or a new `src/lib.rs`)."""
+    probe = folder / "src" / PROBE_FILE
+    probe.parent.mkdir(exist_ok=True)
+    probe.write_text(PROBE_SOURCE)
+    roots = [folder / name for name in CRATE_ROOTS if (folder / name).exists()]
+    for crate_root in roots or ([] if declares_targets(folder) else [folder / "src/lib.rs"]):
+        include_probe(crate_root, probe)
+
+
+def unprobed(crate_root: pathlib.Path, root: pathlib.Path) -> bool:
+    """Whether `crate_root` is a file of the case that does not include the probe yet."""
+    return crate_root.is_relative_to(root) and crate_root.exists() and PROBE_FILE not in crate_root.read_text()
+
+
+def probe_targets(root: pathlib.Path, home: pathlib.Path) -> None:
+    """Includes the probe in each crate root `cargo metadata` lists that does not include it yet."""
+    for package in metadata(root, home):
+        probe = pathlib.Path(package["manifest_path"]).parent / "src" / PROBE_FILE
+        for crate_root in [pathlib.Path(target["src_path"]) for target in package["targets"]]:
+            if unprobed(crate_root, root):
+                include_probe(crate_root, probe)
+
+
+def add_probes(root: pathlib.Path, home: pathlib.Path) -> None:
     """Gives every package under `root` the probe, included at the end of each of its crate roots."""
     for folder in [manifest.parent for manifest in root.rglob("Cargo.toml") if is_package(manifest)]:
-        (folder / "src").mkdir(exist_ok=True)
-        (folder / "src" / PROBE_FILE).write_text(PROBE_SOURCE)
-        roots = [folder / name for name in CRATE_ROOTS if (folder / name).exists()] or [folder / "src/lib.rs"]
-        for crate_root in roots:
-            text = crate_root.read_text() if crate_root.exists() else ""
-            crate_root.write_text(f'{text}include!("{PROBE_FILE}");\n')
+        probe_package(folder)
+    probe_targets(root, home)
 
 
-def unit(command: str, root: pathlib.Path) -> tuple[str, str, list[str]]:
+def target_folders(root: pathlib.Path, home: pathlib.Path) -> dict[str, str]:
+    """Per crate root's absolute path, its package's folder relative to `root` (`""` for the root)."""
+    folders = {}
+    for package in metadata(root, home):
+        folder = pathlib.Path(package["manifest_path"]).parent.relative_to(root).as_posix()
+        for target in package["targets"]:
+            folders[str(pathlib.Path(target["src_path"]).resolve())] = "" if folder == "." else folder
+    return folders
+
+
+def unit(command: str, root: pathlib.Path, folders: dict[str, str]) -> tuple[str, str, list[str]]:
     """A clippy-driver command Cargo runs: its crate root's absolute path, its package's folder and its lint flags."""
     source = next(word.strip("'") for word in command.split() if word.strip("'").endswith(".rs"))
+    path = str((root / source).resolve())
     folder = pathlib.PurePosixPath(source).parent.parent.as_posix()
-    flags = [f"{level} {lint}" for level, lint in LINT_FLAG.findall(command)]
-    return str((root / source).resolve()), "" if folder == "." else folder, flags
+    flags = [f"{level or SHORT_LEVELS[short]} {lint}" for level, short, lint in LINT_FLAG.findall(command)]
+    return path, folders.get(path, "" if folder == "." else folder), flags
 
 
-def units(stderr: str, root: pathlib.Path) -> list[tuple[str, str, list[str]]]:
+def units(stderr: str, root: pathlib.Path, folders: dict[str, str]) -> list[tuple[str, str, list[str]]]:
     """Each clippy-driver command Cargo reports running (`-v`), as `unit` reads it."""
     commands = [line.split("`", 1)[1].rstrip("`") for line in stderr.splitlines() if "Running `" in line]
-    return sorted(unit(command, root) for command in commands if "clippy-driver" in command)
+    return sorted(unit(command, root, folders) for command in commands if "clippy-driver" in command)
 
 
 def probe_lint(message: dict) -> str | None:
@@ -151,7 +202,7 @@ def check_probe(home: pathlib.Path) -> None:
     with tempfile.TemporaryDirectory() as folder:
         root = pathlib.Path(folder)
         (root / "Cargo.toml").write_text('[package]\nname = "probe"\nversion = "0.1.0"\nedition = "2024"\n')
-        add_probes(root)
+        add_probes(root, home)
         forced = [f"--force-warn={lint}" for lint in PROBES]
         result = run(["cargo", "clippy", "--offline", "--message-format=json", "--", *forced], root, home)
         missing = set(PROBES) - set().union(*reported(result.stdout).values())
@@ -159,11 +210,11 @@ def check_probe(home: pathlib.Path) -> None:
             raise SystemExit(f"the probe does not report {sorted(missing)}:\n{result.stderr}")
 
 
-def package_records(stdout: str, stderr: str, root: pathlib.Path) -> dict[str, dict]:
+def package_records(stdout: str, stderr: str, root: pathlib.Path, folders: dict[str, str]) -> dict[str, dict]:
     """Per package folder Cargo lints: its flags, the lints reported in every target, and those in some only."""
     lints = reported(stdout)
     packages: dict[str, dict] = {}
-    for source, package, flags in units(stderr, root):
+    for source, package, flags in units(stderr, root, folders):
         packages.setdefault(package, {"flags": flags, "targets": []})["targets"].append(lints.get(source, set()))
     records = {}
     for package, entry in sorted(packages.items()):
@@ -178,12 +229,12 @@ def record(case: dict, home: pathlib.Path) -> dict:
         for name, text in case["files"].items():
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_text(text)
-        add_probes(root)
+        add_probes(root, home)
         result = run(["cargo", "clippy", "--workspace", "--offline", "-v", "--message-format=json"], root, home)
         errors = [line for line in result.stderr.splitlines() if line.startswith("error:") and "could not compile" not in line]
         if errors:
             return {"name": case["name"], "error": errors[0].replace(str(root), "<root>")}
-        return {"name": case["name"], "packages": package_records(result.stdout, result.stderr, root)}
+        return {"name": case["name"], "packages": package_records(result.stdout, result.stderr, root, target_folders(root, home))}
 
 
 def main() -> None:

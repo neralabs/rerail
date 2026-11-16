@@ -4,8 +4,8 @@
 //   npm install --prefix <tools> --legacy-peer-deps eslint@10.11.0 @eslint/js@10.0.1 globals@16.5.0 \
 //     @eslint/eslintrc@3.3.7 typescript-eslint@8.70.1 @typescript-eslint/eslint-plugin@8.70.1 \
 //     @typescript-eslint/parser@8.70.1 typescript@6.0.3 eslint-plugin-react@7.37.5 eslint-plugin-react-hooks@7.1.1 \
-//     eslint-plugin-unicorn@76.0.0 eslint-plugin-n@18.4.1 @next/eslint-plugin-next@16.3.8 eslint-plugin-vue@10.11.1 \
-//     vue-eslint-parser@10.4.1 @vitest/eslint-plugin@1.6.27
+//     eslint-plugin-unicorn@76.0.0 eslint-plugin-n@18.4.1 @next/eslint-plugin-next@16.3.8 eslint-config-next@16.3.8 \
+//     eslint-plugin-vue@10.11.1 vue-eslint-parser@10.4.1 @vitest/eslint-plugin@1.6.27
 //   node fixtures/host/lint-config/eslint/generate_eslint.mjs <tools>
 // The versions are the packs' pins (packs/<pack>/upstream/<tool>/gates.yaml); any other installed version is refused.
 //
@@ -35,6 +35,7 @@ const PINS = {
   "eslint-plugin-unicorn": "76.0.0",
   "eslint-plugin-n": "18.4.1",
   "@next/eslint-plugin-next": "16.3.8",
+  "eslint-config-next": "16.3.8",
   "eslint-plugin-vue": "10.11.1",
   "@vitest/eslint-plugin": "1.6.27",
 };

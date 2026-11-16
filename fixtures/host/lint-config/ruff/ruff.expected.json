@@ -89,6 +89,21 @@
   "tests/probe.py": "E402 E501 E711 E713 E722 E741 F403 F841 TC001 TC005 TC010",
   "tests/sub/probe.py": "E402 E501 E711 E713 E722 E741 F403 F841 TC001 TC005 TC010"
  },
+ "extend-chain-too-deep": {
+  "configs/tests/probe.py": "E402 E501 E711 E712 E713 E741 F401",
+  "docs/probe.py": "E402 E501 E711 E712 E713 E741 F401",
+  "lib/deep/probe.py": "E402 E501 E711 E712 E713 E741 F401",
+  "lib/probe.py": "E402 E501 E711 E712 E713 E741 F401",
+  "probe.py": "E402 E501 E711 E712 E713 E741 F401",
+  "scripts/probe.py": "E402 E501 E711 E712 E713 E741 F401",
+  "sub/probe.py": "E402 E501 E711 E712 E713 E741 F401",
+  "tests/probe.py": "E402 E501 E711 E712 E713 E741 F401",
+  "tests/sub/probe.py": "E402 E501 E711 E712 E713 E741 F401"
+ },
+ "extend-folder": "error",
+ "extend-loop": "error",
+ "extend-missing": "error",
+ "extend-missing-in-chain": "error",
  "extend-preview-from-base": {
   "configs/tests/probe.py": "AIR001 ASYNC100 ASYNC105 ASYNC115 B026 B033 C401 C419 C420 COM818 E722 F401 F841 G010 PLC0414 PLW0177 RET501 SIM101 SIM110 T100 TC005 TC010 TRY203 UP006 UP008 UP031 W605",
   "docs/probe.py": "AIR001 ASYNC100 ASYNC105 ASYNC115 B026 B033 C401 C419 C420 COM818 E722 F401 F841 G010 PLC0414 PLW0177 RET501 SIM101 SIM110 T100 TC005 TC010 TRY203 UP006 UP008 UP031 W605",
@@ -100,6 +115,21 @@
   "tests/probe.py": "AIR001 ASYNC100 ASYNC105 ASYNC115 B026 B033 C401 C419 C420 COM818 E722 F401 F841 G010 PLC0414 PLW0177 RET501 SIM101 SIM110 T100 TC005 TC010 TRY203 UP006 UP008 UP031 W605",
   "tests/sub/probe.py": "AIR001 ASYNC100 ASYNC105 ASYNC115 B026 B033 C401 C419 C420 COM818 E722 F401 F841 G010 PLC0414 PLW0177 RET501 SIM101 SIM110 T100 TC005 TC010 TRY203 UP006 UP008 UP031 W605"
  },
+ "extend-pyproject-unparseable": "error",
+ "extend-pyproject-without-ruff": {
+  "configs/tests/probe.py": "E711 E712 E713 E741",
+  "docs/probe.py": "E711 E712 E713 E741",
+  "lib/deep/probe.py": "E711 E712 E713 E741",
+  "lib/probe.py": "E711 E712 E713 E741",
+  "probe.py": "E711 E712 E713 E741",
+  "scripts/probe.py": "E711 E712 E713 E741",
+  "sub/probe.py": "E711 E712 E713 E741",
+  "tests/probe.py": "E711 E712 E713 E741",
+  "tests/sub/probe.py": "E711 E712 E713 E741"
+ },
+ "extend-root-folder": "error",
+ "extend-self": "error",
+ "extend-unparseable": "error",
  "incompatible-both-selected": {
   "configs/tests/probe.py": "D211 D212",
   "docs/probe.py": "D211 D212",
@@ -188,6 +218,17 @@
   "sub/probe.py": "F401 F403 F841",
   "tests/probe.py": "E402 E501 E711 E712 E713 E722 E741",
   "tests/sub/probe.py": "E402 E501 E711 E712 E713 E722 E741"
+ },
+ "nested-tables-control": {
+  "configs/tests/probe.py": "E711 E712 E713 E741 F401 F403 F841",
+  "docs/probe.py": "E711 E712 E713 E741 F401 F403 F841",
+  "lib/deep/probe.py": "E711 E712 E713 E741 F401 F403 F841",
+  "lib/probe.py": "E711 E712 E713 E741 F401 F403 F841",
+  "probe.py": "E711 E712 E713 E741 F401 F403 F841",
+  "scripts/probe.py": "E711 E712 E713 E741 F401 F403 F841",
+  "sub/probe.py": "E711 E712 E713 E741 F401 F403 F841",
+  "tests/probe.py": "E711 E712 E713 E741 F403 F841",
+  "tests/sub/probe.py": "E711 E712 E713 E741 F403 F841"
  },
  "no-options": {
   "configs/tests/probe.py": "ASYNC100 ASYNC105 ASYNC115 B026 B033 C401 C419 DTZ001 E722 F401 F841 G010 PLC0414 PLW0177 RET501 SIM101 T100 TC005 TC010 TRY203 UP006 UP008 UP031 W605",
@@ -444,7 +485,12 @@
   "tests/probe.py": "E712 E713 E722 E741 F403 F841",
   "tests/sub/probe.py": "E712 E713 E722 E741 F403 F841"
  },
+ "unknown-key-extended-pyproject": "error",
+ "unknown-key-in-map-value": "error",
+ "unknown-nested-key": "error",
  "unknown-per-file-selector": "error",
+ "unknown-root-key": "error",
+ "unknown-root-key-pyproject": "error",
  "unknown-selector-with-preview": {
   "configs/tests/probe.py": "E402 E501 E711 E712 E713 E722 E741",
   "docs/probe.py": "E402 E501 E711 E712 E713 E722 E741",

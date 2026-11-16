@@ -6,8 +6,9 @@
  * namespace, a loop) is code, and the file is not read. Nothing in such a file changes a `const` once set, so the rule
  * entries of the exported config array are read through same-file `const` bindings, array and object spreads,
  * `defineConfig(...)` (from `eslint/config` or `@eslint/config-helpers`), typescript-eslint's `config(...)` and
- * `extends`. Rerail takes those helpers, and the modules the file imports, to do what their documentation says; it does
- * not read them. A shared config it recognises by the module the file imports and the member path it reads
+ * `extends`; `globalIgnores(...)` from the same modules is an element of `ignores` alone. Rerail takes those helpers,
+ * and the modules the file imports, to do what their documentation says; it does not read them. A shared config it
+ * recognises by the module the file imports and the member path it reads
  * (`js.configs.recommended`, `...tseslint.configs.strict`, `...react.configs.flat.recommended` in an object,
  * `...js.configs.recommended.rules` in `rules`: `eslint-presets.ts`), or by a string `extends` through the plugin the
  * object binds (`plugins: { js }, extends: ["js/recommended"]`), contributes its rule entries in place, marked with the
@@ -148,14 +149,32 @@ export function folderOfGlob(pattern: string): string | undefined {
   return folder.split("/").some(part => part === "." || part === "..") ? undefined : folder;
 }
 
+/** A segment of a glob Rerail matches as minimatch does: names, `*`, `?`, and `{a,b}` alternatives of names. */
+const EXACT_SEGMENT = /^(?:[\p{L}\p{N}_@.+*?-]|\{[\p{L}\p{N}_@.+-]*(?:,[\p{L}\p{N}_@.+-]*)+\})+$/u;
+/** A segment that is, or has an alternative that is, `.` or `..`, which minimatch takes as a path step. */
+const DOT_SEGMENT = /(?:^|[{,])\.\.?(?:[,}]|$)/u;
+
 /**
- * `files` less `ignores` (JSON) as globs, where each is a list of globs Rerail matches files against as ESLint does: no
- * `files` is every file; a nested list (every glob of which must match) or a negated glob is not read.
+ * `glob` as the pack matcher (`globPattern`) matches it the same as ESLint's minimatch (`dot: true`), its leading `./`
+ * dropped as ESLint drops it; undefined for any other: a character class, an extglob, an escape, a `.`, `..` or empty
+ * segment, or a brace minimatch expands otherwise (`{a}`, `{1..3}`, nested, with a glob inside).
+ */
+function exactGlob(glob: unknown): string | undefined {
+  if (typeof glob !== "string") return undefined;
+  const relative = glob.startsWith("./") ? glob.slice(2) : glob;
+  return relative.split("/").every(segment => EXACT_SEGMENT.test(segment) && !DOT_SEGMENT.test(segment)) ? relative : undefined;
+}
+
+/**
+ * `files` less `ignores` (JSON) as globs, where each is a list of globs Rerail matches files against as ESLint does
+ * (`exactGlob`): no `files` is every file; a nested list (every glob of which must match), a negated glob or one
+ * Rerail cannot match as ESLint does is not read.
  */
 export function filePatterns(files: unknown, ignores: unknown): FilePatterns | undefined {
   const globs = (value: unknown, none: readonly string[]): readonly string[] | undefined => {
     if (value === undefined) return none;
-    return Array.isArray(value) && value.every(glob => typeof glob === "string" && !glob.startsWith("!")) ? value as string[] : undefined;
+    const exact = Array.isArray(value) ? value.map(exactGlob) : [undefined];
+    return exact.every(glob => glob !== undefined) ? exact as string[] : undefined;
   };
   const included = globs(files, ["**/*"]);
   const excluded = globs(ignores, []);
@@ -463,8 +482,14 @@ class FlatConfigReader {
     return this.#calleeCode(node, trusted) ?? this.#firstNonData(node.arguments, given || !helper);
   }
 
+  /** A call of a config helper (`#isConfigHelper`) or of `globalIgnores`: none changes what it is given. */
   #isConfigHelperCall(node: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
-    return node.type === "CallExpression" && this.#isConfigHelper(node.callee);
+    return (node.type === "CallExpression" && this.#isConfigHelper(node.callee)) || this.#isGlobalIgnoresCall(node);
+  }
+
+  /** A call of ESLint's `globalIgnores`, which makes a config of the globs it is given. */
+  #isGlobalIgnoresCall(node: t.Node): node is t.CallExpression {
+    return node.type === "CallExpression" && node.callee.type === "Identifier" && this.#isConfigHelperNamed(node.callee, "globalIgnores");
   }
 
   #calleeCode(node: t.CallExpression | t.OptionalCallExpression | t.NewExpression, trusted: "global" | "package"): t.Node | undefined {
@@ -536,7 +561,16 @@ class FlatConfigReader {
     const nested = this.#nestedElements(value);
     if (nested !== undefined) for (const element of nested) this.#elements(element, scope, depth + 1);
     else if (value.type === "ObjectExpression") this.#object(value, scope, depth + 1);
-    else this.#notRead(node, scope, depth);
+    else if (!this.#isGlobalIgnores(value, depth)) this.#notRead(node, scope, depth);
+  }
+
+  /**
+   * Whether `value` is a `globalIgnores(...)` that gives a config: a non-empty list of globs, with a name or none. Its
+   * config holds `ignores` alone, which sets no rule (`#object`); one ESLint refuses is not read.
+   */
+  #isGlobalIgnores(value: t.Expression, depth: number): boolean {
+    if (!this.#isGlobalIgnoresCall(value)) return false;
+    return givesIgnoresConfig(value.arguments.map(argument => (argument.type === "SpreadElement" ? undefined : this.#resolve(argument as t.Expression, depth + 1))));
   }
 
   /** The elements an array or a config helper's call holds, spreads taken apart; undefined for any other value. */
@@ -677,16 +711,21 @@ class FlatConfigReader {
 
   /** `defineConfig` imported from ESLint, or typescript-eslint's `config`: both concatenate their arguments. */
   #isConfigHelper(callee: t.Node): boolean {
-    if (callee.type === "Identifier") {
-      const from = this.#imports.get(callee.name);
-      return from !== undefined && DEFINE_CONFIG_MODULES.has(from.module) && from.imported === "defineConfig";
-    }
-    if (callee.type === "MemberExpression" && !callee.computed && callee.object.type === "Identifier" && callee.property.type === "Identifier") {
-      const from = this.#imports.get(callee.object.name);
-      return from !== undefined && TYPESCRIPT_ESLINT_MODULES.has(from.module) && callee.property.name === "config"
-        && (from.imported === "default" || from.imported === "*");
-    }
-    return false;
+    if (callee.type === "Identifier") return this.#isConfigHelperNamed(callee, "defineConfig");
+    return callee.type === "MemberExpression" && !callee.computed && callee.property.type === "Identifier" && callee.property.name === "config"
+      && this.#isTypescriptEslint(callee.object);
+  }
+
+  /** Whether `object` is typescript-eslint, through its default or namespace import. */
+  #isTypescriptEslint(object: t.Node): boolean {
+    const from = object.type === "Identifier" ? this.#imports.get(object.name) : undefined;
+    return from !== undefined && TYPESCRIPT_ESLINT_MODULES.has(from.module) && (from.imported === "default" || from.imported === "*");
+  }
+
+  /** Whether `callee` is ESLint's config helper `name`, imported from `eslint/config` or `@eslint/config-helpers`. */
+  #isConfigHelperNamed(callee: t.Identifier, name: string): boolean {
+    const from = this.#imports.get(callee.name);
+    return from !== undefined && DEFINE_CONFIG_MODULES.has(from.module) && from.imported === name;
   }
 
   /**
@@ -969,6 +1008,17 @@ function pluginMember(id: string): { readonly namespace: string; readonly name: 
   const second = id.startsWith("@") ? id.indexOf("/", first + 1) : -1;
   const split = second > 0 ? second : first;
   return split < 0 ? { namespace: "", name: id } : { namespace: id.slice(0, split), name: id.slice(split + 1) };
+}
+
+/**
+ * Whether `globalIgnores` given `args` (each resolved; undefined for a spread) makes a config ESLint takes: a non-empty
+ * list of globs, and a name or none (@eslint/config-helpers 0.7.0 `globalIgnores`, @eslint/config-array's schema). A
+ * name Rerail cannot tell is a string is taken as one ESLint refuses.
+ */
+function givesIgnoresConfig(args: readonly (Resolved | undefined)[]): boolean {
+  const [globs, name] = args.map(arg => (arg?.ok === true ? arg.value : undefined));
+  const named = args.length < 2 || typeof name === "string";
+  return named && Array.isArray(globs) && globs.length > 0 && globs.every(glob => typeof glob === "string");
 }
 
 /** What a member path `a.b.c` hangs off: `a`. */

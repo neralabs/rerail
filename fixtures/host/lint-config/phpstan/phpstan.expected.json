@@ -1063,6 +1063,30 @@
      "missingType.return"
     ]
    }
+  },
+  {
+   "name": "ignore-root-path",
+   "files": {
+    "phpstan.neon": "includes:\n\t- build/base.neon\nparameters:\n\tlevel: 6\n\treportUnmatchedIgnoredErrors: false\n\tignoreErrors:\n\t\t- identifier: argument.sprintf\n\t\t  path: .\n\t\t- identifier: argument.type\n\t\t  path: ./\n\t\t- identifier: if.alwaysFalse\n\t\t  path: '%currentWorkingDirectory%'\n\t\t- identifier: array.duplicateKey\n\t\t  paths: [src/Legacy, .]\n\t\t- identifier: argument.sscanf\n\t\t  paths: []\n",
+    "build/base.neon": "parameters:\n\tignoreErrors:\n\t\t- identifier: missingType.return\n\t\t  path: ..\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sscanf"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sscanf"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sscanf"
+    ],
+    "src/probe.php": [
+     "argument.sscanf"
+    ],
+    "tests/probe.php": [
+     "argument.sscanf"
+    ]
+   }
   }
  ]
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { portsOf, type LinterNote, type Port, type PortVerdict } from "../../../../src/engine/catalog/lint-config/linter-config.js";
+import { portsOf, settleVerdicts, type FolderDecision, type LinterNote, type Port, type PortDecision, type PortVerdict } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import { oxlintReader } from "../../../../src/engine/catalog/lint-config/oxlint-config.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
@@ -14,15 +14,17 @@ import { removeFolder } from "../../../support/platform/remove-folder.js";
 /**
  * The reader against oxlint itself (fixtures/host/lint-config/oxlint/: oxlint 1.88.0's `--print-config` in each probe
  * folder of each config in corpus.json, recorded by generate_oxlint.mjs). Where the reader decides a port's oxlint rule
- * on or off in a probe folder, oxlint must agree; it may leave the rule unknown only where the case says Rerail cannot
- * read it, or for a type-aware rule, which only `--type-aware` runs. A config oxlint refuses is one the reader reads
- * nothing of.
+ * on or off in a probe folder, oxlint must agree, and the reader's verdict settled alone must give that state whatever
+ * the pack's value; it may leave the rule unknown only where the case says Rerail cannot read it, or for a type-aware
+ * rule, which only `--type-aware` runs. A config oxlint refuses is one the reader reads nothing of.
  */
 interface OracleCase {
   readonly name: string;
   readonly files: Readonly<Record<string, string>>;
   /** Per probe folder (`*` for every folder), the rules (`*` for every rule) the reader may leave unknown. */
   readonly unknown?: Readonly<Record<string, readonly string[]>>;
+  /** Per probe folder, ports (by rule id) the reader decides there, by whether the config names them (explicit) or not. */
+  readonly explicit?: Readonly<Record<string, Readonly<Record<string, boolean>>>>;
   /** Whether the config sets `options.typeAware`, which runs the type-aware rules. */
   readonly typeAware?: boolean;
 }
@@ -70,11 +72,36 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
   return root;
 }
 
-/** The verdict's state in `folder`: the decision of the deepest folder holding it, else the one for every file. */
-function stateIn(verdict: PortVerdict | undefined, folder: string): boolean | "unknown" {
+/** The verdict's decision in `folder`: the deepest folder's holding it, else the one for every file. */
+function decisionIn(verdict: PortVerdict | undefined, folder: string): PortDecision | FolderDecision | undefined {
   const holding = (verdict?.folders ?? []).filter(decision => folder === decision.folder || folder.startsWith(`${decision.folder}/`));
-  const deepest = holding.sort((left, right) => right.folder.length - left.folder.length)[0];
-  return deepest?.on ?? verdict?.decision?.on ?? "unknown";
+  return holding.sort((left, right) => right.folder.length - left.folder.length)[0] ?? verdict?.decision;
+}
+
+/** The port's state in `folder` once its verdict alone settles, the port starting `startsOn`. */
+function settledIn(port: Port, verdict: PortVerdict | undefined, folder: string, startsOn: boolean): boolean {
+  const { settings } = settleVerdicts({ ...port, startsOn }, verdict === undefined ? [] : [verdict], []);
+  const holding = settings.filter(setting => setting.folder === "" || folder === setting.folder || folder.startsWith(`${setting.folder}/`));
+  return holding.sort((left, right) => right.folder.length - left.folder.length)[0]?.on ?? startsOn;
+}
+
+/**
+ * Where the verdict's `decision` in `folder` disagrees with what the case says of its explicitness, or its state
+ * settled alone with its state, the port starting on or off (a held-off port's turned on taking the pack's value).
+ */
+function settleDisagreements(oracleCase: OracleCase, port: Port, verdict: PortVerdict | undefined, folder: string): string[] {
+  const where = `${folder || "."} ${port.ruleId}`;
+  const decision = decisionIn(verdict, folder);
+  const state = decision?.on ?? "unknown";
+  const explicit = oracleCase.explicit?.[folder]?.[port.ruleId];
+  const decidedExplicit = decision === undefined || decision.on === "unknown" ? undefined : decision.explicit;
+  const found = explicit === undefined || decidedExplicit === explicit ? [] : [`${where}: explicit ${String(decidedExplicit)}, the case says ${String(explicit)}`];
+  for (const startsOn of [true, false]) {
+    const settled = settledIn(port, verdict, folder, startsOn);
+    const wanted = state === "unknown" || (state && port.heldOff !== undefined) ? startsOn : state;
+    if (settled !== wanted) found.push(`${where}: settles ${String(settled)} from ${String(startsOn)}, not ${String(wanted)}`);
+  }
+  return found;
 }
 
 const mayBeUnknown = (oracleCase: OracleCase, folder: string, rules: readonly string[]): boolean =>
@@ -105,9 +132,10 @@ function disagreements(oracleCase: OracleCase, records: Readonly<Record<string, 
     const verdict = verdictOf(port);
     for (const folder of corpus.probes) {
       const runs = oxlintRuns(records[folder]!, rules);
-      const state = stateIn(verdict, folder);
-      if (runs === undefined || agrees(oracleCase, folder, rules, state, runs)) continue;
-      found.push(`${folder || "."} ${rules.join(",")}: Rerail ${String(state)}, oxlint ${runs ? "on" : "off"}`);
+      if (runs === undefined) continue;
+      const state = decisionIn(verdict, folder)?.on ?? "unknown";
+      if (!agrees(oracleCase, folder, rules, state, runs)) found.push(`${folder || "."} ${rules.join(",")}: Rerail ${String(state)}, oxlint ${runs ? "on" : "off"}`);
+      found.push(...settleDisagreements(oracleCase, port, verdict, folder));
     }
   }
   return found;

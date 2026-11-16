@@ -10,9 +10,9 @@
  * every level (src/DependencyInjection/RulesExtension.php): the port's own rule class turns it on; any other class may
  * report its identifier, so a rule the level leaves off keeps the pack's value. An `ignoreErrors` entry naming an
  * identifier with no message, count or path turns its rule off; with a path that is a folder of the repository, off in
- * that folder. Repository files the config includes are read in turn; any other include (an extension's `rules.neon`,
- * a file outside the repository) may register rules or ignore errors, so a rule only the level decides keeps the
- * pack's value.
+ * that folder (the root, `.`, every file). Repository files the config includes are read in turn; any other include
+ * (an extension's `rules.neon`, a file outside the repository) may register rules or ignore errors, so a rule only the
+ * level decides keeps the pack's value.
  */
 import { posix } from "node:path";
 import { readFormat } from "./formats/lint-config-formats.js";
@@ -136,10 +136,10 @@ function configPath(file: string, written: string): string | undefined {
 /** A wildcard of the `fnmatch` patterns PHPStan's paths take. */
 const PATH_WILDCARD = /[*?[]/u;
 
-/** A path an `ignoreErrors` entry is limited to: a folder of the repository, or not. */
+/** A path an `ignoreErrors` entry is limited to: a folder of the repository (`""`, the root, every file), or not. */
 function ignoredPath(root: string, file: string, written: string): { folder: string } | { other: string } {
   const path = PATH_WILDCARD.test(written) ? undefined : configPath(file, written);
-  return path !== undefined && path !== "" && isRepositoryFolder(root, path) ? { folder: path } : { other: written };
+  return path !== undefined && isRepositoryFolder(root, path) ? { folder: path } : { other: written };
 }
 
 /** Why an entry ignores only some of its identifiers' errors: a message it matches, or a count; undefined when it ignores them all. */
@@ -149,18 +149,27 @@ function partialOf(entry: NeonValue): string | undefined {
   return neonEntry(entry, "count") === undefined ? undefined : "a count of its errors";
 }
 
+/**
+ * The folders an entry is limited to (undefined: every file) and its paths that are not folders. A path that is the
+ * root (`.`, `%currentWorkingDirectory%`) holds every file: PHPStan matches a folder by its prefix (`FileExcluder`).
+ */
+function limitsOf(root: string, file: string, entry: NeonValue): Pick<PhpstanIgnore, "folders" | "otherPaths"> {
+  const written = stringsOf(neonEntry(entry, "path")) ?? stringsOf(neonEntry(entry, "paths"));
+  const paths = (written ?? []).map(path => ignoredPath(root, file, path));
+  const folders = paths.flatMap(path => ("folder" in path ? [path.folder] : []));
+  if (written === undefined || folders.includes("")) return { folders: undefined, otherPaths: [] };
+  return { folders, otherPaths: paths.flatMap(path => ("other" in path ? [path.other] : [])) };
+}
+
 /** An `ignoreErrors` entry that is a mapping and names identifiers, as read; undefined for any other entry. */
 function ignoreOf(root: string, file: string, entry: NeonValue): PhpstanIgnore | undefined {
   const identifiers = stringsOf(neonEntry(entry, "identifier")) ?? stringsOf(neonEntry(entry, "identifiers")) ?? [];
   if (identifiers.length === 0) return undefined;
-  const written = stringsOf(neonEntry(entry, "path")) ?? stringsOf(neonEntry(entry, "paths"));
-  const paths = (written ?? []).map(path => ignoredPath(root, file, path));
   return {
     because: `${file}: ignoreErrors ${identifiers.length === 1 ? "identifier" : "identifiers"} ${identifiers.join(", ")}`,
     identifiers,
     partial: partialOf(entry),
-    folders: written === undefined ? undefined : paths.flatMap(path => ("folder" in path ? [path.folder] : [])),
-    otherPaths: paths.flatMap(path => ("other" in path ? [path.other] : [])),
+    ...limitsOf(root, file, entry),
   };
 }
 

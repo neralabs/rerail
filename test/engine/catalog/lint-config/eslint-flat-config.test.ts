@@ -179,15 +179,53 @@ describe("readEslintFlatConfig: config elements", () => {
   it("sets no rule for an object of only a name and ignores", () => {
     expect(entriesOf("export default [{ name: \"ignored\", ignores: [\"dist/**\"] }];")).toEqual([]);
   });
+
+  it.each([
+    ["from eslint/config", "import { globalIgnores } from \"eslint/config\";", "globalIgnores([\"dist/**\", \".next/**\"])"],
+    ["with a name, from @eslint/config-helpers", "import { globalIgnores } from \"@eslint/config-helpers\";", "globalIgnores([\"dist/**\"], \"build\")"],
+    ["given a const of the file", "import { globalIgnores } from \"eslint/config\";\nconst ignored = [\"dist/**\"];", "globalIgnores(ignored)"],
+  ])("sets no rule for globalIgnores %s, and reads what comes before it", (_, imports, call) => {
+    const config = outcome(`${imports}\nexport default [{ rules: { "no-console": "off" } }, ${call}];`);
+    expect(config.ok && { entries: config.value.entries, unread: config.value.unread }).toEqual({ entries: [read("no-console", "off")], unread: [] });
+  });
+
+  it.each([
+    ["no globs", "globalIgnores([])"],
+    ["globs not in a list", "globalIgnores(\"dist/**\")"],
+    ["a glob that is not a string", "globalIgnores([\"dist/**\", 1])"],
+    ["a name that is not a string", "globalIgnores([\"dist/**\"], 1)"],
+    ["a name it cannot read", "globalIgnores([\"dist/**\"], shared.name)"],
+    ["a spread", "globalIgnores(...shared.lists)"],
+    ["globs it cannot read", "globalIgnores(shared.ignores)"],
+    ["another module's globalIgnores", "other([\"dist/**\"])"],
+  ])("does not read a globalIgnores ESLint refuses or Rerail cannot tell: %s", (_, call) => {
+    const imports = "import { globalIgnores } from \"eslint/config\";\nimport { globalIgnores as other } from \"other-config\";\nimport shared from \"shared-config\";";
+    const config = outcome(`${imports}\nexport default [{ rules: { "no-console": "off" } }, ${call}];`);
+    expect(config.ok && { entries: config.value.entries, unread: config.value.unread }).toEqual({ entries: [{ ...read("no-console", "off"), shadowedBy: call }], unread: [call] });
+  });
 });
 
 describe("readEslintFlatConfig: where an entry applies", () => {
   const some = (files: string, patterns?: FilePatterns): FlatConfigScope => ({ kind: "some", files, ...(patterns === undefined ? {} : { patterns }) });
   it.each([
-    ["a folder glob with ./", "files: [\"./src/**\"]", { kind: "folders", folders: ["src"], files: "[\"./src/**\"]", patterns: globs(["./src/**"]) }],
+    ["a folder glob with ./", "files: [\"./src/**\"]", { kind: "folders", folders: ["src"], files: "[\"./src/**\"]", patterns: globs(["src/**"]) }],
     ["a folder's files glob", "files: [\"src/**/*\", \"lib/**\"]", { kind: "folders", folders: ["src", "lib"], files: "[\"src/**/*\", \"lib/**\"]", patterns: globs(["src/**/*", "lib/**"]) }],
-    ["a folder outside the repository", "files: [\"../x/**\"]", some("[\"../x/**\"]", globs(["../x/**"]))],
-    ["a folder through a dot segment", "files: [\"src/./x/**\"]", some("[\"src/./x/**\"]", globs(["src/./x/**"]))],
+    ["a folder outside the repository", "files: [\"../x/**\"]", some("[\"../x/**\"]")],
+    ["a folder through a dot segment", "files: [\"src/./x/**\"]", some("[\"src/./x/**\"]")],
+    // ESLint drops a leading `./` from `files` and `ignores` before minimatch matches them.
+    ["globs with ./ for some files", "files: [\"./src/**/*.js\"], ignores: [\"./src/gen/**\"]", some("[\"./src/**/*.js\"]", globs(["src/**/*.js"], ["src/gen/**"]))],
+    ["alternatives of names", "files: [\"*.{js,mjs}\", \"{src,lib}/*.ts\", \"{,a}b.ts\"]", some("[\"*.{js,mjs}\", \"{src,lib}/*.ts\", \"{,a}b.ts\"]", globs(["*.{js,mjs}", "{src,lib}/*.ts", "{,a}b.ts"]))],
+    // Globs the pack matcher would match otherwise than minimatch does: for some files Rerail does not match.
+    ["an extglob", "files: [\"**/*.?(c|m)[jt]s?(x)\"]", some("[\"**/*.?(c|m)[jt]s?(x)\"]")],
+    ["a character class", "files: [\"src/*.[jt]s\"]", some("[\"src/*.[jt]s\"]")],
+    ["an escape", "files: [\"src/\\\\*.js\"]", some("[\"src/\\\\*.js\"]")],
+    ["a brace of one name", "files: [\"src/{a}.js\"]", some("[\"src/{a}.js\"]")],
+    ["a brace range", "files: [\"src/{1..3}.js\"]", some("[\"src/{1..3}.js\"]")],
+    ["a brace with a glob in it", "files: [\"src/{a,*.ts}\"]", some("[\"src/{a,*.ts}\"]")],
+    ["a brace with a dot segment in it", "files: [\"{.,src}/*.js\", \"{src,..}/*.js\"]", some("[\"{.,src}/*.js\", \"{src,..}/*.js\"]")],
+    ["an empty segment", "files: [\"src//a.js\"]", some("[\"src//a.js\"]")],
+    ["a glob that is not a string", "files: [\"src/*.js\", 1]", some("[\"src/*.js\", 1]")],
+    ["an ignore it does not match as minimatch does", "files: [\"src/*.js\"], ignores: [\"src/[ab].js\"]", some("[\"src/*.js\"]")],
     ["a pattern that is not a folder's", "files: [\"src/*.ts\"]", some("[\"src/*.ts\"]", globs(["src/*.ts"]))],
     ["a nested pattern list", "files: [\"src/**\", [\"lib/**\"]]", some("[\"src/**\", [\"lib/**\"]]")],
     ["a negated pattern", "files: [\"src/**\", \"!src/gen/**\"]", some("[\"src/**\", \"!src/gen/**\"]")],
@@ -246,6 +284,9 @@ describe("readEslintFlatConfig: shared configs", () => {
     });
     const named = "import { configs, parser, plugin } from \"typescript-eslint\";\nimport { other } from \"typescript-eslint\";\nexport default [...configs.recommended, parser, other.configs.recommended];";
     expect(outcome(named, "eslint.config.mts")).toMatchObject({ ok: true, value: { unread: ["parser", "other.configs.recommended"] } });
+    // `config` of anything but the import itself is not typescript-eslint's helper.
+    const member = "import * as tseslint from \"typescript-eslint\";\nexport default tseslint.default.config(...tseslint.configs.recommended);";
+    expect(outcome(member, "eslint.config.mts")).toMatchObject({ ok: true, value: { entries: [], unread: ["tseslint.default.config(...tseslint.configs.rec…"] } });
     expect(entriesOf(named, "eslint.config.mts")).toHaveLength(46);
   });
 

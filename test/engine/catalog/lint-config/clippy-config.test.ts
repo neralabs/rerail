@@ -314,11 +314,157 @@ describe("clippyReader", () => {
     expect(notes).toEqual(["src/lib.rs: its lint attributes are not read: line 2: a ( is not closed."]);
   });
 
-  it("notes the files beside Cargo.toml that may also set lints", async () => {
+  it("notes the files beside Cargo.toml that may set Clippy's lint options", async () => {
     const { notes } = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nall = \"deny\"\n", ".cargo/config.toml": "[build]\nrustflags = [\"-Dwarnings\"]\n", "clippy.toml": "msrv = \"1.70\"\n" });
-    expect(notes).toEqual([
-      ".cargo/config.toml is not read: rustflags it sets may turn Clippy's lints on or off.",
-      "clippy.toml is not read: Rerail does not map Clippy's lint options onto rules' options.",
-    ]);
+    expect(notes).toEqual(["clippy.toml is not read: Rerail does not map Clippy's lint options onto rules' options."]);
+  });
+
+  describe("crate roots", () => {
+    const ALLOWED = PACKAGE + "[lints.clippy]\nneedless_else = \"allow\"\n";
+    const WARN = "#![warn(clippy::needless_else)]\n";
+    const explicitOn = (file: string): PortDecision => ({ on: true, explicit: true, because: `${file}: #![warn(clippy::needless_else)]` });
+    const mayBe = (file: string): PortDecision => ({ on: "unknown", because: `${file}: #![warn(clippy::needless_else)] may set it` });
+
+    it("reads the library at its [lib] path, not src/lib.rs", async () => {
+      const { decision } = await read({ "Cargo.toml": `${ALLOWED}\n[lib]\npath = "lib.rs"\n`, "lib.rs": WARN, "src/lib.rs": "#![allow(clippy::needless_else)]\n" });
+      expect(decision(NEEDLESS_ELSE)).toEqual(explicitOn("lib.rs"));
+    });
+
+    it("reads no library with autolib = false and no [lib], and src/lib.rs with a [lib] that names no path", async () => {
+      const noLibrary = await read({ "Cargo.toml": PACKAGE + "autolib = false\n\n[lints.clippy]\nneedless_else = \"allow\"\n", "src/lib.rs": WARN });
+      expect(noLibrary.decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: "Cargo.toml [lints.clippy] needless_else = \"allow\"" });
+      const declared = await read({ "Cargo.toml": PACKAGE + "autolib = false\n\n[lib]\nname = \"demo\"\n\n[lints.clippy]\nneedless_else = \"allow\"\n", "src/lib.rs": WARN });
+      expect(declared.decision(NEEDLESS_ELSE)).toEqual(explicitOn("src/lib.rs"));
+    });
+
+    it("reads every inferred binary: src/main.rs, src/bin/*.rs and src/bin/*/main.rs", async () => {
+      const { decision } = await read({ "Cargo.toml": ALLOWED, "src/bin/a.rs": WARN, "src/bin/b/main.rs": WARN, "src/bin/README.md": "Tools.\n" });
+      expect(decision(NEEDLESS_ELSE)).toEqual(explicitOn("src/bin/a.rs"));
+      const differing = await read({ "Cargo.toml": ALLOWED, "src/main.rs": "fn main() {}\n", "src/bin/a.rs": WARN });
+      expect(differing.decision(NEEDLESS_ELSE)).toEqual({ on: "unknown", because: "src/main.rs and src/bin/a.rs set it differently" });
+    });
+
+    it("reads a [[bin]] path; an inferred binary beside a [[bin]], or one with required-features, may or may not be checked", async () => {
+      const declared = await read({ "Cargo.toml": `${ALLOWED}\n[[bin]]\nname = "x"\npath = "tools/x.rs"\n`, "tools/x.rs": WARN });
+      expect(declared.decision(NEEDLESS_ELSE)).toEqual(explicitOn("tools/x.rs"));
+      const beside = await read({ "Cargo.toml": `${ALLOWED}\n[[bin]]\nname = "x"\npath = "tools/x.rs"\n`, "tools/x.rs": "fn main() {}\n", "src/main.rs": WARN });
+      expect(beside.decision(NEEDLESS_ELSE)).toEqual(mayBe("src/main.rs"));
+      const featured = await read({ "Cargo.toml": `${ALLOWED}\n[[bin]]\nname = "x"\npath = "tools/x.rs"\nrequired-features = ["f"]\n`, "tools/x.rs": WARN });
+      expect(featured.decision(NEEDLESS_ELSE)).toEqual(mayBe("tools/x.rs"));
+      const same = await read({ "Cargo.toml": `${ALLOWED}\n[[bin]]\nname = "demo"\npath = "src/main.rs"\n`, "src/main.rs": WARN });
+      expect(same.decision(NEEDLESS_ELSE)).toEqual(explicitOn("src/main.rs"));
+    });
+
+    it("reads no inferred binary with autobins = false, unless a [[bin]] without a path may name one", async () => {
+      const off = await read({ "Cargo.toml": PACKAGE + "autobins = false\n\n[lints.clippy]\nneedless_else = \"allow\"\n", "src/main.rs": WARN });
+      expect(off.decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: "Cargo.toml [lints.clippy] needless_else = \"allow\"" });
+      const named = await read({ "Cargo.toml": PACKAGE + "autobins = false\n\n[lints.clippy]\nneedless_else = \"allow\"\n\n[[bin]]\nname = \"demo\"\n", "src/main.rs": WARN });
+      expect(named.decision(NEEDLESS_ELSE)).toEqual(mayBe("src/main.rs"));
+    });
+
+    it("reads the build script: build.rs, package.build's path, none with build = false", async () => {
+      expect((await read({ "Cargo.toml": ALLOWED, "build.rs": WARN })).decision(NEEDLESS_ELSE)).toEqual(explicitOn("build.rs"));
+      expect((await read({ "Cargo.toml": PACKAGE + "build = true\n\n[lints.clippy]\nneedless_else = \"allow\"\n", "build.rs": WARN })).decision(NEEDLESS_ELSE)).toEqual(explicitOn("build.rs"));
+      expect((await read({ "Cargo.toml": PACKAGE + "build = \"tools/b.rs\"\n\n[lints.clippy]\nneedless_else = \"allow\"\n", "tools/b.rs": WARN, "build.rs": "fn main() {}\n" })).decision(NEEDLESS_ELSE)).toEqual(explicitOn("tools/b.rs"));
+      expect((await read({ "Cargo.toml": PACKAGE + "build = false\n\n[lints.clippy]\nneedless_else = \"allow\"\n", "build.rs": WARN })).decision(NEEDLESS_ELSE)?.on).toBe(false);
+    });
+
+    it.each<[string, string, string, string]>([
+      ["a [lib] path that is no string", "", "[lib]\npath = 3\n", "[lib] path is not a path"],
+      ["a package.build that is no path", "build = 3\n", "", "package.build is not a path"],
+      ["a [[bin]] path outside the repository", "", "[[bin]]\nname = \"x\"\npath = \"/x.rs\"\n", "[[bin]] path \"/x.rs\" is outside the repository"],
+      ["a table under a [[bin]]", "", "[[bin]]\nname = \"x\"\n[bin.test]\n", "line 9: [bin.test] is a table under an array of tables, which Rerail does not read"],
+    ])("refuses a package with %s, saying why", async (_, keys, tables, why) => {
+      const manifest = `[package]\nname = "demo"\n${keys}\n[lints.clippy]\nall = "deny"\n\n${tables}`;
+      const { config, notes } = await read({ "Cargo.toml": manifest });
+      expect({ config, notes }).toEqual({ config: undefined, notes: [`Cargo.toml is not read: ${why}.`] });
+      const member = await read({ "Cargo.toml": `${PACKAGE}[lints.clippy]\nall = "deny"\n\n[workspace]\nmembers = ["a"]\n`, "a/Cargo.toml": manifest });
+      expect(member.config?.verdict(port(NEEDLESS_ELSE), ruleCatalog)?.folders).toEqual([{ folder: "a", on: "unknown", because: `a/Cargo.toml is not read: ${why}` }]);
+    });
+  });
+
+  describe("rustflags", () => {
+    const ALLOWED = PACKAGE + "[lints.clippy]\nneedless_else = \"allow\"\n";
+
+    it("applies the root config's [build] rustflags after [lints], as Cargo passes them", async () => {
+      const { decision, notes } = await read({ "Cargo.toml": ALLOWED, ".cargo/config.toml": "[build]\nrustflags = [\"-W\", \"clippy::needless_else\"]\n" });
+      expect(decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: true, because: ".cargo/config.toml [build] rustflags -W clippy::needless_else" });
+      expect(notes).toEqual([]);
+      const silenced = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nneedless_else = \"warn\"\n", ".cargo/config.toml": "build.rustflags = \"-C opt-level=0 --cfg=x -L native=lib -lfoo -Awarnings\"\n" });
+      expect(silenced.decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: ".cargo/config.toml [build] rustflags -A warnings" });
+      const linking = await read({ "Cargo.toml": ALLOWED, ".cargo/config.toml": "[build]\nrustflags = [\"-C\", \"target-cpu=native\"]\n" });
+      expect(linking.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "Cargo.toml [lints.clippy] does not turn it on" });
+    });
+
+    it("reads each form of a lint flag, a lint's - as _", async () => {
+      for (const flags of ["\"-Wclippy::needless-else\"", "\"--warn=clippy::needless_else\"", "\"--warn\", \"clippy::needless_else\"", "\"-D\", \"clippy::style\""]) {
+        const { decision } = await read({ "Cargo.toml": ALLOWED, ".cargo/config.toml": `[build]\nrustflags = [${flags}]\n` });
+        expect(decision(NEEDLESS_ELSE)?.on).toBe(true);
+      }
+    });
+
+    it("reads .cargo/config over .cargo/config.toml, as Cargo does", async () => {
+      const { decision } = await read({ "Cargo.toml": ALLOWED, ".cargo/config": "[build]\nrustflags = [\"-W\", \"clippy::needless_else\"]\n", ".cargo/config.toml": "[build]\nrustflags = [\"-A\", \"clippy::needless_else\"]\n" });
+      expect(decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: true, because: ".cargo/config [build] rustflags -W clippy::needless_else" });
+    });
+
+    it("reads rustflags alone as a config", async () => {
+      const { decision } = await read({ "Cargo.toml": PACKAGE, ".cargo/config.toml": "[build]\nrustflags = [\"-W\", \"clippy::pedantic\"]\n" });
+      expect(decision(UNNESTED_OR)).toEqual({ on: true, explicit: true, because: ".cargo/config.toml [build] rustflags -W clippy::pedantic" });
+      expect(decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: ".cargo/config.toml rustflags does not turn it on" });
+    });
+
+    it("leaves to the pack what a [target]'s rustflags, which replace [build]'s on its platforms, may set", async () => {
+      const { decision } = await read({ "Cargo.toml": ALLOWED, ".cargo/config.toml": "[build]\nrustflags = [\"-W\", \"clippy::needless_else\"]\n[target.'cfg(unix)']\nrustflags = [\"-W\", \"clippy::pedantic\"]\n" });
+      expect(decision(NEEDLESS_ELSE)).toEqual({ on: "unknown", because: ".cargo/config.toml [build] rustflags -W clippy::needless_else may set it" });
+      expect(decision(UNNESTED_OR)).toEqual({ on: "unknown", because: ".cargo/config.toml [target.cfg(unix)] rustflags -W clippy::pedantic may set it" });
+      const empty = await read({ "Cargo.toml": ALLOWED, ".cargo/config.toml": "[build]\nrustflags = [\"-W\", \"clippy::needless_else\"]\n[target.x86_64-pc-windows-msvc]\nrustflags = []\nlinker = \"lld\"\n[target.other]\nlinker = \"ld\"\n" });
+      expect(empty.decision(NEEDLESS_ELSE)?.on).toBe(true);
+    });
+
+    it("leaves to the pack, in a config's folder below the root, what its rustflags may set: Cargo reads it only when run there", async () => {
+      const { config } = await read({
+        "Cargo.toml": `${ALLOWED}\n[workspace]\nmembers = ["crates/a"]\n`,
+        "crates/a/Cargo.toml": "[package]\nname = \"a\"\n\n[lints.clippy]\nneedless_else = \"allow\"\n",
+        "crates/a/.cargo/config.toml": "[build]\nrustflags = [\"-W\", \"clippy::needless_else\"]\n",
+      });
+      expect(config?.verdict(port(NEEDLESS_ELSE), ruleCatalog)).toEqual({
+        decision: { on: false, explicit: true, because: "Cargo.toml [lints.clippy] needless_else = \"allow\"" },
+        folders: [{ folder: "crates/a", on: "unknown", because: "crates/a/.cargo/config.toml [build] rustflags -W clippy::needless_else may set it" }],
+      });
+    });
+
+    it.each<[string, string, string]>([
+      ["a flag Rerail does not read", "[build]\nrustflags = [\"-Zunstable-options\"]\n", ".cargo/config.toml [build] rustflags has \"-Zunstable-options\", which Rerail does not read and which may set lint levels"],
+      ["--cap-lints", "[build]\nrustflags = \"--cap-lints allow\"\n", ".cargo/config.toml [build] rustflags has \"--cap-lints\", which Rerail does not read and which may set lint levels"],
+      ["-W=", "[build]\nrustflags = [\"-W=clippy::needless_else\"]\n", ".cargo/config.toml [build] rustflags has \"-W=clippy::needless_else\", which Rerail does not read and which may set lint levels"],
+      ["a flag missing its value", "[target.x]\nrustflags = [\"-W\"]\n", ".cargo/config.toml [target.x] rustflags ends in -W without its value"],
+      ["rustflags that are no strings", "[build]\nrustflags = [1]\n", ".cargo/config.toml [build] rustflags is not a string or a list of strings"],
+      ["an include", "include = [\"other.toml\"]\n", "it includes other config files, which Rerail does not follow"],
+      ["broken TOML", "[build\n", "line 1: a table header is not closed"],
+    ])("reads nothing where the root's config has %s, saying why", async (_, text, why) => {
+      const { config, notes } = await read({ "Cargo.toml": ALLOWED, ".cargo/config.toml": text });
+      expect({ config, notes }).toEqual({ config: undefined, notes: [`.cargo/config.toml is not read: ${why}.`] });
+    });
+
+    it("reads nothing where the root's .cargo/config is not a file", async () => {
+      const { config, notes } = await read({ "Cargo.toml": ALLOWED, ".cargo/config/README": "x\n" });
+      expect({ config, notes }).toEqual({ config: undefined, notes: [".cargo/config is not read: it is not a regular file of at most 1 MiB in the repository."] });
+    });
+
+    it("leaves to the pack every lint of the packages where Cargo reads a config below the root it cannot read", async () => {
+      const { config, notes } = await read({
+        "Cargo.toml": `${ALLOWED}\n[workspace]\nmembers = ["crates/a", "b"]\n`,
+        "crates/a/Cargo.toml": "[package]\nname = \"a\"\n",
+        "b/Cargo.toml": "[package]\nname = \"b\"\n",
+        "crates/.cargo/config.toml": "include = [\"x.toml\"]\n",
+      });
+      const because = "crates/.cargo/config.toml is not read: it includes other config files, which Rerail does not follow";
+      expect(config?.verdict(port(NEEDLESS_ELSE), ruleCatalog)).toEqual({
+        decision: { on: false, explicit: true, because: "Cargo.toml [lints.clippy] needless_else = \"allow\"" },
+        folders: [{ folder: "b", on: true, explicit: false, because: "Clippy's default (clippy::style)" }, { folder: "crates/a", on: "unknown", because }],
+      });
+      expect(notes).toEqual([`${because}; Clippy's lints there stay as the pack has them.`]);
+    });
   });
 });

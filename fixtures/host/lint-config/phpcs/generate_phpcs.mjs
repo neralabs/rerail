@@ -123,6 +123,13 @@ const CASES = [
   ["tool-only-elements", { "phpcs.xml": ruleset('<rule ref="Squiz.PHP.Eval" phpcbf-only="true"/>', '<rule ref="Generic.PHP.LowerCaseConstant" phpcs-only="true"/>', '<rule ref="Generic.PHP"><exclude name="Generic.PHP.NoSilencedErrors" phpcbf-only="true"/></rule>') }],
   ["internal-reference", { "phpcs.xml": ruleset('<rule ref="Internal.NoCodeFound"><severity>0</severity></rule>', '<rule ref="Squiz.PHP.Eval"/>') }],
   ["message-type", { "phpcs.xml": ruleset('<rule ref="Generic.PHP.NoSilencedErrors"><type>error</type></rule>', '<rule ref="Squiz.PHP.Eval"><type>warning</type></rule>') }],
+  // The reviewer's cases: processRule passes a rule's settings to the sniffs a ref includes only when the ref has at
+  // most two dot-separated parts or an empty one (`0` counts as empty); `phpcs.xml.dist`'s reach no sniff.
+  ["settings-ruleset-three-parts", { ".phpcs.xml": ruleset('<rule ref="phpcs.xml.dist"><exclude-pattern>tests/*</exclude-pattern></rule>'), "phpcs.xml.dist": ruleset('<rule ref="Generic.PHP.LowerCaseConstant"/>') }],
+  ["severity-ruleset-three-parts", { ".phpcs.xml": ruleset('<rule ref="phpcs.xml.dist"><severity>0</severity></rule>'), "phpcs.xml.dist": ruleset('<rule ref="Generic.PHP.LowerCaseConstant"/>') }],
+  ["settings-ruleset-empty-part", { ".phpcs.xml": ruleset('<rule ref="./phpcs.xml.dist"><exclude-pattern>build/*</exclude-pattern></rule>'), "phpcs.xml.dist": ruleset('<rule ref="Generic.PHP.LowerCaseConstant"/>') }],
+  ["severity-ruleset-empty-part", { ".phpcs.xml": ruleset('<rule ref="./phpcs.xml.dist"><severity>0</severity></rule>', '<rule ref="Squiz.PHP.Eval"/>'), "phpcs.xml.dist": ruleset('<rule ref="Generic.PHP.LowerCaseConstant"/>') }],
+  ["settings-ruleset-zero-part", { "phpcs.xml": ruleset('<rule ref="build/rules.0.xml"><exclude-pattern>build/*</exclude-pattern></rule>'), "build/rules.0.xml": ruleset('<rule ref="Generic.PHP.LowerCaseConstant"/>') }],
 ];
 
 function phpcs(install, args, cwd) {

@@ -4,12 +4,14 @@
 // and without preview (`ruff rule --all --output-format json`, and `ruff check --isolated --show-settings` in an empty
 // folder, with and without `--preview`); the linters' code prefixes (`ruff linter --output-format json`), which decide
 // what a selector names; the D rules each `lint.pydocstyle.convention` turns off (as `--show-settings` reports them);
-// and, from ruff_linter's source at the commit packs/python/upstream/ruff/gates.yaml pins, the selectors Ruff remaps
-// before selecting (`REDIRECTS` in `rule_redirects.rs`, less its test-only entries) and the rules it never runs together
-// (`INCOMPATIBLE_CODES` in `registry.rs`), each checked against the binary: selecting the old selector enables what
-// selecting its target does, and selecting both of a pair enables only the first. Run offline, not in CI:
+// and, from Ruff's source at the commit packs/python/upstream/ruff/gates.yaml pins, the selectors Ruff remaps before
+// selecting (`REDIRECTS` in ruff_linter's `rule_redirects.rs`, less its test-only entries), the rules it never runs
+// together (`INCOMPATIBLE_CODES` in `registry.rs`), each checked against the binary: selecting the old selector enables
+// what selecting its target does, and selecting both of a pair enables only the first; and every key Ruff's config takes
+// (`ruff.schema.json`, whose options Ruff deserialises with `deny_unknown_fields`, the deprecated top-level lint options
+// included), checked to take every option `ruff config --output-format json` lists. Run offline, not in CI:
 //   node scripts/generate/lint-config/ruff-rules.mjs <ruff 0.16.9>
-// (`uvx ruff@0.16.9`'s binary, or any ruff 0.16.9); it fetches those two source files from GitHub at the pinned commit.
+// (`uvx ruff@0.16.9`'s binary, or any ruff 0.16.9); it fetches those three files from GitHub at the pinned commit.
 // A different Ruff version, or a gates.yaml that pins another, is refused; bump PIN and regenerate.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -65,10 +67,10 @@ const categories = [...new Set(rules.map(rule => rule.category))].sort();
 // pycodestyle has no common prefix: its codes start with `E` or `W`, each its own prefix.
 const prefixes = linters.flatMap(linter => (linter.prefix === "" ? linter.categories.map(category => category.prefix) : [linter.prefix])).sort();
 
-/** A file of Ruff's source at the pinned commit. */
-const ruffSource = async path => (await fetch(`https://raw.githubusercontent.com/astral-sh/ruff/${commit}/crates/ruff_linter/src/${path}`)).text();
+/** A file of Ruff's repository at the pinned commit. */
+const ruffSource = async path => (await fetch(`https://raw.githubusercontent.com/astral-sh/ruff/${commit}/${path}`)).text();
 
-const table = /static REDIRECTS[\s\S]*?HashMap::from_iter\(\[([\s\S]*?)\]\)/u.exec(await ruffSource("rule_redirects.rs"))?.[1];
+const table = /static REDIRECTS[\s\S]*?HashMap::from_iter\(\[([\s\S]*?)\]\)/u.exec(await ruffSource("crates/ruff_linter/src/rule_redirects.rs"))?.[1];
 if (table === undefined) throw new Error("rule_redirects.rs holds no REDIRECTS table");
 // An entry under `#[cfg(...)]` exists only in Ruff's own test builds.
 const redirects = [...table.replaceAll(/#\[cfg\([^\n]*\n\s*\("[^"]*",\s*"[^"]*"\),/gu, "").matchAll(/\("([^"]+)",\s*"([^"]+)"\)/gu)]
@@ -85,7 +87,7 @@ for (const [from, to] of redirects) {
 // their variant there (`BlankLineBeforeClass`), which is the rule's name in kebab case.
 const codeByName = new Map(rows.map(([code, name]) => [name, code]));
 const codeOfVariant = variant => codeByName.get(variant.replaceAll(/(?<=[a-z0-9])(?=[A-Z])/gu, "-").toLowerCase());
-const pairs = /INCOMPATIBLE_CODES[^=]*=\s*&\[([\s\S]*?)\n\];/u.exec(await ruffSource("registry.rs"))?.[1];
+const pairs = /INCOMPATIBLE_CODES[^=]*=\s*&\[([\s\S]*?)\n\];/u.exec(await ruffSource("crates/ruff_linter/src/registry.rs"))?.[1];
 if (pairs === undefined) throw new Error("registry.rs holds no INCOMPATIBLE_CODES");
 const incompatible = [...pairs.matchAll(/Rule::(\w+),\s*Rule::(\w+),/gu)].map(([, preferred, expendable]) => [codeOfVariant(preferred), codeOfVariant(expendable)]);
 for (const [preferred, expendable] of incompatible) {
@@ -108,10 +110,41 @@ const conventions = Object.fromEntries(["google", "numpy", "pep257"].map(convent
 ])].sort()]));
 rmSync(folder, { recursive: true, force: true });
 
+// The keys Ruff's config takes, as a tree: per key, the keys under it (`*` any key, as a map's); `{}` for a value no key
+// goes below. An object of the schema with fixed properties denies any other (`additionalProperties: false`); one with
+// `additionalProperties` is a map, whatever properties it documents.
+const schema = JSON.parse(await ruffSource("ruff.schema.json"));
+/** The schema node `node` names: itself, or the definition its `$ref` points at. */
+function definition(node) {
+  const resolved = node.$ref === undefined ? node : schema.definitions[node.$ref.replace("#/definitions/", "")];
+  if (resolved === undefined || resolved.patternProperties !== undefined) throw new Error(`ruff.schema.json: cannot read ${JSON.stringify(node)}`);
+  return resolved;
+}
+/** The keys an object of the schema takes: its properties where it denies others, else any key, as a map's. */
+function objectKeys(object, depth) {
+  const additional = object.additionalProperties ?? true;
+  if (additional !== false) return { "*": additional === true ? {} : optionKeys(additional, depth + 1) ?? {} };
+  return Object.fromEntries(Object.entries(object.properties ?? {}).map(([key, value]) => [key, optionKeys(value, depth + 1) ?? {}]));
+}
+/** The keys schema node `node` takes, over every alternative it allows; undefined where none is an object. */
+function optionKeys(node, depth = 0) {
+  if (depth > 16) throw new Error("ruff.schema.json nests deeper than expected");
+  const resolved = definition(node);
+  const alternatives = [...resolved.anyOf ?? [], ...resolved.oneOf ?? [], ...resolved.allOf ?? []].flatMap(alternative => optionKeys(alternative, depth + 1) ?? []);
+  if ([resolved.type].flat().includes("object")) alternatives.push(objectKeys(resolved, depth));
+  return alternatives.length === 0 ? undefined : Object.assign({}, ...alternatives);
+}
+const sortedKeys = keys => Object.fromEntries(Object.entries(keys).sort(([left], [right]) => left.localeCompare(right)).map(([key, below]) => [key, sortedKeys(below)]));
+const options = sortedKeys(optionKeys(schema));
+const takes = (keys, path) => path.length === 0 || (Object.hasOwn(keys, path[0]) ? takes(keys[path[0]], path.slice(1)) : Object.hasOwn(keys, "*") && takes(keys["*"], path.slice(1)));
+const listed = Object.keys(JSON.parse(execFileSync(ruff, ["config", "--output-format", "json"], { encoding: "utf8", maxBuffer: BUFFER })));
+for (const option of listed) if (!takes(options, option.split("."))) throw new Error(`ruff config lists ${option}, which ruff.schema.json does not take`);
+
 const text = `// Generated by scripts/generate/lint-config/ruff-rules.mjs; do not edit.
 // From ruff ${PIN}: \`ruff rule --all --output-format json\`, \`ruff linter --output-format json\`,
-// \`ruff check --isolated [--preview] [--config lint.pydocstyle.convention=…] --show-settings\`, and, at ${commit},
-// \`REDIRECTS\` in crates/ruff_linter/src/rule_redirects.rs and \`INCOMPATIBLE_CODES\` in crates/ruff_linter/src/registry.rs.
+// \`ruff check --isolated [--preview] [--config lint.pydocstyle.convention=…] --show-settings\`, \`ruff config --output-format json\`,
+// and, at ${commit}, \`REDIRECTS\` in crates/ruff_linter/src/rule_redirects.rs, \`INCOMPATIBLE_CODES\` in
+// crates/ruff_linter/src/registry.rs and ruff.schema.json.
 
 /** The Ruff release these tables are made from, by the gated tool-pack that pins it (\`<pack>/<tool>\`). */
 export const UPSTREAM_VERSIONS: Readonly<Record<string, string>> = ${JSON.stringify({ [GATE]: PIN })};
@@ -149,5 +182,15 @@ export const RUFF_CONVENTIONS: Readonly<Record<string, readonly string[]>> = ${J
 
 /** Pairs of rules Ruff never runs together: where both are on, it turns the second off. */
 export const RUFF_INCOMPATIBLE: readonly (readonly [string, string])[] = ${JSON.stringify(incompatible)};
+
+/** The keys a Ruff config's options may set under each key: \`*\` for any key (a map's), none below a value. */
+export interface RuffOptionKeys {
+  readonly [key: string]: RuffOptionKeys;
+}
+
+/** Every key Ruff ${PIN}'s config takes, the deprecated top-level lint options included; Ruff refuses a config with any other. */
+export const RUFF_OPTIONS: RuffOptionKeys = {
+${Object.entries(options).map(([key, below]) => `  ${JSON.stringify(key)}: ${JSON.stringify(below)},`).join("\n")}
+};
 `;
 writeFileSync(join(import.meta.dirname, "../../../src/engine/catalog/lint-config/generated/ruff-rules.generated.ts"), text);

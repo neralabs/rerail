@@ -10,8 +10,9 @@
  * ruleset (whatever its name: `phpcs.xml.dist` too) or, named `…Sniff.php`, a sniff; else a bare name is a standard
  * (whose sniffs `phpcs-standards.generated.ts` lists), a folder its `ruleset.xml`, and a dotted name a category,
  * sniff or message code. A rule includes them less the sniffs its `<exclude>`s name (an excluded message code is
- * severity 0 instead). `processRule` (l.1136-1370) sets a rule's `<severity>` and patterns on its ref and every sniff
- * it newly includes; `File::addMessage` (src/Files/File.php l.840-1030) takes the severity of the most specific of the
+ * severity 0 instead). `processRule` (l.1136-1370) sets a rule's `<severity>` and patterns on its ref and, for a ref
+ * of at most two dot-separated parts or with an empty one, every sniff it newly includes (`phpcs.xml.dist`'s reach no
+ * sniff); `File::addMessage` (src/Files/File.php l.840-1030) takes the severity of the most specific of the
  * message code, sniff, category and standard that has one, and leaves out a file any of their `<exclude-pattern>`s
  * match, as every ruleset's own `<exclude-pattern>`s and the `ignore` argument do for every sniff (src/Filters/
  * Filter.php l.225-295). A sniff a standard includes is on by a preset; one the ruleset names, explicitly. A pattern
@@ -303,9 +304,14 @@ class LeafReplay {
     return excluded;
   }
 
-  /** The leaf's codes `processRule` sets a rule's settings on: its ref, and for a standard, category or ruleset, each sniff it newly included. */
+  /**
+   * The leaf's codes `processRule` sets a rule's settings on: its ref, and each sniff it newly included when the ref
+   * has at most two dot-separated parts or an empty one (a standard, a category, `./base.xml`; l.1141-1161), as
+   * PHP_CodeSniffer's `array_filter` reads parts: `0` is empty too. A ruleset named `phpcs.xml.dist` passes none on.
+   */
   private settingCodes(rule: PhpcsRule, isNew: boolean): string[] {
-    const groups = rule.ref.kind !== "name" || rule.ref.name.split(".").length <= 2;
+    const parts = rule.ref.name.split(".");
+    const groups = parts.length <= 2 || parts.some(part => part === "" || part === "0");
     return [rule.ref.name, ...groups && isNew ? [this.leaf.sniff] : []].filter(code => this.leaf.checkCodes.includes(code));
   }
 

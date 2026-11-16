@@ -55,6 +55,19 @@ const CASES = [
       "</ForbiddenCode>",
     )),
   }],
+  // The reviewer's case: a directory that is the root covers every file; the first filter covering a file still wins.
+  ["handler-root-suppress", {
+    "psalm.xml": psalm('errorLevel="1"', handler("<ForbiddenCode>", '  <errorLevel type="suppress"><directory name="."/></errorLevel>', "</ForbiddenCode>")),
+  }],
+  ["handler-root-after-folder", {
+    "psalm.xml": psalm('errorLevel="1"', handler(
+      "<ForbiddenCode>",
+      '  <errorLevel type="error"><directory name="src/Legacy"/></errorLevel>',
+      '  <errorLevel type="suppress"><directory name="./"/></errorLevel>',
+      '  <errorLevel type="error"><directory name="tests"/></errorLevel>',
+      "</ForbiddenCode>",
+    )),
+  }],
 ];
 
 /** The ported issues Psalm reports as errors at each probe path, or the error it stops with. */

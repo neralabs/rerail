@@ -95,5 +95,37 @@
  },
  "eslintrc-package-json": {
   "src/a.js": "no-case-declarations no-compare-neg-zero no-cond-assign no-debugger no-delete-var no-dupe-class-members no-dupe-else-if no-dupe-keys no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-obj-calls no-octal no-prototype-builtins no-redeclare no-self-assign no-setter-return no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-negation no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-with require-yield use-isnan valid-typeof"
+ },
+ "flat-files-extglob": {
+  "src/a.js": "no-debugger",
+  "src/b.ts": "no-debugger"
+ },
+ "flat-files-character-class": {
+  "src/a.js": "no-debugger",
+  "scripts/b.js": ""
+ },
+ "flat-files-dot-slash": {
+  "src/a.js": "no-debugger",
+  "scripts/b.js": "no-debugger"
+ },
+ "flat-files-dot-slash-some": {
+  "src/a.js": "no-debugger",
+  "scripts/b.js": ""
+ },
+ "flat-files-negated": {
+  "src/a.js": "no-debugger",
+  "scripts/b.js": "no-console",
+  "scripts/keep.js": "no-console no-debugger"
+ },
+ "flat-create-next-app": {
+  "app/page.tsx": "@next/next/google-font-display @next/next/google-font-preconnect @next/next/inline-script-id @next/next/next-script-for-ga @next/next/no-assign-module-variable @next/next/no-async-client-component @next/next/no-before-interactive-script-outside-document @next/next/no-css-tags @next/next/no-document-import-in-page @next/next/no-duplicate-head @next/next/no-head-element @next/next/no-head-import-in-document @next/next/no-img-element @next/next/no-location-assign-relative-destination @next/next/no-page-custom-font @next/next/no-script-component-in-head @next/next/no-styled-jsx-in-document @next/next/no-sync-scripts @next/next/no-title-in-document-head @next/next/no-typos @next/next/no-unwanted-polyfillio @typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference no-var prefer-spread react-hooks/error-boundaries react-hooks/exhaustive-deps react-hooks/globals react-hooks/immutability react-hooks/purity react-hooks/refs react-hooks/rules-of-hooks react-hooks/set-state-in-effect react-hooks/set-state-in-render react-hooks/static-components react/jsx-key react/jsx-no-comment-textnodes react/jsx-no-duplicate-props react/jsx-no-undef react/no-children-prop react/no-danger-with-children react/no-deprecated react/no-direct-mutation-state react/no-find-dom-node react/no-is-mounted react/no-render-return-value react/no-string-refs react/no-unescaped-entities",
+  "lib/util.js": "@next/next/google-font-display @next/next/google-font-preconnect @next/next/inline-script-id @next/next/next-script-for-ga @next/next/no-assign-module-variable @next/next/no-async-client-component @next/next/no-before-interactive-script-outside-document @next/next/no-css-tags @next/next/no-document-import-in-page @next/next/no-duplicate-head @next/next/no-head-element @next/next/no-head-import-in-document @next/next/no-img-element @next/next/no-location-assign-relative-destination @next/next/no-page-custom-font @next/next/no-script-component-in-head @next/next/no-styled-jsx-in-document @next/next/no-sync-scripts @next/next/no-title-in-document-head @next/next/no-typos @next/next/no-unwanted-polyfillio @typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference react-hooks/error-boundaries react-hooks/exhaustive-deps react-hooks/globals react-hooks/immutability react-hooks/purity react-hooks/refs react-hooks/rules-of-hooks react-hooks/set-state-in-effect react-hooks/set-state-in-render react-hooks/static-components react/jsx-key react/jsx-no-comment-textnodes react/jsx-no-duplicate-props react/jsx-no-undef react/no-children-prop react/no-danger-with-children react/no-deprecated react/no-direct-mutation-state react/no-find-dom-node react/no-is-mounted react/no-render-return-value react/no-string-refs react/no-unescaped-entities"
+ },
+ "flat-global-ignores-named": {
+  "src/a.js": "no-console no-debugger"
+ },
+ "eslintrc-overrides-extglob": {
+  "src/a.js": "no-debugger",
+  "src/b.cjs": "no-debugger"
  }
 }

@@ -1,11 +1,11 @@
 {
  "probes": ["", "src", "sub", "sub/deeper", "other"],
  "cases": [
-  { "name": "empty", "files": { ".oxlintrc.json": "{}" } },
+  { "name": "empty", "files": { ".oxlintrc.json": "{}" }, "explicit": { "": { "eslint-no-debugger": false } } },
   { "name": "schema-settings-env-globals", "files": { ".oxlintrc.json": "{ \"$schema\": \"./node_modules/oxlint/configuration_schema.json\", \"settings\": {}, \"env\": { \"browser\": true }, \"globals\": { \"x\": \"readonly\" }, \"jsPlugins\": [] }" } },
   { "name": "json-with-comments", "files": { ".oxlintrc.json": "{\n  // ours\n  \"rules\": { \"no-debugger\": \"off\", \"eqeqeq\": \"error\", },\n}\n" } },
   { "name": "jsonc-root", "files": { ".oxlintrc.jsonc": "{\n  /* ours */\n  \"rules\": { \"no-debugger\": \"off\", \"no-console\": \"warn\" }\n}\n" } },
-  { "name": "rules-bare-eslint", "files": { ".oxlintrc.json": "{ \"rules\": { \"no-debugger\": \"off\", \"eqeqeq\": \"error\", \"no-console\": \"warn\", \"no-var\": \"error\", \"prefer-const\": \"warn\" } }" } },
+  { "name": "rules-bare-eslint", "files": { ".oxlintrc.json": "{ \"rules\": { \"no-debugger\": \"off\", \"eqeqeq\": \"error\", \"no-console\": \"warn\", \"no-var\": \"error\", \"prefer-const\": \"warn\" } }" }, "explicit": { "": { "eslint-no-debugger": true, "eslint-eqeqeq": true } } },
   { "name": "rules-numeric-severities", "files": { ".oxlintrc.json": "{ \"rules\": { \"no-debugger\": 0, \"eqeqeq\": 2, \"no-console\": 1, \"no-empty\": [2] } }" } },
   { "name": "rules-allow-deny", "files": { ".oxlintrc.json": "{ \"rules\": { \"no-debugger\": \"allow\", \"eqeqeq\": \"deny\", \"no-alert\": [\"deny\"] } }" } },
   { "name": "rules-options", "files": { ".oxlintrc.json": "{ \"rules\": { \"eqeqeq\": [\"error\", \"smart\"], \"no-console\": [\"warn\", { \"allow\": [\"warn\"] }], \"max-params\": [\"error\", { \"max\": 2 }] } }" } },

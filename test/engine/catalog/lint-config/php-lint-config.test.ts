@@ -242,7 +242,7 @@ describe("phpstanReader", () => {
   });
 
   it("limits an ignore to the paths that are folders of the repository, and notes every other path", async () => {
-    const others = ["src/*/Generated", "%rootDir%/../src", "src/Missing", "/abs/src", "../outside", "."];
+    const others = ["src/*/Generated", "%rootDir%/../src", "src/Missing", "/abs/src", "../outside"];
     const root = await repository({
       "phpstan.neon": [
         "parameters:",
@@ -262,6 +262,24 @@ describe("phpstanReader", () => {
       folders: [{ folder: "src/Legacy", on: false, explicit: true, because: `${ignore} in path src/Legacy` }],
       notes: others.map(path => `${SPRINTF}: ${ignore} ignores it in ${JSON.stringify(path)}, which is not a folder of the repository; Rerail sets rules for whole folders only.`),
     });
+  });
+
+  it("ignores in every file for a path that is the root, and in none for an empty paths list", async () => {
+    const root = await repository({
+      "phpstan.neon": [
+        "parameters:",
+        "\tlevel: 6",
+        "\tignoreErrors:",
+        "\t\t- identifier: argument.sprintf",
+        "\t\t  paths: [src/Legacy, src/a.php, '%currentWorkingDirectory%']",
+        "\t\t- identifier: missingType.return",
+        "\t\t  paths: []",
+      ].join("\n"),
+      "src/Legacy/": "",
+    });
+    const { verdicts } = read(phpstanReader, root, [SPRINTF, RETURN_TYPE]);
+    expect(verdicts[SPRINTF]).toEqual({ decision: { on: false, explicit: true, because: "phpstan.neon: ignoreErrors identifier argument.sprintf" } });
+    expect(verdicts[RETURN_TYPE]).toEqual({ decision: { on: true, explicit: false, because: "phpstan.neon: level 6" } });
   });
 
   it("reads the repository's includes, and notes each include it does not read and why", async () => {
@@ -463,14 +481,29 @@ describe("psalmReader", () => {
   });
 
   it("notes what an errorLevel covers that is not a folder of the repository", async () => {
-    const unread = ["<directory name=\"src/*/Legacy\"/>", "<directory name=\"src/Missing\"/>", "<directory name=\".\"/>", "<directory name=\"/abs\"/>", "<referencedClass name=\"\"/>"];
+    const unread = ["<directory name=\"src/*/Legacy\"/>", "<directory name=\"src/Missing\"/>", "<directory name=\"/abs\"/>", "<referencedClass name=\"\"/>"];
     const root = await repository({
-      "psalm.xml": psalmXml("", `<issueHandlers><ForbiddenCode><errorLevel type="info"><directory name="src/*/Legacy"/><directory name="src/Missing"/><directory name="."/><directory name="/abs"/><referencedClass/></errorLevel></ForbiddenCode></issueHandlers>`),
+      "psalm.xml": psalmXml("", `<issueHandlers><ForbiddenCode><errorLevel type="info"><directory name="src/*/Legacy"/><directory name="src/Missing"/><directory name="/abs"/><referencedClass/></errorLevel></ForbiddenCode></issueHandlers>`),
       "src/": "",
     });
     expect(read(psalmReader, root, [FORBIDDEN]).verdicts[FORBIDDEN]).toEqual({
       decision: { on: true, explicit: true, because: "psalm.xml: <ForbiddenCode/>" },
       notes: unread.map(what => `${FORBIDDEN}: psalm.xml: <ForbiddenCode> <errorLevel type="info"> covers ${what}, which is not a folder of the repository; Rerail sets rules for whole folders only.`),
+    });
+  });
+
+  it("takes a directory that is the root as every file, where no filter before it covers a file", async () => {
+    const filters = [
+      "<errorLevel type=\"error\"><directory name=\"src\"/><file name=\"a.php\"/></errorLevel>",
+      "<errorLevel type=\"suppress\"><directory name=\"./\"/></errorLevel>",
+      "<errorLevel type=\"error\"><directory name=\"tests\"/><file name=\"b.php\"/></errorLevel>",
+    ];
+    const root = await repository({ "psalm.xml": psalmXml("", `<issueHandlers><ForbiddenCode>${filters.join("")}</ForbiddenCode></issueHandlers>`), "src/": "", "tests/": "" });
+    const handler = "psalm.xml: <ForbiddenCode>";
+    expect(read(psalmReader, root, [FORBIDDEN]).verdicts[FORBIDDEN]).toEqual({
+      decision: { on: false, explicit: true, because: `${handler} <errorLevel type="suppress"> <directory name="."/>` },
+      folders: [{ folder: "src", on: true, explicit: true, because: `${handler} <errorLevel type="error"> <directory name="src"/>` }],
+      notes: [`${FORBIDDEN}: ${handler} <errorLevel type="error"> covers <file name="a.php"/>, which is not a folder of the repository; Rerail sets rules for whole folders only.`],
     });
   });
 

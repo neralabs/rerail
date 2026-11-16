@@ -285,6 +285,38 @@
     ],
     "tests/probe.php": []
    }
+  },
+  {
+   "name": "handler-root-suppress",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n  <issueHandlers>\n    <ForbiddenCode>\n      <errorLevel type=\"suppress\"><directory name=\".\"/></errorLevel>\n    </ForbiddenCode>\n  </issueHandlers>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "handler-root-after-folder",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n  <issueHandlers>\n    <ForbiddenCode>\n      <errorLevel type=\"error\"><directory name=\"src/Legacy\"/></errorLevel>\n      <errorLevel type=\"suppress\"><directory name=\"./\"/></errorLevel>\n      <errorLevel type=\"error\"><directory name=\"tests\"/></errorLevel>\n    </ForbiddenCode>\n  </issueHandlers>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
   }
  ]
 }

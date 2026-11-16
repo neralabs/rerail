@@ -78,11 +78,15 @@ const reportingLevel = (written: string, what: string): ReportingLevel => {
   return level;
 };
 
-/** A `<directory name>`, as Psalm resolves it against the config's folder (`FileFilter::loadFromArray`, src/Psalm/Config/FileFilter.php l.121-146), as a folder of the repository; undefined for a wildcard or anything else. */
+/**
+ * A `<directory name>`, as Psalm resolves it against the config's folder (`FileFilter::loadFromArray`, src/Psalm/
+ * Config/FileFilter.php l.121-146), as a folder of the repository (`""`, the root: every file); undefined for a
+ * wildcard or anything else.
+ */
 function filterFolder(root: string, written: string): string | undefined {
   const name = written.replace(/(?:\/\*\*)+\/?$/u, "");
   const path = name.includes("*") ? undefined : repositoryPath("", name);
-  return path !== undefined && path !== "" && isRepositoryFolder(root, path) ? path : undefined;
+  return path !== undefined && isRepositoryFolder(root, path) ? path : undefined;
 }
 
 /** One `<errorLevel type="…">` child of an issue handler. */
@@ -149,16 +153,21 @@ function levelDecision(read: PsalmRead, issue: string): PortDecision {
   return { on: true, explicit: false, because };
 }
 
-/** The folders a handler's filters set, the first filter covering a folder winning; what else they cover goes to `notes`. */
-function filterFolders(port: Port, handler: PsalmHandler, notes: string[]): FolderDecision[] {
-  const decided: FolderDecision[] = [];
+/**
+ * The folders a handler's filters set, the first filter covering a folder winning, up to one covering the root (every
+ * file), which the decision for every file then is; what else they cover goes to `notes`.
+ */
+function filterFolders(port: Port, handler: PsalmHandler, notes: string[]): { whole: PortDecision | undefined; folders: FolderDecision[] } {
+  const decided: Extract<FolderDecision, { on: boolean }>[] = [];
+  const covered = (folder: string): boolean => decided.some(earlier => folder === earlier.folder || folder.startsWith(`${earlier.folder}/`));
   for (const filter of handler.filters) {
     const because = `${handler.because.replace(/\/>$/u, ">")} <errorLevel type="${filter.type}">`;
     for (const unread of filter.unread) notes.push(`${port.ruleId}: ${because} covers ${unread}, which is not a folder of the repository; Rerail sets rules for whole folders only.`);
-    const covered = (folder: string): boolean => decided.some(earlier => folder === earlier.folder || folder.startsWith(`${earlier.folder}/`));
-    decided.push(...filter.folders.filter(folder => !covered(folder)).map(folder => ({ folder, on: filter.type === "error", explicit: true, because: `${because} <directory name="${folder}"/>` })));
+    decided.push(...filter.folders.filter(folder => !covered(folder)).map(folder => ({ folder, on: filter.type === "error", explicit: true, because: `${because} <directory name="${folder === "" ? "." : folder}"/>` })));
+    const whole = decided.find(decision => decision.folder === "");
+    if (whole !== undefined) return { whole: { on: whole.on, explicit: true, because: whole.because }, folders: decided.filter(decision => decision !== whole) };
   }
-  return decided;
+  return { whole: undefined, folders: decided };
 }
 
 /** One issue's verdict: its handler's, or the level's. */
@@ -166,8 +175,8 @@ function issueVerdict(read: PsalmRead, port: Port, issue: string): { decision: P
   const handler = read.handlers.get(issue);
   if (handler === undefined) return { decision: levelDecision(read, issue), folders: [], notes: [] };
   const notes: string[] = [];
-  const folders = filterFolders(port, handler, notes);
-  return { decision: { on: handler.level === "error", explicit: true, because: handler.because }, folders, notes };
+  const { whole, folders } = filterFolders(port, handler, notes);
+  return { decision: whole ?? { on: handler.level === "error", explicit: true, because: handler.because }, folders, notes };
 }
 
 /** The decisions for each issue of a port as one: the same state for each, else the pack's value. */

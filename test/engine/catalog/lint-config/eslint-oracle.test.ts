@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { eslintReader } from "../../../../src/engine/catalog/lint-config/eslint-config.js";
 import { globPattern } from "../../../../src/engine/catalog/rule-pack-matcher.js";
-import { portsOf, type LinterNote, type Port, type PortVerdict } from "../../../../src/engine/catalog/lint-config/linter-config.js";
+import { portsOf, settleVerdicts, type FolderDecision, type LinterNote, type Port, type PortDecision, type PortVerdict } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
 import { fixturesPath } from "../../../support/oracles.js";
@@ -15,7 +15,8 @@ import { removeFolder } from "../../../support/platform/remove-folder.js";
 /**
  * The reader against ESLint itself (fixtures/host/lint-config/eslint/: ESLint 10.11.0's own config for each probe file
  * of each config in corpus.json, recorded by generate_eslint.mjs). Where the reader decides a ported rule on or off at
- * a probe, ESLint must agree; it may leave the rule unknown only where the case says Rerail cannot read it.
+ * a probe, ESLint must agree; it may leave the rule unknown only where the case says Rerail cannot read it. The
+ * verdict settled alone gives ESLint's state at each probe, or the pack's where the verdict is unknown.
  */
 interface OracleCase {
   readonly name: string;
@@ -25,6 +26,8 @@ interface OracleCase {
   readonly unknown?: Readonly<Record<string, readonly string[]>>;
   /** Rules the reader decides even where `unknown` allows any. */
   readonly known?: readonly string[];
+  /** Per rule, whether the reader decides it explicitly (the config names it) wherever it decides it. */
+  readonly explicit?: Readonly<Record<string, boolean>>;
 }
 
 const ORACLE = fixturesPath("host", "lint-config", "eslint");
@@ -55,11 +58,18 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
   return root;
 }
 
-/** The verdict's state at `probe`: the decision of the deepest folder holding it, else the one for every file. */
-function stateAt(verdict: PortVerdict | undefined, probe: string): boolean | "unknown" {
+/** The verdict's decision at `probe`: the one of the deepest folder holding it, else the one for every file. */
+function decisionAt(verdict: PortVerdict | undefined, probe: string): PortDecision | FolderDecision | undefined {
   const folders = (verdict?.folders ?? []).filter(decision => probe.startsWith(`${decision.folder}/`));
-  const deepest = folders.sort((left, right) => right.folder.length - left.folder.length)[0];
-  return deepest?.on ?? verdict?.decision?.on ?? "unknown";
+  return folders.sort((left, right) => right.folder.length - left.folder.length)[0] ?? verdict?.decision;
+}
+
+/** The state at `probe` of the settings `verdict` alone settles to for `port` (taken as not held off): the deepest setting holding it, else the pack's. */
+function settledAt(port: Port, verdict: PortVerdict | undefined, probe: string): boolean {
+  const free: Port = { ruleId: port.ruleId, suppress: port.suppress, declared: port.declared, startsOn: port.startsOn };
+  const settings = settleVerdicts(free, verdict === undefined ? [] : [verdict], []).settings
+    .filter(setting => setting.on !== null && (setting.folder === "" || probe.startsWith(`${setting.folder}/`)));
+  return settings.sort((left, right) => right.folder.length - left.folder.length)[0]?.on ?? port.startsOn;
 }
 
 const mayBeUnknown = (oracleCase: OracleCase, probe: string, key: string): boolean =>
@@ -70,20 +80,36 @@ const mayBeUnknown = (oracleCase: OracleCase, probe: string, key: string): boole
 const runsOn = (port: Port, probe: string): boolean =>
   globPattern(port.scope?.include ?? ["**/*"]).test(probe) && !globPattern(port.scope?.exclude ?? []).test(probe);
 
+/**
+ * How the reader disagrees with ESLint (`eslint`: on at `probe` or not) on `key` of `port`: its state, how explicit it
+ * is where the case says, and the state it settles to alone for a port starting either way (the pack's where unknown).
+ */
+function disagreements(oracleCase: OracleCase, probe: string, key: string, port: Port, verdict: PortVerdict | undefined, eslint: boolean): string[] {
+  const found: string[] = [];
+  const decision = decisionAt(verdict, probe);
+  const state = decision?.on ?? "unknown";
+  if (state === "unknown" ? !mayBeUnknown(oracleCase, probe, key) : state !== eslint) found.push(`${probe} ${key}: Rerail ${state}, ESLint ${eslint ? "on" : "off"}`);
+  const explicit = oracleCase.explicit?.[key];
+  if (explicit !== undefined && decision !== undefined && decision.on !== "unknown" && decision.explicit !== explicit) found.push(`${probe} ${key}: explicit ${decision.explicit}, not ${explicit}`);
+  for (const startsOn of [true, false]) {
+    const settled = settledAt({ ...port, startsOn }, verdict, probe);
+    if (settled !== (state === "unknown" ? startsOn : eslint)) found.push(`${probe} ${key} starting ${startsOn ? "on" : "off"}: settles ${settled ? "on" : "off"}`);
+  }
+  return found;
+}
+
 describe("the ESLint reader against ESLint 10.11.0", () => {
   it.each(cases.map(oracleCase => [oracleCase.name, oracleCase] as const))("%s", async (_, oracleCase) => {
     // The probe files are the repository's files the ports run on.
     const root = await repository({ ...Object.fromEntries(oracleCase.probes.map(probe => [probe, ""])), ...oracleCase.files });
     const config = eslintReader.read(root, [] as LinterNote[])!;
-    const disagreements: string[] = [];
+    const found: string[] = [];
     for (const probe of oracleCase.probes) {
       const on = new Set(expected[oracleCase.name]![probe]!.split(" "));
       for (const [key, port] of ports.filter(([, port]) => runsOn(port, probe))) {
-        const state = stateAt(config.verdict(port, ruleCatalog), probe);
-        const eslint = on.has(key);
-        if (state === "unknown" ? !mayBeUnknown(oracleCase, probe, key) : state !== eslint) disagreements.push(`${probe} ${key}: Rerail ${state}, ESLint ${eslint ? "on" : "off"}`);
+        found.push(...disagreements(oracleCase, probe, key, port, config.verdict(port, ruleCatalog), on.has(key)));
       }
     }
-    expect(disagreements).toEqual([]);
+    expect(found).toEqual([]);
   });
 });
