@@ -3344,6 +3344,7 @@ dependencies = [
  "rerail-device-metal",
  "rerail-ecma-lean",
  "rerail-facts",
+ "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
@@ -3481,6 +3482,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-go-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-html-lean"
 version = "0.1.0"
 dependencies = [
@@ -3542,6 +3552,7 @@ dependencies = [
  "rerail-csharp-lean",
  "rerail-css-lean",
  "rerail-ecma-lean",
+ "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",

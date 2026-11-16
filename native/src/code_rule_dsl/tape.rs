@@ -60,6 +60,8 @@ pub mod ecma_lean;
 pub mod rust_lean;
 /// Java's tape from the lean parser (`rerail_java_lean`).
 pub mod java_lean;
+/// Go's tape from the lean parser (`rerail_go_lean`).
+pub mod go_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
 /// PHP's tape from the lean parser (`rerail_php_lean`).

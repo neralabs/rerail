@@ -2535,6 +2535,9 @@ fn ecma_implied_tokens() {
         ("markdown", GrammarDialect::Markdown),
         ("markdown-inline", GrammarDialect::MarkdownInline),
         ("sql", GrammarDialect::Sql),
+        ("go", GrammarDialect::Go),
+        ("c", GrammarDialect::C),
+        ("cpp", GrammarDialect::Cpp),
     ];
     let wanted = std::env::var("RERAIL_IMPLIED_DIALECTS").unwrap_or_else(|_| "javascript,typescript,tsx".into());
     for (name, dialect) in all.into_iter().filter(|(name, _)| wanted.split(',').any(|w| w == *name)) {
@@ -2607,6 +2610,9 @@ fn python_tape_expect() {
         Ok("markdown-inline") => GrammarDialect::MarkdownInline,
         Ok("sql") => GrammarDialect::Sql,
         Ok("vue") => GrammarDialect::Vue,
+        Ok("go") => GrammarDialect::Go,
+        Ok("c") => GrammarDialect::C,
+        Ok("cpp") => GrammarDialect::Cpp,
         _ => GrammarDialect::Python,
     };
     let grammar = Grammar::new(dialect).unwrap();
@@ -3485,6 +3491,118 @@ fn java_parse_costs() {
         }
     }
     eprintln!("Java: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// Go's tapes from the lean parser (the product's parser for Go, decision 0305) are tree-sitter-go's,
+/// byte for byte, on hand-written cases; a text tree-sitter reads with an error the lean parser
+/// refuses (its file goes to tree-sitter). The corpus comparison is `rerail-go-lean`'s `oracle`.
+#[test]
+fn go_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::go_lean;
+    let sources = [
+        "",
+        "// only a comment\n/* block */\npackage a\n",
+        "package main\n\nimport (\n\t\"fmt\"\n\t. \"strings\"\n\t_ \"embed\"\n\tm \"math\"\n)\n\nimport \"os\"\n",
+        "package a\n\nconst (\n\tA = iota\n\tB\n\tC, D = 1, 2\n)\n\nvar x, y int = 1, 2\nvar (\n\tz = []int{1, 2,}\n\tw map[string]chan<- *T\n)\n\ntype T struct {\n\tA, B int `json:\"a\"`\n\t*E\n\tpkg.F\n}\n\ntype I interface {\n\tM(a int) (b string, err error)\n\t~int | ~string\n}\n\ntype U = T\n",
+        "package a\n\nfunc F[T any, U comparable](x T, ys ...U) (r T) {\n\treturn x\n}\n\nfunc (r *R[T]) M() {}\n",
+        "package a\n\nfunc f() {\n\tx := 1\n\tx += 2\n\tx++\n\tc <- x\n\tgo g()\n\tdefer h()\n\tif x := f(); x > 0 {\n\t} else if y {\n\t} else {\n\t}\n\tfor i := 0; i < n; i++ {\n\t}\n\tfor k, v := range m {\n\t}\n\tfor range c {\n\t}\nL:\n\tfor {\n\t\tbreak L\n\t}\n\tgoto L\n}\n",
+        "package a\n\nfunc f() {\n\tswitch x := v.(type) {\n\tcase int, nil:\n\tdefault:\n\t}\n\tswitch {\n\tcase a > b:\n\t\tfallthrough\n\tcase c:\n\t}\n\tselect {\n\tcase v := <-c:\n\tcase c <- 1:\n\tdefault:\n\t}\n}\n",
+        "package a\n\nvar s = []string{\"a\\n\\x41\\u00e9\", `raw\n`, \"\"}\nvar r = 'x' + '\\''\nvar n = 0x1F + 0o17 + 0b1 + 1_000 + .5e-3 + 1i + 0x1p-2\n",
+        "package a\n\nvar (\n\ta = F[int](x)\n\tb = pkg.F[T](x)\n\tc = f[i](x, y)\n\td = G[*pkg.T](x, y)\n\te = (*T)(p)\n\tf = (*S[A])(p)\n\tg = *(*[]T)(p)\n\th = T{A: 1, B: {2}}\n\ti = func(x int) int { return x }(1)\n\tj = interface{}(x)\n\tk = new(T)\n\tl = make([]int, 0, n)\n\tm = a[1:2:3]\n\tn = x.(T)\n)\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Go).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Go.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = go_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
+    for invalid in ["package a\nfunc f( {\n", "package a\nvar x = (1,\n", "package a\nfunc f() {\n", "package a\nvar s = \"ab\n", "package a\nfunc f() { x := }\n", "package a\nvar x = 1 +\n"] {
+        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(go_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads Go with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-go.
+#[test]
+fn the_product_reads_go_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::go_lean;
+    let grammar = Grammar::new(GrammarDialect::Go).unwrap();
+    assert!(tree_parser(GrammarDialect::Go).is_some(), "Go's parser is installed");
+    let source = "package a\n\nfunc f(x int) int { return x + 1 } // one\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = go_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    let invalid = "package a\nfunc f( {\n";
+    assert!(go_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// What a Go file's tape costs, by parser: the lean parser (`tape::go_lean`, the product's)
+/// against tree-sitter-go, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn go_parse_costs() {
+    use crate::code_rule_dsl::tape::go_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Go;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| go_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| go_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(go_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("Go: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
     for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
         eprintln!(
             "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",

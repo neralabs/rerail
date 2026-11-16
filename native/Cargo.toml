@@ -208,6 +208,8 @@ rerail-ecma-lean = { path = "crates/ecma_lean" }
 rerail-rust-lean = { path = "crates/rust_lean" }
 # The lean Java parser, measured directly (`tape::tests::java_parse_costs`).
 rerail-java-lean = { path = "crates/java_lean" }
+# The lean Go parser, measured directly (`tape::tests::go_parse_costs`).
+rerail-go-lean = { path = "crates/go_lean" }
 # The lean C# parser, measured directly (`tape::tests::csharp_parse_costs`).
 rerail-csharp-lean = { path = "crates/csharp_lean" }
 # The lean PHP parser, measured directly (`tape::tests::php_parse_costs`).
