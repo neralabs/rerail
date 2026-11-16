@@ -2428,12 +2428,18 @@ pub type Histogram = (u64, rustc_hash::FxHashMap<Vec<i64>, u64>);
 /// Decision 0203 §3: per wanted (step, key columns) of probe `line`'s join, the rows of the step's relation (every
 /// live row, not its delta alone) that pass the step's constants, counted by the values of those columns. A relation
 /// of more than `cap` rows is read at a stride, its counts scaled. `None` for a step that is not a positive atom.
-pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, wanted: &[(usize, Vec<usize>)], cap: usize) -> Result<Vec<Option<Histogram>>> {
+/// `whole`: the steps are of the line's whole plan (O168), whose order is not its delta join's.
+pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, wanted: &[(usize, Vec<usize>)], cap: usize) -> Result<Vec<Option<Histogram>>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
-    let Some(Body::Join(j)) = comp.probes.get(line).map(|p| &p.body) else { return Ok(vec![None; wanted.len()]) };
+    let j = comp.probes.get(line).and_then(|p| match (whole, &p.body) {
+        (true, _) => p.whole.as_ref(),
+        (false, Body::Join(j)) => Some(j),
+        (false, _) => None,
+    });
+    let Some(j) = j else { return Ok(vec![None; wanted.len()]) };
     Ok(wanted.iter().map(|(at, cols)| {
         let Some(Step::Atom { src, neg: false, keys, .. }) = j.steps.get(*at) else { return None };
         let consts: Vec<(usize, i64)> = keys.iter().filter_map(|&(c, k)| match k { Key::Const(v) => Some((c, v)), Key::Slot(_) => None }).collect();

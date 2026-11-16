@@ -6645,8 +6645,9 @@ impl<'a> Run<'a, '_> {
     /// Decision 0203 §3: the exact pair statistics of rule `r`'s line `line` in component `name`, run in `order`:
     /// for each two positive atoms that share a variable, the rows of the first (past its constants) and the rows
     /// of the second those join, counted from the engine's histograms of both on the shared variables. Each is an
-    /// observation of the second atom bound by the first's variables, as `observe` keeps them.
-    fn exact_statistics(&self, name: &str, line: usize, b: &Body<'_>, order: &[Step]) -> Vec<(Sig, [i64; 2])> {
+    /// observation of the second atom bound by the first's variables, as `observe` keeps them. `whole`: `order` is the
+    /// line's whole plan (O168), and its steps are read there.
+    fn exact_statistics(&self, name: &str, line: usize, whole: bool, b: &Body<'_>, order: &[Step]) -> Vec<(Sig, [i64; 2])> {
         if self.model.inputs.atoms.is_none() {
             joins::log(|| format!("exact {}: symbols as text, no histograms", b.head_text()));
             return Vec::new();
@@ -6685,7 +6686,7 @@ impl<'a> Run<'a, '_> {
             joins::log(|| format!("exact {}: no two positive atoms share a variable ({} atoms: {})", b.head_text(), atoms.len(), (0..b.len()).map(|i| b.show(i)).collect::<Vec<_>>().join(", ")));
             return Vec::new();
         }
-        let hist = match super::native::component::step_histograms(self.db, name, line, &wanted, joins::HISTOGRAM_ROWS) {
+        let hist = match super::native::component::step_histograms(self.db, name, line, whole, &wanted, joins::HISTOGRAM_ROWS) {
             Ok(h) => h,
             Err(e) => {
                 joins::log(|| format!("exact {}: no histograms: {e}", b.head_text()));
@@ -7758,7 +7759,7 @@ impl<'a> Run<'a, '_> {
                     let rule = order_rules[line];
                     joins::flag_slow(key, rule, est, work);
                     super::profile::decision("slow joins (decision 0203)", || format!("{} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows", b.head_text()));
-                    let exact = self.exact_statistics(&name, line, &b, &probes[k].2);
+                    let exact = self.exact_statistics(&name, line, false, &b, &probes[k].2);
                     joins::log(|| format!("slow {} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows; {} exact pair statistics", b.head_text(), exact.len()));
                     joins::put_exact(key, rule, exact);
                     self.heavy_for([r], true, Some(key));
@@ -7980,7 +7981,7 @@ impl<'a> Run<'a, '_> {
                         let rule = order_rules[line];
                         joins::flag_slow(key, rule, est, work);
                         super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
-                        let exact = self.exact_statistics(&name, line, &b, &running);
+                        let exact = self.exact_statistics(&name, line, whole, &b, &running);
                         joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
                         joins::put_exact(key, rule, exact);
                         self.heavy_for([r], true, Some(key));

@@ -128,6 +128,27 @@ fn a_whole_plan_is_cut_and_a_finished_trial_keeps_its_rows() {
     closure::semi_naive_here(false);
 }
 
+/// Decision 0203 §3 at a whole plan's cut: the planner's statistics are of the whole plan's order, so its steps' histograms
+/// are read in the whole join, not the delta join, whose step at the same place is another atom. Read there, a key
+/// column past that atom's width was out of bounds (a panic in the cross-file part over PostHog).
+#[test]
+fn a_whole_plans_step_histograms_are_read_in_its_whole_join() {
+    let db = connection();
+    db.execute_batch("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES (1, 2), (2, 3), (3, 3);\nCREATE TABLE path(c0, c1); INSERT INTO path SELECT c0, c1 FROM edge;\nCREATE TABLE node(c0); INSERT INTO node VALUES (2), (3);").unwrap();
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    let node = format!("t:b:{}:{}:i", hex("node"), hex("c0"));
+    let delta = format!("pos d0 v0 v1\npos {input} v1 v2\npos {node} v2\nhead v0 v2");
+    let whole = format!("pos {node} v2\npos {input} v1 v2\npos c0 v0 v1\nhead v0 v2");
+    open(&db, &format!("name whist\nrel path ii\njoin 0 0 {} {}", hex(&delta), hex(&whole))).unwrap();
+    // Step 0 by column 0: the whole plan's is `node` (one column, 2 rows); the delta join's is `path` (3 rows).
+    let of = |whole: bool, wanted: &[(usize, Vec<usize>)]| step_histograms(&db, "whist", 0, whole, wanted, 1 << 20).unwrap();
+    assert_eq!(of(true, &[(0, vec![0])])[0].as_ref().map(|h| h.0), Some(2));
+    assert_eq!(of(false, &[(0, vec![0])])[0].as_ref().map(|h| h.0), Some(3));
+    // The whole plan's step 2 is `path`, by its second column: in the delta join that step is `node`, of one column.
+    assert_eq!(of(true, &[(2, vec![1])])[0].as_ref().map(|h| (h.0, h.1.len())), Some((3, 2)));
+    close(&db, "whist").unwrap();
+}
+
 /// Decision 0206, a first step fused with its filters (`rowcode`): a cut inside a chunk stops the chunk at the row it
 /// is at, so the rows after it are left and read by the wave going on. Before, the chunk's loop went on naming each
 /// row it passed over as reached: the cut left one row, and the fixpoint lost what the rest derive.
