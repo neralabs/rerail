@@ -1497,10 +1497,9 @@ fn tapes(
         // Back for a retry, which builds the prefix again.
         plan.initial.set(initial);
     }
-    // The documents in the slabs, one table over them: a batch over `MAX_SLABS` is the wave's to
-    // split.
+    // The documents resident, gathered into one block (decision 0289 §4), one table over them.
     let table = crate::code_rule_dsl::prof::time("residency.docs", || crate::code_rule_dsl::residency::slabs::admit_docs(files))?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or_else(capacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or_else(capacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }

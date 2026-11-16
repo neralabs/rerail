@@ -4088,6 +4088,7 @@ dependencies = [
  "libc",
  "metal",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-metal",
  "rerail-prof",

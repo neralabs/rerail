@@ -30,8 +30,6 @@ use std::sync::Mutex;
 static SERIAL: Mutex<()> = Mutex::new(());
 
 #[test]
-
-#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
 fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     if metal::Device::system_default().is_none() {
         return;
@@ -128,4 +126,45 @@ fn sources_are_admitted_once_and_read_in_place() {
     for (source, &k) in again.iter().zip(&at) {
         assert_eq!(slabs[k as usize].id, source.slab.id);
     }
+}
+
+/// Decision 0289 §4: a batch reads one block. Documents admitted into two slabs (a source past a slab's size between
+/// them) are copied into one, each read as before; the residency finds them there, so the next batch over them copies
+/// nothing.
+#[test]
+fn a_batch_over_several_slabs_is_gathered_into_one_block() {
+    if metal::Device::system_default().is_none() {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    drop_all();
+    let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = SOURCES.iter().map(|(source, lang)| document(source, *lang).0).collect();
+    let first = admit_docs(&docs[..1]).unwrap();
+    // A source larger than a slab takes one of its own; the next document goes to another.
+    let big = vec![b'x'; SLAB_BYTES + (1 << 20)];
+    let held_big = admit_sources(&[&big]).unwrap();
+    let rest = admit_docs(&docs[1..]).unwrap();
+    assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
+    let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
+    let table = DocTable::one_block(documents.clone()).unwrap();
+    assert_eq!(table.slabs.len(), 1, "one block bound");
+    for (document, gathered) in documents.iter().zip(&table.documents) {
+        assert_eq!(gathered.slab.id, table.slabs[0].id);
+        assert_eq!(gathered.image(), document.image());
+        let v = &gathered.view;
+        assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
+        let nodes = v.nodes as usize;
+        assert_eq!(u32s(gathered, v.parent, nodes), u32s(document, document.view.parent, nodes));
+        assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
+        assert_eq!(u32s(gathered, v.kids, v.kid_count as usize), u32s(document, document.view.kids, document.view.kid_count as usize));
+        assert_eq!(gathered.code_starts(), document.code_starts());
+        assert_eq!(gathered.codes().len(), document.codes().len());
+    }
+    // Asked again, the residency gives the gathered documents: one slab already, nothing copied.
+    let again = admit_docs(&docs).unwrap();
+    assert!(again.iter().all(|document| document.slab.id == table.slabs[0].id));
+    let twice = gather(again.clone()).unwrap();
+    assert!(twice.iter().zip(&again).all(|(a, b)| Arc::ptr_eq(a, b)));
+    drop((table, held_big, twice, again));
+    drop_all();
 }

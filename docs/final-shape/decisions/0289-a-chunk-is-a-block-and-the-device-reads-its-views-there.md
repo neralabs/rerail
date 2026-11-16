@@ -170,6 +170,43 @@ The residency's slabs become chunk blocks:
 
 The Metal tape tests (`metal_tape_tests`, `tapes_are_tape`) are the check.
 
+Built in two steps, each leaving the engine working.
+
+**Step A: the slabs are blocks, and a batch reads one.** The tapes reach the device from the AST matcher wave's label
+passes (0106, 0107), which admit a batch's documents into the residency (`admit_docs`) and bind a table over them.
+Before, a slab was a raw lease of the pool, and a batch bound up to four of them (`MAX_SLABS`). A batch over more was
+refused and split.
+
+- A slab is now a chunk block over a lease of the pool (`lease_block_within`, 0266 §16): its rooms are the block's
+  allocations, zeroed by the block when the lease is recycled.
+- A resident document records its range in its block (`Resident::at`, `len`): every part of it is inside.
+- A batch's documents are gathered into one block (`slabs::gather`, `DocTable::one_block`). Those not in it already
+  are copied there, a range each, their view's offsets moved with them. The residency then finds them there, so a
+  later batch over them copies nothing. The newest block takes the copies when they fit, else a new one holds them
+  all. Kernels bind that one block (the four `Slabs` slots all point at it), and no batch is split for its slabs.
+- A document admitted from memory (`Parts::Bytes`) is no longer checked against its SHA-256 twice: its digest was
+  made from those same bytes (`TapeDoc::tape_digest`). One read from the store (`Parts::Frames`) still is.
+
+Checks: `a_batch_over_several_slabs_is_gathered_into_one_block` (documents in two blocks gathered into one, every
+part read as before, and asked again, nothing copied); `stored_tapes_are_admitted_into_slabs_and_read_in_place`
+(no longer ignored: it is hosted in the engine, where the languages are registered); the device's tape test; the
+metal crate's recycled-slab test; the matcher wave on Metal (`the_wave_finds_ws_matches_on_metal`,
+`the_wave_is_one_evaluation_on_metal`).
+
+Measured cold on hogql, the same findings. The label passes ran over fewer documents in the second run (the wave's
+lane varies), so per document and per byte:
+
+| | Batches | Documents | `residency.docs` | Admission |
+|---|---|---|---|---|
+| Before | 22 | 653 | 44.4 ms, 68 µs a document | 32.2 ms for 18.1 MB, 1.78 µs a KB |
+| Step A | 17 | 434 | 20.3 ms, 47 µs a document | 13.1 ms for 11.9 MB, 1.10 µs a KB |
+
+The machine's load was lower in the second run. What is left of an admission is the image serialized twice (once for
+its digest, once to copy) and the derived parts.
+
+**Step B: `DocView` and `Slabs` go.** A kernel binds the block and reads its document table, a `structure!` with
+spans, as `ChunkDoc` is read.
+
 ## Order, and why
 
 §2 first: it removes the measured cost (the views' 22.4 ms), and needs only §1's copy of each array, made once per

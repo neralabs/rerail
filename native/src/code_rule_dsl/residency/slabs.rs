@@ -109,7 +109,7 @@ pub fn admit(
 
 /// The documents of in-memory tapes, resident, in order: hits from the residency, misses copied
 /// from each document's image and source (a batch whose tapes were restored before it ran).
-pub(in crate::code_rule_dsl) fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
+pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
     let digests = docs.iter().map(|doc| doc.tape_digest().map_err(invalid)).collect::<Result<Vec<_>, _>>()?;
     let missing = misses(&digests)?;
     if !missing.is_empty() {
@@ -172,31 +172,30 @@ fn place(
     let by_code_at = code_start_at + aligned(4 * (plan.codes + 1));
     let tape = region(tape_at, plan.tape);
     let source = region(source_at, plan.source);
-    let source_sha256: [u8; 32] = Sha256::digest(match parts {
-        // Decompressed straight into the slab, to the frames' raw lengths exactly.
+    match parts {
+        // Decompressed straight into the slab, to the frames' raw lengths exactly, then checked: the
+        // store's bytes are the tape's and the source's whose digests the store holds.
         Parts::Frames(frames) => {
             crate::content_store::decompress_into(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
             crate::content_store::decompress_into(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))?;
-            &*source
+            let source_sha256: [u8; 32] = Sha256::digest(&*source).into();
+            if source_sha256 != frames.source_sha256 {
+                return Err(invalid("a resident source's digest"));
+            }
+            // The key is the tape's identity: its bytes and its source's (`HashKey::tape_identity`).
+            if crate::code_rule_dsl::tape::tape_identity(&source_sha256, tape) != *digest {
+                return Err(invalid("a resident tape's digest"));
+            }
         }
+        // A document in memory: its digest was made from these same bytes (`TapeDoc::tape_digest`), so
+        // there is nothing read to check them against.
         Parts::Bytes(image, text) => {
             tape.copy_from_slice(image);
             source.copy_from_slice(text);
-            &*source
         }
-    })
-    .into();
-    if let Parts::Frames(frames) = parts
-        && source_sha256 != frames.source_sha256
-    {
-        return Err(invalid("a resident source's digest"));
     }
     let tape = &*tape;
     let source = &*source;
-    // The key is the tape's identity: its bytes and its source's (`HashKey::tape_identity`).
-    if crate::code_rule_dsl::tape::tape_identity(&source_sha256, tape) != *digest {
-        return Err(invalid("a resident tape's digest"));
-    }
     let layout = resident::layout(tape).map_err(invalid)?;
     if layout.source_len != source.len()
         || layout.nodes as usize != plan.nodes
@@ -297,6 +296,8 @@ fn place(
         digest: *digest,
         slab: Arc::clone(slab),
         view,
+        at: offset,
+        len: plan.bytes(),
         bytes: [aligned(plan.tape), aligned(plan.source), plan.derived()],
         tape_length: plan.tape,
     })
