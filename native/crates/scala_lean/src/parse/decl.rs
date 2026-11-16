@@ -41,12 +41,8 @@ impl P<'_> {
         }
         let (kind, rest): (K, fn(&mut Self) -> R<()>) = match t.code {
             w::IMPORT => (K::ImportDeclaration, Self::import_rest),
-            w::PACKAGE => {
-                if self.word_at(1) == w::OBJECT {
-                    return self.refuse();
-                }
-                (K::PackageClause, Self::package_rest)
-            }
+            w::PACKAGE if self.word_at(1) == w::OBJECT => (K::PackageObject, Self::package_object_rest),
+            w::PACKAGE => (K::PackageClause, Self::package_rest),
             w::CLASS => (K::ClassDefinition, Self::class_rest),
             w::OBJECT => (K::ObjectDefinition, Self::object_rest),
             w::TRAIT => (K::TraitDefinition, Self::class_rest),
@@ -63,7 +59,7 @@ impl P<'_> {
         let s = self.tok().start;
         let n = self.t.wrap_from(m, kind, field, s);
         rest(self)?;
-        if matches!(kind, K::ClassDefinition | K::ObjectDefinition | K::TraitDefinition | K::FunctionDefinition | K::ValDefinition | K::VarDefinition | K::TypeDefinition) {
+        if matches!(kind, K::PackageObject | K::ClassDefinition | K::ObjectDefinition | K::TraitDefinition | K::FunctionDefinition | K::ValDefinition | K::VarDefinition | K::TypeDefinition) {
             self.end_marker()?;
         }
         let id = self.close(n);
@@ -355,6 +351,14 @@ impl P<'_> {
         self.template_tail()
     }
 
+    /// `package object p extends B { … }` (`package_object`: `name`, `extend`, `body`).
+    fn package_object_rest(&mut self) -> R<()> {
+        self.tk(K::TPackage)?;
+        self.tk(K::TObject)?;
+        self.identifier(f::NAME)?;
+        self.template_tail()
+    }
+
     /// `object O extends B { … }` (`name`, `extend`, `body`).
     fn object_rest(&mut self) -> R<()> {
         if self.is_word(w::CASE) {
@@ -437,7 +441,7 @@ impl P<'_> {
             _ => return self.refuse(),
         }
         if self.self_type_ahead() {
-            return self.refuse();
+            self.self_type()?;
         }
         self.statements(Region::Indent, f::NONE)?;
         match self.layout(v::OUTDENT | v::COMMA_OUTDENT)? {
@@ -454,28 +458,57 @@ impl P<'_> {
     pub(super) fn template_body(&mut self, field: u8) -> R<u32> {
         let n = self.open_field(K::TemplateBody, field);
         self.tk(K::TLBrace)?;
+        // An indent inside the braces (`_braced_template_body2`: an indent before or after the self
+        // type, statements, the outdent at the `}`).
+        let mut indent = self.braced_indent()?;
         if self.self_type_ahead() {
-            return self.refuse();
-        }
-        if self.tok().nl && self.peek() != T::RBrace {
-            // An indent inside the braces (`_braced_template_body2`: indent, statements, outdent
-            // at the `}`).
-            if let Some(Ext::Indent) = self.layout(v::INDENT)? {
-                self.take();
-                self.statements(Region::Indent, f::NONE)?;
-                match self.layout(v::OUTDENT)? {
-                    Some(Ext::Outdent) => {
-                        self.take();
-                    }
-                    _ => return self.refuse(),
-                }
-                self.expect(T::RBrace)?;
-                return Ok(self.close(n));
+            self.self_type()?;
+            if !indent {
+                indent = self.braced_indent()?;
             }
         }
-        self.statements(Region::Brace, f::NONE)?;
+        self.statements(if indent { Region::Indent } else { Region::Brace }, f::NONE)?;
+        if indent {
+            match self.layout(v::OUTDENT)? {
+                Some(Ext::Outdent) => {
+                    self.take();
+                }
+                _ => return self.refuse(),
+            }
+        }
         self.expect(T::RBrace)?;
         Ok(self.close(n))
+    }
+
+    /// The indent the scanner gives at a line's start inside braces: whether it did.
+    fn braced_indent(&mut self) -> R<bool> {
+        if self.tok().nl && self.peek() != T::RBrace && self.layout(v::INDENT)? == Some(Ext::Indent) {
+            self.take();
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// `name: T =>` (`self_type`: the name, its type; the `:` and `=>` left out).
+    fn self_type(&mut self) -> R<()> {
+        let n = self.open(K::SelfType);
+        if self.is_word(w::UNDERSCORE) {
+            let x = self.open(K::Wildcard);
+            self.tk(K::TUnderscore)?;
+            self.close(x);
+        } else {
+            self.identifier(f::NONE)?;
+        }
+        if self.is_op(op::COLON) {
+            self.tk(K::TColon)?;
+            self.typ_x(f::NONE, super::types::Tx { no_arrow: true })?;
+        }
+        if !self.is_op(op::ARROW) {
+            return self.refuse();
+        }
+        self.tk(K::TFatArrow)?;
+        self.close(n);
+        Ok(())
     }
 
     /// Whether a self type starts the body (`self =>`, `self: T =>`, `this: T =>`).
@@ -595,9 +628,12 @@ impl P<'_> {
         let n = self.open_field(K::Parameters, f::PARAMETERS);
         self.tk(K::TLParen)?;
         if self.is_word(w::USING) {
-            return self.refuse();
-        }
-        if self.is_word(w::IMPLICIT) {
+            // `(using c: C)`; `(using C)` (types alone) is refused.
+            if !(Self::is_name(self.peek_at(1)) && self.is_op_at(2, op::COLON)) {
+                return self.refuse();
+            }
+            self.tk(K::TUsing)?;
+        } else if self.is_word(w::IMPLICIT) {
             self.tk(K::TImplicit)?;
         }
         while self.peek() != T::RParen {

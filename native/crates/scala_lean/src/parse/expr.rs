@@ -31,6 +31,7 @@ impl P<'_> {
     /// `_identifier`: a name (`identifier`) or an operator (`operator_identifier`), given `field`.
     pub(super) fn identifier(&mut self, field: u8) -> R<u32> {
         let t = self.tok();
+        self.not_keyword_after_dot(t)?;
         if Self::is_name(t) {
             return self.leaf(K::Identifier, field);
         }
@@ -43,19 +44,34 @@ impl P<'_> {
     /// A name as a leaf of `kind` (`type_identifier`, …).
     pub(super) fn ident_as(&mut self, kind: K, field: u8) -> R<u32> {
         let t = self.tok();
+        self.not_keyword_after_dot(t)?;
         if Self::is_name(t) || t.kind == T::Op && !op::is_reserved(t.code) && t.code != op::ARROW {
             return self.leaf(kind, field);
         }
         self.refuse()
     }
 
+    /// `extension` after a `.` (`a.extension.B`): tree-sitter reads its keyword there (refused).
+    fn not_keyword_after_dot(&mut self, t: Tok) -> R<()> {
+        if t.kind == T::Id && t.code == w::EXTENSION && self.i > 0 && self.toks[self.i - 1].kind == T::Dot {
+            return self.refuse();
+        }
+        Ok(())
+    }
+
     // ---- Expressions.
 
     /// `expression`, given `field`, in the `{expression}` class: its place.
     pub(super) fn expression_f(&mut self, field: u8) -> R<u32> {
+        self.expression_m(field, false)
+    }
+
+    /// `expression_f`, a `match` after it left to the caller where `stop_match` (an assignment's
+    /// right side: `a = b match {…}` matches the assignment).
+    fn expression_m(&mut self, field: u8, stop_match: bool) -> R<u32> {
         self.deeper()?;
         let saved = std::mem::replace(&mut self.right_operand, false);
-        let n = self.expression();
+        let n = self.expression(stop_match);
         self.right_operand = saved;
         let n = n?;
         self.depth -= 1;
@@ -116,7 +132,7 @@ impl P<'_> {
     }
 
     /// `expression`.
-    fn expression(&mut self) -> R<u32> {
+    fn expression(&mut self, stop_match: bool) -> R<u32> {
         let t = self.tok();
         if t.kind == T::Id {
             match t.code {
@@ -141,6 +157,9 @@ impl P<'_> {
         loop {
             let t = self.tok();
             if t.kind == T::Id && t.code == w::MATCH {
+                if stop_match {
+                    break;
+                }
                 if t.nl && self.layout(AFTER_OPERAND)?.is_some() {
                     break;
                 }
@@ -162,6 +181,10 @@ impl P<'_> {
                 self.tk(K::TEq)?;
                 self.indentable_assign()?;
                 n = self.close(x);
+                // `a = b match {…}`: the match is over the assignment (its value an expression).
+                if self.is_word(w::MATCH) {
+                    continue;
+                }
                 break;
             }
             if t.kind == T::Op && t.code == op::COLON && !t.nl {
@@ -198,7 +221,7 @@ impl P<'_> {
                 return self.indented_block(f::RIGHT, at);
             }
         }
-        self.expression_f(f::RIGHT)
+        self.expression_m(f::RIGHT, true)
     }
 
     /// An infix expression whose operators bind tighter than `min` (`infix_expression`: `left`,
@@ -455,7 +478,17 @@ impl P<'_> {
                         p.t.last_end = e.end;
                         p.close(n);
                     }
-                    Some(_) => return p.refuse(),
+                    Some(_) => {
+                        // `xs*` (`vararg`: the `*` the scanner's, of no name).
+                        let n = p.open(K::Vararg);
+                        p.simple()?;
+                        if !(p.is_op(op::STAR) && matches!(p.kind_at(1), T::RParen | T::Comma)) {
+                            return p.refuse();
+                        }
+                        let e = p.bump()?;
+                        p.t.last_end = e.end;
+                        p.close(n);
+                    }
                     None => {
                         p.expression_f(f::NONE)?;
                     }
@@ -623,13 +656,12 @@ impl P<'_> {
                 p.depth -= 1;
                 match p.layout(fol)? {
                     Some(Ext::Semi) => {
-                        // A semicolon the scanner gives before the `}` is the clause's last child.
+                        // A semicolon the scanner gives is the clause's (before the `}`, or before a
+                        // `case` whose arrow is on a later line: its last child), the comments
+                        // before it too.
                         let at = p.take();
-                        if p.peek() == T::RBrace {
-                            // The comments before it are the clause's too.
-                            p.t.flush(at);
-                            p.t.last_end = p.t.last_end.max(at);
-                        }
+                        p.t.flush(at);
+                        p.t.last_end = p.t.last_end.max(at);
                     }
                     Some(Ext::Outdent | Ext::CommaOutdent) if region == Region::Indent => return Ok(()),
                     Some(_) => return p.refuse(),
@@ -694,7 +726,11 @@ impl P<'_> {
                 }
                 _ => return self.refuse(),
             }
-            self.kw(w::THEN, K::TThen)?;
+            // `then` is in the condition's field (`condition: seq(…, "then")`).
+            if !self.is_word(w::THEN) {
+                return self.refuse();
+            }
+            self.tkf(K::TThen, f::CONDITION)?;
         }
         self.with_fol(fol | v::GATE, |p| p.indentable_f(f::CONSEQUENCE))?;
         if self.peek() == T::Semi && self.word_at(1) == w::ELSE {
@@ -958,14 +994,16 @@ impl P<'_> {
     pub(super) fn lambda_ahead(&mut self) -> bool {
         let t = self.tok();
         let k = match t.kind {
-            T::Id if t.code == w::IMPLICIT => 2,
+            T::Id if t.code == w::IMPLICIT => {
+                if !Self::is_name(self.peek_at(1)) {
+                    return false;
+                }
+                2
+            }
             T::Id | T::BackId if Self::is_name(t) || t.code == w::UNDERSCORE => 1,
             T::LParen => self.matching(0) + 1,
             _ => return false,
         };
-        if k == 2 && !Self::is_name(self.peek_at(1)) {
-            return false;
-        }
         matches!(self.op_at(k), op::ARROW | op::QARROW)
     }
 
@@ -1034,11 +1072,34 @@ impl P<'_> {
         let n = self.open(K::InstanceExpression);
         self.tk(K::TNew)?;
         if self.peek() == T::LBrace {
-            return self.refuse();
+            // `new { … }`: a template body alone.
+            self.template_body(f::NONE)?;
+            return Ok(self.close(n));
         }
-        self.constructor_application(f::NONE)?;
-        if self.is_word(w::WITH) {
-            return self.refuse();
+        let m = self.mark();
+        let b = self.annotated_type()?;
+        if self.is_word(w::WITH) && !self.tok().nl {
+            // `new A with B { … }`: a compound type (`base`, `extra`), its `with`s left out.
+            self.t.refield(b, f::BASE);
+            let c = self.t.wrap(m, K::CompoundType, f::NONE);
+            while self.is_word(w::WITH) && !self.tok().nl {
+                self.tk(K::TWith)?;
+                let x = self.annotated_type()?;
+                self.t.refield(x, f::EXTRA);
+            }
+            self.close(c);
+            self.t.unmark(m);
+            if self.peek() == T::LParen {
+                return self.refuse();
+            }
+        } else {
+            self.t.unmark(m);
+            while self.peek() == T::LParen && !self.tok().nl {
+                self.arguments(f::ARGUMENTS)?;
+            }
+            if self.is_word(w::WITH) {
+                return self.refuse();
+            }
         }
         if self.peek() == T::LBrace && !self.tok().nl {
             self.template_body(f::NONE)?;
