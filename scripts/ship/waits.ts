@@ -552,8 +552,9 @@ function upgradeGroup(settings: WaitsSettings, side: WaitSide, rep: number, phas
   }
 }
 
-const BUSY_STATUS_SAMPLES = 60;
-const BUSY_MAX_SCANS = 20;
+// Each scan follows a branch switch so its audit has work; a warm one lasts a second or two, so a few probes fit in it.
+const BUSY_STATUS_SAMPLES = 100;
+const BUSY_MAX_SCANS = 100;
 
 function busyGroup(settings: WaitsSettings, side: WaitSide, rep: number, phase: string): Measured[] {
   const home = new Home(settings, side, join(settings.work, `x${side[0]}`));
