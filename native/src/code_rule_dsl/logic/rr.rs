@@ -676,6 +676,41 @@ fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static
     }))
 }
 
+/// The text tests' compiled groups of automata as images (decisions 0075, 0264): each under its key, read from the
+/// shipped bundle, else the engine build's image store (`image_store`), so a project's first run reads the groups the
+/// bundle or an earlier project determinized. A group's DFA is the build's (its bytes are regex-automata's, in the
+/// build's byte order), as the other images are. An entry is a tag (1: a DFA follows; 0: the group does not
+/// determinize within the limit) and the DFA's bytes.
+pub struct ImageDfas(pub Option<std::sync::Arc<crate::content_store::ContentStore>>);
+
+impl ImageDfas {
+    fn key(group: &str) -> crate::content_store::HashKey {
+        crate::content_store::HashKey::sha256(format!("rerail dfa group image 1\0{}\0{group}", crate::code_rule_dsl::build_ids::engine()).as_bytes())
+    }
+}
+
+impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
+    fn get(&self, group: &str) -> Option<Option<Vec<u8>>> {
+        let (bytes, id) = images::read(self.0.as_deref(), Self::key(group))?;
+        if let (Some(store), Some(id)) = (self.0.as_deref(), id) {
+            renew_image(store, id);
+        }
+        crate::code_rule_dsl::prof::count("rr.dfa_image_read", 1);
+        match bytes.split_first() {
+            Some((1, dfa)) => Some(Some(dfa.to_vec())),
+            Some((0, _)) => Some(None),
+            _ => None,
+        }
+    }
+
+    fn put(&self, group: &str, dfa: Option<&[u8]>) {
+        let mut entry = vec![u8::from(dfa.is_some())];
+        entry.extend_from_slice(dfa.unwrap_or_default());
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
+        keep_image(self.0.as_deref(), "a group of automata", Self::key(group), entry);
+    }
+}
+
 /// The lease of image `id`, read by this run, renewed (`keep_image`).
 fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
     use crate::content_store::write_back::Syms;

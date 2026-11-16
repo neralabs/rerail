@@ -516,58 +516,6 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     Ok(Some(documents))
 }
 
-/// The compiled groups' schema (decision 0075).
-const DFAS: u32 = crate::content_store::live_fact_schema(103);
-
-/// The path a compiled group is kept under (read by no path, as the other entries).
-const DFA_PATH: &str = "rerail/dfa";
-
-/// The plan a compiled group is kept under: what its key does not already name (the key names the engine, its version
-/// and the patterns).
-fn dfa_plan() -> FactsPlanSet {
-    FactsPlanSet::new(vec![Sha256::digest(b"rerail.dfa-entry/v1").into()])
-}
-
-/// Compiled groups of automata in the facts memo (decision 0075): each under its key, stored as a source, so a later
-/// process reads a group's DFA instead of determinizing it. An entry is a tag (1: a DFA follows; 0: the group does
-/// not determinize within the limit) and the DFA's bytes.
-/// Its second field lists the sources of every group read or stored, for the run's manifest: no other root holds them.
-pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>);
-
-impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
-    fn get(&self, key: &str) -> Option<Option<Vec<u8>>> {
-        let source = super::memo::stored_source(self.0, key).ok()??;
-        self.1.lock().expect("the groups' sources").push(source);
-        let memo = self.0.facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }).ok()?;
-        match memo.results.get(&dfa_plan().plans[0])?.entry.split_first() {
-            Some((1, bytes)) => Some(Some(bytes.to_vec())),
-            Some((0, _)) => Some(None),
-            _ => None,
-        }
-    }
-
-    fn put(&self, key: &str, dfa: Option<&[u8]>) {
-        let mut entry = vec![u8::from(dfa.is_some())];
-        entry.extend_from_slice(dfa.unwrap_or_default());
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-        // Stored by the store's writer, behind the run (decision 0104); its source reaches the manifest, queued after.
-        // A group not kept is compiled again by the next process.
-        let (key, sources) = (key.to_owned(), std::sync::Arc::clone(&self.1));
-        self.0.write_back_syms(
-            crate::content_store::write_back::Syms::None, "a group of automata",
-            entry.len() + key.len(),
-            Vec::new(),
-            Box::new(move |store| {
-                let source = super::memo::source(store, &key)?;
-                let set = dfa_plan();
-                store.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.clone() }], &[])?;
-                sources.lock().expect("the groups' sources").push(source);
-                Ok(())
-            }),
-        );
-    }
-}
-
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rr` libraries).
 

@@ -3258,23 +3258,18 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::decision("documents", || format!("none read: no rule reads a document, so the run is over none of the {} files", docs.len()));
         docs.clear();
     }
-    // The text tests' plans compiled once for the process (decision 0075), their groups of automata read from the store
-    // when an earlier process determinized them.
-    // A group is determinized where that pays: kept in the store for later runs, or for a run over many documents.
-    // A small run with no store searches few strings, and runs a group on the lazy DFA (O-vocabulary-dfa-reuse).
+    // The text tests' plans compiled once for the process (decision 0075), their groups of automata images (0264):
+    // read from the engine's bundle or its build's image store when it or an earlier process determinized them.
+    // A group is determinized where that pays: kept in the image store for later runs, or for a run over many
+    // documents. A small run with no store searches few strings, and runs a group on the lazy DFA
+    // (O-vocabulary-dfa-reuse).
     let compiling = crate::code_rule_dsl::logic::profile::span(|| "compile the text tests".into());
-    let dense = durable.is_some() || docs.len() >= DENSE_TEXT_DOCS;
-    let compiled = match durable {
-        Some(_) => {
-            // The groups' sources reach the manifest with the other late ones: those it stores are the writer's.
-            let groups = prepared::StoredDfas(store, Arc::clone(&late_sources));
-            vocabulary.compile(Some(&groups), dense)
-        }
-        None => vocabulary.compile(None, dense),
-    };
+    let groups = crate::code_rule_dsl::logic::rr::ImageDfas(crate::code_rule_dsl::logic::rr::image_store());
+    let dense = groups.0.is_some() || docs.len() >= DENSE_TEXT_DOCS;
+    let compiled = vocabulary.compile(Some(&groups), dense);
     drop(compiling);
     if let Some(c) = compiled.filter(|c| c.read + c.built + c.lazy > 0) {
-        crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read from the store, {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
+        crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read (the bundle, the build's image store or this process), {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
     }
     // The run's text tests, each string tested once: the batches' and every program the run evaluates (`Hooks::texts`).
     let vocabulary = Arc::new(vocabulary.again());
