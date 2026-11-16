@@ -3837,7 +3837,7 @@ impl Model {
                 return super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() };
             }
             // The rows each step makes when every row is walked, past the bound head too (no witness cut, decision
-            // 0229): what the device's breadth-first stages make (decision 0271).
+            // 0229): what the device's breadth-first stages make (decision 0277).
             let mut r_all = 1.0;
             for s in &order {
                 let before = r;

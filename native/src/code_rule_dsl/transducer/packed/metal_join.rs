@@ -96,7 +96,7 @@ pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
 /// wanted verdict; X (keys 0, 1) and Y (keys 2, 3) of kinds agg[1] & 15 and agg[1] >> 4 (`OPND_*`); its value into
 /// `bind_slot[0]`.
 pub(in crate::code_rule_dsl) const ROWTEXT: u32 = 10;
-/// A witness (decision 0271): per binding, its candidates of the stage's relation until one that every probe of the
+/// A witness (decision 0277): per binding, its candidates of the stage's relation until one that every probe of the
 /// rest of the body passes (`Batch::witness`); the binding out as it is. A probe's key reads a slot (`SLOT`), a
 /// constant (`CONST`) or a column of the candidate (`ACOL`, its column in `key_slot`).
 pub(in crate::code_rule_dsl) const WITNESS: u32 = 11;
@@ -688,7 +688,7 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     }
 }
 
-// A witness's probe (decision 0271): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
+// A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
 // candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
 static inline bool witness_probe(constant Stage& b, device const long* L, uint t, uint cap_in, device const long* RA, uint nra, uint ra,
                                  device const long* R, device const uint* perm, device const uint* starts, device const uint* rkeys,
@@ -2028,7 +2028,7 @@ impl Batch {
         Ok(())
     }
 
-    /// A witness stage (`WITNESS`, decision 0271) from `left` into `out`: per binding, the candidates of `right` in
+    /// A witness stage (`WITNESS`, decision 0277) from `left` into `out`: per binding, the candidates of `right` in
     /// order until one that each of `rest`'s probes (semi- or anti-joins, at most `WITNESS_PROBES`) passes; then the
     /// bindings that have one, as a semi-join writes them. `stage`'s sizes, and the probes', are set here.
     #[allow(clippy::too_many_arguments)]

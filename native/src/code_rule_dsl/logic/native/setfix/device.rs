@@ -84,7 +84,7 @@ enum Kind {
     RowText { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64>, auto: RowAuto },
     /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
     /// `cols`) and the atoms after it (`rest`: each relation, its key columns and its probe), run as one witness per
-    /// binding (`mj::WITNESS`, decision 0271), as the CPU's walk runs them (decision 0229).
+    /// binding (`mj::WITNESS`, decision 0277), as the CPU's walk runs them (decision 0229).
     Witness { rel: Arc<InRel>, cols: Vec<usize>, rest: Vec<(Arc<InRel>, Vec<usize>, mj::Stage)> },
 }
 
@@ -319,13 +319,13 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
 /// whole (no keys), the CPU makes them all too, and the device takes it.
 fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
-        // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0271).
+        // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0277).
         Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
 }
 
-/// The witness form of `j`'s steps from `i` (decision 0271), where every slot the head reads is bound before `i`
+/// The witness form of `j`'s steps from `i` (decision 0277), where every slot the head reads is bound before `i`
 /// (`setfix::tail`): an atom over an input relation that binds slots, then at most `mj::WITNESS_PROBES` atoms (or
 /// negated atoms) over input relations keyed by slots bound before `i`, constants or the first atom's columns, none
 /// with a fused program. Each binding needs one row of them, not all: the device's breadth-first stages would make
@@ -418,7 +418,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
     let mut i = 0;
     while i < j.steps.len() {
         let step = &j.steps[i];
-        // The rest of the body as one witness per binding, where it takes that shape (decision 0271).
+        // The rest of the body as one witness per binding, where it takes that shape (decision 0277).
         if matches!(step, Step::Atom { .. }) && let Some(w) = witness_stage(j, i, &bound) {
             stages.push(w);
             i = j.steps.len();
@@ -1063,7 +1063,7 @@ fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Opt
 
 /// A relation kept on the device: its rows, and its sorts by key columns.
 /// Whose rows an entry holds: a relation's, or a source's that views read whole (`View` with no rows chosen): every
-/// view of the source, whatever its columns, reads the one upload (decision 0271).
+/// view of the source, whatever its columns, reads the one upload (decision 0277).
 enum Owner {
     Rel(Weak<InRel>),
     Src(Weak<dyn crate::code_rule_dsl::facts::vtab::Source>),
@@ -1102,7 +1102,7 @@ fn owner_col(rel: &InRel, c: usize) -> usize {
 }
 
 /// The columns of the relation an atom's stage reads (`d`'s keys, column tests, binds, row program and fold): the
-/// device holds only these of it (decision 0271).
+/// device holds only these of it (decision 0277).
 fn right_cols(d: &mj::Stage) -> Vec<usize> {
     let mut out: Vec<usize> = Vec::new();
     out.extend(d.key_rcol[..d.nkeys as usize].iter().map(|&c| c as usize));
@@ -1237,7 +1237,7 @@ struct Run<'p> {
 
 /// The device's copy of `rel`'s columns `need` and `cols`, its sort by `cols` (none when it has no keys), and where
 /// each of its columns lies in the copy (`mj::NONE`: not held), uploaded and encoded into `batch` when not resident.
-/// A copy holds only the columns stages read; one that lacks a column is uploaded again with it (decision 0271).
+/// A copy holds only the columns stages read; one that lacks a column is uploaded again with it (decision 0277).
 #[allow(clippy::type_complexity)]
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vec<u32>), String> {
     RESIDENT.with_borrow_mut(|res| {
@@ -1344,7 +1344,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
 pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
     use rerail_accel::gpu::join::{StatCol, column_stats_of};
     // Each relation's upload and where the column is in it: a copy holds only the columns stages read, in its
-    // owner's numbering (decision 0271), so a column it lacks is gathered on the host.
+    // owner's numbering (decision 0277), so a column it lacks is gathered on the host.
     let devs: Vec<Option<(Rc<mj::DevRel>, usize)>> = RESIDENT.with_borrow(|res| {
         cols.iter()
             .map(|c| {

@@ -2384,7 +2384,7 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
 }
 
 /// Per probe of component `name`, the first step past the one that binds its head's slots (`tail`): from it on, the
-/// CPU's walk counts one witness (decision 0229) and the device's stages every row (decision 0271), so the two
+/// CPU's walk counts one witness (decision 0229) and the device's stages every row (decision 0277), so the two
 /// counts agree only before it. A probe that is not a join: 0.
 pub fn step_tails(conn: impl Scoped, name: &str) -> Result<Vec<usize>> {
     let conn = conn.db();

@@ -13,7 +13,7 @@
 //! new pack and removes the old, once the bytes no row names are most of it.
 //!
 //! An entry a later run found as it was, under more identities (decision 0225 §2), keeps its bytes: only those
-//! identities are appended, as a small image its row names beside the entry's (`over_*`, decision 0274). A reader
+//! identities are appended, as a small image its row names beside the entry's (`over_*`, decision 0280). A reader
 //! takes both; an entry written again whole drops it.
 
 #[allow(unused_imports)]
@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 /// An entry a run writes: its part (its content's and path's, `memo::part_of`), its path, its content's SHA-256, its
 /// document key, and its bytes (`memo::image`) with their length decoded. `over`: the bytes are not the entry but
-/// what is kept over the entry stored at its part (decision 0274): written only where that entry is the same content
+/// what is kept over the entry stored at its part (decision 0280): written only where that entry is the same content
 /// and document, else dropped (the entry was collected: the next run misses it).
 pub struct MemoPut {
     pub part: i64,
@@ -118,7 +118,7 @@ const COLUMNS: &str = "part, path, digest, doc, pack, at, len, raw, over_pack, o
 
 impl ContentStore {
     /// The entries of `rows` (`COLUMNS`), their bytes read from the packs, by part.
-    /// What is kept over an entry whose bytes are not there is left: its identities are read again (decision 0274).
+    /// What is kept over an entry whose bytes are not there is left: its identities are read again (decision 0280).
     fn blobs_of(&self, rows: Vec<Row>) -> HashMap<i64, Arc<MemoBlob>> {
         // One read of the packs for the entries and what is kept over them: the entries' first.
         let mut at: Vec<At> = rows.iter().map(|r| r.at).collect();

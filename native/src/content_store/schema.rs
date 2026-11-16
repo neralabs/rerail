@@ -730,7 +730,7 @@ CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB 
 -- The per-file memo's entries (decision 0240 §4): where each one's bytes are in the packs beside the store
 -- (`<store>.memo/<pack>.pack`), by its plan's space and its part (its content's and path's), with its path, its
 -- content's SHA-256 and its document key. A path's contents are ordered by where they were appended. `over_*`: what a
--- later run kept over the entry, its identities (decision 0274), in the packs too; `over_len` 0 is nothing
+-- later run kept over the entry, its identities (decision 0280), in the packs too; `over_len` 0 is nothing
 -- (`ADDED_COLUMNS` adds them to an older store; an older binary ignores them and reads the entry as it was made).
 CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NULL, path TEXT NOT NULL,
     digest BLOB NOT NULL, doc INTEGER NOT NULL, pack INTEGER NOT NULL, at INTEGER NOT NULL, len INTEGER NOT NULL,

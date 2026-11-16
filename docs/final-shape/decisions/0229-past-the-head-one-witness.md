@@ -49,7 +49,7 @@ looked alike, since each walked all of a document's nodes. The planner then star
   - the 27,884 finding locations are the same.
 - The step counts for such a rule are the rows walked, not every witness. Replanning reads them as the rule's real
   fan-out.
-- The device's walk does not cut yet. On Metal such a key still walks every witness. (Decision 0271 adds the
+- The device's walk does not cut yet. On Metal such a key still walks every witness. (Decision 0277 adds the
   device's witness stage.)
 - Fixed along the way (decision 0170): an atom segment was cut from every atom held when it was written, not only
   up to the write's end. When another thread interned atoms during a write, the segment ran past that end. The write

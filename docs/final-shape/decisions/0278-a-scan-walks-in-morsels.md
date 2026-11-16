@@ -1,6 +1,6 @@
-# 0272: A join's scan walks in morsels across the pool
+# 0278: A join's scan walks in morsels across the pool
 
-Numbered 0263 where it was written.
+Numbered 0263 where it was written, 0272 at the django-bugs merge.
 
 Status: building (2026-11-15). Refines the native engine's join walk (`setfix::run_join_in_each`) and the kept
 part's frames (`Retained::write_frames`, t33 K4). Follows decision 0254 (chunks evaluate at once), which left the

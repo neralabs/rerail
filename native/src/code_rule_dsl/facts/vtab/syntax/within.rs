@@ -154,7 +154,7 @@ impl Within {
     }
 
     /// Whether the batch's solve answers the `n` side: an axis of ancestors in the set (`has` reads every ancestor),
-    /// or containment in the tree, the ancestors of every kind (`inside` of the set of all kinds; decision 0271).
+    /// or containment in the tree, the ancestors of every kind (`inside` of the set of all kinds; decision 0277).
     fn solvable(&self) -> bool {
         matches!(self.mode, Mode::Axis(Axis::Nearest | Axis::Inside) | Mode::Tree)
     }
@@ -506,7 +506,7 @@ impl Source for Within {
     fn made_on_lookup(&self) -> bool {
         true
     }
-    /// A kind-set axis or containment read whole (the device's keyed read, decision 0271): the batch's solve
+    /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
     /// (decision 0143), one pass over the nodes, chosen from here on, so its `n` lookups read the same rows. Spans
     /// have no such solve.
     fn complete_rows(&self) -> bool {
@@ -514,7 +514,7 @@ impl Source for Within {
             return false;
         }
         if !self.chosen.swap(true, Ordering::Relaxed) {
-            crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0143)", || "solved for the batch: a stratum on the device reads the axis whole (decision 0271)".into());
+            crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0143)", || "solved for the batch: a stratum on the device reads the axis whole (decision 0277)".into());
         }
         true
     }

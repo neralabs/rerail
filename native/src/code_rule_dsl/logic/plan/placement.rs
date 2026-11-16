@@ -86,7 +86,7 @@ pub(in crate::code_rule_dsl) struct JoinEst {
     pub(in crate::code_rule_dsl) relation: f64,
     pub(in crate::code_rule_dsl) output: f64,
     /// Its input and output when every row is walked (`StepPlan::all`): the CPU's walk keeps one witness past the
-    /// bound head (decision 0229), the device's stages make every row (decision 0271).
+    /// bound head (decision 0229), the device's stages make every row (decision 0277).
     pub(in crate::code_rule_dsl) walked: (f64, f64),
     pub(in crate::code_rule_dsl) keys: usize,
     pub(in crate::code_rule_dsl) range: bool,
@@ -157,13 +157,13 @@ const DEVICE_SORT: f64 = 45e-6;
 /// copy (`kind(n, k) :- node(_, n, k, _, _)`) priced as cheaper on the GPU and cost the same there.
 const DEVICE_ROW_BACK: f64 = 75e-9;
 /// A value of a relation the device reads, copied into its upload (the host reads the source's row and writes the
-/// device's column), per column an atom reads (decision 0271): 7 ns, measured on the same run (98.7 ms for 13.7 M
+/// device's column), per column an atom reads (decision 0277): 7 ns, measured on the same run (98.7 ms for 13.7 M
 /// values). Priced for every stratum, though a relation an earlier stratum of the chunk uploaded is found resident.
 const DEVICE_UPLOAD_PER_VALUE: f64 = 7e-9;
 
 /// CPU: seconds per unit of planned work, and per stratum (measured; see the module's comment).
 const CPU_PER_WORK: f64 = 100e-9;
-/// CPU: seconds per row a scan reads (decision 0271). A copy of an input (`kind(n, k) :- node(_, n, k, _, _)`) on
+/// CPU: seconds per row a scan reads (decision 0277). A copy of an input (`kind(n, k) :- node(_, n, k, _, _)`) on
 /// PostHog's `posthog/hogql` (437 files, 2026-11-14): 8.5 M rows scanned and 4.9 M made in 0.56 s, the rows made
 /// costing what the device's rows back do (`DEVICE_ROW_BACK`), so about 30 ns a row scanned. Priced at
 /// `CPU_PER_WORK`, a copy looked twice as dear on the CPU as it was, and went to the device, which did it no cheaper.
@@ -235,7 +235,7 @@ pub(in crate::code_rule_dsl) struct Shape {
     /// Its join steps' estimates, when the planner recorded them (profiling, or a run that may use the device).
     pub(in crate::code_rule_dsl) joins: Vec<JoinEst>,
     /// The relations its atoms read, each with its rows and the columns an atom reads of it (the most any one
-    /// does): what the device uploads (decision 0271).
+    /// does): what the device uploads (decision 0277).
     pub(in crate::code_rule_dsl) reads: Vec<(String, f64, usize)>,
     /// The rows its scans read (a positive atom read whole), of its planned work: on the CPU a scanned row costs a
     /// read, not a probe (`CPU_PER_SCANNED`).
@@ -720,7 +720,7 @@ pub mod tests {
         assert_eq!(forms, vec![JoinForm::Probe, JoinForm::Probe, JoinForm::Tile, JoinForm::Index], "{p:?}");
         assert!(p.joins[1].probe_s < p.joins[0].probe_s, "the second probe finds the relation sorted");
         // A copy of an input (one scan, every row out) stays on the CPU: the device saves no join, and pays the upload
-        // and the rows back (decision 0271). A join whose rows the device would make past the bound head, where the
+        // and the rows back (decision 0277). A join whose rows the device would make past the bound head, where the
         // CPU's walk keeps one witness (decision 0229), is priced with every row on the device.
         let was = set_device(true);
         let mut copy = Shape { work: 250_000.0, rows: 150_000.0, scanned: 250_000.0, rules: 1, steps: 1, ..Shape::default() };

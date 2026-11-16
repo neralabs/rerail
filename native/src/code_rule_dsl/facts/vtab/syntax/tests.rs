@@ -527,7 +527,7 @@ fn within_holds_exactly_the_contained_pairs() {
         if mode == within::Mode::Tree {
             assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
         }
-        // Read whole first (the device's keyed read, decision 0271): the tree by the batch's solve, every pair once,
+        // Read whole first (the device's keyed read, decision 0277): the tree by the batch's solve, every pair once,
         // and the lookups after it read the same rows; spans have no solve.
         let whole = within::Within::new(Arc::clone(&batch), mode);
         assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");

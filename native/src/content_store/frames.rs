@@ -1671,7 +1671,7 @@ mod tests {
         assert_eq!(frames, 0, "no memo entry is a frame");
     }
 
-    /// Decision 0274: what a later run keeps over an entry (its identities) is read with it, from the store and from
+    /// Decision 0280: what a later run keeps over an entry (its identities) is read with it, from the store and from
     /// the snapshot, survives compaction, is dropped where the entry is not the same content, and goes when the
     /// entry is written again whole.
     #[test]

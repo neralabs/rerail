@@ -1,6 +1,6 @@
-# 0271: The device reads axes whole, holds only the columns it reads, and keeps one witness past the head
+# 0277: The device reads axes whole, holds only the columns it reads, and keeps one witness past the head
 
-Numbered 0233 where it was written.
+Numbered 0233 where it was written, 0271 at the django-bugs merge.
 
 Status: built (2026-11-14). Refines the device's joins (`setfix::device`, `metal_join`, decision 0095), placement's
 prices (`plan::placement`) and the tree axes' batch solve (`within`, decision 0143).

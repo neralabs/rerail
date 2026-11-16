@@ -442,7 +442,7 @@
         assert_eq!(in_place, 0);
         let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        // Both columns uploaded: a copy holds only the columns asked for (decision 0271).
+        // Both columns uploaded: a copy holds only the columns asked for (decision 0277).
         super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
         let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
         assert_eq!(in_place, 2);
@@ -500,7 +500,7 @@
         }
     }
 
-    /// Past the step that binds the head, the device keeps one witness per binding (decision 0271), as the CPU's walk
+    /// Past the step that binds the head, the device keeps one witness per binding (decision 0277), as the CPU's walk
     /// does (decision 0229): the same rows, and no binding table of every row the rest of the body would make. The
     /// rest: an atom that binds, then semi-joins keyed by its columns, a constant and a slot bound before, and a
     /// negated atom.

@@ -1,4 +1,6 @@
-# 0274: A memo entry whose rows stand takes its new identities as a delta record beside it
+# 0280: A memo entry whose rows stand takes its new identities as a delta record beside it
+
+Numbered 0274 at the django-bugs merge.
 
 Status: built (2026-11-15, the user's choice at the django-bugs merge). Joins decision 0225 §2 (the per-file memo
 holds each relation under its identity) with decision 0240 §4 (an entry is one image in a pack, its symbols by

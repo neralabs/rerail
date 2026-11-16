@@ -139,7 +139,7 @@ Status of each planning issue the siblings found since 2026-11-11, here:
 | "Holds kept plans" also meant "a corpus run" | hub 84cee532a | Fixed in the hub; comes with the hub merge |
 | A witness past the bound head priced as a full walk (139 → 82 s CPU) | django-bugs 693247ec4 (0229) | Fixed there, bundled with a store fork fix; comes with django-bugs' merge |
 | A factorized key inlined past keeps' cutoff | rr-align 2ff9ffe8e | Fixed there; not planner code |
-| Device placement mispriced (Metal 654 s vs CPU 487 s) | django-bugs 9264a3c70 (0271) | Partly fixed there; resident uploads, the after-wave pass and GPU latency open |
+| Device placement mispriced (Metal 654 s vs CPU 487 s) | django-bugs 9264a3c70 (0277) | Partly fixed there; resident uploads, the after-wave pass and GPU latency open |
 | Planning is 12% of a session's stream jobs | django-bugs/Two-pass 0230 | Open; plan below |
 
 ## Open

@@ -30,7 +30,7 @@ pub(super) fn base_key(rel: &str) -> String {
 /// file-local output's identity (`identities`) it was made under. A relation's rows in an entry are its rows only
 /// when its identity now is among them; a relation with no rows for the file has no key in `rows`, so whether it
 /// is held is read here, not from `rows`. An `own:` key: it holds no symbol. An entry whose rows stand as stored
-/// takes more of them kept over it (`identities_of`, decision 0274).
+/// takes more of them kept over it (`identities_of`, decision 0280).
 pub(super) const COVERED: &str = "own:covered";
 
 /// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
@@ -92,7 +92,7 @@ pub(super) fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
     rows(a) == rows(b) && lines(a) == lines(b)
 }
 
-/// What is written of an entry whose rows stand as stored (decision 0274): the identities it holds now (`COVERED`),
+/// What is written of an entry whose rows stand as stored (decision 0280): the identities it holds now (`COVERED`),
 /// kept over the stored entry, whose rows, lines and other identities they are.
 fn identities_of(entry: &Entry) -> Entry {
     Entry { key: entry.key, rows: entry.rows.get(COVERED).map(|v| (COVERED.to_owned(), v.clone())).into_iter().collect(), ..Entry::default() }
@@ -538,7 +538,7 @@ impl Frame {
 
     fn projected(&self, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
         let mut entry = Entry { key: self.key, ..image::decode(&self.blob.bytes, self.blob.raw, keep, &self.atoms)? };
-        // The identities a later run found its rows hold (decision 0274), kept over it: with those it was made under,
+        // The identities a later run found its rows hold (decision 0280), kept over it: with those it was made under,
         // all true while it stands. Bytes kept over it that do not decode add none: the relations are a partial hit's.
         if let Some((bytes, raw)) = self.blob.over.as_ref().filter(|_| keep(COVERED))
             && let Ok(more) = image::decode(bytes, *raw, &|k| k == COVERED, &self.atoms)
@@ -730,7 +730,7 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
 
 /// `remember_all`, each entry with whether its rows stand as stored (decision 0225 §2): its relations were derived
 /// again and found as they were, so only the identities they now hold are written, kept over the stored entry
-/// (decision 0274).
+/// (decision 0280).
 pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
     let standing: HashSet<(String, i64)> = entries.iter().filter(|e| e.4).map(|e| (e.1.clone(), e.2)).collect();
     let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
@@ -794,7 +794,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
                 let Some(digest) = digest else { continue };
                 // Each symbol as its string, read from the table the entry was made under: no numbering to map,
                 // forked or not, and no other table of the store to misread it by. Of an entry whose rows stand, only
-                // the identities it now holds, kept over the stored entry (decision 0274).
+                // the identities it now holds, kept over the stored entry (decision 0280).
                 let over = standing.contains(&(path.clone(), e.key));
                 let (bytes, raw) = if over { image::encode(&identities_of(e), &syms, &made_under)? } else { image::encode(e, &syms, &made_under)? };
                 puts.push(crate::content_store::MemoPut { part: part_of(&digest, path), path: path.clone(), digest, key: e.key, bytes, raw, over });
@@ -1095,7 +1095,7 @@ pub mod tests {
         let held = covered(&entry);
         assert_eq!(held.len(), 2);
         assert!(held.contains(&covered_words(&a)) && held.contains(&covered_words(&b)) && !held.contains(&covered_words(&c)));
-        // It is an `own:` key, and names no symbol: what is kept over an entry whose rows stand (decision 0274).
+        // It is an `own:` key, and names no symbol: what is kept over an entry whose rows stand (decision 0280).
         assert_eq!(identities_of(&entry).rows.keys().collect::<Vec<_>>(), [COVERED]);
         assert_eq!(Syms::default().columns(COVERED, 2), Some(vec![false, false]));
     }
