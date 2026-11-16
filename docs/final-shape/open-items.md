@@ -50,7 +50,7 @@ choosing the same one are writing about the same thing. Numbered items keep thei
 | O43 | Phase 10 (step 30) | Launch cost on the device: each chunk pays one GPU wake-up from idle (about 0.85 ms, 12 of 19–22 ms of host wait on async-sync-boundary at 1 in 8, decision 0040) because the GPU sits idle while the CPU runs the chunk's joins. The joins themselves are small (about 0.1 s of 7.7 s CPU, at most 245K rows into a step over the run), so the goal is not join speed: it is to keep the chunk on the device in one launch. Close by running a chunk's native joins on Metal in the same command buffer as its nearest ancestors (one command buffer, one wait a chunk): plan chosen on the host from statistics as now; each step a sort or hash join kernel over the shared relations, counting then writing (or writing into a reused block and retrying on overflow); negation as an anti-join; text tests as chunked matchers; aggregates and cross-file rounds stay as they are. Loading inputs, building indexes and the per-chunk statistics (about 2.8 s of CPU) are the same shape and move with it. Validated by the profile's device phases: one launch per chunk, schedule (GPU waking) no longer paid per chunk, findings unchanged | open |
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
-| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
+| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions (t17) | narrowed (2026-11-16): `shortlex_min` folds natively (0124); on Metal the four recursions run on the CPU: a made text across rounds, `printf`, and the fold itself are missing |
 | O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open, narrowed (2026-11-06): `.rr`'s `within(n, a)` is the engine's tree relation, read off the tape per looked-up node (decision 0050 §4); the `@within`/`@depth` programs and the two kind-filtered walks remain |
 | O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
 | O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
@@ -1293,11 +1293,27 @@ exclusion needs that mark), with `@rx_*` on §16's regex path.
 ## O62. The shortlex-least route lattice
 
 Of the 70 recursions in the data-layer rules, 4 need a lattice beyond `set`, `flat`, `min` and `max`: `hierarchy`
-(internal-dead-code, public-api-triples) and the two sink searches (serverplan-state-tripwires), each the least
-route under (length, text). The native lattices are `i64`-valued, and `Min`'s widening jumps to its top, losing the
-route. Without `widen` the declaration fails `UnboundedLattice` (`internal_dead_code.hierarchy_unwidened.rdl`).
-**Closure:** a catalogue lattice bounded by its edge relation, or the length as a `min` lattice with the route in
-the findings layer (t17 § 6).
+(internal-dead-code, public-api-triples) and the two sink searches (serverplan-state-tripwires, `sink` and
+`project_sink`), each the least route under (length, text).
+
+**Built (decision 0124).** `.lattice shortlex_min<symbol>` is a lattice of the native set engine (`ShortlexMin`):
+a key keeps its shortest route, then the least by bytes. It is finite, so `widen 64` keeps the route (the witness is
+no longer lost). `hierarchy` runs natively as a lattice relation, 26,527 rows on public_api_triples, the same as
+SQLite's. The unwidened declaration still fails `UnboundedLattice` (`internal_dead_code.hierarchy_unwidened.rr`),
+as it should.
+
+**Open: Metal.** The device folds `min`, `max` and `flat`, and runs these four recursions on the CPU. Three things
+are missing, checked in this order by `device::fixpoint`:
+
+1. **A made text across rounds.** Each rule makes its route each round (`@concat(r0, ...)`). The device refuses a
+   recursive component that makes text, since each round's batch has its own text arena: a route made in one round
+   is not a symbol the next round can read. This is a design choice (one arena kept for the component and its
+   texts interned at its end, or texts interned on the device each round), asked of the user.
+2. **`@printf`** (hierarchy's `"%012d."`) is no device text function; `@id` (the sinks') is to be checked.
+3. **The fold**: `lat_best` and `lat_merge` compare values as numbers. `shortlex_min` needs each value's text, a
+   symbol's or an arena's, compared by (characters, bytes) a word at a time.
+
+**Closure:** the four recursions run on Metal and give SQLite's rows.
 
 ## O63. Tree built-ins beyond `nearest`
 
