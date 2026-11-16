@@ -16,6 +16,8 @@ import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
+import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
+import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -209,6 +211,12 @@ interface EngineRoutingState {
   idle: Map<string, NodeJS.Timeout>;
   /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
   idleRuntimeMs: number;
+  /**
+   * The walk of each repository's other worktrees, shared by the sessions of every runtime: hooks name the session's
+   * folder, so sessions in different worktrees of one repository run in different runtimes, and each walking every
+   * worktree for itself held every file of every worktree once per session.
+   */
+  worktreeWalks: RepositoryWorktreeWalks;
 }
 
 /** The lane one session's work in one runtime runs in, one at a time. */
@@ -291,7 +299,7 @@ async function routeEngineEvent(
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true });
+      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks });
       state.runtimes.set(runtimeKey, runtime);
     }
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
@@ -519,6 +527,24 @@ async function listenOnSocket(
   }
 }
 
+/**
+ * The walks of the repositories' other worktrees, which read only those the engine's file-system watch says may have
+ * changed. An engine built before that watch has none: every walk then reads every worktree, and the log says so once.
+ */
+function engineWorktreeWalks(): RepositoryWorktreeWalks {
+  let treeWatch: TreeWatch | undefined;
+  try {
+    treeWatch = nativeTreeWatch();
+  } catch (error) {
+    process.stderr.write(`rerail: the engine's file-system watch failed to start: ${error instanceof Error ? error.message : String(error)}\n`);
+    return new RepositoryWorktreeWalks();
+  }
+  if (treeWatch === undefined) {
+    process.stderr.write("rerail: the engine is older than Rerail and has no file-system watch: every walk reads every other worktree\n");
+  }
+  return new RepositoryWorktreeWalks({ treeWatch });
+}
+
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const routing: EngineRoutingState = {
@@ -530,7 +556,10 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     pending: new Set(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
+    worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
   };
+  // Walks a caller gave are the caller's to close.
+  const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
@@ -582,6 +611,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       routing.idle.clear();
       await Promise.allSettled(routing.pending);
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+      closeWalks();
     },
   };
   server.requestTimeout = 30_000;
@@ -594,6 +624,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     clearInterval(idleSweep);
     server.close();
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+    closeWalks();
     throw error;
   }
   return engineService;
