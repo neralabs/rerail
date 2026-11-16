@@ -985,7 +985,7 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
 /// loop, `Step::Token`), none where that token's word is an `unless after` one; then the mask's
 /// words from the bytes (`native_cpu_bytes`), a stated loop of words.
 #[allow(clippy::too_many_arguments)]
-fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cpu_bytes::Bytewise<'_>, o: u16, extra: Option<u8>, unless: &[u16], heads: &mut Vec<(Block, Step)>) -> Value {
+fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cpu_bytes::Bytewise<'_>, o: u16, extra: Option<u8>, unless: &[u16], coded: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let (codes, starts, bytes, len) = ((e.ctx)(f, CODES), (e.ctx)(f, STARTS), (e.ctx)(f, BYTES), (e.ctx)(f, LEN));
     let next = (e.get)(f, Mem::Next);
@@ -998,6 +998,18 @@ fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cp
     f.append_block_param(found, types::I64);
     f.append_block_param(found, types::I64);
     f.append_block_param(done, types::I64);
+    // A mark with token tests (`lazy_coded`): its tests' hit, in the token's code, first.
+    if let Some(m) = coded {
+        let stride = (e.ctx)(f, RECORD_STRIDE);
+        let off = f.ins().imul(here, stride);
+        let ca = f.ins().iadd(codes, off);
+        let c = f.ins().uload32(flags, ca, 0);
+        let bit = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(m));
+        let bit = f.ins().band_imm(bit, 1);
+        let gap = f.create_block();
+        f.ins().brif(bit, done, &[BlockArg::from(one)], gap, &[]);
+        f.switch_to_block(gap);
+    }
     f.ins().jump(back, &[BlockArg::from(here)]);
     // The grammar token before: the records before, past the extras.
     f.switch_to_block(back);
@@ -3764,6 +3776,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                 let r = bn.records.as_ref().ok_or(Error::UnsupportedBackend)?;
                                 let unless: Vec<u16> = r.unless.iter().filter(|&&(k, _)| k == order).map(|&(_, w)| w).collect();
                                 let extra = r.extra;
+                                let coded = (crate::native_cpu_block::lazy_coded(r) >> order & 1 == 1).then_some(order);
                                 let name = format!("tempo_word_{}", word_fns.len());
                                 let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
                                     let ctx = q[0];
@@ -3773,7 +3786,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                     let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a mark does not refuse");
                                     let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
                                     let bw = crate::native_cpu_bytes::Bytewise::of(bn);
-                                    let v = lazy_mark(g, &env, &bw, o, extra, &unless, hs);
+                                    let v = lazy_mark(g, &env, &bw, o, extra, &unless, coded, hs);
                                     g.ins().return_(&[v]);
                                 })?;
                                 word_fns.insert(key, made);

@@ -2554,3 +2554,75 @@ Tests:
 
 Counts, reported: words 101.4, punctuation 54.9, mixed 56.2,
 strings 266.4, numbers 151.3, comments 233.4.
+
+## A token's gap is tier 2's; the refill keeps its block
+
+The lean lexer has no gap marks. It asks whether a token is on a new
+line only where a statement asks (`on_line`), and it checks a JSON
+document's bytes only where it reads one.
+
+Ours still made one gap mark in tier 1: `json_bad`'s form feed (a
+form feed between tokens marks the next one). Three of the
+differences from lean came from it:
+
+- every refill compared each byte with 12 and made a movemask of
+  the result;
+- the gap's first byte was read back from the record before (one
+  past its first byte);
+- after a comment, a cold function (`f6`) read the comment's bytes
+  again for form feeds.
+
+The mark was eager only because it also has token tests (`after
+string when …`, `at number when …`). An earlier step had made the
+marks without tests lazy, and left this one.
+
+**The change.**
+
+- **A mark's tests stay in tier 1; its gap goes to tier 2.**
+  `lazy_marks` now takes marks with token tests too. `lazy_coded`
+  lists them. Their tests' hits stay in the code bit, set by the token
+  loop as before, the way a lexer flags what it reads. The gap is
+  tier 2's: the outlined test reads the token's code bit first, then
+  scans the bytes from the grammar token before. The JIT
+  (`lazy_mark`) and the printed Rust (`rust_stream`) both do this.
+  A mark with tests and an `unless after` stays the loop's, since the
+  word before also decides its tests' hits.
+- **The choice is the compiler's, by target.** Metal's tier 1 still
+  sets every mark in the codes, because the GPU makes all of a block's
+  marks at once. The CPU's loop leaves the gaps to tier 2.
+- **The refill keeps its block, as lean's `base`.** With no gap mark in
+  the loop, the state's `from` word was free. The refill now stores
+  the block after the one it read there (`spent_q`). The refill skips
+  a spent block when the cursor's block is the one it read. Before,
+  it read the last record's start back to learn the same thing.
+  The skip used to need the gap marks folded; now it also runs when
+  there are none in the loop.
+
+```rust
+// lean.rs, the window loop:
+base = cursor.max(base + 64);
+// generated (tier1_aot.rs), the refill:
+spent = state_from == (cursor >> 6) + 1;   // the block just read
+q = if spent { (cursor >> 6) + 1 } else { cursor >> 6 };
+```
+
+This reverses an earlier choice (journal 35) to read the cursor back
+rather than carry it. That choice was made on counts. Lean keeps the
+value in a register, and so do we now.
+
+Tests:
+- `the_marks_tests_are_the_masks` now checks the CPU's codes against
+  a grammar with `json_bad`'s tests alone (`ff` made `empty`). It
+  also runs the CPU's tier 2 on every case, so a form feed in a gap
+  must refuse there.
+- `the_loop_reads_no_record_back` asserts `PassShape::reads_back` is
+  zero. With the eager mark restored it fails.
+- The other code comparisons leave out the lazy marks' bits on both
+  sides.
+
+Found on the way: two corpus files of 500 KB are refused by the CPU's
+tier 2 and taken by the interpreter, with or without this change
+(open item `O-tier2-large-file-refusal`).
+
+Counts, reported: words 98.1, punctuation 53.3, mixed 55.0,
+strings 264.0, numbers 156.5, comments 229.4.

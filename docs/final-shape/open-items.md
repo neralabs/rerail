@@ -4747,3 +4747,18 @@ corpus tests pass with it, but none makes this case.
 
 **Closure:** a test with a produced relation that also has `.rr` facts, read by a native stratum and by a SQL
 stratum above it, which sees both the facts and the answers.
+
+## O-tier2-large-file-refusal. The CPU's tier 2 refuses two large files the interpreter takes
+
+Found 2026-11-16, while making `json_bad`'s gap tier 2's (decision 0177). Two `.rr` files of the
+corpus, about 500 KB each, are refused by the CPU's tier 2 (`Parser::image`, "the compiled words
+refuse", at the program's fifth word). The interpreter (`stream::run`) takes them. With the old,
+eager `json_bad` the same two are refused, so the change did not cause it.
+
+Cutting the file down by lines keeps the refusal only at about this size: no single rule causes
+it. A refused file goes to the fallback, so the tapes stay right; only the fast path is lost.
+`corpus_tapes_are_the_engines` compares the files the CPU takes, so it does not see this.
+
+**Closure:** find what the fifth word tests that grows with the file (a node or stack bound, a
+record count). Then either the bound grows with the file, or the refusal is the planned
+fallback and is documented as such. A test takes a file of that size on the CPU's tier 2.
