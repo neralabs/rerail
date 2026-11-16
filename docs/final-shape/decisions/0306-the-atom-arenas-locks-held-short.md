@@ -66,9 +66,11 @@ Step 2, on the M5 Max (the M3 was then short of disk):
 Both machines were busy with other work (load 15–18 on the M3, 16 then 94 on the M5), so no wall time from these
 runs is evidence. The wait counts fell even though the load rose.
 
-## Next, not done
+## Not next: a lock-free arena
 
-The arena is append-only: an atom's id and text never change once given. Reads could take no lock at all: text
-chunks that never move, and an insert-only hash table (open addressing over atomic slots, a new table published by
-RCU when it grows). Writers would then never wait for readers. That is the end of this lock, but the arena also
-holds stored segments, forks (0170) and provisional ids (0160), so it is a decision of its own.
+Reads that take no lock at all are possible. The text would live in chunks that never move, and the hash table would
+be insert-only, with a new one published by RCU when it grows. It is not worth building. After this decision the
+arena's readers wait about 2 thread-seconds a cold run, under 1% of its 250–290 s of CPU, with no wall time to
+show for it. The same samples hold much more in the store's I/O (`pwrite`, `fsync`, `pread`: about 24 s), file
+opens (13–23 s) and rayon's idle spin (8–11 s on the M3). A plain lock is right for a string table. Here it was
+held badly (point 1) and too long (point 2), and that was cheap to fix.
