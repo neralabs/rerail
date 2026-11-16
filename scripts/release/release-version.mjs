@@ -172,13 +172,11 @@ function versionCore() {
 const core = versionCore();
 
 /**
- * Raises the core range of each released pack an older core cannot load, now that core is at the release that first
- * loads it (core.mjs), in its package.json and package-lock.json. Returns `{ raised, waiting }`, each
- * `{ name, from, to }`: `waiting` are packs that need it and are not released by this run, left as they are.
+ * The packs an older core cannot load whose core range still admits one, now that core is `coreVersion` (core.mjs):
+ * `{ id, name, from, to }`, the range each has and the one it needs.
  */
-function raiseCoreRanges() {
-  const coreVersion = JSON.parse(readText("package.json")).version;
-  const due = listPacks()
+function dueCoreRanges(coreVersion) {
+  return listPacks()
     .filter((pack) => !pack.private)
     .flatMap((pack) => {
       const directory = `packs/${pack.id}`;
@@ -190,27 +188,42 @@ function raiseCoreRanges() {
       if (!/^>=\S+$/u.test(range)) throw new Error(`${directory}/package.json: its core range ${range} admits Rerail older than ${floor} and is not a plain >=<version>; raise it by hand to leave those out`);
       return [{ id: pack.id, name: pack.name, from: range, to: raisedCoreRange(floor) }];
     });
+}
+
+/** Writes pack `id`'s core range `to` over `from` in its package.json: that one line, so the rest stays byte for byte. */
+function writeCoreRange({ id, name, from, to }) {
+  const path = `packs/${id}/package.json`;
+  // peerDependenciesMeta names core too, with an object, so the line with the range is the only one of its kind.
+  const line = `${JSON.stringify(CORE_NAME)}: ${JSON.stringify(from)}`;
+  const text = readText(path);
+  if (text.split(line).length !== 2) throw new Error(`${path}: expected its core range once, as ${line}`);
+  writeFileSync(join(ROOT, path), text.replace(line, `${JSON.stringify(CORE_NAME)}: ${JSON.stringify(to)}`));
+  console.log(`${name}: core range ${from} -> ${to}`);
+}
+
+/** Records the `raised` ranges in package-lock.json's pack entries. versionCore may have rewritten it, so it is read here. */
+function lockCoreRanges(raised) {
+  if (raised.length === 0 || !existsSync(join(ROOT, "package-lock.json"))) return;
+  const lock = JSON.parse(readText("package-lock.json"));
+  for (const { id, to } of raised) {
+    const entry = lock.packages?.[`packs/${id}`];
+    if (entry === undefined) throw new Error(`package-lock.json has no packs/${id}; run npm install`);
+    entry.peerDependencies = { ...entry.peerDependencies, [CORE_NAME]: to };
+  }
+  writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(lock, null, 2)}\n`);
+}
+
+/**
+ * Raises the core range of each released pack an older core cannot load, now that core is at the release that first
+ * loads it, in its package.json and package-lock.json. Returns `{ raised, waiting }`, each `{ name, from, to }`:
+ * `waiting` are packs that need it and are not released by this run, left as they are.
+ */
+function raiseCoreRanges() {
+  const due = dueCoreRanges(JSON.parse(readText("package.json")).version);
   const released = new Set(packs.map((pack) => pack.id));
   const raised = due.filter(({ id }) => released.has(id));
-  for (const { id, name, from, to } of raised) {
-    const path = `packs/${id}/package.json`;
-    // The one line, so the rest of the file stays byte for byte: peerDependenciesMeta names core with an object.
-    const line = `${JSON.stringify(CORE_NAME)}: ${JSON.stringify(from)}`;
-    const text = readText(path);
-    if (text.split(line).length !== 2) throw new Error(`${path}: expected its core range once, as ${line}`);
-    writeFileSync(join(ROOT, path), text.replace(line, `${JSON.stringify(CORE_NAME)}: ${JSON.stringify(to)}`));
-    console.log(`${name}: core range ${from} -> ${to}`);
-  }
-  // versionCore may have rewritten the lockfile, so it is read here.
-  if (raised.length > 0 && existsSync(join(ROOT, "package-lock.json"))) {
-    const lock = JSON.parse(readText("package-lock.json"));
-    for (const { id, to } of raised) {
-      const entry = lock.packages?.[`packs/${id}`];
-      if (entry === undefined) throw new Error(`package-lock.json has no packs/${id}; run npm install`);
-      entry.peerDependencies = { ...entry.peerDependencies, [CORE_NAME]: to };
-    }
-    writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(lock, null, 2)}\n`);
-  }
+  raised.forEach(writeCoreRange);
+  lockCoreRanges(raised);
   return { raised, waiting: due.filter(({ id }) => !released.has(id)) };
 }
 
