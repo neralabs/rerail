@@ -165,6 +165,27 @@ version-cap rule above (5 of them flip in tree-sitter). The refused cut and edit
 files' cuts and fragments mid-typing that tree-sitter reads by taking a keyword as a name where
 only a name fits (`type break;` declares `break`); those files go to tree-sitter.
 
+**Cost** (`cpp_parse_costs`, `--profile profiling`, through `scripts/dev/quiet-run` on a leased
+M1 Max, 2026-11-16; the best of three passes over the files both parsers read; "the tape" is the
+engine's whole route, a parse and its tape):
+
+| C++, 937 files, 10.6 MB, 1.92 M nodes | instructions a node | cycles a node | ns a byte |
+|---|---|---|---|
+| lean: the parser's columns | 564 | 143 | 8.2 |
+| lean: the tape | 584 | 153 | 8.8 |
+| tree-sitter-cpp: parse | 6,160 | 1,707 | 97.7 |
+| tree-sitter-cpp: the tape | 9,141 | 2,446 | 139.9 |
+
+| C, 829 files, 8.6 MB, 1.37 M nodes | instructions a node | cycles a node | ns a byte |
+|---|---|---|---|
+| lean: the parser's columns | 533 | 141 | 7.1 |
+| lean: the tape | 555 | 153 | 7.8 |
+| tree-sitter-c: parse | 6,098 | 1,700 | 86.2 |
+| tree-sitter-c: the tape | 9,349 | 2,508 | 127.1 |
+
+The lean route costs a sixteenth of tree-sitter's in cycles (C++ 153 against 2,446 a node; C 153
+against 2,508). A refused file pays for the lean parser's attempt as well as tree-sitter's.
+
 **Engine tests:**
 - `c_tapes_from_the_lean_parser_are_tree_sitters` and
   `cpp_tapes_from_the_lean_parser_are_tree_sitters`: hand-written cases, compared byte for byte
@@ -176,6 +197,5 @@ only a name fits (`type break;` declares `break`); those files go to tree-sitter
 
 - **A narrower version-cap rule.** Reading those 58 files too needs a model of tree-sitter-cpp's
   stack versions (forks, merges, the cap of 6, the order versions are dropped in).
-- **Cost on a quiet host** (`scripts/dev/quiet-run`), as 0196 reports it: `cpp_parse_costs` (ignored, `RERAIL_PY_FILES`, `RERAIL_C_DIALECT`) measures it.
 - **C's and C++'s capabilities** are `not-supported-yet`: rules cannot yet ask C- or C++-specific
   questions.

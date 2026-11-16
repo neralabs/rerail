@@ -90,9 +90,18 @@ byte against tree-sitter's encoded tape; syntax errors refused) and
 `the_product_reads_go_with_the_lean_parser` (the engine's parse route gives the lean tape, a refused
 file tree-sitter's).
 
-**Cost:** `go_parse_costs` (ignored, `RERAIL_PY_FILES`) measures it; not yet run on a quiet host.
+**Cost** (`go_parse_costs`, `--profile profiling`, through `scripts/dev/quiet-run` on a leased
+M1 Max, 2026-11-16, run with 0307's; the best of three passes over the files both parsers read):
+
+| Go, 869 files, 10.3 MB, 2.02 M nodes | instructions a node | cycles a node | ns a byte |
+|---|---|---|---|
+| lean: the parser's columns | 473 | 122 | 7.5 |
+| lean: the tape | 490 | 131 | 8.1 |
+| tree-sitter-go: parse | 5,238 | 1,367 | 84.9 |
+| tree-sitter-go: the tape | 8,621 | 2,178 | 135.2 |
+
+The lean route costs about a seventeenth of tree-sitter's in cycles (131 against 2,178 a node).
 
 ## Open
 
-- **Cost on a quiet host** (`scripts/dev/quiet-run`), as 0196 reports it.
 - **Go's capabilities** are `not-supported-yet`: rules cannot yet ask Go-specific questions.
