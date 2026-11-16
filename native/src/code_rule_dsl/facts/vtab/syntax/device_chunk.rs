@@ -6,8 +6,9 @@
 //!
 //! - the projection's arrays, by local id: `core` (the tape node), `low` (its id's low 32 bits by definition,
 //!   empty for ids in preorder), `ord` (its index among its siblings), and the fielded nodes;
-//! - the facts' arrays, by tape node: `parent`, `start`, `end`, `kind` (the tape's atom) and `field`;
-//! - `local`, each tape node's local id (`NONE` for one left out), which a parent is read through;
+//! - `up`, the projection's parent of each local id (`Projected::up`, `NONE` above the root and an anchor);
+//! - each node's `start`, `end`, `kind` (the tape's atom) and `field`, by local id, read off the tape through its API
+//!   (0293) when the chunk is made: an interim, until the device's kernels read the tape in the chunk (0293 step 5);
 //! - `core.rr`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
 //!   first device read (`fill_locs`): the document's first row in them, its spans past its nodes (tokens, the whole
 //!   text, lines and end points, as `Projected::span` gives them) and its line starts (`core_rr::Lines`).
@@ -15,12 +16,15 @@
 //! The kind a view holds is the dialect's canonical code's atom (`Dialect::kind`): each tag's canonical table is in
 //! the block once, and an entry points at its own.
 //!
-//! The arrays are copied in once per batch, on the device's first read. §3 of 0289 makes them the projection's and
-//! the facts' own storage, and the copy goes.
+//! The projection's arrays are made in the batch's block (0289 §3): the entry points at them, and nothing is copied.
+//! `Facts` holds no column since 0293 step 4: a node's kind, span and field are the tape's answers, and the tape image
+//! is already in the chunk (0289 §4). Until the kernels read it there, the chunk holds those four answers for the
+//! projected nodes, made once per batch on the device's first read. The canonical tables are copied in once a batch.
 
 use super::{Batch, Place, View};
 use crate::code_rule_dsl::facts::core::NONE;
-use rerail_blocks::{Block, Span, block::kind, structure};
+use rerail_blocks::{Block, Cells, Span, structure};
+use std::sync::Arc;
 use std::collections::HashMap;
 
 structure! {
@@ -43,8 +47,8 @@ structure! {
         pub low: Span<u32>,
         pub ord: Span<u32>,
         pub fielded: Span<u32>,
-        pub local: Span<u32>,
-        pub parent: Span<u32>,
+        pub up: Span<u32>,
+        /// By local id, off the tape (an interim until 0293 step 5).
         pub start: Span<u32>,
         pub end: Span<u32>,
         pub kind: Span<u32>,
@@ -106,7 +110,8 @@ pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
 
 /// A batch's chunk block, and its root's offset in it.
 pub struct Chunk {
-    pub block: Block,
+    /// The batch's block (`Batch::block`), which its projections are in.
+    pub block: Arc<Block>,
     pub root: usize,
     /// Whether the `Loc` views' arrays are in the block (`fill_locs`), once asked.
     locs: std::sync::OnceLock<bool>,
@@ -122,20 +127,38 @@ fn put<T: Copy>(b: &Block, span: *const Span<T>, src: &[T]) {
     }
 }
 
-/// The batch's chunk: every document's arrays the views read.
+/// `n` values made by `at` (by local id) put in `b`, and `span` set to them.
+fn made<T: Copy>(b: &Block, span: *const Span<T>, n: usize, at: impl Fn(usize) -> T) {
+    let p: *mut T = b.alloc_t(n.max(1));
+    // SAFETY: `p` holds `n` items, just allocated in `b`, as `span` is.
+    unsafe {
+        for l in 0..n {
+            p.add(l).write(at(l));
+        }
+        Span::set(span, p, n);
+    }
+}
+
+/// Points `span` at `cells`, which are in `b` (a projection's, made in its batch's block); copied in when they are
+/// not (a projection made apart from the batch).
+fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cells: &Cells<T>) {
+    if Arc::ptr_eq(cells.block(), b) {
+        // SAFETY: `cells` are in `b`, as `span` is, and live as long as the batch, which holds both.
+        unsafe { Span::set(span, cells.as_ptr(), cells.len()) }
+    } else {
+        put(b, span, cells);
+    }
+}
+
+/// The batch's chunk, in the batch's block: every document's arrays the views read.
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
-    // What the arrays take, with room for alignment, and for the axes' pairs read whole (`put_pairs`, up to 1 GB):
-    // the block reserves address space, not memory.
-    let bytes: usize = batch.docs.iter().map(|p| 4 * (6 * p.facts.len() + 4 * p.core.len()) + 2 * p.facts.len() + 4096).sum::<usize>()
-        + batch.dialects.values().map(|d| 2 * d.canonical.len() + 64).sum::<usize>()
-        + (1 << 30);
-    let b = Block::anon(kind::CHUNK, bytes.next_power_of_two());
+    let b = Arc::clone(&batch.block);
     let root: *mut ChunkRoot = b.alloc_t(1);
     let docs: *mut ChunkDoc = b.alloc_t(batch.docs.len().max(1));
     // Each dialect's canonical codes, once.
     let mut canon: HashMap<u8, (*const u16, usize)> = HashMap::new();
-    for (&tag, d) in &batch.dialects {
+    for (tag, d) in batch.dialects.iter() {
         let p: *mut u16 = b.alloc_t(d.canonical.len().max(1));
         // SAFETY: just allocated for `canonical.len()` items.
         unsafe { std::ptr::copy_nonoverlapping(d.canonical.as_ptr(), p, d.canonical.len()) };
@@ -155,17 +178,20 @@ pub fn build(batch: &Batch) -> Chunk {
             let fielded = p.fielded();
             (*d).nfielded = fielded.len() as u32;
             (*d).preorder = u32::from(p.defs.is_none());
-            put(&b, &raw const (*d).core, &p.core);
+            point(&b, &raw const (*d).core, &p.core);
             // Every local's, past the nodes too: a token's id is by definition as well (`Projected::global`).
-            put(&b, &raw const (*d).low, p.defs.as_ref().map_or(&[][..], |x| &x.low[..]));
-            put(&b, &raw const (*d).ord, p.ordinals());
-            put(&b, &raw const (*d).fielded, fielded);
-            put(&b, &raw const (*d).local, &p.local);
-            put(&b, &raw const (*d).parent, &f.parent[..]);
-            put(&b, &raw const (*d).start, &f.start[..]);
-            put(&b, &raw const (*d).end, &f.end[..]);
-            put(&b, &raw const (*d).kind, &f.kind);
-            put(&b, &raw const (*d).field, &f.field);
+            match p.defs.as_ref() {
+                Some(x) => point(&b, &raw const (*d).low, &x.low),
+                None => put(&b, &raw const (*d).low, &[]),
+            }
+            point(&b, &raw const (*d).ord, p.ordinals());
+            point(&b, &raw const (*d).fielded, fielded);
+            point(&b, &raw const (*d).up, &p.up);
+            let ids = &p.core;
+            made(&b, &raw const (*d).start, ids.len(), |l| f.start(ids[l]));
+            made(&b, &raw const (*d).end, ids.len(), |l| f.end(ids[l]));
+            made(&b, &raw const (*d).kind, ids.len(), |l| f.kind(ids[l]));
+            made(&b, &raw const (*d).field, ids.len(), |l| f.field(ids[l]));
             match canon.get(&p.tag) {
                 Some(&(c, n)) => Span::set(&raw const (*d).canonical, c, n),
                 None => Span::set(&raw const (*d).canonical, std::ptr::null::<u16>(), 0),

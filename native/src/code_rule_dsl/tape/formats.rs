@@ -1,21 +1,21 @@
-//! Decision 0293: a document's tape through the one API (`rerail_tape_format::tape`), in the format the run reads
+//! Decision 0293: a document's tape through the one API (`rerail_tape_format::tape`), in the format the run stores
 //! (`RERAIL_TAPE`), read in place:
 //!
-//! - **15** (the default): the image's own columns;
-//! - **16**: format 16, written from them once an image (0293's interim: until the parsers write it, and until
-//!   the store keeps it beside format 15);
+//! - **15** (the default): format 15's columns, as the parsers write them;
+//! - **16**: format 16, written from them where a file's documents are made (`FileImage::single`, `embedding`),
+//!   until the parsers write it; the store keeps it, and a load reads it as stored;
 //! - **16z**: format 16 in fixed LZ4 blocks, a block decoded where a read falls in it.
 //!
-//! A language without format 16's table (`f16::lang`), or an image with a code the table lacks, is read as format
-//! 15, and the run says so once a language.
+//! A language without format 16's table (`f16::lang`), or an image with a code the table lacks, keeps format 15,
+//! and the run says so once a language.
 
-use super::{SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage};
-use rerail_tape_format::f16::{self, Lang, Tape16, Tape16Z};
+use super::{Columns15, FileImage, Held, SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage};
+use rerail_tape_format::f16::{self, Lang};
 use rerail_tape_format::tape::{AnyTape, CodeTable, Entry, F15, F15Columns};
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
-/// The format a run reads its documents' tapes in.
+/// The format a run stores and reads its documents' tapes in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     F15,
@@ -37,19 +37,33 @@ impl Format {
             Ok(other) => panic!("RERAIL_TAPE={other}: the formats are 15, 16 and 16z"),
         })
     }
+
+    /// The tape format version the store keys a tape by when a run stores this format: a store holds each
+    /// document once per format, and a run finds only its own. (A language that keeps format 15 in a run of
+    /// format 16 is stored under 16, as format 15's bytes: the bytes say what they hold.)
+    pub fn store_version(self) -> u32 {
+        match self {
+            Format::F15 => super::TAPE_FORMAT_VERSION,
+            Format::F16 => 16,
+            Format::F16Z => 1016,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Format::F15 => "15",
+            Format::F16 => "16",
+            Format::F16Z => "16z",
+        }
+    }
 }
 
-/// A document's tape where its image is held: format 15's columns, and each format a run asks for made from them
-/// once (the image's code table as the API's, and format 16 as written; none where it is read as format 15). The
-/// document (`TapeDoc`) and its facts (`Facts::tape`) hold the same one.
-pub struct DocTape {
-    image: Arc<TapeImage>,
-    table: OnceLock<CodeTable>,
-    f16: OnceLock<Option<(&'static Lang, Tape16)>>,
-    f16z: OnceLock<Option<(&'static Lang, Tape16Z)>>,
+/// The tape format version the store keys this run's tapes by (`Format::store_version`).
+pub fn stored_version() -> u32 {
+    Format::of_run().store_version()
 }
 
-impl TapeImage {
+impl Columns15 {
     /// Its code table as the API's: the entries format 15's reader takes from the image's bytes (`f15_columns`).
     pub fn code_table(&self) -> CodeTable {
         let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
@@ -60,8 +74,10 @@ impl TapeImage {
                     kind: c.kf() & kind_mask,
                     field: c.kf() >> rerail_tape_format::KIND_BITS,
                     flags: c.flags,
-                    alias: (c.alias != SENTINEL).then(|| self.kind_aliases[usize::from(c.alias)].clone()),
-                    classes: c.classes().to_vec(),
+                    // An alias past the table (a damaged image) reads as an empty name, which a restore refuses.
+                    alias: (c.alias != SENTINEL).then(|| self.kind_aliases.get(usize::from(c.alias)).cloned().unwrap_or_default()),
+                    // A count past the slots (a damaged image) reads as that many classes, which a restore refuses.
+                    classes: c.classes.get(..usize::from(c.class_count)).map_or_else(|| vec![0; usize::from(c.class_count)], <[u16]>::to_vec),
                 })
                 .collect(),
         )
@@ -81,66 +97,104 @@ impl TapeImage {
     }
 }
 
-/// Format 16 written from `image` (format 15, read through `table`), or why it is not: the run says so once a
-/// language.
-fn written(image: &TapeImage, table: &CodeTable) -> Option<(&'static Lang, Tape16)> {
+/// The run says once a language that its documents keep format 15, and why.
+fn keeps_15(image: &TapeImage, tag: u8, why: &str) {
     static SAID: [AtomicBool; 256] = [const { AtomicBool::new(false) }; 256];
-    let tag = crate::code_rule_dsl::language::tape_tag(image.language)?;
-    let why = match f16::lang(tag) {
-        None => "its language has no format 16 table".to_owned(),
-        Some(lang) => match f16::numbers(lang, table) {
-            Ok(number) => return Some((lang, f16::write_from(lang, &F15::over(image.columns(), table), &number, image.source_len as u64))),
-            Err(e) => e,
-        },
-    };
     if !SAID[usize::from(tag)].swap(true, Ordering::Relaxed) {
-        eprintln!("rerail: RERAIL_TAPE asks for format 16; {:?} documents are read as format 15: {why}", image.language);
+        eprintln!("rerail: RERAIL_TAPE asks for format {}; {:?} documents are read as format 15: {why}", Format::of_run().name(), image.language);
     }
-    None
+}
+
+impl TapeImage {
+    /// This tape written in `format`, from format 15's columns (decision 0293's interim: the parsers write format
+    /// 15, and format 16 is written from it where a file's documents are made). A tape already held in another
+    /// format is kept as it is; one whose language has no format 16 table, or whose code the table lacks, keeps
+    /// format 15, and the run says so once a language.
+    pub fn in_format(self, format: Format) -> Self {
+        let Held::F15(c) = &self.held else { return self };
+        if format == Format::F15 {
+            return self;
+        }
+        let Some(tag) = crate::code_rule_dsl::language::tape_tag(self.language) else { return self };
+        let Some(lang) = f16::lang(tag) else {
+            keeps_15(&self, tag, "its language has no format 16 table");
+            return self;
+        };
+        let table = c.table.get_or_init(|| c.code_table());
+        let number = match f16::numbers(lang, table) {
+            Ok(number) => number,
+            Err(e) => {
+                keeps_15(&self, tag, &e);
+                return self;
+            }
+        };
+        let mut t = f16::write_from(lang, &F15::over(c.columns(), table), &number, self.source_len as u64);
+        t.set_tag(tag);
+        let held = match format {
+            Format::F16 => Held::F16(Arc::new(t)),
+            _ => Held::F16Z(Arc::new(t.blocks(lang))),
+        };
+        Self { held, ..self }
+    }
+
+    /// The language's table, where the image is held in format 16.
+    pub fn lang(&self) -> Option<&'static Lang> {
+        match &self.held {
+            Held::F15(_) => None,
+            Held::F16(t) => f16::lang(t.tag()),
+            Held::F16Z(t) => f16::lang(t.tag()),
+        }
+    }
+}
+
+impl FileImage {
+    /// Every document's tape in `format` (`TapeImage::in_format`).
+    pub fn in_format(self, format: Format) -> Self {
+        FileImage {
+            primary: self.primary.in_format(format),
+            derived: self.derived.into_iter().map(|d| super::DerivedImage { tape: d.tape.in_format(format), ..d }).collect(),
+        }
+    }
+}
+
+/// A document's tape as held (its image), shared by the document (`TapeDoc`) and the facts read off it
+/// (`Facts::tape`). A test may read it in another format (`tape_in`): written from format 15 once.
+pub struct DocTape {
+    image: Arc<TapeImage>,
+    other: [OnceLock<TapeImage>; 3],
 }
 
 impl DocTape {
     pub fn new(image: Arc<TapeImage>) -> Self {
-        DocTape { image, table: OnceLock::new(), f16: OnceLock::new(), f16z: OnceLock::new() }
+        DocTape { image, other: Default::default() }
     }
 
     pub fn image(&self) -> &TapeImage {
         &self.image
     }
 
-    /// The bytes it holds: the image's columns and code table, and each format made from them.
+    /// The bytes it holds.
     pub fn bytes(&self) -> usize {
-        let image = &*self.image;
-        let columns = [&image.code, &image.size, &image.base, &image.off, &image.tail].iter().map(|c| c.len()).sum::<usize>();
-        let made = self.f16.get().and_then(Option::as_ref).map_or(0, |(_, t)| t.bytes()) + self.f16z.get().and_then(Option::as_ref).map_or(0, |(_, t)| t.bytes());
-        columns + image.codes.len() * std::mem::size_of::<super::Code>() + made
+        self.image.estimated_bytes() + self.other.iter().filter_map(OnceLock::get).map(TapeImage::estimated_bytes).sum::<usize>()
     }
 
-    /// The tape, read in place in the run's format (`RERAIL_TAPE`, decision 0293). One a pass: a 16z tape keeps the
-    /// blocks it decoded.
+    /// The tape, read in place in the format it is held in.
     pub fn tape(&self) -> AnyTape<'_> {
-        self.tape_in(Format::of_run())
+        self.image.tape()
     }
 
-    /// The tape in `format`, or format 15 where the language has no format 16.
+    /// The tape in `format`: as held, or (a test's comparison of formats) written from format 15 once.
     pub fn tape_in(&self, format: Format) -> AnyTape<'_> {
-        let image = &*self.image;
-        let table = self.table.get_or_init(|| image.code_table());
-        let held = match format {
-            Format::F15 => None,
-            Format::F16 => self.f16.get_or_init(|| written(image, table)).as_ref().map(|(lang, t)| AnyTape::F16(t.reader(lang).expect("written with its language"))),
-            Format::F16Z => self
-                .f16z
-                .get_or_init(|| written(image, table).map(|(lang, t)| (lang, t.blocks(lang))))
-                .as_ref()
-                .map(|(lang, t)| AnyTape::F16Z(t.reader(lang).expect("written with its language"))),
-        };
-        held.unwrap_or_else(|| AnyTape::F15(F15::over(image.columns(), table)))
+        if format == self.image.format() {
+            return self.image.tape();
+        }
+        let slot = Format::ALL.iter().position(|&f| f == format).expect("a format");
+        self.other[slot].get_or_init(|| (*self.image).clone().in_format(format)).tape()
     }
 }
 
 impl TapeDoc {
-    /// This document's tape, read in place in the run's format (`DocTape::tape`).
+    /// This document's tape, read in place in the format it is held in (`DocTape::tape`).
     pub fn tape(&self) -> AnyTape<'_> {
         self.held.tape()
     }

@@ -56,7 +56,7 @@ pub enum Mode {
 }
 
 /// A kind-set axis: which ancestors of `n` are its rows' `a`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
     /// The nearest one in the set.
     Nearest,
@@ -107,8 +107,8 @@ pub struct Within {
     /// `None` when the block cannot hold them.
     #[cfg(target_os = "macos")]
     on_device: OnceLock<Option<usize>>,
-    /// The format the documents' tapes are read in (`RERAIL_TAPE`).
-    format: Format,
+    /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
+    format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
     sets: Box<[OnceLock<CodeSet>]>,
 }
@@ -155,15 +155,23 @@ impl Within {
             solved: OnceLock::new(),
             #[cfg(target_os = "macos")]
             on_device: OnceLock::new(),
-            format: Format::of_run(),
+            format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
             batch,
         }
     }
 
-    /// The same, reading the documents' tapes in `format` rather than the run's.
+    /// The same, reading the documents' tapes in `format` rather than as held (a test's comparison of formats).
     pub fn reading(self, format: Format) -> Self {
-        Within { format, ..self }
+        Within { format: Some(format), ..self }
+    }
+
+    /// `dt`'s tape: as held, or in the format a test asked for.
+    fn tape_of<'d>(&self, dt: &'d DocTape) -> rerail_tape_format::tape::AnyTape<'d> {
+        match self.format {
+            Some(format) => dt.tape_in(format),
+            None => dt.tape(),
+        }
     }
 
     /// Document `doc`'s tape, which the tree's containment and the kind-set axes read (not spans).
@@ -181,8 +189,13 @@ impl Within {
             if self.mode == Mode::Tree {
                 return t.table().set(|_| true);
             }
+            // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), slot 0 of its tag's stride whatever kind its entry
+            // holds: a member where the set names ERROR, as `member` and the device's bits read it (0289).
             let members = self.members.get(&self.batch.docs[doc].tag);
-            t.table().set(|e| members.is_some_and(|m| m.get(usize::from(e.kind)).is_some_and(|&x| x)))
+            t.table().set(|e| {
+                let slot = if e.flags & rerail_tape_format::CODE_ERROR != 0 { 0 } else { usize::from(e.kind) };
+                members.is_some_and(|m| m.get(slot).is_some_and(|&x| x))
+            })
         })
     }
 
@@ -190,7 +203,7 @@ impl Within {
     fn each_member(&self, doc: usize, mut f: impl FnMut(u32, bool)) {
         let p = &self.batch.docs[doc];
         match self.doc_tape(doc) {
-            Some(dt) => with_tape!(dt.tape_in(self.format), |t| {
+            Some(dt) => with_tape!(self.tape_of(dt), |t| {
                 let set = self.set(doc, &t);
                 for (l, &id) in p.core.iter().enumerate() {
                     f(l as u32, set.contains(t.code(id as usize)));
@@ -269,7 +282,7 @@ impl Within {
         let members = batch
             .dialects
             .iter()
-            .map(|(&tag, d)| {
+            .map(|(tag, d)| {
                 let table = (0..KIND_STRIDE as usize)
                     .map(|code| kinds.contains(&i64::from(kind_atom(tag, d.canonical.get(code).copied().unwrap_or(code as u16)))))
                     .collect();
@@ -324,12 +337,12 @@ impl Within {
                 .expect("the CPU's nearest pass")
                 .pop()
                 .unwrap_or_default();
-            Self::solve_pairs(&found, inside)
+            Self::solved_from(&found, inside)
         })
     }
 
     /// Per node row its rows: its nearest member ancestor (`found`, a node row), or for `inside` the chain of them.
-    fn solve_pairs(found: &[u32], inside: bool) -> Solved {
+    fn solved_from(found: &[u32], inside: bool) -> Solved {
         use crate::code_rule_dsl::facts::nearest as file_local;
         let n = found.len();
         let (mut start, mut pairs) = (Vec::with_capacity(n + 1), Vec::with_capacity(n));
@@ -348,6 +361,26 @@ impl Within {
             #[cfg(target_os = "macos")]
             in_chunk: None,
         }
+    }
+
+    /// The batch's solve on each document's tape: one pass of the set's matches (`nearest_all`), kept where the
+    /// projection has them, mapped to node rows.
+    fn solved_on_tapes(&self, n: usize, inside: bool) -> Solved {
+        use crate::code_rule_dsl::facts::nearest as file_local;
+        let mut found = Vec::with_capacity(n);
+        let mut near = Vec::new();
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = self.batch.nodes[doc] as u32;
+            let dt = self.doc_tape(doc).expect("every document holds its tape");
+            with_tape!(self.tape_of(dt), |t| {
+                nearest_all(&t, self.set(doc, &t), |id| p.local[id] != NONE, &mut near);
+            });
+            found.extend(p.core.iter().map(|&id| match near[id as usize] {
+                rerail_tape_format::tape::NONE => file_local::NONE,
+                a => base + p.local[a as usize],
+            }));
+        }
+        Self::solved_from(&found, inside)
     }
 
     /// The solve's first row per node row (`nodes + 1` values).
@@ -402,26 +435,6 @@ impl Within {
         }
     }
 
-    /// The batch's solve on each document's tape: one pass of the set's matches (`nearest_all`), kept where the
-    /// projection has them, mapped to node rows.
-    fn solved_on_tapes(&self, n: usize, inside: bool) -> Solved {
-        use crate::code_rule_dsl::facts::nearest as file_local;
-        let mut found = Vec::with_capacity(n);
-        let mut near = Vec::new();
-        for (doc, p) in self.batch.docs.iter().enumerate() {
-            let base = self.batch.nodes[doc] as u32;
-            let dt = self.doc_tape(doc).expect("every document holds its tape");
-            with_tape!(dt.tape_in(self.format), |t| {
-                nearest_all(&t, self.set(doc, &t), |id| p.local[id] != NONE, &mut near);
-            });
-            found.extend(p.core.iter().map(|&id| match near[id as usize] {
-                rerail_tape_format::tape::NONE => file_local::NONE,
-                a => base + p.local[a as usize],
-            }));
-        }
-        Self::solve_pairs(&found, inside)
-    }
-
     /// The planner expects `keys` more lookups of `n`: the batch's solve is chosen once they cost more than it.
     pub(super) fn expect(&self, keys: f64) {
         // Containment's solve is every ancestor of every node: only a reader of the whole relation chooses it.
@@ -452,7 +465,7 @@ impl Within {
         let p = &self.batch.docs[doc];
         // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
         // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
-        let slot = p.facts.kind[p.core[local as usize] as usize] % crate::code_rule_dsl::facts::core::KIND_STRIDE;
+        let slot = p.facts.kind(p.core[local as usize]) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
         self.members.get(&p.tag).is_some_and(|t| t.get(slot as usize).is_some_and(|&m| m))
     }
 
@@ -465,7 +478,7 @@ impl Within {
     fn span(&self, doc: usize, local: u32) -> (u32, u32) {
         let p = &self.batch.docs[doc];
         let id = p.core[local as usize] as usize;
-        (p.facts.start[id], p.facts.end[id])
+        (p.facts.start(id as u32), p.facts.end(id as u32))
     }
 
     fn zero(&self) -> &Vec<Vec<u32>> {
@@ -483,7 +496,7 @@ impl Within {
     fn containers(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
         if let Some(dt) = self.doc_tape(doc) {
-            return with_tape!(dt.tape_in(self.format), |t| self.containers_on(&t, doc, p, local));
+            return with_tape!(self.tape_of(dt), |t| self.containers_on(&t, doc, p, local));
         }
         if let Mode::Axis(axis) = self.mode {
             let mut out = Vec::new();
@@ -544,7 +557,7 @@ impl Within {
     fn contained(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
         if let Some(dt) = self.doc_tape(doc) {
-            return with_tape!(dt.tape_in(self.format), |t| self.contained_on(&t, doc, p, local));
+            return with_tape!(self.tape_of(dt), |t| self.contained_on(&t, doc, p, local));
         }
         let sizes = p.sizes();
         if let Mode::Axis(axis) = self.mode {

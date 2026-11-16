@@ -173,7 +173,7 @@ pub(super) fn prefetch(store: &ContentStore, sources: &[HashKey]) -> Result<Stor
         .stored_objects_by_hash(
             sources,
             grammar_version(),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
         )
         .map_err(|error| invalid(error.to_string()))?;
     let tapes = objects

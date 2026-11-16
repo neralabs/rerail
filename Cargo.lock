@@ -3174,6 +3174,7 @@ dependencies = [
 name = "rerail-blocks"
 version = "0.1.0"
 dependencies = [
+ "block",
  "libc",
  "metal",
  "rayon",
@@ -4479,6 +4480,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-prof",
  "rerail-store",
  "rusqlite",

@@ -55,6 +55,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/prof/src/lib.rs", "LEFT", Thread, "this thread's sampling countdown"),
     ("crates/prof/src/lib.rs", "SPAN", Thread, "this thread's sampled span"),
     ("crates/prof/src/lib.rs", "THREAD_IX", Thread, "this thread's number in the heap samples taken with no span open"),
+    ("crates/tape_format/src/f16.rs", "BLOCKS", Thread, "the 16z blocks this thread decoded last, keyed by tape id and block: the same bytes on any thread"),
     ("crates/tape_format/src/lib.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("src/code_rule_dsl/budget.rs", "BUDGET_COUNTDOWN", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/budget.rs", "MATCH_BUDGET", Call, "the state of one call in progress on this thread, set and read within it"),

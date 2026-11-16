@@ -40,7 +40,7 @@ fn guest_differences(md: &str) -> Vec<String> {
     let mut inline = tree_sitter::Parser::new();
     inline.set_language(&GrammarDialect::MarkdownInline.get_ts_language()).unwrap();
     let mut out = Vec::new();
-    for id in 0..f.start.len() as u32 {
+    for id in 0..f.len() as u32 {
         if !matches!(syntax::kind_name(&f, id), "inline" | "pipe_table_cell") {
             continue;
         }
@@ -48,7 +48,7 @@ fn guest_differences(md: &str) -> Vec<String> {
         let ours = inline.parse(&text, None).unwrap();
         let ours = nodes(&ours, &|span| place.host(span));
         // tree-sitter-md's ranges, from its block tree's node at the same place.
-        let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+        let (start, end) = (f.start(id) as usize, f.end(id) as usize);
         let node = block.root_node().descendant_for_byte_range(start, end).unwrap();
         let node = std::iter::successors(Some(node), |n| n.parent()).find(|n| n.start_byte() == start && n.end_byte() == end && matches!(n.kind(), "inline" | "pipe_table_cell")).unwrap();
         let mut range = node.range();

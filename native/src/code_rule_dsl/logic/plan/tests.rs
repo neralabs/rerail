@@ -2425,6 +2425,100 @@ fn a_filter_is_priced_at_the_rows_it_passes_on() {
     assert!((rows - 1_000.0 * 0.97 * 0.98).abs() < 1e-6 * rows, "rows out {rows}");
 }
 
+/// A model with no statistics but those each test sets (decision 0299's tests).
+fn bare_model(p: &Program) -> Model {
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()}
+}
+
+/// `(order shown, work)` of `p`'s first rule.
+fn priced_first_rule(model: &Model, p: &Program) -> (Vec<String>, f64) {
+    let r = &p.rules[0];
+    let (order, work, _) = model.plan_rule(body::Placed::of_program(p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    (order.iter().map(|s| r.body[s.at].to_string()).collect(), work)
+}
+
+/// Decision 0299: `within(n, a)` read from its container yields the container's descendants: the mean size of a
+/// node with children (`Stats::subtree_fan`), not the view's fanout, which is of the lookups made so far.
+#[test]
+fn within_read_from_its_container_is_priced_by_subtree_size() {
+    let p = parse(".decl c(t: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- c(t), within(n, t).\n.output r\n").unwrap();
+    let mut model = bare_model(&p);
+    // 1,000 leaves and 10 nodes of 50.
+    model.stats.size = std::sync::Arc::new(HashMap::from([("1".to_owned(), 1.0), ("2".to_owned(), 50.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("1".to_owned(), 1_000), ("2".to_owned(), 10)].into_iter().collect());
+    model.stats.nodes = 1_010.0;
+    assert_eq!(model.stats.subtree_fan(), Some(50.0));
+    model.stats.card.insert("c", 10.0);
+    model.ndv.insert(("c", 0), 10.0);
+    model.stats.fan.insert(("c", 0), 1.0);
+    model.stats.card.insert("within", 1_000.0);
+    for (c, ndv, fan) in [(0, 400.0, 2.5), (1, 70.0, 14.0)] {
+        model.ndv.insert(("within", c), ndv);
+        model.stats.fan.insert(("within", c), fan);
+    }
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order, ["c($t)", "within($n, $t)"]);
+    assert!((work - (10.0 + 10.0 * 50.0)).abs() < 1e-6, "work {work}");
+}
+
+/// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
+/// made, not the default size.
+#[test]
+fn a_relation_of_facts_is_sized_when_planned() {
+    let p = parse(".decl ck(k: number, g: number)\n.decl a(c: number, k: number)\n.decl r(c: number)\nck(5, 1). ck(6, 1). ck(7, 2).\nr(c) :- ck(k, _), a(c, k).\n.output r\n").unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut stats = Stats::empty(&p);
+    stats.card.insert("a", 1_000.0);
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(stats);
+    let model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
+    assert_eq!(model.stats.card.get("ck").copied(), Some(3.0));
+    assert_eq!(model.ndv.at("ck", 1).copied(), Some(2.0));
+    let groups = model.stats.dfreq.at("ck", 1).expect("the facts' counts");
+    assert_eq!(groups.get(&Constant::Int(1)).copied(), Some(2));
+}
+
+/// Decision 0299: `kind($c, $k)` with `$k` bound by an atom whose values are counted reads those kinds' nodes,
+/// each as often as it binds: (10 + 30) / 2 a binding, not every node over the kinds.
+#[test]
+fn a_kind_bound_by_counted_values_reads_their_nodes() {
+    let p = parse(".decl ck(k: number)\n.decl kind(n: number, k: number)\n.decl r(c: number)\nr(c) :- ck(k), kind(c, k).\n.output r\n").unwrap();
+    let mut model = bare_model(&p);
+    model.stats.kfreq = std::sync::Arc::new([("5".to_owned(), 10), ("6".to_owned(), 30), ("7".to_owned(), 10_000)].into_iter().collect());
+    model.stats.card.insert("ck", 2.0);
+    model.ndv.insert(("ck", 0), 2.0);
+    model.stats.fan.insert(("ck", 0), 1.0);
+    model.stats.dfreq.insert(("ck".to_owned(), 0), HashMap::from([(Constant::Int(5), 1), (Constant::Int(6), 1)]));
+    model.stats.card.insert("kind", 10_040.0);
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order, ["ck($k)", "kind($c, $k)"]);
+    assert!((work - (2.0 + 2.0 * 20.0)).abs() < 1e-6, "work {work}");
+}
+
+/// Decision 0299: a probe on several bound columns reads at least the rows of one combination the relation holds.
+/// Independence divided `w`'s two rows a node by its 400 names, though a node has one name.
+#[test]
+fn a_probe_on_several_columns_reads_a_combinations_rows() {
+    let p = parse(".decl d(n: number, x: number)\n.decl w(n: number, x: number, s: number)\n.decl r(s: number)\nr(s) :- d(n, x), w(n, x, s).\n.output r\n").unwrap();
+    let mut model = bare_model(&p);
+    model.stats.card.insert("d", 100.0);
+    for c in 0..2 {
+        model.ndv.insert(("d", c), 100.0);
+        model.stats.fan.insert(("d", c), 1.0);
+    }
+    model.stats.card.insert("w", 1_000.0);
+    for (c, ndv, fan) in [(0, 500.0, 2.0), (1, 400.0, 2.5), (2, 50.0, 20.0)] {
+        model.ndv.insert(("w", c), ndv);
+        model.stats.fan.insert(("w", c), fan);
+    }
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order, ["d($n, $x)", "w($n, $x, $s)"]);
+    assert!((work - (100.0 + 100.0 * 1.0)).abs() < 1e-6, "work {work}");
+}
+
 #[test]
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse(".decl a(x:number,y:number)\n").unwrap();
