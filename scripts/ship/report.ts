@@ -332,7 +332,7 @@ export function renderReport(report: Report): string {
     ...report.candidates.map(headline),
     ...(report.waits === null ? [] : [waitsHeadline(report.waits)]),
     "",
-    `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline ${baseline} · gate: ${report.verdict.gate.join(", ")} · bar: every metric ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline, findings no worse, every run completes.`,
+    `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline ${baseline} · gate: ${[...report.verdict.gate, ...(report.waits === null ? [] : ["waits"])].join(", ")} · bar: every metric ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline, findings no worse, every run completes.`,
     "",
   ];
   for (const c of report.candidates) lines.push(...candidateSection(c));
