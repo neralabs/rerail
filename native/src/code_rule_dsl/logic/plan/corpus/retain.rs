@@ -1462,27 +1462,80 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
     for (rel, frame) in &names {
         let Some(width) = prog.fields()?.arity(rel) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
         let g = group_col(prog, locations, rel).min(width.max(1) - 1);
-        let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
         let (docs, digest, atom_owned) = &docs_of_rel[rel];
         // A granule's rows are its owners', each owner's together, owners ascending (`write_frames`): each owner's
-        // range follows from the owners' row counts. Checked at each range's ends; an owner's rows are hashed
-        // again only when an edit changes them.
+        // range follows from the owners' row counts, and each granule's count is its frame's, read undecoded. The
+        // rows are decoded where the run first reads the input (`Lazy`): an edit reads few of them.
         let mut owners: Vec<(i64, i64, u64)> = docs.iter().map(|(d, (_, n))| (granule(*d, atom_owned.then_some(&*atoms)), *d, *n)).collect();
         owners.sort_unstable();
         let mut ranges = Ranges::default();
+        let mut granules: Vec<(Arc<crate::content_store::AdmittedFrame>, Vec<(i64, u32)>)> = Vec::new();
         let mut at = 0usize;
         for run in owners.chunk_by(|a, b| a.0 == b.0) {
-            let Some(got) = parts.get(&(frame.clone(), run[0].0)).and_then(|a| a.rows().ok()) else { return Ok(Err(format!("{rel}: a granule's frame is missing or does not decode"))) };
-            if got.types.len() != width || got.rows.len() != got.n * width || run.iter().map(|o| o.2 as usize).sum::<usize>() != got.n {
+            let Some(part) = parts.get(&(frame.clone(), run[0].0)) else { return Ok(Err(format!("{rel}: a granule's frame is missing"))) };
+            let n: usize = run.iter().map(|o| o.2 as usize).sum();
+            if part.width() != Some(width) || part.len() != Some(n) {
                 return Ok(Err(format!("{rel}: a granule's frame does not hold its owners' rows")));
             }
-            let mut start = 0usize;
+            let mut start = at;
             for &(_, owner, n) in run {
-                let n = n as usize;
-                if width > 0 && n > 0 && [start, start + n - 1].iter().any(|r| owner_of(&got.rows[r * width..(r + 1) * width], g) != owner) {
-                    return Ok(Err(format!("{rel}: a granule's rows are not by owner")));
+                ranges.insert(owner, (start as u32, n as u32));
+                start += n as usize;
+            }
+            granules.push((Arc::clone(part), run.iter().map(|o| (o.1, o.2 as u32)).collect()));
+            at += n;
+        }
+        let names: Vec<String> = prog.fields()?.columns(rel).unwrap_or_default().into_iter().map(|(n, _)| n.to_owned()).collect();
+        let source: Arc<dyn Source> = Arc::new(Lazy { rel: rel.clone(), names, width, g, n: at, granules, made: std::sync::OnceLock::new() });
+        let source: Arc<dyn Source> = match std::env::var_os("RERAIL_KEPT_READS") {
+            Some(_) => {
+                // Each granule's first row, in the order the rows were laid out.
+                let mut starts: Vec<usize> = Vec::new();
+                let mut at = 0usize;
+                for run in owners.chunk_by(|a, b| a.0 == b.0) {
+                    starts.push(at);
+                    at += run.iter().map(|o| o.2 as usize).sum::<usize>();
                 }
-                ranges.insert(owner, ((at + start) as u32, n as u32));
+                Arc::new(Traced::new(rel.clone(), source, starts))
+            }
+            None => source,
+        };
+        out.insert(rel.clone(), KeptInput { source, docs: Arc::clone(docs), digest: *digest, ranges: Arc::new(ranges) });
+    }
+    Ok(Ok(out))
+}
+
+/// A kept input as its frames hold it, decoded where the run first reads it (`kept_inputs`): its names and its rows'
+/// count are known before. A granule whose rows are not its owners' is told through `failure`, its reader failing.
+struct Lazy {
+    rel: String,
+    names: Vec<String>,
+    width: usize,
+    /// Its owner column.
+    g: usize,
+    n: usize,
+    /// Each granule's frame with its owners and their rows' counts, owners ascending.
+    granules: Vec<(Arc<crate::content_store::AdmittedFrame>, Vec<(i64, u32)>)>,
+    /// Its rows, once read; with why not, read as none.
+    made: std::sync::OnceLock<(Arc<dyn Source>, Option<String>)>,
+}
+impl Lazy {
+    fn decode(&self) -> std::result::Result<Arc<dyn Source>, String> {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "a kept input, decoded where read".into());
+        let (rel, width) = (&self.rel, self.width);
+        let mut columns: Vec<Vec<i64>> = (0..width).map(|_| Vec::with_capacity(self.n)).collect();
+        for (part, owners) in &self.granules {
+            let got = part.rows().map_err(|e| format!("{rel}: a granule's frame does not decode: {e}"))?;
+            if got.types.len() != width || got.rows.len() != got.n * width {
+                return Err(format!("{rel}: a granule's frame does not hold its owners' rows"));
+            }
+            // Checked at each owner's range ends; an owner's rows are hashed again only when an edit changes them.
+            let mut start = 0usize;
+            for &(owner, n) in owners {
+                let n = n as usize;
+                if width > 0 && n > 0 && [start, start + n - 1].iter().any(|r| owner_of(&got.rows[r * width..(r + 1) * width], self.g) != owner) {
+                    return Err(format!("{rel}: a granule's rows are not by owner"));
+                }
                 start += n;
             }
             for row in got.rows.chunks_exact(width.max(1)).take(got.n) {
@@ -1490,12 +1543,340 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
                     columns[c].push(*v);
                 }
             }
-            at += got.n;
         }
-        let source = crate::code_rule_dsl::logic::native::component::columns_source(prog.fields()?.columns(rel).unwrap_or_default().into_iter().map(|(n, _)| n.to_owned()).collect(), columns.into_iter().map(Some).collect());
-        out.insert(rel.clone(), KeptInput { source, docs: Arc::clone(docs), digest: *digest, ranges: Arc::new(ranges) });
+        Ok(crate::code_rule_dsl::logic::native::component::columns_source(self.names.clone(), columns.into_iter().map(Some).collect()))
     }
-    Ok(Ok(out))
+    fn made(&self) -> &(Arc<dyn Source>, Option<String>) {
+        self.made.get_or_init(|| match self.decode() {
+            Ok(s) => (s, None),
+            Err(why) => (crate::code_rule_dsl::logic::native::component::columns_source(self.names.clone(), vec![Some(Vec::new()); self.width]), Some(why)),
+        })
+    }
+    fn inner(&self) -> &dyn Source {
+        self.made().0.as_ref()
+    }
+}
+impl Source for Lazy {
+    fn columns(&self) -> Vec<String> {
+        self.names.clone()
+    }
+    fn len(&self) -> usize {
+        self.n
+    }
+    fn estimated_len(&self) -> usize {
+        self.n
+    }
+    fn failure(&self) -> Option<String> {
+        let (inner, why) = self.made();
+        why.clone().or_else(|| inner.failure())
+    }
+    fn row_stream(&self, range: std::ops::Range<usize>, reverse: bool) -> Option<Box<dyn crate::code_rule_dsl::facts::vtab::RowStream>> {
+        self.inner().row_stream(range, reverse)
+    }
+    fn direct_all(&self, equal: &[(usize, i64)]) -> Option<Vec<crate::code_rule_dsl::facts::vtab::ReadRow>> {
+        self.inner().direct_all(equal)
+    }
+    fn direct_one(&self, column: usize, values: &[i64]) -> Option<Vec<crate::code_rule_dsl::facts::vtab::ReadRow>> {
+        self.inner().direct_one(column, values)
+    }
+    fn caches_rows(&self) -> bool {
+        self.inner().caches_rows()
+    }
+    fn row_cells(&self, row: usize) -> Option<(i64, Arc<dyn crate::code_rule_dsl::facts::vtab::RowCells>)> {
+        self.inner().row_cells(row)
+    }
+    fn frozen(&self) -> Option<Arc<dyn Source>> {
+        self.inner().frozen()
+    }
+    fn revision(&self) -> Option<u64> {
+        self.inner().revision()
+    }
+    fn cell(&self, row: usize, column: usize) -> rusqlite::types::Value {
+        self.inner().cell(row, column)
+    }
+    fn row_id(&self, row: usize) -> i64 {
+        self.inner().row_id(row)
+    }
+    fn text_column(&self, column: usize) -> bool {
+        self.inner().text_column(column)
+    }
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        self.inner().row_at(row, columns, out)
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.inner().estimated_matches(column, batch)
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.inner().estimated_matches_all(columns)
+    }
+    fn composite(&self) -> bool {
+        self.inner().composite()
+    }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        self.inner().lookup_all(equal)
+    }
+    fn doc_column(&self) -> Option<usize> {
+        self.inner().doc_column()
+    }
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+        self.inner().lookup_in(column, values, doc)
+    }
+    fn kept_to_doc(&self, column: usize) -> bool {
+        self.inner().kept_to_doc(column)
+    }
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        self.inner().filter_eq(eqs)
+    }
+    fn made_on_lookup(&self) -> bool {
+        self.inner().made_on_lookup()
+    }
+    fn complete_rows(&self) -> bool {
+        self.inner().complete_rows()
+    }
+    fn expect_lookups(&self, column: usize, keys: f64) {
+        self.inner().expect_lookups(column, keys)
+    }
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.inner().statistics()
+    }
+    fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+        self.inner().value_counts(wanted)
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.inner().indexed(column)
+    }
+    fn range_upper_compatible(&self, lower: usize, upper: usize) -> bool {
+        self.inner().range_upper_compatible(lower, upper)
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.inner().range_indexed(column)
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.inner().range_lookup(column, lower, upper)
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.inner().lookup(column, values)
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.inner().value(row, column)
+    }
+    fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
+        self.inner().sorted_rows(column, value)
+    }
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.inner().sorts_rows(column)
+    }
+    fn prepare_lookup(&self, columns: &[usize]) {
+        self.inner().prepare_lookup(columns)
+    }
+    fn prepare_index(&self, columns: &[usize]) {
+        self.inner().prepare_index(columns)
+    }
+    fn primary_key_len(&self) -> Option<usize> {
+        self.inner().primary_key_len()
+    }
+    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+        self.inner().lookup_primary_batch(values)
+    }
+    fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
+        self.inner().ordered(equal, order)
+    }
+    fn ordered_range(&self, equal: &[(usize, i64)]) -> Option<std::ops::Range<usize>> {
+        self.inner().ordered_range(equal)
+    }
+}
+
+/// `RERAIL_KEPT_READS`: a kept input that counts what the run reads of it, printed when it is dropped: the rows and
+/// granules read one at a time, and the calls that read a whole column (a scan, an index, statistics).
+struct Traced {
+    rel: String,
+    inner: Arc<dyn Source>,
+    starts: Vec<usize>,
+    rows: parking_lot::Mutex<rustc_hash::FxHashSet<usize>>,
+    whole: parking_lot::Mutex<BTreeMap<&'static str, usize>>,
+}
+impl Traced {
+    fn new(rel: String, inner: Arc<dyn Source>, starts: Vec<usize>) -> Self {
+        Self { rel, inner, starts, rows: Default::default(), whole: Default::default() }
+    }
+    fn row(&self, r: usize) {
+        let mut rows = self.rows.lock();
+        if rows.is_empty() && std::env::var_os("RERAIL_KEPT_READS_STACK").is_some_and(|v| v == self.rel.as_str()) {
+            eprintln!("RERAIL_KEPT_READS {}: first row read at\n{}", self.rel, std::backtrace::Backtrace::force_capture());
+        }
+        rows.insert(r);
+    }
+    fn rows_of(&self, got: &Option<Vec<usize>>) {
+        if let Some(g) = got {
+            self.rows.lock().extend(g.iter().copied());
+        }
+    }
+    fn whole(&self, what: &'static str) {
+        *self.whole.lock().entry(what).or_default() += 1;
+    }
+}
+impl Drop for Traced {
+    fn drop(&mut self) {
+        let rows = self.rows.lock();
+        let granules: BTreeSet<usize> = rows.iter().map(|r| self.starts.partition_point(|s| s <= r)).collect();
+        eprintln!("RERAIL_KEPT_READS {}: {} rows in {} granules; read {} rows in {} granules; whole {:?}", self.rel, self.inner.len(), self.starts.len(), rows.len(), granules.len(), self.whole.lock());
+    }
+}
+impl Source for Traced {
+    fn columns(&self) -> Vec<String> {
+        self.inner.columns()
+    }
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+    fn row_stream(&self, range: std::ops::Range<usize>, reverse: bool) -> Option<Box<dyn crate::code_rule_dsl::facts::vtab::RowStream>> {
+        self.whole("row_stream");
+        self.inner.row_stream(range, reverse)
+    }
+    fn direct_all(&self, equal: &[(usize, i64)]) -> Option<Vec<crate::code_rule_dsl::facts::vtab::ReadRow>> {
+        self.whole("direct_all");
+        self.inner.direct_all(equal)
+    }
+    fn direct_one(&self, column: usize, values: &[i64]) -> Option<Vec<crate::code_rule_dsl::facts::vtab::ReadRow>> {
+        self.whole("direct_one");
+        self.inner.direct_one(column, values)
+    }
+    fn caches_rows(&self) -> bool {
+        self.inner.caches_rows()
+    }
+    fn row_cells(&self, row: usize) -> Option<(i64, Arc<dyn crate::code_rule_dsl::facts::vtab::RowCells>)> {
+        self.row(row);
+        self.inner.row_cells(row)
+    }
+    fn frozen(&self) -> Option<Arc<dyn Source>> {
+        self.whole("frozen");
+        self.inner.frozen()
+    }
+    fn revision(&self) -> Option<u64> {
+        self.inner.revision()
+    }
+    fn cell(&self, row: usize, column: usize) -> rusqlite::types::Value {
+        self.row(row);
+        self.inner.cell(row, column)
+    }
+    fn row_id(&self, row: usize) -> i64 {
+        self.inner.row_id(row)
+    }
+    fn text_column(&self, column: usize) -> bool {
+        self.inner.text_column(column)
+    }
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        self.row(row);
+        self.inner.row_at(row, columns, out)
+    }
+    fn estimated_len(&self) -> usize {
+        self.inner.estimated_len()
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.inner.estimated_matches(column, batch)
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.inner.estimated_matches_all(columns)
+    }
+    fn composite(&self) -> bool {
+        self.inner.composite()
+    }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        self.whole("lookup_all (index)");
+        let got = self.inner.lookup_all(equal);
+        self.rows_of(&got);
+        got
+    }
+    fn doc_column(&self) -> Option<usize> {
+        self.inner.doc_column()
+    }
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+        self.whole("lookup_in (index)");
+        let got = self.inner.lookup_in(column, values, doc);
+        self.rows_of(&got);
+        got
+    }
+    fn kept_to_doc(&self, column: usize) -> bool {
+        self.inner.kept_to_doc(column)
+    }
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        self.whole("filter_eq (scan)");
+        self.inner.filter_eq(eqs)
+    }
+    fn made_on_lookup(&self) -> bool {
+        self.inner.made_on_lookup()
+    }
+    fn complete_rows(&self) -> bool {
+        self.inner.complete_rows()
+    }
+    fn expect_lookups(&self, column: usize, keys: f64) {
+        self.inner.expect_lookups(column, keys)
+    }
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.whole("statistics");
+        self.inner.statistics()
+    }
+    fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+        self.whole("value_counts");
+        self.inner.value_counts(wanted)
+    }
+    fn failure(&self) -> Option<String> {
+        self.inner.failure()
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.inner.indexed(column)
+    }
+    fn range_upper_compatible(&self, lower: usize, upper: usize) -> bool {
+        self.inner.range_upper_compatible(lower, upper)
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.inner.range_indexed(column)
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.whole("range_lookup (index)");
+        let got = self.inner.range_lookup(column, lower, upper);
+        self.rows_of(&got);
+        got
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.whole("lookup (index)");
+        let got = self.inner.lookup(column, values);
+        self.rows_of(&got);
+        got
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.row(row);
+        self.inner.value(row, column)
+    }
+    fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
+        self.whole("sorted_rows (index)");
+        self.inner.sorted_rows(column, value)
+    }
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.inner.sorts_rows(column)
+    }
+    fn prepare_lookup(&self, columns: &[usize]) {
+        self.whole("prepare_lookup");
+        self.inner.prepare_lookup(columns)
+    }
+    fn prepare_index(&self, columns: &[usize]) {
+        self.whole("prepare_index");
+        self.inner.prepare_index(columns)
+    }
+    fn primary_key_len(&self) -> Option<usize> {
+        self.inner.primary_key_len()
+    }
+    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+        self.whole("lookup_primary_batch");
+        self.inner.lookup_primary_batch(values)
+    }
+    fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
+        self.inner.ordered(equal, order)
+    }
+    fn ordered_range(&self, equal: &[(usize, i64)]) -> Option<std::ops::Range<usize>> {
+        self.whole("ordered_range");
+        self.inner.ordered_range(equal)
+    }
 }
 
 /// `source` with its columns named `names` (as the run binds it), its rows as they are.

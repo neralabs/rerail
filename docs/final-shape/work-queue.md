@@ -515,6 +515,27 @@ pass.
   - **Open:** `frame_rels` names the program's declared relations. `Retained::from_frames` also reads as inputs
     the relations a run binds from an earlier phase (`bound`: `doc`, `types__wgen`). If one is undeclared, it is
     left out. No read of a left-out frame was seen on ep2.
+  - **Found again** (2026-11-16, ep2, after Q20): `parse`'s 2 s of own time on an edit was this read. It now has
+    spans: "the kept frames, before the first wave", and inside the store "the store's frames, read once a process"
+    and "the cross part's space, by identity (Q19)", each with "their symbols held". `parse`'s own time is 0.03 s.
+    Test: `a_run_reads_its_cross_space_by_identity_whichever_run_reads_first` asserts the spans.
+    - A B101 edit after a warm run: 78 G. The space read is 1.70 s of it: 12,404 identities asked, 40,996 frames
+      (347 MB) kept, 45,161 identities left out (23,941 on 11-15).
+    - The space now holds 155,273 frames, 3.45 GB of blobs, in a store of 8.4 GB. The scan selects `data`, so SQLite
+      reads every row's overflow pages, kept or not. A sample has 29% of the main thread in that read, almost all
+      `pread` under `vdbeColumnFromOverflow`. The read grows with every edit the store keeps, the shape the done-when
+      rules out.
+    - **Tried, does not work:** scan the keys alone, then read the kept frames' blobs. `frames` is `WITHOUT ROWID`,
+      so its rows are its key records. A seek or range scan by `space` compares whole records past their first page,
+      blob included, whatever columns it selects; a lookup by key reads its neighbours' blobs. On ep2 the space's
+      keys scan in 0.12 s through `frames_by_digest` (covering), but lookups by key cost about 115 µs each (134K
+      lookups: 15.7–18.2 s). Every other frame read by key (`admit_frame_parts`) pays the same.
+      `a_cross_space_read_reads_no_blob_of_a_frame_it_leaves_out` (ignored) breaks a stale blob's overflow chain
+      and asserts the read still succeeds.
+    - **Next, a store format change, the user's call:** take the blobs out of the key's b-tree: a rowid table keyed
+      by the frame (`frames.data` → `frame_data(id INTEGER PRIMARY KEY, data)`), or `frames` as a rowid table with
+      a unique index on its key. Then (2) collection drops the identities no live program reads; (3) how much of the
+      347 MB a run reads at all, now that kept inputs are decoded where read (Q20).
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 
@@ -554,12 +575,37 @@ pass.
 
     - The outputs (`outputs.rro`) are identical across every step.
     - The span's own time went from 9.7 s to 1.35 s.
-- **Open.** `the kept inputs, from the frames` (2.26 s) decodes every granule of all 1208 inputs into full
-  column sources before the cross part runs, with 3 changed. The fallback reads the 300 hits' projected rows, and
-  its `stats` is 2.1 G.
-  - Taking the kept inputs still costs more than the fallback, so the done-when is not met.
-  - Reading an input's granules where reached (a source that decodes a granule on first read, with its count from
-    the documents' table) is the shape 0266's blocks give: "base + delta read as one".
+- **What the run reads of the kept inputs** (2026-11-16, `RERAIL_KEPT_READS`, one B101 edit): of 1208 inputs (22.4 M
+  rows, 33,756 granules), 1182 are never read; 23 are read whole, row by row, by `measure export` (their kept
+  statistics' row count is not the rows held); 3 by statistics or an index. So a lazy source would save the decode
+  of most inputs. But a profile put most of the step elsewhere: with no changed file, `the evaluated owners,
+  patched` took 1.0 s and `the changed files' old and new rows` 0.27 s.
+- **Cause, built** (a2ff8071e). Since memo entries are images (0240 §4), a hit read for its outputs alone called
+  `entry(d)`, which decodes every relation. Its export and base rows then went through the replay into the exports
+  and `base_rows`, and the kept-inputs step took them for this run's rows of the changed files: every document
+  "evaluated", every input patched by digest, and 3 inputs reported changed with no file changed. Such a hit now
+  decodes its `own:` rows alone (`memo::outputs_alone`), as the outputs frame held before 0240.
+  - Test: `a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows` (rerail-engine): three edits of one
+    file, each reads both other files for their outputs alone with no export or base value decoded
+    (`Report::memo_kept`), and each edit's rows are a full run's. It waits out the stat index's racy window first:
+    without that, whether a file was known by stat (and so read for its outputs alone) depended on the test's speed.
+  - ep2, B101 edits after a cold run: every edit takes its kept inputs (0 of 1208 inputs changed). `stats` is
+    0.45–0.48 s; of it, `the evaluated owners, patched` is 1 ms (was 1.0 s) and the memo replay 4 ms (was 0.15 s).
+    Totals 63–68 G, peak 1.39 GB (was 98 G, 3.25 GB). An edit with `RERAIL_KEPT_INPUTS=off`: 69.1 G, peak 5.39 GB.
+    The outputs are identical (md5 82c81b38…).
+  - **The done-when is met**: every edit took its kept inputs, and taking them costs less than the fallback.
+- **A kept input is decoded where it is first read, built.** `kept_inputs` admits each input's granules and checks
+  their counts and width undecoded (`Admitted::width`, `len`); the rows are decoded on the run's first read of the
+  input (`retain::Lazy`), and a granule whose rows are not its owners' is told through `failure` then. The planner's
+  estimates do not force it: an edit decodes 20 of 1208 inputs (3 by a stratum, 17 by statistics).
+  - Test: `a_kept_input_is_decoded_where_it_is_first_read` (rerail-logic).
+  - ep2, B101 edits after a cold run: `the kept inputs, from the frames` 0.08 s (was 0.31 s); `stats` 0.25–0.27 s;
+    totals 61–64 G, CPU 4.8–5.1 s, peak 1.0 GB (was 63–68 G, 1.39 GB). Outputs identical (82c81b38…).
+  - What is left of the step is the documents' tables and the frames' admission. 0266's `Facts` block (step 4, not
+    started on any branch) would read the inputs in place and replace `Lazy`.
+- **Open.** The exports read whole by `measure export` (their kept statistics' row count is not the rows held) are
+  the next read of unchanged rows: their kept statistics should be taken.
+  - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 
 ### Q21. The hub's gate failures at 692cc9772
 
