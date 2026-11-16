@@ -17,6 +17,9 @@
 //! The engine reads and writes images (`code_rule_dsl::tape`); its constants are these, and a
 //! format change is made here, once, for every writer.
 
+pub mod tape;
+pub mod f16;
+
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
 /// named-only at rest, no stored source digest (RER-131); 14: the tokens the grammar implies
@@ -445,7 +448,7 @@ impl<L: Layout> Writer<L> {
         let keys = &self.keys[from..to];
         let code = &mut self.out[HEADER_BYTES + 2 * from..HEADER_BYTES + 2 * to];
         let (id_of, codes, mask) = (&mut self.id_of[..], &mut self.codes, self.slots - 1);
-        for (k, (&key, cell)) in keys.iter().zip(code.chunks_exact_mut(2)).enumerate() {
+        for (k, (&key, cell)) in keys.iter().zip(code.as_chunks_mut::<2>().0).enumerate() {
             // A key is below `slots` (`push`'s assertion): the mask is no change, and no check.
             let slot = &mut id_of[(key as usize) & mask];
             if *slot == NO_CODE {
@@ -712,7 +715,7 @@ impl<L: Layout> Writer<L> {
             if width == 2 {
                 if let Ok(block) = <&[u32; CHECKPOINT_STRIDE]>::try_from(block) {
                     let mut cells = [0u8; 2 * CHECKPOINT_STRIDE];
-                    for (cell, &s) in cells.chunks_exact_mut(2).zip(block) {
+                    for (cell, &s) in cells.as_chunks_mut::<2>().0.iter_mut().zip(block) {
                         let o = s - b;
                         high |= o;
                         cell.copy_from_slice(&(o as u16).to_le_bytes());
