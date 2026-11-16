@@ -1,6 +1,6 @@
 //! A host file's tape, read in place by its embedders: the named nodes an embedder asks for (a
 //! node's kind, its bytes, its named children, its parent and named siblings), answered from the
-//! tape's columns (`TapeImage`), with nothing decoded or rebuilt. Whichever parser read the host,
+//! tape through the tape API (`TapeImage::tape`, in whichever format it is held), with nothing decoded or rebuilt. Whichever parser read the host,
 //! tree-sitter or a lean parser, its tape is the same, so an embedder builds the same program from
 //! either.
 //!
@@ -8,7 +8,9 @@
 //! no embedder reads one. A node's children are the nodes after it, each one past the last's
 //! subtree (the `size` column); its parent is found from the root by the same steps.
 
-use crate::code_rule_dsl::tape::{Grammar, SENTINEL, TAIL_FROM_START, TapeImage};
+use crate::code_rule_dsl::tape::{Grammar, TapeImage};
+use rerail_tape_format::tape::Tape as _;
+use rerail_tape_format::with_tape;
 use std::ops::Range;
 
 /// The host's tape and its grammar.
@@ -61,18 +63,17 @@ impl<'t> HostNode<'t> {
 
     /// One past its subtree's last node.
     fn after(self) -> u32 {
-        self.index + self.host.image.size_at(self.i())
+        with_tape!(self.host.image.tape(), |t| t.subtree_end(self.i()) as u32)
     }
 
     /// Its kind's name, and whether it is named: the contextual alias where it has one.
     fn name(self) -> (&'t str, bool) {
-        let image = self.host.image;
-        let code = &image.codes[usize::from(image.code_at(self.i()))];
-        if code.alias != SENTINEL {
-            let (name, named) = &image.kind_aliases[usize::from(code.alias)];
+        let image: &'t TapeImage = self.host.image;
+        let entry = image.code_table().entry(with_tape!(image.tape(), |t| t.code(self.i())));
+        if let Some((name, named)) = &entry.alias {
             return (name.as_str(), *named);
         }
-        let kind = code.kf() & 0x3ff;
+        let kind = entry.kind;
         (self.host.grammar.kind_name(kind).unwrap_or("ERROR"), self.host.grammar.kind_is_named(kind))
     }
 
@@ -85,13 +86,11 @@ impl<'t> HostNode<'t> {
     }
 
     pub fn start_byte(self) -> usize {
-        self.host.image.start_at(self.i()) as usize
+        with_tape!(self.host.image.tape(), |t| t.start(self.i()) as usize)
     }
 
     pub fn end_byte(self) -> usize {
-        let image = self.host.image;
-        let from = if image.widths[2] & TAIL_FROM_START != 0 { self.i() } else { self.after() as usize - 1 };
-        (image.start_at(from) + image.tail_at(self.i())) as usize
+        with_tape!(self.host.image.tape(), |t| t.end(self.i()) as usize)
     }
 
     pub fn byte_range(self) -> Range<usize> {

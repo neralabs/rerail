@@ -1321,8 +1321,10 @@ fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
     broken.off[2 * 17] ^= 0x40;
     reject("second block offset", &broken);
     let mut broken = image.clone();
-    broken.codes.push(broken.codes[0]);
-    broken.code[0..2].copy_from_slice(&(broken.codes.len() as u16).to_le_bytes());
+    let first = broken.codes[0];
+    broken.codes.push(first);
+    let count = broken.codes.len() as u16;
+    broken.code[0..2].copy_from_slice(&count.to_le_bytes());
     reject("out-of-range code", &broken);
     let mut broken = image.clone();
     broken.widths[1] = 4;
@@ -4803,5 +4805,53 @@ fn every_tape_format_reads_the_document_as_restored() {
                 assert_eq!(children(&t, i).collect::<Vec<_>>(), doc.transducer_children(node).map(|c| c as usize).collect::<Vec<_>>(), "{name}: children of {i}");
             }
         });
+    }
+}
+
+/// Decision 0293 §4: a file's documents stored in each format (`FileImage::in_format`, then as the store keeps and
+/// reads them) are held as stored, and the documents restored from them answer every node question as format 15's
+/// do: a Python file of several blocks, and a host whose language has no format 16 table (kept as format 15) with a
+/// TSX guest that has one.
+#[test]
+fn a_file_stored_in_each_format_reads_back_as_format_15() {
+    use super::formats::Format;
+    fn same(a: &TapeDoc, b: &TapeDoc, name: &str) {
+        assert_eq!(a.transducer_len(), b.transducer_len(), "{name}: nodes");
+        for node in 0..a.transducer_len() as u32 {
+            assert_eq!(
+                (a.transducer_kind(node), a.transducer_field(node), a.transducer_flags(node), a.transducer_span(node)),
+                (b.transducer_kind(node), b.transducer_field(node), b.transducer_flags(node), b.transducer_span(node)),
+                "{name}: node {node}"
+            );
+            assert_eq!(a.transducer_parent(node), b.transducer_parent(node), "{name}: parent of {node}");
+            assert_eq!(a.transducer_descendants(node), b.transducer_descendants(node), "{name}: subtree of {node}");
+            assert_eq!(a.transducer_children(node).collect::<Vec<_>>(), b.transducer_children(node).collect::<Vec<_>>(), "{name}: children of {node}");
+        }
+        assert_eq!(a.transducer_supertypes().collect::<Vec<_>>(), b.transducer_supertypes().collect::<Vec<_>>(), "{name}: classes");
+    }
+    let python: String = (0..400).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
+    let cases = [(GrammarDialect::Python, python), (GrammarDialect::TestHtml, "<script lang=\"tsx\">let x = <a />;</script>\n".to_owned())];
+    for (lang, source) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap();
+        assert_eq!(image.primary.format(), Format::F15, "the tests' run stores format 15");
+        let reference = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        for format in Format::ALL {
+            let stored = image.clone().in_format(format).round_trip(&grammar).unwrap();
+            let has_table = |dialect| crate::code_rule_dsl::language::tape_tag(dialect).and_then(rerail_tape_format::f16::lang).is_some();
+            let held = |tape: &TapeImage| if has_table(tape.language) { format } else { Format::F15 };
+            assert_eq!(stored.primary.format(), held(&stored.primary), "{lang:?} in {}", format.name());
+            for d in &stored.derived {
+                assert_eq!(d.tape.format(), held(&d.tape), "{lang:?}'s guest in {}", format.name());
+            }
+            let doc = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &stored, &|| false).unwrap();
+            same(&reference, &doc, &format!("{lang:?} in {}", format.name()));
+            let (guests, read) = (reference.guests().unwrap(), doc.guests().unwrap());
+            assert_eq!(guests.len(), read.len());
+            assert_eq!(guests.len(), usize::from(lang == GrammarDialect::TestHtml));
+            for (g, r) in guests.iter().zip(read.iter()) {
+                same(&g.doc, &r.doc, &format!("{lang:?}'s guest in {}", format.name()));
+            }
+        }
     }
 }

@@ -347,13 +347,13 @@ pub fn build_in_wave_with_tape(
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::lines::Terminators;
-    use crate::code_rule_dsl::tape::{self, TAPE_FORMAT_VERSION, TapeImage};
+    use crate::code_rule_dsl::tape::{self, TapeImage};
     use crate::code_rule_dsl::build_ids::grammar_version;
     use crate::content_store::HashKey;
     use sha2::Digest as _;
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
-    let (gv, fv) = (grammar_version(), i64::from(TAPE_FORMAT_VERSION));
+    let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
     let bytes = file.source().as_bytes();
     let digest: [u8; 32] = match digest {
         Some(d) => d,
@@ -440,12 +440,12 @@ pub(crate) fn build_cached_with_tape(
     // A standalone cache build has the same lookup/parse/publication window as a corpus run.
     let _reading = cache.hold_collection().map_err(|e| e.to_string())?;
     use crate::code_rule_dsl::lines::Terminators;
-    use crate::code_rule_dsl::tape::{self, TAPE_FORMAT_VERSION, TapeImage};
+    use crate::code_rule_dsl::tape::{self, TapeImage};
     use crate::code_rule_dsl::build_ids::grammar_version;
     use crate::content_store::HashKey;
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
-    let (gv, fv) = (grammar_version(), i64::from(TAPE_FORMAT_VERSION));
+    let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
     let e = |e: crate::content_store::StoreError| e.to_string();
     let bytes = file.source().as_bytes();
     // A tape this process queued is read from memory (`build_in_wave`): reads see writes.
@@ -612,7 +612,8 @@ pub fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::tape::Gra
         f.field.push(node.field);
         f.syntax_errors |= node.flags & 12 != 0;
         classes.extend(memberships.iter().map(|&class| (kind_atom(tag, class), node.id)));
-    })?;
+    })
+    .map(|_| ())?;
     drop(decode);
     index(&mut f);
     let _classes = crate::code_rule_dsl::logic::profile::span(|| "class postings".into());

@@ -103,8 +103,8 @@ pub struct Within {
     chosen: std::sync::atomic::AtomicBool,
     /// The `n` side of every node, made once (`solved`).
     solved: OnceLock<Solved>,
-    /// The format the documents' tapes are read in (`RERAIL_TAPE`).
-    format: Format,
+    /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
+    format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
     sets: Box<[OnceLock<CodeSet>]>,
 }
@@ -146,15 +146,23 @@ impl Within {
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
             solved: OnceLock::new(),
-            format: Format::of_run(),
+            format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
             batch,
         }
     }
 
-    /// The same, reading the documents' tapes in `format` rather than the run's.
+    /// The same, reading the documents' tapes in `format` rather than as held (a test's comparison of formats).
     pub fn reading(self, format: Format) -> Self {
-        Within { format, ..self }
+        Within { format: Some(format), ..self }
+    }
+
+    /// `dt`'s tape: as held, or in the format a test asked for.
+    fn tape_of<'d>(&self, dt: &'d DocTape) -> rerail_tape_format::tape::AnyTape<'d> {
+        match self.format {
+            Some(format) => dt.tape_in(format),
+            None => dt.tape(),
+        }
     }
 
     /// Document `doc`'s tape, which the tree's containment and the kind-set axes read (not spans).
@@ -181,7 +189,7 @@ impl Within {
     fn each_member(&self, doc: usize, mut f: impl FnMut(u32, bool)) {
         let p = &self.batch.docs[doc];
         match self.doc_tape(doc) {
-            Some(dt) => with_tape!(dt.tape_in(self.format), |t| {
+            Some(dt) => with_tape!(self.tape_of(dt), |t| {
                 let set = self.set(doc, &t);
                 for (l, &id) in p.core.iter().enumerate() {
                     f(l as u32, set.contains(t.code(id as usize)));
@@ -341,7 +349,7 @@ impl Within {
         for (doc, p) in self.batch.docs.iter().enumerate() {
             let base = self.batch.nodes[doc] as u32;
             let dt = self.doc_tape(doc).expect("every document holds its tape");
-            with_tape!(dt.tape_in(self.format), |t| {
+            with_tape!(self.tape_of(dt), |t| {
                 nearest_all(&t, self.set(doc, &t), |id| p.local[id] != NONE, &mut near);
             });
             found.extend(p.core.iter().map(|&id| match near[id as usize] {
@@ -411,7 +419,7 @@ impl Within {
     fn containers(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
         if let Some(dt) = self.doc_tape(doc) {
-            return with_tape!(dt.tape_in(self.format), |t| self.containers_on(&t, doc, p, local));
+            return with_tape!(self.tape_of(dt), |t| self.containers_on(&t, doc, p, local));
         }
         if let Mode::Axis(axis) = self.mode {
             let mut out = Vec::new();
@@ -472,7 +480,7 @@ impl Within {
     fn contained(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
         if let Some(dt) = self.doc_tape(doc) {
-            return with_tape!(dt.tape_in(self.format), |t| self.contained_on(&t, doc, p, local));
+            return with_tape!(self.tape_of(dt), |t| self.contained_on(&t, doc, p, local));
         }
         let sizes = p.sizes();
         if let Mode::Axis(axis) = self.mode {

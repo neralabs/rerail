@@ -44,7 +44,8 @@ This record is steps 2 and 3, and the API they need.
    - **format 16 in fixed blocks** (0156 §2.1, `16z`): LZ4 blocks of 1,024 nodes, with the block index. A block is
      one side-list part, so a read's arrays and side lists are all in its block (only a parent's sibling steps
      cross back). A read decodes the one block it falls in, to the tape's own bytes for it, never to an array of
-     nodes, and reads it in place as format 16 is read; the reader keeps the last two blocks it decoded.
+     nodes, and reads it in place as format 16 is read; each thread keeps the last two blocks it decoded, keyed by
+     tape, so a reader is made per read and decodes nothing again.
 
    `AnyTape` holds one of them and dispatches once a document (`with_tape!`), so the per-node reads are
    monomorphised. A format the lab drops is removed from `AnyTape`; a candidate it adds goes in the same way.
@@ -53,11 +54,25 @@ This record is steps 2 and 3, and the API they need.
    most frequent first), its cutoff, its widths and its revision are a table the lab writes (`tape16 table`) and the
    crate embeds. A language without one has no format 16 tape: format 15 serves it, and the run says so.
 
-4. **The format a run reads** is `RERAIL_TAPE`: `15` (the default until 0156 is accepted), `16`, or `16z` (the fixed
-   blocks); another value stops the run. A document's `AnyTape` comes from its `TapeDoc` (`TapeDoc::tape`): format
-   15 over the image's own columns, with the image's code table as the API's (made once an image). A language
-   without a table, or an image with a code its table lacks, is read as format 15, and the run says so once a
-   language.
+4. **The format a run stores and reads** is `RERAIL_TAPE`: `15` (the default until 0156 is accepted), `16`, or
+   `16z` (the fixed blocks); another value stops the run. The store keeps one format, the run's: a document's
+   image (`TapeImage`) holds format 15's columns or format 16's (or 16z's) bytes as stored, and its tape
+   (`TapeImage::tape`) is read where it lies in that format. Each stored form starts with its own magic
+   (`TMPTAP9N`, `TMPTAP16`, `TMPTAP6Z`) and the language's tag after it, so a load reads whatever the store
+   holds, as held. Format 16 is written from format 15's columns where a file's documents are made
+   (`FileImage::single`, `FileImage::embedding`, after the embedders have read the host): the parsers write
+   format 15 until they call format 16's writer. A language without a table, or an image with a code its table
+   lacks, keeps format 15, and the run says so once a language. The store keys a tape by the run's format
+   (`tape_format_version`: 15, 16, or 1016 for 16z; `formats::stored_version`), so a store holds a document once
+   per format and a run finds only its own. A restore checks the codes a tape uses (a language's table lists
+   every code its grammar allows).
+
+   Checked end to end (2026-11-16): the engine's workspace (207), syntax (35), matcher, findings, rule and wave
+   (505) tests pass alike with `RERAIL_TAPE` 15, 16 and 16z, but for failures format 15 has too (pack data not
+   pulled; Q17's two). The CLI under strict SQL gives byte-identical outputs in the three formats: 49 bandit and
+   178 ruff rules over 10 files, cold and warm, and three rules over a file written to trigger them, read from
+   each store as stored (no tape written again). The stores hold 322 KB of tapes in format 15, 173 KB in 16 and
+   110 KB in 16z (raw, before the store's zstd), for 68 tapes.
 
 5. **The axes read the tape** (step 3; built). A document's facts hold the tape they were read off (`Facts::tape`,
    the image moved in, not copied; the same `DocTape` its `TapeDoc` holds), and its bytes count in a chunk's
@@ -73,23 +88,21 @@ This record is steps 2 and 3, and the API they need.
 
 ## Interim, until steps 4 and 5
 
-- **A run reading format 16 also holds format 15.** `Facts`, `TapeDoc`'s records, the matcher and the Metal kernels
-  read format 15 until they move to the API. So no memory or time is measured before then.
-- **The writer is driven from format 15's finished columns** where a tape is written, not by the parser: the
-  parsers' format-15 writer wraps and rewinds (`Writer::insert`, `rewind`), which format 16's writer has no
-  calls for yet. Format 16 is to be stored beside format 15 and read back as stored, not written again at each
-  load. Until the store keeps it, a document's format 16 (or 16z) is written from format 15 once an image, the
-  first time the run reads it in that format (`tape/formats.rs`). The store must keep it before anything is
-  measured: a load-time write would be counted as a read.
-- **The axes' Metal solve** still climbs a parent array on the device (`facts::nearest`), the projection's parents
-  (from `Facts`), with membership off the tape. The lab's format-16 kernels (E30, E31) replace it in step 5.
+- **What reads the image's tape through the API** in whichever format it is held: the checks a restore makes
+  (`tape::validated`), the embedders' reading of the host (`embed::host`), the axes (§5), and the image's node
+  counts and subtree sizes.
+- **What still copies it into nodes:** a document's records (`TapeDoc`'s `Rec`) and its facts' columns (`Facts`)
+  are built from it at restore, through the API, in every format. The matcher reads the records; the base views
+  read the facts. Steps 4 and 5 remove both. So nothing is measured before then: a restore's copy would be counted
+  as a read.
+- **The device's kernels read format 15 only** (`facts::nearest`'s Metal solve, the matcher's Metal runs): a
+  Metal run over a store of format 16 stops at the residency with the reason (`resident::header_counts`). The
+  lab's format-16 kernels (E30, E31) replace them in step 5.
 - **What the axes still read off the facts:** spans (`span_within`), the planner's statistics (the projection's
   subtree sizes and depths), and every document whose facts hold no tape. Step 4 moves them.
-- **A 16z reader is made per lookup**, so a lookup decodes the blocks it reads afresh; a reader kept per document
-  and thread is a choice for the lab's measurements.
 
 ## Not done
 
-- The writer's calls from every parser (0156 §7), and the store's format-16-only rows.
+- The writer's calls from every parser (0156 §7).
 - 16z's blocks over the language's dictionary: each block is compressed alone for now.
 - The text stream (0156 §6), hashes per algorithm (§5), edits (§4).
