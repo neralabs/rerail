@@ -2805,3 +2805,43 @@ nothing, it goes away (the next section).
 Test: `a_full_windows_word_is_not_cut`.
 
 Counts, reported: comments 234.0, strings 266.0.
+
+## A padded window is not cut
+
+**Intro.** simdjson asks for padded input: zeros after the text, so a
+read past the end is safe and finds nothing. The user asked for the
+same here. A window that reads past the file's end then reads zeros.
+An output that is false on a zero byte has no bits there, so it needs
+no cut at all: a line comment's `\n`, a string's unescaped quote, a
+digit class.
+
+**The change.**
+
+- **The layout.** `BACK` (256) zero bytes follow every file's last
+  byte. This covers the CPU's `Batch` and a resident source's slab
+  (`SOURCE_MARGIN`, was 64; a slab is mapped zeroed). 256 is Metal's
+  widest window (64 bits a lane, 32 lanes). Whether 64 would do is
+  open (`O-padding-width`).
+- **The compiler.** `Bytewise::padded(o)` says whether output `o` is
+  false on a zero byte at its delay (`zero_kills`). Such an output's
+  word is its mask, with no cut. A window cuts only where one of its
+  outputs, extra sets or gate needs it (`cut_for`, `zero_free`).
+- **`zero_kills`.** It now knows `a & !b` is false where `a` is, as
+  for a closer not escaped.
+
+```rust
+// generated (tier1_aot.rs), the line comment's first block, after:
+v86 = vgetq_lane_u64::<0>(…);          // the `\n`s, a movemask
+v87 = v86.trailing_zeros() as u64;
+if v86 != 0 { /* the comment's end */ } else { return f34(…) /* next block */ }
+// lean (micro::find): let s = block(b, i).eq(x); if s != 0 { return Some(i + s.trailing_zeros()) }
+```
+
+An output true on a zero byte keeps the cold cut (the section
+before).
+
+Tests: `a_padded_windows_word_is_not_cut` (the window never reads the
+file's length), and `a_full_windows_word_is_not_cut` (zeros past the
+end, then text past the padding).
+
+Counts, reported: comments 224.1, strings 261.7.

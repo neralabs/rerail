@@ -163,8 +163,29 @@ impl<'a> Bytewise<'a> {
         let d = self.native.output_delays[usize::from(o)];
         let start = f.ins().iadd_imm(p, i64::from(d));
         let m = self.mask(f, at, x, start, heads);
+        if self.padded(o) {
+            return m;
+        }
         let cut = self.cut64(f, at, p);
         f.ins().band(m, cut)
+    }
+
+    /// Whether output `o` has no bits past the file's end already: it is false where the byte
+    /// its delay back is zero (`zero_kills`), and the bytes past the end are zeros, `BACK` of
+    /// them (`native_cpu_block::BACK`), more than a window at a block of the file reaches. As
+    /// simdjson's padded input: a line comment's `\n`, a string's quote, no cut.
+    pub fn padded(&self, o: u16) -> bool {
+        let x = usize::from(self.native.outputs[usize::from(o)]);
+        crate::native_cpu_lanes::zero_kills(self.native, x, u32::from(self.native.output_delays[usize::from(o)]))
+    }
+
+    /// The cut of outputs `os`' window at `p` (`cut64`), where one of them needs it (`padded`);
+    /// else all ones, an instruction no one reads.
+    fn cut_for(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value) -> Value {
+        if os.iter().all(|&o| self.padded(o)) {
+            return f.ins().iconst(types::I64, -1);
+        }
+        self.cut64(f, at, p)
     }
 
     /// Outputs `os`' bits for the file's bytes `p .. p + 64`, none past its end, as `word`'s
@@ -183,12 +204,13 @@ impl<'a> Bytewise<'a> {
         let mut carry = Carry { pack: Some(pack.clone()), ..Carry::default() };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
-        let cut = self.cut64(f, at, p);
+        // An extra set without the zero byte has no bits on the padding (`padded`).
+        let cut = if extras.iter().all(zero_free) { self.cut_for(f, at, os, p) } else { self.cut64(f, at, p) };
         let words: Vec<Value> = os.iter().map(|&o| {
             let x = usize::from(self.native.outputs[usize::from(o)]);
             let d = i64::from(self.native.output_delays[usize::from(o)]);
             let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, &mut carry, heads);
-            f.ins().band(m, cut)
+            if self.padded(o) { m } else { f.ins().band(m, cut) }
         }).collect();
         let lanes = windows.entry(0).or_insert_with(|| {
             let base = f.ins().iadd(at.bytes, p);
@@ -198,7 +220,7 @@ impl<'a> Bytewise<'a> {
             let parts: Vec<_> = (1..=4).map(|c| lanes.extra(f, k, c)).collect();
             let m = lanes.mask(f, &parts, at.weights);
             let m = sym_value(f, m);
-            f.ins().band(m, cut)
+            if zero_free(&extras[k]) { m } else { f.ins().band(m, cut) }
         }).collect();
         (words, more)
     }
@@ -232,7 +254,7 @@ impl<'a> Bytewise<'a> {
     /// the bytes; and each one's carry out, at `p + 64` (simdjson's add overflow), in `cins`'
     /// order: a loop of windows 64 bytes apart passes it on, as the lean lexer's reader does.
     pub fn words_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, Vec<Value>) {
-        let cut = self.cut64(f, at, p);
+        let cut = self.cut_for(f, at, os, p);
         let carry = Carry { ins: cins.to_vec(), pack: Some(self.pack_for(&self.roots(os), &[])), ..Carry::default() };
         self.words_in(f, at, os, p, carry, None, cut, heads)
     }
@@ -258,7 +280,7 @@ impl<'a> Bytewise<'a> {
                 // A delay `d` reads from `p + d`: `d` bytes ahead of the shared start.
                 let d = i64::from(self.native.output_delays[usize::from(o)]);
                 let m = self.mask_at(f, at, x, p, -d, windows, memo, carry, heads);
-                f.ins().band(m, cut)
+                if self.padded(o) { m } else { f.ins().band(m, cut) }
             })
             .collect();
         let outs = carry.ins.iter().map(|&(a, _)| match carry.outs.iter().find(|o| o.0 == a) {
@@ -396,13 +418,15 @@ impl<'a> Bytewise<'a> {
             }
         }
         let pack = self.pack_for(&self.roots(os), &[crate::class_pack::Need { set, care: [u64::MAX; 4] }]);
-        let cut = self.cut64(f, at, p);
+        // The gate's bytes without the zero byte have no bits on the padding (`padded`).
+        let gated_zero = set[0] & 1 != 0;
+        let cut = if gated_zero { self.cut64(f, at, p) } else { self.cut_for(f, at, os, p) };
         let base = f.ins().iadd(at.bytes, p);
         let mut lanes = Lanes::window(f, self.native, &self.plan, base, p, at.len, at.nibble).packed(Some(pack.clone()));
         let parts: Vec<_> = (1..=4).map(|c| lanes.extra(f, 0, c)).collect();
         let m = lanes.mask(f, &parts, at.weights);
         let m = sym_value(f, m);
-        let mut any = f.ins().band(m, cut);
+        let mut any = if gated_zero { f.ins().band(m, cut) } else { m };
         let known = Rc::new(known_if_zero(self.native, &gate, &given));
         let quick_carry = |f: &mut FunctionBuilder<'_>| {
             let zero = f.ins().iconst(types::I64, 0);
@@ -1451,6 +1475,12 @@ fn by_offset(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Of
     n
 }
 
+/// Whether a set a body tests (`class_pack::Need`) is false on the zero byte, its answer there
+/// cared for: no bits on the padding past the file's end (`Bytewise::padded`).
+fn zero_free(n: &crate::class_pack::Need) -> bool {
+    n.set[0] & 1 == 0 && n.care[0] & 1 != 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1745,17 +1775,45 @@ mod tests {
         }
     }
 
+    /// An output false on a zero byte (`padded`) is not cut at all, as simdjson's padded
+    /// input: its window never reads the file's length, the bytes past it zeros
+    /// (`native_cpu_block::BACK`). One true there keeps its cut.
+    #[test]
+    fn a_padded_windows_word_is_not_cut() {
+        let native = padded_program();
+        let b = Bytewise::of(&native);
+        assert_eq!((0..5).map(|o| b.padded(o)).collect::<Vec<_>>(), vec![true, true, true, true, false]);
+        for o in 0..5u16 {
+            let func = b.window_function(o, 0);
+            let entry = func.layout.entry_block().expect("an entry");
+            let len = func.dfg.block_params(entry)[1];
+            let reads = func.layout.blocks().flat_map(|bl| func.layout.block_insts(bl)).any(|i| func.dfg.inst_values(i).any(|v| v == len));
+            assert_eq!(reads, !b.padded(o), "output {o}: {}", func.display());
+        }
+    }
+
+    /// `gated_program`, and an output true on a zero byte (4: not `|`): its bits past the
+    /// file's end are the padding's, cut.
+    fn padded_program() -> BlockNative {
+        let mut native = gated_program();
+        native.insts.push(BlockInst::Not(0));
+        native.outputs.push(12);
+        native.output_delays.push(0);
+        native
+    }
+
     /// A window's cut to the file's end (`cut64`) is its tail's alone, as the lean lexer's
     /// `block` pads only where 64 bytes are not left: a full window's word is its mask, one
     /// compare on its way; the tail's cut in a cold block, no select. Its bits are the file's
-    /// bytes' alone, whatever lies past its end.
+    /// bytes' alone, whatever lies past its padding.
     #[test]
     fn a_full_windows_word_is_not_cut() {
         use cranelift_module::{Linkage, Module};
-        let native = gated_program();
+        let native = padded_program();
         let b = Bytewise::of(&native);
-        // A class's word: no `prev`'s cut of its own.
-        let func = b.window_function(1, 0);
+        // An output true on a zero byte (`padded` not): no `prev`'s cut of its own.
+        assert!(!b.padded(4));
+        let func = b.window_function(4, 0);
         let dfg = &func.dfg;
         let mut shifts = 0;
         for block in func.layout.blocks() {
@@ -1772,7 +1830,7 @@ mod tests {
         // Every output's word, whatever the bytes past the end.
         let mut module = cranelift_jit::JITModule::new(crate::native_cpu_codegen::tier1_builder().expect("a JIT"));
         let mut runs = Vec::new();
-        for o in 0..4u16 {
+        for o in 0..5u16 {
             let mut ctx = module.make_context();
             let mut func = b.window_function(o, 0);
             let id = module.declare_function(&format!("w{o}"), Linkage::Local, &func.signature).expect("declared");
@@ -1787,13 +1845,16 @@ mod tests {
         let mut x = 0x2545_f491_4f6c_dd1du64;
         for round in 0..300 {
             let n = 1 + (round % 150);
-            let (mut zeros, mut text) = (vec![0u8; 16 + n + 160], vec![0u8; 16 + n + 160]);
+            let pad = 16 + n + crate::native_cpu_block::BACK;
+            let (mut zeros, mut text) = (vec![0u8; pad + 160], vec![0u8; pad + 160]);
             for i in 16..zeros.len() {
                 x ^= x << 13;
                 x ^= x >> 7;
                 x ^= x << 17;
                 let c = alphabet[(x >> 8) as usize % alphabet.len()];
-                text[i] = c;
+                if i < 16 + n || i >= pad {
+                    text[i] = c;
+                }
                 if i < 16 + n {
                     zeros[i] = c;
                 }

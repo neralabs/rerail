@@ -233,10 +233,11 @@ impl Batch {
             words += program.outputs as u64;
             let row = Row { bytes: bytes.len() as u64, blocks: blocks as u64, len: file.len() as u64, out: words, positions, capacity, counts, scratch };
             scratch += (program.slots * blocks) as u64;
-            // One copy, as simdjson's padded input: the file, then zeros to its last block's end.
+            // One copy, as simdjson's padded input: the file, then zeros to its last block's end
+            // and `BACK` past its last byte at least.
             let at = bytes.len();
             bytes.extend_from_slice(file);
-            bytes.resize(at + blocks * 64, 0);
+            bytes.resize(at + (blocks * 64).max(file.len() + BACK), 0);
             words += (program.outputs * blocks) as u64;
             // The extracts' positions, and with records a code a token after them.
             positions += (program.extracts.len() + usize::from(program.records.is_some())) as u64 * capacity;
@@ -375,6 +376,13 @@ pub fn thread_cpu() -> f64 {
 /// Zero bytes before the first block: `pair` and `plane_before` load each block one byte back,
 /// and the byte before the stream is 0x00.
 pub const FRONT: usize = 16;
+
+/// Zero bytes after every file's last byte, at least, wherever a compiled function reads it
+/// (`Batch`, a resident source's slab): as simdjson's padded input, a window that reads past
+/// the end reads zeros, so an output false on a zero byte has no bits there and needs no cut
+/// (`Bytewise::padded`). The widest window: 64 bits a lane times 32 lanes (Metal's), 256 bytes;
+/// a CPU window at a block before the end, its delay and its `prev`s reach less.
+pub const BACK: usize = 256;
 
 
 /// A field of the carried state: bits `pos..pos + width` of loop-carried word `word`. A `top`

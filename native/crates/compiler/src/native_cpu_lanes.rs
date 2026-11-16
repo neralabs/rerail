@@ -275,7 +275,7 @@ fn lane_plan(native: &BlockNative, deep: bool) -> (Vec<bool>, Vec<u8>, Vec<bool>
 
 /// Whether value `x` is false wherever the byte `back` before its position is zero: its bytes
 /// say so (an `eq_byte` of a byte not zero, a class without the zero byte, a plane's bit), a
-/// `prev` further back, either side of an `and`, both of an `or`.
+/// `prev` further back, either side of an `and`, an `and_not`'s first, both of an `or`.
 pub fn zero_kills(native: &BlockNative, x: usize, back: u32) -> bool {
     fn go(native: &BlockNative, x: usize, back: u32, depth: u32) -> bool {
         if depth > 64 {
@@ -292,6 +292,8 @@ pub fn zero_kills(native: &BlockNative, x: usize, back: u32) -> bool {
             }
             BlockInst::Prev(a, k) => back >= u32::from(k) && go(native, o(a), back - u32::from(k), depth + 1),
             BlockInst::And(a, b) => go(native, o(a), back, depth + 1) || go(native, o(b), back, depth + 1),
+            // `a` and not `b`: false where `a` is (a closer not escaped).
+            BlockInst::AndNot(a, _) => go(native, o(a), back, depth + 1),
             BlockInst::Or(a, b) => go(native, o(a), back, depth + 1) && go(native, o(b), back, depth + 1),
             _ => false,
         }
