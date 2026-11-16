@@ -11,7 +11,9 @@ import { openRerailDatabase } from "../engine/storage/database.js";
 const CHECKOUT_PRUNING_INTERVAL_MS = 60 * 60 * 1000;
 /**
  * How long a pass may wait on the filesystem before it gives up. A stat on a hard-mounted share whose server is down
- * never answers, and a pass waiting on it would keep every later one from starting for the daemon's life.
+ * never answers, and a pass waiting on it would keep every later one from starting for the daemon's life. The checkout
+ * it waited on is skipped by later passes until the filesystem answers, so a dead share holds one pool thread, never one
+ * per pass.
  */
 const CHECKOUT_PRUNING_PASS_LIMIT_MS = 15 * 60 * 1000;
 
@@ -40,16 +42,17 @@ export function startCheckoutPruning(databasePath: string, options: CheckoutPrun
   const log = options.log ?? (line => process.stderr.write(line));
   const passLimitMs = options.passLimitMs ?? CHECKOUT_PRUNING_PASS_LIMIT_MS;
   let stopped = false;
+  const unanswered = new Set<string>();
   let running: { readonly done: Promise<void>; readonly abort: AbortController } | undefined;
   const pass = (): void => {
     if (stopped || running !== undefined || !existsSync(databasePath)) return;
     const abort = new AbortController();
     const limit = setTimeout(() => {
-      log(`rerail daemon: forgetting removed checkouts: gave up on a pass the filesystem had not answered after ${Math.round(passLimitMs / 1000)} s; the next pass tries again\n`);
+      log(`rerail daemon: forgetting removed checkouts: gave up on a pass the filesystem had not answered after ${Math.round(passLimitMs / 1000)} s; the next pass skips the checkout it waited on\n`);
       abort.abort();
     }, passLimitMs);
     limit.unref();
-    const done = prune(databasePath, abort.signal)
+    const done = prune(databasePath, abort.signal, unanswered)
       .catch((error: unknown) => log(`rerail daemon: forgetting removed checkouts: ${error instanceof Error ? error.message : String(error)}\n`))
       .finally(() => {
         clearTimeout(limit);
@@ -70,10 +73,10 @@ export function startCheckoutPruning(databasePath: string, options: CheckoutPrun
   };
 }
 
-async function prune(databasePath: string, signal: AbortSignal): Promise<void> {
+async function prune(databasePath: string, signal: AbortSignal, unanswered: Set<string>): Promise<void> {
   const database = openRerailDatabase(databasePath);
   try {
-    await pruneCheckouts(database, { signal });
+    await pruneCheckouts(database, { signal, unanswered });
   } finally {
     database.$client.close();
   }
