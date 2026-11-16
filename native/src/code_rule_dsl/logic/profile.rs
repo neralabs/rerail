@@ -1614,18 +1614,40 @@ pub fn declined() -> BTreeMap<String, String> {
     state().fallbacks.clone()
 }
 
+/// Each stratum's span totals (CPU, calls): the spans whose path ends in `stratum <key>` (the whole path, or after a
+/// `/`), for each key `known` names, in one pass over the spans. A key may hold `/` itself (`ann_input/ann_strip/
+/// type_app`), so every such suffix is tried. Scanning every span for each stratum was quadratic: at 300 files the
+/// main thread wrote the executors' section for minutes.
+fn by_stratum<'a>(spans: &BTreeMap<String, SpanTotal>, known: impl Fn(&str) -> Option<&'a str>) -> HashMap<&'a str, (f64, u64)> {
+    let mut out: HashMap<&'a str, (f64, u64)> = HashMap::new();
+    for (p, t) in spans {
+        let mut from = 0;
+        while let Some(i) = p[from..].find("stratum ").map(|i| from + i) {
+            if (i == 0 || p.as_bytes()[i - 1] == b'/')
+                && let Some(k) = known(&p[i + "stratum ".len()..])
+            {
+                let e = out.entry(k).or_default();
+                e.0 += t.total;
+                e.1 += t.calls;
+            }
+            from = i + 1;
+        }
+    }
+    out
+}
+
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
 /// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
 pub fn fallbacks(r: &mut String, state: &State) {
     let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
+    let spans = by_stratum(&state.spans, |k| state.fallbacks.get_key_value(k).map(|(k, _)| k.as_str()));
     let mut rows: Vec<(f64, u64, u64, &String, &String)> = state
         .fallbacks
         .iter()
         .map(|(key, class)| {
             let name = format!("stratum {key}");
             let at = |p: &String| p == &name || p.ends_with(&format!("/{name}"));
-            let cpu: f64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.total).sum();
-            let calls: u64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.calls).sum();
+            let (cpu, calls) = spans.get(key.as_str()).copied().unwrap_or_default();
             let vm: u64 = state.sql.iter().filter(|((p, _), _)| at(p) || p.contains(&format!("{name}/"))).map(|(_, s)| s.vm).sum();
             (cpu, vm, calls, key, class)
         })
@@ -1674,11 +1696,8 @@ pub fn executor(key: &str, ran: &'static str, native: Option<String>, device: Ve
 /// Every stratum's executors and hazards: by hazard, costliest first (a stratum counts under each of its hazards),
 /// then the strata. What to build next, on the device and in the native engine, by what it costs.
 pub fn executors(r: &mut String, state: &State) {
-    let cpu_of = |key: &str| -> f64 {
-        let name = format!("stratum {key}");
-        state.spans.iter().filter(|(p, _)| **p == name || p.ends_with(&format!("/{name}"))).map(|(_, t)| t.total).sum()
-    };
-    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (cpu_of(k), k, b)).collect();
+    let cpu = by_stratum(&state.spans, |k| state.blocked.get_key_value(k).map(|(k, _)| k.as_str()));
+    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (cpu.get(k.as_str()).map_or(0.0, |c| c.0), k, b)).collect();
     let mut ran: BTreeMap<&str, u64> = BTreeMap::new();
     for (_, _, b) in &rows {
         for (e, n) in &b.ran {
