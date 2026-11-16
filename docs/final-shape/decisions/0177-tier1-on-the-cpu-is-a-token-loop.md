@@ -2911,3 +2911,37 @@ Left, and right to be: the number arm's `& 262144` (`0`'s entry is
 not the other digits'), and the cold arm of bytes with no rule.
 
 Test: `a_rare_arm_knows_its_entry` (`PassShape::known_entries`).
+
+## A reader's short form is read in its arm
+
+**Intro.** The lean lexer's `b'/'` arm tests the byte after. For `//`
+it scans in place (`find` is inlined), and for `/*` it calls
+`find_pair`. Ours called a short function (`f35`) for every `/`. That
+function read one block and tail-called the whole reader. The arm
+then unpacked a (last, tag, hits) word to learn what had been read.
+
+**The change.**
+
+- **The reader's arm.** A reader rule with a short form
+  (`RuleMode::Short`, its whole function `LONG_CALL`) is built in the
+  loop's arm, as a run's has been. Its openers' tests, its first
+  window, and its tests run there. A read past the window calls the
+  whole function (`long_out`), and the results go on to the arm's
+  exit.
+- **No short functions.** The short form is built once only, to see
+  that it calls nothing but its whole function. The branch that made
+  short functions is gone.
+- **An arm's body in a block of its own.** The entry constant (the
+  section before) goes before it, since `tested` expects the rule's
+  block empty.
+
+```rust
+// generated (tier1_aot.rs), the `/` arm, after:
+47 => { if b[s+1] == b'/' { /* 64 bytes: eq '\n', movemask, ctz */
+          if m != 0 { last = s + 1 + ctz - 1 } else { cold_path(); f33(…) /* the whole reader */ } }
+        else if b[s+1] == b'*' { /* first block of `*/` */ … } … }
+// before: 47 => { cold_path(); let t = f35(…); /* unpack last, tag, hits */ … }
+```
+
+Test: `a_readers_short_form_is_the_loops_arm` (`PassShape::arms`).
+Functions 21 to 19.

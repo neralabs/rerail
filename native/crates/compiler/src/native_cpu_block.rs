@@ -3170,7 +3170,15 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // lexer's arm knows its byte, its tests of it the compiler's.
         let entry = match (side, pure) {
             (Side::Rare(_), true) => match rare_entry(r, t, RareClass { end: TokenEnd::Any, tagged: false, rule: k }) {
-                Some(e) => f.ins().iconst(types::I64, e as i64),
+                Some(e) => {
+                    // The rule's body in a block of its own, empty as its builders expect
+                    // (`tested` leaves it); the straight jump is merged (`clif_fold`).
+                    let e = f.ins().iconst(types::I64, e as i64);
+                    let body = f.create_block();
+                    f.ins().jump(body, &[]);
+                    f.switch_to_block(body);
+                    e
+                }
                 None => entry,
             },
             _ => entry,
@@ -3182,6 +3190,23 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // past its 16 bytes calls the whole function. A reader keeps its call, as the lean
         // lexer's string calls `string_end`.
         let arm = matches!(mode, RuleMode::Calls) && matches!(rule, EndRule::Run(o) if rd.bytewise(o)) && rd.calls.iter().any(|x| x.0 == LONG_CALL | k as u16);
+        // A reader with a short form likewise: its openers' tests and its first window here,
+        // as the lean lexer's `b'/'` arm tests the byte after and scans a line comment in place;
+        // a read past the window calls the whole function, as that arm calls `find_pair`.
+        let arm = arm || matches!(mode, RuleMode::Calls) && matches!(rule, EndRule::Read(_)) && rd.calls.iter().any(|x| x.0 == LONG_CALL | k as u16);
+        // `arm`, where a reader's openers name their own (`in_arm`).
+        let in_arm = arm;
+        // A short form's long way (`RuleMode::Short`): its whole function's results, returned
+        // from the short function, or on to the arm's exit (`done`), as a call's.
+        let long_out = |f: &mut FunctionBuilder<'_>, got: Vec<Value>| {
+            if matches!(mode, RuleMode::Short(_)) {
+                f.ins().return_(&got);
+            } else {
+                let got = if packs(r) { unpack_rule(f, got[0], got[1]).to_vec() } else { got };
+                let got: Vec<BlockArg> = got.iter().map(|&v| v.into()).collect();
+                f.ins().jump(done, &got);
+            }
+        };
         // A rule with a function of its own, but the fused two: its call (`rule_fn`).
         let own = rd.calls.iter().find(|x| x.0 == RULES_CALL | k as u16).filter(|_| !arm);
         if arm {
@@ -3205,7 +3230,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // the token, as a lexer checks the token it reads.
         let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = r.checks.iter().zip(&t.filters).filter(|(c, _)| usize::from(c.rule) == k).map(|(c, &b)| (*c, b)).collect();
         // A short run's token is 16 bytes at most (`RuleMode::Short`).
-        let short = arm || matches!((mode, rule), (RuleMode::Short(_), EndRule::Run(o)) if rd.bytewise(o)) && rd.calls.iter().any(|x| x.0 == LONG_CALL | k as u16);
+        let short = (arm || matches!(mode, RuleMode::Short(_))) && matches!(rule, EndRule::Run(o) if rd.bytewise(o)) && rd.calls.iter().any(|x| x.0 == LONG_CALL | k as u16);
         let most = short.then_some(16);
         // A run read from the bytes (`short_word`) and its count tests of a byte set its first
         // bytes never are (`run_tests`): their bits from one window, the run's, as the lean
@@ -3425,6 +3450,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // string with no `\` straight through.
                     let whole = match mode {
                         RuleMode::Short(_) => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16),
+                        RuleMode::Calls if in_arm => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16),
                         _ => None,
                     };
                     let counts: Vec<crate::records::TokenCheck> = tests.iter().map(|(t, _)| *t).filter(|t| t.count && !t.always()).collect();
@@ -3493,7 +3519,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         f.switch_to_block(long);
                         let call = f.ins().call(callee, &rule_args(sig, [c.bytes, s, c.len, c.blocks, raw, entry]));
                         let got = f.inst_results(call).to_vec();
-                        f.ins().return_(&got);
+                        long_out(f, got);
                         f.switch_to_block(not);
                         continue;
                     }
@@ -3529,6 +3555,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // its whole function's call, returned.
                     let whole = match (mode, rd.bytes.filter(|(b, _)| b.can(a.closer))) {
                         (RuleMode::Short(_), Some(bytes)) => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16).map(|w| (w, bytes)),
+                        (RuleMode::Calls, Some(bytes)) if in_arm => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16).map(|w| (w, bytes)),
                         _ => None,
                     };
                     let (x, base) = match whole {
@@ -3555,7 +3582,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
                         let call = f.ins().call(callee, &rule_args(sig, [c.bytes, s, c.len, c.blocks, raw, entry]));
                         let got = f.inst_results(call).to_vec();
-                        f.ins().return_(&got);
+                        long_out(f, got);
                         f.switch_to_block(found);
                         let at = f.block_params(found)[0];
                         let l = f.ins().iadd_imm(at, i64::from(a.off));
@@ -6487,38 +6514,21 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let sig = func.signature.clone();
             let id = module.declare_function(&format!("{name}_rule{k}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
             func.name = cranelift_codegen::ir::UserFuncName::user(0, id.as_u32());
-            // A run's or a reader's short function (`RuleMode::Short`), where it calls nothing
-            // but its whole one: the loop calls it, a lexer's short number or comment with no
-            // register saved.
-            let mut short = None;
-            // A run's short form is the loop's arm (`rule_last`'s `arm`), no function of its
-            // own: where it calls nothing but its whole one, the whole one alone.
+            // A run's or a reader's short form (`RuleMode::Short`) is the loop's arm (`rule_last`'s
+            // `arm`), no function of its own, where it calls nothing but its whole one: the loop
+            // calls the whole one alone, past the short form, as the lean lexer's arm calls
+            // `find_pair`. Built here with that call only to see so.
             let mut arm = false;
             if matches!(rec.rules[k], crate::records::EndRule::Run(_) | crate::records::EndRule::Read(_)) {
                 let mut with = ids.clone();
                 with.push((LONG_CALL | k as u16, id, sig.clone()));
                 let mut short_bw = bytewise.clone();
                 short_bw.bail = Some((id, sig.clone()));
-                let mut sfunc = built(&sig_of(RULE_ARGS), RuleMode::Short(k), &short_bw, &with, module.isa())?;
+                let sfunc = built(&sig_of(RULE_ARGS), RuleMode::Short(k), &short_bw, &with, module.isa())?;
                 let made = calls_of(&sfunc);
-                if !made.is_empty() && made.iter().all(|&x| x == id.as_u32()) && matches!(rec.rules[k], crate::records::EndRule::Run(_)) {
-                    arm = true;
-                } else if !made.is_empty() && made.iter().all(|&x| x == id.as_u32()) {
-                    let ssig = sfunc.signature.clone();
-                    let sid = module.declare_function(&format!("{name}_rule{k}_short"), Linkage::Local, &ssig).map_err(|_| Error::BackendFailure)?;
-                    sfunc.name = cranelift_codegen::ir::UserFuncName::user(0, sid.as_u32());
-                    short = Some((sid, sfunc));
-                }
+                arm = !made.is_empty() && made.iter().all(|&x| x == id.as_u32());
             }
-            match short {
-                _ if arm => byte_calls.push((LONG_CALL | k as u16, id, sig, func)),
-                Some((sid, sfunc)) => {
-                    let ssig = sfunc.signature.clone();
-                    byte_calls.push((LONG_CALL | k as u16, id, sig.clone(), func));
-                    byte_calls.push((RULES_CALL | k as u16, sid, ssig, sfunc));
-                }
-                None => byte_calls.push((RULES_CALL | k as u16, id, sig, func)),
-            }
+            byte_calls.push((if arm { LONG_CALL } else { RULES_CALL } | k as u16, id, sig, func));
         }
     }
     let byte_ids: Vec<ByteCall> = byte_calls.iter().map(|(o, id, sig, _)| (*o, *id, sig.clone())).collect();

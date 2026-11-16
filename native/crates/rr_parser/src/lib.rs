@@ -1477,6 +1477,17 @@ pub mod tests {
         assert!(shape.known_entries >= 5, "rare arms with their entry known: {}", shape.known_entries);
     }
 
+    /// A reader with a short form (a comment's, a string's, a backtick's: its openers and its
+    /// first window, the long read its whole function's call) is read in the loop's arm too,
+    /// as the lean lexer's `b'/'` arm tests the byte after and scans a line comment in place:
+    /// the number's arm and the readers' (`PassShape::arms`), no short function between.
+    #[test]
+    fn a_readers_short_form_is_the_loops_arm() {
+        let c = crate::compiled().expect("compiles");
+        let shape = c.parser.tier1.passes.last().expect("a pass");
+        assert!(shape.arms >= 4, "the run's and the readers' arms: {}", shape.arms);
+    }
+
     /// Decision 0177, stage 2a: the tokens by the loop, each at the first byte after the one
     /// before that `skip` does not hold, are the starts' and lasts' masks, on every file the
     /// masks take (a file they refuse, its totals' flag set, is the engine's either way).
