@@ -28,6 +28,8 @@ describe("the Git a process keeps, gone under it", () => {
   let repository = "";
   let head = "";
   let folders: string[] = [];
+  /** First on `PATH` and empty at the first look: a stand-in placed there later is what a look would keep. */
+  let earlier = "";
   let machineGit = "";
 
   /** The program a start names, or this machine's Git in place of a stand-in that is there. */
@@ -73,9 +75,10 @@ describe("the Git a process keeps, gone under it", () => {
     // Looked for without keeping it, before the stand-ins go on PATH.
     machineGit = findGit().path!;
     folders = ["first", "second", "third"].map(name => join(root, name));
-    await Promise.all(folders.map(async folder => await mkdir(folder)));
+    earlier = join(root, "earlier");
+    await Promise.all([earlier, ...folders].map(async folder => await mkdir(folder)));
     await placeStandIn(folders[0]!);
-    vi.stubEnv("PATH", [...folders, ...(process.env.PATH === undefined ? [] : [process.env.PATH])].join(delimiter));
+    vi.stubEnv("PATH", [earlier, ...folders, ...(process.env.PATH === undefined ? [] : [process.env.PATH])].join(delimiter));
     vi.mocked(spawnSync).mockImplementation((file, args, options) => actual.spawnSync(program(file), args, options));
     vi.mocked(execFile).mockImplementation((file, args, options, callback) => actual.execFile(program(file), args, options, callback));
     vi.mocked(spawn).mockImplementation((file, args, options) => actual.spawn(program(file), args, options));
@@ -133,5 +136,26 @@ describe("the Git a process keeps, gone under it", () => {
     expect(gitExecutable()).toBe(kept);
     await expect(gitHead(repository)).resolves.toBe(head);
     expect(started(spawn)).toEqual([kept, now]);
+  });
+
+  it("looks for Git again only when a start finds no program, not when Git exits non-zero or prints past maxBuffer", async () => {
+    const kept = gitExecutable();
+    // First on the first look's PATH, so a look now would keep it.
+    const sooner = await placeStandIn(earlier);
+    try {
+      const calls = [
+        runGit(repository, ["rev-parse", "--verify", "--quiet", "no-such-branch"]),
+        runGit(repository, ["rev-parse", "HEAD"], { maxBuffer: 1 }),
+        await runGitAsync(repository, ["rev-parse", "--verify", "--quiet", "no-such-branch"]),
+        await runGitAsync(repository, ["rev-parse", "HEAD"], { maxBuffer: 1 }),
+      ];
+      // Git exits 1 for a ref it lacks. Past maxBuffer the call carries its error; its status is null, or 0 when Git
+      // exited before Node ended it.
+      expect([calls[0]!.status, calls[2]!.status]).toEqual([1, 1]);
+      expect(calls.map(call => call.error === undefined)).toEqual([true, false, true, false]);
+      expect(gitExecutable()).toBe(kept);
+    } finally {
+      await rm(sooner);
+    }
   });
 });
