@@ -1722,6 +1722,14 @@ pub mod tests {
             inputs.push(format!("r(x) :- a(x), {}.\n", "b".repeat(n)).into_bytes());
             inputs.push(format!("{}\"open", " ".repeat(n)).into_bytes());
         }
+        // A word on past its block by its next block's first 16 bytes (`short_word`) or more,
+        // and one to the file's end.
+        for pad in [48usize, 50, 62, 63] {
+            for n in [1usize, 2, 15, 16, 17, 18, 31, 80] {
+                inputs.push(format!("{}{} x\n", " ".repeat(pad), "w".repeat(n)).into_bytes());
+                inputs.push(format!("{}{}", " ".repeat(pad), "w".repeat(n)).into_bytes());
+            }
+        }
         // Two-byte spellings (`pairs`): runs of them, and one at the file's end. The CPU reads
         // the next byte (`EndRule::Next`); the interpreter's rule is the same, its mask Metal's.
         for t in [":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="] {

@@ -2181,3 +2181,41 @@ is from the bytes, so the wait's fold is not tested.
 
 Counts, reported: words 101.1, punctuation 52.9, mixed 55.1,
 strings 306.2, numbers 158.0, comments 231.2.
+
+## A word past its block reads a few bytes on
+
+When a word reaches the end of the lean lexer's window, `word_end`
+reads on a byte at a time and writes the token at once. A word rarely
+goes on past more than a few bytes of the next block.
+
+Ours read the next block's whole word mask for this. That was a call
+to the mask's function over 64 bytes, and then the refill made the
+same mask again for that block.
+
+**The change.** Where the run's output comes from the bytes, the run
+past its register word reads the next block's first 16 bytes with one
+vector (`Bytewise::short_word`), as the number rule's run already
+does. A run that is still going after those 16 bytes goes on to the
+whole words, as before. Blocks stay aligned, and the token is written
+where it ends, as lean writes it.
+
+Not done: carrying the open token to the next block's refill, which
+would finish it from that refill's own word mask. It would remove the
+16-byte read too. But it would move the token's tail out of its block,
+past the waits and the gap marks' attribution, and the lean lexer
+does not do it.
+
+```rust
+// generated (tier1_aot.rs), a word past its block:
+v726 = vld1q_u8(bytes + next);           // the next block's first 16
+v744 = movemask(word class of v726) & 0xffff;
+v747 = (!!v744).trailing_zeros();        // the run's bytes there
+if v747 < 16 { last = next + v747 - 1 }  // else the whole words
+```
+
+Tests: `the_cpus_records_are_the_interpreters` gains words that go 1,
+15, 16, 17 and more bytes past their block, and words that end the
+file. With the last byte off by one, the test fails.
+
+Counts, reported: words 96.5, punctuation 53.9, mixed 55.2,
+strings 306.1, numbers 158.0, comments 231.2.

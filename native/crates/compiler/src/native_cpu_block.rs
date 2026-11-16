@@ -3089,6 +3089,19 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 // The block's word, in a register: but where the run starts in the next block
                 // (the token at the block's last byte).
                 let reg = regs.and_then(|g| g.runs.iter().find(|&&(k, _)| k == o).map(|&(_, v)| v));
+                // A run on past the word in the register: its next bytes by one vector
+                // (`Bytewise::short_word`) from the next block's first, as the lean lexer's
+                // `word_end` reads a word's few bytes past its window; past those 16, whole
+                // words below. Where the output is the bytes'.
+                let cont_of = match (reg, rd.bytes.filter(|(b, _)| b.can(o))) {
+                    (Some(_), Some((b, file))) => {
+                        let cont = f.create_block();
+                        f.append_block_param(cont, types::I64);
+                        Some((cont, b, file))
+                    }
+                    _ => None,
+                };
+                let cont = cont_of.map(|(b, _, _)| b);
                 let x = match reg {
                     Some(v) => {
                         let (in_reg, edge) = (f.create_block(), f.create_block());
@@ -3098,6 +3111,12 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         f.ins().jump(first_word, &[v.into()]);
                         f.switch_to_block(edge);
                         f.set_cold_block(edge);
+                        if let Some(cont) = cont {
+                            // The run from the next block's first byte.
+                            f.ins().jump(cont, &[i.into()]);
+                            f.switch_to_block(first_word);
+                            f.block_params(first_word)[0]
+                        } else {
                         let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
                         let load = f.create_block();
                         inside_or_past(f, inside, load, limit, ended, &[s.into(), untag.into(), nohits.into()]);
@@ -3107,6 +3126,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         f.ins().jump(first_word, &[x.into()]);
                         f.switch_to_block(first_word);
                         f.block_params(first_word)[0]
+                        }
                     }
                     None => {
                         // From the bytes: the run's first 16 from `s + 1` by one vector
@@ -3149,7 +3169,15 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], next, &[]);
                 f.switch_to_block(next);
                 f.set_cold_block(next);
-                f.ins().jump(more, &[w1.into()]);
+                match cont {
+                    Some(cont) => {
+                        let p = f.ins().ishl_imm(w1, 6);
+                        f.ins().jump(cont, &[p.into()]);
+                    }
+                    None => {
+                        f.ins().jump(more, &[w1.into()]);
+                    }
+                }
                 // A whole word of the run: on to the next, or the file's end.
                 f.switch_to_block(more);
                 f.set_cold_block(more);
@@ -3169,6 +3197,19 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let l = f.ins().iadd_imm(l, -1);
                 let w1 = f.ins().iadd_imm(w, 1);
                 f.ins().brif(full, more, &[w1.into()], ended, &[l.into(), untag.into(), nohits.into()]);
+                if let Some((cont, b, file)) = cont_of {
+                    f.switch_to_block(cont);
+                    f.set_cold_block(cont);
+                    let p = f.block_params(cont)[0];
+                    let x = b.short_word(f, &file, o, p, heads);
+                    let y = f.ins().bnot(x);
+                    let ones = f.ins().ctz(y);
+                    let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
+                    let l = f.ins().iadd(p, ones);
+                    let l = f.ins().iadd_imm(l, -1);
+                    let w = f.ins().ushr_imm(p, 6);
+                    f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], more, &[w.into()]);
+                }
             }
             EndRule::Read(i) => {
                 // A reader (`records::read_last`): the first region whose opener holds at `s`,
