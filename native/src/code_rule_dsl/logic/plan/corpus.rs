@@ -3386,8 +3386,11 @@ fn run_observed(
     };
     let cross_plan = match &cross_declared {
         Some(declared) => {
-            let (plan, version) = cross_memo::split(&mut split.cross, Some(cross_version.clone()), &lowered.domains, declared, &cross_digest, &split.same_doc)?;
-            cross_version = version.ok_or_else(|| Error::Plan("the cross memo's split made no version of the part".into()))?;
+            let (plan, version) = cross_memo::split(&cross_version, &lowered.domains, declared, &cross_digest, &split.same_doc)?;
+            if !Arc::ptr_eq(&version, &cross_version) {
+                split.cross = lower::Tree::of(Arc::clone(&version));
+                cross_version = version;
+            }
             plan
         }
         None => None,
@@ -7280,7 +7283,7 @@ fn run_observed(
         hops.is_empty() || cross_rounds::declared(&prog).is_none()
     };
     // The import components (decision 0076) run before the cross part, with no hooks: what they read is bound now.
-    let eager: BTreeSet<&str> = cross_plan.iter().flat_map(|p| p.components.rules.iter()).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
+    let eager: BTreeSet<&str> = cross_plan.iter().flat_map(|p| p.components.rules().flat_map(|r| r.reads().map(|a| p.components.rel_name(a.rel())))).collect();
     // A new process that maintains its cross-file part from the store (t32 4.1) runs it as a session does: its
     // inputs bound before the run, not loaded as their first reader runs. Not a part whose requests the run answers
     // as it goes (0065 §2a, phase 0's loads): their answers are the loader's, which no kept row stands for.
@@ -7356,7 +7359,7 @@ fn run_observed(
     if let Some(plan) = &cross_plan {
         let components_span = crate::code_rule_dsl::logic::profile::span(|| "import components".into());
         let held: BTreeSet<String> = cross_memo::HELD.iter().map(|r| (*r).to_owned()).collect();
-        let got = texts_run(&part(plan.components.clone(), None), &db, cross_stats.clone(), held, modes, &vocabulary)?;
+        let got = texts_run(&part_of(lower::Tree::of(plan.components.clone()), Some(plan.components.clone())), &db, cross_stats.clone(), held, modes, &vocabulary)?;
         let edges: Vec<(i64, i64)> = held_rows(&db, &got, cross_memo::HELD[1], 2)?.into_iter().map(|r| (r[0], r[1])).collect();
         let mut keys: HashMap<i64, String> = HashMap::new();
         let mut rows = Vec::new();
@@ -7375,23 +7378,26 @@ fn run_observed(
         // found), so only its copy from `<rel>__cross` runs, and only the copies something reads (decision 0076).
         let all_found = cross_mode == cross_memo::Mode::On && found.misses.is_empty() && !plan.memo.is_empty();
         if all_found {
-            let before = cross.program.rules.len();
-            cross_memo::keep_copies(&mut cross, plan, &wanted);
+            let before = cross.version.as_ref().map_or(0, |v| v.size());
+            cross_memo::keep_copies(&mut cross, plan, &wanted)?;
+            let after = cross.version.as_ref().map_or(0, |v| v.size());
             crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
-                format!("every component found: {} rules of memoised relations not run, their copies only", before - cross.program.rules.len())
+                format!("every component found: {} rules of memoised relations not run, their copies only", before - after)
             });
         }
         // No component found (a new store): `rr_cross_doc` is empty and every guard passes, so none is run.
         if found.hits.is_empty() && cross_mode != cross_memo::Mode::Verify {
-            let dropped = cross_memo::drop_guards(&mut cross);
+            let dropped = cross_memo::drop_guards(&mut cross)?;
             crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || format!("no component found: {dropped} guards on `rr_cross_doc` not run"));
         }
-        let read: BTreeSet<&str> = cross.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
+        let cross_now = cross.placed()?;
+        let cross_f = cross_now.fields()?;
+        let read: BTreeSet<&str> = cross_now.v.rules().flat_map(|r| r.reads().map(|a| cross_now.v.rel_name(a.rel()))).collect();
         let mut replayed = Totals::default();
         let inputs = found.inputs(&store, plan, &components, cross_mode, |r| !all_found || read.contains(format!("{r}{}", cross_memo::SUFFIX).as_str()))?;
         let replayed_rows: usize = inputs.iter().skip(1).map(|(_, _, cols)| cols.first().map_or(0, Vec::len)).sum();
         for (rel, width, cols) in inputs {
-            let types: Vec<String> = cross.program.decls[rel.as_str()].iter().map(|(_, t)| t.clone()).map(String::from).collect();
+            let types: Vec<String> = cross_f.types(&rel).into_iter().map(String::from).collect();
             let columns = (0..width).map(|i| format!("c{i}")).collect();
             let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, cols.into_iter().map(Some).collect());
             replayed.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
