@@ -47,6 +47,8 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 - The core range is raised in the pack's `package.json` and in `package-lock.json`, by the rule the pack validation
   judges it by (`scripts/release/core.mjs`). A pack that needs it and has no changeset is not released, so it is
   named in a warning and left alone: add a changeset for it.
+- A pack released while core stays older than the release that first loads it, because core is left out of the pull
+  request, is named in a warning not to merge: published so, no released Rerail could load it.
 - The tag is pushed with the `neralabs-ci` app's token.
 - **Anything core ships:** every path except packs, documentation, CI, changesets and pending changelog entries, tests,
   fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack.

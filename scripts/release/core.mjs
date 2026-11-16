@@ -306,7 +306,12 @@ export function coreFloor(heldOff, languages) {
  * older, still loads the pack.
  */
 export function admitsRefusingCore(range, floor, coreVersion) {
-  return floor !== undefined && !semver.lt(coreVersion, `${floor}-0`) && semver.intersects(range, `<${floor}-0`, { includePrerelease: true });
+  return floor !== undefined && !coreBeforeFloor(coreVersion, floor) && semver.intersects(range, `<${floor}-0`, { includePrerelease: true });
+}
+
+/** Whether core at `coreVersion` is older than `floor`, the release that first loads a pack; its prereleases are not. */
+export function coreBeforeFloor(coreVersion, floor) {
+  return floor !== undefined && semver.lt(coreVersion, `${floor}-0`);
 }
 
 /** The core range that leaves out every core older than `floor`: what the Release pull request writes. */

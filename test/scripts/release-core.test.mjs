@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { afterEach, describe, expect, it } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
+import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
@@ -551,6 +551,15 @@ describe("admitsRefusingCore", () => {
   it("is settled by the range the release writes", () => {
     expect(raisedCoreRange("0.1.5")).toBe(">=0.1.5-0");
     expect(admitsRefusingCore(raisedCoreRange("0.1.5"), "0.1.5", "0.1.5")).toBe(false);
+  });
+});
+
+describe("coreBeforeFloor", () => {
+  it("is true for a core older than the release that first loads the pack, and false from its prereleases on", () => {
+    expect(coreBeforeFloor("0.1.4", "0.1.5")).toBe(true);
+    expect(coreBeforeFloor("0.1.5-next.0", "0.1.5")).toBe(false);
+    expect(coreBeforeFloor("0.1.5", "0.1.5")).toBe(false);
+    expect(coreBeforeFloor("0.1.4", undefined)).toBe(false);
   });
 });
 

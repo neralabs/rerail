@@ -157,6 +157,7 @@ describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", ()
     expect(body).toContain(`- \`${packName("javaish")}\`: \`>=0.1.0-0\` → \`>=0.1.5-0\``);
     expect(body).not.toContain(`- \`${packName("plain")}\`: `);
     expect(body).not.toContain("Not released by this pull request");
+    expect(body).not.toContain("Do not merge yet");
   });
 
   it("changes nothing but the range in the package.json it raises", () => {
@@ -176,7 +177,10 @@ describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", ()
     commit(repo, "the pack");
     releaseVersion(repo);
     expect([rangeOf(repo, "javaish"), lockedRangeOf(repo, "javaish")]).toEqual([">=0.1.0-0", ">=0.1.0-0"]);
-    expect(readFileSync(join(repo.root, "body.md"), "utf8")).not.toContain("Core range raised");
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    expect(body).not.toContain("Core range raised");
+    // The pack is released here and core stays at 0.1.4, which cannot load it: nothing released could.
+    expect(body).toContain(`> Do not merge yet: this pull request releases \`${packName("javaish")}\` (needs Rerail 0.1.5 or newer) and leaves core at 0.1.4, so no released Rerail could load it.`);
   });
 
   it("leaves a range that already leaves older cores out", () => {
