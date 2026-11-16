@@ -45,6 +45,9 @@
   { "name": "convention-exact-carried", "files": { "ruff.toml": "extend = \"base.toml\"\n[lint]\nextend-select = [\"D404\"]\n", "base.toml": "[lint]\nselect = [\"D\"]\n[lint.pydocstyle]\nconvention = \"pep257\"\n" } },
   { "name": "convention-unknown", "files": { "ruff.toml": "[lint.pydocstyle]\nconvention = \"sphinx\"\n" }, "unknown": [""] },
   { "name": "incompatible-docstring-rules", "files": { "ruff.toml": "[lint]\nselect = [\"D2\"]\nignore = [\"D212\"]\n" } },
-  { "name": "incompatible-both-selected", "files": { "ruff.toml": "[lint]\nselect = [\"D203\", \"D211\", \"D212\", \"D213\"]\n" } }
+  { "name": "incompatible-both-selected", "files": { "ruff.toml": "[lint]\nselect = [\"D203\", \"D211\", \"D212\", \"D213\"]\n" } },
+  { "name": "toml11-multi-line-inline-table", "files": { "pyproject.toml": "[tool.ruff.lint]\nselect = [\"E7\", \"F\"]\nper-file-ignores = {\n  \"tests/**\" = [\"E722\"], # TOML 1.1\n  \"docs/**\" = [\"F401\"],\n}\n[tool.other]\nk = \"\\x41\\e\"\n" } },
+  { "name": "toml-table-under-array-of-tables", "files": { "pyproject.toml": "[[tool.other.a]]\nx = 1\n[tool.other.a.b]\ny = 1\n[[tool.other.a]]\nx = 2\n[tool.other.a.b]\ny = 2\n[tool.ruff.lint]\nselect = [\"E7\"]\nignore = [\"E722\"]\n" } },
+  { "name": "toml11-extended-config", "files": { "ruff.toml": "extend = \"base.toml\"\n[lint]\nextend-select = [\"F\"]\n", "base.toml": "[lint]\nselect = [\"E7\"]\nignore = [\"E722\"]\n[lint.flake8-tidy-imports]\nbanned-api = {\n  \"os.x\" = { msg = \"\\x41\" },\n}\n" } }
  ]
 }

@@ -214,11 +214,11 @@ function conventionOf(toml: RuffToml): RuffConvention | undefined {
   return { name, because: `${toml.name}: ${key} = ${JSON.stringify(name)}` };
 }
 
-/** What `readTomlStringLists` makes of a Ruff file whose Ruff section starts at `prefix`, or why it cannot be read. */
+/** What `readTomlStringLists` makes of a Ruff file whose Ruff section starts at `prefix` (TOML 1.1, as Ruff parses it), or why it cannot be read. */
 function parseRuffToml(text: string, prefix: string) {
   const sections = sectionsOf(prefix);
   const paths = (options: readonly string[]): string[] => options.flatMap(option => sections.map(section => `${section}${option}`));
-  return readFormat(() => readTomlStringLists(text, paths(RUFF_LISTS), paths(RUFF_TABLES), [`${prefix}extend`, ...paths([CONVENTION])], paths(RUFF_SCALARS)));
+  return readFormat(() => readTomlStringLists(text, paths(RUFF_LISTS), paths(RUFF_TABLES), [`${prefix}extend`, ...paths([CONVENTION])], paths(RUFF_SCALARS), "1.1"));
 }
 
 /** The Ruff file `toml` holds, as Ruff reads it. */

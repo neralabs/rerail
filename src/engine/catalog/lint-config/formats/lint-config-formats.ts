@@ -98,6 +98,15 @@ const BARE_KEY_TEXT = /^[A-Za-z0-9_-]+$/u;
 /** A key path as TOML writes it: bare parts as they are, others quoted, so `"lint.ignore"` is not `lint.ignore`. */
 const dottedPath = (parts: readonly string[]): string => parts.map(part => (BARE_KEY_TEXT.test(part) ? part : JSON.stringify(part))).join(".");
 const ESCAPES: Readonly<Record<string, string>> = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", "\"": "\"", "\\": "\\" };
+/** The hex digits of each `\u`-style escape. */
+const HEX_ESCAPES: Readonly<Record<string, number>> = { u: 4, U: 8 };
+
+/**
+ * The TOML a linter parses: 1.0 (Python's tomllib, as Bandit and SQLFluff read it) or 1.1, which Ruff and Cargo read
+ * and which adds inline tables over several lines (comments, a trailing comma) and the `\e` and `\xHH` escapes.
+ */
+export type TomlVersion = "1.0" | "1.1";
+
 /**
  * How many arrays and inline tables a value may nest in (a dotted key in an inline table nests a table for each part
  * before the last). The reader recurses into each, so a deeper file would overflow the stack.
@@ -131,8 +140,9 @@ export function readTomlStringLists(
   wantedTables: readonly string[] = [],
   wantedStrings: readonly string[] = [],
   wantedScalars: readonly string[] = [],
+  version: TomlVersion = "1.0",
 ): TomlStringLists {
-  const found = new TomlReader(text, { wanted, wantedTables, wantedStrings, wantedScalars, wantedTrees: [] }).read();
+  const found = new TomlReader(text, { wanted, wantedTables, wantedStrings, wantedScalars, wantedTrees: [] }, version).read();
   return { lists: found.lists, tables: found.tables, strings: found.strings, scalars: found.scalars, paths: found.paths };
 }
 
@@ -140,8 +150,8 @@ export function readTomlStringLists(
  * The tables at `wanted` dotted paths, whole: every key under each, at any depth, with its value. Reads and refuses
  * as `readTomlStringLists` does.
  */
-export function readTomlTrees(text: string, wanted: readonly string[]): TomlTrees {
-  const found = new TomlReader(text, { wanted: [], wantedTables: [], wantedStrings: [], wantedScalars: [], wantedTrees: wanted }).read();
+export function readTomlTrees(text: string, wanted: readonly string[], version: TomlVersion = "1.0"): TomlTrees {
+  const found = new TomlReader(text, { wanted: [], wantedTables: [], wantedStrings: [], wantedScalars: [], wantedTrees: wanted }, version).read();
   return { trees: found.trees, paths: found.paths };
 }
 
@@ -163,6 +173,12 @@ class TomlReader {
   readonly #scalars = new Map<string, string>();
   readonly #trees = new Map<string, Map<string, TomlValue>>();
   readonly #paths = new Set<string>();
+  /** The dotted paths of every array of tables (`[[a]]`), whose elements' keys and sub-tables (`[a.b]`) are read past. */
+  readonly #arrayTables = new Set<string>();
+  readonly #escapes: Readonly<Record<string, string>>;
+  readonly #hexEscapes: Readonly<Record<string, number>>;
+  /** Whether an inline table may run over several lines (TOML 1.1). */
+  readonly #multiLineInlineTables: boolean;
   readonly wanted: ReadonlySet<string>;
   readonly wantedTables: ReadonlySet<string>;
   readonly wantedStrings: ReadonlySet<string>;
@@ -172,7 +188,11 @@ class TomlReader {
   readonly #longestTree: number;
   readonly #longestKey: number;
 
-  constructor(readonly text: string, wanted: TomlWanted) {
+  constructor(readonly text: string, wanted: TomlWanted, version: TomlVersion) {
+    const toml11 = version === "1.1";
+    this.#escapes = toml11 ? { ...ESCAPES, e: "\u001b" } : ESCAPES;
+    this.#hexEscapes = toml11 ? { ...HEX_ESCAPES, x: 2 } : HEX_ESCAPES;
+    this.#multiLineInlineTables = toml11;
     this.wanted = new Set(wanted.wanted);
     this.wantedTables = new Set(wanted.wantedTables);
     this.wantedStrings = new Set(wanted.wantedStrings);
@@ -228,12 +248,23 @@ class TomlReader {
     if (!this.text.startsWith(close, this.#index)) this.#fail("a table header is not closed");
     this.#index += close.length;
     this.#refuseTables(path, path.length);
-    // No wanted key lives in an array of tables: its keys are read past, never collected.
-    this.#table = arrayTable ? undefined : path;
-    if (!arrayTable) {
+    if (arrayTable) this.#arrayTables.add(dottedPath(path));
+    // No wanted key lives in an array of tables, nor in a table under one (`[a.b]` after `[[a]]`, a table of its last
+    // element): their keys are read past, never collected.
+    const inArray = arrayTable || this.#underArrayTable(path);
+    this.#table = inArray ? undefined : path;
+    if (!inArray) {
       this.#paths.add(dottedPath(path));
       this.#wantedTable(dottedPath(path));
     }
+  }
+
+  /** Whether a table holding `path` (not `path` itself) is an array of tables. */
+  #underArrayTable(path: readonly string[]): boolean {
+    for (const dotted of dottedPrefixes(path, path.length - 1, Number.POSITIVE_INFINITY)) {
+      if (this.#arrayTables.has(dotted)) return true;
+    }
+    return false;
   }
 
   /** A wanted table or tree, recorded even while it is empty: an empty table is set, not absent. */
@@ -395,32 +426,39 @@ class TomlReader {
   #inlineTable(depth: number): Map<string, TomlValue> {
     this.#index += 1;
     const table = new Map<string, TomlValue>();
-    this.#skipBlank(false);
-    if (this.text[this.#index] === "}") {
-      this.#index += 1;
-      return table;
-    }
+    const lines = this.#multiLineInlineTables;
     for (;;) {
-      const key = this.#key();
-      if (this.text[this.#index] !== "=") this.#fail("expected =");
-      this.#index += 1;
-      this.#skipBlank(false);
-      let target = table;
-      for (const part of key.slice(0, -1)) {
-        const inner = target.get(part) ?? new Map<string, TomlValue>();
-        if (!(inner instanceof Map)) this.#fail(`${key.join(".")} is set twice`);
-        target.set(part, inner);
-        target = inner;
+      this.#skipBlank(lines);
+      // `{}`, or in TOML 1.1 the `}` after a trailing comma.
+      if (this.text[this.#index] === "}" && (table.size === 0 || lines)) {
+        this.#index += 1;
+        return table;
       }
-      const last = key.at(-1)!;
-      if (target.has(last)) this.#fail(`${key.join(".")} is set twice`);
-      target.set(last, this.#value(depth));
-      this.#skipBlank(false);
+      this.#inlineEntry(table, depth);
+      this.#skipBlank(lines);
       const char = this.text[this.#index];
       this.#index += 1;
       if (char === "}") return table;
       if (char !== ",") this.#fail("expected , or } in an inline table");
     }
+  }
+
+  /** One `key = value` of an inline table, a dotted key nesting a table for each part before the last. */
+  #inlineEntry(table: Map<string, TomlValue>, depth: number): void {
+    const key = this.#key();
+    if (this.text[this.#index] !== "=") this.#fail("expected =");
+    this.#index += 1;
+    this.#skipBlank(false);
+    let target = table;
+    for (const part of key.slice(0, -1)) {
+      const inner = target.get(part) ?? new Map<string, TomlValue>();
+      if (!(inner instanceof Map)) this.#fail(`${key.join(".")} is set twice`);
+      target.set(part, inner);
+      target = inner;
+    }
+    const last = key.at(-1)!;
+    if (target.has(last)) this.#fail(`${key.join(".")} is set twice`);
+    target.set(last, this.#value(depth));
   }
 
   #string(): string {
@@ -458,18 +496,11 @@ class TomlReader {
 
   #escape(multiLine: boolean): string {
     const code = this.text[this.#index + 1] ?? "";
-    if (code in ESCAPES) {
+    if (code in this.#escapes) {
       this.#index += 2;
-      return ESCAPES[code]!;
+      return this.#escapes[code]!;
     }
-    if (code === "u" || code === "U") {
-      const digits = this.text.slice(this.#index + 2, this.#index + (code === "u" ? 6 : 10));
-      if (!/^[0-9A-Fa-f]+$/u.test(digits) || digits.length !== (code === "u" ? 4 : 8)) this.#fail("a \\u escape needs hex digits");
-      const point = Number.parseInt(digits, 16);
-      if (point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)) this.#fail("a \\u escape is not a Unicode scalar value");
-      this.#index += code === "u" ? 6 : 10;
-      return String.fromCodePoint(point);
-    }
+    if (code in this.#hexEscapes) return this.#codePoint(code, this.#hexEscapes[code]!);
     // A line-ending backslash in a multi-line basic string trims the line break and the blanks after it.
     const rest = /^\\[ \t]*\r?\n[\s]*/u.exec(this.text.slice(this.#index));
     if (multiLine && rest !== null) {
@@ -477,5 +508,15 @@ class TomlReader {
       return "";
     }
     this.#fail(`unknown escape \\${code}`);
+  }
+
+  /** The character a `\u`, `\U` or `\x` escape of `digits` hex digits names. */
+  #codePoint(code: string, digits: number): string {
+    const hex = this.text.slice(this.#index + 2, this.#index + 2 + digits);
+    if (!/^[0-9A-Fa-f]+$/u.test(hex) || hex.length !== digits) this.#fail(`a \\${code} escape needs hex digits`);
+    const point = Number.parseInt(hex, 16);
+    if (point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)) this.#fail(`a \\${code} escape is not a Unicode scalar value`);
+    this.#index += 2 + digits;
+    return String.fromCodePoint(point);
   }
 }

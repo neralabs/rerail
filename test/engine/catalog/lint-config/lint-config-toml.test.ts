@@ -70,6 +70,11 @@ describe("readTomlStringLists lists", () => {
     expect(found.paths).toEqual(["tool.ruff", "tool.ruff.ignore"]);
   });
 
+  it("reads past a table under an array of tables, repeated for each element, as TOML 1.0 has it", () => {
+    const text = "[[a]]\nx = 1\n[a.b]\ny = 1\n[[a]]\nx = 2\n[a.b]\ny = 2\n[tool.ruff]\nignore = [\"E3\"]\n";
+    expect(Object.fromEntries(readTomlStringLists(text, PYPROJECT_KEYS).lists)).toEqual({ "tool.ruff.ignore": ["E3"] });
+  });
+
   it("lets a table be added to, by a header after an inline table at its path", () => {
     const found = readTomlStringLists("[a]\nb = { c = [\"x\"] }\n[a.b]\nd = [\"y\"]\n", ["a.b.c", "a.b.d"]);
     expect(Object.fromEntries(found.lists)).toEqual({ "a.b.c": ["x"], "a.b.d": ["y"] });
@@ -149,7 +154,9 @@ describe("readTomlStringLists strings", () => {
     ["a \\u escape with a letter that is not hex", String.raw`"\u12G4"`, "line 1: a \\u escape needs hex digits"],
     ["a \\u escape cut short by the end of the file", "\"\\u1", "line 1: a \\u escape needs hex digits"],
     ["a \\u escape that is a surrogate", String.raw`"\uD800"`, "line 1: a \\u escape is not a Unicode scalar value"],
-    ["a \\U escape past the last code point", String.raw`"\U00110000"`, "line 1: a \\u escape is not a Unicode scalar value"],
+    ["a \\U escape past the last code point", String.raw`"\U00110000"`, "line 1: a \\U escape is not a Unicode scalar value"],
+    ["a TOML 1.1 \\x escape, which TOML 1.0 does not have", String.raw`"\x41"`, "line 1: unknown escape \\x"],
+    ["a TOML 1.1 \\e escape, which TOML 1.0 does not have", String.raw`"\e"`, "line 1: unknown escape \\e"],
     ["a string open at the end of the file", "\"open", "line 1: a string is not closed"],
     ["a string open at the end of its line", "'open\nkey2 = 1", "line 1: a string is not closed"],
     ["a string open at a carriage return", "\"open\r\n", "line 1: a string is not closed"],
@@ -157,6 +164,30 @@ describe("readTomlStringLists strings", () => {
   ])("refuses %s", (_, value, message) => {
     expect(() => stringOf(value)).toThrow(LintConfigFormatError);
     expect(() => stringOf(value)).toThrow(message);
+  });
+});
+
+// Ruff and Cargo parse TOML 1.1; Python's tomllib, which Bandit and SQLFluff read with, parses TOML 1.0 and refuses these.
+describe("TOML 1.1", () => {
+  const read11 = (text: string, wanted: readonly string[]) => readTomlStringLists(text, wanted, [], [], [], "1.1");
+
+  it("reads an inline table over several lines, with comments and a trailing comma", () => {
+    const text = "a = {\n  b = [\"x\"], # one\n  c = { d = 1, },\n}\n";
+    expect(Object.fromEntries(read11(text, ["a.b"]).lists)).toEqual({ "a.b": ["x"] });
+    expect(read11(text, []).paths).toEqual(["a", "a.b", "a.c", "a.c.d"]);
+    expect(() => readTomlStringLists(text, [])).toThrow("line 1: expected a key");
+    expect(() => readTomlStringLists("a = { b = 1, }\n", [])).toThrow("line 1: expected a key");
+  });
+
+  it.each([
+    ["a \\x escape", String.raw`k = "\x41\x7e"`, "A~"],
+    ["an \\e escape", String.raw`k = "\e"`, "\u001b"],
+  ])("reads %s", (_, text, value) => {
+    expect(readTomlStringLists(text, [], [], ["k"], [], "1.1").strings.get("k")).toBe(value);
+  });
+
+  it("refuses a \\x escape without two hex digits", () => {
+    expect(() => readTomlStringLists(String.raw`k = "\x4"`, [], [], ["k"], [], "1.1")).toThrow("line 1: a \\x escape needs hex digits");
   });
 });
 

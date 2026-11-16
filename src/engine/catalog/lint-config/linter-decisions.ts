@@ -1,7 +1,7 @@
 /**
- * One linter's decisions for the several upstream names a port honours (two ESLint rules, a Ruff code and its alias) as
- * the one decision that linter's config makes for the port, settling in the order verdicts across linters settle
- * (`settleVerdicts`): an explicit off, an explicit on, an implicit on, unknown, an implicit off.
+ * The one order decisions settle in, for one linter's several upstream names of a port (two ESLint rules, a Ruff code
+ * and its alias) and across linters, for every file and per folder (`settleVerdicts`): an explicit off, an explicit on,
+ * an implicit on, unknown, an implicit off.
  */
 import type { PortDecision } from "./linter-config.js";
 
@@ -19,7 +19,7 @@ const TIERS = [
   { on: false, explicit: false },
 ] as const;
 
-/** The decision `decisions` come to, their reasons joined; undefined when there are none. */
+/** The decision `decisions` come to, each reason once; undefined when there are none. */
 export function combineDecisions(decisions: readonly PortDecision[]): PortDecision | undefined {
   for (const tier of TIERS) {
     const found = decisions.filter(decision => inTier(decision, tier));

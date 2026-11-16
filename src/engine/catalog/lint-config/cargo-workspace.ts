@@ -52,7 +52,8 @@ export function readManifest(root: string, folder: string): CargoManifest | { re
   if (!read.present) return undefined;
   if (read.text === undefined) return { why: NOT_A_FILE.replace(/\.$/u, "") };
   const text = read.text;
-  const parsed = readFormat(() => readTomlTrees(text, MANIFEST_TABLES).trees);
+  // Cargo parses manifests as TOML 1.1.
+  const parsed = readFormat(() => readTomlTrees(text, MANIFEST_TABLES, "1.1").trees);
   return parsed.ok ? { folder, tables: parsed.value } : { why: parsed.why };
 }
 

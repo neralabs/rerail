@@ -28,6 +28,7 @@ import type { CodeRuleDslSuppress } from "../../code-rule/code-rule-semantic.js"
 import type { RuleCatalog, RuleConfig } from "../repository-model.js";
 import type { RulePackRule } from "../rule-packs.js";
 import { stableJsonText } from "../../stable-json.js";
+import { combineDecisions } from "./linter-decisions.js";
 
 /** A config file larger than this is not one a person wrote; it is reported as not read. As `package.json` in `rule-pack-matcher.ts`. */
 export const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -242,15 +243,6 @@ function agreedConfig(ruleId: string, decided: readonly Decided[], notes: string
   return config !== undefined && Object.keys(config).length > 0 ? { config, because: configured.map(found => found.because).join("; ") } : undefined;
 }
 
-/** The order decisions settle in, the first tier with one deciding; at `unknown`, any unknown leaves the pack's value. */
-const TIERS = [
-  { on: false, explicit: true },
-  { on: true, explicit: true },
-  { on: true, explicit: false },
-  "unknown",
-  { on: false, explicit: false },
-] as const;
-
 /** Notes that one config keeps the port on and another turns it off. */
 function noteConflict(port: Port, decided: readonly Decided[], notes: string[]): void {
   const keptOn = decided.find(decision => decision.on && decision.explicit);
@@ -258,18 +250,10 @@ function noteConflict(port: Port, decided: readonly Decided[], notes: string[]):
   if (keptOn !== undefined && turnedOff !== undefined) notes.push(`${port.ruleId}: ${keptOn.because} keeps it on, but ${turnedOff.because} turns it off; it starts off.`);
 }
 
-/** The first tier `decisions` reach, their reasons joined; undefined where an unknown, or none, leaves the pack's value. */
+/** Where `decisions` settle (`combineDecisions`); undefined where an unknown, or none, leaves the pack's value. */
 function settle(decisions: readonly (PortDecision | FolderDecision)[]): { on: boolean; explicit: boolean; because: string } | undefined {
-  const decided = decisions.filter(decision => decision.on !== "unknown");
-  for (const tier of TIERS) {
-    if (tier === "unknown") {
-      if (decided.length < decisions.length) return undefined;
-      continue;
-    }
-    const found = decided.filter(decision => decision.on === tier.on && decision.explicit === tier.explicit);
-    if (found.length > 0) return { on: tier.on, explicit: tier.explicit, because: found.map(decision => decision.because).join("; ") };
-  }
-  return undefined;
+  const combined = combineDecisions(decisions);
+  return combined === undefined || combined.on === "unknown" ? undefined : { on: combined.on, explicit: combined.explicit, because: combined.because };
 }
 
 /** The setting for every file: the state that differs from the pack's, if it does, and the options, if any. */
