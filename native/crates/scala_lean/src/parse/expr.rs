@@ -909,12 +909,12 @@ impl P<'_> {
         let paren = match self.kind_at(1) {
             T::LParen => true,
             T::LBrace => false,
-            _ => return self.refuse(),
+            _ => return self.bare_for(n),
         };
         self.stored(K::TFor, f::NONE, paren)?;
         self.stored(if paren { K::TLParen } else { K::TLBrace }, f::ENUMERATORS, paren)?;
         let close = if paren { T::RParen } else { T::RBrace };
-        self.with_fol(0, |p| p.enumerators(close))?;
+        self.with_fol(0, |p| p.enumerators(Some(close)))?;
         if self.peek() != close {
             return self.refuse();
         }
@@ -955,7 +955,38 @@ impl P<'_> {
 
     /// `enumerators` to `close`: enumerators apart by semicolons (the scanner's at line ends), in an
     /// indent where the scanner gives one first; a semicolon before `close` is theirs.
-    fn enumerators(&mut self, close: T) -> R<()> {
+    /// `for x <- xs yield e`, `for` and indented enumerators, then `yield` or `do` (the gate before
+    /// either at the `for`'s column).
+    fn bare_for(&mut self, n: crate::tw::Node) -> R<u32> {
+        self.tk(K::TFor)?;
+        let fol = self.fol;
+        self.with_fol(0, |p| p.enumerators(None))?;
+        // After the enumerators only the gate is valid (the `for` is not complete).
+        match self.with_fol(0, |p| p.layout(v::GATE))? {
+            Some(Ext::Gate) => {
+                self.take();
+            }
+            None => {}
+            Some(_) => return self.refuse(),
+        }
+        match self.word() {
+            w::YIELD => self.tk(K::TYield)?,
+            w::DO => self.tk(K::TDo)?,
+            _ => return self.refuse(),
+        };
+        self.with_fol(fol, |p| p.indentable_f(f::BODY))?;
+        Ok(self.close(n))
+    }
+
+    /// Whether the enumerators end here: at `close`, or (`None`, a bare `for`) at `yield` or `do`.
+    fn enumerators_end(&mut self, close: Option<T>) -> bool {
+        match close {
+            Some(c) => self.peek() == c,
+            None => matches!(self.word(), w::YIELD | w::DO),
+        }
+    }
+
+    fn enumerators(&mut self, close: Option<T>) -> R<()> {
         let mut indent = false;
         if self.tok().nl {
             match self.layout(v::INDENT)? {
@@ -974,7 +1005,7 @@ impl P<'_> {
                 p.enumerator()?;
                 if p.peek() == T::Semi {
                     p.tk(K::TSemi)?;
-                    if p.peek() == close {
+                    if p.enumerators_end(close) {
                         break;
                     }
                     continue;
@@ -982,14 +1013,14 @@ impl P<'_> {
                 match p.layout(fol)? {
                     Some(Ext::Semi) => {
                         let at = p.take();
-                        if p.peek() == close {
+                        if p.enumerators_end(close) {
                             p.t.flush(at);
                             p.t.last_end = p.t.last_end.max(at);
                             break;
                         }
                     }
                     Some(Ext::Outdent) if indent => break,
-                    None if p.peek() == close => break,
+                    None if p.enumerators_end(close) => break,
                     _ => return p.refuse(),
                 }
             }
@@ -1012,7 +1043,10 @@ impl P<'_> {
     /// `p <- e`, `p = e`, `case p <- e`, guards after it; or guards alone (`enumerator`).
     fn enumerator(&mut self) -> R<()> {
         let n = self.open(K::Enumerator);
-        if !self.is_word(w::IF) {
+        if self.is_word(w::IF) {
+            // Guards alone: the first may start the line.
+            self.guard()?;
+        } else {
             if self.is_word(w::CASE) {
                 self.tk(K::TCase)?;
             }
@@ -1028,10 +1062,7 @@ impl P<'_> {
         while self.is_word(w::IF) && !self.tok().nl {
             self.guard()?;
         }
-        if self.is_word(w::IF) {
-            // A guard on its own line: an enumerator of its own, or this one's (refused).
-            return self.refuse();
-        }
+        // A guard on the next line is an enumerator of its own (after the scanner's semicolon).
         self.close(n);
         Ok(())
     }
