@@ -5941,19 +5941,40 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             }
             Step::Split { whole, a, b, ka, kb } => {
                 // As `cat` makes it: `"" . w`, or at each "." with a part before it.
-                let w = cx.syms.name(val(slots, *whole)).to_owned();
-                for p in std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))) {
+                let probe = j.probes[i];
+                // The whole's text, and each part's atom where the part is only looked up (`PROBE_A`, `PROBE_B`), read
+                // under one read of the arena. `Err`: not known in memory, looked up after (`held`). A part not in
+                // memory where a miss is final has no atom (`Atoms::misses_are_final`).
+                type Part = Result<Option<i64>, ()>;
+                let at = |w: &str| std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))).collect::<Vec<_>>();
+                let (pa, pb) = (a.is_some() && probe & PROBE_A != 0 && probe & UNREAD_A == 0, b.is_some() && probe & PROBE_B != 0 && probe & UNREAD_B == 0);
+                let fin = cx.syms.atoms.misses_are_final();
+                let read = crate::content_store::atoms::Sym::try_from(val(slots, *whole)).ok().and_then(|id| cx.syms.atoms.in_memory(|m| {
+                    let w = m.str(id)?;
+                    let look = |t: &str| -> Part { match m.get(t) { Some(v) => Ok(Some(i64::from(v))), None if fin => Ok(None), None => Err(()) } };
+                    let parts: Vec<(Option<usize>, Part, Part)> = at(w).into_iter().map(|p| {
+                        let (x, y) = p.map_or(("", w), |p| (&w[..p], &w[p + 1..]));
+                        (p, if pa { look(x) } else { Err(()) }, if pb { look(y) } else { Err(()) })
+                    }).collect();
+                    Some((w.to_owned(), parts))
+                }));
+                let (w, parts) = read.unwrap_or_else(|| {
+                    let w = cx.syms.name(val(slots, *whole));
+                    let parts = at(&w).into_iter().map(|p| (p, Err(()), Err(()))).collect();
+                    (w, parts)
+                });
+                for (p, ax, by) in parts {
                     let (x, y) = p.map_or(("", w.as_str()), |p| (&w[..p], &w[p + 1..]));
-                    let probe = j.probes[i];
+                    let held = |cx: &mut Ctx<'_, '_>, part: Part, t: &str| match part { Ok(v) => v, Err(()) => cx.syms.held(t) };
                     match a {
                         Some(s) if probe & UNREAD_A != 0 => slots[*s] = 0,
-                        Some(s) if probe & PROBE_A != 0 => match cx.syms.held(x) { Some(v) => slots[*s] = v, None => continue },
+                        Some(s) if probe & PROBE_A != 0 => match held(cx, ax, x) { Some(v) => slots[*s] = v, None => continue },
                         Some(s) => slots[*s] = cx.syms.id(x),
                         None => if cx.syms.name(val(slots, *ka)) != x { continue },
                     }
                     match b {
                         Some(s) if probe & UNREAD_B != 0 => slots[*s] = 0,
-                        Some(s) if probe & PROBE_B != 0 => match cx.syms.held(y) { Some(v) => slots[*s] = v, None => continue },
+                        Some(s) if probe & PROBE_B != 0 => match held(cx, by, y) { Some(v) => slots[*s] = v, None => continue },
                         Some(s) => slots[*s] = cx.syms.id(y),
                         None => if cx.syms.name(val(slots, *kb)) != y { continue },
                     }

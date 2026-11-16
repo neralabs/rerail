@@ -108,14 +108,49 @@ What this shows:
 
 - **Without the lock's shared word, text joins in morsels stop losing.** `resolve_export` falls from 2.7 s in
   morsels under the current lock to 0.75 s, against 0.97 s on one thread.
-- **That is only a quarter faster than one thread, on 16 threads.** Something other than the arena now bounds
-  it. Its delta comes in 11 waves, most of them small, so the waves' serial parts are the likely bound: settling,
-  indexing the delta, replanning. That is not yet traced.
+- **That is only a quarter faster than one thread, on 16 threads.** Something other than the arena's lock bounds
+  it. §6 traces what: not the waves' serial parts, as first guessed.
 - **The chunk phase does not move** (22.4–24.0 s in all three). The arena's lock is not what holds its threads
   at 6–7 of 16 busy.
 - **The whole gain within reach is about 0.4 s** of the cross part, about 1% of the run. A sharded lock already
   gets it. An RCU arena would at most add the readers' last shared writes, which the probe already removed, and
   stop `store_upto`'s copies.
+
+### 6. Traced: what bounds `resolve_export` on one thread
+
+The wave trace (`RDL_WAVE_TRACE`) of a full PostHog run on the M3 times each probe of the stratum's 13 runs (the
+whole plan's budgeted pieces, then the waves):
+
+| probe | runs | wall | largest |
+|---|---|---|---|
+| 2: `resolve_export($t, $q), $t = @cat($m2, $x), fl272_exports(…)` | 13 | about 700 ms | 256 ms: 134,636 delta rows, 447,804 parts, 126,558 rows made |
+| 4: `resolve_export(@cat($m, $x), $r) :- exports(…)` | 9 | about 190 ms | 61 ms: 128,903 rows, each `@cat` interned |
+| the others | | about 15 ms | |
+
+That is about 0.9 s of the 0.97 s stratum, and the walks' thread CPU (`native.tsv`) is 0.70 s and 0.18 s of it. So
+the waves' serial parts (settling, indexing, replanning) are not the bound. Probe 2's walk is.
+
+Probe 2 splits each delta text at every "." and looks up both parts by text: about 1.09 M parts, about 0.57 µs each
+on one core. A stack sample of the stratum puts the walk's self time in `Interner::get`. The table holds millions
+of atoms, so each probe is a random cache miss, and a hit then reads the candidate's string (another miss) to
+compare. That is memory latency per part, not locks: one thread is bound by it, and threads would share it out.
+
+Two overheads on that path are removed (2026-11-15):
+
+- **A stored atom's segment was found in a `BTreeMap`** of the ~1,800 segments a run holds (`store_upto` adds one
+  per write). Every text read of a stored atom, and every hash hit's compare, walked it. The held segments are now
+  a sorted array of starts beside the segments (`Segments`), searched in place.
+- **A split read the arena once per text:** the whole, then each part. It now reads the whole and its parts'
+  atoms under one read (`Atoms::in_memory`), and a part not in memory is no atom where misses are final.
+  `Atoms::existing` ends at `misses_are_final` too, not at `lookup`.
+
+| M3 Max, all of PostHog, alternating (load average 16–42) | probe 2's CPU | `resolve_export` | cross part |
+|---|---|---|---|
+| base (0263) | 0.78 / 0.80 s | 0.88 / 1.01 s | 4.78 / 4.86 s |
+| §6 | 0.69 / 0.66 s | 0.92 / 0.86 s | 4.66 / 4.54 s |
+
+All four runs gave the same 29,747 violations (483a6f116876). What remains is the lookups' memory latency. The
+levers left are threads (§5, after the lock) and fewer lookups (a plan that reads the parts' atoms by id).
 
 ## Open
 
@@ -123,7 +158,9 @@ What this shows:
   blocks never move.
 - **The text steps a chunk at a time** (one `lookup_all` per chunk, as row programs read atoms). This is
   independent of the lock, and helps one thread too.
-- **What bounds `resolve_export` across waves** (Measured): trace its 11 waves before any arena work.
+- **Fewer text lookups in a split.** Probe 2 looks up about 2.4 parts per delta row, and most miss. A plan that
+  starts from the parts' relation, or a key rule that keeps each qualified name's parts by id (decision 0103's
+  cache form), would read ids, not texts.
 - **What holds the chunk phase at 6–7 busy threads:** not this lock (Measured).
 - **Taking the sharded lock alone** (the probe's patch, cleaned up) would keep most of §0's 0.4 s at a few
   lines' cost, with 0263 §4 lifted. Writers then take every shard. The probe showed no writer cost, but it was
