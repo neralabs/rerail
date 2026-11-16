@@ -448,9 +448,18 @@ step 3 replaces what is under the writer.
      components when the cross part reads base relations anyway. The rule-building parts the factorized store and
      this pass share (`Made`, `BodyItem`, `Round`, `write`) are in `passes.rs`. A debug build checks the helpers
      made and, through the passes after it, the digest against the tree's `push_local_joins`, and on the 317 B-now
-     rules they agree. Test: `local_joins_are_pushed_on_a_version_as_on_the_tree`. Next in (b): the helpers named
-     from their content (`fl<k>_`, `fz<k>_` counters renumber every helper after an edited rule), checked against
-     the exact ports up to the names.
+     rules they agree. Test: `local_joins_are_pushed_on_a_version_as_on_the_tree`.
+   - Done (b), seventh slice (2026-11-16): the helpers are named from their content. A pushed join is
+     `fl<h>_<head>`, a factorized part `fz<h>_<rel>` and its key `fzk<h>_<rel>`, where `h` is a stable FNV-1a hash
+     of the text of the rule that makes the helper (`file_local::helper_name`). Counters numbered them before: the
+     program's declarations for `fz`, and a counter over the rules for `fl`. A reader copy's open variables are
+     `fz<depth>_v`, numbered by how many reads that copy has had replaced, where a counter over the program renamed
+     every later reader's. The names keep the `fl<digits>_<head>` shape that the run's and the profile's readers
+     parse. A salt hashes again a name the program already declares, or one this round gave other content. The tree
+     passes name their helpers the same way. So the debug check still compares the version's program with the
+     tree's by digest, exactly, not just up to helper names as planned. On the 317 B-now rules they agree. The
+     names change once, so every prepared program and file-local part is a miss once. Tests:
+     `an_edit_renames_only_its_own_rules_helpers`, and the three ports' tests.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

@@ -1,6 +1,6 @@
 //! `file_local::push_local_joins` on the version (0281's path, step 5): the tree pass one for one, reading the split
 //! from the version (`FileLocal`). Variables are read by name, as the tree reads them, so each component, interface
-//! and helper name (`fl<k>_<head>`, numbered as the tree numbers them) is the tree's; each round's program is a
+//! and helper name (`fl<h>_<head>`, from its content: `helper_name`) is the tree's; each round's program is a
 //! version of its own, split again to check the helpers stay file-local.
 
 use super::super::{FileLocal, close_under, var_equalities_in};
@@ -113,9 +113,8 @@ fn push_with<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, keep_u
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
     let base = |rel: &str| f.is_input(rel);
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
-    let mut names: BTreeMap<(usize, usize), String> = BTreeMap::new();
-    let mut number = decl_names.len();
     loop {
+        let mut used = std::collections::HashMap::new();
         let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
         let mut made: Vec<(usize, String)> = Vec::new();
         let mut program: Vec<Made<'v>> = Vec::with_capacity(rules.len());
@@ -147,7 +146,7 @@ fn push_with<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, keep_u
             }
             let mut taken: BTreeSet<usize> = BTreeSet::new();
             let mut replaced: Vec<(usize, BodyItem<'v>)> = Vec::new();
-            for (component, (mut lits, vars)) in comps.into_iter().enumerate() {
+            for (mut lits, vars) in comps {
                 let atoms: Vec<AtomRef<'v>> = lits.iter().filter_map(|&j| body[j].atom()).collect();
                 let rel = |a: &AtomRef<'_>| v.rel_name(a.rel());
                 if !atoms.iter().any(|a| base(rel(a))) && atoms.len() < 2 {
@@ -226,16 +225,8 @@ fn push_with<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, keep_u
                     })
                     .collect();
                 let Some(typed) = typed else { continue };
-                let helper = names
-                    .entry((i, component))
-                    .or_insert_with(|| loop {
-                        let name = format!("fl{number}_{head_rel}");
-                        number += 1;
-                        if !decl_names.contains(&name) {
-                            break name;
-                        }
-                    })
-                    .clone();
+                let content = format!("{head_rel}({}) :- {}", iface.join(", "), lits.iter().map(|&j| v.show_lit(rule, body[j])).collect::<Vec<_>>().join(", "));
+                let helper = super::super::helper_name("fl", head_rel, &content, |n| decl_names.contains(n), &mut used);
                 decls.retain(|(r, _)| *r != helper);
                 decls.push((helper.clone(), typed));
                 let args: Vec<NOwned<'v>> = iface.iter().map(|x| NOwned::V(x.clone())).collect();

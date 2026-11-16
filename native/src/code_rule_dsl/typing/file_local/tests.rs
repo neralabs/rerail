@@ -579,11 +579,18 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
     assert!(!out.rules().any(|r| out.rel_name(r.head().rel()) == "fl_outer"), "the product is gone:\n{}", out.show());
-    assert!(out.show().contains("fz10_fl_outer(") && out.show().contains("fzk13_fl_outer("), "{}", out.show());
+    // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash.
+    let shown = out.show();
+    let parts: std::collections::BTreeSet<&str> = shown.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| w.starts_with("fz") && w.ends_with("_fl_outer")).collect();
+    assert_eq!(parts.len(), 4, "{parts:?}");
+    for p in parts.iter().filter(|p| !p.starts_with("fzk")) {
+        assert!(p["fz".len()..p.len() - "_fl_outer".len()].bytes().all(|b| b.is_ascii_digit()), "{p}");
+        assert!(parts.contains(format!("fzk{}", &p["fz".len()..]).as_str()), "{parts:?}");
+    }
 }
 
 /// The file-local joins of cross-file rules are pushed on a version as the tree pushes them: the same helpers
-/// (`fl<k>_<head>`, numbered as the tree numbers them), the same program.
+/// (`fl<h>_<head>`, named from their content), the same program.
 #[test]
 fn local_joins_are_pushed_on_a_version_as_on_the_tree() {
     use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
@@ -623,4 +630,35 @@ at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
     assert_eq!(pass.made, want);
     let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
+/// A helper is named from its content: an edit of one rule renames its own helper, and no other rule's (a counter
+/// renumbered every helper after the edited rule's).
+#[test]
+fn an_edit_renames_only_its_own_rules_helpers() {
+    let program = |c: i64| {
+        format!(
+            r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl first(f: node, s: symbol)
+.output first
+first(f, s) :- uses(f, _), child(p, f, {c}), text(p, s).
+.decl named(f: node, s: symbol)
+.output named
+named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
+"#
+        )
+    };
+    let made = |c: i64| push_local_joins(&mut crate::code_rule_dsl::logic::rr::parse(&program(c)).unwrap());
+    let (before, after) = (made(1), made(2));
+    let of = |m: &[String], head: &str| m.iter().find(|r| r.ends_with(&format!("_{head}"))).cloned().unwrap_or_else(|| panic!("{head} in {m:?}"));
+    assert_ne!(of(&before, "first"), of(&after, "first"), "the edited rule's helper is renamed");
+    assert_eq!(of(&before, "named"), of(&after, "named"), "another rule's is not");
 }

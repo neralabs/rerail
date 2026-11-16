@@ -247,11 +247,10 @@ impl ProgramPass for FactorizeExports {
             if chosen.is_empty() {
                 return Ok(());
             }
-            // The tree names a part by its program's count of declarations, which each new one raises.
-            let mut declared = decl_names.clone();
+            // Each part named from its content (`helper_name`), as the tree names it.
+            let mut used = HashMap::new();
             let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
-            let mut declare = |declared: &mut HashSet<String>, rel: String, cols: Vec<(String, String)>| {
-                declared.insert(rel.clone());
+            let mut declare = |rel: String, cols: Vec<(String, String)>| {
                 decls.retain(|(r, _)| *r != rel);
                 decls.push((rel, cols));
             };
@@ -292,10 +291,11 @@ impl ProgramPass for FactorizeExports {
                             ok = false;
                             break;
                         };
-                        let pname = format!("fz{}_{rel}", declared.len());
-                        declare(&mut declared, pname.clone(), cols.clone());
-                        let kname = format!("fzk{}_{rel}", declared.len());
-                        declare(&mut declared, kname.clone(), vec![cols.last().cloned().expect("the key")]);
+                        let content = format!("{rel}({}) :- {}", iface.join(", "), part.iter().map(|l| v.show_lit(rule, *l)).collect::<Vec<_>>().join(", "));
+                        let pname = super::super::helper_name("fz", rel, &content, |n| decl_names.contains(n), &mut used);
+                        declare(pname.clone(), cols.clone());
+                        let kname = format!("fzk{}", &pname["fz".len()..]);
+                        declare(kname.clone(), vec![cols.last().cloned().expect("the key")]);
                         if !no_inline.contains(&kname) {
                             no_inline.push(kname.clone());
                         }
@@ -337,8 +337,7 @@ impl ProgramPass for FactorizeExports {
                 stands.insert(rel.clone(), per_rule);
             }
             // The relation's rules go; each read becomes the parts of each of its rules, the key and the variables
-            // the read leaves open named apart (in the tree's order, a stack, so the fresh names are its own).
-            let mut fresh = 0usize;
+            // the read leaves open named apart (the open ones by the copy's depth, as the tree names them).
             let mut out: Vec<Made<'_>> = Vec::with_capacity(program.len());
             for m in program {
                 let head = match &m.head {
@@ -348,8 +347,8 @@ impl ProgramPass for FactorizeExports {
                 if stands.contains_key(head) {
                     continue;
                 }
-                let mut work = vec![m];
-                while let Some(m) = work.pop() {
+                let mut work = vec![(m, 0usize)];
+                while let Some((m, depth)) = work.pop() {
                     let read_at = m.body.iter().position(|it| match it {
                         BodyItem::Orig(l) => matches!(l.view(), L::Atom(a) if !a.neg() && stands.contains_key(v.rel_name(a.rel()))),
                         BodyItem::New(rel, _) => stands.contains_key(rel),
@@ -366,18 +365,17 @@ impl ProgramPass for FactorizeExports {
                         BodyItem::New(rel, args) => (rel.clone(), args.clone()),
                     };
                     for (head, atoms) in &stands[rel.as_str()] {
-                        fresh += 1;
                         let to = |x: &str| -> NOwned<'_> {
                             match head.iter().position(|h| h == x) {
                                 Some(i) => args[i].clone(),
-                                None => NOwned::V(format!("fz{fresh}_{x}")),
+                                None => NOwned::V(format!("fz{}_{x}", depth + 1)),
                             }
                         };
                         let parts = atoms.iter().map(|(p, iface)| BodyItem::New(p.clone(), iface.iter().map(|x| to(x)).collect()));
                         let mut copy = m.clone();
                         copy.kept = false;
                         copy.body.splice(at..=at, parts);
-                        work.push(copy);
+                        work.push((copy, depth + 1));
                     }
                 }
             }
