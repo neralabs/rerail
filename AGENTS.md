@@ -82,7 +82,7 @@ compile ran.
 
 ### Relax: the live test loop
 
-[Relax](https://github.com/makepad/relax) runs the engine's tests from source and patches each
+[Relax](https://github.com/makepad/relax) (our fork and its setup: `scripts/dev/relax/README.md`) runs the engine's tests from source and patches each
 saved function body into the running tests: a body edit reaches a verdict in 2–9 s, against
 about 48 s for a cargo rebuild (t37, §3). Use it for the inner loop of one area's tests. Keep
 cargo for everything else: builds, the quick tier, the gate, wasm, release and CI. Commit only

@@ -239,7 +239,7 @@ it rebuilds them. macOS's syspolicyd then could not read the file by the name it
 ("Unable (errno: 2) to read file") and killed the running Relax ("Terminating process due to
 Malware rejection").
 
-Sharing the workspace's crates (2026-11-15). Under `RELAX_SHARE=rerail` Relax mounts each worktree at
+Sharing the workspace's crates (2026-11-15). The fork, its setup and the invariants are in `scripts/dev/relax/README.md`. Under `RELAX_SHARE=rerail` Relax mounts each worktree at
 one path, so the keys of the workspace's own crates match across worktrees: a second worktree's
 first run of the same code took 15 s wall, 27 s CPU. But two worktrees whose code differed undid
 each other's stores, and each turn cost what a run after an edit did (60–75 s wall, about 200 s
@@ -261,12 +261,12 @@ still missed). Taking turns, A then C (a one-line edit) at a load of 35–65:
 | A after C | 40 s | 114 s | 55946 / 1201 |
 | C after A | 26 s | 97 s | 56016 / 1169 |
 
-Before the fix the same turns took 115–183 s wall, 242–270 s CPU, with about 22000 hits. What
+Before the fix the same turns took 115–183 s wall, 242–272 s CPU, with about 22000 hits. What
 each turn still redoes is the engine's own crate (its build ID, and `RERAIL_FIXTURES_DIR`, an
 absolute checkout path the build script sets) and the native cargo step.
 
 Two runs at once (2026-11-15), A and C as above, both from the installed Relax under
-`RELAX_SHARE=rerail`, at a load of 55–75. Both cold: 152 s and 156 s wall (376 s and 241 s CPU);
+`RELAX_SHARE=rerail`, at a load of 55–75. Both cold: 152 s and 156 s wall (471 s and 328 s CPU);
 the second waited on the first's build-script claims (`waits for its claim`) and took their
 outputs. Both again: 28 s and 70 s wall. The first try found that two native builds at once list a
 package's host and target runs (libc) in either order, which gave the same outputs two identities;
