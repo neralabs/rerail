@@ -7,7 +7,10 @@
 //! - A change among the folder's entries (a file at its top written, created or deleted, a folder
 //!   at its top changed) breaks it to none: the thread acknowledges the break, which the change
 //!   waits for, and takes the oplock again; the handle and its read go on. (In that moment a
-//!   rename of the folder or one above it would fail as it would with no oplock.)
+//!   rename of the folder or one above it would fail as it would with no oplock.) What cannot go
+//!   at once (an acknowledgment while the last is in flight, an oplock not granted while another
+//!   holder's break runs) is asked again `RENEW_RETRY` later, the handle and its read kept, up to
+//!   `RENEWS` asks; then the handle is let go as for a rename, below.
 //! - A rename or deletion of the folder or one above it breaks its handle part and waits for the
 //!   handle: the thread closes it at once, which lets that go on, and opens the path again
 //!   `REOPEN_DELAY` later. The same folder there (its volume and file id) is watched on and `lost`,
@@ -80,6 +83,11 @@ const REOPEN_RETRY: Duration = Duration::from_millis(20);
 /// How many reopens of one root `REOPEN_WINDOW` allows; the next ends its watch.
 const REOPENS: usize = 8;
 const REOPEN_WINDOW: Duration = Duration::from_secs(60);
+/// How soon the thread asks again to take back an oplock after a break to none, when the
+/// acknowledgment or the request could not go.
+const RENEW_RETRY: Duration = Duration::from_millis(20);
+/// How many times it asks; then it lets go of the handle and opens the path again.
+const RENEWS: u32 = 10;
 
 /// A call of the host's for the thread, with where to answer it.
 enum Command {
@@ -134,6 +142,16 @@ struct Identity {
     file: [u8; 16],
 }
 
+/// An oplock to take back after a break to none, asked for again at `at`.
+#[derive(Debug, Clone, Copy)]
+struct Renewal {
+    at: Instant,
+    /// The break's acknowledgment has still to go.
+    acknowledge: bool,
+    /// How many times it was asked for.
+    tries: u32,
+}
+
 /// One root's handle and its operations: the read, the oplock and the acknowledgment of a break to
 /// none. Each flag holds while that operation's completion is still to come, so its OVERLAPPED
 /// stays put until then.
@@ -145,6 +163,8 @@ struct Watch {
     reading: bool,
     oplocked: bool,
     releasing: bool,
+    /// When the oplock a break to none took is to be asked for again.
+    renewal: Option<Renewal>,
     /// When the handle, let go for a rename or deletion, is to be opened again.
     reopen_at: Option<Instant>,
     /// When the handle was opened again, within the last `REOPEN_WINDOW`.
@@ -161,6 +181,7 @@ impl Watch {
             reading: false,
             oplocked: false,
             releasing: false,
+            renewal: None,
             reopen_at: None,
             reopens: VecDeque::new(),
         }
@@ -224,10 +245,42 @@ impl Watch {
         !done && self.oplocked
     }
 
-    /// Acknowledges a break to none if it waits, then takes the oplock again; true when it is held.
-    fn renew(&mut self, acknowledge: bool) -> bool {
-        (!acknowledge || self.release())
-            && self.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE)
+    /// Acknowledges a break to none if it waits, then takes the oplock again, after `tries` asks.
+    /// What cannot go now is asked again `RENEW_RETRY` after `now`, the handle and its read kept;
+    /// false once `RENEWS` asks failed, or when a request finished at once, whose completion
+    /// tells why and whose OVERLAPPED another request would share.
+    fn renew(&mut self, acknowledge: bool, tries: u32, now: Instant) -> bool {
+        self.renewal = None;
+        let acknowledged = !acknowledge || self.release();
+        if acknowledged && self.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE) {
+            return true;
+        }
+        if self.oplocked || tries + 1 >= RENEWS {
+            return false;
+        }
+        self.renewal = Some(Renewal {
+            at: now + RENEW_RETRY,
+            acknowledge: !acknowledged,
+            tries: tries + 1,
+        });
+        true
+    }
+
+    /// Lets go of the handle so whatever broke the oplock goes on; it is opened again
+    /// `REOPEN_DELAY` after `now`.
+    fn let_go(&mut self, now: Instant) {
+        self.close_handle();
+        self.renewal = None;
+        self.reopen_at = Some(now + REOPEN_DELAY);
+    }
+
+    /// When the thread is next to act on this watch: a renewal, or a reopen.
+    fn due(&self) -> Option<Instant> {
+        self.renewal
+            .map(|renewal| renewal.at)
+            .into_iter()
+            .chain(self.reopen_at)
+            .min()
     }
 
     /// Acknowledges a break to none, which holds no oplock; true when it was taken.
@@ -551,6 +604,7 @@ impl Loop {
             return;
         };
         watch.close_handle();
+        watch.renewal = None;
         watch.reopen_at = None;
         self.keys.remove(&watch.root);
         if !watch.pending() {
@@ -604,15 +658,14 @@ impl Loop {
         let Some(watch) = self.watches.get_mut(&key) else {
             return;
         };
+        let now = Instant::now();
         let kept = match oplock_break(error, &watch.io.oplock_out) {
             Break::Acknowledge(level) => watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_ACK, level),
-            Break::Renew { acknowledge } => watch.renew(acknowledge),
+            Break::Renew { acknowledge } => watch.renew(acknowledge, 0, now),
             Break::LetGo => false,
         };
         if !kept {
-            // Let go of the handle so whatever broke the oplock goes on; open it again later.
-            watch.close_handle();
-            watch.reopen_at = Some(Instant::now() + REOPEN_DELAY);
+            watch.let_go(now);
         }
     }
 
@@ -637,16 +690,29 @@ impl Loop {
         }
     }
 
-    /// How long the thread may wait for a completion before a handle is due to be opened again.
+    /// How long the thread may wait for a completion before an oplock is due to be asked for
+    /// again or a handle to be opened again.
     fn wait_milliseconds(&self, now: Instant) -> u32 {
         self.watches
             .values()
-            .filter_map(|watch| watch.reopen_at)
+            .filter_map(Watch::due)
             .min()
             .map_or(INFINITE, |at| {
                 let wait = at.saturating_duration_since(now).as_millis();
                 u32::try_from(wait).unwrap_or(INFINITE - 1)
             })
+    }
+
+    /// Asks again for each oplock due to be taken back after a break to none.
+    fn renew_due(&mut self, now: Instant) {
+        for watch in self.watches.values_mut() {
+            let Some(renewal) = watch.renewal.filter(|renewal| renewal.at <= now) else {
+                continue;
+            };
+            if !watch.renew(renewal.acknowledge, renewal.tries, now) {
+                watch.let_go(now);
+            }
+        }
     }
 
     /// Opens again every handle due, once its closed handle's operations have all completed.
@@ -816,7 +882,9 @@ fn serve(shared: &Shared, state: &mut Loop) {
             Dequeued::TimedOut => {}
             Dequeued::Failed => return,
         }
-        state.reopen_due(Instant::now());
+        let now = Instant::now();
+        state.renew_due(now);
+        state.reopen_due(now);
     }
 }
 
@@ -913,8 +981,9 @@ impl Drop for DirectoryChanges {
 #[cfg(test)]
 mod tests {
     use super::{
-        Break, Dequeued, Identity, Loop, READ_HANDLE, REOPEN_WINDOW, REOPENS, ReadOutcome, WAKE,
-        Watch, dequeue, may_reopen, open_directory, oplock_break, parse, read_outcome, remote,
+        Break, Dequeued, Identity, Loop, READ_HANDLE, RENEWS, REOPEN_WINDOW, REOPENS, ReadOutcome,
+        WAKE, Watch, dequeue, may_reopen, open_directory, oplock_break, parse, read_outcome,
+        remote,
     };
     use crate::tree_watch::TreeWatcher;
     use crate::tree_watch::notices::Notices;
@@ -992,6 +1061,39 @@ mod tests {
             oplock_break(ERROR_ACCESS_DENIED, &broken(0, 0)),
             Break::LetGo
         );
+    }
+
+    #[test]
+    fn a_break_to_none_that_cannot_renew_yet_keeps_the_handle_until_the_bound() {
+        let scratch = Scratch::new("renew-retry");
+        scratch.write("checkout/a.txt", "a");
+        let root = scratch.path("checkout").to_string_lossy().into_owned();
+        let (handle, identity) = open_directory(&root).expect("open the root");
+        let mut watch = Watch::open(root.clone(), identity, handle);
+        // A break to none that waits for its acknowledgment while the last one is still in flight.
+        watch.releasing = true;
+        watch.io.oplock_out.Flags = REQUEST_OPLOCK_OUTPUT_FLAG_ACK_REQUIRED;
+        let mut state = Loop {
+            port: std::ptr::null_mut(),
+            notices: Arc::new(Notices::default()),
+            watches: HashMap::from([(1, watch)]),
+            keys: HashMap::from([(root, 1)]),
+            next_key: 2,
+        };
+        state.oplock_completed(1, 0);
+        for asked in 1..RENEWS {
+            let watch = &state.watches[&1];
+            assert!(
+                watch.open_handle() && watch.reopen_at.is_none(),
+                "the handle and its read stay after {asked} asks"
+            );
+            let renewal = watch.renewal.expect("asked for again");
+            assert!(renewal.acknowledge);
+            state.renew_due(renewal.at);
+        }
+        let watch = &state.watches[&1];
+        assert!(!watch.open_handle() && watch.renewal.is_none() && watch.reopen_at.is_some());
+        assert!(watch.reopens.is_empty(), "no reopen counted yet");
     }
 
     #[test]
