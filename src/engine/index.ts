@@ -126,6 +126,7 @@ export {
   auditRequests,
   auditResultPages,
   auditRuleProvenances,
+  auditRuleProvenanceStep,
   auditRuleSetRules,
   auditRuleSets,
   auditRuleSetUses,
