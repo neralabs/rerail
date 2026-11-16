@@ -34,6 +34,15 @@ which the profile reports).
 The texts are held from the digests to the waves: on PostHog about 300 MB more during phase 1 (1.1 GB against 0.74
 GB), none at the run's peak (the cross part's), where none is left untaken.
 
+### 2. Canonical forms a directory at a time
+
+On a cold store the observer vouches for no path, and each corpus file had its own `realpath`
+(`Observer::canonical_all`): 7,677 samples of `getattrlist` in phase 1, beside its opens. Now `observe::realpaths`
+resolves each directory once and lists it: a file there is the directory's canonical form and its name, where the
+listing holds that name byte for byte (the case and form on disk, which macOS's `realpath` gives) and the entry is no
+symlink. Any other path (a symlink, a name in another case, a missing file, `..`) has its own `realpath`, as before.
+`observe::tests::realpaths_a_directory_at_a_time_are_each_files_own` compares it with `realpath` on each of those.
+
 `texts::tests::a_text_is_borrowed_then_taken_and_read_again_once_its_file_changed` checks the borrow, the take, a
 changed file and a holder's end.
 
@@ -50,10 +59,10 @@ All of PostHog on the M3 Max (shared with other builds, load 14-23), the same 29
 | warm wall | 1.08 s | 1.05 s |
 | peak footprint, unprofiled | 2.53-2.62 GB | 2.62 GB |
 
+With §2 too (load 12): phase 1's sample has no `getattrlist` (was 7,677 samples) and 440 of `open` (was 7,935);
+the unprofiled kernel CPU is 64 s (was 72-73 s), the same findings, the warm run 1.10 s.
+
 ## Open
 
-- Each corpus file still gets a `realpath` on a cold store (`Observer::canonical_all`, 8 thread-seconds of
-  `getattrlist` in the whole run's sample): a directory's canonical form and the file's name would do where the file
-  is no symlink, but macOS's `realpath` also gives a name's case on disk, which that would have to keep.
 - The rest of the kernel time: spin-yields (about 20 thread-seconds: the plan model's `RwLock`, rayon's idle spin,
   mutexes) and the store's `pwrite`, `pread` and `fsync` (16).

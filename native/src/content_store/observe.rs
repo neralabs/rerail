@@ -614,7 +614,6 @@ impl Observer {
     /// files (notes/t40). `observe` reaches the observer (the process's, under its lock): the `realpath`s run with it
     /// released, since a thread waiting on the pool may run another job, and that job may observe.
     pub fn canonical_all(observe: impl Fn(&mut dyn FnMut(&mut Observer)), paths: &[PathBuf]) -> Vec<Option<PathBuf>> {
-        use rayon::prelude::*;
         let mut out: Vec<Option<PathBuf>> = vec![None; paths.len()];
         let mut todo: Vec<(usize, PathBuf)> = Vec::new();
         observe(&mut |o| {
@@ -628,7 +627,7 @@ impl Observer {
         if todo.is_empty() {
             return out;
         }
-        let got: Vec<Option<PathBuf>> = todo.par_iter().with_min_len(64).map(|(_, p)| std::fs::canonicalize(p).ok()).collect();
+        let got = realpaths(&todo.iter().map(|(_, p)| p.as_path()).collect::<Vec<_>>());
         observe(&mut |o| {
             for ((i, path), c) in std::mem::take(&mut todo).into_iter().zip(&got) {
                 out[i] = c.clone().map(|c| o.canonical_resolved(path, c));
@@ -1517,6 +1516,53 @@ fn under(path: impl AsRef<Path>, root: impl AsRef<Path>) -> bool {
 }
 
 /// Whether `path` has no `.` or `..` component: its last name is a name in its directory's listing.
+/// Each of `paths`' `realpath`, a directory at a time (decision 0300 §2): a directory resolved once, and a file in it
+/// is its canonical form and the file's name where its listing holds that name as given (the case on disk: macOS's
+/// `realpath` gives that) and the entry is no symlink. Any other path is resolved on its own. One `realpath` a file
+/// was 8 thread-seconds of `getattrlist` over PostHog's 29,885 files on a cold store, all at once in the kernel.
+pub fn realpaths(paths: &[&Path]) -> Vec<Option<PathBuf>> {
+    use rayon::prelude::*;
+    let mut by_dir: HashMap<&Path, Vec<usize>> = HashMap::new();
+    let mut alone: Vec<usize> = Vec::new();
+    for (i, p) in paths.iter().enumerate() {
+        match (p.is_absolute() && plain(p)).then(|| p.parent().zip(p.file_name())).flatten() {
+            Some((dir, _)) => by_dir.entry(dir).or_default().push(i),
+            None => alone.push(i),
+        }
+    }
+    let dirs: Vec<(&Path, Vec<usize>)> = by_dir.into_iter().collect();
+    let resolved: Vec<Vec<(usize, Option<PathBuf>)>> = dirs
+        .par_iter()
+        .map(|(dir, files)| {
+            let canonical = std::fs::canonicalize(dir).ok();
+            // The names as on disk, and which are symlinks (the listing's entry type: no stat).
+            let names: HashMap<std::ffi::OsString, bool> = match (&canonical, std::fs::read_dir(dir)) {
+                (Some(_), Ok(entries)) => entries.flatten().map(|e| (e.file_name(), e.file_type().is_ok_and(|t| t.is_symlink()))).collect(),
+                _ => HashMap::new(),
+            };
+            files
+                .iter()
+                .map(|&i| {
+                    let name = paths[i].file_name().expect("a file name");
+                    let found = match (&canonical, names.get(name)) {
+                        (Some(c), Some(false)) => Some(c.join(name)),
+                        _ => std::fs::canonicalize(paths[i]).ok(),
+                    };
+                    (i, found)
+                })
+                .collect()
+        })
+        .collect();
+    let mut out: Vec<Option<PathBuf>> = vec![None; paths.len()];
+    for (i, c) in resolved.into_iter().flatten() {
+        out[i] = c;
+    }
+    for i in alone {
+        out[i] = std::fs::canonicalize(paths[i]).ok();
+    }
+    out
+}
+
 fn plain(path: &Path) -> bool {
     !path.components().any(|c| matches!(c, std::path::Component::CurDir | std::path::Component::ParentDir))
 }
@@ -2463,6 +2509,25 @@ mod tests {
     }
 
     /// `collect` drops what no run asks any more, and keeps the rest.
+    #[test]
+    fn realpaths_a_directory_at_a_time_are_each_files_own() {
+        let given = std::env::temp_dir().join(format!("rerail-realpaths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&given);
+        std::fs::create_dir_all(given.join("d/e")).unwrap();
+        std::fs::write(given.join("d/a.py"), "").unwrap();
+        std::fs::write(given.join("d/e/b.py"), "").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(given.join("d/e/b.py"), given.join("d/link.py")).unwrap();
+            std::os::unix::fs::symlink(given.join("d/e"), given.join("d/dirlink")).unwrap();
+        }
+        let asked: Vec<PathBuf> = ["d/a.py", "d/e/b.py", "d/link.py", "d/dirlink/b.py", "d/missing.py", "d/A.py", "d/e/../a.py"].iter().map(|p| given.join(p)).collect();
+        let refs: Vec<&Path> = asked.iter().map(PathBuf::as_path).collect();
+        let one_by_one: Vec<Option<PathBuf>> = asked.iter().map(|p| std::fs::canonicalize(p).ok()).collect();
+        assert_eq!(realpaths(&refs), one_by_one, "as `realpath` gives each: symlinks, a missing file, another case, `..`");
+        let _ = std::fs::remove_dir_all(&given);
+    }
+
     #[test]
     fn collection_drops_what_no_run_asks_any_more() {
         let given = std::env::temp_dir().join(format!("rerail-observer-collect-{}", std::process::id()));
