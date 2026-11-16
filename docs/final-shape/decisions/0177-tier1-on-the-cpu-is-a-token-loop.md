@@ -2408,3 +2408,18 @@ extra set: eight swizzles, each word its set's, on random bytes);
 
 Counts, reported: words 99.3, punctuation 54.3, mixed 55.9,
 strings 314.3, numbers 154.5, comments 236.5.
+
+## Chained pairs are read left to right only when they chain
+
+Two two-byte tokens can overlap: `=>=` is `=>` then `=`, not `=` and
+`>=`. The refill keeps each run of pair starts' bits an even way
+from the run's first, about fourteen word operations. It did that on
+every block. The lean lexer does it only where two pair starts are
+next to each other (`if pairs & (pairs << 1) != 0`).
+
+**The change.** The same test, a branch: the correction is in a cold
+block. Its inputs are tested by `the_cpus_records_are_the_interpreters`
+(runs of pairs, `=>=>=` at every pad across a block's edge).
+
+Counts, reported: words 99.0, punctuation 54.4, mixed 55.8,
+strings 313.4, numbers 153.3, comments 234.4.

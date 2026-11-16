@@ -4917,7 +4917,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 if chained {
                     // Each run of pairs' first bytes keeps its bits an even way from its first:
                     // a run from an even place its even bits, from an odd place its odd ones.
+                    // Only where two are next to each other (`=>=`), as the lean lexer reads
+                    // them left to right only then: a branch, the rare case's work in it.
                     let pl = f.ins().ishl_imm(p, 1);
+                    let adjacent = f.ins().band(p, pl);
+                    let (chain, join) = (f.create_block(), f.create_block());
+                    f.append_block_param(join, types::I64);
+                    f.ins().brif(adjacent, chain, &[], join, &[p.into()]);
+                    f.switch_to_block(chain);
+                    f.set_cold_block(chain);
                     let edges = f.ins().band_not(p, pl);
                     let even = f.ins().iconst(types::I64, 0x5555_5555_5555_5555);
                     let from_even = f.ins().band(edges, even);
@@ -4926,7 +4934,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                     let keep_e = f.ins().band(runs_even, even);
                     let odd_runs = f.ins().band_not(p, runs_even);
                     let keep_o = f.ins().band_not(odd_runs, even);
-                    p = f.ins().bor(keep_e, keep_o);
+                    let kept = f.ins().bor(keep_e, keep_o);
+                    f.ins().jump(join, &[kept.into()]);
+                    f.switch_to_block(join);
+                    p = f.block_params(join)[0];
                 }
                 let seconds = f.ins().ishl_imm(p, 1);
                 x = f.ins().band_not(x, seconds);
