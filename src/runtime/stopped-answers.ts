@@ -11,7 +11,8 @@
  *
  * One file a folder, `stopped-answers/<daemon pid>-<daemon start>/<digest of the folder's real path>.json` in the Rerail
  * home. It holds no path: the repository key and the clone id the database records, how many folders up the checkout's
- * top is, the device and inode of the folder, the top and the top's `.git`, and when the daemon answered. A new daemon
+ * top is, the device and inode of the folder, the top and the top's `.git`, those of the database the daemon holds, its
+ * WAL and the WAL's index, and when the daemon answered. A new daemon
  * places every folder again, so it removes the folders of the daemons before it once it runs (`removeEarlierAnswers`),
  * and no hook does. A link in place of the file or of either folder above it is never followed. The hook reads the file,
  * and the checkout's `.git`, `commondir` and clone id files, only as small plain files opened without waiting, so a pipe
@@ -19,10 +20,10 @@
  */
 import { createHash } from "node:crypto";
 import {
-  closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type BigIntStats,
+  closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, readSync, statSync, type BigIntStats,
 } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { storedPath } from "../engine/catalog/checkout-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -68,8 +69,8 @@ export interface StartAnswer {
   readonly workspace: string;
   /** The checkout the daemon placed the folder in; null where it placed it in none it knows. */
   readonly scope: { readonly repositoryKey: string; readonly checkoutPath: string | null } | null;
-  /** The daemon that answered, as `daemon.json` named it. */
-  readonly daemon: DaemonIdentity;
+  /** The daemon that answered, as `daemon.json` named it, and the database it reads. */
+  readonly daemon: DaemonIdentity & { readonly databasePath: string };
 }
 
 /** A daemon as `daemon.json` names it: its process and when it started. */
@@ -79,29 +80,39 @@ export interface DaemonIdentity {
 }
 
 const keptSchema = z.object({
-  v: z.literal(2),
+  v: z.literal(3),
   repository: z.string(),
   cloneId: z.string(),
   depth: z.number().int().nonnegative(),
   folder: z.string(),
   checkout: z.string(),
   git: z.string(),
+  database: z.string(),
+  wal: z.string(),
+  walIndex: z.string(),
   at: z.number(),
 });
 
 /**
  * What is kept of one answer of stopped. `cloneId` is the clone id the checkout's Git folder held when it was kept;
- * `folder`, `checkout` and `git` are `<device>:<inode>`.
+ * `folder`, `checkout`, `git`, `database`, `wal` and `walIndex` are `<device>:<inode>`.
  */
 type KeptAnswer = z.infer<typeof keptSchema>;
 
 /** Where the checkout's top is from the folder, and the device and inode of the folder, the top and the top's own `.git`. */
 type Placement = Pick<KeptAnswer, "depth" | "folder" | "checkout" | "git">;
 
-/** What is kept of an answer of stopped but its clone id, which is read only when the answer is written, and the checkout's top. */
+/** The device and inode of the database file, its WAL (`-wal`) and the WAL's index (`-shm`). */
+type DatabaseFiles = Pick<KeptAnswer, "database" | "wal" | "walIndex">;
+
+/**
+ * What is kept of an answer of stopped but its clone id, which is read only when the answer is written; the checkout's
+ * top; and the process of the daemon that answered.
+ */
 interface Placed {
   readonly kept: Omit<KeptAnswer, "cloneId">;
   readonly top: string;
+  readonly pid: number;
 }
 
 const daemonSchema = z.object({ pid: z.number().int(), startedAt: z.number(), databasePath: z.string() });
@@ -139,13 +150,14 @@ export function repeatsStoppedAnswer(workspace: string, now = Date.now()): boole
 /**
  * Whether `kept` still holds for `folder`: it is recent; the folder, the checkout's top and the top's `.git` have the
  * same device and file ids, with no `.git` between the folder and the top; the top holds the clone id that was kept,
- * where the daemon reads it; the daemon holds no file of its database that is gone from the disk; and the database,
- * read whole and at once, still places the checkout by that clone id in the kept repository and reads it stopped.
+ * where the daemon reads it; the database, its WAL and the WAL's index at their names are the files the daemon held
+ * when it answered ({@link sameDatabaseFiles}); and the database, read whole and at once, still places the checkout by
+ * that clone id in the kept repository and reads it stopped.
  */
 function stillHolds(kept: KeptAnswer, folder: string, daemon: RecordedDaemon, now: number): boolean {
   const top = folderUp(folder, kept.depth);
-  return isRecent(kept, now) && sameOnDisk(kept, folder, top) && sameCloneId(top, kept.cloneId) && !daemonFileGone(daemon)
-    && stillStopped(daemon.databasePath, top, kept);
+  return isRecent(kept, now) && sameOnDisk(kept, folder, top) && sameCloneId(top, kept.cloneId)
+    && sameDatabaseFiles(kept, daemon.databasePath) && stillStopped(daemon.databasePath, top, kept);
 }
 
 /** Kept less than `KEPT_FOR_MS` ago; one kept "later" than now, as after the clock was set back, is not. */
@@ -160,13 +172,16 @@ function sameOnDisk(kept: KeptAnswer, folder: string, top: string): boolean {
 
 /**
  * What is kept of the stopped `answer`, but its clone id: undefined where the daemon placed the folder in no checkout,
- * where the folder is not that checkout's top or a folder in it as spelled, and where the top has no `.git` of its own.
- * The daemon places a folder outside Git again on every answer, so an answer resting on one is not kept.
+ * where the folder is not that checkout's top or a folder in it as spelled, where the top has no `.git` of its own, and
+ * where a look at the database the daemon reads, its WAL or the WAL's index fails. The daemon places a folder outside
+ * Git again on every answer, so an answer resting on one is not kept.
  */
-function placedOf({ workspace, scope }: StartAnswer, now: number): Placed | undefined {
+function placedOf({ workspace, scope, daemon }: StartAnswer, now: number): Placed | undefined {
   if (scope === null || scope.checkoutPath === null) return undefined;
   const placement = placementOf(workspace, scope.checkoutPath);
-  return placement === undefined ? undefined : { kept: { v: 2, repository: scope.repositoryKey, ...placement, at: now }, top: scope.checkoutPath };
+  const files = databaseFilesAt(daemon.databasePath);
+  if (placement === undefined || files === undefined) return undefined;
+  return { kept: { v: 3, repository: scope.repositoryKey, ...placement, ...files, at: now }, top: scope.checkoutPath, pid: daemon.pid };
 }
 
 /** Where `top` is from `folder` and what each is on disk; undefined where `top` is not `folder` or above it, or one cannot be read. */
@@ -178,13 +193,14 @@ function placementOf(folder: string, top: string): Placement | undefined {
 
 /**
  * Writes the answer `placed` names at `file`, with the clone id the checkout's top holds now, unless what is there says
- * the same of the folder's placement and is younger than `REWRITE_AFTER_MS`, or the top holds no clone id this hook can
- * read, which no later hook could check.
+ * the same of the folder's placement and is younger than `REWRITE_AFTER_MS`, the top holds no clone id this hook can
+ * read, which no later hook could check, or the daemon does not hold open the files at the database's names
+ * ({@link daemonHolds}).
  */
-async function rewritten(file: string, { kept, top }: Placed, now: number): Promise<void> {
+async function rewritten(file: string, { kept, top, pid }: Placed, now: number): Promise<void> {
   if (keptAlready(readKept(file), kept, now)) return;
   const cloneId = cloneIdAt(top);
-  if (cloneId === undefined) return;
+  if (cloneId === undefined || !daemonHolds(pid, kept)) return;
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   await replaceFile(file, JSON.stringify({ ...kept, cloneId }), { mode: 0o600, retryMs: 0 });
 }
@@ -431,33 +447,43 @@ function onServer(path: string): boolean {
 }
 
 /**
- * On Linux, whether the daemon holds open a file of its database that is gone from the disk: one deleted or replaced
- * under it, as removing the WAL by hand or restoring a backup over the file does. Another reader then makes new files
- * and reads the database without what the daemon wrote since its last checkpoint. A daemon whose open files cannot be
- * listed counts as one. Elsewhere false: Windows refuses to delete a file SQLite holds, and macOS has no `/proc`.
+ * The device and inode of the database at `databasePath`, its WAL and the WAL's index, each looked at without following
+ * a link; undefined where a look fails. The daemon's connections hold all three open for its whole life, so SQLite
+ * never deletes or makes again the WAL or its index under it, and a checkpoint or `VACUUM` writes each in place.
  */
-function daemonFileGone({ pid, databasePath }: RecordedDaemon): boolean {
-  if (process.platform !== "linux") return false;
-  try {
-    const deleted = deletedNames(databasePath);
-    return readdirSync(`/proc/${pid}/fd`).some(fd => deleted.has(linkTarget(`/proc/${pid}/fd/${fd}`)));
-  } catch {
-    return true;
-  }
+function databaseFilesAt(databasePath: string): DatabaseFiles | undefined {
+  const [database, wal, walIndex] = ["", "-wal", "-shm"].map(suffix => idAt(`${databasePath}${suffix}`, lstatSync));
+  return database === undefined || wal === undefined || walIndex === undefined ? undefined : { database, wal, walIndex };
 }
 
-/** What `/proc/<pid>/fd` names a file of the database at `databasePath` once it is deleted: its real path and ` (deleted)`. */
-function deletedNames(databasePath: string): Set<string> {
-  const file = join(realpathSync(dirname(databasePath)), basename(databasePath));
-  return new Set(["", "-wal", "-shm"].map(suffix => `${file}${suffix} (deleted)`));
+/**
+ * Whether the database at `databasePath`, its WAL and the WAL's index are the files the answer `kept` was kept beside,
+ * the ones the daemon held: one moved aside, deleted or replaced under the running daemon since, as a restore that skips
+ * `rerail daemon stop` does, has another file id at its name, and another reader would read a file the daemon does not.
+ * A file the daemon still holds keeps its id, so no other file can take it.
+ */
+function sameDatabaseFiles(kept: DatabaseFiles, databasePath: string): boolean {
+  const now = databaseFilesAt(databasePath);
+  return now !== undefined && sameFiles(now, kept);
 }
 
-/** Where the link at `path` points; empty where it is gone, as a descriptor closed while the list was read is. */
-function linkTarget(path: string): string {
+function sameFiles(left: DatabaseFiles, right: DatabaseFiles): boolean {
+  return left.database === right.database && left.wal === right.wal && left.walIndex === right.walIndex;
+}
+
+/**
+ * On Linux, whether the daemon's process `pid` holds open each of `files`, by device and inode: one moved aside or
+ * replaced under it before it answered is not at its name, and an answer kept beside it would be checked against a file
+ * the daemon does not read. A daemon whose open files cannot be listed holds none. Elsewhere true: Windows refuses to
+ * move or delete a file SQLite holds, and macOS has no `/proc`.
+ */
+function daemonHolds(pid: number, files: DatabaseFiles): boolean {
+  if (process.platform !== "linux") return true;
   try {
-    return readlinkSync(path);
+    const held = new Set(readdirSync(`/proc/${pid}/fd`).map(fd => idAt(`/proc/${pid}/fd/${fd}`, statSync)));
+    return [files.database, files.wal, files.walIndex].every(id => held.has(id));
   } catch {
-    return "";
+    return false;
   }
 }
 

@@ -1001,7 +1001,7 @@ function keptAt(folder: string, at: number): void {
 function wholeKeptAnswer(text: string): boolean {
   try {
     const kept = JSON.parse(text) as Record<string, unknown>;
-    return kept.v === 2 && ["repository", "cloneId", "folder", "checkout", "git"].every(field => typeof kept[field] === "string")
+    return kept.v === 3 && ["repository", "cloneId", "folder", "checkout", "git", "database", "wal", "walIndex"].every(field => typeof kept[field] === "string")
       && typeof kept.depth === "number" && typeof kept.at === "number";
   } catch {
     return false;
@@ -2116,10 +2116,12 @@ function plantedForShare(share: string, local: string): void {
     const { dev, ino } = look(path, { bigint: true });
     return `${dev}:${ino}`;
   };
+  const database = defaultRerailDatabasePath();
   const file = keptAnswerFile(share);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify({
-    v: 2, repository, cloneId, depth: 0, folder: id(real, statSync), checkout: id(real, statSync), git: id(join(real, ".git"), lstatSync), at: Date.now(),
+    v: 3, repository, cloneId, depth: 0, folder: id(real, statSync), checkout: id(real, statSync), git: id(join(real, ".git"), lstatSync),
+    database: id(database, lstatSync), wal: id(`${database}-wal`, lstatSync), walIndex: id(`${database}-shm`, lstatSync), at: Date.now(),
   }));
 }
 
@@ -2368,7 +2370,7 @@ describe("the hook start check", () => {
         await rm(keptAnswerFile(app), { force: true });
         const hooks = Array.from({ length: 8 }, () => host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES));
         expect(await Promise.all(hooks)).toEqual(Array.from({ length: 8 }, () => false));
-        expect(JSON.parse(readFileSync(keptAnswerFile(app), "utf8"))).toMatchObject({ v: 2, depth: 0, cloneId: readFileSync(cloneIdFile(app), "utf8").trim() });
+        expect(JSON.parse(readFileSync(keptAnswerFile(app), "utf8"))).toMatchObject({ v: 3, depth: 0, cloneId: readFileSync(cloneIdFile(app), "utf8").trim() });
         expect(readdirSync(dirname(keptAnswerFile(app)))).toEqual([basename(keptAnswerFile(app))]);
       }
     } finally {
@@ -2980,9 +2982,10 @@ describe("the hook start check", () => {
     const share = `\\\\localhost\\${local[0]!.toLowerCase()}$${local.slice(2)}`;
     if (!existsSync(share)) skip("this machine shares no drive to this user as <letter>$");
     const host = await startCheckHost();
-    plantedForShare(share, local);
+    // Planted while the daemon holds the database, so the files it names are those a check finds.
     const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
+      plantedForShare(share, local);
       host.proofs.nextCheck();
       expect({ started: await host.hookRerailStarted("claude-code", share), checked: host.proofs.found.at(-1) }).toEqual({ started: true, checked: false });
     } finally {
