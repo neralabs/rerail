@@ -466,6 +466,62 @@ fn a_context_joins_a_later_group_by_what_it_binds() {
     assert!(p.decls.iter().any(|(rel, cols)| rel.starts_with("rr_cover") && cols.len() == 1), "a relation of s alone");
 }
 
+/// A negated conjunction whose parts bind the rule's variables apart (`!(lit(lo, _), lit(hi, _))`) is bound by the
+/// rule's context: alone its helper is every pair of strings in the corpus (eslint-yoda's `yoda_in_order`, 178 M rows
+/// of 13,369 strings). One whose literals tie them (`!(link(lo, hi), lit(hi, _))`) needs none.
+#[test]
+fn a_negated_cross_product_is_bound_by_the_rules_context() {
+    let p = parse(concat!(
+        ".decl want(a: node, b: node)\n.decl lit(e: node, v: symbol)\n.decl link(a: node, b: node)\n.input want, lit, link\n",
+        ".decl apart(a: node, b: node)\n.decl tied(a: node, b: node)\n.output apart, tied\n",
+        "apart(lo, hi) :- want(lo, hi), !(lit(lo, _), lit(hi, _)).\n",
+        "tied(lo, hi) :- want(lo, hi), !(link(lo, hi), lit(hi, _)).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let shown: Vec<String> = p.rules.iter().map(|r| r.to_string()).collect();
+    let helper = |head: &str| -> String {
+        let rule = p.rules.iter().find(|r| r.head.rel == head).unwrap_or_else(|| panic!("{shown:#?}"));
+        let not = rule.body.iter().filter_map(Literal::atom).find(|a| a.neg && a.rel.starts_with("rr_not")).unwrap_or_else(|| panic!("{shown:#?}"));
+        p.rules.iter().filter(|r| r.head.rel == not.rel).map(|r| r.to_string()).collect::<Vec<_>>().join("\n")
+    };
+    let (apart, tied) = (helper("apart"), helper("tied"));
+    let bound = |helper: &str| helper.contains("rr_ctx") || helper.contains("want(");
+    assert!(bound(&apart) && apart.contains("lit($lo") && apart.contains("lit($hi"), "{apart}\n{shown:#?}");
+    assert!(!bound(&tied), "{tied}");
+}
+
+/// An aggregate's context may read the clause's demand, its first atom (decision 0201 §6): `pair(a, b)` here. Of
+/// inputs alone it would be every two nodes with keys, as `same_head`'s were every two tuple patterns of a corpus.
+#[test]
+fn an_aggregates_context_reads_the_clauses_demand() {
+    let p = parse(concat!(
+        ".decl want(a: node, b: node)\n.decl key(a: node, i: number, k: symbol)\n.input want, key\n",
+        ".decl pair(a: node, b: node)\n.decl close(a: node, b: node)\n.output close\n",
+        "pair(a, b) :- want(a, b).\n",
+        "close(a, b) :- pair(a, b), count : { key(a, i, x), key(b, i, y), x != y } <= 1.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(!ctx.is_empty() && ctx.iter().all(|r| r.contains("pair($a, $b)")), "{ctx:#?}");
+}
+
+/// Alternatives that would multiply past 16 rules are outlined into a helper relation (decision 0201 §5): five
+/// two-way disjunctions are not 32 rules of `h`.
+#[test]
+fn alternatives_past_the_bound_are_a_helper_relation() {
+    let p = parse(concat!(
+        ".decl k(n: node, a: node)\n.decl p(n: node)\n.decl q(n: node)\n.input k, p, q\n.decl h(n: node)\n.output h\n",
+        "h(n) :- k(n, a), (p(a) ; q(a)), (p(n) ; q(n)), (q(a) ; p(n)), (p(a) ; p(n)), (q(a) ; q(n)).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let shown: Vec<String> = p.rules.iter().map(|r| r.to_string()).collect();
+    assert!(p.rules.iter().filter(|r| r.head.rel == "h").count() <= 16, "{shown:#?}");
+    assert!(p.rules.iter().any(|r| r.head.rel.starts_with("rr_or")), "{shown:#?}");
+}
+
 /// A group that only computes from an asked variable (`jb(p - 1, 92)`) does not bind it: covered alone it would be
 /// `rr_cover(p) :- t = @sub(p, 1), jb(t, 92)`, which cannot place `p` (serverplan-state-tripwires' `jbs_odd`).
 #[test]
