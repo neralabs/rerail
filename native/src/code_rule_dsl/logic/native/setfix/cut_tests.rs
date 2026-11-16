@@ -221,3 +221,47 @@ fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
     assert_eq!(rows(&db), one, "the fixpoint is the unlimited run's");
     closure::semi_naive_here(false);
 }
+
+/// Decision 0264 §7: a scan whose join only reads texts (here a split whose parts are looked up) walks in morsels, and
+/// makes one walk's rows; one that makes atoms (the parts in its head, interned) walks whole, so its new atoms' ids
+/// do not follow the threads' timing.
+#[test]
+fn a_join_that_only_reads_texts_walks_in_morsels_and_one_that_makes_atoms_walks_whole() {
+    if crate::threads::max() < 2 {
+        return;
+    }
+    let setup = |db: &Connection| {
+        register_symbols(db).unwrap();
+        let w: Vec<String> = (0..40_000).map(|i| format!("('m{i}.x{}')", i % 50)).collect();
+        let p: Vec<String> = (0..40_000).filter(|i| i % 3 == 0).map(|i| format!("('m{i}', 'x{}')", i % 50)).collect();
+        db.execute_batch(&format!("CREATE TABLE w(c0); INSERT INTO w VALUES {};\nCREATE TABLE p(c0, c1); INSERT INTO p VALUES {};\nCREATE TABLE res(c0, c1); CREATE TABLE one(c0);", w.join(", "), p.join(", "))).unwrap();
+    };
+    let (w, p) = (format!("t:b:{}:{}:s", hex("w"), hex("c0")), format!("t:b:{}:{}:ss", hex("p"), hex("c0, c1")));
+    // `rel`: the table and its types; the rows read back as two texts (the second empty for one column).
+    let walk = |join: &str, rel: &str, whole: bool| {
+        let db = connection();
+        setup(&db);
+        open(&db, &format!("name txt\nrel {rel} empty\nseed 0 {}", hex(join))).unwrap();
+        let before = morsels_walked();
+        let go = || run(&db, "txt", 0).unwrap();
+        if whole { walks_whole(go) } else { go() };
+        let walked = morsels_walked() - before;
+        let text = |c: &str| format!("CASE typeof({c}) WHEN 'integer' THEN sym_text({c}) ELSE {c} END");
+        let (table, second) = if rel.starts_with("one ") { ("one", "''".to_owned()) } else { ("res", text("c1")) };
+        let rows: Vec<(String, String)> = db.prepare(&format!("SELECT {}, {second} FROM {table} ORDER BY 1, 2", text("c0"))).unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        close(&db, "txt").unwrap();
+        (rows, walked)
+    };
+    // The head reads the whole, not the parts: they are only keys of `p`.
+    let looked_up = format!("pos {w} v0\ncat v0 v1 v2\npos {p} v1 v2\nhead v0");
+    let (one, _) = walk(&looked_up, "one s", true);
+    let (many, walked) = walk(&looked_up, "one s", false);
+    assert!(walked > 0, "the split's parts are only looked up: its scan walks in morsels");
+    assert_eq!(one.len(), 13_334, "every third name's parts are a row of p");
+    assert_eq!(many, one, "the same rows");
+    let interned = format!("pos {w} v0\ncat v0 v1 v2\nhead v1 v2");
+    let (made, walked) = walk(&interned, "res ss", false);
+    assert_eq!(walked, 0, "parts in the head are interned: the walk stays whole");
+    assert_eq!(made.len(), 40_000 * 2, "each name at its start and at its dot");
+}

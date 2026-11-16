@@ -6050,7 +6050,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }
         let (j, store) = (cx.j, cx.store);
         let Some(Step::Atom { src, neg: false, keys, binds, .. }) = j.steps.first() else { return false };
-        if !keys.is_empty() || !morsels_on() || reads_texts(j) {
+        if !keys.is_empty() || !morsels_on() || makes_atoms(j) {
             return false;
         }
         let mut hints = [0; runs::HINTS];
@@ -6147,14 +6147,19 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         IN_MORSELS.with(|m| m.set(m.get() + 1));
         true
     }
-    /// Whether the walk reads or makes texts row by row (`@cat`, a split, a text function or test, a joined text):
-    /// each is a read of the atom arena under its lock, and a miss a lookup past it (`Atoms::existing`). On full
-    /// PostHog (M3 Max, 16 threads) such a join walked in morsels spent its threads waiting on the lock's word:
-    /// `exports/resolve_export` took 2.7 s against 1.0 s on one thread. It walks whole until the arena's reads
-    /// take no lock.
-    fn reads_texts(j: &JoinRule) -> bool {
+    /// Whether the walk may make atoms row by row: a joined head (`@cat` in it), a joined text, or a `@cat`, text
+    /// function or split part whose text is interned (neither looked up, unread, nor held as the walk's scratch:
+    /// `probes`). Such a walk stays whole: in morsels, its new atoms' ids would follow the threads' timing. A walk
+    /// that only reads texts walks in morsels (decision 0264 §7): the arena's reads take a shard of their own.
+    fn makes_atoms(j: &JoinRule) -> bool {
+        const KEPT: u8 = PROBE_OUT | UNREAD_OUT | TEXT_OUT;
         j.out.iter().any(|t| matches!(t, Term::Cat(..)))
-            || j.steps.iter().any(|s| matches!(s, Step::Cat { .. } | Step::Split { .. } | Step::Func { .. } | Step::Test { .. } | Step::StrJoin { .. }))
+            || j.steps.iter().zip(&j.probes).any(|(s, &p)| match s {
+                Step::Cat { .. } | Step::Func { .. } => p & KEPT == 0,
+                Step::Split { a, b, .. } => (a.is_some() && p & (PROBE_A | UNREAD_A) == 0) || (b.is_some() && p & (PROBE_B | UNREAD_B) == 0),
+                Step::StrJoin { .. } => true,
+                _ => false,
+            })
     }
     /// A plain scan's rows and candidates, as `candidates` gives them for a step with no key.
     fn candidates_of<'a>(src: &'a Src, store: &'a Store, _hints: &mut [u32; runs::HINTS]) -> (Rows<'a>, Cands<'a>) {

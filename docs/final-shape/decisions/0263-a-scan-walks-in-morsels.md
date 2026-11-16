@@ -79,6 +79,9 @@ everywhere.
 
 ### 4. A join that reads texts row by row walks whole
 
+Narrowed by decision 0264 §7: since the arena's reads take a shard of their own, only a join that may make atoms
+walks whole.
+
 This covers `@cat`, a split, a text function, a text test and a joined text. Each one reads the atom arena
 under its lock (`Atoms::state`). A miss then goes on to `existing`, then `lookup` and `catch_up`, under further
 locks.
