@@ -858,6 +858,7 @@ fn successors_reconstruct_sibling_requirements_at_both_branch_destinations() {
 
 #[test]
 fn unrelated_query_values_do_not_require_all_pairs_within_a_task() {
+    crate::test_languages();
     let p = program(vec![
         word(REPEAT_BEGIN, 0, 9),
         word(REPEAT_END, 0, 9),
@@ -2584,6 +2585,7 @@ fn successor_query_capture_copy_preserves_every_value_across_divergent_merge_par
 
 #[test]
 fn active_successor_generations_keep_complete_winners_within_eighteen_dispatches() {
+    crate::test_languages();
     let p = program(vec![
         word(REPEAT_BEGIN, 0, 0),
         word(CAPTURE, 0, 0),

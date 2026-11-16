@@ -586,12 +586,7 @@
         if !mj::available() {
             return;
         }
-        {
-            use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
-            use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
-            register(Family::Python, &Pack::<Python>::NEW);
-            language::register_base(Family::Python, &Pack::<Python>::NEW);
-        }
+        crate::test_languages();
         let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "def f(a, b:\n    return [a for\n", "", "@d\ndef g():\n    try:\n        pass\n    except E as e:\n        raise\n"];
         let make = || -> Vec<Document> { texts.iter().enumerate().map(|(at, source)| {
             let path = format!("d{at}.py");

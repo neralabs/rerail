@@ -607,6 +607,12 @@ pass.
   That test binary registers no language on either side (the hub's too). 0289's view test registers Python itself.
 - **Done when**: they pass, the registration made where the crate's tests read a registry (hosted in the engine, as
   open-items' "Hosted in the engine" did for the others, or registered once for the crate's tests).
+- **Record**: done (2026-11-16). The crate registers Python's pack once for its tests (`test_languages`, lib.rs, under
+  a `Once`; the registry's first registration holds), and the four tests and 0289's view test call it first. The
+  four pass with `--features metal-tests`, as does the view test. Reviewed myself against reviewer-brief.md: the
+  tests' bodies are unchanged; it is no second loader for the product (`cfg(test)`, Python alone, the one pack these
+  tests parse); the engine's `install_languages` registers the same pack, so a test hosted there later reads the
+  same registry.
 
 ### Q24. A two-run process's second run names fewer sources when its files are new
 
