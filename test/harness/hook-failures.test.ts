@@ -1,7 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -344,6 +344,153 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
       withinTheDay: { followed: "", files: [...parts, basename(link)].sort() },
       past: { followed: "", files: parts },
     });
+  });
+
+  // A log of `bytes` a person keeps outside the Rerail home, linked at the live name.
+  const linkLogElsewhere = async (context: TestContext, rerailHome: string, bytes: number): Promise<{ elsewhere: string; text: string }> => {
+    const elsewhere = join(await home(), HOOK_FAILURES_FILE);
+    const text = `${fullLine}\n`.repeat(Math.ceil(bytes / (fullLine.length + 1)));
+    writeFileSync(elsewhere, text);
+    symlinkOrSkip(context, elsewhere, join(rerailHome, HOOK_FAILURES_FILE), "file");
+    return { elsewhere, text };
+  };
+  const kindOf = (path: string): string => {
+    const stats = lstatSync(path, { throwIfNoEntry: false });
+    if (stats === undefined) return "missing";
+    return stats.isSymbolicLink() ? "link" : stats.isFile() ? "file" : "other";
+  };
+  // What the live name and `.1` are once a hook moved a log linked at the live name, the files of the log, and the
+  // number status counts. Status reads the live name only when it is a regular file: a link left there can lead to a
+  // named pipe, whose open would hold this test's own process until a program wrote to it.
+  const afterTheMove = (rerailHome: string): { live: string; movedAside: string; files: string[]; counted: number | null } => {
+    const live = kindOf(join(rerailHome, HOOK_FAILURES_FILE));
+    return {
+      live, movedAside: kindOf(join(rerailHome, `${HOOK_FAILURES_FILE}.1`)), files: logFiles(rerailHome),
+      counted: live === "file" ? statusCount(rerailHome) : null,
+    };
+  };
+  // The link itself moved to `.1`, where status does not follow it, and each failure since is in a new live log.
+  const movedAsTheLink = (counted: number): ReturnType<typeof afterTheMove> => ({
+    live: "file", movedAside: "link", files: [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`], counted,
+  });
+
+  // A person made the live name a link to a log they keep elsewhere, and the log is full: the next hook moves the link to
+  // `.1` as it is, and a new log begins in the Rerail home. Status follows no link at `.1`, so from then on it counts the
+  // failures since the move, in the words it uses when there is no `.1`. The person's file stays as it was.
+  it("counts the failures since a hook moved a full log a person linked at the live name to .1 as the link", async context => {
+    const rerailHome = await home();
+    const { elsewhere, text } = await linkLogElsewhere(context, rerailHome, 256 * 1024 + 1);
+    const before = statusCount(rerailHome);
+    recordLast(rerailHome, 2);
+    recordLast(rerailHome, 3);
+    expect({ before, ...afterTheMove(rerailHome), said: statusSays(rerailHome, 0, afterEveryFailure), leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({
+      before: full, ...movedAsTheLink(2),
+      said: [expect.stringMatching(/^Hooks: 2 hook events could not be recorded in the last 24 hours; /u)],
+      leftAsItWas: true,
+    });
+  });
+
+  // As above, and every open of the person's file, by any name, fails, as when the share it is on stops answering, or
+  // its disk is nearly full and a copy would fill it. The hook reads nothing through the link: its size check stats the
+  // live name, as `main`'s does, and the link moves on as it is. So the hook keeps its own failure in the Rerail home.
+  it("moves a full log a person linked at the live name to .1 without opening or reading it through the link", async context => {
+    const rerailHome = await home();
+    const { elsewhere, text } = await linkLogElsewhere(context, rerailHome, 256 * 1024 + 1);
+    const refusedThroughTheLink = (call: string): string => `${call} => {
+      const target = fs.realpathSync(${JSON.stringify(elsewhere)});
+      return (path, ...rest) => {
+        let reaches = null;
+        try { reaches = fs.realpathSync(String(path)); } catch {}
+        if (reaches !== target) return ${call}(path, ...rest);
+        fs.writeSync(1, "${call} ");
+        throw Object.assign(new Error("EIO: i/o error, ${call}"), { code: "EIO" });
+      };
+    }`;
+    const opened = await recordWithWrapped(rerailHome, 2, {
+      openSync: refusedThroughTheLink("open"), readFileSync: refusedThroughTheLink("read"), appendFileSync: refusedThroughTheLink("append"),
+    });
+    expect({ opened, ...afterTheMove(rerailHome), leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({
+      opened: "", ...movedAsTheLink(1), leftAsItWas: true,
+    });
+  });
+
+  // Ways a file Rerail can look at refuses to be read, on each system: each denies `path` and gives the step that lifts
+  // the denial. Windows test processes run with no backup privilege, so an access list binds them as it binds a person's
+  // programs. A file held with no sharing (libuv's UV_FS_O_EXLOCK, 0x10000000, which `fs.constants` does not name)
+  // refuses every other open, this process's own among them, and so does mode 0000; mode 0200 and a denied read take
+  // writes.
+  interface Denial { how: string; deny: (path: string) => () => void }
+  const icacls = (...args: string[]): void => { execFileSync("icacls", args, { stdio: "ignore", windowsHide: true }); };
+  const readDenied: Denial = { how: "its access list denies reading it", deny: path => {
+    icacls(path, "/deny", "*S-1-1-0:(RD)");
+    return () => icacls(path, "/remove:d", "*S-1-1-0");
+  } };
+  const heldWithNoSharing: Denial = { how: "another program holds it with no sharing", deny: path => {
+    const held = openSync(path, constants.O_RDWR | 0x1000_0000);
+    return () => closeSync(held);
+  } };
+  const withMode = (mode: number): Denial => ({ how: `its mode is 0${mode.toString(8).padStart(3, "0")}`, deny: path => {
+    chmodSync(path, mode);
+    return () => chmodSync(path, 0o600);
+  } });
+  const UNREADABLE = process.platform === "win32" ? [readDenied, heldWithNoSharing] : [withMode(0o200), withMode(0o000)];
+  // A denial that also refuses writes.
+  const noAccess = process.platform === "win32" ? heldWithNoSharing : withMode(0o000);
+  // What `act` gives while `denial` keeps `path` from being read; the denial is lifted after.
+  const whileDenied = <T>(path: string, { deny }: Denial, act: () => T): T => {
+    const allow = deny(path);
+    try {
+      return act();
+    } finally {
+      allow();
+    }
+  };
+  const skipAsRoot = (context: TestContext): void => {
+    if (process.getuid?.() === 0) context.skip("root reads a file whatever its mode");
+  };
+
+  // A person linked the live name to a full log that Rerail can look at but not read. The hook reads nothing through the
+  // link, so this changes nothing: the link moves to `.1` as it is, and each failure since goes into a new log of the
+  // Rerail home, where status counts it. Given back to the live name, the link would take every later failure into the
+  // person's file, or lose it where the file takes no writes, and status, unable to read the log, would say nothing.
+  it.for(UNREADABLE)("counts every later failure in the Rerail home when a full log linked at the live name cannot be read, as $how", async (denial, context) => {
+    skipAsRoot(context);
+    const rerailHome = await home();
+    const { elsewhere, text } = await linkLogElsewhere(context, rerailHome, 256 * 1024 + 1);
+    const moved = whileDenied(elsewhere, denial, () => {
+      recordLast(rerailHome, 2);
+      recordLast(rerailHome, 3);
+      return afterTheMove(rerailHome);
+    });
+    expect({ ...moved, leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({ ...movedAsTheLink(2), leftAsItWas: true });
+  });
+
+  // As above, and `.1` is a folder, so the link cannot move there: the hook gives it back to the live name, as it gives
+  // back any log it took and cannot move on. On Windows, as elsewhere, that makes the live name a second name of the link
+  // itself, not of the file it leads to. The file also refuses writes, so the hook's own failure is lost, as on `main`,
+  // whose move fails there too.
+  it("gives a full log linked at the live name back as the link when it cannot move it to .1", async context => {
+    skipAsRoot(context);
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    const { elsewhere, text } = await linkLogElsewhere(context, rerailHome, 256 * 1024 + 1);
+    mkdirSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`));
+    const given = whileDenied(elsewhere, noAccess, () => {
+      recordLast(rerailHome, 2);
+      return { live: kindOf(live), leadsTo: readlinkSync(live), files: logFiles(rerailHome) };
+    });
+    expect({ ...given, leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({
+      live: "link", leadsTo: elsewhere, files: [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`], leftAsItWas: true,
+    });
+  });
+
+  // A person linked the live name to a file of over 1 MB, more than hooks write before one of them moves the log. The
+  // link moves to `.1` as it is, whatever the size of what it leads to.
+  it("moves a file of over 1 MB a person linked at the live name to .1 as the link", async context => {
+    const rerailHome = await home();
+    const { elsewhere, text } = await linkLogElsewhere(context, rerailHome, 1024 * 1024 + 1);
+    recordLast(rerailHome, 2);
+    expect({ ...afterTheMove(rerailHome), leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({ ...movedAsTheLink(1), leftAsItWas: true });
   });
 
   // A running hook took the full log a moment ago, though no hook wrote to it for a day, and a hook held up since it
@@ -942,7 +1089,7 @@ async function recordWithRename(rerailHome: string, at: number | undefined, wrap
 }
 
 /** The `node:fs` functions a test can wrap in a process of its own, each by the source of a function of the real one. */
-type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync" | "statSync" | "lstatSync" | "fstatSync", string>>;
+type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync" | "readFileSync" | "statSync" | "lstatSync" | "fstatSync", string>>;
 
 /**
  * {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it, and
