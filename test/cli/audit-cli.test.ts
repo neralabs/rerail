@@ -295,12 +295,16 @@ describe("rerail scan and settings CLI", () => {
     const queued = auditRequestSchema.parse(JSON.parse(output));
     // The scan spends the clause's whole allowance, a fixed count of work whatever the list's length past it: about
     // 1.5 s on an Apple-silicon Mac, and past `--wait`'s ten seconds on a Windows CI runner. So the test waits for the
-    // request through the API, not with `--wait`.
-    const request = await vi.waitFor(async () => {
-      const { auditRequests } = await (await fetch(new URL("/api/sessions/s1/audit-requests", daemon.url))).json();
-      const current = auditRequestSchema.parse(auditRequests.find((item: { id: string }) => item.id === queued.id));
-      if (current.status === "queued" || current.status === "running") throw new Error(`scan ${queued.id} is ${current.status}`);
-      return current;
+    // request through the API, not with `--wait`. `vi.waitUntil` retries only while the scan is still queued or
+    // running; a failed request or a scan gone from the list throws, which stops the wait at once.
+    const request = await vi.waitUntil(async () => {
+      const response = await fetch(new URL("/api/sessions/s1/audit-requests", daemon.url));
+      if (!response.ok) throw new Error(`Listing the session's scans answered ${response.status}`);
+      const { auditRequests } = await response.json();
+      const found = auditRequests.find((item: { id: string }) => item.id === queued.id);
+      if (found === undefined) throw new Error(`Scan ${queued.id} disappeared before it could be observed`);
+      const current = auditRequestSchema.parse(found);
+      return current.status === "queued" || current.status === "running" ? false : current;
     }, { timeout: 60_000, interval: 100 });
     expect(request).toMatchObject({ status: "completed", error: null });
     const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
