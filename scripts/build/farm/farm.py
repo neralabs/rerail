@@ -16,11 +16,12 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 11
+VERSION = 12
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -567,7 +568,7 @@ DOWN_SECONDS = (30, 1800)
 OFF_LINK_SECONDS = 60
 # The throughput probe's size, and how often it is sent (it is the slowest part of the probe). The
 # round trip is taken off its time: at 4 MB a session's start alone halved the rate seen.
-PROBE_BYTES = 16 << 20
+PROBE_BYTES = 32 << 20
 PROBE_SECONDS = 600
 
 
@@ -671,20 +672,36 @@ def probe(host, cfg, fell_back=False, recovered=False):
     except (ValueError, IndexError):
         h["load"] = None
     h["mounts"] = [m for m in lines[5:] if m]
-    started = time.time()
-    try:
-        subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
-        h["rtt_ms"] = round((time.time() - started) * 1000)
-    except subprocess.TimeoutExpired:
-        h["rtt_ms"] = 5000
-    link = link_of(host)
-    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+    # The round trip is the least of three: each starts an ssh process here, which a loaded Mac
+    # delays by up to a few hundred ms, and that is not the link.
+    rtts = []
+    for _ in range(3):
         started = time.time()
         try:
-            subprocess.run(ssh(name, "cat >/dev/null", "health"), input=os.urandom(PROBE_BYTES), capture_output=True, timeout=10)
-            h["mbps"] = round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
+            subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
+            rtts.append(round((time.time() - started) * 1000))
         except subprocess.TimeoutExpired:
-            h["mbps"] = 0
+            rtts.append(5000)
+            break
+    h["rtt_ms"] = min(rtts)
+    link = link_of(host)
+    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+        data = os.urandom(PROBE_BYTES)  # made before the clock starts: 70 ms on a loaded Mac
+        # A plain pipe: `run(input=, capture_output=True)` writes stdin 512 bytes at a time while
+        # it reads, and measured itself (57 MB/s where the pipe does 270).
+        proc = subprocess.Popen(ssh(name, "cat >/dev/null", "health"), stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        timer = threading.Timer(10, proc.kill)
+        timer.start()
+        started = time.time()
+        try:
+            proc.stdin.write(data)
+            proc.stdin.close()
+        except OSError:
+            pass
+        killed = proc.wait() != 0 and not timer.is_alive()
+        timer.cancel()
+        h["mbps"] = 0 if killed else round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
         h["mbps_at"] = time.time()
     if link and arrival != link and not recovered and recover(host, arrival):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
