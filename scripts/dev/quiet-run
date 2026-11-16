@@ -189,7 +189,7 @@ def drain(machine, host):
     """Waits for the farm's work on `machine` to end and its load to settle (at most DRAIN_SECONDS).
     A host a person uses is not taken. The load at the start."""
     slots = [f"{machine}.{i}" for i in range(host["cores"])] if host else [f"local.{i}" for i in range(os.cpu_count() or 8)]
-    locks = [farm.state("slots", s) for s in slots] + ([farm.state("tests", machine + ".lock")] if host else [])
+    locks = [farm.state("slots", s) for s in slots] + (farm.test_slot_paths(machine, host) if host else [])
     deadline = time.time() + DRAIN_SECONDS
     seen = []
     while True:

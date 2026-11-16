@@ -176,9 +176,8 @@ features and the earlier command, and repeated at the checkout's builds for 3 ho
 in `~/Library/Caches/rerail-farm/variants/`), and the checkout's latest `diagnose --brief`
 findings (another toolchain or cargo configuration than the active worktrees, profile settings that
 differ, scripts that set the variables builds share), each with what to do. A cargo command that
-runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate
-profile) while a test host has 4 cores or more to spare is told the `test-remote` command that runs
-it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). After a cleaner run, at most hourly per checkout, the job writes
+runs tests here (`cargo test` or `cargo nextest run`, filtered or not) while a test host has a free
+test slot is told the `test-remote` command that runs it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). After a cleaner run, at most hourly per checkout, the job writes
 those findings (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
 its message. On a machine leased for a benchmark (Quiet runs, below), every build is told the
@@ -198,6 +197,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
+| `test_slots` | how many `test-remote` commands the host runs at once (default: a third of its cores). One at a time left a 16-core host mostly idle while commands queued for 25 minutes; a command waits only when every slot of every host is taken, and goes to whichever frees first. A checkout's second command goes to another host when one has a slot (its commands on one host share a target directory, which cargo builds in one at a time) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | free disk a host needs (default 40) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
