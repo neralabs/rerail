@@ -1,0 +1,1 @@
+A coding agent's tool call that never got its result, such as an edit you refused in Claude Code or one whose result was lost while the daemon restarted, no longer leaves its file unchecked: what the call wrote is checked when the agent stops or the session ends, and so is any later command that writes the file.

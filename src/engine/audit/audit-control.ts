@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
-import { physicalPath } from "../catalog/checkout-control.js";
+import { checkoutRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { runGit } from "../git.js";
+import { processState } from "../process-liveness.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits } from "../storage/schema.js";
 import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
 import { scrubSecrets } from "../secret-scrub.js";
@@ -79,7 +80,7 @@ function ancestors(path: string): string[] {
   for (let folder = dirname(path); folder !== folders.at(-1); folder = dirname(folder)) folders.push(folder);
   return folders;
 }
-function canonicalWorkspace(path: string): string { try { return realpathSync(path); } catch { return resolve(path); } }
+function canonicalWorkspace(path: string): string { try { return checkoutRealpath(path); } catch { return resolve(path); } }
 function controls(
   databasePath: string,
   row: { cwd: string; endedAt: number | null },
@@ -106,10 +107,7 @@ function request(row: typeof auditRequests.$inferSelect): AuditRequest {
   return auditRequestSchema.parse({ ...row, paths: row.paths, auditIds: row.auditIds });
 }
 function processIsLive(processId: number): boolean {
-  if (processId === process.pid) return true;
-  try { process.kill(processId, 0); return true; } catch (error) {
-    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
-  }
+  return processId === process.pid || processState(processId) !== "gone";
 }
 
 /** Durable controls keyed by canonical workspace, with requests kept session-local. */
@@ -117,6 +115,14 @@ export class SqliteAuditControlStore {
   readonly path: string;
   readonly #database: RerailDatabase;
   constructor(databasePath: string, database?: RerailDatabase) { this.path = databasePath; this.#database = database ?? openRerailDatabase(databasePath); }
+
+  /**
+   * SQLite's `PRAGMA data_version` on this store's connection: it changes when any other connection commits to the
+   * database, and stays put otherwise, so a poller can tell that nothing it reads here changed without reading it.
+   */
+  dataVersion(): number {
+    return z.number().int().parse(this.#database.$client.pragma("data_version", { simple: true }));
+  }
 
   #interruptOwned(sessionId: string, error: string): void {
     const update = { status: "interrupted" as const, finishedAt: Date.now(), error };

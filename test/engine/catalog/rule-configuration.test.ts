@@ -22,6 +22,8 @@ import {
   temporaryDatabase,
   testBundle,
 } from "../../support/rule-configuration-builders.js";
+import { eq } from "drizzle-orm";
+import { ruleSettings } from "../../../src/engine/storage/schema.js";
 
 const WORKTREE = "/work/app-feature";
 const OTHER_CHECKOUT = "/work/app";
@@ -323,6 +325,17 @@ describe("rule configuration writes", () => {
     setUpRepository(db, REPOSITORY, { packs: [] }, 42);
     expect(listRepositoryRules(db, ruleCatalog, REPOSITORY).rules).toEqual([]);
     expect(() => setUpRepository(db, OTHER_REPOSITORY, { packs: [] })).toThrow(/Unknown repository/u);
+  });
+
+  it("keeps where a setting came from, and makes it a person's when a later write does not say", async () => {
+    const db = await workedExample();
+    const origin = () => db.select({ targetId: ruleSettings.targetId, origin: ruleSettings.origin }).from(ruleSettings)
+      .where(eq(ruleSettings.targetId, "no-var")).all();
+    setUpRepository(db, REPOSITORY, { packs: [], settings: [repositorySetting("", "rule", "no-var", { on: true, mode: null, origin: "lint-config" })] });
+    expect(origin()).toEqual([{ targetId: "no-var", origin: "lint-config" }]);
+    // The dashboard, the API and MCP write without an origin: the row is the person's from then on.
+    setRuleSetting(db, repositorySetting("", "rule", "no-var", { on: true, mode: "block" }));
+    expect(origin()).toEqual([{ targetId: "no-var", origin: null }]);
   });
 });
 

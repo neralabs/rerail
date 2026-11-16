@@ -16,6 +16,7 @@ import { installedPackVersion } from "../../src/setup/index.js";
 import { removeInstalledPacks } from "../support/installed-packs.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { removeFixtures, TS_PACKS, fixture, gitRepository, stripAnsi, type Recorded, agentIo, terminalIo, request, selected, enabledRules, expectUntouched, SETUP_TIMEOUT_MS, TYPESCRIPT, offerReview } from "../support/repository-setup.js";
+import { stubUserHome } from "../support/user-home.js";
 
 afterEach(async () => {
   readsRepository.mockClear();
@@ -36,6 +37,16 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(io.text()).toContain("Try it");
     expect(io.text()).toContain("Good to know");
     expect(io.text()).not.toContain("optional");
+    // A person at a terminal gets the dashboard in their browser.
+    expect(environment.pages).toMatchObject([{ repoRoot: setup.repo, page: "rules", open: true }]);
+  });
+
+  it("shows the link and says why when no browser can open", async () => {
+    const setup = await fixture();
+    const io = terminalIo(["", "1"]);
+    expect(await runSetup(io, request(setup, fakeSetupEnvironment({ browser: false })))).toMatchObject({ status: "started" });
+    expect(stripAnsi(io.text())).toContain("http://127.0.0.1:4737/#rules");
+    expect(stripAnsi(io.text())).toContain("Couldn’t open your browser. Copy the link instead.");
   });
 
   it("says which numbers it takes when a typed answer names none, then asks again", async () => {
@@ -82,7 +93,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const fresh = await fixture();
     const asked = terminalIo(["", "", "1"]);
     await runSetup(asked, request(fresh, fakeSetupEnvironment({ sessionsApproved: false })));
-    expect(asked.text()).toContain("Step 1 of 3 · Can Rerail see your coding agent sessions?");
+    expect(asked.text()).toContain("Step 1 of 3 · OK for Rerail to read your coding agent sessions?");
     expect(asked.text()).toContain("Step 2 of 3 · Find rule packs for acme-api?");
     expect(asked.text()).toContain("Step 3 of 3 · Start Rerail in acme-api with this rule pack?");
 
@@ -91,7 +102,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const other = gitRepository(join(named.root, "landing-page"));
     const repo = terminalIo(["", "1"]);
     await runSetup(repo, request(named, fakeSetupEnvironment({ sessionsApproved: false }), { repo: other }));
-    expect(repo.text()).toContain("Step 1 of 2 · Can Rerail see your coding agent sessions?");
+    expect(repo.text()).toContain("Step 1 of 2 · OK for Rerail to read your coding agent sessions?");
     expect(repo.text()).toContain("Step 2 of 2 · Start Rerail in landing-page with this rule pack?");
     expect(repo.text()).not.toContain("Find rule packs for");
   });
@@ -160,7 +171,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const asked = terminalIo(["", "1", fresh.repo, "1"]);
     await runSetup(asked, request(fresh, fakeSetupEnvironment({ sessionsApproved: false }), { cwd: elsewhere }));
     expect(steps(asked)).toEqual([
-      "Step 1 of 3 · Can Rerail see your coding agent sessions?",
+      "Step 1 of 3 · OK for Rerail to read your coding agent sessions?",
       "Step 2 of 3 · Which project do you want to start with?",
       "Step 3 of 3 · Start Rerail in acme-api with this rule pack?",
     ]);
@@ -178,7 +189,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const io = terminalIo(["", "1"]);
     expect(await runSetup(io, request(setup, fakeSetupEnvironment({ sessionsApproved: false })))).toMatchObject({ status: "started" });
     expect(stripAnsi(io.text()).match(/Step \d of \d · [^\n]+/gu)).toEqual([
-      "Step 1 of 2 · Can Rerail see your coding agent sessions?",
+      "Step 1 of 2 · OK for Rerail to read your coding agent sessions?",
       "Step 2 of 2 · Start Rerail in acme-api with this rule pack?",
     ]);
   });
@@ -187,7 +198,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await fixture();
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const io = terminalIo(["1", setup.repo, "1"]);
     expect(await runSetup(io, request(setup, fakeSetupEnvironment(), { cwd: setup.root, repo: home }))).toMatchObject({ status: "started" });
     expect(io.text()).toContain("Start Rerail inside a repository, not your home folder.");
@@ -201,7 +212,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await fixture();
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const plain = join(setup.root, "downloads");
     mkdirSync(plain);
     const environment = fakeSetupEnvironment();

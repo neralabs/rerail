@@ -32,6 +32,7 @@ export const ENTRY_POINTS = {
   eventStream: "dist/harness/event-stream.js",
   hookLauncher: "dist/harness/hook-launcher.js",
   repositoryStart: "dist/runtime/repository-start.js",
+  startStateReader: "dist/runtime/start-state-reader.js",
   claudeHook: "dist/hosts/claude/claude-hook.js",
   claudeStatus: "dist/hosts/claude/claude-status.js",
   codexHook: "dist/hosts/codex/codex-hook.js",

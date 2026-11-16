@@ -13,7 +13,7 @@
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
@@ -173,7 +173,9 @@ async function rulesAtRef(root: string, ref: string, scratch: string): Promise<R
   for (const { mode, type, object, name } of entries) {
     const target = join(folder, name);
     const blob = blobs.get(object);
-    if (type === "blob" && mode === "120000") symlinkSync(blob?.toString("utf8") ?? "missing", target);
+    // A symlink entry becomes a folder, which the loader leaves out as it leaves out a link: Windows refuses to make a
+    // symlink without Developer Mode or admin rights, and the link's target never mattered.
+    if (type === "blob" && mode === "120000") mkdirSync(target);
     else if (type === "blob" && blob !== undefined) writeFileSync(target, blob);
     else if (type === "blob") {
       // Larger than the loader reads: a file of that size, which it leaves out as too large.

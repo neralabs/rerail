@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
@@ -10,6 +10,7 @@ import { defaultRerailDatabasePath, openRerailDatabase, steerFeedback } from "..
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { installPack } from "../support/installed-packs.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const RULE = "bandit-b101-assert-used";
 const OTHER_RULE = "bandit-b102-exec-used";
@@ -17,7 +18,7 @@ const directories: string[] = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 /**

@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   getLibraryRule,
   loadRuleCatalog,
@@ -23,16 +23,25 @@ import {
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "BLOCK_MODE");
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules, and show the typescript pack's
 // with option values set.
 installPack("complexity");
 installPack("typescript");
 
+// rules add compiles every installed pack's rules, once in a process while the installed packs stay the same: done
+// here, that one compile is no single case's work, and does not count against that case's time limit.
+beforeAll(() => { loadRuleCatalog(); });
+
 const directories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 async function repository(files: Record<string, string> = {}): Promise<string> {
@@ -263,7 +272,8 @@ describe("rerail rules test", () => {
     });
   });
 
-  it("counts only where rules add would have the rule run: the draft's folder, and the folders it is added at already", async () => {
+  /** A repository set up with nothing added, a match in each of four places, and a rule that would catch all four. */
+  async function folderedRepository() {
     const repo = await repository({
       "web/src/a.ts": "console.log('web');\n",
       "web2/src/b.ts": "console.log('web2');\n",
@@ -272,28 +282,36 @@ describe("rerail rules test", () => {
     });
     setUpEmpty(repo);
     const rule = { ...noConsolePolicy(), id: "no-console-in-folders", scope: { include: ["**/*.ts"], exclude: [] } };
+    const file = (draft: object): string => writeDraft(repo, { kind: "code", rule, ...draft });
+    // The JSON report; the text one only where a test reads it, each a whole `rerail rules test` pass of its own.
     const tested = async (draft: object) => {
-      const { report, stdout } = await testReportText(writeDraft(repo, { kind: "code", rule, ...draft }), repo);
-      return { report, folders: report.repository?.folders, paths: report.repository?.matches.map(match => match.path), stdout };
+      const { report } = await testReport(file(draft), repo);
+      return { report, folders: report.repository?.folders, paths: report.repository?.matches.map(match => match.path) };
     };
+    const text = async (draft: object): Promise<string> => (await run("test", [file(draft), "--repo", repo])).stdout;
+    return { repo, file, tested, text };
+  }
 
-    // Not added yet: a draft that names no folder is added to the whole repository, and one that names a folder there.
+  // Each `rerail rules test` pass compiles and scans the repository; these make three and five, which a full suite run
+  // can slow past the default 5 s.
+  it("counts the whole repository, or the draft's folder, where the rule is not added yet", { timeout: 15_000 }, async () => {
+    const { tested, text } = await folderedRepository();
     expect(await tested({})).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
     const nested = await tested({ folder: "web/src" });
     expect(nested).toMatchObject({ folders: ["web/src"], paths: ["web/src/a.ts"] });
     expect(nested.report).not.toHaveProperty("refusal");
     expect(nested.report.repository).not.toHaveProperty("notNarrowed");
-    expect(nested.stdout).toContain("  Repo: 1 place matches under web/src/, where the rule runs.\n    web/src/a.ts:1:1  console.log('web');");
+    expect(await text({ folder: "web/src" })).toContain("  Repo: 1 place matches under web/src/, where the rule runs.\n    web/src/a.ts:1:1  console.log('web');");
+  });
 
-    // Added at web: it stays there when the draft names no folder, and a folder the draft names is one more.
-    expect((await run("add", [writeDraft(repo, { kind: "code", rule, folder: "web" }), "--repo", repo])).exit).toBe(0);
+  it("counts where rules add would have the rule run once it is added: the folders it is added at, and the draft's", { timeout: 15_000 }, async () => {
+    const { repo, file, tested, text } = await folderedRepository();
+    expect((await run("add", [file({ folder: "web" }), "--repo", repo])).exit).toBe(0);
     expect(await tested({})).toMatchObject({ folders: ["web"], paths: ["web/src/a.ts"] });
-    const both = await tested({ folder: "lib" });
-    expect(both).toMatchObject({ folders: ["lib", "web"], paths: ["lib/c.ts", "web/src/a.ts"] });
-    expect(both.stdout).toContain("  Repo: 2 places match under lib/, web/, where the rule runs.\n");
-    const whole = await tested({ folder: "" });
-    expect(whole).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
-    expect(whole.stdout).toContain("  Repo: 4 places match.\n");
+    expect(await tested({ folder: "lib" })).toMatchObject({ folders: ["lib", "web"], paths: ["lib/c.ts", "web/src/a.ts"] });
+    expect(await text({ folder: "lib" })).toContain("  Repo: 2 places match under lib/, web/, where the rule runs.\n");
+    expect(await tested({ folder: "" })).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
+    expect(await text({ folder: "" })).toContain("  Repo: 4 places match.\n");
   });
 
   it("says so where it cannot read where the rule is added, and still counts the repository", async () => {
@@ -497,15 +515,15 @@ describe("rerail rules test", () => {
     expect(report.repository).toMatchObject({ matches: [{ path: "app.json" }, { path: "local.json" }], leftOut: 6 });
   });
 
-  it("never follows a symlink out of the checkout, to a file or a folder", async () => {
+  it("never follows a symlink out of the checkout, to a file or a folder", async context => {
     const outside = await mkdtemp(join(tmpdir(), "rerail-rule-draft-outside-"));
     directories.push(outside);
     mkdirSync(join(outside, "folder"));
     writeFileSync(join(outside, "secret.ts"), "console.log('outside');\n");
     writeFileSync(join(outside, "folder", "b.ts"), "console.log('outside folder');\n");
     const repo = await repository({ "src/a.ts": "console.log('inside');\n" });
-    symlinkSync(join(outside, "secret.ts"), join(repo, "src", "linked.ts"));
-    symlinkSync(join(outside, "folder"), join(repo, "src", "linked"), "dir");
+    symlinkOrSkip(context, join(outside, "secret.ts"), join(repo, "src", "linked.ts"));
+    linkFolder(join(outside, "folder"), join(repo, "src", "linked"));
     const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
 
     const { exit, report } = await testReport(file, repo);
@@ -660,6 +678,33 @@ describe("rerail rules test", () => {
     expect(report.cases.map(({ caught, ok }) => ({ caught, ok }))).toEqual([{ caught: true, ok: true }, { caught: false, ok: true }]);
   });
 
+  it("refuses a tool-call rule while conversation rules are off, naming the variable, and adds nothing", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "0");
+    const repo = await repository();
+    setUpEmpty(repo);
+    const file = writeDraft(repo, {
+      kind: "conversation",
+      rule: {
+        id: "acme:no-force-push",
+        mode: "steer",
+        match: { field: "input.command", regex: String.raw`\bgit\s+push\b[^\n]*--force\b` },
+        sample: { source: "tool:Bash", boundary: "tool-call" },
+        action: { content: "Do not force-push." },
+        repeat: { mode: "always" },
+      },
+    });
+
+    const { exit, report } = await testReport(file, repo);
+    expect(exit).not.toBe(0);
+    expect(report).toMatchObject({ ok: false, valid: false });
+    expect(report.error).toContain("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1");
+
+    const added = await run("add", [file, "--repo", repo]);
+    expect(added.exit).not.toBe(0);
+    expect(added.stderr).toContain("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1");
+    expect(rulesOf(repo).repository).toEqual([]);
+  });
+
   it.each(["test", "add"] as const)("rules %s --help prints the draft format and an example that passes rules test", async action => {
     const { exit, stdout } = await run(action, ["--help"]);
 
@@ -756,6 +801,37 @@ describe("rerail rules add", () => {
 
     const steering = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: "acme:no-console-steer" } });
     expect((await run("add", [steering, "--repo", repo])).stdout).not.toContain(BLOCK_STEERS_NOTE);
+  });
+
+  it("refuses a rule on Block while Block mode is off, naming the variable, and stores nothing", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_BLOCK_MODE", "0");
+    const repo = await repository();
+    setUpEmpty(repo);
+    const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: "acme:no-console-block-while-off", mode: "block" } });
+
+    const { exit, stderr } = await run("add", [file, "--repo", repo]);
+
+    expect(exit).not.toBe(0);
+    expect(stderr).toContain("Block mode is experimental and off: set RERAIL_EXPERIMENTAL_BLOCK_MODE=1");
+    expect(getLibraryRuleMode("acme:no-console-block-while-off")).toBeUndefined();
+  });
+
+  it("takes an edit of a rule of yours already on Block while Block mode is off, keeping it on Block", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const rule = { ...noConsolePolicy(), id: "acme:no-console-kept-on-block", mode: "block" };
+    expect((await run("add", [writeDraft(repo, { kind: "code", rule }), "--repo", repo])).exit).toBe(0);
+    vi.stubEnv("RERAIL_EXPERIMENTAL_BLOCK_MODE", "0");
+    const edited = writeDraft(repo, { kind: "code", rule: { ...rule, description: "No console calls, edited." } });
+
+    const tested = await run("test", [edited, "--repo", repo]);
+    expect(`${tested.stdout}${tested.stderr}`).not.toContain("RERAIL_EXPERIMENTAL_BLOCK_MODE");
+    expect(tested.exit).toBe(0);
+    const { exit, stdout } = await run("add", [edited, "--repo", repo]);
+
+    expect(exit).toBe(0);
+    expect(stdout).toContain(BLOCK_STEERS_NOTE);
+    expect(getLibraryRuleMode("acme:no-console-kept-on-block")).toBe("block");
   });
 
   it("sets a repository that is not set up up with only the new rule", async () => {

@@ -1,0 +1,1 @@
+A hook no longer drops its event when the daemon is busy for a few seconds: it waits up to 12 seconds for the daemon to answer as itself, and sends nothing to a daemon that does not. No hook starts a needless Rerail process beside a busy daemon.

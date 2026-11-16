@@ -1,0 +1,1 @@
+On Windows, Rerail starts every program by its full path, so a `git.exe` or `powershell.exe` committed to a repository never runs in its place; the folders it makes outside your profile, where Windows ignores file modes, are private to you; and it no longer follows a link planted where it reads or writes its files (`rerail scrub` included).

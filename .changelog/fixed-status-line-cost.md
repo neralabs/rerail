@@ -1,0 +1,1 @@
+Claude Code's status line, which runs every five seconds in each session, now takes about half the CPU time and 16 MB less memory per run: it ships as one bundled file and no longer loads the database schema to read the daemon's answer.

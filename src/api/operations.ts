@@ -1,11 +1,10 @@
-import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation, type CodeRuleViolationFix, type CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
 import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, AUDIT_MODES, AUDIT_SCOPES, AUDIT_STATUSES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
-import { withinCheckout } from "../engine/catalog/checkout-control.js";
+import { checkoutRealpath, withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { agentTranscriptPayload } from "../engine/transcript-boundary.js";
@@ -23,7 +22,8 @@ import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-
 import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
-import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { ApiError, defineOperation, experimentalSummary, type Operation, type RerailApiStores } from "./operation.js";
+import { mergeAssistOperations } from "./merge-assist-operations.js";
 import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, historyScope, repositoryOperations, within } from "./repository-operations.js";
 import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
@@ -90,7 +90,8 @@ const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   blind: z.enum(AUDIT_BLIND_REASONS).optional(),
 }).strict();
 
-export const auditRecordSchema = createSelectSchema(audits).extend({
+// `ruleProvenance` is the audit's provenance wherever the database keeps it; the id of its stored copy stays inside.
+export const auditRecordSchema = createSelectSchema(audits).omit({ ruleProvenanceId: true }).extend({
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),
@@ -348,8 +349,8 @@ export const operations: readonly Operation[] = [
       if (session !== null) {
         try {
           // A host may report a directory below its launch root; presence and identity follow the session's canonical cwd.
-          const cwd = realpathSync(session.session.cwd);
-          if (session.session.host !== input.host || !withinCheckout(cwd, realpathSync(input.repository))) session = null;
+          const cwd = checkoutRealpath(session.session.cwd);
+          if (session.session.host !== input.host || !withinCheckout(cwd, checkoutRealpath(input.repository))) session = null;
           else repository = cwd;
         } catch { session = null; }
       }
@@ -487,7 +488,8 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_create",
     method: "POST",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: internalTesting("Queue an explicit audit for one session. Touched-file audits require paths."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "Queue an explicit audit for one session. Touched-file audits require paths.")),
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
@@ -501,7 +503,8 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_list",
     method: "GET",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: internalTesting("List explicit audit requests and the ids of the audits each one produced for one session."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "List explicit audit requests and the ids of the audits each one produced for one session.")),
     params: sessionId,
     output: z.object({ auditRequests: z.array(auditRequestSchema) }),
     handler: (stores, input, caller) => {
@@ -513,7 +516,8 @@ export const operations: readonly Operation[] = [
     id: "repository_audits_list",
     method: "GET",
     path: "/api/repository-audits",
-    summary: internalTesting("List one full repository audit baseline per historically scanned repository."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "List one full repository audit baseline per historically scanned repository.")),
     query: repositoryAuditQuerySchema.extend(repositoryFilter),
     output: z.object({
       repositories: z.array(repositoryAuditSummarySchema),
@@ -525,7 +529,8 @@ export const operations: readonly Operation[] = [
     id: "repository_audit_entries_list",
     method: "GET",
     path: "/api/repository-audits/{auditId}/entries",
-    summary: internalTesting("Query paginated violations and failures from one repository audit baseline."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "Query paginated violations and failures from one repository audit baseline.")),
     params: z.object({ auditId: z.string().min(1) }),
     query: repositoryAuditEntryQuerySchema,
     output: z.object({
@@ -703,6 +708,7 @@ export const operations: readonly Operation[] = [
     },
   }),
   ...repositoryOperations,
+  ...mergeAssistOperations,
 ];
 
 /** The flat argument object an MCP tool takes: path params, query, and body merged. */

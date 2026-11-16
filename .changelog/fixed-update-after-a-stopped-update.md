@@ -1,0 +1,1 @@
+`rerail update` no longer says another update is already running after one was stopped or crashed: for up to 15 minutes after Ctrl-C, or until `update.lock` was deleted by hand when one stopped as it started. Two updates at once no longer fail with "Unexpected end of JSON input" or "EEXIST"; the second says another update is already running.

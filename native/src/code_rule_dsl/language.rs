@@ -1832,6 +1832,39 @@ mod tests {
         }
     }
 
+    /// A template takes a `\x` or `\u` that no hex digits follow, as a tagged template does since
+    /// ES2018: ``String.raw`C:\x\users` `` is a Windows path. A longer escape stays whole, and a
+    /// string literal still refuses one (Patch 17 in `grammars/tree-sitter-javascript/PATCHES.md`,
+    /// Patch 29 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_template_takes_an_escape_without_hex_digits() {
+        let source =
+            "String.raw`C:\\x\\users\\u`;\nf`\\x4g\\u{` + `\\x41\\u0041\\u{41}\\n${a}\\x`;\n";
+        for dialect in [
+            GrammarDialect::JavaScript,
+            GrammarDialect::TypeScript,
+            GrammarDialect::Tsx,
+        ] {
+            let root = dialect.ast_grep(source);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let escapes = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "escape_sequence")
+                .map(|node| node.text().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                escapes,
+                [
+                    "\\x", "\\u", "\\u", "\\x", "\\u", "\\x41", "\\u0041", "\\u{41}", "\\n", "\\x"
+                ],
+                "{dialect:?}"
+            );
+            let string = dialect.ast_grep("x = 'C:\\x';\n");
+            assert!(string.root().get_inner_node().has_error(), "{dialect:?}");
+        }
+    }
+
     /// A destructuring assignment's target may be parenthesized, comments and all (Patch 6 in
     /// `grammars/tree-sitter-javascript/PATCHES.md`).
     #[test]

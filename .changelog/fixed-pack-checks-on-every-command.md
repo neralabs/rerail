@@ -1,0 +1,1 @@
+Commands that read your rule packs, such as `rerail packs list` and `rerail start`, and the daemon's start no longer compile every rule of every pack: Rerail keeps the engine's verdict on each pack until the pack or Rerail changes. With the Node, TypeScript, JavaScript, Python and complexity packs, `rerail packs list` takes 2 s instead of 16 s.

@@ -58,7 +58,8 @@ function random(seed: number): () => number {
 /**
  * A repository with `rules` rules on: every 25th audit is a repository audit that rewrites the whole standing
  * backlog of unfixed violations, the rest are touched-file audits reporting a handful of them. Rows are written
- * with plain SQL in one transaction, the way any writer (this build or an older one) fills `audits`.
+ * with plain SQL in one transaction, as this build's audit store writes them: the rule provenance stored once, and
+ * named by every audit.
  */
 function seed(path: string, { audits, rules, backlog, sessions, seed: seedValue }: Options, now: number): void {
   const database = openRerailDatabase(path);
@@ -87,10 +88,12 @@ function seed(path: string, { audits, rules, backlog, sessions, seed: seedValue 
       "INSERT INTO sessions (session_id, host, cwd, repository_id, started_at, ended_at) VALUES (?, 'claude-code', '/benchmark/checkout', ?, ?, NULL)",
     );
     sessionIds.forEach((id, index) => session.run(id, REPOSITORY, now - 7 * DAY + index));
+    const provenanceId = client.prepare("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)")
+      .run(createHash("sha256").update(provenance).digest("hex"), provenance).lastInsertRowid;
     const audit = client.prepare(
       "INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, catalog_revision, rule_revisions_json, "
-        + "rule_provenance_json, paths_json, started_at, finished_at, status, violations_json, failures_json) "
-        + "VALUES (?, ?, '/benchmark/checkout', ?, 'steer', 1, 'catalog', ?, ?, '[]', ?, ?, 'completed', ?, '[]')",
+        + "rule_provenance_json, rule_provenance_id, paths_json, started_at, finished_at, status, violations_json, failures_json) "
+        + "VALUES (?, ?, '/benchmark/checkout', ?, 'steer', 1, 'catalog', ?, '[]', ?, '[]', ?, ?, 'completed', ?, '[]')",
     );
     for (let index = 0; index < audits; index += 1) {
       const startedAt = now - Math.floor(next() * 6 * DAY);
@@ -100,7 +103,7 @@ function seed(path: string, { audits, rules, backlog, sessions, seed: seedValue 
         : Array.from({ length: 15 }, () => standing[Math.floor(next() * standing.length)]!);
       audit.run(
         `benchmark-audit-${index}`, sessionIds[Math.floor(next() * sessions)]!, repositoryAudit ? "repository" : "touched-files",
-        revisions, provenance, startedAt, startedAt + 500, JSON.stringify(violations),
+        revisions, provenanceId, startedAt, startedAt + 500, JSON.stringify(violations),
       );
     }
   })();

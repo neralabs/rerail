@@ -10,6 +10,9 @@ import {
 } from "./support/contract-code-rule.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 import { steerText } from "./support/steer-text.js";
+import { withExperiments } from "../test/support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES");
 
 
 const originalRerailHome = process.env.RERAIL_HOME;

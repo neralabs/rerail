@@ -1,9 +1,9 @@
 {
   "format": "rerail.rule-pack/v1",
   "id": "complexity",
-  "name": "Cyclomatic complexity",
+  "name": "Function complexity",
   "category": "language",
-  "covers": "Keeps Python, TypeScript, JavaScript, PHP, Rust and Vue functions, and those a Blade template's PHP defines, at cyclomatic complexity 6 or below, measured as lizard does.",
+  "covers": "Keeps functions small enough to read, test and change: flags any function with more than 6 paths through it (cyclomatic complexity, counted as lizard 1.24.0 does). For Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue.",
   "reason": "matches Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source",
   "match": {
     "any": [

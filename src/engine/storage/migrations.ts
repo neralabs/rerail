@@ -33,6 +33,9 @@ export interface Migration {
   up(database: RerailDatabase): void;
 }
 
+/** The step that keeps each rule provenance once; `rule-provenance-move.ts` moves what audits held before it. */
+export const RULE_PROVENANCE_STEP = "audit-rule-provenance-once";
+
 /**
  * The first schema version with a migration path. Files stamped 1 come from releases before it: 0.1.0-next.1 (main
  * before the migration path) wrote the baseline's shape without `schema_migrations`, and such a file is adopted at the
@@ -125,6 +128,56 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       for (const statement of LOGGED_BY_AUDIT_MODE_REPAIR) database.run(sql.raw(statement));
     },
   },
+  {
+    // An audit names its rule provenance in `audit_rule_provenances`, which keeps each distinct one once, instead of
+    // holding a copy in `rule_provenance_json` (221 KB for 767 rules, written again by every audited edit). Steps run
+    // before the DDL, so the table is created here as this step introduced it; then the column. The audits a file
+    // holds keep their provenance inline, where the audit store reads it, until the daemon moves it in short
+    // transactions (`rule-provenance-move.ts`): moving it here would hold the open's write lock for the whole history
+    // (about 10 s for 4,000 audits), and other writers fail once they have waited 5 s. No floor, by choice: builds at
+    // the baseline keep opening the file, so agent hosts on different installed versions keep sharing it. An older
+    // build writes its audits' provenance inline as before, and this build reads it there; for the audits this build
+    // wrote or moved it reads `[]`, which only its audit API and remote sink show, as its dashboard reads no
+    // provenance. The step records the last audit the file holds (`audit_rule_provenance_step`): the move takes the
+    // audits up to that one, in the order they were recorded, whatever the clock read when each began. An older build
+    // never reads that table.
+    id: RULE_PROVENANCE_STEP,
+    up(database) {
+      if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
+      for (const statement of AUDIT_RULE_PROVENANCES_TABLE) database.run(sql.raw(statement));
+      addColumn(database, "audits", "rule_provenance_id", "integer");
+      database.run(sql.raw("INSERT INTO audit_rule_provenance_step (last_audit_id) SELECT audit_id FROM audits ORDER BY rowid DESC LIMIT 1"));
+    },
+  },
+  {
+    // A repository's `merge_assist`, off by default: only a person turns Merge Assist on. No floor: an older build
+    // never reads the column, and its inserts take the default. Its tables need no step; the DDL creates them.
+    id: "repositories-merge-assist",
+    up(database) {
+      addColumn(database, "repositories", "merge_assist", "integer DEFAULT false NOT NULL");
+    },
+  },
+  {
+    // A rule setting's `origin`: `lint-config` for one the repository's lint config gave (set-up, `rerail packs
+    // calibrate`), null for a person's or an agent's, which calibrating leaves alone. No floor: an older build never
+    // reads the column. Its writes name only the columns it knows, so a row it inserts has no origin, and its upsert
+    // of an existing row keeps the row's origin: a calibrated row an older build's dashboard changed still reads as
+    // calibrated, and the next calibration may replace that change. Its delete takes the origin with the row.
+    id: "rule-settings-origin",
+    up(database) {
+      addColumn(database, "rule_settings", "origin", "text");
+    },
+  },
+];
+
+/**
+ * `audit_rule_provenances` and its digest index, and `audit_rule_provenance_step`, as `audit-rule-provenance-once`
+ * introduced them.
+ */
+const AUDIT_RULE_PROVENANCES_TABLE: readonly string[] = [
+  "CREATE TABLE IF NOT EXISTS `audit_rule_provenances` (\n\t`provenance_id` integer PRIMARY KEY NOT NULL,\n\t`digest` text NOT NULL,\n\t`rule_provenance_json` text NOT NULL,\n\tCONSTRAINT \"audit_rule_provenances_json\" CHECK(json_type(\"audit_rule_provenances\".\"rule_provenance_json\") = 'array')\n)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS `audit_rule_provenances_digest_unique` ON `audit_rule_provenances` (`digest`)",
+  "CREATE TABLE IF NOT EXISTS `audit_rule_provenance_step` (\n\t`last_audit_id` text PRIMARY KEY NOT NULL\n)",
 ];
 
 /**

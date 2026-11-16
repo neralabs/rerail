@@ -32,7 +32,7 @@ import {
   type AuditorCloseOptions,
   type SteerSourceOf,
 } from "./code-rule.js";
-import type { SteerTrigger } from "./rerail-steer.js";
+import type { SteerShell, SteerTrigger } from "./rerail-steer.js";
 import {
   AUDIT_BLIND_REASONS,
   AUDIT_FAILURE_CODES,
@@ -55,11 +55,13 @@ import { SqliteAuditStore } from "../audit/audit-store.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
+import { removeScratch } from "../file-replace.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { binaryPrefix } from "./binary-prefix.js";
+import { IGNORED_DIRECTORIES } from "./ignored-directories.js";
 import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
@@ -78,22 +80,6 @@ const AUDIT_MAX_FAILURES = 20;
 const UNREPORTED_FACTS = "\0unreported";
 /** The most source bytes the repository walk reads in total. */
 export const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
-export const IGNORED_DIRECTORIES = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".rerail",
-  ".venv",
-  "__pycache__",
-  "node_modules",
-  "dist",
-  "build",
-  ".next",
-  ".turbo",
-  "coverage",
-  "target",
-  "vendor",
-]);
 /**
  * A repository index honours the walk's bounds, ignored directories and source languages, and skips an unlisted file
  * named like a secret as `workspaceLanguage` does; the lane adds Git's ignores.
@@ -552,6 +538,26 @@ function auditFailureCap(scope: AuditScope, limit = AUDIT_MAX_FAILURES): (failur
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+/**
+ * A walked entry's place among its siblings in path order: the byte order of UTF-8 paths, which Git and the native
+ * repository index sort by. A folder sorts as its name followed by "/", so `a.txt` comes before `a/b.txt` and `a0.txt`
+ * after it.
+ */
+function walkOrderKey(entry: Dirent): Buffer {
+  return Buffer.from(entry.isDirectory() ? `${entry.name}/` : entry.name);
+}
+
+/** A folder's entry waiting to go on the walk's stack, with its `walkOrderKey`. */
+interface WalkEntry {
+  readonly path: string;
+  readonly key: Buffer;
+}
+
+/** Puts `entries` on the walk's stack so the walk, which takes from the stack's end, takes them in path order. */
+function pushInPathOrder(stack: string[], entries: WalkEntry[]): void {
+  entries.sort((left, right) => Buffer.compare(right.key, left.key));
+  for (const entry of entries) stack.push(entry.path);
+}
 
 /** The graph reads the edit's own text, which disk may not hold yet. */
 function overlayOf(edit: CodeRuleEdit): SourceOverlay {
@@ -583,6 +589,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #nestedCheckouts: () => readonly string[];
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #followGitignore: boolean;
+  readonly #steerShell: SteerShell | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   #scope: AuditScope;
@@ -663,6 +670,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
        * repository's setting when it opens, and it holds for the session's life.
        */
       followGitignore?: boolean;
+      /** The shell the session's coding agent runs commands in, which a steer's command is written for (`steerShell`). */
+      steerShell?: SteerShell | undefined;
     },
   ) {
     this.#catalog = catalog;
@@ -675,6 +684,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
     this.#timingLog = options.timingLog;
     this.#followGitignore = options.followGitignore ?? false;
+    this.#steerShell = options.steerShell;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -989,7 +999,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#pending.clear();
     this.#applied.clear();
     await Promise.all(this.#spoolRemovals);
-    if (this.#spoolDirectory !== undefined) await rm(this.#spoolDirectory, { recursive: true, force: true });
+    // Retried while Windows holds a spooled file, then left in the temp directory: a failure here would stop the close
+    // before it closes the audits below.
+    if (this.#spoolDirectory !== undefined) await removeScratch(this.#spoolDirectory);
     this.#workspaceRevisions.clear();
     this.#workspaceStorage.clear();
     this.#workspaceEvaluations.clear();
@@ -1678,6 +1690,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return false;
   }
 
+  /**
+   * Puts a folder's walkable entries on the walk's stack so the walk takes them in path order (`walkOrderKey`), as the
+   * native repository index reads a Git checkout, whatever order the filesystem lists them in. A listing that fails
+   * partway (on a network or FUSE filesystem) still puts the entries it gave on the stack before its error leaves, so
+   * they are audited and the caller reports the folder.
+   */
   async #enqueueAuditDirectory(
     workspace: NativeCodeRuleDslWorkspace,
     canonicalRoot: string,
@@ -1685,10 +1703,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     stack: string[],
     nested: NestedCheckoutWalk,
   ): Promise<void> {
-    for await (const entry of await opendir(absolute)) {
-      if (this.#closing) return;
-      if (!this.#shouldWalkDirectoryEntry(workspace, canonicalRoot, absolute, entry, nested)) continue;
-      stack.push(join(absolute, entry.name));
+    const entries: WalkEntry[] = [];
+    try {
+      for await (const entry of await opendir(absolute)) {
+        if (this.#closing) return;
+        if (this.#shouldWalkDirectoryEntry(workspace, canonicalRoot, absolute, entry, nested))
+          entries.push({ path: join(absolute, entry.name), key: walkOrderKey(entry) });
+      }
+    } finally {
+      pushInPathOrder(stack, entries);
     }
   }
 
@@ -2032,7 +2055,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const boundary = checkoutPathBoundary(this.#workspaceRoot);
     const secret = new Set(violations.flatMap(({ path, mode }) =>
       path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
-    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path));
+    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path), this.#steerShell);
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,

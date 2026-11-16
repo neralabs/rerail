@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { createRerailMcpHandler } from "../../src/api/mcp.js";
 import { operations } from "../../src/api/operations.js";
@@ -24,6 +24,11 @@ import {
 } from "../../src/engine/index.js";
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { installPack } from "../support/installed-packs.js";
+import { shortSpelling } from "../engine/support/short-path.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REPOSITORY_SCAN");
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
 installPack("complexity");
@@ -56,7 +61,9 @@ describe("MCP callers and the agent guard", () => {
   let nestedKey: string;
 
   beforeEach(async () => {
-    root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-mcp-caller-")));
+    // Spelt as Rerail records a checkout: on Windows the native realpath gives each name's long form, where a temp
+    // folder can be spelt with 8.3 short names (`C:\Users\RUNNER~1\...`).
+    root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-mcp-caller-")));
     parent = gitRepository(join(root, "app"), "git@github.com:acme/app.git");
     mkdirSync(join(parent, "web", "src"), { recursive: true });
     // A repository inside another (a submodule's checkout) is its own repository.
@@ -73,7 +80,7 @@ describe("MCP callers and the agent guard", () => {
 
   afterEach(async () => {
     stores.close();
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   async function call(name: string, args: Record<string, unknown>, cwd?: string | null): Promise<ToolAnswer> {
@@ -93,6 +100,37 @@ describe("MCP callers and the agent guard", () => {
   }
 
   const from = (path: string): string => encodeURIComponent(path);
+
+  /** The names of the MCP tools a coding agent in `cwd` is offered. */
+  async function toolNames(cwd: string): Promise<string[]> {
+    const response = await mcp(new Request("http://localhost:4737/mcp", {
+      method: "POST",
+      headers: { host: "localhost:4737", "content-type": "application/json", accept: "application/json, text/event-stream", [CALLER_CWD_HEADER]: cwd },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    }));
+    return (await response.json() as { result: { tools: Array<{ name: string }> } }).result.tools.map(tool => tool.name);
+  }
+
+  it("offers an operation of an experimental feature as a tool only while the daemon runs that feature", async () => {
+    const experimental = operations.filter(operation => operation.experiment !== undefined).map(operation => operation.id);
+    expect(experimental).toEqual(expect.arrayContaining(["audit_requests_create", "repository_audits_list", "merge_assist_get"]));
+    vi.stubEnv("RERAIL_EXPERIMENTAL_REPOSITORY_SCAN", "0");
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "0");
+
+    const offered = await toolNames(from(parent));
+    expect(offered).toContain("repository_context_get");
+    expect(offered.filter(name => experimental.includes(name))).toEqual([]);
+    expect((await call("repository_audits_list", {}, from(parent))).result).toMatch(/Tool repository_audits_list not found/u);
+
+    vi.stubEnv("RERAIL_EXPERIMENTAL", "1");
+    vi.stubEnv("RERAIL_EXPERIMENTAL_REPOSITORY_SCAN", "");
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "");
+    try {
+      expect(await toolNames(from(parent))).toEqual(expect.arrayContaining(experimental));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 
   it("refuses a caller header that is not an absolute, existing folder with invalid params", async () => {
     for (const header of ["relative/path", encodeURIComponent(`${parent}\0x`), encodeURIComponent(join(root, "gone")), "%E0%A4%A"]) {
@@ -128,6 +166,19 @@ describe("MCP callers and the agent guard", () => {
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const listed = await (await app.request("/api/repositories")).json() as { repositories: Array<{ repositoryKey: string }> };
     expect(listed.repositories.map(repository => repository.repositoryKey).sort()).toEqual([nestedKey, parentKey, "remote:github.com/acme/sibling"].sort());
+  });
+
+  it("resolves a caller folder spelt with 8.3 short names to the checkout and folder Rerail records", async context => {
+    const short = shortSpelling(join(parent, "web", "src"));
+    if (short === undefined) {
+      // Not Windows, or a volume with 8.3 names turned off: there is no short spelling to send.
+      context.skip();
+      return;
+    }
+    expect(await call("repository_context_get", {}, from(short))).toMatchObject({
+      status: 200,
+      result: { repository: { repositoryKey: parentKey }, checkout: { checkoutPath: parent, folder: "web/src" } },
+    });
   });
 
   it("resolves a caller folder to a nested checkout recorded after the folder was first seen", async () => {

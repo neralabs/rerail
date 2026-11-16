@@ -1,0 +1,1 @@
+The rerail command starts about three times faster and in less than half the memory: `rerail version` takes about 0.4 s instead of 1.5 s, and `rerail status` and `rerail session` about 0.6 s instead of 1.7 s, because the command now ships as one bundled file.

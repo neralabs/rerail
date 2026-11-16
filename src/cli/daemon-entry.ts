@@ -5,13 +5,16 @@
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
-import { runRerailDaemon } from "../daemon/daemon.js";
+import { serveRerailDaemon } from "../daemon/daemon.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { stampLines } from "./daemon-log.js";
 
-// The daemon's stdout and stderr are `daemon.log`: what Rerail logs there is written scrubbed of secrets.
-scrubWrites(process.stdout);
-scrubWrites(process.stderr);
+// The daemon's stdout and stderr are `daemon.log`: what Rerail logs there is scrubbed of secrets, then each line starts
+// with the time it was written. The wrapper set last runs first, so the time is added to text already scrubbed. The two
+// streams write to one file, so they share one count of where a line starts.
+stampLines([process.stdout, process.stderr]);
+for (const stream of [process.stdout, process.stderr]) scrubWrites(stream);
 
 // Whatever starts the daemon passes on its own node, which can be an older `node` from PATH once the one set-up
 // recorded is gone; the daemon refuses it with set-up's message, which its starter shows from the log.
@@ -21,8 +24,9 @@ if (!node.ok) {
   process.exit(1);
 }
 
+// A TLS key other accounts can read keeps the daemon from other machines only: it then serves this one (`serveRerailDaemon`).
 try {
-  await runRerailDaemon(process.argv.slice(2), {
+  await serveRerailDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
   });
 } catch (error) {

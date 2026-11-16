@@ -1,0 +1,1 @@
+Each turn costs the daemon a little less CPU: looking up which checkout holds a folder, which a walk does for every folder on every turn, reuses one prepared database query, and a walk of a 17,700-file checkout takes about a tenth less time on a Windows laptop.

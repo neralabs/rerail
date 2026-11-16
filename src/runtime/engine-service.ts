@@ -1,7 +1,9 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
-import { createServer, request, type Server } from "node:http";
-import { connect } from "node:net";
+import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { connect, type Socket } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
 import {
@@ -12,16 +14,53 @@ import {
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
+import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
+import { isNamedPipe } from "./engine-pipe.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
 export interface EngineService {
+  /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
+  readonly socketPath: string;
+  /**
+   * Stops taking connections, answers every request whose body has arrived (running each one's event, queued ones too),
+   * then closes the runtimes. A request that stalls before it has all arrived is cut off ({@link cutStalledRequests}).
+   */
   close(): Promise<void>;
   ingest(
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
   ): Promise<readonly AdapterDelivery[]>;
+  /** How many runtimes are open: one per checkout some live session uses. */
+  openRuntimes(): number;
+  /**
+   * Closes every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
+   * a day whatever it owes; the service also does this every minute.
+   */
+  closeIdleSessions(): Promise<void>;
 }
+
+/**
+ * How long a session may send no event before the engine service closes it as its end would. Its end is not certain to
+ * arrive: a coding agent that is killed sends none, and Claude Code gives its SessionEnd hook 1.5 s, which a hook on a
+ * busy Windows machine outlasts. A session whose end was lost kept its state (its own copy of its checkout's source
+ * walk, its conversation history, its evaluator) until the daemon stopped. A closed session's next event opens it again
+ * from its ledger. A session waiting on a tool call, or holding a steer for its agent, stays open for up to a day
+ * (`OWING_SESSION_IDLE_MS`): its ledger holds neither. A reopened session's code-rule boundaries wait for its rules to
+ * open again (`REOPENED_RULES_WAIT_MS` in runtime.ts), so its first edit is still steered at its own result.
+ */
+export const IDLE_SESSION_MS = 30 * 60_000;
+/**
+ * How long a session that still owes its agent something (a tool call's result, a steer, a held finding, a scan) may
+ * send no event before the engine service closes it anyway, and what it owed is lost. An agent killed while its session
+ * owed it something, as Claude Code closed at a permission prompt is, sends no end and no result: without a bound its
+ * session kept its source walk, its evaluator and its checkout's runtime until the daemon stopped. The bound is a day,
+ * not `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be left for hours while they
+ * are away, and closing its session then would drop the check of the call's edit or the steer it holds.
+ */
+const OWING_SESSION_IDLE_MS = 24 * 60 * 60_000;
+/** How often the engine service looks for idle sessions. */
+const IDLE_SWEEP_MS = 60_000;
 
 const ConfigurationSchema = z
   .object({
@@ -50,10 +89,6 @@ function parseEngineRequest(value: unknown): EngineRequest {
   return { event, configuration };
 }
 
-
-function isWindowsNamedPipe(endpoint: string): boolean {
-  return endpoint.startsWith("\\\\.\\pipe\\");
-}
 
 /** Why `directory` cannot hold the engine socket, and what the person can do about it. */
 interface DirectoryRefusal {
@@ -119,7 +154,7 @@ export async function chooseEngineSocketPath(
   // the BSDs. A longer path fails to bind, or on some systems binds a truncated name no client finds.
   const limit = platform === "linux" || platform === "android" ? 107 : 103;
   for (const candidate of candidates) {
-    if (isWindowsNamedPipe(candidate)) return candidate;
+    if (isNamedPipe(candidate)) return candidate;
     const bytes = Buffer.byteLength(candidate);
     if (bytes > limit) {
       refused.push(`${candidate} is ${bytes} bytes, longer than the ${limit} a socket path may be here. Pointing RERAIL_HOME (or TMPDIR) at a shorter folder shortens it.`);
@@ -143,14 +178,46 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
    * standalone service (tests, benchmarks) omits it.
    */
   accessToken?: string;
+  /**
+   * A pipe name to listen on instead when `socketPath`, a Windows named pipe, is held by a process that cannot prove it
+   * is this home's engine service (`engineHoldsCapability`). Any local user can create a pipe of any name, and
+   * `socketPath` is derived from the database path, which anyone can work out, so without one a pipe made first stops
+   * every daemon start. Clients find the pipe through the state file, never by computing it. A socket path the caller
+   * named outright gets none.
+   */
+  pipeFallback?: () => string;
+  /** Defaults to `IDLE_SESSION_MS`; tests pass their own. */
+  idleSessionMs?: number;
+  /** The clock idle sessions are measured by; defaults to `Date.now`. */
+  now?: () => number;
+  /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
+  idleRuntimeMs?: number;
 };
+
+/**
+ * How long a checkout's runtime stays open after its last session ends. A session that starts there again within it
+ * finds its rules compiled and its checkout walked: the five packs a TypeScript repository adds take 12 s of CPU to
+ * compile on a Windows laptop. After it the runtime closes, and the engine frees what its rules held.
+ */
+export const IDLE_RUNTIME_MS = 15 * 60_000;
 
 interface EngineRoutingState {
   runtimes: Map<string, RerailRuntime>;
   runtimeKeysBySession: Map<string, Set<string>>;
   runtimeKeysByConfiguration: Map<string, string>;
+  /** When each open session last sent an event, by its lane (`laneOf`). */
+  lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
+  /** The runtimes no session uses, each with the timer that closes it. */
+  idle: Map<string, NodeJS.Timeout>;
+  /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
+  idleRuntimeMs: number;
+}
+
+/** The lane one session's work in one runtime runs in, one at a time. */
+function laneOf(runtimeKey: string, sessionId: string): string {
+  return JSON.stringify([runtimeKey, sessionId]);
 }
 
 interface RuntimeRoute {
@@ -184,20 +251,25 @@ function resolveRuntimeRoute(
     }
     return { runtimeKey: configuredRuntimeKey ?? candidates!.values().next().value! };
   }
+  const serviceDatabasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
   const { accessToken: _accessToken, ...serviceDefaults } = options;
   const runtimeOptions: RerailRuntimeOptions = configuration === undefined
     ? {
         ...serviceDefaults,
         storageRoot: resolvePath(options.storageRoot),
-        databasePath: resolvePath(options.databasePath ?? defaultRerailDatabasePath()),
+        databasePath: serviceDatabasePath,
         workspaceRoot: resolvePath(workspaceRoot),
       }
     : {
         storageRoot: resolvePath(configuration.storageRoot),
         modelPath: resolvePath(configuration.modelPath),
-        databasePath: resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
+        databasePath: resolvePath(configuration.databasePath ?? serviceDatabasePath),
         workspaceRoot: resolvePath(workspaceRoot),
       };
+  // The service's Merge Assist is over its own database; a runtime over another makes its own.
+  if (configuration !== undefined && options.mergeAssist !== undefined && runtimeOptions.databasePath === serviceDatabasePath) {
+    runtimeOptions.mergeAssist = options.mergeAssist;
+  }
   const runtimeKey = JSON.stringify([
     runtimeOptions.storageRoot,
     runtimeOptions.modelPath,
@@ -216,32 +288,227 @@ async function routeEngineEvent(
 ): Promise<readonly AdapterDelivery[]> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
-  const execution = state.lanes.run(JSON.stringify([runtimeKey, sessionId]), () => {
+  const lane = laneOf(runtimeKey, sessionId);
+  clearTimeout(state.idle.get(runtimeKey));
+  state.idle.delete(runtimeKey);
+  const execution = state.lanes.run(lane, () => {
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
       runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true });
       state.runtimes.set(runtimeKey, runtime);
     }
-    if (event.kind === "session-start") {
+    // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
+    if (event.kind !== "session-end") {
       const keys = state.runtimeKeysBySession.get(sessionId) ?? new Set<string>();
       keys.add(runtimeKey);
       state.runtimeKeysBySession.set(sessionId, keys);
+      state.lastEventAt.set(lane, (options.now ?? Date.now)());
     }
     return runtime.ingest(event);
   });
-  state.pending.add(execution);
-  void execution.then(
-    () => state.pending.delete(execution),
-    () => state.pending.delete(execution),
-  );
+  track(state, execution);
   const deliveries = await execution;
   if (event.kind === "session-end") {
-    const keys = state.runtimeKeysBySession.get(sessionId);
-    keys?.delete(runtimeKey);
-    if (keys?.size === 0) state.runtimeKeysBySession.delete(sessionId);
+    state.lastEventAt.delete(lane);
+    releaseSessionRuntime(state, sessionId, runtimeKey);
   }
   return deliveries;
+}
+
+/** Keeps `work` among what `close` waits for until it settles. */
+function track(state: EngineRoutingState, work: Promise<unknown>): void {
+  const settled = work.then(() => [] as const, () => [] as const);
+  state.pending.add(settled);
+  void settled.then(() => state.pending.delete(settled));
+}
+
+/** `sessionId` no longer uses the runtime at `runtimeKey`, which closes once no session has used it a while. */
+function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
+  const keys = state.runtimeKeysBySession.get(sessionId);
+  keys?.delete(runtimeKey);
+  if (keys?.size === 0) state.runtimeKeysBySession.delete(sessionId);
+  retireUnusedRuntime(state, runtimeKey);
+}
+
+/**
+ * Closes, as its end would, each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`), and then retires its
+ * runtime as an end does. The check runs again in the session's lane, so an event that came in meanwhile keeps the
+ * session open. A session that still owes its agent a tool call's check, a steer or a scan stays open
+ * (`RerailRuntime.closeIdleSession`) until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one whose close
+ * fails, which is reported; the next sweep looks again.
+ */
+async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now: () => number): Promise<void> {
+  /** How long the session at `lane` has sent nothing; minus infinity once it has closed, so it is never idle. */
+  const quietFor = (lane: string): number => {
+    const at = state.lastEventAt.get(lane);
+    return at === undefined ? Number.NEGATIVE_INFINITY : now() - at;
+  };
+  await Promise.all([...state.lastEventAt.keys()].filter(lane => quietFor(lane) >= idleMs).map(async (lane) => {
+    const [runtimeKey, sessionId] = JSON.parse(lane) as [string, string];
+    const closing = state.lanes.run(lane, async () => {
+      const quiet = quietFor(lane);
+      if (quiet < idleMs) return false;
+      const evenIfOwing = quiet >= OWING_SESSION_IDLE_MS;
+      const closed = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing }) ?? true;
+      if (closed) state.lastEventAt.delete(lane);
+      return closed;
+    });
+    track(state, closing);
+    try {
+      if (await closing) releaseSessionRuntime(state, sessionId, runtimeKey);
+    } catch (error) {
+      process.stderr.write(`rerail: closing idle session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }));
+}
+
+function runtimeInUse(state: EngineRoutingState, runtimeKey: string): boolean {
+  for (const keys of state.runtimeKeysBySession.values()) if (keys.has(runtimeKey)) return true;
+  return false;
+}
+
+/**
+ * Disposes the runtime at `runtimeKey` once no session has used it for `state.idleRuntimeMs`. A runtime holds its
+ * checkout's whole source walk (one observation for every file of the working tree, ignored ones included, about
+ * 100,000 in a large repository) and its compiled rules, so a daemon that kept the runtime of every checkout and
+ * worktree it ever served grew until its heap ran out. The next event for that checkout makes a new runtime, as the
+ * first one did.
+ */
+function retireUnusedRuntime(state: EngineRoutingState, runtimeKey: string): void {
+  if (runtimeInUse(state, runtimeKey) || !state.runtimes.has(runtimeKey) || state.idle.has(runtimeKey)) return;
+  if (state.idleRuntimeMs <= 0) {
+    disposeRuntime(state, runtimeKey);
+    return;
+  }
+  const timer = setTimeout(() => {
+    state.idle.delete(runtimeKey);
+    if (!runtimeInUse(state, runtimeKey)) disposeRuntime(state, runtimeKey);
+  }, state.idleRuntimeMs);
+  timer.unref();
+  state.idle.set(runtimeKey, timer);
+}
+
+/**
+ * A full collection, exposing `gc` for the call. Once a runtime closed it lets the engine free the programs of the rules
+ * it compiled. They are native memory V8 does not count (512 MB for the Node pack's builtins rule alone), and a daemon
+ * with no session open allocates too little to start a collection: the closed runtime's rules stayed in memory until the
+ * next session came. The heap watch uses it to tell garbage from a live heap.
+ */
+export function collectGarbage(): void {
+  setFlagsFromString("--expose-gc");
+  const gc: unknown = runInNewContext("gc");
+  if (typeof gc === "function") gc();
+}
+
+function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
+  const runtime = state.runtimes.get(runtimeKey);
+  if (runtime === undefined) return;
+  state.runtimes.delete(runtimeKey);
+  for (const [configuration, key] of state.runtimeKeysByConfiguration) if (key === runtimeKey) state.runtimeKeysByConfiguration.delete(configuration);
+  const disposal = runtime.dispose().then(() => {
+    collectGarbage();
+    return [] as const;
+  }, (error: unknown) => {
+    process.stderr.write(`rerail: closing an idle runtime failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    return [] as const;
+  });
+  state.pending.add(disposal);
+  void disposal.then(() => state.pending.delete(disposal));
+}
+
+/**
+ * How far apart the close's looks for stalled requests are: a request that has not all arrived is cut off once it has
+ * sent nothing from one look to the next, so after one to two of these with nothing sent.
+ */
+const STALLED_REQUEST_MS = 1_000;
+
+/**
+ * While the service closes, cuts off each connection still sending a request ({@link awaitsRequest}) once two looks
+ * `STALLED_REQUEST_MS` apart find it has sent nothing between them. A hook writes its whole request at once,
+ * so one still arriving has stalled, and waiting for it would hold the close with no limit: `server.close()` stops the
+ * check that enforces the server's request and headers timeouts. A connection that owes an answer to a request whose
+ * body has arrived is never cut, whatever came in after that request: its event runs and its hook gets the whole
+ * answer; a next request that stalls is cut after that answer. Idle connections are left to `server.close()`, which
+ * ends them once as the close begins: Node counts a connection whose answer is ended but still being written as idle,
+ * so ending idle ones at each look would cut an answer larger than the socket's buffer. Each look runs after the event
+ * loop has read what arrived meanwhile (`setImmediate`), so a loop kept busy past the wait cuts off nothing that came
+ * in time. Returns the function that stops the looks.
+ */
+function cutStalledRequests(connections: ReadonlyMap<Socket, ConnectionState>): () => void {
+  let seen = new Map<Socket, number>();
+  const look = (): void => {
+    const now = new Map<Socket, number>();
+    for (const [socket, state] of connections) {
+      if (!awaitsRequest(socket, state)) continue;
+      if (seen.get(socket) === socket.bytesRead) socket.destroy();
+      else now.set(socket, socket.bytesRead);
+    }
+    seen = now;
+  };
+  look();
+  const looks = setInterval(() => setImmediate(look), STALLED_REQUEST_MS);
+  return () => clearInterval(looks);
+}
+
+/**
+ * What the close knows of an open connection: `undefined` until a request's headers have arrived; then the oldest
+ * request whose answer is not all written, while there is one (a client can send its next request before it has the
+ * answer to the one ahead); then the last request, or, once that request had all arrived when its answer was written,
+ * how many bytes the connection had read by then.
+ */
+export type ConnectionState = IncomingMessage | number | undefined;
+
+/**
+ * Whether `socket` is still sending a request: it has sent none yet, or one whose body has not all arrived, or, after
+ * the answer to a request that had all arrived, on a connection its client keeps open, bytes of a next request whose
+ * headers have not all arrived. So a next request that stalls in its headers is cut off as a first one is. A kept
+ * connection that sends nothing after such an answer is not: Node's keep-alive timeout ends it about 6 s after that
+ * answer, as when the close made no looks, and a whole request its client sends there meanwhile is answered. So such a
+ * connection answered more than 4 s into the close holds it past the 10 s `rerail daemon stop` gives before its kill.
+ * Part of a next request's headers that came before the answer was written (a client that sends its next request
+ * without waiting for the answer) counts with the answered request, so that connection is left to the same timeout.
+ * A request answered on its headers alone (a wrong path, a refused access token, the capability proof) keeps its
+ * entry, since the rest of its body is not a next request: it is cut while that body stalls, and once the body has
+ * come it is left to the same timeout. A connection that owes an answer to a request whose body has arrived counts as
+ * not sending one, whatever came in after that request: its entry is that request until the answer is written.
+ */
+function awaitsRequest(socket: Socket, state: ConnectionState): boolean {
+  if (typeof state === "number") return socket.bytesRead > state;
+  return state?.complete !== true;
+}
+
+/**
+ * Each open connection of `server`, with its `ConnectionState`, which `cutStalledRequests` reads. A connection leaves it
+ * when it closes, so a daemon does not keep every hook's socket for its life.
+ */
+export function trackConnections(server: Server): ReadonlyMap<Socket, ConnectionState> {
+  const connections = new Map<Socket, ConnectionState>();
+  // Each connection's requests whose answers are not all written yet, oldest first: Node writes a connection's answers
+  // in the order its requests came.
+  const unanswered = new WeakMap<Socket, IncomingMessage[]>();
+  server.on("connection", (socket: Socket) => {
+    connections.set(socket, undefined);
+    socket.once("close", () => connections.delete(socket));
+  });
+  server.on("request", (incoming: IncomingMessage, response: ServerResponse) => {
+    const { socket } = incoming;
+    const waiting = unanswered.get(socket) ?? [];
+    unanswered.set(socket, waiting);
+    waiting.push(incoming);
+    // A request that comes in while an answer is still owed on its connection waits for its turn.
+    if (waiting.length === 1) connections.set(socket, incoming);
+    response.once("finish", () => {
+      if (!connections.has(socket)) return;
+      waiting.shift();
+      const next = waiting[0];
+      if (next !== undefined) connections.set(socket, next);
+      // Left as it is when this request's body has not all arrived (an answer on its headers alone), whose rest would
+      // read as a next request.
+      else if (incoming.complete) connections.set(socket, socket.bytesRead);
+    });
+  });
+  return connections;
 }
 
 function listen(server: Server, socketPath: string): Promise<void> {
@@ -270,15 +537,71 @@ async function socketAnswers(socketPath: string): Promise<boolean> {
 }
 
 /**
- * Listens on `socketPath`. A daemon killed without cleanup (`kill -9`, a crash) leaves its Unix socket file behind, and
- * binding over it fails with EADDRINUSE: when no process answers on that socket, the file is removed and the bind tried
- * once more; when one does, the error says a live daemon owns it. Windows named pipes leave no file to clear.
+ * Whether this home's engine service answers on the pipe `socketPath`: it proves it holds `accessToken` by answering a
+ * challenge (`engineHoldsCapability`), which never shows the holder the capability. Any local user can create the pipe
+ * name first, and a probe that presented the capability would hand it to them. Without a capability to check, any
+ * holder counts as this home's.
  */
-async function listenOnSocket(server: Server, socketPath: string): Promise<void> {
+async function ownEngineAnswers(socketPath: string, accessToken: string | undefined): Promise<boolean> {
+  return accessToken === undefined || await engineHoldsCapability(socketPath, accessToken);
+}
+
+/** Answers a challenge sent to {@link ENGINE_PROOF_PATH} with the proof that this engine holds `accessToken`. */
+function answerEngineChallenge(challenge: unknown, accessToken: string, response: ServerResponse): void {
+  if (!isEngineChallenge(challenge)) {
+    response.writeHead(400).end(JSON.stringify({ error: "engine-challenge-required" }));
+    return;
+  }
+  response.end(JSON.stringify({ proof: engineProof(accessToken, challenge) }));
+}
+
+/** What listening beside a held pipe needs; tests pass their own. */
+export interface HeldPipeListening {
+  listen: (socketPath: string) => Promise<void>;
+  /** Whether this home's engine service answers on the held pipe. */
+  ownEngineAnswers: (socketPath: string) => Promise<boolean>;
+  fallback: (() => string) | undefined;
+}
+
+/**
+ * Where to listen when `pipe` is already held (`cause`, EACCES or EADDRINUSE): on the fallback pipe when the holder is not this
+ * home's engine service, which a second daemon must never start beside. Returns the pipe it listens on.
+ */
+export async function listenBesideHeldPipe(pipe: string, cause: unknown, listening: HeldPipeListening): Promise<string> {
+  if (listening.fallback === undefined) throw cause;
+  if (await listening.ownEngineAnswers(pipe)) {
+    throw new Error(`Rerail's engine pipe ${pipe} is in use by a running daemon; stop it with \`rerail daemon stop\` before starting another.`, { cause });
+  }
+  const fallback = listening.fallback();
+  await listening.listen(fallback);
+  return fallback;
+}
+
+/**
+ * Listens on `socketPath`, and returns where it listens. A daemon killed without cleanup (`kill -9`, a crash) leaves
+ * its Unix socket file behind, and binding over it fails with EADDRINUSE: when no process answers on that socket, the
+ * file is removed and the bind tried once more; when one does, the error says a live daemon owns it. Windows named
+ * pipes leave no file to clear; a held one moves to `pipeFallback` (`listenBesideHeldPipe`).
+ */
+async function listenOnSocket(
+  server: Server,
+  socketPath: string,
+  options: Pick<EngineServiceOptions, "accessToken" | "pipeFallback">,
+): Promise<string> {
   try {
     await listen(server, socketPath);
+    return socketPath;
   } catch (error) {
-    if (isWindowsNamedPipe(socketPath) || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    // libuv creates a pipe's first instance alone, and reports a name another process holds as EACCES or EADDRINUSE.
+    if (isNamedPipe(socketPath) && (code === "EACCES" || code === "EADDRINUSE")) {
+      return await listenBesideHeldPipe(socketPath, error, {
+        listen: async path => await listen(server, path),
+        ownEngineAnswers: async path => await ownEngineAnswers(path, options.accessToken),
+        fallback: options.pipeFallback,
+      });
+    }
+    if (code !== "EADDRINUSE") throw error;
     // Only a socket is a dead daemon's to clear: anything else at the path is left alone, whatever a probe would say.
     if (!(await lstat(socketPath)).isSocket()) {
       throw new Error(`Rerail's engine socket path ${socketPath} holds something that is not a socket; move it aside before starting the daemon.`, { cause: error });
@@ -290,20 +613,30 @@ async function listenOnSocket(server: Server, socketPath: string): Promise<void>
       if (unlinkError.code !== "ENOENT") throw unlinkError;
     });
     await listen(server, socketPath);
+    return socketPath;
   }
 }
 
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
-  if (!isWindowsNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
+  if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const routing: EngineRoutingState = {
     runtimes: new Map(),
     runtimeKeysBySession: new Map(),
     runtimeKeysByConfiguration: new Map(),
+    lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
+    idle: new Map(),
+    idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
   };
+  const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
+    if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
+      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
+      incoming.resume();
+      return;
+    }
     if (incoming.method !== "POST" || incoming.url !== "/events") {
       response.writeHead(404).end();
       return;
@@ -330,20 +663,42 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
   });
+  let socketPath = options.socketPath;
+  const connections = trackConnections(server);
   const engineService: EngineService = {
+    get socketPath() {
+      return socketPath;
+    },
     ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
+    openRuntimes: () => routing.runtimes.size,
+    closeIdleSessions: sweepIdleSessions,
     async close() {
+      clearInterval(idleSweep);
+      // Every hook whose request has arrived gets its answer, with the block or steer in it, and its event is recorded,
+      // the ones waiting behind a running event too. The close ends once the last of those connections has: its server
+      // takes no new ones, and a request that stalls is cut off.
       const closed = Promise.withResolvers<void>();
       server.close((error) => (error ? closed.reject(error) : closed.resolve()));
-      await closed.promise;
-      await Promise.allSettled(routing.pending);
+      const stopLooking = cutStalledRequests(connections);
+      try {
+        await closed.promise;
+        for (const timer of routing.idle.values()) clearTimeout(timer);
+        routing.idle.clear();
+        await Promise.allSettled(routing.pending);
+      } finally {
+        stopLooking();
+      }
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     },
   };
   server.requestTimeout = 30_000;
+  // Never keeps the process alive; `closeIdleSessions` reports its own failures.
+  const idleSweep = setInterval(() => void sweepIdleSessions(), IDLE_SWEEP_MS);
+  idleSweep.unref();
   try {
-    await listenOnSocket(server, options.socketPath);
+    socketPath = await listenOnSocket(server, options.socketPath, options);
   } catch (error) {
+    clearInterval(idleSweep);
     server.close();
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     throw error;

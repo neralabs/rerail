@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,11 +11,12 @@ import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-document
 import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { exportRulesDump, importRulesDump, type RulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
 import { testBundle } from "../../support/rule-configuration-builders.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDatabase(): Promise<string> {
@@ -150,6 +151,29 @@ describe("rules dump", () => {
     try {
       expect(importRulesDump(target, testBundle(), dump)).toEqual({ library: 0, repositories: 1, onBlock: [], approved: [], waiting: [] });
       expect(exportRulesDump(target).repositories[0]?.settings).toEqual([{ folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null }]);
+    } finally {
+      target.$client.close();
+    }
+  });
+
+  it("keeps a setting the lint config gave as the lint config's through export and import, and a person's as theirs", async () => {
+    const source = openRerailDatabase(await temporaryDatabase());
+    let dump: unknown;
+    try {
+      source.$client.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0)");
+      source.$client.exec(`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", origin, updated_at) VALUES
+        ('repository', 'repo', '', 'rule', 'calibrated', 0, 'lint-config', 0), ('repository', 'repo', '', 'rule', 'mine', 1, NULL, 0)`);
+      dump = JSON.parse(JSON.stringify(exportRulesDump(source)));
+    } finally {
+      source.$client.close();
+    }
+    const target = openRerailDatabase(await temporaryDatabase());
+    try {
+      importRulesDump(target, testBundle(), dump);
+      expect(target.$client.prepare("SELECT target_id, origin FROM rule_settings ORDER BY target_id").all()).toEqual([
+        { target_id: "calibrated", origin: "lint-config" },
+        { target_id: "mine", origin: null },
+      ]);
     } finally {
       target.$client.close();
     }
