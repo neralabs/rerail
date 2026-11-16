@@ -77,7 +77,8 @@ forks merge settle each tie. The parser reads each tie locally, by looking ahead
 speculation, and the oracle checks each one:
 
 - **Every ambiguous block item reads as an expression** (C reads the first as a declaration).
-  Example: `void (*f)() = g;` in a block is a call.
+  Example: `void (*f)() = g;` in a block is a call. One shape keeps C's rule: `T [a](b);` declares
+  only as a block's first item.
 - **Most vexing parse.** `T x(a, b);` declares a function when every item reads as a parameter.
   - A literal's word (`nullptr`, `this`, `true`, `sizeof`) as the first item means an initializer.
     In later items, or after a pointer's or a reference's declarator (where the parse forks at
@@ -96,6 +97,25 @@ speculation, and the oracle checks each one:
   - `(a = b, c)` is an error, so the parser refuses it.
 - **Template arguments** prefer a type. `true`, `false`, `nullptr` and `this` are expressions. A
   `>>` closing two argument lists splits in two. `a < b > (c) d` is a pair of comparisons.
+- **Nested template arguments past tree-sitter's version cap are refused.** Each template argument
+  forks tree-sitter-cpp's parse: a type (dynamic precedence 3) or an expression (1). Its GLR keeps
+  at most 6 stack versions. Where nested lists fork past that, it drops versions by their order,
+  not their precedence, and arguments read as expressions. Small files run through tree-sitter
+  show it is not a property of the local syntax:
+
+  | text | arguments read as expressions |
+  |---|---|
+  | `std::pair<A, B<C>> f(int);` | none |
+  | `[[nodiscard]] std::pair<A, B<C>> f(int);` | `B<C>`, `C` |
+  | `void f() { auto y = new X<A, M<N>>(x); }` | none |
+  | `void f() { g(new X<A, M<N>>(x)); }` | `A` |
+  | `x = static_cast<A<B<C>>*>(p);` | none |
+  | `x = *static_cast<A<B<C<double>>>*>(p);` | `B<C<double>>` |
+
+  The parser refuses a file with a template argument list inside a list's later argument, or
+  lists four deep. The refusal is a flag no speculation undoes, so a failed template reading
+  cannot fall back to comparisons. Every flip observed falls under the rule; it also refuses files
+  tree-sitter happens to read with types (58 of the corpus's 63), which cost only speed.
 - **A directive's line end is `token.immediate`.** After a blank, the line end cannot be read
   there, so the next line's text is the value (`#define A \nint x;` defines `A` as `int x;`).
   A `\r` just before the `\n` belongs to the line end. In C++, `0x` with no digit is `0` with
@@ -116,6 +136,10 @@ speculation, and the oracle checks each one:
   - `p->A::~A()`.
   - `f(float, n)`.
   - `[&] -> T {}`.
+  - `void f(T x = {})`: a parameter's default is an expression, so tree-sitter-cpp reads the
+    braces as a compound literal with a MISSING type. (A member's `= {}` is valid.)
+  - `delete [] (T*)p`, and `operator delete[](p)` as an expression: the `[]` reads as a lambda's
+    head.
 
 ### In the engine
 
@@ -132,26 +156,14 @@ corpus (`~/orca/rerail-shared/lean-corpus/{c,cpp}`, files of the stored reposito
 |---|---|---|
 | C, whole files | 829 / 0 / 0 | 0 / 0 / 744 |
 | C, cut (2 places) and edited (2 lines) | 1,161 / 0 / 10 | 0 / 0 / 3,277 |
-| C++, whole files | 994 / 6 / 0 | 0 / 6 / 554 |
-| C++, cut (2 places) and edited (2 lines) | 1,343 / 7 / 34 | 0 / 6 / 3,608 |
+| C++, whole files | 937 / 0 / 63 | 0 / 0 / 560 |
+| C++, cut (2 places) and edited (2 lines) | 1,271 / 0 / 113 | 0 / 0 / 3,614 |
 
-Every clean C file is read, and none differs. Of the 1,000 clean C++ files, 994 are identical, and
-none is refused.
-
-The 6 that differ are GLR ties that this decision does not settle from local syntax:
-
-- Template arguments deep inside nested types, read as expressions (4 files).
-- `fillers[f](input, n);`, which reads as an expression in one block. The same shape reads as a
-  declaration in another.
-
-The cut and edited sets add 1 more instance of these ties; the rest of their sets' differences are
-the files above. Their refused clean texts are fragments mid-typing that tree-sitter reads by
-taking a keyword as a name where only a name fits (`type break;` declares `break`), or a function
-without parameters; those files go to tree-sitter.
-
-The 6 error texts that differ are also tree-sitter-cpp ties: consecutive top-level macro calls,
-and `= {}` defaults read as compound literals. Their tapes do not match tree-sitter's recovery,
-so their files must go to tree-sitter. That stays open (below).
+No tape differs from tree-sitter's, and every text tree-sitter reads with an error is refused.
+Every clean C file is read. Of the 1,000 clean C++ files, 937 are read and 63 refused, all by the
+version-cap rule above (5 of them flip in tree-sitter). The refused cut and edited texts are those
+files' cuts and fragments mid-typing that tree-sitter reads by taking a keyword as a name where
+only a name fits (`type break;` declares `break`); those files go to tree-sitter.
 
 **Engine tests:**
 - `c_tapes_from_the_lean_parser_are_tree_sitters` and
@@ -162,8 +174,8 @@ so their files must go to tree-sitter. That stays open (below).
 
 ## Open
 
-- **The 6 C++ error texts that are read**: refuse them, or match tree-sitter's ties.
-- **The 6 C++ GLR ties** above.
+- **A narrower version-cap rule.** Reading those 58 files too needs a model of tree-sitter-cpp's
+  stack versions (forks, merges, the cap of 6, the order versions are dropped in).
 - **Cost on a quiet host** (`scripts/dev/quiet-run`), as 0196 reports it: `cpp_parse_costs` (ignored, `RERAIL_PY_FILES`, `RERAIL_C_DIALECT`) measures it.
 - **C's and C++'s capabilities** are `not-supported-yet`: rules cannot yet ask C- or C++-specific
   questions.
