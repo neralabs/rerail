@@ -538,3 +538,46 @@ fn exports_are_cut_on_a_version_as_on_the_tree() {
     }
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
 }
+
+/// An export joining two parts at a key its head projects away is handed on as its parts on a version as the tree
+/// hands it on: the same lines, the same program (the parts, their keys, the readers' copies and fresh names).
+#[test]
+fn exports_are_factorized_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl fl_outer(f: node, x: symbol)
+fl_outer(f, x) :- encl(f, p), bound(p, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), fl_outer(f, x).
+.decl outer2(f: node)
+.output outer2
+outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
+"#;
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = FactorizeExports::new(true);
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = factorize_exports(&mut tree);
+    assert_eq!(want.len(), 1, "{want:?}");
+    assert!(want[0].starts_with("fl_outer: handed on as parts"), "{want:?}");
+    assert_eq!(pass.lines, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+    assert!(!out.rules().any(|r| out.rel_name(r.head().rel()) == "fl_outer"), "the product is gone:\n{}", out.show());
+    assert!(out.show().contains("fz10_fl_outer(") && out.show().contains("fzk13_fl_outer("), "{}", out.show());
+}

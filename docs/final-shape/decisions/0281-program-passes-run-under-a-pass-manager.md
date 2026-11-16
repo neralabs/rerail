@@ -430,6 +430,15 @@ step 3 replaces what is under the writer.
      `--features test-hooks` panicked loading the test-only dialects' ast-grep grammars, which only the
      dev-dependencies enabled (`crates/lang`'s `test-hooks` now enables them). Test:
      `exports_are_cut_on_a_version_as_on_the_tree`.
+   - Done (b), fifth slice (2026-11-16): `factorize_exports` (decision 0099) is a manager pass
+     (`file_local::FactorizeExports`, `passes/factorize.rs`), the image made before it, off where the run's options
+     turn the factorized store off. `relation_keys`, `determined` and `functional` are read from the version by
+     name, and the parts from `keeps::factors_of`. The names follow the tree's counters: a part is
+     `fz<declarations>_` and a reader's open variable is `fz<copy>_`, and the readers' copies are made on the
+     tree's stack, so each copy's names are the tree's. A relation one of whose rules has an untyped part leaves
+     the rules and declarations its earlier rules made, as the tree does. Each round's program is a version split
+     through `FileLocal`. A debug build checks the lines and the digest against the tree's pass. On the 317 B-now
+     rules it factorizes 66 exports, as the tree does. Test: `exports_are_factorized_on_a_version_as_on_the_tree`.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

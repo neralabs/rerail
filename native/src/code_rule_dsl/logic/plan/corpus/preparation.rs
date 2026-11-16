@@ -64,6 +64,8 @@ impl ProgramPass for RuleOrder {
 /// rules dropped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
+    /// What the factorized store handed on as parts (`file_local::FactorizeExports`): a line per relation.
+    pub factorized: Vec<String>,
     /// What the export demand cut (`file_local::DemandExports`): a line per export, or why it cut none.
     pub demand: Vec<String>,
     /// The relations located (`file_local::Locate`), or those left.
@@ -78,8 +80,11 @@ pub struct Found {
 /// of one library rule made two: after the rows are located, they are merged again, and so are the relations over
 /// them, before the program splits. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
 /// runs them, or the merge alone with `RERAIL_SAME=off`.
-pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
+pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Found), String> {
     let mut p = Pipeline::new("preparation", version);
+    // An export that is a join of parts meeting at a key it projects away is handed on as its parts (decision 0099).
+    let mut factorized = crate::code_rule_dsl::typing::file_local::FactorizeExports::new(factorize);
+    p.program(&mut factorized);
     // Each export cut to what its cross-file readers can use: their demand, made file-local.
     let mut demand = crate::code_rule_dsl::typing::file_local::DemandExports::default();
     p.program(&mut demand);
@@ -98,7 +103,7 @@ pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
         p.program(&mut merge);
         p.program(&mut repeats);
     }
-    let found = Found { demand: demand.lines, located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
+    let found = Found { factorized: factorized.lines, demand: demand.lines, located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
     p.program(&mut InputsRead);
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));
@@ -129,7 +134,7 @@ mod tests {
         )
         .unwrap();
         let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
-        let (out, _) = run(v.clone()).unwrap();
+        let (out, _) = run(v.clone(), true).unwrap();
         assert!(out.base_bytes().is_some(), "a base");
         let inputs: Vec<&str> = out.inputs().map(|a| out.text(a)).collect();
         assert_eq!(inputs, ["a", "c"], "b is read by no rule; c is an output");

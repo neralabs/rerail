@@ -8,6 +8,9 @@ use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, Progr
 use crate::code_rule_dsl::logic::program_image::{Lit as L, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+mod factorize;
+pub use factorize::FactorizeExports;
+
 /// A term of `v`'s rule as a builder's term: a variable by the atom naming it (a derivation's ids are its input's).
 pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'a> {
     match t {

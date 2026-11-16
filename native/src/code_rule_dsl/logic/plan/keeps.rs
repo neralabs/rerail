@@ -789,7 +789,7 @@ pub(in crate::code_rule_dsl) fn factors(rule: &Rule) -> Option<(String, Vec<Vec<
 }
 
 /// `factors` over a rule of a version: the key's name, and each part's literals by place.
-fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
+pub(in crate::code_rule_dsl) fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
     use super::super::program_image::Lit;
     let lits: Vec<_> = r.body().collect();
     if !lits.iter().all(|l| matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. })) {
