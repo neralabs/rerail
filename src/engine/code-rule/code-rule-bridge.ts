@@ -373,7 +373,7 @@ function editPreimage(source: Source, captured: Preimage | undefined, reported: 
  * holds what the tool wrote, unless the file was put back before the result. Where the result gives no text that fits
  * the file (`reportedText`), the capture is kept where it is the file before the tool (`placesBeforeWrite`): the file
  * was put back, and the edit changed nothing. Otherwise what the file held is unknown: the edit is read as one whose
- * earlier text could not be read, so it is checked over its whole file and says why, rather than read as no change.
+ * earlier text could not be read, so it is checked over its whole file rather than read as no change.
  */
 function unchangedSinceWrite(source: Source, captured: Preimage, reported: ReportedPreimage): Preimage {
   const preimage = reportedText(reported, source.text);
