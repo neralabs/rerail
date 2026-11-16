@@ -1,14 +1,16 @@
-import { randomBytes, X509Certificate } from "node:crypto";
-import { createReadStream, existsSync, realpathSync } from "node:fs";
-import { readFile, stat, rm } from "node:fs/promises";
+import { createPrivateKey, randomBytes, X509Certificate } from "node:crypto";
+import { constants, createReadStream, existsSync, realpathSync } from "node:fs";
+import { open, readFile, stat, rm, type FileHandle } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
+import { createSecureContext } from "node:tls";
 import type { AddressInfo, Server as NetServer } from "node:net";
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir, userInfo } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
+import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
@@ -107,6 +109,12 @@ export interface RerailDaemonOptions {
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
    */
   tls?: DaemonTlsMaterial;
+  /**
+   * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
+   * the key (`serveRerailDaemon`). Its arguments asked for https, and may have asked to be reachable from other
+   * machines. The state file records it, for `rerail status` to say.
+   */
+  remoteRefused?: string;
   /**
    * Called when a Rerail process asks the daemon to stop (`POST /native/shutdown`, which `rerail daemon stop` sends on
    * Windows, where no signal reaches a handler). Omitted, the daemon serves no such request.
@@ -571,6 +579,7 @@ export class RerailDaemon {
       nativeToken: this.#nativeToken,
       accessToken: this.#accessToken,
       ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
+      ...(this.#options.remoteRefused === undefined ? {} : { remoteRefused: this.#options.remoteRefused }),
     };
   }
 
@@ -771,11 +780,25 @@ function privateKeyHint(platform: NodeJS.Platform): string {
 }
 
 /**
+ * A TLS private key file this account reads, which parses as a key, that the daemon may not serve with because other
+ * accounts can read it too. Its message names the key and the command that makes it its owner's alone.
+ */
+export class TlsKeyExposedError extends Error {
+  override readonly name = "TlsKeyExposedError";
+}
+
+/**
  * The PEM files `tls` names, read once at start. The private key must be its owner's alone (`openToOthers`): a key
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
- * `C:\certs` say, inherits an ACL that lets every local user read it. `access` is for tests.
+ * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
+ * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
+ * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). Any other path that is no key
+ * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one another
+ * program holds with a lease or an oplock, one larger than any key, one that holds no key such as the certificate, one
+ * whose readers cannot be read), and a certificate that would not serve with the key, is a mistake in the command and
+ * stops the start within seconds. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -788,10 +811,210 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
   if (others !== undefined) {
     // A function, so a `$` in the key's path is never read as a replacement pattern.
     const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
-    throw new Error(`${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
+    throw await refusedKey(tls, `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };
+}
+
+/**
+ * What a start whose key others can read throws: `TlsKeyExposedError`, on which the daemon serves this computer alone,
+ * when the key is a private key this account reads (`readPrivateKey`) and the certificate would serve with it
+ * (`certificateServes`); else `refusal`, main's message for this command line. On Windows a Node child opens the two
+ * files first (`openedInChild`). When its open was still waiting at its bound, the start refuses; when it never got to
+ * open them, the refusal says why on a line of its own, since the person would otherwise expect the daemon on loopback.
+ */
+async function refusedKey(tls: DaemonTlsFiles, refusal: string): Promise<Error> {
+  const child = process.platform === "win32" ? await openedInChild([tls.keyFile, tls.certFile]) : OPENED;
+  if (child.kind !== "opened") return new Error(child.kind === "held" ? refusal : `${refusal}\n${child.why}`);
+  const key = await readPrivateKey(tls.keyFile);
+  return key !== undefined && (await certificateServes(tls.certFile, key)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
+}
+
+/**
+ * What `path` holds, read once (`readWithoutWaiting`), when it is a regular file this account reads that parses as a
+ * private key; undefined otherwise. A folder, a FIFO, a file another program holds with a lease, one larger than any
+ * key, a certificate or any other file is no key.
+ */
+async function readPrivateKey(path: string): Promise<Buffer | undefined> {
+  try {
+    const key = await readWithoutWaiting(path);
+    if (key !== undefined) createPrivateKey(key);
+    return key;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether the certificate at `certFile` would serve https with `key`, checked as an https start checks the two (the read
+ * in `loadDaemonTls`, then `RerailDaemon.start`'s parse and the server's pairing), for a start whose key others can read,
+ * which serves with neither. A certificate that cannot be read, holds no certificate or is not `key`'s throws what that
+ * start throws for it beside a private key, naming a folder, whose read error names no file. A file
+ * `readWithoutWaiting` does not read (a FIFO, one another program holds with a lease, one larger than any certificate)
+ * serves nothing.
+ */
+async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
+  const cert = (await readWithoutWaiting(certFile))?.toString("utf8");
+  if (cert === undefined) return false;
+  certificateFingerprint(cert);
+  createSecureContext({ cert, key });
+  return true;
+}
+
+/**
+ * The most a refused start reads of its key or certificate. A PEM private key, or a certificate with its chain, takes a
+ * few kilobytes, so a larger file is no key or certificate a person serves with: it gets the key's refusal, unread past
+ * this bound, so a file of gigabytes is refused as fast as a missing one.
+ */
+const REFUSED_TLS_FILE_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Opens for reading without waiting (`O_NONBLOCK`). Where another program holds a lease on the file, as Samba's kernel
+ * oplocks and an NFS server's delegations do on Linux, an open that waited would wait for the lease to break, 45 s by
+ * default, past `rerail daemon start`'s 15 s wait; this one fails at once (`EAGAIN`). A FIFO opens without waiting for
+ * a writer. Windows has no `O_NONBLOCK`: undefined there, it adds nothing, and `openedInChild` waits in its place.
+ */
+const OPEN_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+
+/**
+ * What a refused start's Node child did with the key and the certificate on Windows (`openedInChild`): opened them, or
+ * failed to, in time; began but was still in an open at its bound; or never got to open them, with the line a refusal
+ * then adds.
+ */
+type ChildOpen = { readonly kind: "opened" } | { readonly kind: "held" } | { readonly kind: "unstarted"; readonly why: string };
+
+const OPENED: ChildOpen = { kind: "opened" };
+const HELD: ChildOpen = { kind: "held" };
+
+/** A child that never got to open the files: why the daemon does not serve this computer meanwhile, as a sentence. */
+function unstarted(why: string): ChildOpen {
+  return { kind: "unstarted", why: `This daemon would serve this computer alone meanwhile, but the Node process that opens the key and the certificate for it first ${why}.` };
+}
+
+/**
+ * How long a refused start waits on Windows for its Node child to begin, from the spawn (`openedInChild`). A Node start
+ * takes about 40 ms on a quiet machine, and its 95th percentile reached 3.5 s on a laptop busy with coding agents. A
+ * child that has not begun within 10 s leaves too little of `rerail daemon start`'s 15 s wait for a daemon on loopback.
+ */
+const CHILD_START_WAIT_MS = 10_000;
+
+/** How long the child's opens of the key and the certificate may wait, from the moment it begins them (`openedInChild`). */
+const CHILD_OPEN_WAIT_MS = 2_000;
+
+/** How long a refused start waits for its Node child to exit once it has ended it: milliseconds, even in an open. */
+const CHILD_END_WAIT_MS = 1_000;
+
+/**
+ * The child's own pipe, past its stdin, stdout and stderr, which go nowhere: where it says it began and that it is
+ * done (`CHILD_OPEN`). A preload in the person's NODE_OPTIONS runs in the child before its script and may print on
+ * stdout or stderr; what it prints never reaches this pipe, so it never speaks for the child.
+ */
+const CHILD_PIPE_FD = 3;
+
+/**
+ * The child's work: say it began, open each file named after its script to read it and close it, then say it is done;
+ * the daemon reports what an open throws. The writes are synchronous, so the first leaves before an open that waits.
+ */
+const CHILD_OPEN = `const fs = require('node:fs'); fs.writeSync(${CHILD_PIPE_FD}, 'b'); for (const file of process.argv.slice(1)) { try { fs.closeSync(fs.openSync(file, 'r')); } catch {} } fs.writeSync(${CHILD_PIPE_FD}, 'd');`;
+
+/**
+ * Windows: what one Node child did when asked to open `files` to read them. Windows has no open that skips another
+ * program's oplock: one that caches writes, as Windows' SMB server holds for a client caching the file, holds every
+ * open that reads it until its holder acknowledges the break, and a holder that never does holds it until it closes the
+ * file. The child's open waits in the daemon's place: an open waiting in the daemon itself would keep its process from
+ * exiting until the holder lets go, long after `rerail daemon start` stopped waiting. The opens get
+ * `CHILD_OPEN_WAIT_MS` from the moment the child says on its own pipe (`CHILD_PIPE_FD`) that it began, so a busy
+ * machine's slow Node start does not eat into them, and the start gets `CHILD_START_WAIT_MS`; a child past either bound
+ * is ended. Only what the child says there counts, never what a preload prints. A child that cannot be spawned,
+ * or ends before it began, never leads to an open in the daemon. Once the child's opens are through, any break is
+ * acknowledged, and the daemon's own open does not wait.
+ */
+async function openedInChild(files: readonly string[]): Promise<ChildOpen> {
+  let child: ReturnType<typeof spawn>;
+  try {
+    // Its stdin, stdout and stderr go nowhere; the pipe at index `CHILD_PIPE_FD` is what it says.
+    child = spawn(process.execPath, ["-e", CHILD_OPEN, ...files], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
+  } catch (error) {
+    return unstarted(`could not start: ${errorText(error)}`);
+  }
+  const exited = new Promise(resolve => {
+    child.once("exit", resolve);
+    child.once("error", resolve);
+  });
+  try {
+    return await childOpen(child);
+  } finally {
+    // One that said it is done ends by itself; one still starting, or in an open, is ended here, and the start goes on
+    // once it has exited, so nothing it started outlives it, or after `CHILD_END_WAIT_MS` at most.
+    child.kill();
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, CHILD_END_WAIT_MS).unref())]);
+  }
+}
+
+/** What `child` did (`openedInChild`): said it was done, ran out of time in an open after it began, or never began. */
+async function childOpen(child: ReturnType<typeof spawn>): Promise<ChildOpen> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await new Promise<ChildOpen>(resolve => {
+      timer = setTimeout(resolve, CHILD_START_WAIT_MS, unstarted(`did not start within ${CHILD_START_WAIT_MS / 1_000} s`));
+      child.on("error", error => resolve(unstarted(`could not start: ${error.message}`)));
+      // Only after all its output, so a child that said it is done counts as done however soon it ends.
+      child.on("close", code => resolve(unstarted(`ended (exit code ${code ?? "none"}) before it opened them`)));
+      // Unset when the spawn failed for want of file handles (EMFILE), which `error` answers.
+      const pipe = child.stdio?.[CHILD_PIPE_FD];
+      if (!(pipe instanceof Readable)) return;
+      // A failed read only ends its output, which `close` or a bound then answers; unheard, it would throw here.
+      pipe.on("error", () => undefined);
+      // Only the child's own script writes to its pipe: "b" as it begins its opens, then "d" once they are through.
+      let said = "";
+      pipe.on("data", (chunk: Buffer) => {
+        said += chunk.toString();
+        if (said === "bd") resolve(OPENED);
+        else if (said === "b") {
+          clearTimeout(timer);
+          timer = setTimeout(resolve, CHILD_OPEN_WAIT_MS, HELD);
+        }
+      });
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * What the file at `path` holds: opened once without waiting (`OPEN_WITHOUT_WAITING`), then checked and read through
+ * that handle, so the file checked is the file read. Undefined for a file another program holds under a lease, for a
+ * path that is no regular file or folder (a FIFO, a device), which is never read, and for a file larger than
+ * `REFUSED_TLS_FILE_MAX_BYTES`, of which no more than that is read. Throws what opening the path throws, and what
+ * reading it throws (a folder's `EISDIR`) with the path added, as an error of the open names it.
+ */
+async function readWithoutWaiting(path: string): Promise<Buffer | undefined> {
+  const handle = await open(path, OPEN_WITHOUT_WAITING).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "EAGAIN") return undefined;
+    throw error;
+  });
+  if (handle === undefined) return undefined;
+  try {
+    const found = await handle.stat();
+    return found.isFile() || found.isDirectory() ? await readAtMost(handle, REFUSED_TLS_FILE_MAX_BYTES) : undefined;
+  } catch (error) {
+    throw new Error(`${errorText(error)} '${path}'`, { cause: error });
+  } finally {
+    await handle.close();
+  }
+}
+
+/** What `handle` holds from its start, reading at most `limit` bytes and one: undefined past `limit`. */
+async function readAtMost(handle: FileHandle, limit: number): Promise<Buffer | undefined> {
+  const buffer = Buffer.alloc(limit + 1);
+  let filled = 0;
+  let bytesRead = -1;
+  while (bytesRead !== 0 && filled < buffer.length) {
+    ({ bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled));
+    filled += bytesRead;
+  }
+  return filled > limit ? undefined : buffer.subarray(0, filled);
 }
 
 /** The SHA-256 fingerprint of the first certificate in `pem`, the one a TLS server presents as its own. */
@@ -839,10 +1062,87 @@ async function packageVersion(): Promise<string> {
   return typeof manifest.version === "string" ? manifest.version : "0.0.0";
 }
 
-/** What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon. */
-export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
+/**
+ * What `runRerailDaemon` starts the daemon with: what the process entry point (`src/cli/daemon-entry.ts`) supplies from
+ * the layers above the daemon, and why it serves this computer alone, which only `serveRerailDaemon`'s loopback restart
+ * sets.
+ */
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "remoteRefused">;
 
-export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+/**
+ * The daemon flags and options (each followed by its value) that make it reachable from other machines: where it binds
+ * and answers, and every transport one (`DAEMON_TRANSPORT_FLAGS`, `DAEMON_TRANSPORT_OPTIONS`), so one added there is
+ * left out of a loopback daemon's arguments too.
+ */
+const REMOTE_FLAGS: readonly string[] = ["--allow-remote", ...DAEMON_TRANSPORT_FLAGS];
+const REMOTE_OPTIONS: readonly string[] = ["--host", "--public-host", ...DAEMON_TRANSPORT_OPTIONS];
+
+/** `argv` without the flags and options that make a daemon reachable from other machines: a loopback daemon's. */
+export function loopbackArguments(argv: readonly string[]): string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index] ?? "";
+    if (REMOTE_OPTIONS.includes(argument)) index += 1;
+    else if (!REMOTE_FLAGS.includes(argument)) kept.push(argument);
+  }
+  return kept;
+}
+
+/** What daemon.log, `rerail daemon start` and `rerail status` say of a daemon that serves this computer alone. */
+export function loopbackOnlyNotice(reason: string): string {
+  return `This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${reason}`;
+}
+
+/** The daemon argument that names why a daemon serves this computer alone, as its loopback restart leaves it. */
+const REMOTE_REFUSED = "--remote-refused";
+
+/** The arguments of a daemon that serves this computer alone for `reason`: `argv`'s loopback ones, then why. */
+export function loopbackCommandLine(argv: readonly string[], reason: string): string[] {
+  return [...loopbackArguments(argv), REMOTE_REFUSED, reason];
+}
+
+/** Why a daemon started with `argv` serves this computer alone (`--remote-refused <why>`), and its other arguments. */
+export function remoteRefusal(argv: readonly string[]): { argv: string[]; reason: string } | undefined {
+  const at = argv.indexOf(REMOTE_REFUSED);
+  const reason = at === -1 ? undefined : argv[at + 1];
+  return reason === undefined ? undefined : { argv: [...argv.slice(0, at), ...argv.slice(at + 2)], reason };
+}
+
+/**
+ * The daemon process: `runRerailDaemon`, except that a TLS key it may not serve with (`TlsKeyExposedError`), which keeps
+ * it from serving https and from other machines, no longer keeps it from this one. The daemon starts again without the
+ * options that reach other machines (`serveLoopback`): on loopback, over http, as a daemon started with no options is,
+ * so hooks keep recording and steering, and the state file, daemon.log, `rerail daemon start` and `rerail status` say
+ * why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing. A
+ * daemon launched with `--remote-refused`, as a restart of such a daemon is, serves this computer alone from the start.
+ * Its caller supplies only the services of the layers above: why the daemon serves this computer alone is this
+ * function's alone to say, so no caller can record a daemon other machines reach as one they cannot.
+ */
+export async function serveRerailDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
+  const relaunched = remoteRefusal(argv);
+  if (relaunched !== undefined) return await serveLoopback(relaunched.argv, relaunched.reason, services);
+  try {
+    await runRerailDaemon(argv, services);
+  } catch (error) {
+    if (!(error instanceof TlsKeyExposedError)) throw error;
+    await serveLoopback(argv, error.message, services);
+  }
+}
+
+/**
+ * Runs the daemon for this computer alone, for `reason`: with `argv` less what reaches other machines
+ * (`loopbackArguments`), saying why on stderr, which is daemon.log, once for each start. The process takes the arguments
+ * of such a daemon (`loopbackCommandLine`) as if it had been started with them, as the hook launcher runs a hook: a
+ * restart at the heap ceiling relaunches the daemon with this process's arguments (`runRerailDaemon`), so the next
+ * daemon serves this computer alone too, saying why, even once the key is fixed, until someone starts it again.
+ */
+async function serveLoopback(argv: readonly string[], reason: string, services: Omit<RerailDaemonServices, "remoteRefused">): Promise<void> {
+  process.stderr.write(`rerail daemon: ${loopbackOnlyNotice(reason)}\n`);
+  process.argv.splice(2, process.argv.length - 2, ...loopbackCommandLine(argv, reason));
+  await runRerailDaemon(loopbackArguments(argv), { ...services, remoteRefused: reason });
+}
+
+async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
   // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.

@@ -295,7 +295,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch
   (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
-  (everyone has full control), is refused.
+  (everyone has full control), is never served with: when this account reads it as a private key, the daemon then
+  serves this computer alone, on loopback, on T9's three conditions.
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
   and created with `wx` (`src/engine/catalog/repository-identity.ts`).
 - A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
@@ -640,7 +641,26 @@ capability.
 
 **Mitigated** (`src/daemon/daemon.ts:loadDaemonTls`, `src/runtime/daemon-control.ts:daemonFetch`):
 
-- `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS, and refuses a key file other users could read.
+- `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS, and never serves with a key file other users
+  could read. When that key is a file this account reads, it parses as a private key and `--tls-cert` names its
+  certificate, the daemon serves this computer alone (`serveRerailDaemon`), on three conditions:
+  1. Loopback only. It starts again without `--host`, `--public-host` and the TLS files, so it binds `127.0.0.1` over
+     http, as a daemon started with no options does, and never off loopback; a restart at its heap ceiling relaunches
+     it the same way (`--remote-refused`), even once the key is fixed. Other machines reach nothing.
+  2. The start does not report success. `rerail daemon start` exits 1 when it asked for other machines
+     (`--allow-remote`, `--public-host`), with the refusal on stderr, and so does a later start that asks for them and
+     finds this daemon running; the loopback daemon keeps running. `daemon.json` (`remoteRefused`), `daemon.log` and
+     `rerail status` name the key and the command that makes it private.
+  3. A missing or unreadable key is still an error. Any other `--tls-key` that was refused before stops the start
+     with the exit code and message it had: a missing or misspelled path, a folder, a FIFO, a file this account may
+     not read or another program holds (a lease, or on Windows an oplock not given up within 2 s of the open), one
+     over 1 MiB, one that holds no private key (the certificate, when the two are swapped), or one whose readers
+     cannot be read (`Get-Acl` failing on Windows). A `--tls-cert` that cannot be read, holds no certificate or is
+     not the key's stops it too, with the message it gets beside a private key, a folder's naming the folder; a held
+     one, a FIFO or one over 1 MiB gets the key's refusal. On Windows a Node process opens both files first, so that
+     an oplock keeps it waiting and not the daemon. It says that it began and that it opened them on a pipe of its
+     own, which nothing a NODE_OPTIONS preload prints reaches; when that process cannot start, ends before it opens
+     them, or has not begun within 10 s, the start stops with the key's refusal and a line saying why.
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)
@@ -669,6 +689,12 @@ On Unix, Rerail creates its files private and tightens existing ones. Windows is
   `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `*.pre-update`. It never
   follows a symlink to do so.
 - The rule-pack staging folder is created 0700.
+
+**Mitigated on every system** (`src/daemon/daemon.ts:loadDaemonTls`): a daemon TLS key other accounts can read, by its
+mode bits or on Windows its ACL, is never served with. Rerail leaves the key as the person made it and names the
+command that makes it private; meanwhile the daemon serves this computer alone on T9's three conditions: loopback
+only, a start that asked for other machines exits 1, and a key that is missing, unreadable or no private key stops
+the start.
 
 **What remains:** Windows is unchanged, and any new data file in the home must be added to that list.
 

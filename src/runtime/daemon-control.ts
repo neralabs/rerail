@@ -56,6 +56,11 @@ export interface DaemonState {
    * certificate and no other (see {@link daemonFetch}), so a self-signed one needs no CA.
    */
   tlsFingerprint256?: string;
+  /**
+   * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
+   * the key, and this names it and the command that fixes it. Absent for every other daemon.
+   */
+  remoteRefused?: string;
 }
 
 /** Header a Rerail process, and the dashboard page, send the daemon's {@link DaemonState.accessToken} in. */
@@ -366,6 +371,7 @@ const DAEMON_STATE_FIELDS: Readonly<Record<string, (value: unknown) => boolean>>
   nativeToken: isOptionalString,
   accessToken: isOptionalString,
   tlsFingerprint256: isOptionalString,
+  remoteRefused: isOptionalString,
   startedAt: value => typeof value === "number",
   packageRoot: isString,
   workspaceRoot: isOptionalString,
