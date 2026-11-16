@@ -734,6 +734,15 @@ pass.
   view at 30 ns, measured then on a stored copy).
 - **Done when**: placement's CPU estimate is within 2× of the measured CPU for the costliest strata of this run, and
   the strata the GPU then runs cheaper move there.
+- **Repriced** (2026-11-16, decision 0304, after 0297 and 0299 merged): the planned work is now within 5% of the
+  work done over the run, and placement's CPU prices are fitted to that unit: 0.7 ms a stratum run, 117 ns a row
+  scanned, 52 ns any other unit. The strata's CPU priced 3.17 s against 3.22 s ran (was 2.54 s against 3.52 s);
+  `kind` 450 ms against 452 ms. The GPU kept 4 strata, not 7: the three that left were neutral.
+- **Still open, placement's**: views whose rows cost far more than a unit. `ann_root`'s seed (`kind`, `field`)
+  costs about 1.5 µs a unit, `fzk287`'s (`line`, `col`) about 18 µs, and `rdefn` and `attr_of` read `text`. Each
+  is priced at a quarter to a tenth of its CPU. The next step is a per-relation price for a view's row, measured
+  per view, or else a cheaper read of those views (the row read above).
+- **Not placement's**: the recursive strata's misses are join statistics, now Q41.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
@@ -776,6 +785,22 @@ pass.
   otherwise. Callers that give no digest (`remember_all`, `Memo::remember`) still read them, outside the waves.
 - **Done when**: phased-facts holds the fix or its replacement, and a strict cold run writes its entries with no
   SQL in the waves.
+
+### Q41. Recursive strata's joins mispriced by their fan-out (cost-classifier's to take)
+
+- **Found** (2026-11-16, Native-and-GPU-strata, decision 0304's run over PostHog's `posthog/hogql`, after 0297 and
+  0299): three strata whose planned work misses the work done by 10× or more, all of them recursive:
+  - `qualname`: 0.07 M planned, 0.97 M done. Its probe `qualname($s, $p), !kind($s, #k1132),
+    rr_nearest_scope($f, $s), def_name($f, $x)` was priced at 1,380 units a plan. At `rr_nearest_scope` with `$s`
+    bound, 8,778 rows became 919,420, and `def_name` then kept 5,384.
+  - `qn`: 0.01 M planned, 0.10 M done. The seed `ibind($s, $x, $q), bound_in($s, $x), walk($n, $x, $s)` did
+    72 K units.
+  - The 50-relation `ask_loaded_bff/ask_py_before_bb/…` stratum: 1,350 planned, 144 K done. Not yet traced.
+- **Why it matters**: placement prices a stratum by its planned work (0304). A stratum planned at a tenth of its work
+  is priced at a tenth of its CPU.
+- **Whose**: the planner's statistics: `atom_rows_`, and the fan of a `nearest` relation read with its scope bound
+  (0299's line of work).
+- **Done when**: these strata's planned work is within 2× of their work.
 
 
 ## Questions for the user
