@@ -585,7 +585,7 @@ impl Scan {
     }
 
     /// A scan whose levels are its own: several in one command buffer, each total read after it completes.
-    fn owned(count: usize) -> Result<Scan, String> {
+    pub fn owned(count: usize) -> Result<Scan, String> {
         let (mut levels, mut owned) = (Vec::new(), Vec::new());
         let mut size = count;
         loop {

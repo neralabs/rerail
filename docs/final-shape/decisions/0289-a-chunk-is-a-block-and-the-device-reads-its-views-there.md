@@ -99,10 +99,30 @@ Measured cold, with the same placement (7 strata) and the same findings:
 Of the 22.4 ms, 14.4 ms is the axis solve, on the host and on Metal (`kind-set axis solved for the batch`), and
 5.3 ms is the chunk block's build (0.3 ms a batch). The copy and the kernel are the remaining ~2.7 ms.
 
-Next: the solve on the device, from the chunk. A kernel climbs each node's ancestors through the chunk's arrays
-against the axis's kind bitmap, counts each node's rows, scans the counts, and writes the pairs and the per-node
-starts into the chunk. The host reads them there in place (`lookup`, `value`). The host's gather of every node's
-parent and membership goes, and so does `Solved`'s copy. The chunk block's build goes with §3.
+Then the solve itself, on the device's binding (`Binding::Metal`), made in the chunk
+(`metal_join::axis_in_chunk`, registered as `facts::nearest::install_chunk_axis`). For each node row, `axis_count`
+climbs the node's ancestors through the chunk's arrays, checking each against the axis's bitmap of kinds (256 tags
+× 1,024 codes). The climb is bounded by the document's nodes. A scan of the counts gives each node's first row.
+Then `axis_write` writes the pairs, nearest first, in the host's order. The starts and the pairs are page-aligned
+in the chunk and bound with no copy, and the host reads them there in place (`Within::starts`, `pairs`).
+There are two submissions, since the pairs' space is allocated once the total is read. The host's gather of every
+node's parent and membership goes, and so does the copy of the pairs. Containment (`within`) is built with the
+CPU's binding: it keeps the host's solve, and its pairs are copied. When the chunk cannot hold an axis, the solve
+falls back to the host's, and the profile says why.
+
+Checks: the device test compares the device's solve with the host's: rows in order, both columns, and each
+looked-up node's run. The engine's `the_kind_set_axes_hold_exactly_their_pairs` runs `Binding::Metal` against its
+oracle.
+
+| Cold, hogql, same findings | Uploads' host CPU | Views on the host | Views made on the device |
+|---|---|---|---|
+| Before §2 | 48.2 ms | 30.2 MB in 39.8 ms | 6.7 MB in 2.0 ms |
+| Axes' pairs copied | 30.1 ms | 6.9 MB in 2.6 ms | 21.7 MB in 22.4 ms |
+| Axes solved in the chunk | 18.2 ms | 1.3 MB in 0.3 ms | 19.9 MB in 11.5 ms |
+
+No axis is solved on the host now: 18 are solved in the chunk. Of the 11.5 ms, 6.3 ms is the chunk block's build
+(about 0.35 ms a batch), which §3 removes. Most of the rest is two submissions per axis. Placement varied between
+these runs (4 to 7 strata on the GPU), so the uploads are compared, not the totals.
 
 ### 3. The host reads the block
 

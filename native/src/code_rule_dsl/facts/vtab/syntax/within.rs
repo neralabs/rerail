@@ -99,10 +99,13 @@ pub struct Within {
 }
 
 /// An axis's `n` side for every node of the batch: per node row its run in `pairs` (`start[row]..start[row + 1]`),
-/// each pair inner node row << 32 | outer node row.
+/// each pair inner node row << 32 | outer node row. Made on the host, or on the device in the batch's chunk block,
+/// where the host reads them in place (decision 0289 §2).
 struct Solved {
     start: Vec<u32>,
     pairs: Vec<u64>,
+    #[cfg(target_os = "macos")]
+    in_chunk: Option<crate::code_rule_dsl::facts::nearest::InChunk>,
 }
 
 /// Statistics from the tree (`Within::shape`): rows, and per column (`n`, `a`) distinct values and the sum of
@@ -174,6 +177,10 @@ impl Within {
     /// rows (that ancestor, or for `inside` the chain of them).
     fn solved(&self) -> &Solved {
         self.solved.get_or_init(|| {
+            #[cfg(target_os = "macos")]
+            if let Some(s) = self.solved_in_chunk() {
+                return s;
+            }
             use crate::code_rule_dsl::logic::profile;
             use crate::code_rule_dsl::facts::nearest::{self as file_local, Binding, Trees};
             let _span = profile::span(|| "kind-set axis solved for the batch".into());
@@ -206,8 +213,65 @@ impl Within {
                 }
             }
             start.push(pairs.len() as u32);
-            Solved { start, pairs }
+            Solved {
+                start,
+                pairs,
+                #[cfg(target_os = "macos")]
+                in_chunk: None,
+            }
         })
+    }
+
+    /// The solve's first row per node row (`nodes + 1` values).
+    fn starts(&self) -> &[u32] {
+        let s = self.solved();
+        #[cfg(target_os = "macos")]
+        if let Some(c) = &s.in_chunk {
+            let n = self.batch.nodes.last().copied().unwrap_or(0) + 1;
+            // SAFETY: the device wrote `n` values there, and the chunk lives as long as the batch this axis holds.
+            return unsafe { std::slice::from_raw_parts(self.batch.chunk().block.ptr::<u32>(c.start), n) };
+        }
+        &s.start
+    }
+
+    /// The solve's rows, pairs of node rows.
+    fn pairs(&self) -> &[u64] {
+        let s = self.solved();
+        #[cfg(target_os = "macos")]
+        if let Some(c) = &s.in_chunk {
+            // SAFETY: the device wrote `len` pairs there, and the chunk lives as long as the batch.
+            return unsafe { std::slice::from_raw_parts(self.batch.chunk().block.ptr::<u64>(c.pairs), c.len) };
+        }
+        &s.pairs
+    }
+
+    /// The solve made on the device in the batch's chunk (decision 0289 §2), when the binding is the device's and
+    /// one is registered: `None` sends it to the host's.
+    #[cfg(target_os = "macos")]
+    fn solved_in_chunk(&self) -> Option<Solved> {
+        use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_code};
+        use crate::code_rule_dsl::facts::nearest::{Binding, chunk_axis};
+        let solve = chunk_axis().filter(|_| self.binding == Binding::Metal)?;
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "kind-set axis solved on the device in the chunk".into());
+        // Per tag and code a bit: the host's `member`, whose code 0 (an error) is never one.
+        let bits = (self.mode != Mode::Tree).then(|| {
+            let mut bits = vec![0u32; 256 * KIND_STRIDE as usize / 32];
+            for (&tag, table) in &self.members {
+                for (code, _) in table.iter().enumerate().filter(|&(c, &m)| m && kind_code(c as u32) as usize == c) {
+                    let at = usize::from(tag) * KIND_STRIDE as usize + code;
+                    bits[at / 32] |= 1 << (at % 32);
+                }
+            }
+            bits
+        });
+        let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
+        match solve(self.batch.chunk(), bits.as_deref(), inside) {
+            Ok(c) => Some(Solved { start: Vec::new(), pairs: Vec::new(), in_chunk: Some(c) }),
+            Err(why) => {
+                crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0289)", || format!("solved on the host: {why}"));
+                None
+            }
+        }
     }
 
     /// The planner expects `keys` more lookups of `n`: the batch's solve is chosen once they cost more than it.
@@ -403,7 +467,7 @@ impl Within {
 
     fn pair(&self, row: usize) -> u64 {
         if self.solvable() && row < LOOKED_UP {
-            return self.solved().pairs[row];
+            return self.pairs()[row];
         }
         let side = usize::from(row >= OUTER);
         let (k, at) = slot(row - if side == 0 { self.looked_up() } else { OUTER });
@@ -490,9 +554,13 @@ impl Source for Within {
         if !self.solvable() {
             return None;
         }
-        let pairs = &self.solved().pairs;
+        let pairs = self.pairs();
         let chunk = self.batch.chunk();
-        let at = (*self.on_device.get_or_init(|| device_chunk::put_pairs(chunk, pairs)))?;
+        // Solved in the chunk, the pairs are there already; else copied in once.
+        let at = match &self.solved().in_chunk {
+            Some(c) => c.pairs,
+            None => (*self.on_device.get_or_init(|| device_chunk::put_pairs(chunk, pairs)))?,
+        };
         Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view: device_chunk::VIEW_AXIS, rows: pairs.len(), pairs: at })
     }
     fn columns(&self) -> Vec<String> {
@@ -501,7 +569,7 @@ impl Source for Within {
     /// Every pair once: a scan makes each node's containers, ids `0..len`.
     fn len(&self) -> usize {
         if self.solvable() {
-            return self.solved().pairs.len();
+            return self.pairs().len();
         }
         *self.all.get_or_init(|| {
             for row in 0..self.batch.nodes.last().copied().unwrap_or(0) as u32 {
@@ -547,7 +615,7 @@ impl Source for Within {
             let Some((doc, local)) = self.batch.node(v) else { continue };
             let row = self.batch.nodes[doc] + local as usize;
             if column == 0 && self.reads_solved() {
-                let start = &self.solved().start;
+                let start = self.starts();
                 out.extend(start[row] as usize..start[row + 1] as usize);
                 continue;
             }

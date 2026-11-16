@@ -658,6 +658,28 @@
                 }
             }
         }
+        // On the device's binding the solve itself is made on the device in the chunk: the host's rows, in its order,
+        // and its runs per looked-up node.
+        for axis in [Axis::Nearest, Axis::Inside] {
+            let host = Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Cpu);
+            let dev = Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Metal);
+            let n = host.len();
+            assert_eq!(dev.len(), n);
+            for c in 0..2 {
+                let (h, d): (Vec<i64>, Vec<i64>) = ((0..n).map(|r| host.value(r, c)).collect(), (0..n).map(|r| dev.value(r, c)).collect());
+                assert_eq!(d, h, "column {c}");
+            }
+            for r in (0..node.len()).step_by(7) {
+                let id = node.value(r, 1);
+                assert_eq!(dev.lookup(0, &[id]), host.lookup(0, &[id]), "the rows of {id}");
+            }
+            let d = dev.device_view().expect("made on the device");
+            let out = mj::DevRel::empty(2, n).unwrap();
+            let mut batch = mj::Batch::new().expect("the device");
+            batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &[0, 1], &out).unwrap();
+            batch.finish().unwrap();
+            assert_eq!(out.column(1), &(0..n).map(|r| host.value(r, 1)).collect::<Vec<_>>()[..]);
+        }
         // `has` is made per looked-up node, not by the batch's solve: uploaded as before.
         assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).device_view().is_none());
         let _ = std::fs::remove_file(&store_path);
