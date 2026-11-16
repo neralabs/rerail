@@ -1,0 +1,280 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "structure-duplicate-function-bodies",
+  "revision": 1,
+  "mode": "log",
+  "description": "Keep one copy of each function body over 10 lines across files, outside tests and generated code; copies drift apart when only one is fixed.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs",
+      "**/*.rs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/vendor/**",
+      "**/vendored/**",
+      "**/third_party/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/public/**",
+      "**/*.min.*",
+      "**/*.bundle.*",
+      "**/*.d.ts",
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.e2e.*",
+      "**/__tests__/**",
+      "**/__mocks__/**",
+      "**/__fixtures__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/fixtures/**",
+      "**/cypress/**",
+      "**/playwright/**",
+      "**/*.stories.*",
+      "**/.storybook/**",
+      "**/stories/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/migrations/**",
+      "**/drizzle/**",
+      "**/components/ui/**",
+      "**/examples/**",
+      "**/target/**",
+      "**/benches/**",
+      "**/tests.rs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "duplicate-function-body-ts",
+      "violation": {
+        "code": "DUPLICATE_FUNCTION_BODY",
+        "anchor": "witness.span",
+        "message": "Keep one copy of each function. This body is repeated verbatim in another file: import the existing function, or move it to a shared module. Leave copies across a deliberate boundary."
+      },
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "fn",
+            "paths": {
+              "include": [
+                "**/*.ts",
+                "**/*.tsx"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "typescript",
+                "rule": {
+                  "pattern": "$BODY",
+                  "kind": "statement_block",
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "program",
+                      "has": {
+                        "kind": "comment",
+                        "regex": "(?i)@generated|do not edit|auto-?generated"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "layout": {
+                    "span": {
+                      "min": 10
+                    }
+                  }
+                }
+              }
+            },
+            "project": {
+              "body": "capture.BODY",
+              "path": "file.path"
+            }
+          }
+        },
+        "group_by": [
+          "fn.body"
+        ],
+        "count": {
+          "lte": 1,
+          "distinct": [
+            "fn.path"
+          ]
+        }
+      }
+    },
+    {
+      "id": "duplicate-function-body-js",
+      "violation": {
+        "code": "DUPLICATE_FUNCTION_BODY",
+        "anchor": "witness.span",
+        "message": "Keep one copy of each function. This body is repeated verbatim in another file: import the existing function, or move it to a shared module. Leave copies across a deliberate boundary."
+      },
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "fn",
+            "paths": {
+              "include": [
+                "**/*.js",
+                "**/*.jsx",
+                "**/*.mjs",
+                "**/*.cjs"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "javascript",
+                "rule": {
+                  "pattern": "$BODY",
+                  "kind": "statement_block",
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "program",
+                      "has": {
+                        "kind": "comment",
+                        "regex": "(?i)@generated|do not edit|auto-?generated"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "layout": {
+                    "span": {
+                      "min": 10
+                    }
+                  }
+                }
+              }
+            },
+            "project": {
+              "body": "capture.BODY",
+              "path": "file.path"
+            }
+          }
+        },
+        "group_by": [
+          "fn.body"
+        ],
+        "count": {
+          "lte": 1,
+          "distinct": [
+            "fn.path"
+          ]
+        }
+      }
+    },
+    {
+      "id": "duplicate-function-body-rs",
+      "violation": {
+        "code": "DUPLICATE_FUNCTION_BODY",
+        "anchor": "witness.span",
+        "message": "Keep one copy of each function. This body is repeated verbatim in another file: import the existing function, or move it to a shared module. Leave copies across a deliberate boundary."
+      },
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "fn",
+            "paths": {
+              "include": [
+                "**/*.rs"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "rust",
+                "rule": {
+                  "pattern": "$BODY",
+                  "kind": "block",
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "mod_item",
+                      "regex": "(?s)^\\s*mod\\s+tests\\b"
+                    }
+                  },
+                  "inside": {
+                    "kind": "function_item"
+                  },
+                  "layout": {
+                    "span": {
+                      "min": 10
+                    }
+                  }
+                }
+              }
+            },
+            "project": {
+              "body": "capture.BODY",
+              "path": "file.path"
+            }
+          }
+        },
+        "group_by": [
+          "fn.body"
+        ],
+        "count": {
+          "lte": 1,
+          "distinct": [
+            "fn.path"
+          ]
+        }
+      }
+    }
+  ]
+}

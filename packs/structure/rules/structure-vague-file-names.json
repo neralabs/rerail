@@ -1,0 +1,87 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "structure-vague-file-names",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name source files and folders for what the code does, not as a leftover backup or copy or a catch-all such as misc, stuff or untitled.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs",
+      "**/*.vue",
+      "**/*.svelte",
+      "**/*.astro",
+      "**/*.py",
+      "**/*.bak",
+      "**/*.orig",
+      "**/*.old",
+      "**/*.backup",
+      "**/*.rs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/vendor/**",
+      "**/vendored/**",
+      "**/third_party/**",
+      "**/third-party/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/coverage/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.min.js",
+      "**/fixtures/**",
+      "**/__fixtures__/**",
+      "**/fixture/**",
+      "**/testdata/**",
+      "**/test-data/**",
+      "**/test_data/**",
+      "**/__snapshots__/**",
+      "**/snapshots/**",
+      "**/__mocks__/**",
+      "**/migrations/**",
+      "**/target/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "leftover-copy-name",
+      "violation": {
+        "code": "LEFTOVER_COPY_NAME",
+        "anchor": "witness.span",
+        "message": "Keep file names specific to what the code does. This one reads as a leftover copy or backup: merge what is still needed into the original, or rename it for what differs. Leave a name a tool needs."
+      },
+      "forbid": {
+        "regex": {
+          "source": "file.path",
+          "pattern": "(?i)(?:(?:[-_.](?:bak\\d?|orig)|\\.old|[^/] ?\\(\\d{1,2}\\)| copy(?: ?\\d{1,2})?|[-_]copy[-_]?\\d{1,2}|[-_]final[-_]?(?:final|v?\\d{1,2}))(?:\\.[^/]*)?(?:/|$)|(?:^|/)copy[-_ ]of[-_ ][^/]*|[^/ ] [2-9]\\.[^/]+$|\\.backup$)"
+        }
+      }
+    },
+    {
+      "id": "catch-all-name",
+      "violation": {
+        "code": "CATCH_ALL_NAME",
+        "anchor": "witness.span",
+        "message": "Keep file and folder names specific to what they hold. This catch-all name says nothing: name it after the feature or the thing it holds. Leave it if it predates your change or is a URL route."
+      },
+      "forbid": {
+        "regex": {
+          "source": "file.path",
+          "pattern": "(?i)(?:(?:^|/)(?:misc(?:ellaneous)?|untitled[-_ ]?\\d{0,2})\\.[^/]+$|(?:(?:^|/)|[-_])stuff(?:\\.[^/]*)?(?:/|$)|(?-i:[a-z0-9]Stuff)(?:\\.[^/]*)?(?:/|$))"
+        }
+      }
+    }
+  ]
+}

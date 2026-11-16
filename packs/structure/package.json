@@ -1,0 +1,34 @@
+{
+  "name": "@neralabs/rerail-pack-structure",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rerail rule pack: keeps a codebase's shape as it grows (file length, layering, used and tested exports, file names).",
+  "keywords": [
+    "rerail",
+    "rerail-pack",
+    "coding-agent",
+    "rules",
+    "architecture"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/structure"
+  },
+  "files": [
+    "pack.json",
+    "rules",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.1.0-0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  }
+}

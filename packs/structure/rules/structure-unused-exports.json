@@ -1,0 +1,286 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "structure-unused-exports",
+  "revision": 1,
+  "mode": "log",
+  "description": "Remove exports that no other file imports and their own file never uses, outside default exports and entry, route, index, test and generated files.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/*.min.js"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "unused-export",
+      "violation": {
+        "code": "UNUSED_EXPORT",
+        "anchor": "witness.span",
+        "message": "Keep every export in use. Nothing imports this and its file never uses it. Fine if its caller comes next; otherwise use it or drop `export`. Leave it if a framework or another package needs it."
+      },
+      "require_each": {
+        "subject": {
+          "evidence": {
+            "as": "exported",
+            "paths": {
+              "exclude": [
+                "**/*.test.*",
+                "**/*.spec.*",
+                "**/__tests__/**",
+                "**/__mocks__/**",
+                "**/__fixtures__/**",
+                "**/test/**",
+                "**/tests/**",
+                "**/testing/**",
+                "**/e2e/**",
+                "**/cypress/**",
+                "**/playwright/**",
+                "**/*.stories.*",
+                "**/.storybook/**",
+                "**/*.d.ts",
+                "**/*.d.mts",
+                "**/*.d.cts",
+                "**/*.config.*",
+                "**/*.setup.*",
+                "**/scripts/**",
+                "**/generated/**",
+                "**/__generated__/**",
+                "**/*.generated.*",
+                "**/*.gen.*",
+                "**/migrations/**",
+                "**/seed/**",
+                "**/seeds/**",
+                "**/seeders/**",
+                "**/template/**",
+                "**/templates/**",
+                "**/index.*",
+                "**/main.*",
+                "**/page.*",
+                "**/layout.*",
+                "**/loading.*",
+                "**/error.*",
+                "**/global-error.*",
+                "**/not-found.*",
+                "**/template.*",
+                "**/default.*",
+                "**/route.*",
+                "**/middleware.*",
+                "**/proxy.*",
+                "**/instrumentation.*",
+                "**/instrumentation-client.*",
+                "**/opengraph-image.*",
+                "**/twitter-image.*",
+                "**/icon.*",
+                "**/apple-icon.*",
+                "**/sitemap.*",
+                "**/robots.*",
+                "**/manifest.*",
+                "**/pages/**",
+                "**/routes/**",
+                "**/routes.*",
+                "**/root.*",
+                "**/entry.client.*",
+                "**/entry.server.*",
+                "**/hooks.server.*",
+                "**/hooks.client.*",
+                "**/+*"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "typescript",
+                "rule": {
+                  "pattern": "$NAME",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "type_identifier"
+                    }
+                  ],
+                  "not": {
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "export_statement",
+                          "has": {
+                            "regex": "^default$"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "type_identifier",
+                        "inside": {
+                          "kind": "type_alias_declaration",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "type_query"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "program",
+                          "has": {
+                            "kind": "import_statement",
+                            "regex": "drizzle-orm/[a-z-]+-core"
+                          }
+                        }
+                      },
+                      {
+                        "binds": {
+                          "occurrence": {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "type_query"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "function_signature"
+                        }
+                      }
+                    ]
+                  },
+                  "binds": {
+                    "scope": "module",
+                    "used": false,
+                    "exported": true
+                  }
+                }
+              }
+            },
+            "project": {
+              "name": "capture.NAME",
+              "path": "file.path",
+              "stem": "file.stem"
+            }
+          }
+        },
+        "evidence": {
+          "evidence": {
+            "as": "imported",
+            "query": {
+              "ast": {
+                "language": "typescript",
+                "rule": {
+                  "any": [
+                    {
+                      "pattern": "$NAME",
+                      "kind": "identifier",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "identifier"
+                        }
+                      },
+                      "inside": {
+                        "kind": "import_specifier"
+                      }
+                    },
+                    {
+                      "pattern": "$NAME",
+                      "kind": "identifier",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "identifier"
+                        }
+                      },
+                      "inside": {
+                        "kind": "export_specifier",
+                        "inside": {
+                          "kind": "export_clause",
+                          "inside": {
+                            "kind": "export_statement",
+                            "has": {
+                              "kind": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "export_statement",
+                      "regex": "^export\\s+(?:type\\s+)?\\*[^;]*?from\\s+[\"'](?:[^\"']*/)?(?<STEM>[^/\"'.]+)[^/\"']*[\"']"
+                    },
+                    {
+                      "kind": "import_statement",
+                      "regex": "^import\\s+(?:type\\s+)?(?:[\\w$]+\\s*,\\s*)?\\*\\s+as\\s[^;]*?from\\s+[\"'](?:[^\"']*/)?(?<STEM>[^/\"'.]+)[^/\"']*[\"']"
+                    },
+                    {
+                      "kind": "call_expression",
+                      "regex": "^(?:import|require)\\s*\\(\\s*(?:/\\*[^*]*\\*/\\s*)*[\"'](?:[^\"']*/)?(?<STEM>[^/\"'.]+)[^/\"']*[\"']"
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "name": "capture.NAME",
+              "path": "file.path",
+              "stem": "capture.STEM"
+            },
+            "where": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "eq": [
+                        "exported.name",
+                        "imported.name"
+                      ]
+                    },
+                    {
+                      "ne": [
+                        "exported.path",
+                        "imported.path"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "eq": [
+                        "exported.stem",
+                        "imported.stem"
+                      ]
+                    },
+                    {
+                      "ne": [
+                        "exported.path",
+                        "imported.path"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
