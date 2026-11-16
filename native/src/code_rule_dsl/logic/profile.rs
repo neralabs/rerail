@@ -887,8 +887,16 @@ fn open(path: String) -> Span {
                 *s.gaps.entry((after, path.clone())).or_default() += start - at;
             }
         }
-        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`).
-        let heap = if rerail_prof::heap::on() { rerail_prof::heap::intern(&path) } else { 0 };
+        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`), and names the
+        // thread for what it allocates with none open.
+        let heap = if rerail_prof::heap::on() {
+            if s.opens.is_empty() {
+                rerail_prof::heap::name_thread(std::thread::current().name().unwrap_or("an unnamed thread"));
+            }
+            rerail_prof::heap::intern(&path)
+        } else {
+            0
+        };
         rerail_prof::heap::set_span(heap);
         s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap });
     });
@@ -906,7 +914,14 @@ impl Drop for Span {
             let mut s = s.lock();
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
-            rerail_prof::heap::set_span(s.opens.last().map_or(0, |o| o.heap));
+            // Its thread's outermost span closed: what it allocates until the next is charged to "between spans,
+            // after" it (as the CPU gaps are), not to no span at all.
+            let after = match s.opens.last() {
+                Some(o) => o.heap,
+                None if rerail_prof::heap::on() => rerail_prof::heap::intern(&format!("(between spans) after {}", open.path)),
+                None => 0,
+            };
+            rerail_prof::heap::set_span(after);
             let total = now - open.start;
             if s.opens.is_empty() {
                 s.covered += total;
