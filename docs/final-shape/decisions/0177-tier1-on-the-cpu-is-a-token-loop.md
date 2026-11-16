@@ -1010,9 +1010,9 @@ Strings and numbers pay for the put-back on the rules' general tail.
 ## The word hash's multiplier, kept (2026-11-15)
 
 **The problem.** The lean lexer keeps its word hash's multiplier in a
-register. In the generated Rust, rustc made the 64-bit literal again
-at each word's lookup: a `mov` and three `movk`. It takes a literal
-to be as cheap to make as to keep.
+register. The generated Rust used the 64-bit literal at each word's
+lookup, so it was made there each time: a `mov` and three `movk`.
+The source had a literal where lean's has a value kept.
 
 **Tried and dropped.** Multipliers of two or three 16-bit parts (two
 or three instructions to make). No such multiplier parts rr's words.
