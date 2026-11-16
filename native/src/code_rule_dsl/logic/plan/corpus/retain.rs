@@ -1854,29 +1854,37 @@ impl Retained {
         let mut written = 0;
         // Digests of content and granules by content (decision 0212): what every process reads back alike.
         let atoms = store.atoms_handle();
-        // Inputs first: their digests are what the relations derived from them record.
-        for (rel, source) in inputs {
-            let Some(name) = was.names.get(rel) else { continue };
+        // Inputs first: their digests are what the relations derived from them record. Each input is a job of its
+        // own (its rows' digests by document, its changed granules' rows, each encoded); their frames are taken in
+        // the inputs' order.
+        let phase = super::phases::current();
+        let input_docs = &self.input_docs;
+        let atoms_ref = &atoms;
+        let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, Vec<EncodedFrame>, usize)> {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
+            let atoms: &crate::content_store::atoms::Atoms = atoms_ref;
+            let mut puts: Vec<EncodedFrame> = Vec::new();
+            let mut written = 0;
+            let name = was.names.get(rel)?;
             let width = source.columns().len();
             let types = types_of(prog, domains, rel);
             let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
             let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
-            now.insert(rel.clone(), digest);
             if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
-                continue;
+                return Some((digest, puts, written));
             }
             // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
             if width == 0 {
                 let n = source.len() as u64;
                 let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
                 puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } }.encoded());
-                continue;
+                return Some((digest, puts, written));
             }
             let g = group_col(prog, locations, rel).min(width - 1);
             let atom_owner = types.len() == width && atom_owners(&types, g);
             let owners = atom_owner.then_some(&*atoms);
             let granule = |d: i64| granule(d, owners);
-            let docs = self.input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
+            let docs = input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
             let old = was.inputs.get(rel).map(|(_, d)| Arc::clone(d));
             // The granules whose documents differ, or that hold a document come or gone.
             let differ = |doc: &i64| old.as_ref().is_none_or(|o| o.get(doc) != docs.get(doc));
@@ -1886,14 +1894,14 @@ impl Retained {
             }
             if std::env::var_os("RERAIL_INPUT_TRACE").is_some() && changed.len() <= 8 && source.len() > 20_000 {
                 let differ_n: Vec<(i64, Option<(u64, u64)>, Option<(u64, u64)>)> = docs.iter().filter(|(d, _)| differ(d)).take(4).map(|(d, v)| (*d, Some(*v), old.as_ref().and_then(|o| o.get(d)).copied())).collect();
-                eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", f.columns(rel), source.len(), docs.len());
+                eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", prog.fields().ok().and_then(|f| f.columns(rel)), source.len(), docs.len());
             }
             if changed.len() > 8 && std::env::var_os("RERAIL_INPUT_TRACE").is_some() {
                 let differ_n = docs.keys().filter(|d| differ(d)).count();
                 let gone_n = old.as_ref().map_or(0, |o| o.keys().filter(|d| !docs.contains_key(*d)).count());
                 let ex: Vec<String> = docs.iter().filter(|(d, _)| differ(d)).take(3).map(|(d, v)| format!("{d}: {v:?} was {:?}", old.as_ref().and_then(|o| o.get(d)))).collect();
-                let hit = self.input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
-                eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, super::phases::current(), source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
+                let hit = input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
+                eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, phase, source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
             }
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
             // rows as one range). A maintained input (`Layered`) gives each owner's rows from its ranges; another
@@ -1928,6 +1936,17 @@ impl Retained {
             table.sort_unstable();
             let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
             puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } }.encoded());
+            Some((digest, puts, written))
+        };
+        let framed_inputs: Vec<Option<(u64, Vec<EncodedFrame>, usize)>> = {
+            use rayon::prelude::*;
+            inputs.par_iter().map(|(rel, source)| one_input(rel, source)).collect()
+        };
+        for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
+            let Some((digest, frames, n)) = done else { continue };
+            now.insert(rel.clone(), digest);
+            puts.extend(frames);
+            written += n;
         }
         // Every input the run bound, framed or not (an option's `env`, an earlier phase's export): its digest is
         // what a relation derived from it records.

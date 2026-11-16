@@ -9343,12 +9343,24 @@ impl<'a> Cells<'a> {
         }
     }
 
-    /// The sum of `rows`' row digests (`row_digest`), keyed (`key`) a chunk at a time: no copy of all of them.
+    /// The sum of `rows`' row digests (`row_digest`), keyed (`key`) a chunk at a time: no copy of all of them. Many
+    /// rows are summed in parts at once (a wrapping sum: the same in any order).
     fn sum(&self, rows: &[i64]) -> u64 {
         let w = self.width;
         if w == 0 {
             return 0;
         }
+        const PART: usize = 1 << 15;
+        if rows.len() / w >= 2 * PART {
+            use rayon::prelude::*;
+            return rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add);
+        }
+        self.sum_one(rows)
+    }
+
+    /// `sum` on this thread.
+    fn sum_one(&self, rows: &[i64]) -> u64 {
+        let w = self.width;
         if self.atoms.is_none() {
             return rows.chunks_exact(w).fold(0u64, |s, r| s.wrapping_add(row_digest(r)));
         }

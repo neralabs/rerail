@@ -1766,6 +1766,16 @@ impl Drop for HeldPlan<'_> {
 /// Sources a queued write stores (decision 0102), for the manifest queued after it.
 pub type Late = Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
 
+/// The cross part's new atoms (the names it made, `@cat`), to the writer as its rows are derived: a wave of their
+/// own, written while the part's kept rows are framed (`retain`), not after them in the part's last wave (decision
+/// 0296). None pending (a warm run's), nothing queued.
+fn cross_atoms_ahead(store: &ContentStore) {
+    if store.atoms_handle().pending() {
+        store.queue_atoms_flush();
+        crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::CrossDerived);
+    }
+}
+
 /// The store's collection (decision 0053), started once the run's manifest is written: `join` waits for it.
 pub struct Collecting(std::sync::mpsc::Receiver<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>>);
 
@@ -7359,6 +7369,9 @@ fn run_observed(
     // The chunks' freed pages go back before the cross part builds its own.
     { let _s = crate::code_rule_dsl::logic::profile::span(|| "release the chunks' pages".into()); crate::code_rule_dsl::prof::release(); }
     phase("stats", statements.count());
+    // What the file-local part left queued (the files' stats) goes to the writer now, not with the cross part's
+    // writes at its end (decision 0296).
+    crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Local);
     statements.enter("cross");
     let mut rounds = cross_rounds::Rounds::default();
     // Strata a session's run evaluated, of all (decision 0077).
@@ -7932,6 +7945,7 @@ fn run_observed(
                         None => texts_run(part, &db, stats, keep, modes, &vocabulary)?,
                     };
                     drop(s);
+                    cross_atoms_ahead(store);
                     let Binder { constants, mut measured_kept, mut bound_old, mut lazies, .. } = binder;
                     let mut got = got;
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
@@ -8348,6 +8362,7 @@ fn run_observed(
                     let strata = kept_strata.as_mut().map(|k| k as &mut dyn super::KeptStrata);
                     let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), strata, texts: Some(Arc::clone(&vocabulary)), ..Default::default() } } else { super::Hooks { texts: Some(Arc::clone(&vocabulary)), ..Default::default() } };
                     let got = super::run_atoms_native_hooked(&cross, &db, "main", cross_stats, wanted.clone(), modes, hooks)?;
+                    cross_atoms_ahead(store);
                     if let Some(k) = kept_strata {
                         let written = k.written_rows;
                         cross_kept = k.strata;
