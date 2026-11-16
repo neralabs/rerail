@@ -5,7 +5,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { prepareMergedCheckout, removeMergedCheckout } from "../../../scripts/check/merged-checkout.mjs";
@@ -132,7 +132,8 @@ describe("the checkout the pre-commit checks run in", () => {
     const run = spawnSync("node", [SCRIPT, "prepare"], { cwd: root, env: { ...ENV, TMPDIR: tmp }, encoding: "utf8" });
 
     expect(run.status, run.stderr).toBe(0);
-    expect(run.stdout.trim()).toBe(root);
+    // The root as Git prints it (`D:/a/b` on Windows), which pre-commit.sh compares with Git's own.
+    expect(resolve(run.stdout.trim())).toBe(resolve(root));
     expect(run.stderr.trim()).toMatch(
       /^pre-commit: could not merge your work with origin\/main \(git merge-tree: fatal: refusing to merge unrelated histories; it needs Git 2\.38 or later\), so your branch is checked alone$/u,
     );
