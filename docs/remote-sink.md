@@ -111,7 +111,7 @@ one is the batch header; each further line is a record:
 {"type":"session","id":"<session id>","host":"claude-code","cwd":"/abs","repositoryKey":"…","startedAt":…,"endedAt":…|null}
 {"type":"event","id":"<machineId>:<sequence>","sessionId":"…","eventId":"…","kind":"user-prompt","observedAt":…,"sequence":42,"payload":{…}}
 {"type":"rule","id":"sha256:…","ruleId":"no-todo","kind":"code","mode":"steer","document":{…}}
-{"type":"audit","id":"<audit id>","sessionId":"…","workspaceRoot":"…","scope":"repository","mode":"log","status":"completed","startedAt":…,"finishedAt":…,"ruleRevisions":[…],"ruleProvenance":[…],"paths":[…],"failures":[…],"failureCount":0}
+{"type":"audit","id":"<audit id>","sessionId":"…","workspaceRoot":"…","scope":"repository","mode":"log","origin":"ongoing","status":"completed","startedAt":…,"finishedAt":…,"ruleRevisions":[…],"ruleProvenance":[…],"paths":[…],"failures":[…],"failureCount":0}
 {"type":"violation","id":"<audit id>:<ordinal>","auditId":"…","sessionId":"…","ruleId":"…","violationKey":"…","logged":true,"code":"…","clauseId":"…","mode":"log","message":"…","path":"…","start":{"line":3,"column":5},"end":{"line":3,"column":9},"span":{…},"payloadHash":"sha256:…"}
 {"type":"scan","id":"<scanId>", …the rerail.scan/1 report…}
 {"type":"gap","id":"…","stream":"event","fromSequence":7,"toSequence":9,"reason":"deleted-locally"}
@@ -127,6 +127,9 @@ one is the batch header; each further line is a record:
   `batchId`, so a batch resent after a lost answer can be stored once.
 - **Order.** Referenced records come first, in the same or an earlier batch: repositories, rules and sessions before
   events, audits and violations.
+- **Origin.** An audit's `origin` is `ongoing`, the session's own edits checked as they happen, or `scan`, one
+  someone asked for (`rerail scan --session`, the first repository audit). The dashboard leaves a scan out; a remote
+  still gets its violations, as `violation` records of that audit.
 - **Positions.** A violation's `start` and `end` are **1-based**, `end` just past the match, as in a
   [scan report](headless-scan.md#the-report-rerailscan1). Its `span` is the engine's own, as audits store it: lines,
   columns and bytes **0-based**, ends exclusive. `scan` records use the report's 1-based positions.

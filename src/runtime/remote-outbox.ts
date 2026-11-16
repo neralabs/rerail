@@ -26,6 +26,7 @@ import { parseRuleDocument } from "../engine/catalog/rule-documents.js";
 import { worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
+import { violationKeySql } from "../engine/storage/audit-history.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { keepFilesPrivate } from "../engine/storage/private-files.js";
 import { defaultRerailHome, REMOTE_OUTBOX_FILE } from "../engine/storage/rerail-home.js";
@@ -638,7 +639,7 @@ export class RemoteOutbox {
           if (payloadHash === undefined) continue;
           if (!this.#addRule(rules, { ruleId: provenance.ruleId, payloadHash, checkoutPath }, batch, unsent)) return false;
         }
-        const keys = new Map((rerail.prepare("SELECT ordinal, violation_key, logged FROM audit_violations WHERE audit_id = ?").all(row.audit_id) as Array<{ ordinal: number; violation_key: string; logged: number }>)
+        const keys = new Map((rerail.prepare(audit.origin === "scan" ? SCAN_VIOLATION_KEYS : ONGOING_VIOLATION_KEYS).all(row.audit_id) as Array<{ ordinal: number; violation_key: string; logged: number }>)
           .map(entry => [entry.ordinal, entry]));
         // The audit and its violations go in one batch, or the audit waits for the next.
         const items = [auditRecord(audit, hash), ...violationRecords(audit, keys)];
@@ -787,12 +788,30 @@ function rerailVersion(): string {
   return version;
 }
 
+/** An ongoing audit's violations as its history holds them: the first copy of each, and whether it was logged. */
+const ONGOING_VIOLATION_KEYS = "SELECT ordinal, violation_key, logged FROM audit_violations WHERE audit_id = ?";
+
+/**
+ * A scan's, which its history leaves out (`audit-history.ts`), derived the way the history triggers derive an ongoing
+ * audit's: the first copy of each (rule, key), logged when the audit or any copy was in Log mode.
+ */
+const SCAN_VIOLATION_KEYS = `SELECT ordinal, violation_key, logged FROM (
+    SELECT violation.key AS ordinal, ${violationKeySql("violation.value")} AS violation_key,
+      row_number() OVER copies AS copy,
+      audit.mode = 'log' OR max(coalesce(json_extract(violation.value, '$.mode') = 'log', 0)) OVER copies AS logged
+    FROM audits audit, json_each(audit.violations_json) violation
+    WHERE audit.audit_id = ?
+    WINDOW copies AS (PARTITION BY json_extract(violation.value, '$.ruleId'), ${violationKeySql("violation.value")}
+      ORDER BY violation.key ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+  ) WHERE copy = 1`;
+
 function auditRecord(audit: AuditRecord, hash: string): OutboxRecord {
   return record("audit", audit.auditId, {
     sessionId: audit.sessionId,
     workspaceRoot: audit.workspaceRoot,
     scope: audit.scope,
     mode: audit.mode,
+    origin: audit.origin,
     status: audit.status,
     startedAt: audit.startedAt,
     finishedAt: audit.finishedAt,

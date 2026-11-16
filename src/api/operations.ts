@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation, type CodeRuleViolationFix, type CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
-import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, AUDIT_MODES, AUDIT_SCOPES, AUDIT_STATUSES, type AuditFailure } from "../engine/audit/audit.js";
+import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, AUDIT_MODES, AUDIT_ORIGINS, AUDIT_SCOPES, AUDIT_STATUSES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
 import { checkoutRealpath, withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
@@ -112,6 +112,7 @@ export const auditQuerySchema = z.object({
   status: z.enum(AUDIT_STATUSES).optional(),
   scope: z.enum(AUDIT_SCOPES).optional(),
   mode: z.enum(AUDIT_MODES).optional().describe("Audit mode (steer, log), not the mode of the rules it ran."),
+  origin: z.enum(AUDIT_ORIGINS).optional().describe("ongoing: a session's own edits; scan: one someone asked for, which the dashboard leaves out."),
   limit: countParameter.min(1).max(200).optional().describe("Maximum records to return; defaults to 50 and is capped at 200."),
   offset: countParameter.optional().describe("Number of matching records to skip; defaults to 0."),
 }).strict();
@@ -159,6 +160,7 @@ function auditQuery(input: z.infer<typeof auditQuerySchema>): AuditQuery {
     ...(input.status === undefined ? {} : { status: input.status }),
     ...(input.scope === undefined ? {} : { scope: input.scope }),
     ...(input.mode === undefined ? {} : { mode: input.mode }),
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
     ...(input.limit === undefined ? {} : { limit: input.limit }),
     ...(input.offset === undefined ? {} : { offset: input.offset }),
   };

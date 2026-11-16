@@ -475,7 +475,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `audit_settings_update` | `PATCH /api/sessions/{sessionId}/audit-settings` | People only (`rerail settings`). Set defaults, which outlast the session: `mode` `steer`/`log`; `steerStrategy` `message`/`rewind`/`subagent`. |
 | `audit_requests_create` | `POST /api/sessions/{sessionId}/audit-requests` | Internal testing. Queue an audit for a session. |
 | `audit_requests_list` | `GET /api/sessions/{sessionId}/audit-requests` | Internal testing. `{ auditRequests }` with their `auditIds`. |
-| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=` | `{ audits, total }` with `violations` and failures; `mode` is run mode. |
+| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=&origin=` | `{ audits, total }` with `violations` and failures; `mode` is run mode, `origin` is `ongoing` or `scan`. |
 | `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
 | `repository_audits_list` | `GET /api/repository-audits` | Internal testing. Each repository's `repositoryAudit` and latest `audit` summary with `violationCount`. |
 | `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing. Paged entries; `kind` `violation`/`failure`, `mode` the rule's mode. |
@@ -682,6 +682,8 @@ An audit runs code rules at one of three scopes, in one of two independent run m
 - **`log`** run mode records the same with no conversation output.
 
 Nothing is acknowledged, baselined or suppressed as already seen: changing relevant source can raise the same violation again.
+
+An audit someone asked for (`rerail scan --session`, an audit request, the first repository audit) is recorded with `origin: "scan"`; the audits of a session's own edits are `ongoing`. A scan finds what the checkout already holds, so the dashboard leaves it out: its violations are not the session's (no violation card, not counted as logged or steered) and it is no run of its rules. `rerail scan --wait` prints its run ids; read its findings with `GET /api/audits?auditId=<run id>`, or every scan with `?origin=scan`.
 
 #### Steer strategies (experimental)
 

@@ -16,6 +16,7 @@ import {
   type AuditResult,
   type AuditSummary,
   type AuditMode,
+  type AuditOrigin,
   type AuditScope,
   type AuditStatus,
   type AuditRuleProvenance,
@@ -120,6 +121,7 @@ export interface AuditQuery {
   status?: AuditStatus;
   scope?: AuditScope;
   mode?: AuditMode;
+  origin?: AuditOrigin;
   limit?: number;
   offset?: number;
 }
@@ -260,6 +262,7 @@ function conditions(query: AuditQuery, repositoryId: Repository): SQL | undefine
     query.status === undefined ? undefined : eq(audits.status, query.status),
     query.scope === undefined ? undefined : eq(audits.scope, query.scope),
     query.mode === undefined ? undefined : eq(audits.mode, query.mode),
+    query.origin === undefined ? undefined : eq(audits.origin, query.origin),
   );
 }
 
@@ -278,6 +281,7 @@ function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
     workspaceRoot: row.workspaceRoot,
     scope: row.scope,
     mode: row.mode,
+    origin: row.origin,
     revision: row.revision,
     catalogRevision: row.catalogRevision,
     ruleRevisions: row.ruleRevisions,
@@ -660,6 +664,7 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
           workspaceRoot: input.workspaceRoot,
           scope: input.scope,
           mode: input.mode,
+          origin: input.origin ?? "ongoing",
           revision: input.revision,
           catalogRevision: input.catalogRevision,
           ruleRevisions: input.ruleRevisions,

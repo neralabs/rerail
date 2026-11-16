@@ -11,6 +11,10 @@
  * deletes the old row without running `audits_history_delete` (SQLite runs no delete trigger for it while
  * `recursive_triggers` is off, its default), so the insert trigger clears what an audit of that id left first. The
  * backfill that fills the tables for audits written before them is frozen in its migration step (`migrations.ts`).
+ *
+ * Only ongoing audits (`AuditOrigin`) reach the tables: a scan's violations are the checkout's, found when someone
+ * asked, not the session's, so the dashboard counts neither them nor the scan as an audit of its rules. The scan
+ * keeps its result in `audits`, where `rerail scan` reads it.
  */
 
 /**
@@ -31,10 +35,13 @@ export function violationKeySql(value: string): string {
  */
 const LOGGED = "NEW.mode = 'log' OR max(coalesce(json_extract(violation.value, '$.mode') = 'log', 0)) OVER copies";
 
+/** Whether `audit` is one the derived tables hold: an ongoing audit. Its `origin` never changes after its insert. */
+const ONGOING = (audit: string): string => `${audit}.origin = 'ongoing'`;
+
 /**
  * The `audit_violations` rows of the audit a trigger holds as `NEW`, from its entries at ordinal `from` on: repeats
  * of a (rule, key) among them collapse onto the first copy, `logged` (`LOGGED`) when the audit or any copy was in Log
- * mode.
+ * mode. None for a scan (`ONGOING`).
  */
 const violationRows = (from: string): string => {
   const key = violationKeySql("violation.value");
@@ -47,7 +54,7 @@ const violationRows = (from: string): string => {
         row_number() OVER copies AS copy,
         ${LOGGED} AS logged
       FROM json_each(NEW.violations_json) violation
-      WHERE violation.key >= ${from}
+      WHERE violation.key >= ${from} AND ${ONGOING("NEW")}
       -- The whole partition: with ORDER BY alone the frame would end at the current row, and the first copy, the one
       -- kept, would see only its own rule's mode.
       WINDOW copies AS (PARTITION BY json_extract(violation.value, '$.ruleId'), ${key}
@@ -117,10 +124,14 @@ const REPLACE_VIOLATIONS = `
       AND NOT EXISTS (SELECT 1 FROM audit_violations kept WHERE kept.audit_id = staged.audit_id AND kept.ordinal = staged.ordinal);
   DELETE FROM audit_violations_staging WHERE audit_id = NEW.audit_id;`;
 
-/** Creates the rule set of `audit`'s `rule_revisions_json` and its members unless it exists, then records the audit's use of it. */
+/**
+ * Creates the rule set of `audit`'s `rule_revisions_json` and its members unless it exists, then records the audit's
+ * use of it; nothing for a scan (`ONGOING`).
+ */
 const USE_RULE_SET = (audit: string): string => `
   INSERT INTO audit_rule_sets (rule_revisions_json)
-    SELECT ${audit}.rule_revisions_json WHERE NOT EXISTS (SELECT 1 FROM audit_rule_sets WHERE rule_revisions_json = ${audit}.rule_revisions_json);
+    SELECT ${audit}.rule_revisions_json WHERE ${ONGOING(audit)}
+      AND NOT EXISTS (SELECT 1 FROM audit_rule_sets WHERE rule_revisions_json = ${audit}.rule_revisions_json);
   INSERT INTO audit_rule_set_rules (rule_set_id, rule_id)
     SELECT DISTINCT rule_set.rule_set_id, json_extract(revision.value, '$.ruleId')
     FROM audit_rule_sets rule_set, json_each(rule_set.rule_revisions_json) revision
@@ -129,7 +140,7 @@ const USE_RULE_SET = (audit: string): string => `
       AND NOT EXISTS (SELECT 1 FROM audit_rule_set_rules member WHERE member.rule_set_id = rule_set.rule_set_id);
   INSERT INTO audit_rule_set_uses (audit_id, session_id, started_at, rule_set_id)
     SELECT ${audit}.audit_id, ${audit}.session_id, ${audit}.started_at, rule_set_id
-    FROM audit_rule_sets WHERE rule_revisions_json = ${audit}.rule_revisions_json;`;
+    FROM audit_rule_sets WHERE rule_revisions_json = ${audit}.rule_revisions_json AND ${ONGOING(audit)};`;
 
 const sameKey = (row: string): string =>
   `session_id = ${row}.session_id AND rule_id = ${row}.rule_id AND violation_key = ${row}.violation_key`;

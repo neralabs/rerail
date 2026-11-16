@@ -46,6 +46,7 @@ import {
   type AuditFailure,
   type AuditRecorder,
   type AuditMode,
+  type AuditOrigin,
   type AuditResult,
   type AuditRuleProvenance,
   type AuditScope,
@@ -944,6 +945,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
 
+  /** An audit someone asked for (`rerail scan`, the first repository audit), recorded as a scan (`AuditOrigin`). */
   async audit(
     sessionId: string,
     options: { scope: "repository" | "touched-files"; mode: AuditMode; paths?: string[]; audit?: RepositoryAuditHooks },
@@ -965,17 +967,20 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       if (!withinCheckout(this.#workspaceRoot, absolute)) throw new Error("Policy scan path escapes workspace");
       return relative(this.#workspaceRoot, absolute).split(sep).join("/");
     });
-    const task = this.#runScopeAudit(options.scope, options.mode, scope);
+    const task = this.#runScopeAudit(options.scope, options.mode, scope, false, [], "scan");
     this.#trackAudit(task);
     const auditId = await task;
     return auditId === undefined ? [] : [auditId];
   }
 
-  /** Audit this whole checkout; the checkouts nested in it are skipped and reported, for their own rules to judge. */
+  /**
+   * Audit this whole checkout, as a scan; the checkouts nested in it are skipped and reported, for their own rules to
+   * judge.
+   */
   async auditRepository(sessionId: string, mode: AuditMode): Promise<RepositoryAuditReport> {
     if (sessionId !== this.#sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
     const nestedCheckouts: string[] = [];
-    const task = this.#runScopeAudit("repository", mode, [], false, nestedCheckouts);
+    const task = this.#runScopeAudit("repository", mode, [], false, nestedCheckouts, "scan");
     this.#trackAudit(task);
     const auditId = await task;
     return { auditId, nestedCheckouts: [...new Set(nestedCheckouts)].sort(compareDeterministicStrings) };
@@ -1385,6 +1390,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     generatedEdit = false,
     /** Receives the nested checkouts the walk reached and skipped. */
     reached: string[] = [],
+    origin: AuditOrigin = "ongoing",
   ): Promise<string | undefined> {
     const startedAt = performance.now();
     this.refreshCodeRules();
@@ -1398,7 +1404,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       if (this.#closing) return auditId;
       const prepared = this.#prepareWorkspace();
       workspace = prepared.workspace;
-      auditId = this.#startAudit(scope, mode, revision, paths, prepared);
+      auditId = this.#startAudit(scope, mode, revision, paths, prepared, undefined, origin);
       const indexed = scope === "repository" && (await prepared.storage);
       const indexStartedAt = performance.now();
       const walked = indexed
@@ -2113,6 +2119,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     paths: string[],
     prepared: PreparedWorkspace | null | undefined = this.#replacement ?? this.#workspace,
     provenance: readonly AuditRuleProvenance[] = prepared?.provenance ?? this.#catalog.provenance(),
+    origin: AuditOrigin = "ongoing",
   ): string | undefined {
     if (this.#closing && prepared !== null) return undefined;
     let auditId: string | undefined;
@@ -2122,6 +2129,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         workspaceRoot: this.#workspaceRoot,
         scope,
         mode,
+        origin,
         catalogRevision: prepared === null ? null : (prepared?.version ?? this.#catalog.status.version),
         ruleRevisions: prepared === null ? [] : provenance.map(({ ruleId, revision }) => ({ ruleId, revision })),
         revision,

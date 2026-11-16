@@ -153,6 +153,56 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "repositories", "merge_assist", "integer DEFAULT false NOT NULL");
     },
   },
+  {
+    // An audit's `origin`: `ongoing`, or `scan` for one someone asked for, whose violations the dashboard leaves out.
+    // The four triggers that derive history from `audits` are dropped, and the DDL right after creates them again
+    // skipping scans. The scans a file already holds are the audits its scan requests and first repository audits
+    // name; each is marked and what was derived from it removed (`SCAN_HISTORY_REPAIR`). No floor: an older build
+    // never reads the column, its inserts take the default, and it creates a trigger only when the trigger is missing,
+    // so it keeps these.
+    id: "audits-origin",
+    up(database) {
+      for (const trigger of ["audits_history_insert", "audits_history_violations_append", "audits_history_violations_update", "audits_history_rule_set_update"])
+        database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
+      addColumn(database, "audits", "origin", `text DEFAULT 'ongoing' NOT NULL CONSTRAINT "audits_origin" CHECK("audits"."origin" IN ('ongoing', 'scan'))`);
+      const tables = new Set(database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`).map(row => row.name));
+      if (!tables.has("audits")) return;
+      if (tables.has("audit_requests")) database.run(sql.raw(MARK_REQUESTED_SCANS));
+      if (tables.has("repository_audits")) database.run(sql.raw(MARK_REPOSITORY_AUDIT_SCANS));
+      if (tables.has("audit_violations")) for (const statement of SCAN_HISTORY_REPAIR) database.run(sql.raw(statement));
+    },
+  },
+];
+
+/** `audits-origin`: the audits `rerail scan --session` (an audit request) recorded are scans. */
+const MARK_REQUESTED_SCANS = `UPDATE audits SET origin = 'scan' WHERE audit_id IN (
+    SELECT requested.value FROM audit_requests request, json_each(request.audit_ids_json) requested)`;
+
+/** `audits-origin`: the first repository audit of each checkout is a scan. */
+const MARK_REPOSITORY_AUDIT_SCANS = `UPDATE audits SET origin = 'scan'
+    WHERE audit_id IN (SELECT audit_id FROM repository_audits WHERE audit_id IS NOT NULL)`;
+
+/**
+ * `audits-origin`'s repair: the derived rows of the audits it marked scans go, and the rollup rows of their violations
+ * are recomputed from the sightings left (or dropped). It recomputes them itself: the rollup triggers are missing when
+ * this open's `audit-history-derived-tables` filled the tables.
+ */
+const SCAN_HISTORY_REPAIR: readonly string[] = [
+  `CREATE TEMP TABLE scan_violation_keys AS
+    SELECT DISTINCT violation.session_id, violation.rule_id, violation.violation_key
+    FROM audits audit JOIN audit_violations violation ON violation.audit_id = audit.audit_id
+    WHERE audit.origin = 'scan' AND violation.rule_id IS NOT NULL`,
+  "DELETE FROM audit_violations WHERE audit_id IN (SELECT audit_id FROM audits WHERE origin = 'scan')",
+  "DELETE FROM audit_rule_set_uses WHERE audit_id IN (SELECT audit_id FROM audits WHERE origin = 'scan')",
+  `DELETE FROM rule_violation_rollup
+    WHERE (session_id, rule_id, violation_key) IN (SELECT session_id, rule_id, violation_key FROM temp.scan_violation_keys)`,
+  `INSERT INTO rule_violation_rollup (session_id, rule_id, violation_key, last_seen_at, last_logged_at)
+    SELECT kept.session_id, kept.rule_id, kept.violation_key, max(kept.started_at), max(CASE WHEN kept.logged = 1 THEN kept.started_at END)
+    FROM temp.scan_violation_keys scanned
+    JOIN audit_violations kept
+      ON kept.session_id = scanned.session_id AND kept.rule_id = scanned.rule_id AND kept.violation_key = scanned.violation_key
+    GROUP BY kept.session_id, kept.rule_id, kept.violation_key`,
+  "DROP TABLE temp.scan_violation_keys",
 ];
 
 /** `audit_rule_provenances` and its digest index as `audit-rule-provenance-once` introduced them. */

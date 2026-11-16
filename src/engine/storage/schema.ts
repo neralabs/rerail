@@ -4,10 +4,12 @@ import { ADAPTER_CAPABILITIES, type RerailHost, type SteerStrategy } from "../ad
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import {
   AUDIT_MODES,
+  AUDIT_ORIGINS,
   AUDIT_STATUSES,
   AUDIT_SCOPES,
   type AuditFailure,
   type AuditMode,
+  type AuditOrigin,
   type AuditStatus,
   type AuditScope,
   type AuditRuleProvenance,
@@ -398,6 +400,8 @@ export const audits = sqliteTable(
     workspaceRoot: text("workspace_root").notNull(),
     scope: text("scope", { enum: AUDIT_SCOPES }).$type<AuditScope>().notNull(),
     mode: text("mode", { enum: AUDIT_MODES }).$type<AuditMode>().notNull(),
+    /** What started the audit (`AuditOrigin`); an older Rerail's inserts take the default. */
+    origin: text("origin", { enum: AUDIT_ORIGINS }).$type<AuditOrigin>().notNull().default("ongoing"),
     revision: integer("revision").notNull(),
     /** Immutable catalog digest the run evaluated against; null when it never reached evaluation. */
     catalogRevision: text("catalog_revision"),
@@ -426,6 +430,7 @@ export const audits = sqliteTable(
     index("audits_rule_provenance").on(table.ruleProvenanceId),
     check("audits_scope", sql`${table.scope} IN (${sql.raw(inList(AUDIT_SCOPES))})`),
     check("audits_mode", sql`${table.mode} IN (${sql.raw(inList(AUDIT_MODES))})`),
+    check("audits_origin", sql`${table.origin} IN (${sql.raw(inList(AUDIT_ORIGINS))})`),
     check("audits_status", sql`${table.status} IN (${sql.raw(inList(AUDIT_STATUSES))})`),
     check("audits_revision", sql`${table.revision} >= 0`),
     check("audits_rule_provenance_json", sql`json_type(${table.ruleProvenance}) = 'array'`),
