@@ -1,6 +1,6 @@
 # Audits: recorded audits move to the shared rule provenance after a week
 
-For [pull request #648](https://github.com/neralabs/rerail/pull/648), head 807c53fbb. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #648](https://github.com/neralabs/rerail/pull/648), head be379d5d5. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,11 +10,11 @@ For [pull request #648](https://github.com/neralabs/rerail/pull/648), head 807c5
 2. An audit without rules names a stored `[]`: about 4 bytes more.
 3. While the move waits, the daemon reads the file hourly.
 
-**We recommend:** yes, with the 7-day wait, once CI passes, a maintainer answers #646's question 1 and the [three places marked read first](#3-where-to-look) hold; main's `rerail scrub` gives back 1 MB of 1,438.
+**We recommend:** yes, with the 7-day wait, once a maintainer answers #646's question 1 and the [three places marked read first](#3-where-to-look) hold; main's `rerail scrub` gives back 1 MB of 1,438.
 
 | Size | Lane | Waits on | Not verified |
 |---|---|---|---|
-| 2,450 lines in 14 files: 786 ship, 2 run in every test run, 1,662 are tests and text | Careful. A code owner approves. | #646, question 1. Unanswered. CI fails at 807c53fbb. | 6 |
+| 2,494 lines in 14 files: 786 ship, 2 run in every test run, 1,706 are tests and text | Careful. A code owner approves. | #646, question 1. Unanswered. CI passes at be379d5d5. | 6 |
 
 ## 2. Intent, and the gap
 
@@ -40,7 +40,7 @@ One 4,000-audit file, 767 rules on, Linux x64, 13 November 2026.
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, The move, after a week&#x27;s wait, high risk, 751 lines; B, Every audit names a stored copy, medium risk, 11 lines; C, The daemon starts and stops it, medium risk, 26 lines. Read first: rule-provenance-move.ts, audit-store.ts, daemon.ts. To skim: 1,609 lines of tests and 53 lines of docs paragraphs and one release note.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, The move, after a week&#x27;s wait, high risk, 751 lines; B, Every audit names a stored copy, medium risk, 11 lines; C, The daemon starts and stops it, medium risk, 26 lines. Read first: rule-provenance-move.ts, audit-store.ts, daemon.ts. To skim: 1,653 lines of tests and 53 lines of docs paragraphs and one release note.">
 
 1. **Read first**, 20 min: `rule-provenance-move.ts`: `moveBatch`, `stepBound`, `takes`, `lastOlderWrite`. Can a batch lose a provenance, or the wait miss an older Rerail's audit?
 2. **Read first**, 3 min: `audit-store.ts`: `start`, `storedRuleProvenanceId`. Does every audit of this version name a stored copy?
@@ -51,22 +51,20 @@ One 4,000-audit file, 767 rules on, Linux x64, 13 November 2026.
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, The move, high risk: fails without the fix holds with a limit, independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Names a copy, medium risk: independent review holds with a limit. C, Daemon wiring, medium risk: independent review holds with a limit, users lose nothing holds with a limit. CI at this head does not hold yet for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, The move, high risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Names a copy, medium risk: independent review holds with a limit. C, Daemon wiring, medium risk: independent review holds with a limit, users lose nothing holds with a limit. CI at this head holds for every change.">
 
 Start at A: it rewrites recorded rows. No person has reviewed: check 2's half marks.
 
-<details><summary>Each limit, and each check that does not hold yet</summary>
+<details><summary>Each half mark's limit</summary>
 
-| Change | Check | Its limit, or why it does not hold yet |
+| Change | Check | It holds with this limit |
 |---|---|---|
-| A. The move | fails without the fix | Each fix line taken out fails a test, except one: the bound on the row number in the start's check (`rule-provenance-move.ts` line 603). Three of the five tests added in 01904ea45 and 807c53fbb fail on 601c8dadc's source (Linux x64, Windows 11); the six of 6272d2583, af7ef9e79 and a3a4b54bc fail on e111a35b1; the two of 05c8faadb on de93ffdc1's source. |
-| A. The move | independent review | A second run from a separate checkout verified 807c53fbb, after it found defects at e111a35b1, de93ffdc1 and e5b858333, all fixed. The automated reviewer read 601c8dadc: 0 blockers, 2 follow-ups and 1 nit. 01904ea45 and 807c53fbb answer the follow-up on the code and the nit; it has not read them. It does not approve a high-risk path. No person has reviewed. |
+| A. The move | independent review | A second run from a separate checkout verified 807c53fbb and be379d5d5, after defects at e111a35b1, de93ffdc1 and e5b858333, all fixed. The automated reviewer read 601c8dadc: 0 blockers, 2 follow-ups and 1 nit. 01904ea45 and 807c53fbb answer the follow-up on the code and the nit; it has not reviewed since. It does not approve a high-risk path. No person has reviewed. |
 | A. The move | users lose nothing | This version reads 4,000 of 4,000 audits as main does through the move and after 10 kills (768027db1); at 807c53fbb, 600 of 600 where one audit is dated after the update, on Linux x64 and Windows 11. On purpose, an older Rerail started again after the move, or silent for 7 days, reads `[]`: 0.1.4 did for all 4,000. |
-| A. The move | Windows 11: no new failure | The 23 test files of the change and of the modules that import it, at 807c53fbb: 504 passed, 17 skipped, 1 failed, a test of main's that fails 1 run in 3 there; nothing new against main's baseline. No Windows run had a real 0.1.4 beside the daemon; the tests that write audits as 0.1.4 does pass there. |
+| A. The move | Windows 11: no new failure | The 23 test files of the change and of the modules that import it, at be379d5d5: 505 passed, 17 skipped, none failed; nothing new against main's baseline. No Windows run had a real 0.1.4 beside the daemon; the tests that write audits as 0.1.4 does pass there. |
 | B. Names a copy | independent review | A second run from a separate checkout measured the loss at d57eee7f3, and verified this mark at 768027db1 and again at 4d1aec2c8. The automated reviewer counts its blocker fixed with it. No person on the team has reviewed. |
-| C. Daemon wiring | independent review | The automated reviewer found two nits here at e322936d3, a stop logged as a failure and a failure logged without its stack, and counts both fixed at 2f9ea64e0; `daemon.ts` is unchanged since. A second run from a separate checkout drove the real daemon at 4d1aec2c8 and at 807c53fbb. No person on the team has reviewed. |
+| C. Daemon wiring | independent review | The automated reviewer found two nits here at e322936d3, a stop logged as a failure and a failure logged without its stack, and counts both fixed at 2f9ea64e0; `daemon.ts` is unchanged since. A second run from a separate checkout drove the real daemon at 4d1aec2c8, 807c53fbb and be379d5d5. No person on the team has reviewed. |
 | C. Daemon wiring | users lose nothing | A stop ends the move before its next batch, logging nothing; the next start moves the rest. While the move opens its writer behind another process's lock, a stop takes 262 ms against 261 at main on Linux x64, 352 against 324 on Windows 11 (4d1aec2c8). One limit: each start reads on the hooks' thread, 1.3 to 5.3 ms. |
-| A to C | CI at this head | CI fails at 807c53fbb on each of three attempts, read at 06:41 UTC on 16 November 2026, in `Unit tests (Windows, 2/2)` and `CI result`. Third: 26 checks passed, 1 skipped, 2 failed, on the Merge Assist test of #683 and the Claude status test of #681. First: one timeout in `Unit tests (1/2)`. No test of this change failed. |
 
 </details>
 
@@ -139,13 +137,13 @@ Before: At main the daemon serves and each recorded audit keeps its rule provena
 
 It stands on main alone; no open pull request needs it. #657 and #698 conflict in `src/daemon/daemon.ts`; the team's #631 deletes the release note this edits.
 
-Pull request #648 is based on main at c89f068ed, which holds #530 and is merged in. Its merge waits for a maintainer's answer to question 1 on #646. No pull request needs it. In trial merges it conflicts in one source file with #657 at three places and with #698 at two, and merges clean with four others that share a file. The team's release, #631, deletes the release note it edits.
+Pull request #648 is based on main at c89f068ed, which holds #530 and is merged in. Its merge waits for a maintainer's answer to question 1 on #646. No pull request needs it. In trial merges it conflicts in one source file with #657 at three places and with #698 at two, and merges clean with six others that share a file. The team's release, #631, deletes the release note it edits.
 
-**Trial merges, and shared files.** Trial merges of 807c53fbb with the heads of the open pull requests that share a file, 16 November 2026. #657 (cf986a055): three conflicts in `src/daemon/daemon.ts`; the team's #698 (2cf99f1fe): two there. The second to merge takes main and keeps both sides. Clean: #672, #680, #656 and #562. #676 and #667 do not merge with main today; with 807c53fbb each conflicts only in files where it conflicts with main. Not tried with 807c53fbb: #640, #508 and #631. Of #508, `docs/how-setup-works.md` merged clean with 601c8dadc.
+**Trial merges, and shared files.** Trial merges with the heads of the open pull requests that share a file, 16 November 2026. With be379d5d5: #698 (2cf99f1fe) conflicts at two places of `src/daemon/daemon.ts`, and #631 (5f7d4fb39) in the release note it deletes; #640 (b0bc1b6e3) and #508 (7529228ce) merge cleanly. With 807c53fbb: #657 (cf986a055) conflicts at three places of `daemon.ts`; #672, #680, #656 and #562 are clean; #676 and #667 do not merge with main today, and each conflicts only in files where it conflicts with main. The second to merge takes main and keeps both sides.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 6 not verified, 6 smaller gaps, 8 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 6 not verified, 5 smaller gaps, 8 limits that stay</summary>
 
 1. **Question 1 on #646:** no maintainer has answered.
 2. **No person on the team** has reviewed or commented.
@@ -156,12 +154,11 @@ Pull request #648 is based on main at c89f068ed, which holds #530 and is merged 
 
 **Smaller gaps**
 
-- **Where the numbers were measured.** The move, the writes during it and the kills ran at 768027db1 and d57eee7f3, on the 4,000-audit file. The runs since e111a35b1 use a file of 600 audits. Of the 19 commits since 768027db1, eight change code, four tests only, seven docs and comments only.
+- **Where the numbers were measured.** The move, the writes during it and the kills ran at 768027db1 and d57eee7f3, on the 4,000-audit file. The runs since e111a35b1 use a file of 600 audits. Of the 20 commits since 768027db1, eight change code, five tests only, seven docs and comments only.
 - **Windows 11.** The tests that write audits as 0.1.4 does, with rules and without, pass there. The run with 0.1.4 from npm beside the real daemon was made on Linux x64 only, and so was the run that recorded audits without rules through Claude Code's hook.
 - **A database upgraded before 01904ea45.** A build of main since #530, or of this branch, ran the step with no record; no later step writes one. There an audit recorded before the update and dated after it stops the move: upgraded by 601c8dadc, opened at 807c53fbb, 300 of 600 stay.
-- **One fix line with no failing test.** Without the row bound of the start's check (`rule-provenance-move.ts` line 603) the 23 files still pass. Through a real daemon each later start then wrote the wait line again and read 380 ms cold; 807c53fbb reads 1.4 ms (Linux x64).
 - **Read in the code, not run:** the move starts at most an hour late after the computer sleeps; `rerail.sqlite.pre-update` holds each audit in full until a later version change replaces it; a start time past year 275,760 makes the wait line throw, and the daemon logs that failure once.
-- **One Windows 11 run failed one test of main:** among the 23 files at 807c53fbb, a test of main's that fails 1 run in 3 failed. Repeated, it passed 10 runs of 10 at main and at the head. On Linux x64 the 23 files: 521 passed, 1 skipped.
+- **One Windows 11 run failed one test of main:** among the 23 files at 807c53fbb, a test of main's that fails 1 run in 3 failed. Repeated, it passed 10 runs of 10 at main and at 807c53fbb; at be379d5d5 none failed. On Linux x64: 521 passed, 1 skipped.
 
 **Limits that stay**
 
@@ -194,10 +191,10 @@ The description on GitHub is the record: "How you tested it" holds the runs, the
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | The run at 807c53fbb, three attempts, read at 06:41 UTC on 16 November 2026 | Each failed in `Unit tests (Windows, 2/2)` and `CI result`. Third: 26 checks passed, 1 skipped, 2 failed: two tests of 4,432, the Merge Assist test of #683 and the Claude status test of #681. Second: the test of #683. First: the test of #681, and one of 2,514 in `Unit tests (1/2)`, which timed out at 60 s and passed on the second. No test of this change failed. |
+| CI on GitHub | The run at be379d5d5, read at 12:35 UTC on 16 November 2026, and the run at 807c53fbb, three attempts, read at 06:41 UTC | At be379d5d5 the first attempt passed: 28 checks passed, 1 skipped. At 807c53fbb each attempt failed in `Unit tests (Windows, 2/2)` and `CI result`. Third: two tests of 4,432, the Merge Assist test of #683 and the status test of #681. Second: that of #683. First: the test of #681, and one of 2,514 in `Unit tests (1/2)` timed out at 60 s (#700). No test of this change failed. |
 | Linux x64, Windows 11 | The CI jobs that need none of the repository's secrets, at 807c53fbb | No failure of the change's own. 7 tests fail as they do on main at c89f068ed on the same machines: 2 in `Unit tests (1/2)`, 4 in `Unit tests (Windows, 1/2)`, 1 in `Unit tests (Windows, 2/2)`. One more failed once in `Unit tests (Windows, 2/2)` and passed when run alone. |
-| Linux x64, Windows 11 | The 23 test files of the change and of the modules that import what it changes, and the automated reviewer's rules scan over the diff against main, at 807c53fbb | Linux x64, on tmpfs and on ext4: 521 passed and 1 skipped. Windows 11: 504 passed, 17 skipped, 1 failed, a test of main's that fails 1 run in 3 there and passed 10 runs of 10 when repeated; nothing new against main's baseline. The scan: 0 new findings, every function the change adds or edits at complexity 6 or under. |
-| Linux x64, Windows 11 | The change's two test files, 40 cases, at 807c53fbb | 40 of 40 passed on tmpfs and on ext4. The five cases added since 601c8dadc passed 20 runs of 20 on tmpfs, on ext4 and on Windows 11; three of them fail on 601c8dadc's source. The daemon test of a left audit passed 20 runs of 20 at 4d1aec2c8. The six tests added in 6272d2583, af7ef9e79 and a3a4b54bc fail on e111a35b1. |
+| Linux x64, Windows 11 | The 23 test files of the change and of the modules that import what it changes, and the automated reviewer's rules scan over the diff against main, at be379d5d5 | Linux x64: 521 passed and 1 skipped. Windows 11: 505 passed, 17 skipped, none failed; nothing new against main's baseline. At 807c53fbb one test of main's failed there, which fails 1 run in 3 and passed 10 runs of 10 when repeated. The scan: 0 new findings, every function the change adds or edits at complexity 6 or under. |
+| Linux x64, Windows 11 | The change's two test files, 40 cases, at 807c53fbb; the one be379d5d5 edits, at be379d5d5 | At 807c53fbb: 40 of 40 passed on tmpfs and ext4, and the five cases added since 601c8dadc 20 runs of 20 on both systems; three of them fail on 601c8dadc's source. At be379d5d5 the edited file passed 20 runs of 20 on both, and four of its cases fail with a bound of the start's check taken out. The daemon test of a left audit: 20 of 20 at 4d1aec2c8. |
 | Linux x64, 16 cores | The real daemon and Rerail 0.1.4 from npm on the 4,000-audit file, on one clock moved by a preload, at 768027db1 | Only this version: the first audit moved 507 ms after the week's end, all 4,000 within 15.9 s more. 0.1.4 recording across the week's end, with rules and without: 0 moved, 4,000 of 4,000 read in full. Started again after the move: `[]` for 4,000 of 4,000. |
 | Linux x64, Windows 11 | Writes by another process and kills of the daemon during the move, at d57eee7f3, and on Linux again at 768027db1 | 0 of 14 writes failed at 660, 1,160 and 2,162 MB in use, on both systems. 10 kills on each: 0 audits lost, doubled or dangling, the integrity check passes, 4,000 of 4,000 read as main. Windows 11 moved 4,000 audits in 23.1 to 33.6 s beside 3 other test runs. |
 | Linux x64, Windows 11 | The real daemon at 4d1aec2c8 on a file of 600 audits: a 12 s write lock, a stop, kills, damaged audits, and Claude Code's hook | 600 of 600 read as main. The move ended 3.0 and 2.0 s after the lock's release; a stop took 262 ms against 261 at main, and 352 against 324. With one damaged audit, 599 moved and `daemon.log` named it once. Through the hook, 12 new audits left the moved file at 28,983 pages and grew main's by about 150 pages (148 on Linux x64, 150 on Windows 11). |
@@ -205,11 +202,11 @@ The description on GitHub is the record: "How you tested it" holds the runs, the
 
 **What this report adds to the description**
 
-- **The head is 807c53fbb, fourteen commits after e111a35b1.** Six change code: each check reads one audit row (a3a4b54bc), the writer opens without waiting (6272d2583), a held lock pauses the move (af7ef9e79), a damaged audit stays as it is (05c8faadb), the move takes the audits the step recorded (01904ea45), a busy check pauses it (807c53fbb). Four change tests only, four docs and comments. 71 commits not on main, 5 merges: 2,418 added and 32 removed lines in 14 files.
-- **Trial merges at today's heads.** #657 conflicts at three places of `src/daemon/daemon.ts`, and the team's #698 at two. The team's release, #631, removes `.changelog/fixed-audit-history-size.md`, which this edits: seen in its list of files, not merged on trial. If it merges first, this pull request's sentence needs a new entry file. Of #508 only `docs/how-setup-works.md` was merged on trial: clean.
+- **The head is be379d5d5, fifteen commits after e111a35b1.** Six change code: each check reads one audit row (a3a4b54bc), the writer opens without waiting (6272d2583), a held lock pauses the move (af7ef9e79), a damaged audit stays (05c8faadb), the move takes the audits the step recorded (01904ea45), a busy check pauses it (807c53fbb). Five change tests: the last, be379d5d5, adds a later start to four. Four change docs and comments. 72 commits not on main: 2,462 added, 32 removed lines.
+- **Trial merges at today's heads.** #657 conflicts at three places of `src/daemon/daemon.ts`, and the team's #698 at two. The team's release, #631, deletes `.changelog/fixed-audit-history-size.md`, which this edits: its trial merge with be379d5d5 conflicts in that file alone. If it merges first, this pull request's sentence needs a new entry file. #640 and #508 merge cleanly with be379d5d5.
 - **The cost of an audit without rules.** The measure is 4.04 bytes at copy id 301, 2 bytes at ids 2 to 127 and 0 at ids 0 and 1. By SQLite's integer sizes a copy id past 32,767 takes one byte more in the row and one in the index entry, 6 bytes in all: our reading, not measured. So "at most 4 bytes" holds up to that id.
 - **Asks 2 and 3 are this report's.** The description asks nothing itself and points at #646 for both questions. Ask 2, the length of the wait, is new here. Ask 3 is question 2 of #646, on which this head follows the recommendation of our latest comment there. The automated reviewer's first review named decision 1's floor option, and main's docs describe the floor.
-- **Where the review stands on GitHub.** GitHub still shows the automated reviewer's change request on 42bb8f6da. Its 16 November review of 601c8dadc found 0 blockers, 2 follow-ups and 1 nit: the description described e111a35b1; an audit dated after the update stops the move (01904ea45 answers); a busy read before a batch ends it (807c53fbb answers). 807c53fbb is not reviewed. It escalated the storage path and #646 to three maintainers. All five comments on #646 are ours.
+- **Where the review stands on GitHub.** GitHub still shows the automated reviewer's change request on 42bb8f6da. Its 16 November review of 601c8dadc found 0 blockers, 2 follow-ups and 1 nit: the description described e111a35b1; an audit dated after the update stops the move (01904ea45 answers); a busy read before a batch ends it (807c53fbb answers). Nothing later is reviewed. It escalated the storage path and #646 to three maintainers. All five comments on #646 are ours.
 - **The exported `AuditRow` type changes meaning.** The package root exports `AuditRow`. A null `ruleProvenanceId` there meant a provenance held inline or an empty one; it now marks a row an older Rerail wrote. The column came with #530 and is in no release.
 
 **Sources.** The pull request, its reviews, comments, diff and CI on GitHub, and issue #646, read on 16 November 2026. Rerail at main (c89f068ed) for each quoted intent. The automated reviewer's reviews of e322936d3, 2f9ea64e0, e111a35b1 and 601c8dadc. Our run records and the decision record of the change: each number names its system and its commit.
