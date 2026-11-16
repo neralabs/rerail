@@ -536,6 +536,33 @@ pass.
       by the frame (`frames.data` → `frame_data(id INTEGER PRIMARY KEY, data)`), or `frames` as a rowid table with
       a unique index on its key. Then (2) collection drops the identities no live program reads; (3) how much of the
       347 MB a run reads at all, now that kept inputs are decoded where read (Q20).
+    - **Step (2) tried in the run, does not work** (2026-11-16). The run of no phase deleted, behind the run, the
+      frames of every identity its read left out (patch kept: `working-data/patches/q19-step2-in-run-forget.patch`,
+      with its test). Two faults:
+      - **It contradicts the keep policy.** The cross space is one per root. `CorpusPolicy` protects each root's
+        newest 64 lanes, and a lane is the programs' texts (`rerail.corpus-lane/v2`): policy sets that run one
+        process each over a root keep their frames. A run that deletes what it does not read deletes a sibling
+        lane's, and the two make each other cold.
+      - **The first delete is the backlog.** On ep2 the first run (cold build) left out 55,162 identities, about
+        165K frames and GBs of blobs. SQLite reads a blob's overflow chain to free it. The run reached its 115 s cap
+        waiting on the writer, nothing committed.
+    - **Why collection keeps them.** `collect_unreachable_frames` (0227) already drops a dead program's frames. On
+      ep2 all 357 plans are live and 31 live programs hold the cross space (`frame_program_used`): each edit is a new
+      lane, so the 64 protected lanes keep up to 64 edits' predecessors. The space's size is the policy's, not a
+      missing collector.
+    - **Built, decision 0301** (the user chose: a lane names its policy set). A set's newer lane supersedes its
+      older, which keeps no protection; the program that reuses frames and puts nothing holds them (`hold_frames`:
+      without it, the sweep dropped the space after each edit and every other edit ran its cross part cold, seen on
+      the PYI062 repro). Tests: `a_policy_sets_newer_lane_supersedes_its_older`,
+      `a_program_that_reuses_frames_holds_them`.
+    - **ep2** (B101 edits, outputs identical as sets, 1,334 rows): the space stays at 196,767 frames over two edits
+      (it grew with each before). The frames sweep had not completed since run 289; run alone it took 10.5 s and
+      collected 66,155 frames. After it: 131,371 frames, 36,777 identities left out, an edit 52.8–54.9 G (67.8–69.9
+      before). Each process now sweeps the decision before its own (the decision is the writer's, after
+      `finish_soon`).
+    - **Open:** why the backlog's sweep never finished in a run's process (interrupted, or waiting on the writer):
+      a big backlog would stall again. And lanes of no set (older binaries' manifests, sessions, batches) stay
+      protected: ep2's 36,777 left-out identities leave only when 64 newer lanes of other sets push them out.
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 

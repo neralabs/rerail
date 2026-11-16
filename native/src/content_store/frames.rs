@@ -310,6 +310,8 @@ struct Snapshot {
     preloaded: HashSet<[u8; 32]>,
     /// A dev trace's (`RERAIL_FRAMES_TRACE`): the space read by identity, and its frames' identities left out.
     left_out: Option<([u8; 32], HashSet<Rel>)>,
+    /// The (space, program) pairs known to hold there (`hold_frames`, decision 0301): each looked up once a process.
+    holding: HashSet<([u8; 32], [u8; 32])>,
 }
 
 /// A root's cross part's space, as a run reads it before its first wave (`preload_frames_live`, Q19).
@@ -497,6 +499,17 @@ impl ContentStore {
                 }
             }
             snapshot.confirmed = confirmed;
+            // Which programs hold which spaces (`hold_frames`, decision 0301): a few rows, read here, not in a wave.
+            {
+                let mut st = connection.prepare("SELECT space, program FROM frame_program_used WHERE run = 0")?;
+                let rows = st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+                for row in rows {
+                    let (space, program) = row?;
+                    if let (Ok(space), Ok(program)) = (<[u8; 32]>::try_from(space.as_slice()), <[u8; 32]>::try_from(program.as_slice())) {
+                        snapshot.holding.insert((space, program));
+                    }
+                }
+            }
             drop(connection);
             let _held = rerail_prof::code_rule_dsl::logic::profile::span(|| "their symbols held".into());
             hold_symbols(&self.atoms, read.iter())?;
@@ -778,6 +791,21 @@ impl ContentStore {
 
     /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's
     /// rows only until it is encoded.
+    /// Records, behind the run, that `program` holds `rels` in `space` (`frame_program_used`, decision 0301), when
+    /// it does not hold there yet (the snapshot's, read before the first wave, and this process's writes since): a
+    /// program that reuses its predecessor's frames puts nothing, and the predecessor superseded, nothing else would
+    /// keep them. Whether it queued the holding. No snapshot (no run read the store): queued, and the writer writes
+    /// only what changed.
+    pub fn hold_frames(&self, space: [u8; 32], rels: Vec<Rel>, run: u64, program: [u8; 32]) -> bool {
+        if let Some(s) = self.snapshot()
+            && !s.lock().expect("the frames' snapshot").holding.insert((space, program))
+        {
+            return false;
+        }
+        self.queue_encoded(space, Vec::new(), Vec::new(), Some((rels, run, program)));
+        true
+    }
+
     pub fn queue_encoded(&self, space: [u8; 32], frames: Vec<Encoded>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
         self.queue_encoded_retagged(space, frames, Vec::new(), Vec::new(), gone, used)
     }
@@ -859,6 +887,9 @@ impl ContentStore {
         }
         let mut gone = gone;
         gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
+        if let (Some((_, _, program)), Some(s)) = (&used, self.snapshot()) {
+            s.lock().expect("the frames' snapshot").holding.insert((space, *program));
+        }
         // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0197).
         if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
             return;
@@ -1740,6 +1771,42 @@ mod tests {
             collect_unreachable_frames(&c).unwrap()
         };
         assert!(!again.any(), "nothing left to collect: {again:?}");
+    }
+
+    /// Decision 0301: an edited program reuses its predecessor's frames and puts nothing (decision 0227: a warm run
+    /// writes nothing). Its predecessor superseded and dead, only its own holding keeps them: `hold_frames` records
+    /// it, queued once, and only when the store has none (a run of a program that holds queues nothing, 0197).
+    #[test]
+    fn a_program_that_reuses_frames_holds_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let (old, new) = ([7u8; 32], [8u8; 32]);
+        let maintained = [9u8; 32];
+        let kept = rel("kept", 1);
+        {
+            let store = ContentStore::open(&path).unwrap();
+            let source = store.put_source(b"x = 1\n", &[]).unwrap();
+            // The edited run's manifest names `new`; `old`, its predecessor, no manifest names.
+            store.record_corpus_run_naming("/r", &[source], 1, 1, [5u8; 32], &[new], 1).unwrap();
+            let put = Put { rel: kept.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+            store.keep_frames(&maintained, &[put], &[], Some((&[kept.clone()][..], 0, old))).unwrap();
+            // The run's read before its first wave (decision 0104).
+            store.preload_frames_live(None).unwrap();
+            assert!(store.hold_frames(maintained, vec![kept.clone()], 0, new), "no holding: queued");
+            assert!(!store.hold_frames(maintained, vec![kept.clone()], 0, new), "held, this process: nothing queued");
+            assert!(!store.hold_frames(maintained, vec![kept.clone()], 0, old), "the program that put the frame holds them");
+            store.written().unwrap();
+        }
+        forget_snapshot(path.to_str().unwrap());
+        let store = ContentStore::open(&path).unwrap();
+        store.preload_frames_live(None).unwrap();
+        assert!(!store.hold_frames(maintained, vec![kept.clone()], 0, new), "held, in the store: nothing queued");
+        let swept = {
+            let c = store.connection.lock().unwrap();
+            collect_unreachable_frames(&c).unwrap()
+        };
+        assert_eq!(swept.maintained, 0, "the reusing program holds the frame: {swept:?}");
+        assert!(store.frames(&maintained, &[kept.clone()], 0).unwrap().contains_key(&kept));
     }
 
     fn rel(name: &str, i: u8) -> Rel {

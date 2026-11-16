@@ -2513,8 +2513,11 @@ impl Retained {
         }
         // Behind the run (decision 0104): the part's fixpoint is reached, and these are its results for the next run;
         // a wait for the writer's room here holds no wave. Each frame was encoded as it was made (`FramePut::encoded`).
-        // Nothing changed: nothing written (decision 0227; the program's relations are kept by reachability).
+        // Nothing changed: nothing written (decision 0227; the program's relations are kept by reachability). A
+        // program that reuses an earlier one's frames (an edit, decision 0301) holds them, once: the earlier one
+        // superseded, nothing else keeps them.
         if puts.is_empty() && retags.is_empty() && delta_out.is_empty() {
+            store.hold_frames(was.space, was.names.values().cloned().collect(), super::run_token(), self.key);
             return Ok(written);
         }
         // Mapped (decision 0212): every atom a frame holds is in an `s` column (a text-owned input's owners too, in its
