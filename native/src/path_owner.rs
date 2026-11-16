@@ -15,7 +15,10 @@ use napi_derive::napi;
 pub fn paths_owned_by_current_user(paths: Vec<String>) -> bool {
     #[cfg(windows)]
     {
-        !paths.is_empty() && paths.iter().all(|path| windows::owned_by_current_user(path))
+        !paths.is_empty()
+            && paths
+                .iter()
+                .all(|path| windows::owned_by_current_user(path))
     }
     #[cfg(not(windows))]
     {
@@ -57,7 +60,13 @@ mod windows {
         let mut needed = 0u32;
         // SAFETY: a null buffer of length 0 asks only for the size, which the call writes to `needed`.
         unsafe {
-            GetFileSecurityW(wide.as_ptr(), OWNER_SECURITY_INFORMATION, null_mut(), 0, &mut needed)
+            GetFileSecurityW(
+                wide.as_ptr(),
+                OWNER_SECURITY_INFORMATION,
+                null_mut(),
+                0,
+                &mut needed,
+            )
         };
         if needed == 0 {
             return None;
@@ -82,7 +91,11 @@ mod windows {
         let mut defaulted = 0;
         // SAFETY: `descriptor` is the self-relative descriptor GetFileSecurityW wrote; the call only reads it.
         let read = unsafe {
-            GetSecurityDescriptorOwner(descriptor.as_ptr().cast_mut().cast(), &mut owner, &mut defaulted)
+            GetSecurityDescriptorOwner(
+                descriptor.as_ptr().cast_mut().cast(),
+                &mut owner,
+                &mut defaulted,
+            )
         };
         // SAFETY: a non-null `owner` points at the SID inside `descriptor`, which outlives this call.
         (read != 0 && !owner.is_null() && unsafe { IsValidSid(owner) } != 0).then_some(owner)
@@ -122,7 +135,13 @@ mod windows {
         let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
         // SAFETY: `buffer` holds at least `needed` bytes, aligned for a TOKEN_USER and the SID after it.
         let read = unsafe {
-            GetTokenInformation(token, TokenUser, buffer.as_mut_ptr().cast(), needed, &mut needed)
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buffer.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            )
         };
         (read != 0).then_some(buffer)
     }
@@ -138,5 +157,47 @@ mod windows {
                 && CheckTokenMembership(null_mut(), owner, &mut member) != 0
                 && member != 0
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::paths_owned_by_current_user;
+
+    #[test]
+    fn no_path_is_owned() {
+        assert!(!paths_owned_by_current_user(Vec::new()));
+    }
+
+    /// Outside Windows the catalog compares `lstat`'s owner itself, so the engine answers no.
+    #[cfg(not(windows))]
+    #[test]
+    fn outside_windows_the_owner_is_left_to_the_caller() {
+        let folder = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(!paths_owned_by_current_user(vec![folder]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_this_process_made_is_owned_and_one_that_is_gone_is_not() {
+        let folder = std::env::temp_dir().join(format!(
+            "rerail-path-owner-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let made = folder.to_string_lossy().into_owned();
+        let gone = folder.join("gone").to_string_lossy().into_owned();
+        let with_nul = format!("{made}\0x");
+
+        assert!(paths_owned_by_current_user(vec![made.clone()]));
+        assert!(!paths_owned_by_current_user(vec![gone.clone()]));
+        assert!(!paths_owned_by_current_user(vec![made, gone]));
+        assert!(!paths_owned_by_current_user(vec![with_nul]));
+
+        std::fs::remove_dir_all(folder).unwrap();
     }
 }
