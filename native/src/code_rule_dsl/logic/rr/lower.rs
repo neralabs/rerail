@@ -430,9 +430,9 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
                 [magic, relations] if magic == "magic-transform" => {
                     l.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
                 }
-                // `.pragma "cross-rounds" "k"` (decision 0056): kept as written, for the corpus runner.
-                [key, k] if key == crate::code_rule_dsl::logic::front::PRAGMA && k.parse::<usize>().is_ok() => {
-                    l.prog.settings.push(crate::code_rule_dsl::logic::front::setting(k));
+                // `.pragma "cross-rounds" "k"` (decision 0056), refused: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9).
+                [key, _] if key == crate::code_rule_dsl::logic::front::PRAGMA => {
+                    return Err(at(Error::Syntax(format!(".pragma \"{key}\": bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9)"))));
                 }
                 // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
                 [key, rels] if key == "cross-memo" => {

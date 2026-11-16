@@ -751,7 +751,7 @@ fn split_in(
 /// chunk's base relations; `cross` derives the rest, run once over what the chunks wrote: `exports` (the file-local
 /// relations a cross-file rule reads) and `base` (the base relations a cross-file rule reads, and `node` and `doc`,
 /// which decode findings). In `cross`, both are inputs. `same_doc` names, for each file-local and base relation, the
-/// columns whose values in one row lie in one document (`cross_rounds::bound`: a join through them crosses no file).
+/// columns whose values in one row lie in one document (a join through them crosses no file: the cross memo's guards).
 #[derive(Clone)]
 pub struct Programs {
     /// The parts' trees: shared by each run's copy of the split (`lower::Tree`), copied only where a run edits one.

@@ -198,7 +198,7 @@ fn closed(v: &Version, f: &Fields<'_>, derived: &BTreeSet<String>) -> BTreeSet<S
 }
 
 /// The variables of rule `r` on the document of variable `x`: `x`, and every variable an atom with same-document
-/// columns (`same_doc`) joins to one of them, transitively (`cross_rounds::same_document`, of a version's rule).
+/// columns (`same_doc`) joins to one of them, transitively.
 fn same_document(v: &Version, r: RuleRef<'_>, same_doc: &BTreeMap<String, Vec<usize>>, x: Slot) -> BTreeSet<Slot> {
     let groups: Vec<BTreeSet<Slot>> = r
         .reads()

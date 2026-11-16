@@ -23,7 +23,6 @@ use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::rr::WORLD;
-use crate::code_rule_dsl::typing::cross_rounds;
 pub mod added;
 pub mod guests;
 pub mod hiding;
@@ -66,7 +65,6 @@ pub fn install_cross_file(make: MakeCrossFile) {
 pub mod prepared;
 pub mod maintain;
 pub mod supports;
-pub mod recursive_spike;
 pub mod retain;
 pub mod keptstats;
 pub mod input_delta;
@@ -268,8 +266,6 @@ pub struct Report {
     pub native: usize,
     pub rows: BTreeMap<String, usize>,
     pub chunks: usize,
-    /// The cross-file part's bounded rounds (`typing::cross_rounds`).
-    pub rounds: cross_rounds::Rounds,
     /// Declarations, summaries and terms (`corpus::typing`).
     pub typing: TypingReport,
     /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
@@ -3423,7 +3419,6 @@ fn run_observed(
     // built, and linked once they all are (`references`). W's graph is Python's.
     let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect::<Vec<_>>())?, None => None };
     let part_of = |program: lower::Tree, version| lower::Lowered { program, version, maint: None, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
-    let part = |program: front::Program, version| part_of(lower::Tree::given(program), version);
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
             "{} rules run per chunk over its files (file-local); {} rules run once over all files (cross-file); {} relations exported to the cross part, {} base relations kept for it; exports and file-local outputs without a location column: {:?}",
@@ -7278,10 +7273,7 @@ fn run_observed(
     // (t33 K4): it starts from them and maintains them from the delta of its inputs. `RERAIL_CROSS_K4=off` keeps the
     // strata as before (whole strata run or kept, `kept_strata`), to compare.
     let k4 = durable.is_some() && std::env::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off");
-    let one_fixpoint = run_placed.v.rules().next().is_some() && session.is_none() && !k4 && {
-        let hops = cross_rounds::hops(&run_placed, &split.same_doc)?;
-        hops.is_empty() || cross_rounds::declared(&prog).is_none()
-    };
+    let one_fixpoint = run_placed.v.rules().next().is_some() && session.is_none() && !k4;
     // The import components (decision 0076) run before the cross part, with no hooks: what they read is bound now.
     let eager: BTreeSet<&str> = cross_plan.iter().flat_map(|p| p.components.rules().flat_map(|r| r.reads().map(|a| p.components.rel_name(a.rel())))).collect();
     // A new process that maintains its cross-file part from the store (t32 4.1) runs it as a session does: its
@@ -7340,7 +7332,6 @@ fn run_observed(
     { let _s = crate::code_rule_dsl::logic::profile::span(|| "release the chunks' pages".into()); crate::code_rule_dsl::prof::release(); }
     phase("stats", statements.count());
     statements.enter("cross");
-    let mut rounds = cross_rounds::Rounds::default();
     // Strata a session's run evaluated, of all (decision 0077).
     let mut cross_strata: Option<(usize, usize)> = None;
     let mut cross_kept: Option<(usize, usize)> = None;
@@ -7427,7 +7418,6 @@ fn run_observed(
     let storing = cross_state.as_ref().is_some_and(|(_, found)| !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify);
     let memo_rels: BTreeSet<String> = cross_plan.as_ref().filter(|_| storing).map(|p| p.memo.keys().cloned().collect()).unwrap_or_default();
     let mut memo_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-    let collect_rows = !memo_rels.is_empty();
     // `derived`: the relations the part derives, each with its width (`derived_widths`).
     let mut collect = |db: &Connection, got: &Outcome, derived: BTreeMap<&str, usize>| -> Result<()> {
         for (rel, width) in derived.into_iter().filter(|(r, _)| memo_rels.contains(*r)) {
@@ -7446,28 +7436,8 @@ fn run_observed(
         if let Ok(path) = std::env::var("RERAIL_DUMP_CROSS") {
             let _ = std::fs::write(path, cross.program.rules.iter().map(|r| format!("{r}\n")).collect::<String>());
         }
-        let hops = cross_rounds::hops(&run_placed, &split.same_doc)?;
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
-        // Bounded rounds only for a program that declares them (decision 0056: a typing program); a rule's
-        // cross-file part is one fixpoint, which no chain length cuts.
-        let declared = cross_rounds::declared(&prog);
-        if !hops.is_empty() && declared.is_none() {
-            crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
-                format!("none: the program declares no `.pragma \"{}\"`, so its {} hop relations are one fixpoint", cross_rounds::PRAGMA, hops.len())
-            });
-        }
-        let k = declared.map(cross_rounds::k);
-        // The bounded program, a tree: read only by a program that runs rounds (`cross_rounds::declared`).
-        let bounded = match k.filter(|_| !hops.is_empty()) {
-            Some(_) => {
-                let b = cross_rounds::bound(&cross.program, &split.same_doc)?;
-                debug_assert_eq!(b.hops, hops, "the version's hops are the tree's");
-                Some(b)
-            }
-            None => None,
-        };
-        if hops.is_empty() || k.is_none() {
-            rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
+        {
             // A new process keeps its cross-file part in the store, and maintains it as a session does (t32 4.1):
             // the session's branch, its kept part read from the store's frames and written back after the run.
             let kept_part: Option<std::sync::Mutex<HashMap<[u8; 32], retain::Retained>>> =
@@ -8240,9 +8210,6 @@ fn run_observed(
                     }
                     drop(s);
                     let s = span("retain");
-                    if recursive_spike::on() {
-                        recursive_spike::run(&cross.program, cell.as_ref(), &rows, &cross_inputs, &|a, b| crate::code_rule_dsl::logic::native::component::cat_symbols(&db, a, b));
-                    }
                     let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget());
                     if let Some(was) = &was_frames {
                         let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas)?;
@@ -8349,112 +8316,6 @@ fn run_observed(
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
                 }
             }
-        } else if let Some(cone) = cross_rounds::cone_split(&bounded.as_ref().expect("a program that runs rounds is bounded").program, &hops) {
-            // The rounds run the hops' cone; what reads it and no hop reads runs once, after the last round.
-            // Held: what the rest reads, unless an output (written to its table, read from there).
-            let mut held = wanted.clone();
-            held.extend(cone.reads.iter().filter(|r| !outputs_of(r)).cloned());
-            // What the rounds read and no round changes runs once, before them (`cross_rounds::pre_split`): its rows the
-            // rounds read are inputs `<rel>__pre`, and the rest reads its rows from here.
-            let mut round_stats = cross_stats.clone();
-            let mut pre_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-            let round_prog = match cross_rounds::pre_split(&cone.cone) {
-                Some(ps) => {
-                    let pre_span = crate::code_rule_dsl::logic::profile::span(|| "before the rounds".into());
-                    let pre_derived: BTreeSet<String> = ps.pre.rules.iter().map(|r| r.head.rel.to_string()).collect();
-                    let copied: BTreeSet<String> = ps.reads.iter().chain(cone.reads.iter().filter(|r| pre_derived.contains(*r))).cloned().collect();
-                    let mut pre_held: BTreeSet<String> = held.iter().filter(|r| pre_derived.contains(*r)).cloned().collect();
-                    pre_held.extend(copied.iter().cloned());
-                    let decls = ps.pre.decls.clone();
-                    let got = texts_run(&part(ps.pre, None), &db, cross_stats.clone(), pre_held, modes, &vocabulary)?;
-                    if wanted.contains("returns") && pre_derived.contains("returns") {
-                        returns = held_rows(&db, &got, "returns", 2)?;
-                    }
-                    for rel in &copied {
-                        pre_rows.insert(rel.clone(), held_rows(&db, &got, rel, decls[rel.as_str()].len())?);
-                    }
-                    native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
-                    let mut pre = Totals::default();
-                    for rel in &ps.reads {
-                        let types: Vec<&str> = decls[rel.as_str()].iter().map(|(_, t)| t.as_str()).collect();
-                        let rows = &pre_rows[rel];
-                        let columns = (0..types.len()).map(|i| format!("c{i}")).collect();
-                        let values = (0..types.len()).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
-                        let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
-                        let name = format!("{rel}{}", cross_rounds::PRE);
-                        pre.add_rows(&name, source.len(), source.as_ref(), &types);
-                        modules.bind(&db, &name, source)?;
-                    }
-                    pre.apply(&mut round_stats);
-                    crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
-                        format!("{} relations derived once before the rounds, {} of them read by the rounds", pre_derived.len(), ps.reads.len())
-                    });
-                    drop(pre_span);
-                    ps.rounds
-                }
-                None => cone.cone,
-            };
-            let cone_rules = if collect_rows { round_prog.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(round_prog, None), &hops, &held, &round_stats, modes, k.expect("declared"), &mut rounds, &vocabulary)?;
-            collect(&db, &got, derived_widths(&cone_rules))?;
-            if wanted.contains("returns") && got.kept.contains("returns") {
-                returns = held_rows(&db, &got, "returns", 2)?;
-            }
-            // The cone's final rows the rest reads, as `<rel>__done` inputs held in memory and measured.
-            let mut rest = cone.rest;
-            let done_span = crate::code_rule_dsl::logic::profile::span(|| "done inputs".into());
-            let mut st = cross_stats.clone();
-            let mut done = Totals::default();
-            for rel in &cone.reads {
-                let types: Vec<&str> = rest.decls[format!("{rel}{}", cross_rounds::DONE).as_str()].iter().map(|(_, t)| t.as_str()).collect();
-                let rows = match pre_rows.remove(rel) {
-                    Some(rows) => rows,
-                    None => held_rows(&db, &got, rel, types.len())?,
-                };
-                let columns = (0..types.len()).map(|i| format!("c{i}")).collect();
-                let values = (0..types.len()).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
-                let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
-                let name = format!("{rel}{}", cross_rounds::DONE);
-                done.add_rows(&name, source.len(), source.as_ref(), &types);
-                modules.bind(&db, &name, source)?;
-            }
-            done.apply(&mut st);
-            drop(done_span);
-            native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
-            // A pending round's marks hold for the rest as for the cone.
-            if rounds.pending && let Some(f) = rest.facts.get_mut(cross_rounds::UNCONVERGED) {
-                f.push([front::Value::Int(1)].into());
-            }
-            crate::code_rule_dsl::logic::native::forget_inputs(&db);
-            let rest_wanted: BTreeSet<String> = wanted.iter().filter(|w| rest.rules.iter().any(|r| r.head.rel == **w)).cloned().collect();
-            let rest = part(rest, None);
-            let got = texts_run(&rest, &db, st, rest_wanted.clone(), modes, &vocabulary)?;
-            collect(&db, &got, derived_widths(&rest.program))?;
-            if rest_wanted.contains("returns") && got.kept.contains("returns") {
-                returns = held_rows(&db, &got, "returns", 2)?;
-            }
-            native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
-        } else {
-            let bounded = bounded.expect("a program that runs rounds is bounded");
-            let all_rules = if collect_rows { bounded.program.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(bounded.program, None), &hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds, &vocabulary)?;
-            collect(&db, &got, derived_widths(&all_rules))?;
-            if wanted.contains("returns") && got.kept.contains("returns") {
-                returns = held_rows(&db, &got, "returns", 2)?;
-            }
-            native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
-        }
-        if !hops.is_empty() && k.is_some() {
-            crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
-                format!(
-                    "{} hop relations ({}); {} rounds run, {}; hop rows per round {:?}",
-                    hops.len(),
-                    hops.iter().take(8).cloned().collect::<Vec<_>>().join(", "),
-                    rounds.run,
-                    if rounds.converged { "converged" } else { "NOT converged: chains crossing more files are cut" },
-                    rounds.rows
-                )
-            });
         }
     }
     phase("cross", statements.count());
@@ -8811,7 +8672,7 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the Git index consulted".into());
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
-    let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
@@ -9116,13 +8977,6 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
 }
 
 
-/// The cross-file part's bounded rounds (`typing::cross_rounds`): `round` is the part with its hops reading
-/// `<rel>__prev`, the previous round's rows held in memory (none in round 0). Each round's rows of the
-/// hop relations are digested; an unchanged digest ends the rounds (the fixpoint), as does round `K`. The last
-/// round's outcome is the part's.
-/// A relation's rows after a run: held by the engine (`kept`), or in its table.
-/// How many of `source`'s rows hold each integer constant a rule of `prog` tests `rel`'s columns by, by column name
-/// (the planner's `const_freq`).
 /// Per relation, the integer constants its atoms test, by column (`constant_counts`'s): one pass over the rules,
 /// not one per relation.
 pub fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64)>> {
@@ -9310,133 +9164,6 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 /// `run_atoms_native_over` with the run's text tests (`Hooks::texts`).
 fn texts_run(lowered: &lower::Lowered, db: &Connection, given: super::Stats, kept: BTreeSet<String>, modes: &str, texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> Result<Outcome> {
     super::run_atoms_native_hooked(lowered, db, "main", given, kept, modes, super::Hooks { texts: Some(Arc::clone(texts)), ..Default::default() })
-}
-
-fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds, texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> Result<Outcome> {
-    // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
-    // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
-    let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
-    // Each round rebinds only the `__prev` inputs (and the pending round adds a fact): the other inputs stay loaded.
-    let changing: BTreeSet<String> = hops.iter().map(|rel| format!("{rel}{}", cross_rounds::PREV)).chain([cross_rounds::UNCONVERGED.to_owned()]).collect();
-    crate::code_rule_dsl::logic::native::keep_inputs(db, Some(changing));
-    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round, texts);
-    crate::code_rule_dsl::logic::native::keep_inputs(db, None);
-    crate::code_rule_dsl::logic::native::forget_inputs(db);
-    out
-}
-
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
-fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool, texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> Result<Outcome> {
-    use crate::code_rule_dsl::logic::native::component;
-    // The hop relations' column types, read once: the rounds read no others, and the pending round edits the program.
-    let hop_types: BTreeMap<&str, Vec<String>> = hops.iter().map(|rel| (rel.as_str(), round.program.decls[rel.as_str()].iter().map(|(_, t)| t.to_string()).collect())).collect();
-    let types = |rel: &str| -> Vec<String> { hop_types[rel].clone() };
-    let mut prev_rows: BTreeMap<String, Vec<Vec<i64>>> = hops.iter().map(|rel| (rel.clone(), Vec::new())).collect();
-    let mut prev_totals = Totals::default();
-    for rel in hops {
-        let (t, width) = (types(rel), types(rel).len());
-        let empty = Rows { columns: (0..width).map(|i| format!("c{i}")).collect(), values: vec![Vec::new(); width] };
-        prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), 0, &empty, &t.iter().map(String::as_str).collect::<Vec<_>>());
-    }
-    let mut last = None;
-    let mut measured_lens: BTreeMap<String, usize> = BTreeMap::new();
-    for r in 0..=k + 1 {
-        let _round = crate::code_rule_dsl::logic::profile::span(|| format!("round {r}"));
-        let bind = crate::code_rule_dsl::logic::profile::span(|| "bind previous rows".into());
-        for (rel, rows) in &prev_rows {
-            let width = types(rel).len();
-            let columns = (0..width).map(|i| format!("c{i}")).collect();
-            let values = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
-            modules.bind(db, &format!("{rel}{}", cross_rounds::PREV), component::columns_source(columns, values))?;
-        }
-        drop(bind);
-        let mut st = stats.clone();
-        prev_totals.apply(&mut st);
-        // A hop relation the program outputs is written to its table, to be decoded; the others are held.
-        let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().collect();
-        let got = texts_run(round, db, st, held, modes, texts)?;
-        // This round's rows of the hop relations: from the engine, or their table.
-        let measure = crate::code_rule_dsl::logic::profile::span(|| "hop rows: copy and measure".into());
-        let mut rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-        let mut sources: Vec<(&String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::with_capacity(hops.len());
-        for rel in hops {
-            let width = types(rel).len();
-            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if let Some(held) = component::derived(db, rel) {
-                held
-            } else if got.kept.contains(rel) {
-                return Err(Error::Plan(format!("{rel} is not held")));
-            } else {
-                Arc::new(Rows::of(db, rel, &crate::code_rule_dsl::logic::sql::ident(rel))?)
-            };
-            // Sorted and distinct once: the digest and the next round's `__prev` read them so.
-            let mut held: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
-            held.sort_unstable();
-            held.dedup();
-            rows.insert(rel.clone(), held);
-            sources.push((rel, source));
-        }
-        // The next round's statistics of `<rel>__prev`: a relation is measured again only when its rows moved by more
-        // than a tenth since it was last measured (a later round adds a few percent; each measurement sorts columns).
-        {
-            let _m = crate::code_rule_dsl::logic::profile::span(|| "measure".into());
-            for (rel, source) in &sources {
-                if measured_lens.get(*rel).is_some_and(|&m| source.len().abs_diff(m) * 10 <= m) {
-                    continue;
-                }
-                let prev = format!("{rel}{}", cross_rounds::PREV);
-                prev_totals.forget(&prev);
-                prev_totals.forget(rel);
-                let t = types(rel);
-                let t: Vec<&str> = t.iter().map(String::as_str).collect();
-                prev_totals.add_rows(&prev, source.len(), source.as_ref(), &t);
-                // The next round prices the relation itself by these rows too, not by its seeds (`plan::prior_stats`).
-                prev_totals.alias(&prev, rel);
-                measured_lens.insert((*rel).clone(), source.len());
-            }
-        }
-        drop(sources);
-        drop(measure);
-        let digest = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
-        let digest = { let _d = digest; cross_rounds::digest_sorted(&rows) };
-        report.run = r + 1;
-        report.rows.push(rows.values().map(Vec::len).sum());
-        crate::code_rule_dsl::logic::profile::decision(&format!("round {r} hop rows"), || {
-            // Documents whose rows of some hop relation changed since the round before (by the head's first
-            // node column; a relation without one is not counted).
-            let mut changed: BTreeSet<i64> = BTreeSet::new();
-            for (rel, v) in &rows {
-                if types(rel).first().map(String::as_str) != Some("node") {
-                    continue;
-                }
-                let (now, before) = (v, &prev_rows[rel]);
-                if now == before { continue; }
-                let docs = |rs: &[Vec<i64>]| -> BTreeMap<i64, Vec<Vec<i64>>> {
-                    let mut m: BTreeMap<i64, Vec<Vec<i64>>> = BTreeMap::new();
-                    for r in rs { m.entry(r[0] >> 32).or_default().push(r.clone()); }
-                    m
-                };
-                let (a, b) = (docs(now), docs(before));
-                for d in a.keys().chain(b.keys()) {
-                    if a.get(d) != b.get(d) { changed.insert(*d); }
-                }
-            }
-            let docs: BTreeSet<i64> = rows.values().flatten().map(|r| r[0] >> 32).collect();
-            format!("{}; documents changed {} of {}", rows.iter().map(|(rel, v)| format!("{rel} {}", v.len())).collect::<Vec<_>>().join(", "), changed.len(), docs.len())
-        });
-        if last == Some(digest) || r == k + 1 || (r == k && !pending_round) {
-            report.converged = last == Some(digest);
-            report.pending = r == k + 1 && !report.converged;
-            return Ok(got);
-        }
-        if r == k {
-            round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push([front::Value::Int(1)].into());
-        }
-        last = Some(digest);
-        prev_rows = rows;
-        crate::code_rule_dsl::logic::native::forget_inputs(db);
-    }
-    unreachable!("round K returns")
 }
 
 /// The statements SQLite runs on a connection (`SQLITE_TRACE_STMT`: each statement's first step, those inside

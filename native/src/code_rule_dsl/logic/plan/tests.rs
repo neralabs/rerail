@@ -806,10 +806,6 @@ fn own_ingestion_derives_what_t_facts_do() {
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
-        // The cross-file part is one fixpoint (decision 0065): one run, converged, nothing pending.
-        println!("{name}: cross-file rounds {:?}", report.rounds);
-        assert_eq!(report.rounds.run, 1, "{name}: {:?}", report.rounds);
-        assert!(report.rounds.converged && !report.rounds.pending, "{name}: {:?}", report.rounds);
         for chunk in [1_usize << 18, 1 << 12] {
             let own = dir.join(format!("out-{name}-own-{chunk}"));
             let got = corpus::run(&src, &dir, None, &own, "program", Binding::Cpu, chunk).unwrap();
