@@ -104,4 +104,17 @@ describe("the rule cost multiple", () => {
     expect(multiples.get("b")).toEqual({ multiple: { baseline: 1, candidate: 1.2 }, flags: [] });
     expect(multiples.get("c")!.multiple).toEqual({ baseline: 1, candidate: null });
   });
+
+  it("does not flag a cheap rule's growth: below the median rule a jump is milliseconds", () => {
+    const multiples = ruleMultiples(
+      [
+        { rule: "cheap", baseline_ms: 52, candidate_ms: 80 },
+        { rule: "b", baseline_ms: 600, candidate_ms: 620 },
+        { rule: "c", baseline_ms: 700, candidate_ms: 720 },
+      ],
+      { baseline_ms: 50, candidate_ms: 60 },
+    );
+    // 0.0× → 0.0× of the median: grown 9 times, still not worth a flag.
+    expect(multiples.get("cheap")!.flags).toEqual([]);
+  });
 });

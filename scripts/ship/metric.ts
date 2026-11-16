@@ -7,7 +7,8 @@
 //   workload the corpus's files, bytes, lines and lexical tokens per language, and the engine's own node count
 //            (rerail-engine run-rr with a one-line counting rule per language);
 //   multiple each rule timed alone in the drill-down over the pack's median rule on that corpus, flagged above
-//            MULTIPLE_FLAG or when it grew more than MULTIPLE_GROWTH_FLAG times (informational).
+//            MULTIPLE_FLAG, or when a rule at least as costly as the median grew more than MULTIPLE_GROWTH_FLAG times
+//            (informational).
 //
 // Why: the gross ratio divides every regression by the ~0.65 s Node + tsx start-up, so a pack whose rules take 60 ms
 // passes a doubling; and a per-rule constant (compile) looks like a per-file cost unless the phases are apart. See
@@ -53,7 +54,7 @@ const PARSED = new Set(Object.values(FAMILY));
 
 /** The counts' known gaps, stated in the report beside them. */
 export const KNOWN_GAPS = [
-  "syntax node counts cover each file's host language only: Vue's <script> and Blade's PHP code are not counted (Vue has 0.3–0.4 nodes per lexical token against about 1 elsewhere), so evaluate per rule·node overstates those packs",
+  "syntax node counts cover each file's host language only: Vue's `<script>` and Blade's PHP code are not counted (Vue has 0.3–0.4 nodes per lexical token against about 1 elsewhere), so evaluate per rule·node overstates those packs",
   "node counts come from the candidate checkout's rerail-engine; both sides are divided by the same count",
   "start-up (T0) and phases are the product path's; the .rr side has neither (run-policies takes no empty rule set)",
 ];
@@ -318,6 +319,8 @@ export function cellCost(input: { baseline: { runs: readonly CostRun[]; fixed: r
 export const MULTIPLE_FLAG = 10;
 /** A rule whose multiple grew more than this many times from the baseline's is flagged. */
 export const MULTIPLE_GROWTH_FLAG = 1.5;
+/** Growth is flagged only for a rule at least as costly as the median rule: below it, a jump is milliseconds. */
+export const GROWTH_FLOOR = 1;
 
 export interface RuleMultiple {
   multiple: { baseline: number | null; candidate: number | null };
@@ -349,7 +352,7 @@ export function ruleMultiples(rules: readonly { rule: string; baseline_ms: numbe
     const multiple = { baseline: of("baseline"), candidate: of("candidate") };
     const flags: string[] = [];
     if (multiple.candidate !== null && multiple.candidate > MULTIPLE_FLAG) flags.push(`${multiple.candidate.toFixed(1)}× the pack's median rule`);
-    if (multiple.candidate !== null && multiple.baseline !== null && multiple.baseline > 0 && multiple.candidate / multiple.baseline > MULTIPLE_GROWTH_FLAG) {
+    if (multiple.candidate !== null && multiple.candidate >= GROWTH_FLOOR && multiple.baseline !== null && multiple.baseline > 0 && multiple.candidate / multiple.baseline > MULTIPLE_GROWTH_FLAG) {
       flags.push(`multiple grew ${multiple.baseline.toFixed(1)}× → ${multiple.candidate.toFixed(1)}×`);
     }
     out.set(r.rule, { multiple, flags });
