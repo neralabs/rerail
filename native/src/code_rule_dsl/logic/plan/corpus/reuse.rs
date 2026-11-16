@@ -83,6 +83,25 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     format!("{CUTOFF}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
+/// The key's parts, each as a short digest, and the options (`RERAIL_REUSE_TRACE`): which part made a run miss.
+fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing: &Typing) -> String {
+    if std::env::var_os("RERAIL_REUSE_TRACE").is_none() {
+        return String::new();
+    }
+    let short = |b: &[u8]| Sha256::digest(b).iter().take(3).map(|b| format!("{b:02x}")).collect::<String>();
+    let texts: Vec<u8> = programs.iter().flat_map(|p| p.bytes()).collect();
+    format!(
+        "texts {}, root {} ({}), typing {}, handed down {}, switches {}, options {}",
+        short(&texts),
+        short(root.to_string_lossy().as_bytes()),
+        root.display(),
+        short(format!("{typing:?}").as_bytes()),
+        short(super::phases::handed_down_text().as_bytes()),
+        short(&switches()),
+        options.to_string().chars().take(300).collect::<String>()
+    )
+}
+
 /// The prefix of a whole-run cutoff's record (the observer's `run_record`). Its consulted lines name the plans the
 /// run used (`plan`, digest in hex): the observer's store is collected with the content store's, and a record no
 /// live plan of which it names is dropped (`observe::collect`).
@@ -207,7 +226,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     let checking = super::thread_usage();
     let key = key(programs, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
-        miss(&format!("no record under the run's key {} (programs {})", &key[..CUTOFF.len() + 12], programs.len()));
+        miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
     };
     let Some(consulted) = decode_consulted(&consulted) else {

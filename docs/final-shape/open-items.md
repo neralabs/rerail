@@ -5294,9 +5294,11 @@ chunk.
 
 ## O-kept-route-after-quiet-cold. An edit after a quiet cold run skips the kept route (2026-11-16, decision 0117)
 
-After a cold run of the Python pack on a quiet machine, the next edit makes no kept-inputs decision. It decodes its
-memo hits whole and reads about 18 M kept rows more in the cross part (about 1 s). After a cold run under load, the
-same edit takes the kept route. The kept route is open (no "not taken" reason is printed), so either `kept_route` is
-closed by an earlier condition or no hit counts as unchanged (`keptstats::same` of the keeper's counted content and
-key). Since the kept route's fix (decision 0117, "An outputs-only hit read its whole entry again") it is the cheaper
-route: 6.4 s CPU against 7.0 s. Next: print which condition closes it under `RERAIL_STATS_KEEP_TRACE`.
+Answered (2026-11-16). The stat index trusts a file only when its mtime is over `RACY_NS` (2 s) before its recording
+(git's racy rule). A corpus written just before a cold run (a benchmark's fresh copy) leaves every file racy, so the
+next run read and hashed every file. The kept route took only files the index knew by their stat, so it closed:
+every hit was decoded whole, and the cross part read about 18 M kept rows more. A cold run under load, or the
+benchmark's own steps, started over 2 s after the copy, so there the route was taken. Now a file read for its stat's
+sake whose hashed content is the one the keeper counted is read for its outputs alone too. Quiet cold then edit, M3
+Max, 4 threads: 7.29 s CPU, 6.07 s wall -> 6.46 s, 5.10 s; 299 of 300 files outputs-only; outputs equal a
+from-scratch run (660 relations, 30,453 rows).
