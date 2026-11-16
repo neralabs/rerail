@@ -637,15 +637,73 @@ pass.
   bytes. Red with that branch's own binary at its head (23:01), green at 19:32. Theirs to settle, their area.
 - **Done when**: the test states the set the token loop reads codes for, and passes.
 
-### Q26. The tape lab's clippy warnings
+### Q26. The program image moves onto blocks (Typing-support)
 
-- **Found** (2026-11-16, building 0293's tables): `cargo clippy --features grammar --lib` in `native/lab/tape16`
-  gives 51 warnings in the lab's library, from before this work (`is_multiple_of` 9, index loops 20, complex types
-  5, `chunks_exact` 4, precedence 3, and others). The binary's seven are fixed. `clippy --fix` applies none of its
-  20 suggestions here. The lab is its own workspace, so CI does not see them.
-- **Done when**: the lab's library is clean under clippy, with its timing loops keeping what they time.
+- **Handed off** (2026-11-16, decision 0295 §6.1): Typing-support ports the program image (0173, 0241, 0244, 0276)
+  onto 0266's block layer, keeping 0173's `Version` interface above it. A stored image becomes a packed block in a
+  deferrable slab (0295 §1–2), read in place; the copy into a `Vec<u128>` goes. Their dl1 trace validation judges
+  whether one base plus one delta expresses 0244's views at their measured cost; if not, views stay a second
+  versioned form. Kills by range and the one fold rule are decided with this port (0295 §6.3–4).
+- **Waits for**: the deferrable tier (0295 path step 2), built on final-rerail-shape-phased-facts.
+- **Done when**: Typing-support's version tests pass on blocks, and dl1's trace validation costs no more
+  instructions than 0173's.
 
-### Q30. Placement's CPU estimates miss by their planned work, so the GPU is not chosen
+### Q27. `value_types_are_ws_value_types` reads only the string-typed values
+
+- **Found** (2026-11-16, validating 0295 step 3; fails the same with `output.rs` as at b8e0d1210, before the
+  outputs' framing): `corpus::base_tests::value_types_are_ws_value_types` (base_tests.rs 751)
+  reads 9 rows, all `str` but one `int`, where 29 are wanted: every `int`, `float`, `bool`, `NoneType` and
+  `ellipsis` value but `12` is missing. Maybe one of the 32 hub failures in Q17 ("The hub's gate failures at 692cc9772"); not checked on the hub.
+- **Done when**: it passes, traced to the commit and cause that dropped the non-string values.
+
+### Q32. (Q18 on cost-classifier) Tests red as the hub merges in (dd93316ff)
+
+- **Found** (2026-11-16, at the hub merge 709a47b26): `cache_architecture::every_stored_table_is_a_relations_the_
+  stores_own_or_a_cache_not_yet_moved` refuses `memo_entries` and `memo_packs` (0240's tables; schema.rs and the
+  test are the hub's unchanged); `rr::tape_tests::a_policy_refused_its_kept_inputs_runs_again_over_its_store`
+  fails with "@rr_node_text without the run's long-text nodes bound" (0268) on `public-api-triples.rr`, with the
+  hub's `rr/lower.rs` and `simplify.rs` too (so not 0291).
+- **Found** (2026-11-16, while validating 0297; all five fail at 880f2a0de without 0297's change):
+  `plan::corpus::base_tests::base_relations_read_are_inputs` and `plan::corpus::phases::tests::a_phase_hands_on_
+  its_exports_and_its_reader_follows_each_edit` (the same "@rr_node_text without the run's long-text nodes bound");
+  `plan::corpus::tests::a_maintained_run_decodes_and_copies_no_tree` (a maintained run decodes one tree from its
+  version; the test names the decode's call site in `plan.rs`); `plan::corpus::tests::every_switch_lowering_reads_is_classified`
+  (`RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`, `RERAIL_MODULE_IMAGES`, `RERAIL_SHIPPED_IMAGES`, the hub's 0246 and
+  0264 switches, in neither list); `plan::coverage::every_operation_runs_on_every_executor` (the executors' gaps by
+  pack differ from `gate/executor-coverage/packs.tsv`).
+- **Done when**: each passes, traced to its cause; the hub's own fix taken at the next merge where it has one.
+
+### Q33. (Q27 on cost-classifier) `within` read from its container is priced far under its work
+
+- **Found** (2026-11-16, while measuring decision 0297): `pth_deferred($n, $s) :- demand_pth_deferred($n, $s),
+  look($n, _, $s), rr_nearest_ks4($n, $f), within($f, $s)` took `within($f, $s)` (with `$s` bound, `$f` not) before
+  the `nearest` step in one run of the 300-file bench: priced at 0.24 M rows, it ran 30 M (the other order, `nearest`
+  first, priced and ran 0.26 M in two other runs). A node's descendants are its subtree's size, which the price does
+  not read for `within`.
+- **Done when**: `within` read from its container is priced by the container's subtree size (the kinds' `size`
+  statistics, as `nearest`'s descend is), and `pth_deferred` keeps the cheap order run after run.
+- **Record** (2026-11-16): decision 0299 prices `within` from its container by the subtree size of the container's
+  kind, else the mean over kinds with children (`Stats::subtree_fan`). `pth_deferred` kept the cheap order and ran
+  0.26 M rows priced 0.26 M in two runs of the 300-file bench; `annotation` and `ann_ctx` (the other readers from the
+  container) kept theirs (0.35 M and 0.36 M, as with 0297). Self-reviewed per reviewer-brief.md; tests in 0299.
+
+### Q34. (Q28 on cost-classifier) A strict run stops on the writer's back-pressure when chunks end together
+
+- **Found** (2026-11-16, a 300-file bench run at load 30): `RERAIL_SQL_STRICT` ended the run at "a wait for the
+  store's writer: the queue's back-pressure". Each chunk's memo entries are one job of 60–80 MB (counted as their
+  decoded rows: `base:within` alone 7–10 MB, then `node`, `tape`, `rr_token_named`, three `xd_…_rr_diagnostic`
+  exports of about a row a node). A chunk's wave is held in the queue until its whole transaction commits: 0.2–1.0
+  s of the writer's wall each, 2.3 s for the first (1.1 s of it the commit). Chunks end in a burst (six memo jobs
+  in 6 s, `RERAIL_WRITES`'s timeline); three ending within one wave's write is 67.7 + 62.5 + 63.8 MB over the 192
+  MB cap, and the third waits. With `RERAIL_WRITE_QUEUE_MB=128` or `96` it stops so every run, at any load. The
+  cap does not bound the queue otherwise: the cross part's frames (300 MB in one job, no sealed wave before them)
+  take the queue to 307 MB in every run with no wait.
+- **Fixed on phased-facts** by 0295 step 4 (1449681e9): the run writes memo entries into mapped segments and the
+  queue counts their pointer rows (about 100 bytes an entry), not their images. Frames are its step 5.
+- **Done when**: 0295 step 4 is merged here (through the hub), and a strict 300-file run with
+  `RERAIL_WRITE_QUEUE_MB=96` completes.
+
+### Q36. (Q27, then Q30, on Native-and-GPU-strata) Placement's CPU estimates miss by their planned work, so the GPU is not chosen
 
 - **Found** (2026-11-16, Native-and-GPU-strata, `placement.tsv` of five cold runs of the light run over PostHog's
   `posthog/hogql`, the same 1,629 findings each): the strata cost 2.2–3.7 s of CPU against 1.3–1.6 s estimated, in
@@ -677,7 +735,7 @@ pass.
 - **Done when**: placement's CPU estimate is within 2× of the measured CPU for the costliest strata of this run, and
   the strata the GPU then runs cheaper move there.
 
-### Q31. A rule that copies a view's columns is a stratum
+### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
 - **Found** (2026-11-16, Native-and-GPU-strata): `kind(n, k) :- node(_, n, k, _, _).` (`typing/programs/calls.rr`)
   copies the `node` view: 3.5 M rows, 0.28–0.41 s of CPU a cold run of hogql, the costliest stratum with an exact
@@ -685,7 +743,7 @@ pass.
 - **Whose**: lowering (a request and what its readers read, 0291), where cost-classifier works now. Not taken here.
 - **Done when**: such a rule is bound as a view of its source, and no stratum copies it.
 
-### Q32. A kind-set axis's tape code set counted ERROR nodes as members
+### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 
 - **Found** (2026-11-16, Native-and-GPU-strata, merging sync-integration-hub-tape at d8fd02e57): `Within::set`
   (0293 step 3) tested an entry's code against the set's kinds, so an ERROR node (its entry's code 0) was a member
@@ -695,6 +753,15 @@ pass.
 - **Fixed** on Native-and-GPU-strata (d8fd02e57): the set leaves ERROR entries out, and
   `the_kind_set_axes_hold_exactly_their_pairs` holds a document with ERROR nodes and a set naming ERROR.
 - **Done when**: sync-integration-hub-tape has the fix (its next merge of this branch or the hub).
+
+### Q39. (Q18 on sync-integration-hub-tape, Q26 on the hub and at d8fd02e57) The tape lab's clippy warnings
+
+- **Found** (2026-11-16, building 0293's tables): `cargo clippy --features grammar --lib` in `native/lab/tape16`
+  gives 51 warnings in the lab's library, from before this work (`is_multiple_of` 9, index loops 20, complex types
+  5, `chunks_exact` 4, precedence 3, and others). The binary's seven are fixed. `clippy --fix` applies none of its
+  20 suggestions here. The lab is its own workspace, so CI does not see them.
+- **Done when**: the lab's library is clean under clippy, with its timing loops keeping what they time.
+
 
 ## Questions for the user
 

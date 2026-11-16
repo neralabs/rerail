@@ -1212,7 +1212,8 @@ fn calibrated_rows_at(f: Fields<'_>, model: &Model, b: &Body<'_>, first: Option<
             before = st_rows;
             let factor = if i == 0 { st_rows } else { pattern(b, s.at, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
             let out = rows * factor;
-            work += rows + out;
+            // The rows each step passes on, as the executor counts a line's work (decision 0297).
+            work += out;
             rows = out;
             if !b.plain_atom(s.at).is_some_and(|a| a.neg()) {
                 bound.extend(b.vars(s.at));

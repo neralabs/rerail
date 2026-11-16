@@ -1989,17 +1989,22 @@ impl Retained {
             .filter(|rel| !self.by_delta(store, was, rel, deltas))
             .filter_map(|rel| self.framed(rel).map(|k| (rel, k)))
             .collect();
+        // The copy of a relation's rows lives only in its job: kept for every relation until the loop below, the
+        // copies were the run's peak (460 MB of 3.3 GB at 300 files, beside the relations and their bytes). A
+        // relation whose rows are the stored ones and whose reads changed copies its rows again there.
         let made: HashMap<&String, Whole> = {
             use rayon::prelude::*;
             let atoms = &atoms;
+            // Under the span open here, on whichever thread runs it: rayon's loops open none of their own.
+            let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             whole.into_par_iter().filter_map(|(rel, k)| {
+                let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
                 let rows = k.rel.live_rows()?;
                 let n = k.rel.rows();
                 let types = frame_types(prog, domains, rel, k.rel.types());
                 let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(atoms, &types), &rows, n);
-                let rows = FrameRows { types, rows, n };
-                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| FramePut::encode_rows(&rows));
-                Some((rel, Whole { d, rows, bytes }))
+                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| FramePut::encode_rows(&FrameRows { types, rows, n }));
+                Some((rel, Whole { d, bytes }))
             }).collect()
         };
         let mut made = made;
@@ -2052,11 +2057,11 @@ impl Retained {
                 // A relation with no rows to keep (a view) is named by its reads' digests:
                 // derived again from the same reads, it has the same rows, so its readers' frames stay current.
                 let done = made.remove(rel);
-                let Some((k, rows, d, bytes)) = (match done {
-                    Some(Whole { d, rows, bytes }) => self.framed(rel).map(|k| (k, rows.rows, d, bytes)),
+                let Some((k, mut rows, d, bytes)) = (match done {
+                    Some(Whole { d, bytes }) => self.framed(rel).map(|k| (k, None, d, bytes)),
                     None => self.framed(rel).and_then(|k| k.rel.live_rows().map(|rows| {
                         let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types())), &rows, k.rel.rows());
-                        (k, rows, d, None)
+                        (k, Some(rows), d, None)
                     })),
                 }) else {
                     if let Some(rd) = &read_digests {
@@ -2070,7 +2075,11 @@ impl Retained {
                 if was.derived.get(rel).is_some_and(|s| s.digest == d && s.reads == read_digests) {
                     continue;
                 }
-                if trace {
+                // The rows, where the frame is written from them or traced: copied again if the job dropped its copy.
+                if rows.is_none() && (bytes.is_none() || trace) {
+                    rows = k.rel.live_rows();
+                }
+                if trace && let Some(rows) = &rows {
                     let i = usize::from(was.derived.get(rel).is_some_and(|s| s.digest == d));
                     tally[i].0 += 1;
                     tally[i].1 += n;
@@ -2089,9 +2098,10 @@ impl Retained {
                     puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n } }.encoded());
                 }
                 let types = frame_types(prog, domains, rel, k.rel.types());
-                puts.push(match bytes {
-                    Some(bytes) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
-                    None => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
+                puts.push(match (bytes, rows) {
+                    (Some(bytes), _) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
+                    (None, Some(rows)) => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
+                    (None, None) => return Err(Error::Plan(format!("{rel}: its rows are not held, and its frame is to be written"))),
                 });
             }
         }
@@ -2116,11 +2126,9 @@ impl Retained {
     }
 }
 
-/// A relation written whole (`write_frames`): its digest, its rows, and their bytes when its rows are not the
-/// stored ones.
+/// A relation written whole (`write_frames`): its digest, and its rows' bytes when its rows are not the stored ones.
 struct Whole {
     d: u64,
-    rows: FrameRows,
     bytes: Option<Vec<u8>>,
 }
 

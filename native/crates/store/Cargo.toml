@@ -17,6 +17,8 @@ test-hooks = []
 [dependencies]
 rerail-prof = { path = "../prof" }
 rerail-accel = { path = "../../../accel" }
+# The memo's segments are journal blocks of deferrable leases (decision 0295 §4).
+rerail-blocks = { path = "../blocks" }
 foldhash = "=0.2.0"
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
 hashbrown = { version = "=0.16.1", default-features = false }

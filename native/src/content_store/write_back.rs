@@ -241,6 +241,13 @@ struct Wave {
 }
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
+/// `RERAIL_WRITES` (a measurement aid): seconds since the writer's first use in this process, for its timeline.
+fn writes_trace() -> Option<f64> {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_WRITES").is_some());
+    static T0: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+    (*ON).then(|| T0.elapsed().as_secs_f64())
+}
+
 fn small_job() -> usize {
     cap_bytes() / 64
 }
@@ -273,6 +280,9 @@ impl Writer {
             let Some(jobs) = s.open.remove(&run).filter(|j| !j.is_empty()) else { return };
             s.sealed_bytes += jobs.iter().map(|q| q.1).sum::<usize>();
             s.sealed += 1;
+            if let Some(t) = writes_trace() {
+                eprintln!("RERAIL_WRITES t={t:.2} seal {} jobs, {:.1} MB; queued {:.1} MB, sealed {:.1} MB", jobs.len(), jobs.iter().map(|q| q.1).sum::<usize>() as f64 / 1048576.0, s.bytes as f64 / 1048576.0, s.sealed_bytes as f64 / 1048576.0);
+            }
             jobs
         };
         // A writer with a wave open has its lane: the wave's first job started it (`queue`).
@@ -488,6 +498,9 @@ impl ContentStore {
                 s.dropped = (s.dropped.0 + 1, s.dropped.1 + bytes);
                 return false;
             }
+            if bytes >= small_job() && let Some(t) = writes_trace() {
+                eprintln!("RERAIL_WRITES t={t:.2} queue {what} {:.1} MB; queued {:.1} MB, sealed {:.1} MB", bytes as f64 / 1048576.0, s.bytes as f64 / 1048576.0, s.sealed_bytes as f64 / 1048576.0);
+            }
             let t = full(&s).then(std::time::Instant::now);
             // The first hold says what fills the queue (a strict run ends at it).
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -654,8 +667,11 @@ impl ContentStore {
                     let started = Instant::now();
                     let mut backoff = JOB_BACKOFF_FIRST;
                     let mut forked_in = false;
+                    let mut tries = 0usize;
+                    let jobs_wall = std::cell::Cell::new(0.0f64);
                     let outcomes = loop {
-                        match store.in_one_transaction(|| run(&mut batch)) {
+                        tries += 1;
+                        match store.in_one_transaction(|| { let t = Instant::now(); let o = run(&mut batch); jobs_wall.set(jobs_wall.get() + t.elapsed().as_secs_f64()); o }) {
                             Ok(outcomes) => break outcomes,
                             Err(StoreError::Busy) if started.elapsed() < JOB_DEADLINE => {
                                 std::thread::sleep(super::connection::jittered(backoff));
@@ -669,6 +685,10 @@ impl ContentStore {
                     };
                     drop(warm_scope);
                     drop(batch_span);
+                    if let Some(t) = writes_trace() {
+                        let wall = started.elapsed().as_secs_f64();
+                        eprintln!("RERAIL_WRITES t={t:.2} wave {} jobs, {:.1} MB: {wall:.3} s wall, jobs {:.3} s, begin+commit {:.3} s, CPU {:.3} s, {tries} tries", batch.len(), batch.iter().map(|q| q.1).sum::<usize>() as f64 / 1048576.0, jobs_wall.get(), wall - jobs_wall.get(), thread_cpu() - before);
+                    }
                     let _ = told.send(());
                     let cpu = (thread_cpu() - before) / batch.len().max(1) as f64;
                     w.shared.state.lock().expect("the writer's state").batches += 1;
