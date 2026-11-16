@@ -17,8 +17,13 @@ use std::path::{Path, PathBuf};
 /// - one above the working directory.
 ///
 /// `None` outside a checkout: an installed engine has no source tree.
+///
+/// Found once a process: where the program was loaded from does not change while it runs, and the search (the
+/// loader's lookup, a canonical path, a walk up the directories) cost 1.9 M instructions a call, paid by every
+/// library path a run made (0.6 G of reading a 317-file pack's texts).
 pub fn root() -> Option<PathBuf> {
-    find()
+    static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ROOT.get_or_init(find).clone()
 }
 
 /// The checkout's `native/` directory: `native` (as the working directory has it) outside a checkout,
