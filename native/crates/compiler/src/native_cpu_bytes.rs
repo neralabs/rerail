@@ -190,19 +190,50 @@ impl<'a> Bytewise<'a> {
     /// `word`'s first 16, from one vector of the bytes, as a lexer reads a short token's bytes
     /// and no more.
     pub fn short_word(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        self.short_words(f, at, &[o], p, heads)[0]
+    }
+
+    /// `short_word` for each of outputs `os`, from one window's vectors shared among them, as
+    /// a lexer reads a number's digits and asks of its `.` in one pass.
+    pub fn short_words(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
         let mut carry = Carry { short: true, ..Carry::default() };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
-        let x = usize::from(self.native.outputs[usize::from(o)]);
-        let d = i64::from(self.native.output_delays[usize::from(o)]);
-        let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, &mut carry, heads);
-        // Where the output is false on a zero byte (`zero_kills`), none past the file's end
-        // already: the bytes there are zeros, more than the 16 and its delay
-        // (`native_cpu_block::Batch`).
+        let Some((&first, rest)) = os.split_first() else { return Vec::new() };
+        let mut got = vec![self.short_in(f, at, first, p, &mut windows, &mut memo, &mut carry, heads)];
+        // The first output's window (its delay's): an output of one lane's instruction read in
+        // it, `lag` bytes back, its loads and compares the first's.
+        let d0 = i64::from(self.native.output_delays[usize::from(first)]);
+        for &o in rest {
+            let x = usize::from(self.native.outputs[usize::from(o)]);
+            let d = i64::from(self.native.output_delays[usize::from(o)]);
+            let lag = d0 - d;
+            let shared = self.plan.lanes[x] && (0..=8).contains(&lag) && windows.contains_key(&-d0);
+            let m = if shared {
+                let lanes = windows.get_mut(&-d0).expect("the first output's window");
+                let part = lanes.get_lagged(f, x, 1, lag as u8);
+                match lanes.mask(f, &[part], at.weights) {
+                    Sym::Known(k) => f.ins().iconst(types::I64, k as i64),
+                    Sym::Value(v, false) => v,
+                    Sym::Value(v, true) => f.ins().bnot(v),
+                    Sym::Slot(..) => unreachable!("a window's mask is a value"),
+                }
+            } else {
+                self.short_in(f, at, o, p, &mut windows, &mut memo, &mut carry, heads)
+            };
+            got.push(if shared { self.short_cut(f, at, x, d, p, m) } else { m });
+        }
+        got
+    }
+
+    /// `short_in`'s cut of mask `m` (output instruction `x`, delay `d`, from `p`): none past the
+    /// file's end. Where the output is false on a zero byte (`zero_kills`), none past it
+    /// already: the bytes there are zeros, more than the 16 and its delay
+    /// (`native_cpu_block::Batch`). Else the file's bytes' bits: `len - p`, at most 16.
+    fn short_cut(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, d: i64, p: Value, m: Value) -> Value {
         if crate::native_cpu_lanes::zero_kills(self.native, x, d as u32) {
             return m;
         }
-        // The bits of the file's bytes: `len - p` of them, at most 16.
         let rem = f.ins().isub(at.len, p);
         let zero = f.ins().iconst(types::I64, 0);
         let sixteen = f.ins().iconst(types::I64, 16);
@@ -212,6 +243,14 @@ impl<'a> Bytewise<'a> {
         let low = f.ins().ishl(one, rem);
         let low = f.ins().iadd_imm(low, -1);
         f.ins().band(m, low)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn short_in<'s>(&'s self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, p: Value, windows: &mut HashMap<i64, Lanes<'s>>, memo: &mut HashMap<(usize, i64), Value>, carry: &mut Carry, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        let x = usize::from(self.native.outputs[usize::from(o)]);
+        let d = i64::from(self.native.output_delays[usize::from(o)]);
+        let m = self.mask_at(f, at, x, p, -d, windows, memo, carry, heads);
+        self.short_cut(f, at, x, d, p, m)
     }
 
     /// The runs whose `escaped` outputs `os` read at their window's start, no `prev` or delay

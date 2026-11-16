@@ -2219,3 +2219,49 @@ file. With the last byte off by one, the test fails.
 
 Counts, reported: words 96.5, punctuation 53.9, mixed 55.2,
 strings 306.1, numbers 158.0, comments 231.2.
+
+## A number's tests from its run's window
+
+The lean lexer's number arm finds its `.` while it reads its digits,
+in one pass over the bytes.
+
+Ours read a number's bytes twice. The run (`short_word`) read the
+window from the token's second byte, with the `.` lanes inside its
+own expression (`digit | (dot & prev digit & next digit)`). Then the
+count tests (at least one `.`, at least two) loaded the token's bytes
+again from its first byte, compared each for `.` again, and cut the
+vector to the token's length.
+
+**The change.**
+
+- **One window for several outputs.** `Bytewise::short_words` makes
+  several outputs' 16 bits from one window. An output that is one
+  lane's instruction is read in the first output's window, with the
+  delays' difference as its lag (`Lanes::get_lagged`), so its loads
+  and compares are the first output's.
+- **The run's window gives the tests their bits (`run_tests`).** This
+  holds for a run rule read from the bytes, and its count tests whose
+  output is a byte set at its own byte (`exact`, no delay) that none
+  of the rule's first bytes is in. The token's first byte then has
+  no bit, and the window from its second byte covers the rest.
+- **The cut is the token's length.** In `tested`, such a test's bits
+  are the window's, below `len - 1`, a scalar mask. A test that asks
+  for more than two takes the popcount.
+
+```rust
+// generated (tier1_aot.rs), the number (f38):
+v30 = vld1q_u8(bytes + s + 1);
+v39 = vceqq_u8(v30, splat(b'.'));        // the run's `dot`
+v55 = movemask(digit | (v39 & …));       // the run
+v62 = movemask(v39);                     // the tests', the same lanes
+…
+v87 = v62 & ((1 << (len - 1)) - 1);      // the token's bytes after its first
+```
+
+Tests: `the_marks_tests_are_the_masks` and
+`a_numbers_checks_are_at_its_token` pass. With the cut one byte too
+long, `the_marks_tests_are_the_masks` fails. A lag one byte off
+cannot be seen in this grammar: a number's `.` is never its first or
+last byte.
+
+Counts, reported: numbers 153.0, the others unchanged.

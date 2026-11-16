@@ -2979,7 +2979,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(fdone, &[l_sel.into(), nohits.into(), untag.into(), nohits.into()]);
         } else {
-            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, heads);
+            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], heads);
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(to, &[l_sel.into(), untag.into(), nohits.into()]);
         }
@@ -3060,7 +3060,29 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // A short run's token is 16 bytes at most (`RuleMode::Short`).
         let short = matches!((mode, rule), (RuleMode::Short(_), EndRule::Run(o)) if rd.bytewise(o)) && rd.calls.iter().any(|x| x.0 == LONG_CALL | k as u16);
         let most = short.then_some(16);
-        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, heads) };
+        // A run read from the bytes (`short_word`) and its count tests of a byte set its first
+        // bytes never are (`run_tests`): their bits from one window, the run's, as the lean
+        // lexer's number arm finds its `.` among its digits.
+        let reg_o = |o: u16| regs.and_then(|g| g.runs.iter().find(|&&(k, _)| k == o));
+        let run_outs: Vec<u16> = match (rule, rd.bytes) {
+            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => run_tests(r, b, k, &tests),
+            _ => Vec::new(),
+        };
+        let window: Option<Vec<Value>> = match (rule, rd.bytes) {
+            (EndRule::Run(o), Some((b, file))) if !run_outs.is_empty() => {
+                let i = f.ins().iadd_imm(s, 1);
+                let os: Vec<u16> = std::iter::once(o).chain(run_outs.iter().copied()).collect();
+                let w = b.short_words(f, &file, &os, i, heads);
+                // `tested` from a block of its own, empty (its blocks first).
+                let after = f.create_block();
+                f.ins().jump(after, &[]);
+                f.switch_to_block(after);
+                Some(w)
+            }
+            _ => None,
+        };
+        let pre: Vec<(u16, Value)> = window.as_ref().map(|w| run_outs.iter().copied().zip(w[1..].iter().copied()).collect()).unwrap_or_default();
+        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, heads) };
         match rule {
             // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
             // `pair P`: the first byte's row (its entry's), then the next byte's bit in the
@@ -3133,7 +3155,10 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         // (`Bytewise::short_word`), as a lexer reads a number's few digits;
                         // the run on past them, the word's way below (cold).
                         if let Some((b, file)) = rd.bytes.filter(|(b, _)| b.can(o)) {
-                            let x = b.short_word(f, &file, o, i, heads);
+                            let x = match &window {
+                                Some(w) => w[0],
+                                None => b.short_word(f, &file, o, i, heads),
+                            };
                             let y = f.ins().bnot(x);
                             let ones = f.ins().ctz(y);
                             let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
@@ -4017,6 +4042,20 @@ fn needs_chunks(f: &mut FunctionBuilder<'_>, ns: &[crate::native_cpu_bytes::Need
     f.block_params(join)[0]
 }
 
+/// A run rule `k`'s count tests whose bits its window from the token's second byte gives
+/// (`tested`'s `pre`): each output a byte set at its own byte (`native_cpu_bytes::exact`, no
+/// delay), read from the bytes, that none of the rule's first bytes is in, so the token's first
+/// byte has no bit.
+fn run_tests(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<'_>, k: usize, tests: &[(crate::records::TokenCheck, Option<i64>)]) -> Vec<u16> {
+    let firsts: Vec<u8> = (0..256).filter(|&x| r.ends.get(x).is_some_and(|&e| usize::from(e) == k)).map(|x| x as u8).collect();
+    let mut v: Vec<u16> = tests.iter().filter(|(t, _)| t.count && !t.always() && b.can(t.o)).filter(|(t, _)| {
+        crate::native_cpu_bytes::exact(b.native, t.o).is_some_and(|n| n.lo == 0 && n.hi == 0 && !firsts.iter().any(|&x| n.has(x)))
+    }).map(|(t, _)| t.o).collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
 /// The refusal and the hits of the tests that hold at every token (`TokenCheck::always`).
 fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) -> (i64, i64) {
     tests.filter(|t| t.always()).fold((0i64, 0i64), |(r, h), t| match t.then {
@@ -4031,7 +4070,13 @@ fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) 
 /// count is the mask's bits over the token's words, a word at a time; a run, the mask's first
 /// `least` bits from `s` compared at once, from one word or two.
 #[allow(clippy::too_many_arguments)]
-fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
+///
+/// `pre`: outputs' bits from `s + 1` on, 16 of them, from the run's own window (`run_tests`):
+/// a count of one of them over a token of 16 bytes at most is its bits below the token's
+/// length, as the lean lexer asks of a number's `.` in its digits' pass. The output is never
+/// set at the token's first byte.
+#[allow(clippy::too_many_arguments)]
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, pre: &[(u16, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
     let here = f.current_block().expect("a rule's block");
     let ended = f.create_block();
     f.append_block_param(ended, types::I64);
@@ -4093,14 +4138,28 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             // two, their bits with more than one set (`m & (m - 1)`); more, their count.
             let mut made: Vec<(crate::native_cpu_bytes::Needs, Value)> = Vec::new();
             let weights = rd.bytes.map(|(_, file)| file.weights);
+            // The token's bytes after its first in `pre`'s bits: `len - 1` of them.
+            let below = (!pre.is_empty()).then(|| {
+                let one = f.ins().iconst(types::I64, 1);
+                let n = f.ins().iadd_imm(len, -1);
+                let b = f.ins().ishl(one, n);
+                f.ins().iadd_imm(b, -1)
+            });
             for (t, n) in counts.iter().zip(&ex) {
                 let most = counts.iter().zip(&ex).filter(|(_, m)| *m == n).map(|(t, _)| t.least).max().unwrap_or(0);
                 let k = match made.iter().find(|(m, _)| m == n) {
                     Some(&(_, k)) => k,
                     None => {
-                        let k = match (most, weights) {
-                            (0..=1, _) => needs_some(f, n, c.bytes, s, len),
-                            (2, Some(w)) => {
+                        let given = pre.iter().find(|&&(o, _)| o == t.o).map(|&(_, m)| m);
+                        let k = match (given, below, most, weights) {
+                            // The run's window's bits: a mask where the hit asks a mask, else
+                            // its count.
+                            (Some(m), Some(b), _, _) => {
+                                let k = f.ins().band(m, b);
+                                if most <= 1 || (most == 2 && weights.is_some()) { k } else { f.ins().popcnt(k) }
+                            }
+                            (_, _, 0..=1, _) => needs_some(f, n, c.bytes, s, len),
+                            (_, _, 2, Some(w)) => {
                                 let lanes = needs_lanes(f, n, c.bytes, s, len);
                                 bitmask(f, &[lanes], w)
                             }
