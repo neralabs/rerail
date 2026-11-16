@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,6 +130,32 @@ describe("CheckoutOwners", () => {
 
     expect(owners.lookAgainAt(file)).toBe(true);
     expect(owners.ownerOf(file)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(false);
+  });
+
+  it("owns a worktree's files once Git finishes it, after a lookup landed between its .git file and its HEAD", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "made", join(root, "made"));
+    const made = await realpath(join(root, "made"));
+    const file = join(made, "README.md");
+    // `git worktree add` writes the worktree's `.git` file before the HEAD in the Git folder it names.
+    const head = join(main, ".git", "worktrees", "made", "HEAD");
+    const contents = await readFile(head, "utf8");
+    await rm(head);
+    const owners = new CheckoutOwners();
+
+    // A walk's lookup of the folder lands in between: Git does not take it for a checkout yet.
+    expect(owners.ownerOf(made)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(false);
+    expect(owners.ownerOf(file)).toBeUndefined();
+
+    await writeFile(head, contents);
+
+    // The next Write in it looks again and finds the worktree.
+    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.ownerOf(file)).toEqual({ checkoutRoot: made, path: "README.md" });
     expect(owners.lookAgainAt(file)).toBe(false);
   });
 });
