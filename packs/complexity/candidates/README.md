@@ -1,4 +1,4 @@
-# Rerail rule pack: Cyclomatic complexity, candidates
+# Rerail rule pack: Function complexity, candidates
 
 The port in `rules/` here is still being evaluated: scored against lizard's expected findings and reported, never
 gated and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
