@@ -255,8 +255,8 @@ form they hold.
 | `qualify` (9618–9630), `maintained_cross` (9670) | their version paths only; `requalified` goes |
 | maintained part's diagnostics (6990–7125) | on `Fields`: `f.width`, `f.decls()`, `p.components()`, `p.rules_by_stratum()`, `f.heads()` |
 | `cross_memo::drop_guards`, `keep_copies` | their version edits only (`edit`: `keep` and a rewrite of each guarded rule); the tree edits go |
-| `recursive_spike::run(&cross.program)` | an aid behind `recursive_spike::on()`: ported to `Placed`, or retired (question 2) |
-| `cross_rounds::bound`, `cone_split`, `pre_split`, `run_rounds`, `round.program` (7396–7513, 8195–8310) | question 1 |
+| `recursive_spike::run(&cross.program)` | retired with the spike (§9) |
+| `cross_rounds::bound`, `cone_split`, `pre_split`, `run_rounds`, `round.program` (7396–7513, 8195–8310), and the `hops` check each run makes (6338, 6499) | retired with the bounded rounds (§9) |
 | `maintain::rewrite`'s fallback part, gates test, `input_views` | its version path; `f.gates().is_empty()`; `input_views` on handles (also ends `retain.rs` 315's decode) |
 | `emit::emit_inputs` (140 lines), `emit::outputs`, `plan::decode_kept` | the SQL emitter reads `Placed` through `Body`, as `plan::run`'s kernel does; `decoded_outputs` reads `f.is_input`, `f.width` |
 | `Model::analysis_of` (`plan.rs` 1726), `plan::program_digest` | on `Placed`: the planner's analysis reads the strata, heads and reads from the views, and the digest is the version's |
@@ -317,8 +317,8 @@ rules must equal the old pass's, compared by digest, as 0246 §1 does for loweri
    Delete each pass's tree fallback and `made_from`. List what the image cannot hold, and extend it. Check: the
    session, cone, cross memo and maintenance tests.
 2. **The run holds versions only.** `Split`'s parts are `Placed`. `Cone` drops its trees. Port every run reader in
-   §5: the diagnostics, the emitter, `decode_kept`, `input_views`, `analysis_of`. Printing by `Placed::show`. Answer
-   questions 1 and 2. Check: corpus tests, the SQL extension's tests, the guard that a non-maintained run reads no
+   §5: the diagnostics, the emitter, `decode_kept`, `input_views`, `analysis_of`. Printing by `Placed::show`. Retire the
+   bounded rounds and the spike (§9). Check: corpus tests, the SQL extension's tests, the guard that a non-maintained run reads no
    tree too.
 3. **Preparation after lowering on the writer.** `plan::lower` becomes a derivation from the front's version (encoded
    once from its tree, until step 4). The readers come first (split, constants, causes, statistics), then the
@@ -334,15 +334,41 @@ rules must equal the old pass's, compared by digest, as 0246 §1 does for loweri
    `rr/tests.rs`, the tape tests, dl1.
 6. **Delete `front::Program`,** its statements and its encoding. Add §6's guard.
 
-## Questions for the user
+## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
-1. **The cross rounds' bounded program** (`cross_rounds`, `.pragma "cross-rounds"`): no `.rr` program declares it
-   today, so the path is dormant, and its passes (`bound`, `cone_split`, `pre_split`) are tree rewrites. Port them
-   to `ProgramW` in step 2, or retire the path?
-2. **`recursive_spike::run`,** behind `recursive_spike::on()`, reads the cross part's tree. Keep it as an aid that
-   prints, or retire the spike?
-3. **Steps 4 and 5 against the hub.** 0246's later stages move lowering form by form on the hub. Should steps 4 and 5
-   be done here, on the writer, and merged into the hub, or done on the hub after it takes steps 0–3?
+**The bounded cross-file rounds** (`typing::cross_rounds`, `.pragma "cross-rounds"`).
+
+- **Why they were built.** They came from the Typing branch's summary model, in which each file is typed alone from
+  its imports' summaries. 0052 and 0056 (117ecd9cb, 2026-11-07) made them the program's declaration: k rounds,
+  each reading the last round's rows wherever a chain crosses a file.
+- **Why nothing uses them.** 0065 step 1 (30ee40e7b, the same day) replaced them with one semi-naive fixpoint. It
+  was more accurate (6,299 against 6,198 agreeing with Jedi on 84 files) and cheaper: each round derived 112k to
+  191k hop rows again to add a few thousand. Every typing program dropped the pragma. 0065 kept the mechanism "for
+  a program that declares rounds. None of ours will". It left one case open: typing over files not loaded together,
+  such as a package's summaries alone.
+- **Why they are not needed.** That case is now a library's rows replayed as a derivation (0059), and phased facts
+  over every document read (0083). No program, test or pack declares rounds. But each run still pays for them: the
+  run computes the hops (`cross_rounds::hops`, 6338 and 6499) to check that no program does.
+- **What goes:**
+  - the bounded program (`bound`, `cone_split`, `pre_split`);
+  - `run_rounds`, `rounds_loop`, `Rounds` and `Prepared::rounds`;
+  - the per-run `hops` check.
+
+  The pragma becomes an error that cites 0065.
+- **What stays, moved to `file_local`:** `same_document`, which the cross memo uses, and the `@doc($a) = @doc($b)`
+  join (`join_spec`, `select`), which is the split's, not the rounds'.
+
+**The recursive maintenance spike** (`plan/corpus/recursive_spike.rs`, 2,020 lines, `RERAIL_SPIKE_RECURSIVE`).
+
+- **Why it was built.** 0090 (d8cbb6d8f, 2026-11-09) needed to know how to maintain recursive components exactly.
+  The spike compared DRed, levels and backward/forward against recomputing each component, in an evaluator of its
+  own.
+- **What it answered.** Levels was cheapest at every step: 0.89 s against DRed's 2.04 s at step 08, with 8 bytes a
+  row of kept state. The spike also listed the pitfalls any implementation must handle.
+- **Why it is not needed.** The answer is built. Levels is in the engine (`setfix`'s `Levels`), used where the
+  planner says `leveled`. Its results and pitfalls are recorded in 0090. Nothing calls the spike except its
+  environment variable.
+- **What goes:** the module, its call in the cross part's run, and its row in `facts_only`'s list.
 
 ## Agreement with prior work
 
