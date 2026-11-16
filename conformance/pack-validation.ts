@@ -88,6 +88,11 @@ export interface ValidatePackOptions {
    * scored once, in the conformance job.
    */
   fixtures?: boolean;
+  /**
+   * The core version check 5 holds the pack's core range to (`heldOff`, and a language core first reads after 0.1.0).
+   * Default: the repository's package.json version.
+   */
+  coreVersion?: string;
 }
 
 /** Validation material: kept in the repository, never published. */
@@ -519,13 +524,12 @@ export function languageRangeFailure(range: string, languages: readonly string[]
 /** Every language the pack's shipped rule documents name: a query's, a define's or a transform's `language`, sorted. */
 function shippedLanguages(directory: string): string[] {
   const named = new Set<string>();
+  // An array's entries are its values too, so one walk over Object.entries covers arrays and objects.
   const collect = (value: unknown): void => {
-    if (Array.isArray(value)) value.forEach(collect);
-    else if (typeof value === "object" && value !== null) {
-      for (const [key, child] of Object.entries(value)) {
-        if (key === "language" && typeof child === "string") named.add(child);
-        else collect(child);
-      }
+    if (typeof value !== "object" || value === null) return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "language" && typeof child === "string") named.add(child);
+      else collect(child);
     }
   };
   for (const file of filesUnder(directory, join(directory, "rules")).filter(file => file.endsWith(".json"))) {
@@ -1022,9 +1026,10 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const failure = packageLicenceFailure(manifest.license, sources.recorded);
       if (failure !== undefined) fail("package", failure);
       const heldOff = (pack?.rules ?? []).filter(rule => rule.heldOff !== undefined).map(rule => rule.id);
-      const range = heldOffRangeFailure(manifest.peerDependencies["@neralabs/rerail"], heldOff, rootPackage().version);
+      const coreVersion = options.coreVersion ?? rootPackage().version;
+      const range = heldOffRangeFailure(manifest.peerDependencies["@neralabs/rerail"], heldOff, coreVersion);
       if (range !== undefined) fail("package", range);
-      const languageRange = languageRangeFailure(manifest.peerDependencies["@neralabs/rerail"], shippedLanguages(directory), rootPackage().version);
+      const languageRange = languageRangeFailure(manifest.peerDependencies["@neralabs/rerail"], shippedLanguages(directory), coreVersion);
       if (languageRange !== undefined) fail("package", languageRange);
     }
   }
