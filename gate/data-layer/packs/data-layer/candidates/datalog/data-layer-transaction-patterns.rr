@@ -66,7 +66,7 @@ txn_functions("function_definition").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, value_type_of, node_text, token
+.input doc, syntax_error, node, field, child, text, line, value_type_of, node_text, value, token
 .output violation
 option_item("category-BACKGROUND", 0, "_get_ripple_chain").
 option_item("category-BACKGROUND", 1, "_run_handler").

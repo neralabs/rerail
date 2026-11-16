@@ -629,10 +629,7 @@ impl<'s> Lexer<'s> {
     /// A heredoc's or nowdoc's opening from `s` (its `<<<`): whether a nowdoc, its word's span, and
     /// where its body's line starts (past the opening line's end). `None` where none opens.
     pub fn heredoc_open(&self, s: usize) -> Option<(bool, usize, usize, usize)> {
-        let mut i = s + 3;
-        while matches!(self.at(i), b' ' | b'\t') {
-            i += 1;
-        }
+        let mut i = self.blocks.blank_end(s + 3);
         let quote = self.at(i);
         let nowdoc = quote == b'\'';
         if matches!(quote, b'\'' | b'"') {

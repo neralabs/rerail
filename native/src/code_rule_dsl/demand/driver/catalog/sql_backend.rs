@@ -2192,9 +2192,6 @@ impl PackedRow {
         row
     }
 
-
-
-
     pub(in crate::code_rule_dsl) fn from_sql_row(row: &rusqlite::Row<'_>) -> SqlResult<Self> {
         let row_kind = match row.get::<_, i64>(1)? {
             1 => RowKind::BatchStatus,

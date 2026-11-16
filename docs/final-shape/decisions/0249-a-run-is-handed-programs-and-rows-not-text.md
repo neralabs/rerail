@@ -96,6 +96,10 @@ string, an integer a number, a node its value as the run held it (`Row::raw`), N
 JSON text held. A pack's programs share the relations, as they share `violation` (`corpus::own_names`): each is
 named by its policy. `run_pack` gives each member the rows whose `policy` is its own.
 
+Since decision 0283 (the merge into the hub), the rule leaves `message` empty and ends the row with the message's
+holes (`findings::HOLE`); the writer composes `message` from the `.message` template (decision 0225 §3) and writes
+the row as the table above has it.
+
 ### 7. Phase programs and the typing bridge are handed
 
 A phase program is read once from its file (`phases::source`, its includes read in) and handed to its run

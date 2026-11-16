@@ -57,6 +57,8 @@ fn on_path(name: &str) -> Option<PathBuf> {
 /// The identity a cursor is of: an FSEvents id is of its volume; a Watchman clock names its own instance, so one
 /// identity serves (and keeps its cursors apart from FSEvents').
 pub fn volume(path: &Path) -> Option<[u8; 16]> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = path;
     match backend() {
         #[cfg(target_os = "macos")]
         Backend::FsEvents => fsevents::volume(path),
@@ -563,8 +565,7 @@ mod fsevents {
         let mut out: Vec<PathBuf> = Vec::new();
         {
             let seen = all[at].shared.seen.lock().unwrap_or_else(|e| e.into_inner());
-            for (id, path) in seen.events.iter().filter(|(id, _)| *id > cursor) {
-                let _ = id;
+            for (_, path) in seen.events.iter().filter(|(id, _)| *id > cursor) {
                 let path = Path::new(path.trim_end_matches('/'));
                 let Some((real_root, root)) = real.iter().find(|(r, _)| path.starts_with(r)) else { continue };
                 let under = path.strip_prefix(real_root).map(|rest| if rest.as_os_str().is_empty() { root.clone() } else { root.join(rest) }).unwrap_or_else(|_| path.to_path_buf());

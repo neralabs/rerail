@@ -389,6 +389,10 @@ pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::col
                 let bytes = store.get_source(id)?;
                 out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().chain([id]).collect()));
             }
+            // A program the engine ships (decision 0264): its image from the bundle, kept by no source of the store.
+            None if let Some(bytes) = (mode != "off").then(|| crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(image_key(d)))).flatten() => {
+                out.insert(*d, (Stored::Image(bytes.to_vec()), text_ids[k].into_iter().collect()));
+            }
             None if mode != "require" => want_text.push(k),
             None => {}
         }

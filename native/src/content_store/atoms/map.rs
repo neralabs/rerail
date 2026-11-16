@@ -664,7 +664,7 @@ impl Atoms {
 /// Every stored column that holds atoms, and how it crosses the store's boundary when this process's numbering differs
 /// from the store's (decision 0170). With `NOT_ATOMS`, it classifies every integer, untyped and blob column of the
 /// store's schema: a test (`every_stored_column_is_classified`) fails on a column in neither, so a new column of atoms
-/// is mapped, or said to be none, before it is kept.
+/// is mapped, or said to be none, before it is kept. Only that test reads the two tables.
 #[cfg(test)]
 pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("atom_segment", "first", "the store's atoms themselves: their numbering is the store's"),
@@ -734,7 +734,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("frame_used", &["space", "run", "rels"]),
     ("frames", &["space", "ident", "part", "digest", "reads", "width", "rows", "types", "used"]),
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).
-    ("memo_entries", &["space", "part", "digest", "doc", "pack", "at", "len", "raw"]),
+    ("memo_entries", &["space", "part", "digest", "doc", "pack", "at", "len", "raw", "over_pack", "over_at", "over_len", "over_raw"]),
     ("memo_packs", &["pack"]),
     ("git_tree_entries", &["tree_id", "name_string_id", "mode_id", "object_kind_id", "target_hash_id"]),
     ("git_trees", &["tree_id", "tree_hash_id", "complete", "entry_count"]),

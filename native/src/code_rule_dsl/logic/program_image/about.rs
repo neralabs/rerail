@@ -11,10 +11,13 @@ use super::{AtomId, Cell, RelId};
 /// such cell's atom a relation id.
 pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("answer", &[1, 3]),
+    ("asked", &[1, 3]),
     ("native_dfs", &[1, 2, 3]),
     ("native_roots", &[1, 2]),
     ("native_match", &[1, 2]),
     ("native_group", &[1]),
+    ("native_text_test", &[1, 2]),
+    ("native_text_pattern", &[1]),
     ("native_python_candidates", &[1, 2, 3]),
     ("native_python", &[1, 3, 4]),
     ("native_components", &[1, 2, 3]),
@@ -42,6 +45,7 @@ pub(crate) fn relation_columns(rel: &str) -> &'static [usize] {
 pub enum NativeKind {
     DfsFirst,
     MatchAll,
+    TextTest,
     PythonCandidates,
     Python,
     Components,
@@ -65,6 +69,8 @@ pub enum NativeSpec {
     DfsFirst { edge: RelId, target: RelId, roots: Option<RelId> },
     /// Its groups in order.
     MatchAll { input: RelId, pattern: AtomId, groups: Vec<AtomId>, positions: bool },
+    /// Its patterns in order.
+    TextTest { input: RelId, column: usize, op: AtomId, patterns: Vec<AtomId> },
     PythonCandidates { input: RelId, targets: RelId, context: AtomId, member: AtomId },
     Python { kind: AtomId, input: RelId, targets: Option<RelId> },
     Components { edge: RelId, own: RelId },
@@ -161,6 +167,7 @@ impl About {
         let mut widens: Vec<(RelId, u32)> = Vec::new();
         let mut roots: Vec<(RelId, RelId)> = Vec::new();
         let mut groups: Vec<(RelId, i64, AtomId)> = Vec::new();
+        let mut patterns: Vec<(RelId, i64, AtomId)> = Vec::new();
         let mut demand: Vec<(i64, AtomId)> = Vec::new();
         let mut answers: Vec<(RelId, i64, RelId)> = Vec::new();
         let int = |c: Option<Cell>| match c {
@@ -200,6 +207,16 @@ impl About {
                         &[2],
                         r(2).zip(a(3)).map(|(input, pattern)| NativeSpec::MatchAll { input, pattern, groups: Vec::new(), positions: int(row.get(4).copied()).is_some_and(|p| p != 0) }),
                     )),
+                    "native_text_test" => about.natives.extend(native(
+                        NativeKind::TextTest,
+                        &[2],
+                        r(2).zip(int(row.get(3).copied())).zip(a(4)).map(|((input, column), op)| NativeSpec::TextTest { input, column: column as usize, op, patterns: Vec::new() }),
+                    )),
+                    "native_text_pattern" => {
+                        if let (Some(rel), Some(i), Some(p)) = (r(1), int(row.get(2).copied()), a(3)) {
+                            patterns.push((rel, i, p));
+                        }
+                    }
                     "native_group" => {
                         if let (Some(rel), Some(i), Some(g)) = (r(1), int(row.get(2).copied()), a(3)) {
                             groups.push((rel, i, g));
@@ -277,6 +294,12 @@ impl About {
                 if let NativeSpec::DfsFirst { roots, .. } = &mut n.spec {
                     *roots = Some(root);
                 }
+            }
+        }
+        patterns.sort_unstable_by_key(|&(rel, i, _)| (rel, i));
+        for (rel, _, p) in patterns {
+            if let Some(NativeRef { spec: NativeSpec::TextTest { patterns, .. }, .. }) = about.natives.iter_mut().find(|n| n.rel == rel) {
+                patterns.push(p);
             }
         }
         groups.sort_unstable_by_key(|&(rel, i, _)| (rel, i));

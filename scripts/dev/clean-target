@@ -14,12 +14,13 @@ cleaned while no cargo builds in it: one that holds cargo's lock is skipped, and
 
 What goes, per profile directory:
 
-- **Another compiler's.** Artifacts whose metadata says another rustc than `rust-toolchain.toml`
-  pins: cargo never uses them again (a toolchain bump leaves a whole tree of them).
-- **Superseded.** A crate's build (one hash: its library, test binary, dep-info, fingerprint,
-  build-script output) older than H hours (default 1) when the same unit has a newer build. The
-  hour spares a pair of builds a worktree alternates between (two feature sets of one crate); one
-  still wanted after that is rebuilt once by cargo, dependencies from the shared compiler cache.
+- **Superseded.** Builds no current build was made from. cargo records, per unit, the units it
+  was built from; the roots are the builds nothing else was made from (binaries, test binaries, the
+  workspace's libraries). Of each root the newest stays, the one before it when the same rustc
+  built it (another toolchain's builds go once a newer one exists), and any built in the last H hours
+  (default 1), with every unit they were built from: a crate one build needs in two variants (for
+  the code, and for a build script) keeps both. What no kept root reaches goes once over H hours
+  old. (Grouping builds by crate name instead removed variants still in use: 3½-minute rebuilds.)
 - **Leftover objects.** On macOS a debug build keeps its debug info in `.rcgu.o` files beside the
   binary, which the binary's debug map names (`split-debuginfo=unpacked`). Each rebuild leaves the
   previous ones behind. Those no binary or dylib of the directory names go.
@@ -48,22 +49,6 @@ UNIT = re.compile(r"^(?P<package>.+)-(?P<hash>[0-9a-f]{16})$")
 
 def say(message):
     print(f"clean-target: {message}", flush=True)
-
-
-def pinned_rustc(target):
-    """`rustc X.Y.Z` as the rust-toolchain.toml above `target` pins it, or None (none, or a channel
-    such as nightly)."""
-    d = target
-    while True:
-        try:
-            text = open(os.path.join(d, "rust-toolchain.toml")).read()
-            break
-        except OSError:
-            if os.path.dirname(d) == d:
-                return None
-            d = os.path.dirname(d)
-    m = re.search(r'^channel\s*=\s*"(\d+\.\d+\.\d+)"', text, re.M)
-    return f"rustc {m.group(1)} ".encode() if m else None
 
 
 def target_dir(argv):
@@ -101,17 +86,6 @@ def mtime(path):
         return 0
 
 
-def built_by(path, rustc):
-    """True when the rmeta or rlib at `path` names `rustc`; False when it names another; None: unknown."""
-    try:
-        with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
-            if m.find(rustc) >= 0:
-                return True
-            return False if re.search(rb"rustc \d+\.\d+\.\d+ \(", m[:4 << 20]) else None
-    except (OSError, ValueError):
-        return None
-
-
 def referenced_objects(deps, binaries):
     """The object files the debug maps of `binaries` name (macOS: OSO entries). Their paths are
     NUL-terminated strings in the binary's string table: read there directly, 30 times faster than
@@ -140,7 +114,7 @@ def is_binary(deps, name):
     return "." not in name and os.path.isfile(path) and os.access(path, os.X_OK)
 
 
-def clean_profile(profile, rustc, keep_hours, plan):
+def clean_profile(profile, keep_hours, plan, label):
     """Adds what goes from the profile directory `profile` to `plan` ([(reason, path)])."""
     deps = os.path.join(profile, "deps")
     groups = {}
@@ -148,43 +122,113 @@ def clean_profile(profile, rustc, keep_hours, plan):
         m = ARTIFACT.match(name)
         if m:
             groups.setdefault((m["crate"], m["hash"]), []).append(name)
-    gone = set()
-    # Another compiler's.
-    if rustc:
-        for key, names in groups.items():
-            metas = [n for n in names if n.endswith((".rmeta", ".rlib"))]
-            if metas and built_by(os.path.join(deps, metas[0]), rustc) is False:
-                gone.add(key)
-                plan.append(("another compiler's", key))
-    # Superseded: among builds of the same unit (the same crate and kind: its library, its binary,
-    # its test binary, which cargo names in the build's fingerprint directory), the newest stays.
+    gone = set()  # hashes of the builds that go
+    # No rule by compiler version: the toolchain a checkout pins is not always the one it builds
+    # with (a `cargo +1.97.1`, another cargo first on PATH), and removing by the pin removed the
+    # builds in use. Another compiler's builds go by the sweep below, once no current build uses them.
+    # Superseded: a mark and sweep over cargo's own dependency records. Each unit's fingerprint
+    # directory holds its fingerprint value (in a file named after its kind) and, in its JSON, the
+    # fingerprint values of the units it was built from. The roots are the builds nothing else was
+    # built from and that are not a dependency crate's (binaries, test binaries, the workspace's
+    # libraries); of each root (package and kind) the two newest stay, and any built in the last H
+    # hours. Every unit a kept root reaches stays: a crate one build needs in two variants (for the
+    # code, and with build-script settings for a build script) keeps both. Only what no kept root
+    # reaches goes. A unit whose records cannot be read stays.
     fingerprints = os.path.join(profile, ".fingerprint")
-    by_hash = {}
+    now = time.time()
+    units, by_value, referenced = {}, {}, set()
     for name in os.listdir(fingerprints):
         m = UNIT.match(name)
-        if m:
-            units = frozenset(f for f in os.listdir(os.path.join(fingerprints, name))
-                              if not f.startswith(("dep-", "output-")) and not f.endswith((".json", ".timestamp")))
-            by_hash[m["hash"]] = (m["package"], units)
-    newest = {}
-    for key, names in groups.items():
-        if key in gone or key[1] not in by_hash:
+        if not m:
             continue
-        files = [n for n in names if not n.endswith(".rcgu.o")] or names
-        newest.setdefault(by_hash[key[1]], []).append((max(mtime(os.path.join(deps, n)) for n in files), key))
-    now = time.time()
-    for unit, builds in newest.items():
-        builds.sort(reverse=True)
-        for t, key in builds[1:]:
-            if now - t > keep_hours * 3600:
-                gone.add(key)
-                plan.append(("superseded", key))
-    # Expand each removed build into its files and units.
+        d = os.path.join(fingerprints, name)
+        try:
+            files = os.listdir(d)
+        except OSError:
+            continue
+        kinds, values, children, t, known, compiler = set(), set(), set(), 0, True, None
+        for f in files:
+            path = os.path.join(d, f)
+            t = max(t, mtime(path))
+            if f.endswith(".json"):
+                try:
+                    record = json.load(open(path))
+                    compiler = record.get("rustc")
+                    for dep in record.get("deps", []):
+                        # The file holds the value as cargo's to_hex writes it: little-endian bytes.
+                        children.add((int(dep[3]).to_bytes(8, "little").hex(), dep[1]))
+                except (OSError, ValueError, TypeError, IndexError, AttributeError):
+                    known = False
+            elif not f.startswith(("dep-", "output-")) and not f.endswith(".timestamp"):
+                kinds.add(f)
+                try:
+                    values.add(open(path).read().strip())
+                except OSError:
+                    known = False
+        units[m["hash"]] = {"package": m["package"], "kinds": frozenset(kinds), "values": values,
+                            "children": children, "time": t, "known": known and bool(values), "rustc": compiler}
+        for v in values:
+            by_value.setdefault(v, set()).add(m["hash"])
+        referenced |= {v for v, _ in children}
+    by_name = {}
+    for h, u in units.items():
+        by_name.setdefault((u["package"].replace("-", "_"), u["rustc"]), set()).add(h)
+    def dependency_crate(h):
+        """Whether the unit is a registry or git crate's (its dep-info names sources under ~/.cargo)."""
+        for key, names in groups.items():
+            if key[1] == h:
+                for n in names:
+                    if n.endswith(".d"):
+                        try:
+                            head = open(os.path.join(deps, n), errors="replace").read(1 << 16)
+                        except OSError:
+                            return False
+                        return "/.cargo/registry/" in head or "/.cargo/git/" in head
+        return False
+    roots = {}
+    for h, u in units.items():
+        if u["known"] and not (u["values"] & referenced) and not dependency_crate(h):
+            roots.setdefault((u["package"], u["kinds"]), []).append((u["time"], h))
+    keep = [h for h, u in units.items() if not u["known"]]
+    for group in roots.values():
+        group.sort(reverse=True)
+        # The newest; the one before it too when the same compiler built it (two feature sets a
+        # checkout alternates between), not when a toolchain change left it; any in the window.
+        newest = units[group[0][1]]["rustc"]
+        keep += [h for i, (t, h) in enumerate(group)
+                 if i == 0 or (i == 1 and units[h]["rustc"] == newest) or now - t <= keep_hours * 3600]
+    # A format this script does not read (a cargo change) leaves even the latest build's references
+    # unresolved: then nothing is swept rather than everything. (An older build's references may
+    # point at builds since replaced; the latest one's resolve.)
+    if roots:
+        latest = max((g[0] for g in roots.values()))[1]
+        refs = [v for v, _ in units[latest]["children"]]
+        if refs and sum(1 for v in refs if v in by_value) < len(refs) * 0.9:
+            say(f"{label}: the latest build's dependency records do not resolve: "
+                "superseded builds not swept")
+            keep = list(units)
+    # A reference that resolves to no unit (the unit was rebuilt in place since: the workspace's
+    # library after `cargo build --bin`, while the test binary still names the old value) keeps every
+    # unit of that crate the same rustc built: more than needed, never less.
+    marked, stack = set(), list(keep)
+    while stack:
+        h = stack.pop()
+        if h in marked or h not in units:
+            continue
+        marked.add(h)
+        for v, crate in units[h]["children"]:
+            found = by_value.get(v)
+            stack.extend(found if found else by_name.get((crate, units[h]["rustc"]), ()))
+    for h, u in units.items():
+        if h not in marked and h not in gone and now - u["time"] > keep_hours * 3600:
+            gone.add(h)
+            plan.append(("superseded", h))
+    # Expand each removed build (a hash) into its files: deps/, build/ and its fingerprint.
     expanded = []
-    for reason, key in plan:
-        crate, h = key
-        for name in groups[key]:
-            expanded.append((reason, os.path.join(deps, name)))
+    for reason, h in plan:
+        for key, names in groups.items():
+            if key[1] == h:
+                expanded += [(reason, os.path.join(deps, n)) for n in names]
         for sub in (".fingerprint", "build"):
             d = os.path.join(profile, sub)
             if os.path.isdir(d):
@@ -200,7 +244,7 @@ def clean_profile(profile, rustc, keep_hours, plan):
     inc = os.path.join(profile, "incremental")
     if os.path.isdir(inc):
         # Build scripts' incremental state is `build_script_build`'s, whose builds live in build/.
-        crates = {key[0] for key in groups if key not in gone} | {"build_script_build"}
+        crates = {key[0] for key in groups if key[1] not in gone} | {"build_script_build"}
         for name in os.listdir(inc):
             path = os.path.join(inc, name)
             crate = name.rsplit("-", 1)[0]
@@ -251,7 +295,6 @@ def main(argv):
     target = target_dir(rest)
     if not os.path.isfile(os.path.join(target, "CACHEDIR.TAG")):
         sys.exit(f"clean-target: {target} is not a cargo target directory (no CACHEDIR.TAG)")
-    rustc = pinned_rustc(target)
     started = time.time()
     freed, counts = 0, {}
     for profile in profiles(target):
@@ -266,7 +309,7 @@ def main(argv):
                     say(f"{rel}: a cargo build is running there: skipped")
                     continue
             plan = []
-            clean_profile(profile, rustc, keep_hours, plan)
+            clean_profile(profile, keep_hours, plan, rel)
             size = 0
             for reason, path in plan:
                 # Only ever inside this profile directory.

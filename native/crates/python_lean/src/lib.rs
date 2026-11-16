@@ -213,6 +213,7 @@ pub enum K {
     TFuture,
     TYield,
     TBackslash,
+    TUnderscore,
 }
 
 /// Each kind's name in tree-sitter-python and whether it is named, in `K`'s order.
@@ -401,6 +402,7 @@ pub const KINDS: &[(&str, bool)] = &[
     ("__future__", false),
     ("yield", false),
     ("\\", false),
+    ("_", false),
 ];
 
 /// Fields, as the tape names them; 0 is no field.
@@ -578,7 +580,7 @@ mod tests {
 
     #[test]
     fn the_tables_agree() {
-        assert_eq!(KINDS.len(), K::TBackslash as usize + 1);
+        assert_eq!(KINDS.len(), K::TUnderscore as usize + 1);
         assert_eq!(FIELDS.len(), f::VALUE as usize + 1);
         assert!(KINDS.len() < 256 && FIELDS.len() <= 64 && CLASSES.len() <= 8);
     }

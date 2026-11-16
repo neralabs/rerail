@@ -482,7 +482,10 @@ impl<'a> P<'a> {
             }
         }
         self.unannotated(slot(f::TYPE, Ctx::UType), true)?;
-        if !self.is_ident() {
+        // A method named `_` is an error (tree-sitter reads it as a pattern), but after type
+        // parameters; refused.
+        let t = self.tok();
+        if !self.is_ident() || self.underscore(t) {
             return self.refuse();
         }
         self.leaf(K::Identifier, f::NAME, C_NONE)?;
@@ -712,8 +715,10 @@ impl<'a> P<'a> {
     fn parameter(&mut self) -> R<()> {
         // A receiver: annotations, a type, names and `.`s, `this`.
         // A receiver: tree-sitter reads `@A T this` as a parameter named `this` (an identifier: no
-        // keyword is valid there), and a receiver without annotations or with a qualified `this`.
-        let receiver = (|| {
+        // keyword is valid there), and a receiver without annotations or with a qualified `this`,
+        // first alone (`int i, A this` names a parameter; `int i, A A.this` is an error).
+        let first = self.toks[self.i - 1].kind == T::LParen;
+        let receiver = first && (|| {
             let j = self.scan_annotations(0)?;
             let e = self.scan_type(j, true)?;
             let mut k = e;

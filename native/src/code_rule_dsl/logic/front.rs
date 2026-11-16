@@ -23,6 +23,7 @@ pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::{List, Lists, Name, Stacks};
 pub mod cycles;
+pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
 pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
 
@@ -920,6 +921,7 @@ impl<'p> Graph<'p> {
                     }
                     let component: BTreeSet<String> = scc.iter().map(|&r| self.names[r as usize].to_owned()).collect();
                     let (vn, wn) = (self.names[v as usize].to_owned(), self.names[w as usize].to_owned());
+                    unstratified_trace(&vn, &wn, &component);
                     out.push(if self.aggs.contains(&(v, w)) {
                         Error::AggregationInRecursion { head: vn, aggregated: wn, component }
                     } else {
@@ -933,6 +935,13 @@ impl<'p> Graph<'p> {
             }
         }
         out
+    }
+}
+
+/// `RERAIL_STRATA_COUNTS` (a diagnostic): a refused component's members, which the error's message leaves out.
+pub fn unstratified_trace(head: &str, dep: &str, component: &BTreeSet<String>) {
+    if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
+        eprintln!("RERAIL_STRATA_COUNTS unstratified (magic sets may recover): {head} -> {dep} in a component of {}: {}", component.len(), component.iter().cloned().collect::<Vec<_>>().join(" "));
     }
 }
 
@@ -1110,44 +1119,85 @@ pub fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) -> Vec<BTreeSet<String>> 
 
 /// The relations `roots` read, directly or through other rules, the roots included (`prune`'s, from the outputs).
 pub fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
-    let mut body_of: BTreeMap<&str, Vec<&[Literal]>> = BTreeMap::new();
-    for r in &prog.rules {
-        body_of.entry(&r.head.rel).or_default().push(r.body.as_slice());
-    }
-    let (mut need, mut todo) = (BTreeSet::new(), roots);
-    while let Some(r) = todo.pop() {
-        if !need.insert(r.clone()) {
-            continue;
-        }
-        if let Some(native) = prog.natives.get(&r) {
-            todo.extend(native.reads().into_iter().map(str::to_owned));
-        }
-        for body in body_of.get(r.as_str()).into_iter().flatten() {
-            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
-        }
-    }
-    need
+    reach(prog, roots, false).0
 }
 
-/// Drops the rules of relations no output reads, directly or through other rules. T's `prune`.
+/// `needed`, and which rules are kept: every rule of a needed relation. With `gated` (`prune`), a request rule
+/// (`Program::asked_by`, decision 0174) only once a relation whose readers it serves is needed, or its relation is a
+/// root. `needed` reads every request rule: a stage that computes requests names them as its roots. A request rule is read through its
+/// attribute's answer, which every reader reads; without its readers' gate an unreached reader's request would keep
+/// its body's relations alive, and lowering a program whole would prune to more than lowering it without its
+/// unreached clauses (`dropping_unreached_clauses_prunes_to_the_same_program`).
+fn reach(prog: &Program, roots: Vec<String>, gated: bool) -> (BTreeSet<String>, Vec<bool>) {
+    // Each request rule's readers, by its place among its relation's rules; a relation whose rules no longer match
+    // the record (rules added or dropped since lowering) keeps them ungated.
+    let mut gate: Vec<Option<&BTreeSet<String>>> = vec![None; prog.rules.len()];
+    for (req, readers) in prog.asked_by.iter().filter(|(req, _)| gated && !roots.contains(req)) {
+        let at: Vec<usize> = prog.rules.iter().enumerate().filter(|(_, r)| r.head.rel == req.as_str()).map(|(i, _)| i).collect();
+        if at.len() == readers.len() {
+            for (i, by) in at.into_iter().zip(readers) {
+                gate[i] = Some(by);
+            }
+        }
+    }
+    let mut body_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, r) in prog.rules.iter().enumerate() {
+        body_of.entry(&r.head.rel).or_default().push(i);
+    }
+    let mut kept = vec![false; prog.rules.len()];
+    let (mut need, mut todo) = (BTreeSet::new(), roots);
+    loop {
+        while let Some(r) = todo.pop() {
+            if !need.insert(r.clone()) {
+                continue;
+            }
+            if let Some(native) = prog.natives.get(&r) {
+                todo.extend(native.reads().into_iter().map(str::to_owned));
+            }
+            for &i in body_of.get(r.as_str()).into_iter().flatten() {
+                if gate[i].is_none() {
+                    kept[i] = true;
+                    todo.extend(prog.rules[i].body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
+                }
+            }
+        }
+        // The request rules whose relation and one of whose readers are needed: their bodies are read, which may
+        // need more readers.
+        for (i, by) in gate.iter().enumerate() {
+            if let Some(by) = by
+                && !kept[i]
+                && need.contains(prog.rules[i].head.rel.as_str())
+                && by.iter().any(|b| need.contains(b))
+            {
+                kept[i] = true;
+                todo.extend(prog.rules[i].body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
+            }
+        }
+        if todo.is_empty() {
+            return (need, kept);
+        }
+    }
+}
+
+/// Drops the rules of relations no output reads, directly or through other rules, and the request rules none of
+/// whose readers is read (`reach`). T's `prune`. Facts stay: the engine reads some by name, read by no rule (`env`'s
+/// settings, `corpus::World`; `unconverged`, the pending round).
 pub fn prune(mut prog: Program) -> Program {
-    let mut body_of: BTreeMap<&str, Vec<&[Literal]>> = BTreeMap::new();
-    for r in &prog.rules {
-        body_of.entry(&r.head.rel).or_default().push(r.body.as_slice());
-    }
-    let (mut need, mut todo) = (BTreeSet::new(), prog.outputs.clone());
-    while let Some(r) = todo.pop() {
-        if !need.insert(r.clone()) {
-            continue;
-        }
-        if let Some(native) = prog.natives.get(&r) {
-            todo.extend(native.reads().into_iter().map(str::to_owned));
-        }
-        for body in body_of.get(r.as_str()).into_iter().flatten() {
-            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
+    let (need, kept) = reach(&prog, prog.outputs.clone(), true);
+    // The record follows the rules kept: each request relation's kept rules, in order, with their readers.
+    let gated: BTreeMap<String, Vec<bool>> = prog.asked_by.keys().map(|req| {
+        let mine: Vec<bool> = prog.rules.iter().zip(&kept).filter(|(r, _)| r.head.rel == req.as_str()).map(|(_, k)| *k).collect();
+        (req.clone(), mine)
+    }).collect();
+    for (req, readers) in prog.asked_by.iter_mut() {
+        if let Some(mine) = gated.get(req) && mine.len() == readers.len() {
+            let mut it = mine.iter();
+            readers.retain(|_| *it.next().unwrap());
         }
     }
-    prog.rules.retain(|r| need.contains(r.head.rel.as_str()));
+    let mut keep = kept.into_iter();
+    prog.rules.retain(|_| keep.next().unwrap());
+    prog.asked_by.retain(|req, readers| !readers.is_empty() || prog.rules.iter().any(|r| r.head.rel == req.as_str()));
     // Native metadata owns real dependency edges. A dead producer must not keep its demands
     // alive in the file-local split or cause them to be exported across every chunk.
     prog.natives.retain(|rel, _| need.contains(rel));

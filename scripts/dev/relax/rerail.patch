@@ -1,0 +1,48 @@
+diff --git a/libs/relax/compiler/src/cache.rs b/libs/relax/compiler/src/cache.rs
+index a83c0c4f..f44a8d24 100644
+--- a/libs/relax/compiler/src/cache.rs
++++ b/libs/relax/compiler/src/cache.rs
+@@ -1178,7 +1178,10 @@ pub struct SharedCode {
+ /// too under RELAX_CACHE_DIR (`own_cache_dir`: tests and measurement keep every store in their own
+ /// folder), and when `home` (the folder, made private: shared_code_root) is refused.
+ pub fn shared_code(policy: crate::sandbox::Policy, own_cache_dir: bool, home: impl FnOnce() -> Result<PathBuf, String>) -> Option<SharedCode> {
+-    if policy != crate::sandbox::Policy::Sandboxed || own_cache_dir {
++    // rerail: RELAX_SHARED_OPEN=1 lets an Open run (bare `relax`) share too. Its entries stay apart
++    // from a Sandboxed run's: the cache config hash holds the sandbox bit.
++    let open_shares = policy == crate::sandbox::Policy::Open && std::env::var_os("RELAX_SHARED_OPEN").is_some_and(|v| v == "1");
++    if (policy != crate::sandbox::Policy::Sandboxed && !open_shares) || own_cache_dir {
+         return None;
+     }
+     home().ok().map(|dir| SharedCode { dir, stale: Vec::new() })
+diff --git a/libs/relax/front/src/native.rs b/libs/relax/front/src/native.rs
+index 20d9fcc4..11d21c50 100644
+--- a/libs/relax/front/src/native.rs
++++ b/libs/relax/front/src/native.rs
+@@ -1829,9 +1829,24 @@ pub fn wrapper() -> Option<i32> {
+         if is_bin {
+             // the stub script is this executable (wrapper(): a build script stub exits at once)
+             let _ = std::fs::remove_file(path);
+-            if let Some(e) = &exe {
+-                if std::fs::hard_link(e, path).is_err() {
+-                    let _ = std::fs::copy(e, path);
++            // rerail: on Unix the stub is a script that exits 0, not a hard link of this executable.
++            // Cargo removes and links build scripts' names as it rebuilds them; while those were
++            // names of the loader's file, macOS's syspolicyd could find the name it was scanning
++            // gone ("Unable (errno: 2) to read file") and kill the running loader ("Malware
++            // rejection"). A script is another file, and no Mach-O to scan.
++            let script = cfg!(unix) && (name.starts_with("build_script_") || name.starts_with("build-script-"));
++            #[cfg(unix)]
++            if script {
++                use std::os::unix::fs::PermissionsExt;
++                if std::fs::write(path, b"#!/bin/sh\nexit 0\n").is_ok() {
++                    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
++                }
++            }
++            if !script {
++                if let Some(e) = &exe {
++                    if std::fs::hard_link(e, path).is_err() {
++                        let _ = std::fs::copy(e, path);
++                    }
+                 }
+             }
+         } else if *kind == "dep-info" {

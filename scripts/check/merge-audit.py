@@ -19,6 +19,7 @@ loss (restore it before committing). Exit status 1 when anything is reported.
 import collections
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -74,8 +75,15 @@ def anywhere(rev, lines):
     pat = os.path.join(git('rev-parse', '--git-dir').strip(), 'merge-audit-patterns')
     with open(pat, 'w') as f:
         f.write('\n'.join(lines) + '\n')
-    args = ['grep', '-h', '-F', '-f', pat] + ([rev] if rev else []) + ['--'] + TREES
-    found = {l.strip() for l in git(*args, ok=True).split('\n')}
+    # The working tree is searched with ripgrep where it is installed: `git grep -F -f` took 30 minutes over 226
+    # patterns where `rg` took 3 seconds (2026-11-15). A revision is read by `git grep`.
+    rg = shutil.which('rg')
+    if rev is None and rg:
+        r = subprocess.run([rg, '--no-filename', '--no-line-number', '-F', '-f', pat, '--'] + [t for t in TREES if os.path.exists(t)], capture_output=True, text=True)
+        out = r.stdout
+    else:
+        out = git(*(['grep', '-h', '-F', '-f', pat] + ([rev] if rev else []) + ['--'] + TREES), ok=True)
+    found = {l.strip() for l in out.split('\n')}
     os.remove(pat)
     return {t for t in lines if t in found}
 

@@ -131,7 +131,7 @@ pub trait Source: Send + Sync {
         false
     }
     /// For a reader that takes the whole relation where a join would look it up (the device's keyed read, which
-    /// sorts the rows it is given, decision 0233): whether its rows can be made at once, at the cost of a solve the
+    /// sorts the rows it is given, decision 0277): whether its rows can be made at once, at the cost of a solve the
     /// source runs, rather than one lookup each. A source that answers so makes them (and its lookups then read
     /// them). Every source not made on lookup has them.
     fn complete_rows(&self) -> bool {

@@ -74,7 +74,7 @@ hnsw_architecture_patterns("case_pattern").
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, op, line, value, strprefix, name, fstring_piece, end_line, node_text, cpython_syntax_error
+.input doc, syntax_error, node, field, child, text, op, line, strprefix, name, fstring_piece, end_line, cpython_syntax_error, node_text, value
 .output violation
 hnsw_architecture_forbidden("SqlHnswBeamLayerSearch").
 hnsw_architecture_forbidden("SqlHnswBeamLayerTrace").
@@ -170,7 +170,7 @@ rr_agg2(h, rr_any1, s, t) :- rr_demand_agg_rr_agg2(h, s), rr_ctx3(h, s), hnsw_ar
 hnsw_architecture_interp_k(h, x, k) :- hnsw_architecture_interp(h, x, s), k = count : { rr_agg2(h, _, s, _) }.
 hnsw_architecture_host(h) :- hnsw_architecture_host_str(h).
 hnsw_architecture_host(h) :- hnsw_architecture_host_spec(h).
-rr_ctx6(h, i) :- fstring_piece(h, i, "interpolation", _).
+rr_ctx6(h, i) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _).
 rr_agg5(h, i, j, rr_any4) :- rr_demand_agg_rr_agg5(h, i), rr_ctx6(h, i), fstring_piece(h, j, "interpolation", rr_any4), j < i.
 hnsw_architecture_piece_node(h, i, x) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), k = count : { rr_agg5(h, i, _, _) }, hnsw_architecture_interp_k(h, x, k).
 hnsw_architecture_lit(h, i, v) :- hnsw_architecture_host(h), fstring_piece(h, i, "literal", v).

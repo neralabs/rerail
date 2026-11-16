@@ -308,7 +308,7 @@ pub(super) fn split(
         memo.insert(rel.to_string(), (first, cols.len()));
     }
     // Those of its `sym` columns that hold names: a kind's or field's grammar code is no atom (`lower::atom_columns`).
-    let syms: BTreeMap<String, Vec<bool>> = memo.keys().map(|rel| (rel.clone(), lower::atom_columns(cross, domains, rel))).collect();
+    let syms: BTreeMap<String, Vec<bool>> = memo.keys().map(|rel| (rel.clone(), lower::atom_columns(&cross.decls.get(rel.as_str()).map(|cs| cs.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>()).unwrap_or_default(), domains, rel))).collect();
     for r in cross.rules.iter().filter(|r| memo.contains_key(r.head.rel.as_str())) {
         for a in r.body.iter().filter_map(|l| l.atom()) {
             if derived.contains(a.rel.as_str()) && !memo.contains_key(a.rel.as_str()) && !a.rel.starts_with(PREFIX) {

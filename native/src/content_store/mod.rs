@@ -147,6 +147,12 @@ pub fn reset_search_index_family_writes() {
     SEARCH_INDEX_FAMILY_WRITES.store(0, Ordering::Relaxed);
 }
 
+/// The store handles open on the database at `path` in this process, and the thread connections to it still open.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn holding(path: &Path) -> (usize, usize) {
+    connection::holding(path)
+}
+
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn search_index_family_writes() -> usize {
     SEARCH_INDEX_FAMILY_WRITES.load(Ordering::Relaxed)
@@ -652,7 +658,8 @@ pub struct ContentStore {
     /// The store's writer, shared by its handles in this process (`write_back`, decision 0102); `None` for the
     /// writer's own handle, which writes at once.
     write_back: Option<std::sync::Arc<write_back::Writer>>,
-    /// This handle's shared collection lease (`hold_collection`).
+    /// This handle's shared collection lease (`hold_collection`): a file lock, which WASI has not.
+    #[cfg(not(target_family = "wasm"))]
     lease: std::sync::Arc<collection_guard::SharedLease>,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_lookup_count: AtomicUsize,
@@ -712,6 +719,7 @@ impl ContentStore {
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
             write_back: None,
+            #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),
@@ -728,6 +736,16 @@ impl ContentStore {
     }
 
     pub fn open(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, true)
+    }
+
+    /// A store opened beside the run's own (the rule images', decision 0264): as `open`, but the Neural Engine's
+    /// models stay the run's store's.
+    pub fn open_images(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, false)
+    }
+
+    fn open_with(path: &Path, models: bool) -> StoreResult<Self> {
         // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
         private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -741,7 +759,11 @@ impl ContentStore {
         drop(connection);
         // Compiled Neural Engine models are facts of this store (decision 0098 §3).
         #[cfg(target_os = "macos")]
-        rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
+        if models {
+            rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = models;
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection::new(path.to_path_buf(), identity),
@@ -758,6 +780,7 @@ impl ContentStore {
             holder: parking_lot::Mutex::new(None),
             // A store created again at its path has a writer of its own too.
             write_back: Some(write_back::register_store(path, identity)),
+            #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),

@@ -9,6 +9,36 @@
 
 use super::*;
 
+/// tree-sitter-typescript's `_reserved_identifier`: words it reads as a name in an expression but
+/// never as a type's (`[type in K]` is a computed property's name, `type in K`).
+fn reserved_identifier(code: u8) -> bool {
+    matches!(
+        code,
+        w::DECLARE
+            | w::NAMESPACE
+            | w::TYPE
+            | w::PUBLIC
+            | w::PRIVATE
+            | w::PROTECTED
+            | w::OVERRIDE
+            | w::READONLY
+            | w::MODULE
+            | w::ANY
+            | w::NUMBER
+            | w::BOOLEAN
+            | w::STRING
+            | w::SYMBOL
+            | w::EXPORT
+            | w::OBJECT
+            | w::NEW
+            | w::GET
+            | w::SET
+            | w::ASYNC
+            | w::STATIC
+            | w::LET
+    )
+}
+
 /// TypeScript's reserved words: never a type's name.
 fn reserved(code: u8) -> bool {
     matches!(
@@ -70,6 +100,62 @@ fn accessibility(code: u8) -> Option<K> {
         w::PROTECTED => K::TProtected,
         _ => return None,
     })
+}
+
+/// A member's modifiers, by the codes `ordered` checks their order by.
+const M_ACCESS: u8 = 1;
+const M_DECLARE: u8 = 2;
+const M_STATIC: u8 = 3;
+const M_OVERRIDE: u8 = 4;
+const M_READONLY: u8 = 5;
+const M_ABSTRACT: u8 = 6;
+const M_ACCESSOR: u8 = 7;
+const M_ASYNC: u8 = 8;
+const M_GETSET: u8 = 9;
+
+/// A member's modifiers as read, at most eight (more is no grammar's).
+#[derive(Default)]
+struct Mods {
+    m: [u8; 8],
+    n: usize,
+}
+
+impl Mods {
+    fn push(&mut self, code: u8) -> bool {
+        let Some(at) = self.m.get_mut(self.n) else { return false };
+        *at = code;
+        self.n += 1;
+        true
+    }
+
+    fn all(&self) -> &[u8] {
+        &self.m[..self.n]
+    }
+}
+
+/// Whether `mods` is in `order`'s order, each at most once: tree-sitter-typescript's modifiers are a
+/// fixed sequence of optional ones (`method_definition`: `accessibility_modifier? static?
+/// override_modifier? readonly? async?`), and any other order is a syntax error.
+fn ordered(mods: &[u8], order: &[u8]) -> bool {
+    let mut i = 0;
+    for m in mods {
+        match order[i..].iter().position(|o| o == m) {
+            Some(p) => i += p + 1,
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Whether a field's modifiers are `public_field_definition`'s: `declare accessibility?` or
+/// `accessibility declare?`, then `static? override? readonly?`, `abstract? readonly?`, `readonly?
+/// abstract?` or `accessor?`.
+fn field_modifiers(mods: &[u8]) -> bool {
+    let rest = match mods {
+        [M_DECLARE, M_ACCESS, rest @ ..] | [M_ACCESS, M_DECLARE, rest @ ..] | [M_DECLARE | M_ACCESS, rest @ ..] => rest,
+        rest => rest,
+    };
+    [&[M_STATIC, M_OVERRIDE, M_READONLY][..], &[M_ABSTRACT, M_READONLY], &[M_READONLY, M_ABSTRACT], &[M_ACCESSOR]].iter().any(|o| ordered(rest, o))
 }
 
 pub(super) fn is_primary_type(k: K) -> bool {
@@ -179,6 +265,16 @@ impl<'a> P<'a> {
         let n = self.open_in(K::FunctionType, s);
         if self.peek() == T::Lt {
             self.type_parameters()?;
+        } else {
+            // `({ a: T }` and `([{ a: T }` start an object type to tree-sitter (a parenthesized
+            // type's, a tuple's), not a parameter's pattern: a syntax error before `=>`.
+            let mut k = 1;
+            while self.peek_at(k).kind == T::LBracket {
+                k += 1;
+            }
+            if self.peek_at(k).kind == T::LBrace && matches!(self.peek_at(k + 1).kind, T::Name | T::Str | T::Number) && self.peek_at(k + 2).kind == T::Colon {
+                return self.refuse();
+            }
         }
         self.formal_parameters()?;
         if self.peek() != T::Arrow {
@@ -352,6 +448,11 @@ impl<'a> P<'a> {
             T::Backtick => self.template_literal_type(s),
             T::Name => {
                 let next = self.peek_at(1).kind;
+                // A predefined type, a literal's word or `this` is no name a `.` follows.
+                let keyword = predefined(t.word).is_some() || matches!(t.word, w::TRUE | w::FALSE | w::NULL | w::UNDEFINED | w::THIS);
+                if next == T::Dot && keyword {
+                    return self.refuse();
+                }
                 if next != T::Dot {
                     if let Some(k) = predefined(t.word) {
                         let n = self.open_in(K::PredefinedType, s);
@@ -393,6 +494,14 @@ impl<'a> P<'a> {
                     }
                     w::UNIQUE | w::IMPORT | w::INFER | w::READONLY | w::ASSERTS if next == T::Name || next == T::LParen => self.refuse(),
                     _ if reserved(t.word) => self.refuse(),
+                    // `type.a<T>`: an error to tree-sitter.
+                    w::TYPE if next == T::Dot && {
+                        let k = self.dotted_names();
+                        self.peek_at(2 * k + 1).kind == T::Lt
+                    } =>
+                    {
+                        self.refuse()
+                    }
                     _ => self.type_reference(s),
                 }
             }
@@ -409,11 +518,7 @@ impl<'a> P<'a> {
 
     /// The number of `. name` after the next name.
     pub(super) fn dotted_names(&mut self) -> usize {
-        let mut k = 0;
-        while self.peek_at(2 * k + 1).kind == T::Dot && self.peek_at(2 * k + 2).kind == T::Name {
-            k += 1;
-        }
-        k
+        self.dotted_names_at(0)
     }
 
     /// A type reference over the next name and `k` dotted names after it.
@@ -472,13 +577,28 @@ impl<'a> P<'a> {
         while matches!(self.peek_at(2 * k + 1).kind, T::Dot) && matches!(self.peek_at(2 * k + 2).kind, T::Name | T::Private) {
             k += 1;
         }
-        if self.peek_at(2 * k + 1).kind == T::Lt {
-            return self.refuse();
-        }
         if !matches!(self.peek(), T::Name) || matches!(self.peek_at(2 * k + 1).kind, T::LParen | T::QDot) {
             return self.refuse();
         }
-        if self.peek_at(2 * k + 1).kind == T::LBracket && self.peek_at(2 * k + 2).kind != T::RBracket {
+        // `typeof f<T>`: the query of an instantiation expression; a call or a member after it
+        // not read.
+        if self.peek_at(2 * k + 1).kind == T::Lt {
+            let i = self.open(K::InstantiationExpression, f::NONE, C_NONE);
+            self.type_query_operand(k, f::FUNCTION)?;
+            self.type_arguments(f::TYPE_ARGUMENTS)?;
+            self.close(i);
+            if matches!(self.peek(), T::LParen | T::Dot | T::QDot) {
+                return self.refuse();
+            }
+            self.close(n);
+            return Ok(n);
+        }
+        // `typeof a[k]`: a lookup type over the query (its caller's postfix); but `typeof a[k].c`,
+        // the query of a subscript and member, is not read.
+        if self.peek_at(2 * k + 1).kind == T::LBracket
+            && self.peek_at(2 * k + 2).kind != T::RBracket
+            && self.matching_at(2 * k + 1).is_none_or(|e| matches!(self.peek_at(e + 1).kind, T::Dot | T::QDot | T::LParen))
+        {
             return self.refuse();
         }
         self.type_query_operand(k, f::NONE)?;
@@ -710,11 +830,33 @@ impl<'a> P<'a> {
         }
         let n = self.open(K::PropertySignature, f::NONE, C_NONE);
         let mut method = false;
-        // Modifiers: a word a member's name follows.
+        let mut mods = Mods::default();
+        // Modifiers: a word a member's name follows, in `property_signature`'s order
+        // (`method_signature`'s, with `get` or `set` last).
         loop {
             let t = self.tok();
-            if t.kind != T::Name || !self.member_modifier() || self.peek_at(1).nl {
+            if t.kind != T::Name || !self.member_modifier() {
                 break;
+            }
+            // Before a line break, a modifier names the member; but `get` or `set` before a
+            // method's name and `(` is its accessor (`get\n foo(): T`), and before another name,
+            // an error to tree-sitter.
+            if self.peek_at(1).nl {
+                if !(matches!(t.word, w::GET | w::SET) && self.peek_at(1).kind == T::Name) {
+                    break;
+                }
+                if !matches!(self.peek_at(2).kind, T::LParen | T::Lt) {
+                    return self.refuse();
+                }
+            }
+            let code = match t.word {
+                w::READONLY => M_READONLY,
+                w::GET | w::SET => M_GETSET,
+                _ if accessibility(t.word).is_some() => M_ACCESS,
+                _ => 0,
+            };
+            if code != 0 && (!mods.push(code) || !ordered(mods.all(), &[M_ACCESS, M_READONLY, M_GETSET])) {
+                return self.refuse();
             }
             if let Some(k) = accessibility(t.word) {
                 let a = self.open(K::AccessibilityModifier, f::NONE, C_NONE);
@@ -735,7 +877,8 @@ impl<'a> P<'a> {
         if self.peek() == T::Question {
             self.leaf(K::TQuestion, f::NONE, C_NONE)?;
         }
-        if matches!(self.peek(), T::LParen | T::Lt) {
+        // A `(` or `<` on a new line is a call signature's, the member before it a property's.
+        if matches!(self.peek(), T::LParen | T::Lt) && !self.tok().nl {
             kind = K::MethodSignature;
             self.w.set_key(n.at, key(kind, f::NONE, C_NONE, false));
             self.call_signature()?;
@@ -750,9 +893,11 @@ impl<'a> P<'a> {
     }
 
     /// Whether the `[` `k` tokens ahead opens an index signature or a mapped type (`[name:`,
-    /// `[name in`), not a computed name.
+    /// `[name in`), not a computed name. A reserved identifier before `in` is a computed name's
+    /// expression (`[type in K]`).
     fn index_signature_ahead(&mut self, k: usize) -> bool {
-        self.peek_at(k + 1).kind == T::Name && (self.peek_at(k + 2).kind == T::Colon || self.is_word_at(k + 2, w::IN))
+        let t = self.peek_at(k + 1);
+        t.kind == T::Name && (self.peek_at(k + 2).kind == T::Colon || (self.is_word_at(k + 2, w::IN) && !reserved_identifier(t.word)))
     }
 
     /// `[name: T]: U`, `[K in T as A]?: U` with their modifiers (`readonly`, `-readonly`).
@@ -786,6 +931,9 @@ impl<'a> P<'a> {
             self.bump()?;
             self.ty(slot(f::INDEX_TYPE, Ctx::Type))?;
         } else {
+            if reserved_identifier(self.tok().word) {
+                return self.refuse();
+            }
             let m = self.open(K::MappedTypeClause, f::NONE, C_NONE);
             self.leaf(K::TypeIdentifier, f::NAME, C_NONE)?;
             self.tk(K::MappedTypeClause, K::TIn, f::NONE)?;
@@ -848,7 +996,11 @@ impl<'a> P<'a> {
         let n1 = self.peek_at(1);
         let n2 = self.peek_at(2);
         let predicate_name = |t: Tok| t.kind == T::Name;
-        if n1.kind == T::Name && n1.word == w::ASSERTS && predicate_name(n2) && !n2.nl {
+        if n1.kind == T::Name && n1.word == w::ASSERTS {
+            // `asserts` is the annotation's, with its name; alone it is no type.
+            if !predicate_name(n2) || n2.nl {
+                return self.refuse();
+            }
             let n = self.open(K::AssertsAnnotation, f::RETURN_TYPE, C_NONE);
             self.bump()?;
             let a = self.open(K::Asserts, f::NONE, C_NONE);
@@ -1014,12 +1166,22 @@ impl<'a> P<'a> {
         if self.peek() == T::At {
             return self.refuse();
         }
-        // Modifiers: a word a pattern follows.
+        // Modifiers: a word a pattern follows, in `_parameter_name`'s order.
+        let mut mods = Mods::default();
         loop {
             let t = self.tok();
             let next = self.peek_at(1).kind;
             if t.kind != T::Name || !matches!(next, T::Name | T::LBrace | T::LBracket | T::Ellipsis) {
                 break;
+            }
+            let code = match t.word {
+                w::OVERRIDE => M_OVERRIDE,
+                w::READONLY => M_READONLY,
+                _ if accessibility(t.word).is_some() => M_ACCESS,
+                _ => break,
+            };
+            if !mods.push(code) || !ordered(mods.all(), &[M_ACCESS, M_OVERRIDE, M_READONLY]) {
+                return self.refuse();
             }
             if let Some(k) = accessibility(t.word) {
                 let a = self.open(K::AccessibilityModifier, f::NONE, C_NONE);
@@ -1036,23 +1198,32 @@ impl<'a> P<'a> {
             }
         }
         let pat = slot(f::PATTERN, Ctx::Pattern);
+        let rest = self.peek() == T::Ellipsis;
         if self.is_word(w::THIS) {
             self.leaf(K::This, f::PATTERN, C_NONE)?;
-        } else if self.peek() == T::Ellipsis {
+        } else if rest {
             self.rest_pattern(pat)?;
         } else {
-            self.open_pattern_target(pat)?;
+            self.parameter_target(pat)?;
         }
         let mut kind = K::RequiredParameter;
         if self.peek() == T::Question {
             kind = K::OptionalParameter;
             self.w.set_key(n.at, key(kind, f::NONE, C_NONE, false));
             self.tk(kind, K::TQuestion, f::NONE)?;
+            // `a? = 1`: a default needs the type between (`a?: T = 1`).
+            if self.peek() == T::Eq {
+                return self.refuse();
+            }
         }
         if self.peek() == T::Colon {
             self.type_annotation(f::TYPE)?;
         }
         if self.peek() == T::Eq {
+            // A rest parameter takes no default.
+            if rest {
+                return self.refuse();
+            }
             self.tk(kind, K::TEq, f::NONE)?;
             self.assignment(slot(f::VALUE, Ctx::Expr))?;
         }
@@ -1067,16 +1238,19 @@ impl<'a> P<'a> {
         let n1 = self.peek_at(1);
         let same_line = !n1.nl;
         Some(match t.word {
-            w::INTERFACE if n1.kind == T::Name && same_line => self.interface_declaration(s),
+            // `interface` takes its name across a line break.
+            w::INTERFACE if n1.kind == T::Name => self.interface_declaration(s),
             w::TYPE if n1.kind == T::Name && same_line && matches!(self.peek_at(2).kind, T::Eq | T::Lt) => self.type_alias(s),
             w::ENUM if n1.kind == T::Name => self.enum_declaration(s),
             w::CONST if n1.kind == T::Name && n1.word == w::ENUM => self.enum_declaration(s),
             w::ABSTRACT if n1.kind == T::Name && n1.word == w::CLASS && same_line => self.class_declaration(s),
             w::DECLARE if same_line && self.declares_at(1) => self.ambient(s),
+            // `namespace as {}`: an `as` expression of a name `namespace` to tree-sitter; not read.
+            w::NAMESPACE | w::MODULE if same_line && n1.kind == T::Name && matches!(n1.word, w::AS | w::SATISFIES) => self.refuse(),
             w::NAMESPACE if same_line && n1.kind == T::Name => {
                 // At a statement's place, `namespace N {}` is an expression statement.
                 let e = self.open_in(K::ExpressionStatement, s);
-                let r = self.internal_module(EXPR);
+                let r = self.internal_module(EXPR, true);
                 if let Err(r) = r {
                     return Some(Err(r));
                 }
@@ -1112,7 +1286,7 @@ impl<'a> P<'a> {
             w::CONST if n1.word == w::ENUM && n1.kind == T::Name => self.enum_declaration(d),
             w::ABSTRACT if n1.word == w::CLASS => self.class_declaration(d),
             w::DECLARE if self.declares_at(1) => self.ambient(d),
-            w::NAMESPACE if n1.kind == T::Name => self.internal_module(d).map(|_| ()),
+            w::NAMESPACE if n1.kind == T::Name => self.internal_module(d, false).map(|_| ()),
             w::MODULE if matches!(n1.kind, T::Name | T::Str) => self.module(d),
             _ => return None,
         })
@@ -1232,7 +1406,7 @@ impl<'a> P<'a> {
                 return self.refuse();
             }
             self.tk(K::AmbientDeclaration, K::TGlobal, f::NONE)?;
-            self.statement_block(BARE, false)?;
+            self.statement_block(BARE, Tail::Fixed)?;
             self.close(n);
             return Ok(());
         }
@@ -1265,10 +1439,12 @@ impl<'a> P<'a> {
     }
 
     /// `namespace N {}`, `namespace A.B {}`.
-    fn internal_module(&mut self, s: Slot) -> R<N> {
+    /// `namespace N { … }`; at a statement's place (`statement`), an expression whose body a line
+    /// break before its `{` leaves out (the statement ends there, the block another).
+    fn internal_module(&mut self, s: Slot, statement: bool) -> R<N> {
         let n = self.open_in(K::InternalModule, s);
         self.tk(K::InternalModule, K::TNamespace, f::NONE)?;
-        self.module_rest()?;
+        self.module_rest(statement)?;
         self.close(n);
         Ok(n)
     }
@@ -1276,13 +1452,13 @@ impl<'a> P<'a> {
     fn module(&mut self, s: Slot) -> R<()> {
         let n = self.open_in(K::Module, s);
         self.tk(K::Module, K::TModule, f::NONE)?;
-        self.module_rest()?;
+        self.module_rest(false)?;
         self.close(n);
         Ok(())
     }
 
-    /// A module's name and its body (optional).
-    fn module_rest(&mut self) -> R<()> {
+    /// A module's name and its body; where `bodiless`, none after a line break.
+    fn module_rest(&mut self, bodiless: bool) -> R<()> {
         match self.peek() {
             T::Str => self.string(slot(f::NAME, Ctx::Bare))?,
             T::Name => {
@@ -1294,10 +1470,12 @@ impl<'a> P<'a> {
             }
             _ => return self.refuse(),
         }
-        if self.peek() == T::LBrace {
-            self.statement_block(slot(f::BODY, Ctx::Bare), false)?;
-        } else {
+        let t = self.tok();
+        if t.kind != T::LBrace {
             return self.refuse();
+        }
+        if !(bodiless && t.nl) {
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
         }
         self.after = V_EXPR;
         Ok(())
@@ -1352,7 +1530,7 @@ impl<'a> P<'a> {
         if self.is_word(w::STATIC) && self.peek_at(1).kind == T::LBrace {
             let n = self.open(K::ClassStaticBlock, f::NONE, C_NONE);
             self.tk(K::ClassStaticBlock, K::TStatic, f::NONE)?;
-            self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
             self.close(n);
             return Ok(());
         }
@@ -1364,6 +1542,7 @@ impl<'a> P<'a> {
         let mut is_abstract = false;
         let mut accessor = false;
         let mut star = false;
+        let mut mods = Mods::default();
         loop {
             let t = self.tok();
             if t.kind == T::Star {
@@ -1375,6 +1554,27 @@ impl<'a> P<'a> {
                 break;
             }
             let next = self.peek_at(1);
+            // A modifier at its line's end is the member's name (`public` then a line); `get` and
+            // `set` are an accessor's across the line, and `static` is a modifier across it but
+            // before a generator's `*`.
+            if next.nl && !matches!(t.word, w::GET | w::SET) && !(t.word == w::STATIC && next.kind != T::Star) {
+                break;
+            }
+            let code = match t.word {
+                w::OVERRIDE => M_OVERRIDE,
+                w::STATIC => M_STATIC,
+                w::READONLY => M_READONLY,
+                w::ABSTRACT => M_ABSTRACT,
+                w::DECLARE => M_DECLARE,
+                w::ACCESSOR => M_ACCESSOR,
+                w::ASYNC if !next.nl => M_ASYNC,
+                w::GET | w::SET => M_GETSET,
+                _ if accessibility(t.word).is_some() => M_ACCESS,
+                _ => 0,
+            };
+            if code != 0 && !mods.push(code) {
+                return self.refuse();
+            }
             if let Some(k) = accessibility(t.word) {
                 let a = self.open(K::AccessibilityModifier, f::NONE, C_NONE);
                 self.leaf(k, f::NONE, C_NONE)?;
@@ -1407,7 +1607,7 @@ impl<'a> P<'a> {
                 w::ASYNC if !next.nl => {
                     self.leaf(K::TAsync, f::NONE, C_NONE)?;
                 }
-                w::GET | w::SET if !next.nl => {
+                w::GET | w::SET => {
                     let k = if t.word == w::GET { K::TGet } else { K::TSet };
                     self.leaf(k, f::NONE, C_NONE)?;
                     break;
@@ -1419,16 +1619,23 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         self.property_name(f::NAME)?;
-        if self.peek() == T::Question {
+        let question = self.peek() == T::Question;
+        if question {
             self.leaf(K::TQuestion, f::NONE, C_NONE)?;
         }
+        // A `(` or `<` on a new line ends the member (a field), and no member starts with it.
+        if matches!(self.peek(), T::LParen | T::Lt) && self.tok().nl {
+            return self.refuse();
+        }
         if matches!(self.peek(), T::LParen | T::Lt) {
-            if accessor {
+            // `abstract_method_signature`'s order, or `method_definition`'s (`method_signature`'s).
+            let order: &[u8] = if is_abstract { &[M_ACCESS, M_ABSTRACT, M_OVERRIDE, M_GETSET] } else { &[M_ACCESS, M_STATIC, M_OVERRIDE, M_READONLY, M_ASYNC, M_GETSET] };
+            if accessor || !ordered(mods.all(), order) {
                 return self.refuse();
             }
             self.call_signature()?;
             if self.peek() == T::LBrace && !is_abstract {
-                self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+                self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
                 self.close(n);
                 if self.peek() == T::Semi {
                     self.leaf(K::TSemi, f::NONE, C_NONE)?;
@@ -1440,12 +1647,12 @@ impl<'a> P<'a> {
             self.close(n);
             return self.ts_member_end(kind);
         }
-        if star {
+        if star || !field_modifiers(mods.all()) {
             return self.refuse();
         }
-        // A field.
+        // A field: `?` or `!`, not both.
         self.w.set_key(n.at, key(K::PublicFieldDefinition, f::NONE, C_NONE, false));
-        if self.peek() == T::Bang {
+        if self.peek() == T::Bang && !question {
             self.leaf(K::TBang, f::NONE, C_NONE)?;
         }
         self.after = V_LPAREN;

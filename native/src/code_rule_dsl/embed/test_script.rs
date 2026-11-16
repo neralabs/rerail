@@ -11,7 +11,6 @@ use super::{Embedder, Program};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
 use ast_grep_core::AstGrep;
-use ast_grep_language::LanguageExt;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -34,7 +33,7 @@ pub fn html(source: &str) -> AstGrep<TapeDoc> {
 pub struct TestScript;
 
 impl Embedder for TestScript {
-    fn build(&self, root: HostNode<'_>, source: &str) -> Option<Program> {
+    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Option<Program> {
         let mut scripts = Vec::new();
         let mut handlers = Vec::new();
         let mut stack = vec![root];
@@ -94,13 +93,11 @@ impl Embedder for TestScript {
         if segments.is_empty() {
             return None;
         }
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&dialect.get_ts_language()).ok()?;
-        let tree = parser.parse(&text, None)?;
+        let parse = super::Parse::read(dialect, &text, budget)?;
         segments.index();
         Some(Program {
             dialect,
-            parse: super::Parse::Tree(tree),
+            parse,
             text,
             segments,
             host_errors: Vec::new(),

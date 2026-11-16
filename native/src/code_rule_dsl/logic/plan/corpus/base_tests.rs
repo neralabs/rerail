@@ -1652,3 +1652,23 @@ calls(@ast_dump(n)) :- node(_, n, "call", _, _).
     assert_eq!(got[1], [["Call(func=Name(id='f', ctx=Load()), args=[Constant(value=1)])"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A text test over `node_text` answered on request (decision 0174): `contains` reads the answer's text.
+#[test]
+fn a_text_test_reads_node_text_answered_on_request() {
+    let dir = corpus("node-text-contains", &[("a.py", "class SqlAdminQuery:\n    pass\n"), ("b.py", "x = 1\n")]);
+    let program = r#"
+.decl node(d: node, n: node, k: symbol, s: number, e: number)
+.decl doc(d: node, p: symbol, m: symbol)
+.decl node_text(n: node, s: symbol)
+.input node, doc, node_text
+.decl gate(p: symbol)
+gate(p) :- node(d, m, "module", _, _), doc(d, p, _), node_text(m, s), contains("SqlAdminQuery", s).
+.decl pre(p: symbol)
+pre(p) :- node(d, m, "module", _, _), doc(d, p, _), node_text(m, s), prefix("class", s).
+.output gate, pre
+"#;
+    let got = run(&dir, program, &["gate", "pre"]);
+    assert_eq!(got, [[["a.py"]], [["a.py"]]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

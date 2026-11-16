@@ -13,6 +13,13 @@ pub const PREFIX: &str = "rr_diagnostic_";
 /// whether it has a tag (`tagged`, then `tag`).
 pub const HEAD: [&str; 8] = ["policy", "clause", "code", "path", "line", "at", "message", "tagged"];
 
+/// The start of a hole column's name (`hole0`, …): a message placeholder's value, last in a finding's relation. The
+/// writer composes `message` from them and the template and writes the row without them (decision 0225 §3).
+pub const HOLE: &str = "hole";
+
+/// The index of `message` in a finding's row (`HEAD`).
+pub const MESSAGE_COLUMN: usize = 6;
+
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
     rel.starts_with(PREFIX)
@@ -29,6 +36,65 @@ fn diagnostic_name(policy: &str, clause: &str, place: bool) -> String {
     h.update([0, u8::from(place)]);
     let d: [u8; 32] = h.finalize().into();
     format!("{PREFIX}{}", d[..8].iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// The setting that keeps a finding's message template beside the program (`.message B101 "…"`): what `rr::print`
+/// prints and the writer reads where the program's own texts do not hold the `.violation` (decision 0225 §3).
+pub const MESSAGE: &str = "message";
+
+/// A message template's texts and placeholders: the texts between the placeholders (one more than the placeholders),
+/// and each placeholder's key (`a`, `a.line`, `rel(a)`). `{{` and `}}` are a brace of the text (O111), as the converter
+/// writes a literal one (`convert::policy`), and a lone `}` is text.
+pub fn message_parts(template: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    let (mut texts, mut keys) = (Vec::new(), Vec::new());
+    let mut rest = template;
+    let mut text = String::new();
+    loop {
+        let Some(start) = rest.find(['{', '}']) else { break };
+        text.push_str(&rest[..start]);
+        let brace = &rest[start..start + 1];
+        if rest[start + 1..].starts_with(brace) {
+            text.push_str(brace);
+            rest = &rest[start + 2..];
+            continue;
+        }
+        if brace == "}" {
+            text.push('}');
+            rest = &rest[start + 1..];
+            continue;
+        }
+        texts.push(std::mem::take(&mut text));
+        let Some(end) = rest[start + 1..].find('}').map(|end| end + start + 1) else {
+            return Err("unclosed placeholder".to_owned());
+        };
+        keys.push(rest[start + 1..end].to_owned());
+        rest = &rest[end + 1..];
+    }
+    text.push_str(rest);
+    texts.push(text);
+    Ok((texts, keys))
+}
+
+/// A template's placeholders alone, as a template (`{a}{a.line}`): what lowering reads of it, so what a program's key
+/// holds of it (`rr::message_masked`).
+pub fn message_skeleton(template: &str) -> String {
+    match message_parts(template) {
+        Ok((_, keys)) => keys.iter().map(|k| format!("{{{k}}}")).collect(),
+        Err(_) => template.to_owned(),
+    }
+}
+
+/// A message from its template and its placeholders' values, as the rule made them (`diagnostic_rule`).
+pub fn message_of(template: &str, values: &[String]) -> String {
+    let Ok((texts, _)) = message_parts(template) else { return values.concat() };
+    let mut out = String::new();
+    for (i, text) in texts.iter().enumerate() {
+        out.push_str(text);
+        if let Some(v) = values.get(i) {
+            out.push_str(v);
+        }
+    }
+    out
 }
 
 fn v(name: &str) -> Term { Term::Var(name.to_owned().into()) }
@@ -87,30 +153,11 @@ impl Lowerer {
         let string_column = |i: usize| if matches!(finding.columns[i].1.as_str(), "symbol" | "sym") {
             cols[i].clone()
         } else { number(if i == 0 && place { at.clone() } else { cols[i].clone() }) };
-        let mut pieces = Vec::new();
-        let mut rest = finding.message.as_str();
-        // `{{` and `}}` are a brace of the text (O111), as the converter writes a literal one (`convert::policy`).
-        let mut text = String::new();
-        loop {
-            let Some(start) = rest.find(['{', '}']) else { break };
-            text.push_str(&rest[..start]);
-            let brace = &rest[start..start + 1];
-            if rest[start + 1..].starts_with(brace) {
-                text.push_str(brace);
-                rest = &rest[start + 2..];
-                continue;
-            }
-            if brace == "}" {
-                // A lone `}` was always text.
-                text.push('}');
-                rest = &rest[start + 1..];
-                continue;
-            }
-            pieces.push(s(&std::mem::take(&mut text)));
-            let Some(end) = rest[start + 1..].find('}').map(|end| end + start + 1) else {
-                return Err(Error::Syntax(format!(".violation {} message: unclosed placeholder", finding.name)));
-            };
-            let key = &rest[start + 1..end];
+        // The message's placeholders' values, in order; its texts are not the program's (decision 0225 §3): the
+        // writer puts them in from the template (`message_of`), so a message's edit is no edit of the rules.
+        let (_, keys) = message_parts(&finding.message).map_err(|e| Error::Syntax(format!(".violation {} message: {e}", finding.name)))?;
+        let mut holes = Vec::new();
+        for key in &keys {
             let value = self.fresh("message");
             let term = if let Some((node, property)) = key.split_once('.') {
                 let i = column(node)?;
@@ -142,12 +189,13 @@ impl Lowerer {
                     }
                 } else { string_column(i) }
             };
-            pieces.push(term);
-            rest = &rest[end + 1..];
+            holes.push(term);
         }
-        text.push_str(rest);
-        pieces.push(s(&text));
-        let message = concat(pieces);
+        // The template beside the program, for `rr::print` and the writer (`MESSAGE`).
+        let setting = (MESSAGE.to_owned(), format!("{} {}", finding.name, rerail_rr_syntax::syntax::quote(&finding.message)));
+        if !finding.message.is_empty() && !self.prog.settings.contains(&setting) {
+            self.prog.settings.push(setting);
+        }
         // A code from a column of another type than text: its text, as a code is.
         let code = match &finding.code {
             FindingCode::Name => s(&finding.name),
@@ -155,10 +203,12 @@ impl Lowerer {
             FindingCode::Column(i) if matches!(finding.columns[*i].1.as_str(), "symbol" | "sym") => cols[*i].clone(),
             FindingCode::Column(i) => number(cols[*i].clone()),
         };
-        // The row: the head (`HEAD`), the tag when there is one, and each parameter's name beside its value.
+        // The row: the head (`HEAD`), the tag when there is one, each parameter's name beside its value, then the
+        // message's placeholders' values (`HOLE`), a text each. The rule leaves `message` empty: the writer makes it
+        // from the template and the holes, and writes the row without them (`compose_message`, decision 0225 §3).
         let at_type = if place { "int" } else { column_type(&finding.columns[0].1) };
         let mut decl: Vec<(String, String)> = HEAD.iter().zip(["sym", "sym", "sym", "sym", "int", at_type, "sym", "int"]).map(|(c, t)| ((*c).to_owned(), t.to_owned())).collect();
-        let mut args = vec![s(policy), s(&finding.name), code, v("rr_p"), v("rr_l"), at, message, Term::Int(i64::from(finding.tag.is_some()))];
+        let mut args = vec![s(policy), s(&finding.name), code, v("rr_p"), v("rr_l"), at, s(""), Term::Int(i64::from(finding.tag.is_some()))];
         if let Some(i) = finding.tag {
             decl.push(("tag".to_owned(), column_type(&finding.columns[i].1).to_owned()));
             args.push(cols[i].clone());
@@ -168,6 +218,10 @@ impl Lowerer {
             decl.push((format!("value{i}"), column_type(ty).to_owned()));
             args.push(s(name));
             args.push(cols[i].clone());
+        }
+        for (j, hole) in holes.into_iter().enumerate() {
+            decl.push((format!("{HOLE}{j}"), "sym".to_owned()));
+            args.push(hole);
         }
         let rel = diagnostic_name(policy, &finding.name, place);
         self.prog.decls.insert(rel.clone().into(), decl.into_iter().map(|(c, t)| (c.into(), t.into())).collect::<Vec<_>>().into());

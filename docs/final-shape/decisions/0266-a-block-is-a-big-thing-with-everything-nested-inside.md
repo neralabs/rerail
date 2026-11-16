@@ -230,7 +230,7 @@ allocated between passes, never during one:
 4. **Overflow.** With an estimate in place of a count, a claim past the reserved length is not written. It adds to
    the array's `needed`, and the launcher reruns that pass at the exact size, as the Metal join does now.
 
-The host's writers do the same in morsels (0263): each morsel claims once, and a morsel that crosses into a chunk
+The host's writers do the same in morsels (0278): each morsel claims once, and a morsel that crosses into a chunk
 not yet made makes it under the block's allocation lock. Host claims are short, and their lock is the allocator's,
 not a wait inside a kernel.
 

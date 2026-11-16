@@ -1,0 +1,679 @@
+#!/usr/bin/python3
+"""Diagnoses a checkout's cargo setup: is it on the farm, does it build in the shared cache, and what
+makes it compile crates other worktrees already compiled.
+
+    scripts/build/farm/diagnose [DIR]     # one checkout (default: the current directory's)
+    scripts/build/farm/diagnose --all     # every sibling worktree, one block each
+    scripts/build/farm/diagnose --brief   # the findings alone (what the farm's wrapper prints at builds)
+
+It only reads: the checkout, its target directory, cargo's fingerprints, the running processes and
+the farm's state. "The others" are the sibling worktrees (the checkout's parent directory): a
+build shares the cache with them only where it is configured as they are, so the toolchain, the
+profiles and the local cargo configuration are compared with what most of them have.
+
+What it checks, and why each matters:
+
+- **Toolchain.** The rust-toolchain.toml pin against the one most worktrees have. Crates built by another
+  rustc share nothing with the rest: every dependency compiles again, once per toolchain.
+- **The farm.** `~/.cargo/config.toml` names the farm's wrapper, the installed farm version, a
+  checkout-local `.cargo/config.toml` that overrides the wrapper, flags, target directory or
+  environment.
+- **Profiles.** `[profile.*]` settings that differ from most worktrees': each one changes the
+  hash of the crates it reaches, dependencies included, so none of them is a cache hit elsewhere.
+- **Scripts.** Shell and Python files in the checkout (its `tmp/` included) that set RUSTC_WRAPPER,
+  CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE, RUSTFLAGS or CARGO_INCREMENTAL (a target directory
+  of its own splits nothing: the wrapper keeps it out of the cache key).
+- **Running builds.** cargo and rustc processes of the checkout: toolchain, nice value, CPU, and the
+  environment they run with (a wrapper turned off, a forbidden variable).
+- **Variants.** Registry crates built in more than one variant in one profile, and what differs
+  between the variants (cargo's fingerprint): `features` means commands select different packages
+  (`-p`, `--bin`) and cargo resolves features for those alone; `rustc` a toolchain change;
+  `profile` profile settings; `config` cargo configuration or environment.
+- **Shared with siblings.** The share of the checkout's registry crate builds that some other
+  worktree built identically (same unit hash: a cache hit for whichever came second), and for the
+  rest, what differs from the nearest sibling build of the same crate.
+- **Target directory.** Size, profiles, compilers present, and when the farm's cleaner last ran.
+"""
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+SHARE = os.path.expanduser("~/.local/share/rerail-farm")
+STATE = os.path.expanduser("~/Library/Caches/rerail-farm")
+WATCHED = ("RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER", "CC", "CXX", "SOURCE_DATE_EPOCH", "JEMALLOC_OVERRIDE",
+           "AARCH64_APPLE_DARWIN_JEMALLOC_OVERRIDE", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_INCREMENTAL",
+           "CARGO_TARGET_DIR", "RUSTUP_TOOLCHAIN", "RERAIL_FARM_LOCAL", "RERAIL_FARM_ANY_ENV")
+SCRIPT_SETS = re.compile(r"\b(?:export\s+)?(RUSTC_WRAPPER|CC|CXX|SOURCE_DATE_EPOCH|JEMALLOC_OVERRIDE|RUSTFLAGS|"
+                         r"CARGO_INCREMENTAL)=")
+UNIT = re.compile(r"^(?P<package>.+)-(?P<hash>[0-9a-f]{16})$")
+FIELDS = ("rustc", "features", "declared_features", "target", "profile", "path", "rustflags", "config",
+          "compile_kind", "deps")
+
+
+class Report:
+    def __init__(self):
+        self.lines, self.advice, self.brief, self.current = [], [], [], None
+
+    def section(self, title):
+        self.current = title
+        self.lines.append(f"\n{title}")
+
+    def ok(self, text):
+        self.lines.append(f"  ok    {text}")
+
+    def warn(self, text, advice=None):
+        self.lines.append(f"  WARN  {text}")
+        # The brief findings leave out running builds (the wrapper sees its own build) and the
+        # per-profile detail (diagnose prints it).
+        if self.current != "Running builds" and not text.startswith(" "):
+            self.brief.append(text if len(text) <= 200 else text[:197] + "...")
+        if advice and advice not in self.advice:
+            self.advice.append(advice)
+
+    def info(self, text):
+        self.lines.append(f"        {text}")
+
+    def print(self, header):
+        print(header + "".join("\n" + line for line in self.lines))
+        if self.advice:
+            print("\n  To do:")
+            for a in self.advice:
+                print(f"  - {a}")
+
+
+def run(argv, cwd=None):
+    try:
+        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def pin(text):
+    m = re.search(r'^\s*channel\s*=\s*"([^"]+)"', text or "", re.M)
+    return m.group(1) if m else None
+
+
+def read(path):
+    try:
+        return open(path).read()
+    except OSError:
+        return None
+
+
+def local_config(checkout):
+    return "\n".join(f"{f}\n{read(os.path.join(checkout, f))}" for f in
+                     (".cargo/config.toml", ".cargo/config", "native/.cargo/config.toml")
+                     if read(os.path.join(checkout, f)) is not None)
+
+
+def majority(values):
+    """The most common value and how many have it."""
+    counts = {}
+    for v in values:
+        k = json.dumps(v, sort_keys=True)
+        counts[k] = counts.get(k, 0) + 1
+    k, n = max(counts.items(), key=lambda kv: kv[1])
+    return json.loads(k), n
+
+
+def main_ref(checkout):
+    for ref in ("main", "origin/main"):
+        if run(["git", "rev-parse", "--verify", "-q", ref], checkout).strip():
+            return ref
+    return None
+
+
+def profiles_text(text):
+    """{section: {key: value}} for the [profile.*] tables of a Cargo.toml (a plain line reader)."""
+    out, section = {}, None
+    for line in (text or "").splitlines():
+        s = line.split("#", 1)[0].strip()
+        m = re.match(r"^\[(.+)\]$", s)
+        if m:
+            section = m.group(1) if m.group(1).startswith("profile.") else None
+            if section:
+                out.setdefault(section, {})
+        elif section and "=" in s:
+            k, v = s.split("=", 1)
+            out[section][k.strip()] = v.strip()
+    return out
+
+
+def target_of(checkout):
+    out = run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--offline"], checkout)
+    try:
+        return json.loads(out)["target_directory"]
+    except ValueError:
+        return os.path.join(checkout, "target")
+
+
+def profile_dirs(target):
+    out = {}
+    if not os.path.isdir(target):
+        return out
+    for first in sorted(os.listdir(target)):
+        a = os.path.join(target, first)
+        if os.path.isdir(os.path.join(a, ".fingerprint")):
+            out[first] = a
+        elif os.path.isdir(a):
+            for second in sorted(os.listdir(a)):
+                b = os.path.join(a, second)
+                if os.path.isdir(os.path.join(b, ".fingerprint")):
+                    out[f"{first}/{second}"] = b
+    return out
+
+
+def fingerprint(unit_dir):
+    """(kind, json) of a unit's library or binary fingerprint, or None."""
+    try:
+        names = os.listdir(unit_dir)
+    except OSError:
+        return None
+    for n in names:
+        if n.endswith(".json") and (n.startswith("lib-") or n.startswith("build-script-build-script-build")):
+            try:
+                return n[:-5], json.load(open(os.path.join(unit_dir, n)))
+            except (OSError, ValueError):
+                return None
+    return None
+
+
+_members = {}
+
+
+def members(checkout):
+    """The workspace's own package names: every other unit is a dependency (registry or git)."""
+    if checkout not in _members:
+        names = set()
+        for cargo_toml in [os.path.join(checkout, "Cargo.toml")] + glob.glob(os.path.join(checkout, "native", "**", "Cargo.toml"), recursive=True):
+            if "/target/" in cargo_toml or "/vendor/" in cargo_toml:
+                continue
+            m = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"', read(cargo_toml) or "", re.M | re.S)
+            if m:
+                names.add(m.group(1))
+        _members[checkout] = names
+    return _members[checkout]
+
+
+def live_hashes(profile_dir):
+    """Hashes with a build still present: in deps/ (libraries, binaries) or build/ (build scripts)."""
+    out = set()
+    for sub in ("deps", "build"):
+        try:
+            for n in os.listdir(os.path.join(profile_dir, sub)):
+                m = re.search(r"-([0-9a-f]{16})(?:\.|$)", n)
+                if m:
+                    out.add(m.group(1))
+        except OSError:
+            pass
+    return out
+
+
+def units(profile_dir, own):
+    """{unit dir name: (package, kind, fingerprint)} of the dependency crates built there (and still
+    present: a fingerprint whose build is gone is no build)."""
+    fps = os.path.join(profile_dir, ".fingerprint")
+    live = live_hashes(profile_dir)
+    out = {}
+    for name in os.listdir(fps):
+        m = UNIT.match(name)
+        if not m or m["package"] in own or m["hash"] not in live:
+            continue
+        got = fingerprint(os.path.join(fps, name))
+        if got:
+            out[name] = (m["package"], got[0], got[1])
+    return out
+
+
+def unit_names(profile_dir):
+    try:
+        return set(os.listdir(os.path.join(profile_dir, ".fingerprint")))
+    except OSError:
+        return set()
+
+
+def differs(a, b):
+    return [f for f in FIELDS if a.get(f) != b.get(f)]
+
+
+def processes(checkout):
+    out = []
+    ps = run(["ps", "-axo", "pid=,ppid=,pcpu=,comm="]).splitlines()
+    for line in ps:
+        parts = line.split(None, 3)
+        if len(parts) < 4 or not re.search(r"(/|^)(cargo|rustc|cargo-nextest)$", parts[3]):
+            continue
+        pid = int(parts[0])
+        cmd = run(["ps", "eww", "-o", "command=", "-p", str(pid)])
+        cwd = run(["lsof", "-a", "-d", "cwd", "-p", str(pid), "-Fn"]).rsplit("\nn", 1)[-1].strip()
+        if not (cwd == checkout or cwd.startswith(checkout + "/") or f" {checkout}/" in cmd):
+            continue
+        try:
+            nice = os.getpriority(os.PRIO_PROCESS, pid)
+        except OSError:
+            nice = None
+        env = dict(re.findall(r" ([A-Z_][A-Z0-9_]*)=(\S*)", cmd))
+        args = cmd.split()
+        tc = re.search(r"toolchains/([^/-]+)", parts[3])
+        crate = args[args.index("--crate-name") + 1] if "--crate-name" in args else None
+        out.append({"pid": pid, "cpu": float(parts[2]), "comm": os.path.basename(parts[3]), "nice": nice,
+                    "toolchain": tc.group(1) if tc else None, "crate": crate,
+                    "env": {k: v for k, v in env.items() if k in WATCHED},
+                    "argv": " ".join(a for a in args[1:12] if "=" not in a and not a.startswith("/"))[:90]})
+    return out
+
+
+def built_by_counts(profile_dir):
+    """({rustc version: crates}, the version of the newest library) from the metadata in deps/."""
+    counts, newest = {}, (0, None)
+    deps = os.path.join(profile_dir, "deps")
+    try:
+        names = [n for n in os.listdir(deps) if n.endswith(".rmeta")]
+    except OSError:
+        return counts
+    for n in names:
+        path = os.path.join(deps, n)
+        try:
+            with open(path, "rb") as f:
+                head = f.read(1 << 20)
+            t = os.stat(path).st_mtime
+        except OSError:
+            continue
+        m = re.search(rb"rustc (\d+\.\d+\.\d+)", head)
+        if not m:
+            continue
+        v = m.group(1).decode()
+        counts[v] = counts.get(v, 0) + 1
+        if t > newest[0]:
+            newest = (t, v)
+    return counts, newest[1]
+
+
+def du(path):
+    out = run(["du", "-sk", path])
+    try:
+        return int(out.split()[0]) * 1024
+    except (IndexError, ValueError):
+        return 0
+
+
+def active(checkout, hours=24):
+    """Whether it compiled in the last `hours`: a dep-info file that new (a directory's own time
+    moves when the cleaner removes something, so it says nothing)."""
+    t = target_of_cached(checkout)
+    since = time.time() - hours * 3600
+    for d in profile_dirs(t).values():
+        deps = os.path.join(d, "deps")
+        try:
+            for n in os.listdir(deps):
+                if n.endswith(".d") and os.stat(os.path.join(deps, n)).st_mtime > since:
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def siblings_of(checkout):
+    parent = os.path.dirname(checkout)
+    return sorted(p for p in glob.glob(os.path.join(parent, "*")) if p != checkout and os.path.isdir(os.path.join(p, "target")))
+
+
+def diagnose(checkout, sizes=True, sibling_cache=None):
+    r = Report()
+    siblings = siblings_of(checkout) if sibling_cache is None else [s for s in sibling_cache if s != checkout]
+    # The reference: worktrees that built in the last day (an idle one shares nothing either way).
+    everyone = [checkout] + [s for s in siblings if active(s)]
+
+    # --- checkout
+    r.section("Checkout")
+    branch = run(["git", "branch", "--show-current"], checkout).strip() or "(detached)"
+    head = run(["git", "log", "-1", "--format=%h %cr %s"], checkout).strip()
+    r.info(f"{branch} at {head[:90]}")
+    try:
+        rerail = 'members = ["native"' in open(os.path.join(checkout, "Cargo.toml")).read()
+    except OSError:
+        rerail = False
+    if not rerail:
+        r.warn("not a Rerail checkout (no workspace with native/): the farm passes its builds to plain sccache")
+
+    # --- toolchain
+    r.section("Toolchain")
+    mine = pin(open(os.path.join(checkout, "rust-toolchain.toml")).read()) if os.path.exists(
+        os.path.join(checkout, "rust-toolchain.toml")) else None
+    pins = [pin(read(os.path.join(t, "rust-toolchain.toml"))) for t in everyone]
+    common, n = majority(pins)
+    if mine != common:
+        r.warn(f"pins rustc {mine}; {n} of {len(everyone)} active worktrees pin {common}: every crate it builds is its "
+               f"alone, dependencies included (no cache hit from or for the {common} worktrees)",
+               f"merge a branch with rust-toolchain.toml at {common} in")
+    else:
+        others = sorted({p for p in pins if p != mine and p})
+        r.ok(f"pins rustc {mine}, as {n} of {len(everyone)} active worktrees do" +
+             (f" (others: {', '.join(others)})" if others else ""))
+
+    # --- farm and configuration
+    r.section("Farm and cargo configuration")
+    cfg = os.path.expanduser("~/.cargo/config.toml")
+    text = open(cfg).read() if os.path.exists(cfg) else ""
+    if os.path.join(SHARE, "rustc-wrapper") in text:
+        r.ok("~/.cargo/config.toml sets the farm's wrapper")
+    else:
+        r.warn("~/.cargo/config.toml does not set the farm's wrapper", "run scripts/build/farm/setup")
+    installed = tree = None
+    try:
+        installed = int(open(os.path.join(SHARE, "farm.py")).read().split("\nVERSION = ", 1)[1].split()[0])
+        tree = int(open(os.path.join(checkout, "scripts/build/farm/farm.py")).read().split("\nVERSION = ", 1)[1].split()[0])
+    except (OSError, IndexError, ValueError):
+        pass
+    if installed is not None:
+        if tree is None:
+            r.info(f"installed farm version {installed}; this checkout has no farm (its builds still use the installed one)")
+        elif tree < installed:
+            r.info(f"installed farm version {installed}; this checkout's scripts are version {tree} (older): its "
+                   f"own scripts (test-remote, b.sh) may predate the farm's rules")
+        else:
+            r.ok(f"installed farm version {installed}, this checkout's {tree}")
+    configs = [local_config(t) for t in everyone]
+    common, n = majority(configs)
+    if configs[0] != common:
+        r.warn(f"its local .cargo/config.toml differs from the one {n} of {len(everyone)} active worktrees have: "
+               "flags or environment it sets split its builds from theirs",
+               "merge the shared .cargo/config.toml in")
+        for line in difflines(common, configs[0])[:6]:
+            r.info(line)
+    else:
+        r.ok(f"local .cargo/config.toml as {n} of {len(everyone)} active worktrees have it")
+    if "rustc-wrapper" in (configs[0] or ""):
+        r.warn("its local cargo configuration sets rustc-wrapper: the farm's is overridden",
+               "remove rustc-wrapper from the checkout's .cargo/config.toml")
+
+    # --- profiles
+    r.section("Profiles")
+    profs_all = [profiles_text(read(os.path.join(t, "Cargo.toml"))) for t in everyone]
+    main_p, n = majority(profs_all)
+    mine_p = profs_all[0]
+    ref = f"{n} of {len(everyone)} active worktrees"
+    if True:
+        diffs = []
+        for sec in sorted(set(mine_p) | set(main_p)):
+            a, b = mine_p.get(sec, {}), main_p.get(sec, {})
+            for k in sorted(set(a) | set(b)):
+                if a.get(k) != b.get(k):
+                    diffs.append(f"[{sec}] {k}: {b.get(k, '(unset)')} in most, {a.get(k, '(unset)')} here")
+        if diffs:
+            r.warn(f"{len(diffs)} profile setting(s) differ from those of {ref}: the crates they reach hash apart",
+                   "merge the shared [profile.*] settings in, or land this change where they all merge from")
+            for d in diffs[:8]:
+                r.info(d)
+        else:
+            r.ok(f"[profile.*] as in {ref}")
+
+    # --- scripts
+    r.section("Scripts that set build variables")
+    files = run(["git", "ls-files", "*.sh", "*.py", "*.zsh", "*.bash", "scripts/**", "Makefile", "justfile"], checkout).split()
+    files += [os.path.relpath(p, checkout) for p in glob.glob(os.path.join(checkout, "tmp", "**", "*"), recursive=True)
+              if p.endswith((".sh", ".py", ".zsh")) or (os.path.isfile(p) and os.access(p, os.X_OK) and "." not in os.path.basename(p))]
+    hits = []
+    for f in sorted(set(files)):
+        if f.startswith(("scripts/build/farm/", "scripts/dev/relax/", "target/", "node_modules/")) or "/vendor/" in f \
+                or "/target/" in f or f.endswith((".md", ".json", ".toml", ".txt")):
+            continue
+        p = os.path.join(checkout, f)
+        try:
+            if os.path.getsize(p) > 1 << 20:
+                continue
+            for i, line in enumerate(open(p, errors="replace"), 1):
+                m = SCRIPT_SETS.search(line)
+                if m and not line.lstrip().startswith("#") and "RERAIL_FARM_ANY_ENV" not in line:
+                    hits.append((f, i, m.group(1), line.strip()[:80]))
+        except OSError:
+            continue
+    if hits:
+        r.warn(f"{len(hits)} line(s) set a variable every build must share",
+               "drop those assignments: the farm's ~/.cargo/config.toml already sets what builds share "
+               "(RUSTC_WRAPPER= in particular turns the cache off)")
+        for f, i, var, line in hits[:12]:
+            r.info(f"{f}:{i}: {line}")
+        if len(hits) > 12:
+            r.info(f"... and {len(hits) - 12} more")
+    else:
+        r.ok("none")
+
+    # --- running builds
+    r.section("Running builds")
+    procs = processes(checkout)
+    if not procs:
+        r.info("none")
+    for p in procs:
+        flags = []
+        if p["nice"] is not None and p["nice"] < 19:
+            flags.append(f"nice {p['nice']}")
+        e = p["env"]
+        if "RUSTC_WRAPPER" in e and SHARE not in e["RUSTC_WRAPPER"]:
+            flags.append(f"RUSTC_WRAPPER={e['RUSTC_WRAPPER'] or '(empty)'}: no farm, no cache")
+        for k in ("JEMALLOC_OVERRIDE", "AARCH64_APPLE_DARWIN_JEMALLOC_OVERRIDE", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS",
+                  "CARGO_INCREMENTAL", "RERAIL_FARM_LOCAL", "RERAIL_FARM_ANY_ENV"):
+            if e.get(k):
+                flags.append(f"{k}={e[k][:30]}")
+        if p["comm"] == "rustc" and e.get("CC") and SHARE not in e["CC"]:
+            flags.append(f"CC={e['CC']}")
+        if p["toolchain"] and mine and p["toolchain"] != mine:
+            flags.append(f"rustc {p['toolchain']}, not the pinned {mine}")
+        what = p["crate"] or p["argv"]
+        line = f"{p['comm']} {p['pid']} ({p['cpu']:.0f}% CPU, nice {p['nice']}, rustc {p['toolchain'] or '?'}): {what}"
+        if flags:
+            r.warn(line + " — " + "; ".join(flags),
+                   "start builds without overriding RUSTC_WRAPPER or the shared variables, at nice 19")
+        else:
+            r.ok(line)
+
+    # --- target directory: variants and sharing
+    target = target_of(checkout)
+    profs = profile_dirs(target)
+    r.section(f"Target directory {os.path.relpath(target, checkout) if target.startswith(checkout) else target}")
+    if not profs:
+        r.info("no builds")
+    if sizes and os.path.isdir(target):
+        r.info(f"{du(target) / 1e9:.1f} GB")
+    tidy_log = os.path.join(STATE, "tidy", farm_key(target) + ".log")
+    if os.path.exists(tidy_log):
+        last = [l for l in open(tidy_log, errors="replace") if " " in l and ("freed" in l)]
+        r.info(f"cleaner: {last[-1].strip().replace('clean-target: ', '') if last else 'started, no run finished yet'}")
+    else:
+        r.info("cleaner: not run yet (the farm's wrapper starts it after this checkout's next compile)")
+    for name, d in profs.items():
+        cur = units(d, members(checkout))
+        compilers, latest = built_by_counts(d)
+        if not cur and not compilers:
+            continue
+        line = f"{name}: {len(cur)} dependency crate builds; libraries by rustc " + \
+            ", ".join(f"{v} ({n})" for v, n in sorted(compilers.items()))
+        if latest and mine and latest != mine and re.match(r"^\d", mine):
+            r.warn(line + f"; the newest built by {latest}, though it pins {mine}",
+                   f"its builds run another rustc than the pinned {mine} (a `cargo +{latest}`, RUSTUP_TOOLCHAIN, "
+                   "or another cargo first on PATH): they share nothing with the trees on either")
+        elif len(compilers) > 1:
+            r.info(line + " (the older compiler's go once no current build uses them)")
+        else:
+            r.info(line)
+        if not cur:
+            continue
+        # Variants of one crate in this profile.
+        by_crate = {}
+        for unit, (pkg, kind, fp) in cur.items():
+            by_crate.setdefault((pkg, kind), []).append(fp)
+        multi = {k: v for k, v in by_crate.items() if len(v) > 1}
+        if multi:
+            why = {}
+            for (pkg, kind), fps in multi.items():
+                for f in set(x for i in range(1, len(fps)) for x in differs(fps[0], fps[i])):
+                    why[f] = why.get(f, 0) + 1
+            # A crate built for the code and again for a build script differs in profile (and in what
+            # follows from it): both are needed. Features, rustc, config and version are avoidable.
+            avoidable = {k: v for k, v in why.items() if k in ("features", "rustc", "config", "path", "rustflags")}
+            names = {"path": "version", "config": "config/env"}
+            extra = sum(len(v) - 1 for v in multi.values())
+            top = sorted(multi.items(), key=lambda kv: -len(kv[1]))[:4]
+            text = (f"  {len(multi)} crates built in more than one variant ({extra} extra builds); the avoidable "
+                    "differences: " + (", ".join(f"{names.get(f, f)} ({n})" for f, n in
+                                                  sorted(avoidable.items(), key=lambda kv: -kv[1])) or "none")
+                    + f"; {why.get('profile', 0)} differ in profile (a copy for the code and one for a build script)")
+            if not (avoidable.get("features") or avoidable.get("rustc")):
+                r.info(text)
+            else:
+                r.warn(text,
+                   "features: commands that select different packages (`-p X`, `--bin`) resolve dependency "
+                   "features apart; a workspace-hack crate (cargo-hakari) makes every selection agree")
+            r.info("  e.g. " + ", ".join(f"{p} ({kind.replace('lib-', '').replace('build-script-build-script-build', 'build script')}: "
+                                         f"{len(f)})" for (p, kind), f in top))
+        # Sharing with siblings.
+        if siblings:
+            other = set()
+            for s in siblings:
+                other |= sibling_units(s, name, sibling_cache)
+            shared = [u for u in cur if u in other]
+            pct = 100 * len(shared) / len(cur)
+            line = f"  {len(shared)} of {len(cur)} dependency builds ({pct:.0f}%) match a sibling worktree's"
+            if pct < 60:
+                r.warn(line)
+            else:
+                r.ok(line)
+            reasons = {}
+            for u, (pkg, kind, fp) in cur.items():
+                if u in other:
+                    continue
+                best = None
+                for s in siblings:
+                    for cand in sibling_variants(s, name, pkg, sibling_cache):
+                        if cand[0] == kind:
+                            d_ = differs(fp, cand[1])
+                            if best is None or len(d_) < len(best):
+                                best = d_
+                named = {"path": "version (Cargo.lock)", "features": "features", "rustc": "rustc", "profile": "profile",
+                         "config": "config/env", "rustflags": "rustflags", "target": "target", "declared_features": "declared features"}
+                key_ = ", ".join(named.get(f, f) for f in (best or []) if f != "deps") or \
+                    ("only its dependencies' builds" if best else "no sibling builds it")
+                reasons[key_] = reasons.get(key_, 0) + 1
+            for k, n in sorted(reasons.items(), key=lambda kv: -kv[1])[:5]:
+                r.info(f"    not shared, nearest sibling build differs in {k}: {n}")
+    return r
+
+
+_names = {}
+_variants = {}
+
+
+def sibling_units(sibling, profile, cache):
+    k = (sibling, profile)
+    if k not in _names:
+        _names[k] = unit_names(os.path.join(target_of_cached(sibling), profile))
+    return _names[k]
+
+
+def sibling_variants(sibling, profile, pkg, cache):
+    k = (sibling, profile)
+    if k not in _variants:
+        d = os.path.join(target_of_cached(sibling), profile)
+        out = {}
+        if os.path.isdir(os.path.join(d, ".fingerprint")):
+            for name in unit_names(d):
+                m = UNIT.match(name)
+                if m:
+                    out.setdefault(m["package"], []).append(name)
+        _variants[k] = (d, out, {})
+    d, by_pkg, loaded = _variants[k]
+    res = []
+    for name in by_pkg.get(pkg, []):
+        if name not in loaded:
+            loaded[name] = fingerprint(os.path.join(d, ".fingerprint", name))
+        if loaded[name]:
+            res.append(loaded[name])
+    return res
+
+
+_targets = {}
+
+
+def target_of_cached(checkout):
+    if checkout not in _targets:
+        t = os.path.join(checkout, "target")
+        _targets[checkout] = t if os.path.isfile(os.path.join(t, "CACHEDIR.TAG")) else target_of(checkout)
+    return _targets[checkout]
+
+
+def difflines(a, b):
+    import difflib
+    return [l for l in difflib.unified_diff((a or "").splitlines(), (b or "").splitlines(), "most", "here", lineterm="", n=0)
+            if l[:1] in "+-" and not l.startswith(("+++", "---"))]
+
+
+def farm_key(text):
+    import hashlib
+    return hashlib.sha1(text.encode()).hexdigest()[:16]
+
+
+def sccache_summary():
+    sys.path.insert(0, SHARE)
+    try:
+        import farm
+        out = run_env([farm.SCCACHE, "--show-stats"], farm.sccache_env(dict(os.environ)))
+    except Exception:
+        return None
+    hits = re.search(r"Cache hits rate \(Rust\)\s+([\d.]+) %", out)
+    miss = re.search(r"Cache misses \(Rust\)\s+(\d+)", out)
+    return f"farm sccache since its start: Rust hit rate {hits.group(1) if hits else '?'} %, {miss.group(1) if miss else '?'} Rust misses (all worktrees)"
+
+
+def run_env(argv, env):
+    try:
+        return subprocess.run(argv, env=env, capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def main(argv):
+    everything, brief, rest = False, False, []
+    while argv:
+        a = argv.pop(0)
+        if a in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        if a == "--all":
+            everything = True
+        elif a == "--brief":
+            brief = True
+        elif a.startswith("-"):
+            sys.exit(f"diagnose: unknown option {a} (--help)")
+        else:
+            rest.append(a)
+    here = os.path.realpath(rest[0] if rest else os.getcwd())
+    top = run(["git", "rev-parse", "--show-toplevel"], here).strip() or here
+    if brief:
+        r = diagnose(top, sizes=False)
+        for line in r.brief:
+            print(line)
+        # Not the feature-unification advice: no checkout can act on it alone (it is the hub's).
+        for a in r.advice:
+            if not a.startswith("features:"):
+                print(f"to do: {a}")
+        return 0
+    s = sccache_summary()
+    if everything:
+        trees = [top] + siblings_of(top)
+        trees = sorted(t for t in trees if os.path.exists(os.path.join(t, "Cargo.toml")))
+        for t in trees:
+            diagnose(t, sizes=False, sibling_cache=trees).print(f"\n=== {os.path.basename(t)}")
+    else:
+        diagnose(top).print(f"=== {top}")
+    if s:
+        print(f"\n{s}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

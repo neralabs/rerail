@@ -52,7 +52,7 @@ fn resident() -> Option<u64> {
     let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::zeroed();
     let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
     unsafe extern "C" {
-        /// The task's own port, which `mach_task_self()` reads.
+        // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
         static mach_task_self_: libc::mach_port_t;
     }
     // SAFETY: task_info writes this C-layout buffer; count describes its capacity in words.

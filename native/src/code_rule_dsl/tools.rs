@@ -765,7 +765,7 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -777,6 +777,8 @@ pub fn cli(args: &[String]) -> Result<String, String> {
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
 pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
+    // Done as the library loaded, except where nothing runs then (the browser's build).
+    crate::install_store_functions();
     let budgets = budget_options(args)?;
     let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).
@@ -784,6 +786,8 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
     impl Drop for Flush {
         fn drop(&mut self) {
             crate::code_rule_dsl::logic::costs::flush();
+            #[cfg(feature = "tape-reads")]
+            crate::code_rule_dsl::tape::reads::report();
         }
     }
     let _flush = Flush;
@@ -805,12 +809,17 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
             _ => Err("usage: rerail-engine repeat <script>".into()),
         },
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
+        Some("capture-tapes") => capture_tapes_command(&args[1..]),
+        Some("kind-names") => kind_names_command(&args[1..]),
         Some("run-rr") if args.len() == 4 || args.len() == 5 => {
             let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
             serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
         }
         // Several policies over one repository, each over its own language's files (O105).
         Some("run-policies") if args.len() > 3 => {
+            // Decision 0243: the process ends with the run, before any idle time: its join searches are served at the
+            // run's end.
+            crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
             let paths = args[3..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
             serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(&args[1]), Path::new(&args[2]), &serde_json::Value::Null)?).map_err(|e| e.to_string())
         }
@@ -845,6 +854,14 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
         Some("flatten") => match &args[1..] {
             [file] => crate::tools::flatten(Path::new(file.as_str())),
             _ => Err(USAGE.into()),
+        },
+        // The rule images shipped with the engine (decision 0264): packed from those a run exported
+        // (`RERAIL_EXPORT_IMAGES=<dir>`), into the bundle placed beside the engine (`rerail-library.images`).
+        Some("images") => match &args[1..] {
+            [pack, dir, out] if pack == "pack" => crate::code_rule_dsl::logic::rr::images::pack(Path::new(dir.as_str()), Path::new(out.as_str()))
+                .map(|n| format!("{n} images packed into {out}"))
+                .map_err(|e| e.to_string()),
+            _ => Err("usage: rerail-engine images pack <exported dir> <bundle>".into()),
         },
         // A run's outputs (`out/outputs.rro`, decision 0239) as `.csv` files, one per relation, in `to` (`out` itself
         // when not given): for scripts that read them.
@@ -1278,4 +1295,141 @@ fn policy(file: &str) -> Result<(String, String, String), String> {
 
 fn read(file: &str) -> Result<String, String> {
     std::fs::read_to_string(file).map_err(|error| format!("{file}: {error}"))
+}
+
+/// `capture-tapes <root> <out> [--every <k>] [--max <n>]`: every k-th file under `root` with a tape (sorted
+/// paths; `.git`, `node_modules`, `.venv`, `target`, `dist` left out) parsed as the engine parses it, and its
+/// source and primary tape image written to `out`, for the tape-format lab (`native/lab/tape16`, decision 0156).
+///
+/// The file: `T16CAP01`, then per file: path (u16 length, bytes), tape tag (u8), source (u32 length, bytes),
+/// image (u32 length, bytes), all little-endian. A file the parser refuses or stops on is left out.
+/// `kind-names <out>`: every tape language's kinds as `tag<TAB>id<TAB>name<TAB>named`, then its fields as
+/// `tag<TAB>field id<TAB>name`, for the tape lab
+/// (`native/lab/tape16`), whose captures carry kind ids only.
+fn kind_names_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::language::{from_tape_tag, tape_tag};
+    use crate::code_rule_dsl::language::GrammarDialect;
+    let [out] = args else { return Err("usage: rerail-engine kind-names <out file>".to_owned()) };
+    let mut text = String::new();
+    let mut tags = 0;
+    for &lang in GrammarDialect::all() {
+        let Some(tag) = tape_tag(lang) else { continue };
+        if from_tape_tag(tag) != Some(lang) {
+            continue;
+        }
+        tags += 1;
+        for id in 0..lang.kind_count() {
+            let id = id as u16;
+            if let Some(name) = lang.kind_name(id) {
+                text.push_str(&format!("{tag}\t{id}\t{name}\t{}\n", u8::from(lang.kinds().kind_is_named(id))));
+            }
+        }
+        for id in 1..=lang.kinds().field_count() {
+            if let Some(name) = lang.kinds().field_name(id as u16) {
+                text.push_str(&format!("{tag}\tfield {id}\t{name}\t\n"));
+            }
+        }
+    }
+    std::fs::write(out, text).map_err(|e| e.to_string())?;
+    Ok(format!("{tags} languages to {out}"))
+}
+
+fn capture_tapes_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::language::{dialect_by_label, label_of_path, tape_tag};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
+    use std::io::Write;
+    let usage = || "usage: rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]".to_owned();
+    let (root, out) = match args {
+        [root, out, ..] => (Path::new(root), Path::new(out)),
+        _ => return Err(usage()),
+    };
+    let mut every = 1usize;
+    let mut max = usize::MAX;
+    let all_tokens = args[2..].iter().any(|a| a == "--all-tokens");
+    let mut rest = args[2..].iter().filter(|a| *a != "--all-tokens");
+    while let Some(flag) = rest.next() {
+        let value = rest.next().and_then(|v| v.parse::<usize>().ok()).ok_or_else(usage)?;
+        match flag.as_str() {
+            "--every" => every = value.max(1),
+            "--max" => max = value,
+            _ => return Err(usage()),
+        }
+    }
+    fn walk(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                if !matches!(name.as_ref(), ".git" | "node_modules" | ".venv" | "venv" | "target" | "dist" | "build" | "__pycache__" | "tmp" | "working-data") {
+                    walk(&entry.path(), files);
+                }
+            } else if kind.is_file() {
+                files.push(entry.path());
+            }
+        }
+    }
+    let mut all = Vec::new();
+    walk(root, &mut all);
+    let dialect = |path: &Path| {
+        label_of_path(&path.to_string_lossy()).and_then(dialect_by_label).filter(|d| tape_tag(*d).is_some())
+    };
+    let files: Vec<_> = all.into_iter().filter(|p| dialect(p).is_some()).step_by(every).take(max).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let writer = std::sync::Mutex::new(std::io::BufWriter::new(std::fs::File::create(out).map_err(|e| e.to_string())?));
+    writer.lock().unwrap().write_all(b"T16CAP01").map_err(|e| e.to_string())?;
+    let (written, refused) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
+    rerail_accel::exec::scoped(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(path) = files.get(i) else { break };
+                    let lang = dialect(path).expect("filtered");
+                    let Ok(source) = std::fs::read(path) else { continue };
+                    let Ok(source) = String::from_utf8(source) else {
+                        refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        continue;
+                    };
+                    if source.len() > 16 << 20 {
+                        refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        continue;
+                    }
+                    let parse = |grammar: std::sync::Arc<Grammar>| TapeImage::parse(&grammar, &source, &|| false);
+                    let image = Grammar::new(lang)
+                        .ok()
+                        .and_then(|grammar| if all_tokens { crate::code_rule_dsl::tape::with_all_tokens(|| parse(grammar)) } else { parse(grammar) })
+                        .and_then(Result::ok)
+                        .and_then(|file| file.primary.to_bytes().ok());
+                    let Some(image) = image else {
+                        refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        continue;
+                    };
+                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+                    let mut record = Vec::with_capacity(rel.len() + source.len() + image.len() + 16);
+                    record.extend_from_slice(&(rel.len() as u16).to_le_bytes());
+                    record.extend_from_slice(rel.as_bytes());
+                    record.push(tape_tag(lang).expect("filtered"));
+                    record.extend_from_slice(&(source.len() as u32).to_le_bytes());
+                    record.extend_from_slice(source.as_bytes());
+                    record.extend_from_slice(&(image.len() as u32).to_le_bytes());
+                    record.extend_from_slice(&image);
+                    if writer.lock().unwrap().write_all(&record).is_ok() {
+                        written.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+    writer.into_inner().unwrap().flush().map_err(|e| e.to_string())?;
+    Ok(format!(
+        "{} files captured, {} refused, of {} with a tape\n",
+        written.into_inner(),
+        refused.into_inner(),
+        files.len()
+    ))
 }

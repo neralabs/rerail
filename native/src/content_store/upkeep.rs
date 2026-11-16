@@ -130,13 +130,22 @@ impl SqliteFile {
     }
 }
 
-/// The bytes free on the disk holding `path`.
+/// The bytes free on the disk holding `path` (unknown where the system has no `statvfs`: WASI).
 pub fn disk_free(path: &Path) -> Option<u64> {
-    use std::os::unix::ffi::OsStrExt;
-    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
-    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    (unsafe { libc::statvfs(c.as_ptr(), &mut s) } == 0).then(|| s.f_bavail as u64 * s.f_frsize as u64)
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+        // SAFETY: statvfs writes the C-layout struct it is given; the path is NUL-terminated.
+        let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+        (unsafe { libc::statvfs(c.as_ptr(), &mut s) } == 0).then(|| s.f_bavail as u64 * s.f_frsize as u64)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 impl Job for SqliteFile {

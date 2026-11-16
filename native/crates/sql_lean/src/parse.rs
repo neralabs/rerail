@@ -1147,6 +1147,15 @@ impl<'s> P<'s> {
         Ok(self.ident_span(ctx)?.map(|(s, e)| self.leaf(K::Identifier, field, s, e)))
     }
 
+    /// `_column`: an identifier, or a quoted name as the `literal` the grammar aliases its
+    /// `_literal_string` to (`"ip"`, which both read: tree-sitter takes the `literal`).
+    fn expect_column(&mut self, ctx: Ctx, field: u8) -> R<u32> {
+        let t = self.peek()?;
+        let quoted = self.src.get(t.s as usize) == Some(&b'"');
+        let Some((s, e)) = self.ident_span(ctx)? else { return self.refuse() };
+        Ok(self.leaf(if quoted { K::Literal } else { K::Identifier }, field, s, e))
+    }
+
     fn expect_ident(&mut self, ctx: Ctx, field: u8) -> R<u32> {
         match self.ident(ctx, field)? {
             Some(id) => Ok(id),

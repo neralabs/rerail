@@ -201,7 +201,8 @@ mod tests {
         assert_eq!(through, 1);
         let sup = out.program.decls.keys().find(|r| is_support(r)).expect("a support relation").to_string();
         let decl = &out.program.decls[sup.as_str()];
-        let atoms = lower::atom_columns(&out.program, &out.domains, &sup);
+        let types: Vec<&str> = decl.iter().map(|(_, t)| t.as_str()).collect();
+        let atoms = lower::atom_columns(&types, &out.domains, &sup);
         let col = |name: &str| decl.iter().position(|(c, _)| c.as_str().trim_start_matches('$') == name).unwrap_or_else(|| panic!("{name} in {decl:?}"));
         assert!(!atoms[col("k")], "a kind is no atom: {decl:?} {atoms:?}");
         assert!(atoms[col("s")], "a text is: {decl:?} {atoms:?}");

@@ -24,7 +24,6 @@
 //! (`"sql:select"`, `plan::lower::Constants`), so a Python policy can name SQL kinds inside its SQL guests.
 
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Name, Program, Term};
-use rayon::prelude::*;
 use rustc_hash::FxHashMap as HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -152,10 +151,10 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         // Kind sets read by value over a guest's kinds, copied in its grammar: (copy, original, kinds).
         let mut kind_facts: Vec<(String, String, Vec<String>)> = Vec::new();
         let mut changed = false;
-        // Each rule's analysis reads the round's start alone: made on the pool's threads, used in order below. Only the
+        // Each rule's analysis reads the round's start alone, used in order below. Only the
         // rules `round` names: any other's analysis is the round before's, and its edits are made.
         let analysed: Vec<BTreeMap<String, Fact>> = looked
-            .par_iter()
+            .iter()
             .map(|&i| {
                 let rule = &prog.rules[i];
                 if view(&rule.head.rel) || !reaches[i] {
@@ -374,8 +373,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     // and no rule reached it through the annotation either.
     let asking = asking(prog);
     let asks = |rel: &str| asking.contains(rel);
-    // Each rule bounded on its own, on the pool's threads.
-    prog.rules.par_iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str()) && !asks(&r.head.rel)).for_each(|((rule, seed), reaches)| {
+    // Each rule bounded on its own.
+    prog.rules.iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str()) && !asks(&r.head.rel)).for_each(|((rule, seed), reaches)| {
         let facts: BTreeMap<String, Fact> = if reaches { analyse(rule, &base_locations, &carried, seed).into_iter().map(|(v, f)| (v.to_owned(), f)).collect() } else { BTreeMap::new() };
         // Wildcards in an unscoped base atom's location columns become variables, so they can be bounded.
         let mut fresh = 0;
@@ -835,8 +834,8 @@ impl Delta {
     }
 }
 
-/// A fixpoint over what the columns carry (`Delta`), from rules `start`: in rounds, each round's rules analysed on the
-/// pool's threads against what the columns carried as it began, and applied in order. Both of hiding's fixpoints are
+/// A fixpoint over what the columns carry (`Delta`), from rules `start`: in rounds, each round's rules analysed
+/// against what the columns carried as it began, and applied in order. Both of hiding's fixpoints are
 /// monotone (columns only gain, then only lose being definite), so the rounds reach what a rule at a time does. The
 /// relations whose columns changed are added to `changed`.
 #[allow(clippy::too_many_arguments)]
@@ -855,7 +854,7 @@ fn fixpoint(
     while !round.is_empty() {
         let now: &HashMap<Name, Vec<Fact>> = carried;
         let analysed: Vec<BTreeMap<&str, Fact>> = round
-            .par_iter()
+            .iter()
             .map(|&i| if reaches[i] && now.contains_key(prog.rules[i].head.rel.as_str()) { analyse(&prog.rules[i], base, now, &seeds[i]) } else { BTreeMap::new() })
             .collect();
         let mut next: BTreeSet<usize> = BTreeSet::new();

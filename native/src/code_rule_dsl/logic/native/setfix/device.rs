@@ -30,6 +30,7 @@
 
 use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_dead, rowcode, thread_cpu};
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -83,7 +84,7 @@ enum Kind {
     RowText { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64>, auto: RowAuto },
     /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
     /// `cols`) and the atoms after it (`rest`: each relation, its key columns and its probe), run as one witness per
-    /// binding (`mj::WITNESS`, decision 0233), as the CPU's walk runs them (decision 0229).
+    /// binding (`mj::WITNESS`, decision 0277), as the CPU's walk runs them (decision 0229).
     Witness { rel: Arc<InRel>, cols: Vec<usize>, rest: Vec<(Arc<InRel>, Vec<usize>, mj::Stage)> },
 }
 
@@ -318,13 +319,13 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
 /// whole (no keys), the CPU makes them all too, and the device takes it.
 fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
-        // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0233).
+        // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0277).
         Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
 }
 
-/// The witness form of `j`'s steps from `i` (decision 0233), where every slot the head reads is bound before `i`
+/// The witness form of `j`'s steps from `i` (decision 0277), where every slot the head reads is bound before `i`
 /// (`setfix::tail`): an atom over an input relation that binds slots, then at most `mj::WITNESS_PROBES` atoms (or
 /// negated atoms) over input relations keyed by slots bound before `i`, constants or the first atom's columns, none
 /// with a fused program. Each binding needs one row of them, not all: the device's breadth-first stages would make
@@ -417,7 +418,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
     let mut i = 0;
     while i < j.steps.len() {
         let step = &j.steps[i];
-        // The rest of the body as one witness per binding, where it takes that shape (decision 0233).
+        // The rest of the body as one witness per binding, where it takes that shape (decision 0277).
         if matches!(step, Step::Atom { .. }) && let Some(w) = witness_stage(j, i, &bound) {
             stages.push(w);
             i = j.steps.len();
@@ -1062,7 +1063,7 @@ fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Opt
 
 /// A relation kept on the device: its rows, and its sorts by key columns.
 /// Whose rows an entry holds: a relation's, or a source's that views read whole (`View` with no rows chosen): every
-/// view of the source, whatever its columns, reads the one upload (decision 0233).
+/// view of the source, whatever its columns, reads the one upload (decision 0277).
 enum Owner {
     Rel(Weak<InRel>),
     Src(Weak<dyn crate::code_rule_dsl::facts::vtab::Source>),
@@ -1101,7 +1102,7 @@ fn owner_col(rel: &InRel, c: usize) -> usize {
 }
 
 /// The columns of the relation an atom's stage reads (`d`'s keys, column tests, binds, row program and fold): the
-/// device holds only these of it (decision 0233).
+/// device holds only these of it (decision 0277).
 fn right_cols(d: &mj::Stage) -> Vec<usize> {
     let mut out: Vec<usize> = Vec::new();
     out.extend(d.key_rcol[..d.nkeys as usize].iter().map(|&c| c as usize));
@@ -1236,7 +1237,7 @@ struct Run<'p> {
 
 /// The device's copy of `rel`'s columns `need` and `cols`, its sort by `cols` (none when it has no keys), and where
 /// each of its columns lies in the copy (`mj::NONE`: not held), uploaded and encoded into `batch` when not resident.
-/// A copy holds only the columns stages read; one that lacks a column is uploaded again with it (decision 0233).
+/// A copy holds only the columns stages read; one that lacks a column is uploaded again with it (decision 0277).
 #[allow(clippy::type_complexity)]
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vec<u32>), String> {
     RESIDENT.with_borrow_mut(|res| {
@@ -1334,6 +1335,59 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         e.indexes.push((key, ix.clone()));
         Ok((dev, Some(ix), place))
     })
+}
+
+/// Decision 0209 §6 on the device, with decision 0261: columns' statistics in one batch
+/// (`rerail_accel::gpu::join::column_stats_of`). A relation this thread holds on the device, as it is now (its live
+/// rows), is read in place: its column of the resident upload. Any other's values are gathered on the host. Also how
+/// many columns were read in place.
+pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
+    use rerail_accel::gpu::join::{StatCol, column_stats_of};
+    // Each relation's upload and where the column is in it: a copy holds only the columns stages read, in its
+    // owner's numbering (decision 0277), so a column it lacks is gathered on the host.
+    let devs: Vec<Option<(Rc<mj::DevRel>, usize)>> = RESIDENT.with_borrow(|res| {
+        cols.iter()
+            .map(|c| {
+                let StatColumn::Rel(rel, col) = c else { return None };
+                let owner = Owner::of(rel);
+                let e = res.entries.iter().find(|e| e.owner.same(&owner))?;
+                let at = e.cols.iter().position(|&w| w == owner_col(rel, *col))?;
+                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols).then(|| (e.dev.clone(), at))
+            })
+            .collect()
+    });
+    let gathered: Vec<Option<Vec<i64>>> = cols
+        .iter()
+        .zip(&devs)
+        .map(|(c, d)| match (c, d) {
+            (StatColumn::Rel(rel, col), None) => Some(column_values(rel, *col)),
+            _ => None,
+        })
+        .collect();
+    let stat: Vec<StatCol<'_>> = cols
+        .iter()
+        .zip(&devs)
+        .zip(&gathered)
+        .map(|((c, d), g)| match (c, d, g) {
+            (StatColumn::Values(v), _, _) => StatCol::Host(v),
+            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: at * d.rows, rows: d.rows },
+            (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
+        })
+        .collect();
+    let made = column_stats_of(&stat, k)?;
+    let in_place = devs.iter().filter(|d| d.is_some()).count();
+    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top }).collect(), in_place))
+}
+
+/// Column `col` of `rel`'s live rows, in row order (as the resident upload lays them out).
+fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
+    let n = rel.len();
+    let live = (0..n).filter(|&id| rel.ndead == 0 || !is_dead(&rel.dead, id as u32));
+    if rel.view.is_none() {
+        live.map(|id| rel.row(id)[col]).collect()
+    } else {
+        live.map(|id| rel.at(id).read().at(col)).collect()
+    }
 }
 
 /// The names of column `col`'s distinct symbols on the device, kept with the relation's entry `e` (copied once).

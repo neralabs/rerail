@@ -35,7 +35,7 @@ lv_if("if_statement").
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, line, syntax_error, node_text, path_part, source
+.input doc, node, child, field, text, line, syntax_error, path_part, source, node_text
 .output violation
 layer_digit("0", 0).
 layer_digit("1", 1).

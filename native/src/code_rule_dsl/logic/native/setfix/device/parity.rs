@@ -163,7 +163,7 @@ fn run(fx: &Fixture, c: &Case, id: usize, device: bool) -> Result<(Rows, String,
     let ran = super::super::run(db, &name, 0).map_err(|e| format!("run: {e}"));
     let report = super::take_report();
     // Counts before each rule's tail: past the step that binds the head the CPU counts one witness (decision 0229),
-    // the device every row where its witness stage does not take the rest (decision 0233). Rows are compared whole.
+    // the device every row where its witness stage does not take the rest (decision 0277). Rows are compared whole.
     let tails = super::super::step_tails(db, &name).unwrap_or_default();
     let counts = super::super::step_counts(db, &name)
         .map(|c| c.into_iter().zip(tails.iter().copied().chain(std::iter::repeat(usize::MAX))).map(|(mut c, t)| { c.truncate(t); c }).collect::<Vec<_>>())

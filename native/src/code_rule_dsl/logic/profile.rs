@@ -443,7 +443,7 @@ pub struct StepPlan {
     pub source: String,
     pub rows: f64,
     /// Its rows when every row is walked: past the step that binds the head the walk keeps one witness (decision
-    /// 0229) and `rows` counts that; the device's stages make them all (decision 0233).
+    /// 0229) and `rows` counts that; the device's stages make them all (decision 0277).
     pub all: f64,
     pub passed: Vec<(String, f64, String)>,
     /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
@@ -708,7 +708,7 @@ fn live_threads() -> Vec<(u32, String)> {
     {
         unsafe extern "C" {
             fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::kern_return_t;
-            /// The task's own port, which `mach_task_self()` reads.
+            // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
             static mach_task_self_: libc::mach_port_t;
         }
         let mut list: libc::thread_act_array_t = std::ptr::null_mut();
@@ -1606,6 +1606,12 @@ pub fn fallback(key: &str, class: String) {
         return;
     }
     state().fallbacks.insert(key.to_owned(), class);
+}
+
+/// The strata that fell back to SQLite so far, by key: the kind of literal declined (a test's check that a form runs
+/// natively).
+pub fn declined() -> BTreeMap<String, String> {
+    state().fallbacks.clone()
 }
 
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's

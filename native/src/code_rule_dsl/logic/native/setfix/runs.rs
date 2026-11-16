@@ -711,6 +711,16 @@ impl<'a> Found<'a> {
     pub(super) fn parts(&self) -> impl Iterator<Item = Part<'a>> + '_ {
         self.first[..self.n.min(self.first.len())].iter().copied().chain(self.rest.iter().copied())
     }
+    /// Its `i`th id, over every run in order (`i` under `len`): a walk samples candidates by position (decision 0236).
+    pub(super) fn nth(&self, mut i: usize) -> u32 {
+        for p in self.parts() {
+            if i < p.len() {
+                return match p { Part::Ids(v) => v[i], Part::Rows(lo, _) => lo + i as u32 };
+            }
+            i -= p.len();
+        }
+        panic!("a position past the found ids")
+    }
     /// Its ids, over every run.
     pub(super) fn ids(&self) -> impl Iterator<Item = u32> + '_ {
         self.parts().flat_map(Part::iter)

@@ -59,18 +59,9 @@ use crate::code_rule_dsl::embed::{Parse, Program, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::php_literal::literal_end;
 use ast_grep_core::source::SgNode;
-use ast_grep_language::LanguageExt;
 use std::ops::Range;
 #[cfg(any(test, feature = "test-hooks"))]
-use tree_sitter::Node as TsNode;
-use tree_sitter::{Parser, Tree};
-
-/// tree-sitter-php's tree of `text`, a program (its PHP-only grammar).
-fn tree_sitter_php(text: &str) -> Option<Tree> {
-    let mut parser = Parser::new();
-    parser.set_language(&GrammarDialect::Php.get_ts_language()).ok()?;
-    parser.parse(text, None)
-}
+use tree_sitter::{Node as TsNode, Tree};
 
 /// The embedded PHP program and its map back to the template.
 pub struct View {
@@ -343,14 +334,7 @@ impl View {
         }
         // The lean parser first; tree-sitter-php where it refuses (one behavior: tree-sitter's
         // tape, or a refusal).
-        let lean = crate::code_rule_dsl::tape::Grammar::embedded(GrammarDialect::Php)
-            .ok()
-            .and_then(|grammar| crate::code_rule_dsl::tape::php_lean::encode_program(&grammar, &emitter.out, budget).ok())
-            .and_then(Result::ok);
-        let program = match lean {
-            Some(tape) => Some(Parse::Tape(tape)),
-            None => tree_sitter_php(&emitter.out).map(Parse::Tree),
-        };
+        let program = Parse::read(GrammarDialect::Php, &emitter.out, budget);
         let view = program.map(|program| {
             let mut segments = emitter.segments;
             segments.index();
@@ -386,7 +370,7 @@ impl View {
     pub fn root(&self) -> TsNode<'_> {
         let tree = self.tree.get_or_init(|| match &self.parse {
             Parse::Tree(tree) => tree.clone(),
-            Parse::Tape(_) => tree_sitter_php(&self.text).expect("tree-sitter-php parses"),
+            Parse::Tape(_) => Parse::tree_sitter(GrammarDialect::Php, &self.text).expect("tree-sitter-php parses"),
         });
         tree.root_node()
     }
