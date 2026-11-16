@@ -464,8 +464,11 @@ async function gitOutput(cwd: string, args: readonly string[], signal: AbortSign
   return (await gitStdout(cwd, args, signal))?.trim();
 }
 
+/** The most bytes of stdout `gitStdout` reads by default: past it, the read fails. */
+const GIT_OUTPUT_MAX_BYTES = 1024 * 1024;
+
 /** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
-async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = 1024 * 1024): Promise<string | undefined> {
+async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = GIT_OUTPUT_MAX_BYTES): Promise<string | undefined> {
   const read = await readGit(cwd, args, signal, maxBuffer);
   return read.ended === "printed" ? read.stdout : undefined;
 }
@@ -534,14 +537,19 @@ export async function gitHead(cwd: string, options: GitReadOptions = {}): Promis
 /**
  * The exclude files of the Git checkout at `cwd` that no diff shows, absolute: its `info/exclude` (the common Git
  * folder's, which every worktree shares) and the file `core.excludesFile` names, else Git's default, `git/ignore` in
- * `XDG_CONFIG_HOME` or `~/.config`. Empty outside a Git checkout, or without Git.
+ * `XDG_CONFIG_HOME` or `~/.config`. Undefined when Git does not name them (outside a Git checkout, without Git, or a
+ * Git that failed, ran past its time limit or was stopped): none is not its answer.
  */
-export async function gitExcludeFiles(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
+export async function gitExcludeFiles(cwd: string, options: GitReadOptions = {}): Promise<string[] | undefined> {
   // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
   const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"], options.signal);
-  if (exclude === undefined || exclude === "") return [];
-  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"], options.signal);
-  return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
+  if (exclude === undefined) return undefined;
+  if (exclude === "") return [];
+  // Git fails when `core.excludesFile` is unset: Git's default then holds.
+  const configured = await readGit(cwd, ["config", "--path", "--get", "core.excludesFile"], options.signal, GIT_OUTPUT_MAX_BYTES);
+  if (configured.ended === "timed-out") return undefined;
+  const named = configured.ended === "printed" ? configured.stdout.trim() : "";
+  return [resolve(cwd, exclude), resolve(cwd, named || defaultExcludesFile())];
 }
 
 /**
@@ -584,15 +592,16 @@ function defaultExcludesFile(env: NodeJS.ProcessEnv = process.env, platform: Nod
  * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `.gitconfig`
  * in Git's home ({@link gitHome}, from `env` on `platform`, this process's by default) and `git/config` in
  * `XDG_CONFIG_HOME` or that home's `.config`. The system file, which only an administrator writes, and files
- * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
+ * `include.path` pulls in are left out. Undefined when Git does not name them, as for {@link gitExcludeFiles}.
  */
 export async function gitConfigFiles(
   cwd: string,
   options: GitReadOptions & { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
-): Promise<string[]> {
+): Promise<string[] | undefined> {
   const { env = process.env, platform = process.platform } = options;
   const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"], options.signal);
-  if (local === undefined || local === "") return [];
+  if (local === undefined) return undefined;
+  if (local === "") return [];
   const global = env.GIT_CONFIG_GLOBAL;
   const globals = global === undefined || global === ""
     ? [join(gitHome(env, platform), ".gitconfig"), join(dirname(defaultExcludesFile(env, platform)), "config")]
