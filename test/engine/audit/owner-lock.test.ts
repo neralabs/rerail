@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { forgetFreedOwnerLocks, holdOwnerLock, ownerLockFreed } from "../../../src/engine/audit/owner-lock.js";
+import { forgetFreedOwnerLocks, holdOwnerLock, ownerLockFreed, someOwnerLockFreed } from "../../../src/engine/audit/owner-lock.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 // These answers decide whether a daemon's sessions are ended as no one's: a lock judged free while its service runs
@@ -47,6 +47,18 @@ async function home(): Promise<{ databasePath: string; owners: string }> {
 }
 
 describe("an engine service's owner lock", () => {
+  // The minute's sweep opens the database only when this says yes: a yes while every service runs costs a wait on another
+  // process's write lock, and a no while one has ended leaves its sessions open until the next start.
+  it("says some lock is free only once a service has let its lock go and left the file", async () => {
+    const { databasePath, owners } = await home();
+    expect(someOwnerLockFreed(databasePath), "no lock folder").toBe(false);
+    const held = holdOwnerLock(databasePath);
+    writeFileSync(join(owners, "notes.txt"), "");
+    expect(someOwnerLockFreed(databasePath), "every lock held").toBe(false);
+    held.release();
+    expect(someOwnerLockFreed(databasePath), "a lock let go").toBe(true);
+  });
+
   it("removes the file of a free lock no open session names, and leaves a held one and a free one a session names", async () => {
     const { databasePath, owners } = await home();
     const held = holdOwnerLock(databasePath);

@@ -107,6 +107,21 @@ export function ownerLockFreed(databasePath: string, lockId: string): boolean {
 }
 
 /**
+ * Whether some engine service beside `databasePath` has ended and left its lock file (`ownerLockFreed`): only then can
+ * an open session's owner row name a writer that has ended under a lock. The lock files alone are read, not the
+ * database. False while every lock is held, when there are none, or when none can be tried.
+ */
+export function someOwnerLockFreed(databasePath: string): boolean {
+  let names: string[];
+  try {
+    names = readdirSync(ownersFolder(databasePath));
+  } catch {
+    return false;
+  }
+  return names.some(name => LOCK_FILE.test(name) && ownerLockFreed(databasePath, name.slice(0, -".lock".length)));
+}
+
+/**
  * Removes the lock file of every engine service beside `databasePath` that has ended, each while holding its lock,
  * unless an open session's owner row still names it (`named`): those whose sessions a sweep has just ended, and those of
  * a service that ended with none open. A held one is left, and so is a free one a row names, such as that of a daemon

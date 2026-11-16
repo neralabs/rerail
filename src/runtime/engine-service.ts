@@ -8,7 +8,7 @@ import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
 import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
-import { forgetFreedOwnerLocks, holdOwnerLock } from "../engine/audit/owner-lock.js";
+import { forgetFreedOwnerLocks, holdOwnerLock, someOwnerLockFreed } from "../engine/audit/owner-lock.js";
 import {
   AdapterEventSchema,
   decodeRerailEventResult,
@@ -40,8 +40,8 @@ export interface EngineService {
   openRuntimes(): number;
   /**
    * Suspends every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
-   * a day whatever it owes (`RerailRuntime.closeIdleSession`), then ends what a daemon that died since left open
-   * (`endAbandonedSessions`); the service also does this every minute.
+   * a day whatever it owes (`RerailRuntime.closeIdleSession`), then, once a daemon on the same records that held its
+   * owner lock has ended, what it left open (`endAbandonedSessions`); the service also does this every minute.
    */
   closeIdleSessions(): Promise<void>;
   /**
@@ -473,13 +473,16 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
 /**
  * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), then ends what a daemon that died since
  * left open (`endAbandonedSessions`), as a start does: another daemon on the same records can run on for days after one
- * dies, with no start to end them.
+ * dies, with no start to end them. Only once an owner lock beside the database is free (`someOwnerLockFreed`), which a
+ * service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on the
+ * daemon's main thread, so a minute with no such lock opens no database. Rows that name no lock are judged at the next
+ * start then, or by a sweep a free lock brings.
  */
 async function sweepIdle(state: EngineRoutingState, options: EngineServiceOptions, databasePath: string): Promise<void> {
   const idleMs = options.idleSessionMs ?? IDLE_SESSION_MS;
   const now = options.now ?? Date.now;
   await closeIdleSessions(state, idleMs, now);
-  endAbandonedSessions(databasePath, idleMs, now);
+  if (someOwnerLockFreed(databasePath)) endAbandonedSessions(databasePath, idleMs, now);
 }
 
 /**

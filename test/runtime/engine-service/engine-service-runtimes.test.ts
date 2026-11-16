@@ -768,6 +768,24 @@ describe("the engine service's idle close", () => {
     expect([ended("a"), ended("b")].filter(at => at !== null)).toHaveLength(1);
   });
 
+  // At base an idle minute opened no database. The sweep that ends what a dead daemon left open then opened a writer
+  // every minute, which waits for another process's write lock (`busy_timeout`, 5 s) on the daemon's main thread:
+  // health, the dashboard and every hook waited with it.
+  it("opens no database in a minute's sweep while no daemon has died, so another process's write lock holds nothing up", async () => {
+    const { service, start, databasePath } = await idleService();
+    await start("a");
+    const writer = new Database(databasePath);
+    writer.exec("BEGIN IMMEDIATE");
+    try {
+      const swept = performance.now();
+      await service.closeIdleSessions();
+      expect(performance.now() - swept).toBeLessThan(1_000);
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+    }
+  }, 20_000);
+
   // At base the quiet session's next walk found another writer's change to a file the session had edited and recorded
   // it in Log; after the idle close the reopened session's first walk took it as its baseline and recorded nothing.
   it("records another writer's change to a file the session edited, made while the session was quiet, as its open walk did", async () => {
