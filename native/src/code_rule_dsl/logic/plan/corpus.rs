@@ -4932,11 +4932,26 @@ fn run_observed(
     }
     // The partial hits' entries (`Unbuilt::partial`), by document key, until their chunk takes them.
     let partials: parking_lot::Mutex<HashMap<i64, memo::Entry>> = parking_lot::Mutex::new(HashMap::new());
+    // Each stored source's digest, as its built document's text gives it: the memo's segments are named by it, and in
+    // the waves the store is not read (decision 0104).
+    let stored_digests: parking_lot::Mutex<HashMap<crate::content_store::SourceId, [u8; 32]>> = parking_lot::Mutex::new(HashMap::new());
     let partial_hits = std::sync::atomic::AtomicUsize::new(0);
     // The file-local program pruned to each set of relations partial hits miss (`cone_of`), made once a run.
     let cones: parking_lot::Mutex<HashMap<BTreeSet<String>, Arc<lower::Lowered>>> = parking_lot::Mutex::new(HashMap::new());
     let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, unbuilt: Unbuilt| -> Result<(Option<memo::Content>, syntax::Document)> {
         let Unbuilt { text: source, content: source_id, digest, tape, partial } = unbuilt;
+        // A stored source's digest, from its text where it was not hashed to look it up (a file the stat index knew):
+        // handed to the tape's build, which hashed it there, and kept for the memo's write.
+        let digest = match (digest, source_id) {
+            (None, Some(memo::Content::Stored(_))) => {
+                use sha2::{Digest as _, Sha256};
+                Some(Sha256::digest(source.as_bytes()).into())
+            }
+            (d, _) => d,
+        };
+        if let (Some(memo::Content::Stored(id)), Some(at)) = (source_id, digest) {
+            stored_digests.lock().insert(id, at);
+        }
         if let Some(entry) = partial {
             partials.lock().insert(*d, entry);
             partial_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -6398,7 +6413,11 @@ fn run_observed(
                 {
                     memo::set_last_program(store, &memo_program, None);
                 }
-                memo.remember_all_but(&memo_plan, publish).map_err(|e| Error::Plan(format!("memo publication of {n} documents: {e}")))?;
+                let known: HashMap<crate::content_store::SourceId, [u8; 32]> = {
+                    let all = stored_digests.lock();
+                    publish.iter().filter_map(|(c, ..)| c.stored()).filter_map(|id| all.get(&id).map(|d| (id, *d))).collect()
+                };
+                memo.remember_all_but(&memo_plan, publish, &known).map_err(|e| Error::Plan(format!("memo publication of {n} documents: {e}")))?;
             }
         } else if memoised {
             memo_unattributed += 1;
@@ -10750,7 +10769,8 @@ pub mod tests {
         let record = super::observe(|o| o.run_record(&format!("git-files:{}", real.display())));
         // As `git_files` writes it: the overlays' count (eight bytes), then the files' list.
         let mut empty = 0u64.to_le_bytes().to_vec();
-        empty.extend(super::reuse::encode_lists(&[&[][..] as &[String]]));
+        let none: &[String] = &[];
+        empty.extend(super::reuse::encode_lists(&[none]));
         assert_eq!(record.map(|(_, files)| files), Some(empty), "the empty answer is kept, with no overlay and no file");
         let _run = super::ObservedBatch::begin();
         assert_eq!(super::git_files(&root), None, "and answered from the record");

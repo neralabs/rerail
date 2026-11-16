@@ -752,13 +752,17 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
 pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
-    remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+    remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect(), &HashMap::new())
 }
 
 /// `remember_all`, each entry with whether its rows stand as stored (decision 0225 §2): its relations were derived
 /// again and found as they were, so only the identities they now hold are written, kept over the stored entry
 /// (decision 0280).
-pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
+///
+/// `known`: the digests of stored sources the run holds (each built document's, from its text): a run in its waves
+/// reads no SQL (decision 0104), and a stored source's digest names its entry's part and segment. A stored source
+/// not in it is read from the store.
+pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>, known: &HashMap<SourceId, [u8; 32]>) -> StoreResult<()> {
     let standing: HashSet<(String, i64)> = entries.iter().filter(|e| e.4).map(|e| (e.1.clone(), e.2)).collect();
     let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
     off();
@@ -797,14 +801,14 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         let top: Vec<String> = by.iter().take(12).map(|(r, (n, b))| format!("{r}: {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", estimate as f64 / 2097152.0, held.len(), top.join("; "));
     }
-    // Each content's digest, which names its entry's part: a stored source's read, in one statement. A source
-    // collected since the run found it leaves the entry unwritten: the next run misses it.
-    let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
-    let mut stored = store.source_digests(&ids)?.into_iter();
+    // Each content's digest, which names its entry's part: the run's (`known`), else a stored source's read, in one
+    // statement. A source collected since the run found it leaves the entry unwritten: the next run misses it.
+    let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) if !known.contains_key(id) => Some(*id), _ => None }).collect();
+    let mut stored = if ids.is_empty() { Vec::new() } else { store.source_digests(&ids)? }.into_iter();
     let digests: Vec<Option<[u8; 32]>> = held
         .iter()
         .map(|(c, _, _)| match c {
-            Content::Stored(_) => stored.next().flatten(),
+            Content::Stored(id) => known.get(id).copied().or_else(|| stored.next().flatten()),
             Content::Unstored(d) => Some(*d),
             Content::Held(_) => None,
         })
@@ -1048,14 +1052,14 @@ impl Memo<'_> {
 
     /// `remember` of many documents, stored ones written as one wave (`remember_all`), behind the run.
     pub(super) fn remember_all(self, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
-        self.remember_all_but(program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+        self.remember_all_but(program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect(), &HashMap::new())
     }
 
     /// `remember_all`, each with whether its stored rows frame stands (`remember_all_but`).
-    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
+    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>, known: &HashMap<SourceId, [u8; 32]>) -> StoreResult<()> {
         let entries: Vec<(Content, String, i64, Entry, bool)> = entries;
         if let Memo::Stored(store) = self {
-            return remember_all_but(store, program, entries);
+            return remember_all_but(store, program, entries, known);
         }
         let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
         match self {
