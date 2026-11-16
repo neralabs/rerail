@@ -743,6 +743,23 @@ pass.
   is priced at a quarter to a tenth of its CPU. The next step is a per-relation price for a view's row, measured
   per view, or else a cheaper read of those views (the row read above).
 - **Not placement's**: the recursive strata's misses are join statistics, now Q41.
+- **Two view reads made cheaper** (2026-11-16, a sample of the whole run, 1 ms): of the join engine's time, 23% was
+  `View::find`, a probe into a view. Two shapes in it were wasted:
+  - A field probed by its parent with its field a constant (`field($a, #f65565, $t)`, `$a` bound): the parent's
+    children were listed into a `Vec` (`Facts::children`), each child's row found again and its field read back
+    through the row's document search, to be filtered. Now the field view answers parent and field together
+    (`Source::lookup_eq`): the children are walked off the tape and each one's field compared there. `lookup_docs`
+    went from 9% of the join time to 1%.
+  - A materialized relation (`line`, `col`, `text`, the extra relations) sorted all its rows on its first lookup of
+    a column, once a chunk, and the planner's `estimated_matches` asked for that sort too. Their rows are pushed in
+    node order, so a column pushed in order is now its own index (`Relation::ordered`): searched in the cells, its
+    distinct values counted as it is pushed. The sorts are gone from the sample.
+  - Measured on the same run (load 28 against 55 before, so CPU is only a guide; instructions 82.7 G and 83.6 G,
+    within run-to-run noise): `ann_root` 174 to 112 ms, `fl274_P` 67 to 45 ms, `rdefn` 95 to 76 ms, `def_name`
+    58 to 48 ms.
+- **Still priced under their CPU**: `attr_of` (113 ms against 20 ms priced), `rdefn` (76 against 15), `ann_root` (112
+  against 57), and `fzk287` (56 against 11, unchanged by either fix: 790 rows over 18 runs, a cost per run that no
+  span names yet). A per-view price needs each step's CPU, which the profile does not split by step.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 

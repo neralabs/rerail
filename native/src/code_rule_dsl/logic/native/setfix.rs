@@ -3057,6 +3057,9 @@ impl View {
     }
     /// The source's rows whose view column `c` is `v` and which pass the filters, through the source's own index.
     fn find(&self, c: usize, v: i64) -> Vec<u32> {
+        if !self.eqs.is_empty() && let Some(rows) = self.src.lookup_eq(self.cols[c], v, &self.eqs) {
+            return rows.into_iter().map(|r| r as u32).collect();
+        }
         let rows = self.src.lookup(self.cols[c], &[v]).unwrap_or_default();
         rows.into_iter().filter(|&r| self.eqs.iter().all(|&(c, v)| self.src.value(r, c) == v)).map(|r| r as u32).collect()
     }
