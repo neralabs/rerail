@@ -164,6 +164,6 @@ so their files must go to tree-sitter. That stays open (below).
 
 - **The 6 C++ error texts that are read**: refuse them, or match tree-sitter's ties.
 - **The 6 C++ GLR ties** above.
-- **Cost on a quiet host** (`scripts/dev/quiet-run`), as 0196 reports it.
+- **Cost on a quiet host** (`scripts/dev/quiet-run`), as 0196 reports it: `cpp_parse_costs` (ignored, `RERAIL_PY_FILES`, `RERAIL_C_DIALECT`) measures it.
 - **C's and C++'s capabilities** are `not-supported-yet`: rules cannot yet ask C- or C++-specific
   questions.
