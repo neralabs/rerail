@@ -1,13 +1,14 @@
 //! macOS: one FSEvents stream per watched root, delivered on one serial dispatch queue.
 //!
 //! A stream watches the root's whole tree (`folders` is not used) with file-level events, no
-//! defer and `WatchRoot`, so a rename, move or delete of the root or a folder above it arrives (as
-//! `RootChanged`, or as an event of the root's own path) and ends the watch once the folder it
-//! started on is no longer at the root's path. FSEvents' own drops (`MustScanSubDirs`,
+//! defer, no latency and `WatchRoot`, so a rename, move or delete of the root or a folder above it
+//! arrives (as `RootChanged`, or as an event of the root's own path) and ends the watch once the
+//! folder it started on is no longer at the root's path. FSEvents' own drops (`MustScanSubDirs`,
 //! `UserDropped`, `KernelDropped`) and mounts under the root make the root `lost`. FSEvents
 //! reports real paths; a root is a physical path, so each event's path is the root's followed by
-//! the entry's, its letters' case aside (the volume may not tell case). A root that is not there
-//! is not watched.
+//! the entry's, its letters' case and composition aside (the volume may tell neither). An event
+//! whose path does not read as under the root (a root spelled through a symlink or firmlink)
+//! makes it `lost`. A root that is not there is not watched.
 //!
 //! The streams run on the queue `rerail-tree-watch`, which libdispatch serves from its own
 //! threads: no thread here is the engine's to join. Every stream is stopped, invalidated and
@@ -86,6 +87,7 @@ unsafe extern "C" {
         count: CFIndex,
         callbacks: *const CFArrayCallBacks,
     ) -> CFTypeRef;
+    fn CFStringCompare(one: CFTypeRef, other: CFTypeRef, options: usize) -> CFIndex;
     fn CFRelease(object: CFTypeRef);
 }
 
@@ -102,7 +104,12 @@ unsafe extern "C" {
 
 const UTF8: u32 = 0x0800_0100;
 const SINCE_NOW: u64 = u64::MAX;
-const LATENCY_SECONDS: f64 = 0.05;
+/// No wait before delivering: with `NoDefer` the first change after a quiet spell comes at once,
+/// and what FSEvents holds by then comes together.
+const LATENCY_SECONDS: f64 = 0.0;
+
+const COMPARE_CASE_INSENSITIVE: usize = 0x01;
+const COMPARE_NONLITERAL: usize = 0x10;
 
 const CREATE_NO_DEFER: u32 = 0x02;
 const CREATE_WATCH_ROOT: u32 = 0x04;
@@ -192,8 +199,11 @@ fn report(context: &Context, path: &str, flags: u32) {
         // The root's own rename or removal comes as its own event; its other events are told by
         // the entries that changed.
         Some("") if flags & NAMED != 0 => root_moved(context),
-        Some("") | None => {}
+        Some("") => {}
         Some(relative) => entry(context, relative, flags),
+        // FSEvents reports only paths under the root: one that does not read as under it spells
+        // the root another way (through a symlink or firmlink), so what changed cannot be told.
+        None => context.notices.lost(&context.root),
     }
 }
 
@@ -211,8 +221,8 @@ fn entry(context: &Context, relative: &str, flags: u32) {
 /// the stream started on is still at the root's path. A stream hears of such a change made just
 /// before it started (FSEvents delivers it late: a root watched again after its rename, or just
 /// created), and FSEvents keeps a path's earlier flags on its later events, so these come while
-/// nothing about the root changed. The check runs when the event arrives, a latency after the
-/// change: only a root renamed away and back within it goes unheard.
+/// nothing about the root changed. The check runs when the event arrives: only a root renamed
+/// away and back before then goes unheard.
 fn root_moved(context: &Context) {
     let same = context.identity.is_some() && identity(&context.root) == context.identity;
     if !same {
@@ -220,19 +230,49 @@ fn root_moved(context: &Context) {
     }
 }
 
-/// `path` below `root` (`""` for the root itself), comparing the root's letters without case;
-/// none outside it.
+/// `path` below `root` (`""` for the root itself), comparing the root's letters without case and
+/// however its accented letters are composed; none outside it.
 fn relative_to<'path>(root: &str, path: &'path str) -> Option<&'path str> {
     let root = root.trim_end_matches('/');
-    let head = path.as_bytes().get(..root.len())?;
-    if !head.eq_ignore_ascii_case(root.as_bytes()) {
-        return None;
-    }
-    let rest = path.get(root.len()..)?;
+    let head = path.as_bytes().get(..root.len());
+    let length = if head.is_some_and(|head| head.eq_ignore_ascii_case(root.as_bytes())) {
+        root.len()
+    } else {
+        // Another composition or case of the root's letters takes other bytes: compare as many of
+        // the path's components as the root has.
+        let components = root.matches('/').count();
+        let length = path
+            .match_indices('/')
+            .nth(components)
+            .map_or(path.len(), |(at, _)| at);
+        if !same_spelling(root, &path[..length]) {
+            return None;
+        }
+        length
+    };
+    let rest = path.get(length..)?;
     if rest.is_empty() {
         return Some("");
     }
     rest.strip_prefix('/')
+}
+
+/// Whether `one` and `other` spell the same path, their letters' case and composition (NFC as
+/// typed, NFD as HFS+ stored it) aside.
+fn same_spelling(one: &str, other: &str) -> bool {
+    let (one, other) = (cf_string(one), cf_string(other));
+    let same = match (one, other) {
+        // SAFETY: two strings created above, released below.
+        (Some(one), Some(other)) => unsafe {
+            CFStringCompare(one, other, COMPARE_CASE_INSENSITIVE | COMPARE_NONLITERAL) == 0
+        },
+        _ => false,
+    };
+    for string in [one, other].into_iter().flatten() {
+        // SAFETY: a string created above, released once.
+        unsafe { CFRelease(string) };
+    }
+    same
 }
 
 /// A started stream, released by [`stop_stream`] on the queue.
@@ -274,15 +314,20 @@ extern "C" fn stop_stream(stream: *mut c_void) {
 
 extern "C" fn nothing(_: *mut c_void) {}
 
+/// A `CFString` of `text`, or none; the caller releases it.
+fn cf_string(text: &str) -> Option<CFTypeRef> {
+    let length = CFIndex::try_from(text.len()).ok()?;
+    // SAFETY: `text`'s bytes for its length.
+    let string =
+        unsafe { CFStringCreateWithBytes(std::ptr::null(), text.as_ptr(), length, UTF8, 0) };
+    (!string.is_null()).then_some(string)
+}
+
 /// A one-path `CFArray` of `root`, or none.
 fn path_array(root: &str) -> Option<CFTypeRef> {
-    let length = CFIndex::try_from(root.len()).ok()?;
-    // SAFETY: `root`'s bytes for its length; the array retains the string, which is released here.
+    let path = cf_string(root)?;
+    // SAFETY: the array retains the string, which is released here.
     unsafe {
-        let path = CFStringCreateWithBytes(std::ptr::null(), root.as_ptr(), length, UTF8, 0);
-        if path.is_null() {
-            return None;
-        }
         let array = CFArrayCreate(std::ptr::null(), &path, 1, &raw const kCFTypeArrayCallBacks);
         CFRelease(path);
         (!array.is_null()).then_some(array)
@@ -379,8 +424,9 @@ mod tests {
         Context, DROPPED, ITEM_CREATED, ITEM_MODIFIED, ITEM_RENAMED, MUST_SCAN_SUB_DIRS,
         ROOT_CHANGED, identity, relative_to, report,
     };
+    use crate::tree_watch::TreeWatcher;
     use crate::tree_watch::notices::Notices;
-    use crate::tree_watch::tests::Scratch;
+    use crate::tree_watch::tests::{Scratch, wait_for_watcher};
     use std::sync::Arc;
 
     #[test]
@@ -397,6 +443,27 @@ mod tests {
         assert_eq!(relative_to("/Users/a/Repo", "/Users/a/Repo"), Some(""));
         assert_eq!(relative_to("/Users/a/Repo", "/Users/a/Repository/x"), None);
         assert_eq!(relative_to("/Users/a/Repo", "/Users/a"), None);
+        assert_eq!(
+            relative_to("/Users/a/Repo", "/private/Users/a/Repo/x"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_event_path_is_relative_to_the_root_whatever_the_composition_of_its_letters() {
+        // The root as typed (NFC), the path as HFS+ stored it (NFD), and a non-ASCII case.
+        assert_eq!(
+            relative_to("/Users/a/Caf\u{e9}", "/Users/a/Cafe\u{301}/src/x.ts"),
+            Some("src/x.ts")
+        );
+        assert_eq!(
+            relative_to("/Users/a/\u{c9}t\u{e9}", "/users/a/\u{e9}te\u{301}"),
+            Some("")
+        );
+        assert_eq!(
+            relative_to("/Users/a/Caf\u{e9}", "/Users/a/Cafe/src/x.ts"),
+            None
+        );
     }
 
     #[test]
@@ -411,12 +478,16 @@ mod tests {
         report(&context, "/r/a", ITEM_CREATED | ITEM_MODIFIED);
         report(&context, "/r/b", ITEM_RENAMED);
         report(&context, "/r", ITEM_MODIFIED);
-        report(&context, "/elsewhere/c", ITEM_MODIFIED);
         let taken = notices.take();
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].renamed, vec!["a", "b"]);
         assert_eq!(taken[0].changed, vec!["a"]);
         assert!(!taken[0].lost && !taken[0].ended);
+
+        // A path that does not read as under the root: what changed there cannot be told.
+        report(&context, "/elsewhere/c", ITEM_MODIFIED);
+        let taken = notices.take();
+        assert!(taken[0].lost && !taken[0].ended && taken[0].changed.is_empty());
 
         report(&context, "/r", MUST_SCAN_SUB_DIRS);
         let taken = notices.take();
@@ -450,5 +521,24 @@ mod tests {
         report(&context, &root, ITEM_RENAMED);
         assert!(notices.take()[0].ended);
         std::fs::rename(&moved, scratch.path("")).expect("rename back");
+    }
+
+    #[test]
+    fn a_root_spelled_through_a_symlink_is_lost_when_something_under_it_changes() {
+        let scratch = Scratch::new("symlinked");
+        scratch.write("real/checkout/src/a.txt", "a");
+        std::os::unix::fs::symlink(scratch.path("real"), scratch.path("link")).expect("symlink");
+        // FSEvents reports the real path, `…/real/checkout/…`, of a root watched as `…/link/checkout`.
+        let root = scratch.path("link/checkout").to_string_lossy().into_owned();
+        let mut watcher = TreeWatcher::new();
+        assert!(
+            watcher
+                .watch(root.clone(), vec![String::new()])
+                .expect("watch")
+        );
+        scratch.write("real/checkout/src/a.txt", "written");
+        let notice = wait_for_watcher(&mut watcher, &root, |notice| notice.lost);
+        assert!(!notice.ended);
+        watcher.close().expect("close");
     }
 }
