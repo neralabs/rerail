@@ -220,6 +220,8 @@ impl ContentStore {
                 Err(error) => return Err(StoreError::Io(error)),
             }
         }
+        // The segments beside it (decision 0295): tapes and sources, frames, memo entries, uncompressed.
+        let bytes = bytes.saturating_add(super::segments::segment_bytes(&self.database_path));
         Ok(StoreCapacity {
             bytes,
             state: capacity_state(bytes),

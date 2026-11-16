@@ -75,11 +75,11 @@ impl Plan {
 }
 
 fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
-    let header = crate::content_store::decompress_head(&frames.tape_frame, resident::HEADER_LEN)
+    let header = frames.tape_frame.head(resident::HEADER_LEN)
         .map_err(|error| invalid(format!("tape frame header: {error}")))?;
     let (nodes, codes) = resident::header_counts(&header).map_err(invalid)?;
     let mut lines = 1usize;
-    crate::content_store::decompress_chunks(&frames.source_frame, |chunk| {
+    frames.source_frame.chunks(|chunk| {
         lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
     })
     .map_err(|error| invalid(format!("source frame: {error}")))?;
@@ -175,8 +175,8 @@ fn place(
     let source_sha256: [u8; 32] = Sha256::digest(match parts {
         // Decompressed straight into the slab, to the frames' raw lengths exactly.
         Parts::Frames(frames) => {
-            crate::content_store::decompress_into(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
-            crate::content_store::decompress_into(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))?;
+            frames.tape_frame.copy_into(tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
+            frames.source_frame.copy_into(source).map_err(|error| invalid(format!("source frame: {error}")))?;
             &*source
         }
         Parts::Bytes(image, text) => {
