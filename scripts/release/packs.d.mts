@@ -1,4 +1,4 @@
-// Types of packs.mjs, for packs-pack.ts.
+// Types of packs.mjs, for packs-pack.ts and conformance/pack-validation.ts.
 export interface ReleasePack {
   id: string;
   name: string;
@@ -79,3 +79,10 @@ export function promotePacks(
 export function syncPackLockfile<Lock extends { packages: Record<string, { version?: string }> }>(lock: Lock, packs: readonly ReleasePack[]): Lock;
 export function gateFailures(report: GateReport, ids: readonly string[], checkCount: number): string[];
 export function packIds(args: readonly string[], packs?: readonly ReleasePack[]): string[];
+export const HELD_OFF_SINCE: string;
+export const LANGUAGE_SINCE: ReadonlyMap<string, string>;
+export function heldOffRules(packJson: unknown): string[];
+export function shippedLanguages(directory: string): string[];
+export function coreFloor(heldOff: readonly string[], languages: readonly string[]): string | undefined;
+export function admitsRefusingCore(range: string, floor: string | undefined, coreVersion: string): boolean;
+export function raisedCoreRange(floor: string): string;

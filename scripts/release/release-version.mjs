@@ -11,6 +11,10 @@
 //     today: the lead under the unreleased heading and the entries pending in .changelog/ by change type, whose files it
 //     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
 //     left alone.
+//   - Core ranges: a pack this run releases that an older core cannot load (packs.mjs: a rule held off, a rule in a
+//     language added since) has its core range raised to leave those cores out, in its package.json and in
+//     package-lock.json, once core is at the release that first loads it. The description lists each; a pack that needs
+//     it and is not released here is named in a warning, since nothing publishes its package.json.
 // The description ends with the checklist whoever merges it ticks first (BEFORE_MERGING; docs/release.md, "Before
 // merging"). It is written unticked each time, so a push to main clears it.
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags and the
@@ -23,7 +27,7 @@ import { join, posix } from "node:path";
 import { changelogEntryTypeRefusal, changelogLead, changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
-import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
+import { admitsRefusingCore, changesetNotes, changesetTypeRefusal, coreFloor, heldOffRules, listPacks, raisedCoreRange, readChangesets, ROOT, shippedLanguages } from "./packs.mjs";
 
 /**
  * The most of the description the changelog sections quoted in it may take: a pull request description holds 65,536
@@ -167,6 +171,48 @@ function versionCore() {
 
 const core = versionCore();
 
+/**
+ * Raises the core range of each released pack an older core cannot load, now that core is at the release that first
+ * loads it (packs.mjs), in its package.json and package-lock.json. Returns `{ raised, waiting }`, each
+ * `{ name, from, to }`: `waiting` are packs that need it and are not released by this run, left as they are.
+ */
+function raiseCoreRanges() {
+  const coreVersion = JSON.parse(readText("package.json")).version;
+  const due = listPacks()
+    .filter((pack) => !pack.private)
+    .flatMap((pack) => {
+      const directory = `packs/${pack.id}`;
+      const range = JSON.parse(readText(`${directory}/package.json`)).peerDependencies?.[CORE_NAME];
+      const packJson = existsSync(join(ROOT, directory, "pack.json")) ? JSON.parse(readText(`${directory}/pack.json`)) : {};
+      const floor = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)));
+      return range !== undefined && admitsRefusingCore(range, floor, coreVersion) ? [{ id: pack.id, name: pack.name, from: range, to: raisedCoreRange(floor) }] : [];
+    });
+  const released = new Set(packs.map((pack) => pack.id));
+  const raised = due.filter(({ id }) => released.has(id));
+  for (const { id, name, from, to } of raised) {
+    const path = `packs/${id}/package.json`;
+    // The one line, so the rest of the file stays byte for byte: peerDependenciesMeta names core with an object.
+    const line = `${JSON.stringify(CORE_NAME)}: ${JSON.stringify(from)}`;
+    const text = readText(path);
+    if (text.split(line).length !== 2) throw new Error(`${path}: expected its core range once, as ${line}`);
+    writeFileSync(join(ROOT, path), text.replace(line, `${JSON.stringify(CORE_NAME)}: ${JSON.stringify(to)}`));
+    console.log(`${name}: core range ${from} -> ${to}`);
+  }
+  // versionCore may have rewritten the lockfile, so it is read here.
+  if (raised.length > 0 && existsSync(join(ROOT, "package-lock.json"))) {
+    const lock = JSON.parse(readText("package-lock.json"));
+    for (const { id, to } of raised) {
+      const entry = lock.packages?.[`packs/${id}`];
+      if (entry === undefined) throw new Error(`package-lock.json has no packs/${id}; run npm install`);
+      entry.peerDependencies = { ...entry.peerDependencies, [CORE_NAME]: to };
+    }
+    writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(lock, null, 2)}\n`);
+  }
+  return { raised, waiting: due.filter(({ id }) => !released.has(id)) };
+}
+
+const coreRanges = raiseCoreRanges();
+
 /** Each released package's notes for the description: `{ title, path, section }`, core's first. */
 const released = [
   ...(core === null ? [] : [{ title: `${CORE_NAME} ${core.version}`, path: "CHANGELOG.md", version: core.version }]),
@@ -195,6 +241,10 @@ const lines = [];
 if (coreRefusal !== null) {
   lines.push("> [!WARNING]", `> Core is not released by this pull request: ${coreRefusal}.`, "");
 }
+if (coreRanges.waiting.length > 0) {
+  const named = coreRanges.waiting.map(({ name, from, to }) => `\`${name}\` (\`${from}\`, needs \`${to}\`)`).join(", ");
+  lines.push("> [!WARNING]", `> Not released by this pull request, and an older Rerail cannot load it: ${named}. Pack validation fails until its core range is raised, and only a release publishes that: add a changeset for it on \`main\`.`, "");
+}
 if (rows.length === 0) {
   lines.push("Nothing to release.");
 } else {
@@ -214,6 +264,14 @@ if (rows.length === 0) {
     } else if (changelogLead(changelogSection(readText("CHANGELOG.md"), core.version)) === "") {
       lines.push("", "> [!WARNING]", `> ${core.version}'s notes open with an entry and have no lead: CI fails this pull request until a paragraph saying what the release gives the people who upgrade is written at the top of \`## Unreleased\` on \`main\` (docs/release.md, "Release notes"). This pull request picks it up.`);
     }
+  }
+  if (coreRanges.raised.length > 0) {
+    lines.push(
+      "",
+      "Core range raised, because an older Rerail cannot load what the pack now ships and would leave the whole pack out:",
+      "",
+      ...coreRanges.raised.map(({ name, from, to }) => `- \`${name}\`: \`${from}\` → \`${to}\``),
+    );
   }
   for (const note of released) lines.push("", ...notes(note));
   lines.push(

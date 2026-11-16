@@ -89,10 +89,10 @@ packs/<id>/
 ```
 
 - **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
-  reads in a later release (`LANGUAGE_SINCE` in `src/engine/catalog/rule-packs.ts`: Java, 0.1.5) leaves older cores out
-  from that release on, as for `heldOff` below: they refuse the document and would drop the whole pack, so once core is
-  at that release the pack validation fails a range that admits them, and the Release pull request that bumps core
-  raises it.
+  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/packs.mjs`: Java, 0.1.5) leaves older cores out
+  from that release on, as for `heldOff` below: they refuse the document and would drop the whole pack. Once core is at
+  that release the pack validation fails a range that admits them, and the Release pull request raises the range of
+  each such pack it releases ([release](release.md#release-pull-request)).
 - **`files`**: the pack and its licence records. Validation material never reaches npm.
 - **`repository`**: this repository and the pack's directory. `publishConfig.access` is `public`, like core.
 - **`private`**: `true` makes a pack that is never published. It needs no `publishConfig`; `false` is refused (a
@@ -200,7 +200,7 @@ packs/<id>/
     linter's defaults, a preset, a prefix, a group or the rule's own name; it notes what would have, with the reason
     ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). A person can still turn the rule on. Cores
     before 0.1.5 refuse the field, so once core is at 0.1.5 the pack validation fails a pack using it whose core range
-    admits an older core: the Release pull request that bumps core raises the range to `>=0.1.5-0`.
+    admits an older core, and the Release pull request raises the range of each such pack it releases to `>=0.1.5-0`.
   - `examples` is `{ "caught": { "path"?, "text" }, "passes": { … } }`. A code rule's examples need a `path` inside
     the rule's scope, which decides the file's language; a conversation rule's have none. The complexity pack has one
     pair per rule.

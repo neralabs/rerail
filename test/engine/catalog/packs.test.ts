@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
 import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
-import { HELD_OFF_SINCE, LANGUAGE_SINCE } from "../../../src/engine/index.js";
+import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../../../scripts/release/packs.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -889,6 +889,28 @@ describe("languageRangeFailure", () => {
     expect(languageRangeFailure(">=0.1.0-0", ["java", "python"], since)).toBe(
       `package.json: the core range >=0.1.0-0 admits Rerail older than ${since}, which reads no java rule; raise it to >=${since}-0`,
     );
+  });
+});
+
+// The Release pull request raises a pack's core range with the same rule check 5 judges it by (scripts/release/packs.mjs): the
+// range it writes must pass both checks, for every pack an older core refuses.
+describe("the core range the release writes", () => {
+  const floors = packs.flatMap(id => {
+    const directory = join(PACKS, id);
+    const heldOff = heldOffRules(JSON.parse(readFileSync(join(directory, "pack.json"), "utf8")));
+    const languages = shippedLanguages(directory);
+    const floor = coreFloor(heldOff, languages);
+    return floor === undefined ? [] : [{ id, heldOff, languages, floor }];
+  });
+
+  it("is due for the packs holding a rule off or shipping a rule in a language added since", () => {
+    expect(floors.map(({ id }) => id)).toEqual(["complexity", "python"]);
+  });
+
+  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, floor }) => {
+    expect(heldOffRangeFailure(">=0.1.0-0", heldOff, floor) ?? languageRangeFailure(">=0.1.0-0", languages, floor)).toBeDefined();
+    expect(heldOffRangeFailure(raisedCoreRange(floor), heldOff, floor)).toBeUndefined();
+    expect(languageRangeFailure(raisedCoreRange(floor), languages, floor)).toBeUndefined();
   });
 });
 
