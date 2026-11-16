@@ -51,113 +51,113 @@ perf102_values_only(n) :- perf102_demand_values_only(n),
 .violation PERF102(at: node, detail: symbol) "The loop never uses the {detail}. Leave it if this object is not a dict."
     suppress noqa "PERF102"
 PERF102(n, "value: iterate `.keys()` and bind only the key") :- kind(n, "attribute"),
-    field(n, "attribute", c1), glob("items", c1), within_stop(n, p2, perf102_stop_14),
-    field(_, "function", n), kind(p2, "call"), field(p2, "arguments", c3),
-    kind(c3, "argument_list"), count : { child(c3, c4, _), perf102_positional(c4) } = 0,
-    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
-    field(p5, "left", c6), perf102_keys_only(c6).
+    perf102_tok_has_2(n), perf102_up_1(n, p9), field(p9, "function", f10), (f10 = n ; within(n, f10)),
+    field(p9, "arguments", c11), kind(c11, "argument_list"),
+    count : { child(c11, c12, _), perf102_positional(c12) } = 0, within_stop(p9, p13, perf102_stop_14),
+    field(p13, "right", f14), (f14 = p9 ; within(p9, f14)), kind(p13, "for_statement"),
+    field(p13, "left", c15), perf102_keys_only(c15).
 PERF102(n, "key: iterate `.values()` and bind only the value") :- kind(n, "attribute"),
-    field(n, "attribute", c1), glob("items", c1), within_stop(n, p2, perf102_stop_14),
-    field(_, "function", n), kind(p2, "call"), field(p2, "arguments", c3),
-    kind(c3, "argument_list"), count : { child(c3, c4, _), perf102_positional(c4) } = 0,
-    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
-    field(p5, "left", c6), perf102_values_only(c6).
+    perf102_tok_has_2(n), perf102_up_1(n, p9), field(p9, "function", f10), (f10 = n ; within(n, f10)),
+    field(p9, "arguments", c11), kind(c11, "argument_list"),
+    count : { child(c11, c12, _), perf102_positional(c12) } = 0, within_stop(p9, p13, perf102_stop_14),
+    field(p13, "right", f14), (f14 = p9 ; within(p9, f14)), kind(p13, "for_statement"),
+    field(p13, "left", c15), perf102_values_only(c15).
 
 .decl perf102_alt_6_u0(n: node, n_mv: loc)
-perf102_alt_6_u0(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_alt_6_u0(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    !site_used(b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+    within_stop(c3, p2, perf102_stop_4), perf102_alt_5(c3, N).
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 perf102_alt_6_u0(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
-    count : { child(n, c4, _), perf102_elt(c4) } = 0, unset(N).
+    count : { child(n, c7, _), perf102_elt(c7) } = 0, unset(N).
 
 .decl perf102_alt_6_u1(n: node, n_mv: loc)
-perf102_alt_6_u1(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_alt_6_u1(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    !site_used(b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+    within_stop(c3, p2, perf102_stop_4), perf102_alt_5(c3, N).
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 perf102_alt_6_u1(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
-    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u0(c4, _) } = 0, unset(N).
+    count : { child(n, c7, _), perf102_elt(c7), !perf102_unused_u0(c7, _) } = 0, unset(N).
 
 .decl perf102_alt_6_u2(n: node, n_mv: loc)
-perf102_alt_6_u2(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_alt_6_u2(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    !site_used(b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+    within_stop(c3, p2, perf102_stop_4), perf102_alt_5(c3, N).
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 perf102_alt_6_u2(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
-    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u1(c4, _) } = 0, unset(N).
+    count : { child(n, c7, _), perf102_elt(c7), !perf102_unused_u1(c7, _) } = 0, unset(N).
 
 .decl perf102_alt_6_u3(n: node, n_mv: loc)
-perf102_alt_6_u3(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_alt_6_u3(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    !site_used(b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+    within_stop(c3, p2, perf102_stop_4), perf102_alt_5(c3, N).
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 perf102_alt_6_u3(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
-    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u2(c4, _) } = 0, unset(N).
+    count : { child(n, c7, _), perf102_elt(c7), !perf102_unused_u2(c7, _) } = 0, unset(N).
 
 .decl perf102_alt_6_u4(n: node, n_mv: loc)
-perf102_alt_6_u4(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_alt_6_u4(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    !site_used(b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+    within_stop(c3, p2, perf102_stop_4), perf102_alt_5(c3, N).
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 perf102_alt_6_u4(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
-    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u3(c4, _) } = 0, unset(N).
+    count : { child(n, c7, _), perf102_elt(c7), !perf102_unused_u3(c7, _) } = 0, unset(N).
 
 .decl perf102_alt_6_u5(n: node, n_mv: loc)
-perf102_alt_6_u5(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_alt_6_u5(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    !site_used(b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+    within_stop(c3, p2, perf102_stop_4), perf102_alt_5(c3, N).
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 perf102_alt_6_u5(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
-    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u4(c4, _) } = 0, unset(N).
+    count : { child(n, c7, _), perf102_elt(c7), !perf102_unused_u4(c7, _) } = 0, unset(N).
 
 .decl perf102_alt_6_u6(n: node, n_mv: loc)
-perf102_alt_6_u6(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_alt_6_u6(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    !site_used(b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+    within_stop(c3, p2, perf102_stop_4), perf102_alt_5(c3, N).
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 perf102_alt_6_u6(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
-    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u5(c4, _) } = 0, unset(N).
+    count : { child(n, c7, _), perf102_elt(c7), !perf102_unused_u5(c7, _) } = 0, unset(N).
 
 .decl perf102_alt_6_u7(n: node, n_mv: loc)
-perf102_alt_6_u7(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_alt_6_u7(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    !site_used(b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+    within_stop(c3, p2, perf102_stop_4), perf102_alt_5(c3, N).
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 perf102_alt_6_u7(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
-    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u6(c4, _) } = 0, unset(N).
+    count : { child(n, c7, _), perf102_elt(c7), !perf102_unused_u6(c7, _) } = 0, unset(N).
 
 .decl perf102_unused_u1(n: node, n_mv: node)
 perf102_unused_u1(n, N) :- perf102_demand_unused(n), perf102_alt_6_u0(n, N).
@@ -191,25 +191,37 @@ perf102_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
 perf102_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
 
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^items$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf102_tok_has_2(n: node)
+.stored perf102_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf102_tok_has_2(n) :- field(n, "attribute", c1), glob("items", c1).
+perf102_tok_has_2(n) :- op(n, t2), match("items", t2).
+perf102_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g3).
+perf102_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g3).
+perf102_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g3).
+
 // demand_keys_only: the rows of keys_only its callers ask for (the metavariable columns they pass in)
 .decl perf102_demand_keys_only(n: node)
 perf102_demand_keys_only(c9) :- perf102_demand_keys_only(n), kind(n, "tuple_pattern"), child(n, c9, _),
     kind(c9, "tuple_pattern").
-perf102_demand_keys_only(c6) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("items", c1), within_stop(n, p2, perf102_stop_14), field(_, "function", n),
-    kind(p2, "call"), field(p2, "arguments", c3), kind(c3, "argument_list"),
-    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
-    field(p5, "left", c6).
+perf102_demand_keys_only(c15) :- kind(n, "attribute"), perf102_tok_has_2(n), perf102_up_1(n, p9),
+    field(p9, "function", f10), (f10 = n ; within(n, f10)),
+    field(p9, "arguments", c11), kind(c11, "argument_list"),
+    within_stop(p9, p13, perf102_stop_14), field(p13, "right", f14),
+    (f14 = p9 ; within(p9, f14)), kind(p13, "for_statement"), field(p13, "left", c15).
 
 // demand_values_only: the rows of values_only its callers ask for (the metavariable columns they pass in)
 .decl perf102_demand_values_only(n: node)
 perf102_demand_values_only(c9) :- perf102_demand_values_only(n), kind(n, "tuple_pattern"),
     child(n, c9, _), kind(c9, "tuple_pattern").
-perf102_demand_values_only(c6) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("items", c1), within_stop(n, p2, perf102_stop_14), field(_, "function", n),
-    kind(p2, "call"), field(p2, "arguments", c3), kind(c3, "argument_list"),
-    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
-    field(p5, "left", c6).
+perf102_demand_values_only(c15) :- kind(n, "attribute"), perf102_tok_has_2(n), perf102_up_1(n, p9),
+    field(p9, "function", f10), (f10 = n ; within(n, f10)),
+    field(p9, "arguments", c11), kind(c11, "argument_list"),
+    within_stop(p9, p13, perf102_stop_14), field(p13, "right", f14),
+    (f14 = p9 ; within(p9, f14)), kind(p13, "for_statement"), field(p13, "left", c15).
 
 // demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
 .decl perf102_demand_alt_6(n: node)
@@ -233,18 +245,22 @@ perf102_demand_unused(c16) :- perf102_demand_values_only(n),
     (kind(n, "pattern_list") ; kind(n, "tuple_pattern")), child(n, c12, _),
     child(p13, c12, _), perf102_counted(c12), child(n, c16, _), child(p17, c16, _),
     perf102_counted(c16), perf102_elt(c16).
-perf102_demand_unused(c4) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"), child(n, c4, _),
-    perf102_elt(c4).
+perf102_demand_unused(c7) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"), child(n, c7, _),
+    perf102_elt(c7).
 
 // demand_alt_5: the rows of alt_5 its callers ask for (the metavariable columns they pass in)
 .decl perf102_demand_alt_5(n: node, n_mv: loc)
-perf102_demand_alt_5(c2, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n,
-    within_stop(n, p1, perf102_stop_3),
-    ( kind(p1, "function_definition")
-    ; kind(p1, "class_definition")
-    ; kind(p1, "module")
+perf102_demand_alt_5(c3, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n,
+    bind_name(n, b1), within_stop(n, p2, perf102_stop_3),
+    ( kind(p2, "function_definition")
+    ; kind(p2, "class_definition")
+    ; kind(p2, "module")
     ),
-    within_stop(c2, p1, perf102_stop_4).
+    within_stop(c3, p2, perf102_stop_4).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl perf102_up_1(n: node, p: node)
+perf102_up_1(n, p) :- perf102_tok_has_2(n), within_stop(n, p, perf102_stop_14), kind(p, "call").
 
 // alt_6_u0_empty: level -1 of an unrolled recursion, empty
 .decl perf102_alt_6_u0_empty(n: node, n_mv: loc)
@@ -285,11 +301,11 @@ perf102_alt_2(n) :- node(_, n, _, _, _), glob("[(),]", n).
 //   N: metavariable of the calling rule, passed in (bound by the caller)
 .decl perf102_alt_5(n: node, n_mv: loc)
 perf102_alt_5(n, N) :- perf102_demand_alt_5(n, N), (kind(n, "identifier") ; kind(n, "dotted_name")),
-    text(n, t_n1), text(N, t_n1), site_latest(n), !site_used(n), @doc(n) = @doc(N).
+    text(n, t_n1), text(N, t_n1), bind_name(n, b1), site_latest(b1), !site_used(b1), @doc(n) = @doc(N).
 perf102_alt_5(n, N) :- perf102_demand_alt_5(n, N),
     (kind(n, "function_definition") ; kind(n, "class_definition")),
-    field(n, "name", c1), text(c1, t_n2), text(N, t_n2), site_latest(c1),
-    !site_used(c1), @doc(c1) = @doc(N).
+    field(n, "name", c2), text(c2, t_n2), text(N, t_n2), bind_name(c2, b3),
+    site_latest(b3), !site_used(b3), @doc(c2) = @doc(N).
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule

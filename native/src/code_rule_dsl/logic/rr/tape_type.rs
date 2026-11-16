@@ -84,7 +84,12 @@ impl Seen {
 /// The relations' declared column types, then each clause's variables: an error at the first variable that is a tape
 /// and something else.
 pub(super) fn check(statements: &[Statement]) -> Result<(), Error> {
-    let mut decls: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    check_in(statements, &BTreeMap::new())
+}
+
+/// `check`, with the column types `given` declares besides the statements' own (a module's includes').
+pub(super) fn check_in(statements: &[Statement], given: &BTreeMap<String, Vec<String>>) -> Result<(), Error> {
+    let mut decls: BTreeMap<String, Vec<String>> = given.clone();
     for (item, _) in statements {
         if let Item::Decl { name, cols, .. } = item {
             decls.insert(name.clone(), cols.iter().map(|(_, t)| t.clone()).collect());

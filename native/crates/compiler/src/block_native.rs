@@ -239,9 +239,20 @@ impl BlockNative {
         for (_, group) in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]) {
             todo.extend(group.carries.iter().flat_map(|&(c, x)| [c, x]));
         }
+        // A walk's call makes all its values: one kept keeps the others (the reader-made
+        // tokens leave some of a region's fills unread on the CPU, decision 0177).
+        let mut walk_of: Vec<Option<usize>> = vec![None; insts.len()];
+        for (w, walk) in self.walks.iter().enumerate() {
+            for v in walk.made() {
+                walk_of[usize::from(v)] = Some(w);
+            }
+        }
         while let Some(x) = todo.pop() {
             if !std::mem::replace(&mut keep[x], true) {
                 todo.extend(insts[x].operands());
+                if let Some(w) = walk_of[x] {
+                    todo.extend(self.walks[w].made().into_iter().map(usize::from));
+                }
                 // A kept group's carry reads its next, a round later.
                 for group in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]).map(|(_, g)| g) {
                     if let Some(&(_, next)) = group.carries.iter().find(|p| p.0 == x) {
@@ -261,9 +272,19 @@ impl BlockNative {
         }
         let m = |v: u16| number[usize::from(v)];
         let place_of = |x: usize| usize::from(number[x]);
+        // The walks whose values are kept (none read: the CPU reads no region, decision 0177),
+        // renumbered.
+        let kept_walks: Vec<usize> = (0..self.walks.len()).filter(|&w| keep[usize::from(self.walks[w].hidden)]).collect();
+        let walk_at = |w: u16| kept_walks.iter().position(|&k| k == usize::from(w)).expect("a kept walk's call") as u16;
         BlockNative {
             tables: self.tables.clone(),
-            insts: order.iter().map(|&x| Self::renamed(insts[x], m)).collect(),
+            insts: order
+                .iter()
+                .map(|&x| match Self::renamed(insts[x], m) {
+                    BlockInst::Walk { walk, out, args } => BlockInst::Walk { walk: walk_at(walk), out, args },
+                    i => i,
+                })
+                .collect(),
             outputs: outputs.iter().map(|&v| m(v)).collect(),
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
@@ -282,7 +303,7 @@ impl BlockNative {
                     crate::block::Group { members, carries: g.carries.iter().map(|&(c, x)| (place_of(c), place_of(x))).collect() }
                 })
                 .collect(),
-            walks: self.walks.iter().map(|w| Self::walk_renamed(w, m)).collect(),
+            walks: kept_walks.iter().map(|&w| Self::walk_renamed(&self.walks[w], m)).collect(),
         }
     }
 
@@ -303,7 +324,52 @@ impl BlockNative {
     /// The extracts' outputs the CPU's record pass makes, not a mask (`ruled_lasts`,
     /// `walked_starts`).
     pub fn records_made(&self) -> Vec<usize> {
-        self.ruled_lasts().into_iter().chain(self.walked_starts()).collect()
+        self.ruled_lasts().into_iter().chain(self.walked_starts()).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).collect()
+    }
+
+    /// The outputs the CPU's token loop makes from the file's bytes where it reads them
+    /// (`native_cpu_bytes`), and nothing else of the records reads from the rows: the CPU's
+    /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
+    pub fn read_at_tokens(&self) -> Vec<usize> {
+        use crate::records::EndRule;
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+            return Vec::new();
+        };
+        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
+        let mut read: Vec<u16> = Vec::new();
+        read.extend(r.skip);
+        read.extend(r.rules.iter().filter_map(|x| match *x {
+            EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(o),
+            EndRule::Read(_) | EndRule::Next(_) => None,
+        }));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer])));
+        read.extend(r.checks.iter().map(|c| c.o));
+        // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
+        // still reads from its row stays stored.
+        let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
+        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
+        read.extend(lift.iter().chain(&at).map(|&(_, o)| o));
+        let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
+        // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
+        let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
+        read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
+    /// its token loop runs, a reader gives its token's kind and marks, so it makes none of them.
+    pub fn readers_tags(&self) -> Vec<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().map(|t| usize::from(t.o)).collect())
+    }
+
+    /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds
+    /// the starts: the CPU makes none of them.
+    pub fn loops_errors(&self) -> Vec<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.untaken.iter().map(|&o| usize::from(o)).collect())
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes

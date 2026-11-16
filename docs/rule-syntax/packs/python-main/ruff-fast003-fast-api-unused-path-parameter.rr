@@ -19,7 +19,7 @@ FAST003(F, n, K, FN) :- fast003_plain_str(n), fast003_route_arg(n, FN), parsed(n
     has(r1, c2, "field"),
     match("\\{[a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z_][a-zA-Z0-9_]*)?\\}", c2), F = c2,
     has(c2, c3, "name"), K = c3, docof(c2, d4), guest(d4, _, h5, _),
-    count : { within_stop(h5, p1_17, "decorated_definition"), kind(p1_17, "decorated_definition"), child(p1_17, c2_17, _), kind(c2_17, "function_definition"), field(c2_17, "parameters", c3_17), kind(c3_17, "parameters"), child(c3_17, c4_17, _), (fast003_alias_form(c4_17, AL), value(K, t1_3_16_17), value(AL, t1_3_16_17) ; !fast003_alias_form(c4_17, _), fast003_param_eq(c4_17, K) ; (kind(c4_17, "default_parameter") ; kind(c4_17, "typed_default_parameter")), field(c4_17, "value", c3_5_16_17), fast003_depends_call(c3_5_16_17), child(c3_5_16_17, c1_15_16_17, _), kind(c1_15_16_17, "argument_list"), child(c1_15_16_17, c2_15_16_17, _), ((kind(c2_15_16_17, "identifier"), count : { ref_site(c2_15_16_17, b1_10_12_15_16_17), site_only(b1_10_12_15_16_17), (st1_10_12_15_16_17 = b1_10_12_15_16_17 ; within(b1_10_12_15_16_17, st1_10_12_15_16_17)), (kind(st1_10_12_15_16_17, "function_definition"), !fast003_fn_has(st1_10_12_15_16_17, K) ; kind(st1_10_12_15_16_17, "class_definition"), count : { kind(st1_10_12_15_16_17, "class_definition"), fast003_alt_10(st1_10_12_15_16_17, K) } = 0) } = 0 ; kind(c2_15_16_17, "call"), field(c2_15_16_17, "function", c1_10_12_15_16_17), kind(c1_10_12_15_16_17, "identifier"), count : { ref_site(c1_10_12_15_16_17, b2_10_12_15_16_17), site_only(b2_10_12_15_16_17), (st2_10_12_15_16_17 = b2_10_12_15_16_17 ; within(b2_10_12_15_16_17, st2_10_12_15_16_17)), kind(st2_10_12_15_16_17, "class_definition"), count : { kind(st2_10_12_15_16_17, "class_definition"), fast003_alt_13(st2_10_12_15_16_17, K) } = 0 } = 0), count : { precedes(s1_12_15_16_17, c2_15_16_17), !fast003_alt_14(s1_12_15_16_17) } = 0 ; kind(c2_15_16_17, "keyword_argument"), field(c2_15_16_17, "name", c2_13_15_16_17), glob("dependency", c2_13_15_16_17), field(c2_15_16_17, "value", c3_13_15_16_17), (kind(c3_13_15_16_17, "identifier"), count : { ref_site(c3_13_15_16_17, b1_11_13_15_16_17), site_only(b1_11_13_15_16_17), (st1_11_13_15_16_17 = b1_11_13_15_16_17 ; within(b1_11_13_15_16_17, st1_11_13_15_16_17)), (kind(st1_11_13_15_16_17, "function_definition"), !fast003_fn_has(st1_11_13_15_16_17, K) ; kind(st1_11_13_15_16_17, "class_definition"), count : { kind(st1_11_13_15_16_17, "class_definition"), fast003_alt_10(st1_11_13_15_16_17, K) } = 0) } = 0 ; kind(c3_13_15_16_17, "call"), field(c3_13_15_16_17, "function", c1_11_13_15_16_17), kind(c1_11_13_15_16_17, "identifier"), count : { ref_site(c1_11_13_15_16_17, b2_11_13_15_16_17), site_only(b2_11_13_15_16_17), (st2_11_13_15_16_17 = b2_11_13_15_16_17 ; within(b2_11_13_15_16_17, st2_11_13_15_16_17)), kind(st2_11_13_15_16_17, "class_definition"), count : { kind(st2_11_13_15_16_17, "class_definition"), fast003_alt_13(st2_11_13_15_16_17, K) } = 0 } = 0)) ; fast003_typed_param(c4_17), field(c4_17, "type", c4_6_16_17), has(c4_6_16_17, c5_6_16_17, "call"), fast003_elem_meta(c5_6_16_17), fast003_depends_call(c5_6_16_17), child(c5_6_16_17, c1_14_16_17, _), kind(c1_14_16_17, "argument_list"), child(c1_14_16_17, c2_14_16_17, _), ((kind(c2_14_16_17, "identifier"), count : { ref_site(c2_14_16_17, b1_10_12_14_16_17), site_only(b1_10_12_14_16_17), (st1_10_12_14_16_17 = b1_10_12_14_16_17 ; within(b1_10_12_14_16_17, st1_10_12_14_16_17)), (kind(st1_10_12_14_16_17, "function_definition"), !fast003_fn_has(st1_10_12_14_16_17, K) ; kind(st1_10_12_14_16_17, "class_definition"), count : { kind(st1_10_12_14_16_17, "class_definition"), fast003_alt_10(st1_10_12_14_16_17, K) } = 0) } = 0 ; kind(c2_14_16_17, "call"), field(c2_14_16_17, "function", c1_10_12_14_16_17), kind(c1_10_12_14_16_17, "identifier"), count : { ref_site(c1_10_12_14_16_17, b2_10_12_14_16_17), site_only(b2_10_12_14_16_17), (st2_10_12_14_16_17 = b2_10_12_14_16_17 ; within(b2_10_12_14_16_17, st2_10_12_14_16_17)), kind(st2_10_12_14_16_17, "class_definition"), count : { kind(st2_10_12_14_16_17, "class_definition"), fast003_alt_13(st2_10_12_14_16_17, K) } = 0 } = 0), count : { precedes(s1_12_14_16_17, c2_14_16_17), !fast003_alt_14(s1_12_14_16_17) } = 0 ; kind(c2_14_16_17, "keyword_argument"), field(c2_14_16_17, "name", c2_13_14_16_17), glob("dependency", c2_13_14_16_17), field(c2_14_16_17, "value", c3_13_14_16_17), (kind(c3_13_14_16_17, "identifier"), count : { ref_site(c3_13_14_16_17, b1_11_13_14_16_17), site_only(b1_11_13_14_16_17), (st1_11_13_14_16_17 = b1_11_13_14_16_17 ; within(b1_11_13_14_16_17, st1_11_13_14_16_17)), (kind(st1_11_13_14_16_17, "function_definition"), !fast003_fn_has(st1_11_13_14_16_17, K) ; kind(st1_11_13_14_16_17, "class_definition"), count : { kind(st1_11_13_14_16_17, "class_definition"), fast003_alt_10(st1_11_13_14_16_17, K) } = 0) } = 0 ; kind(c3_13_14_16_17, "call"), field(c3_13_14_16_17, "function", c1_11_13_14_16_17), kind(c1_11_13_14_16_17, "identifier"), count : { ref_site(c1_11_13_14_16_17, b2_11_13_14_16_17), site_only(b2_11_13_14_16_17), (st2_11_13_14_16_17 = b2_11_13_14_16_17 ; within(b2_11_13_14_16_17, st2_11_13_14_16_17)), kind(st2_11_13_14_16_17, "class_definition"), count : { kind(st2_11_13_14_16_17, "class_definition"), fast003_alt_13(st2_11_13_14_16_17, K) } = 0 } = 0)), count : { field(c4_17, "value", c6_6_16_17), fast003_dep_arg_some(c6_6_16_17) } = 0 ; fast003_typed_param(c4_17), field(c4_17, "type", c7_7_16_17), has(c7_7_16_17, c8_7_16_17, "identifier"), fast003_elem_1(c8_7_16_17), (kind(c8_7_16_17, "identifier"), count : { ref_site(c8_7_16_17, b1_9_16_17), site_only(b1_9_16_17), (st1_9_16_17 = b1_9_16_17 ; within(b1_9_16_17, st1_9_16_17)), (kind(st1_9_16_17, "function_definition"), !fast003_fn_has(st1_9_16_17, K) ; kind(st1_9_16_17, "class_definition"), count : { kind(st1_9_16_17, "class_definition"), fast003_alt_10(st1_9_16_17, K) } = 0) } = 0 ; kind(c8_7_16_17, "call"), field(c8_7_16_17, "function", c1_9_16_17), kind(c1_9_16_17, "identifier"), count : { ref_site(c1_9_16_17, b2_9_16_17), site_only(b2_9_16_17), (st2_9_16_17 = b2_9_16_17 ; within(b2_9_16_17, st2_9_16_17)), kind(st2_9_16_17, "class_definition"), count : { kind(st2_9_16_17, "class_definition"), fast003_alt_13(st2_9_16_17, K) } = 0 } = 0), field(c4_17, "type", c9_7_16_17), has(c9_7_16_17, c10_7_16_17, "call"), fast003_elem_meta(c10_7_16_17), fast003_depends_call(c10_7_16_17), child(c10_7_16_17, c11_7_16_17, _), kind(c11_7_16_17, "argument_list"), match("\\(\\s*\\)", c11_7_16_17), count : { field(c4_17, "value", c12_7_16_17), fast003_dep_arg_some(c12_7_16_17) } = 0 ; fast003_typed_param(c4_17), field(c4_17, "type", c13_8_16_17), has(c13_8_16_17, c14_8_16_17, "call"), fast003_elem_meta(c14_8_16_17), fast003_dep_call_some(c14_8_16_17), (child(p1_8_16_17, c14_8_16_17, _), kind(p1_8_16_17, "type"), precedes(p1_8_16_17, s1_8_16_17), kind(s1_8_16_17, "type"), child(s1_8_16_17, c1_8_16_17, _), fast003_dep_call_some(c1_8_16_17) ; precedes(c14_8_16_17, s2_8_16_17), fast003_dep_call_some(s2_8_16_17)), count : { field(c4_17, "value", c19_8_16_17), fast003_dep_arg_some(c19_8_16_17) } = 0), count : { precedes(c4_17, s5_17), kind(s5_17, "positional_separator") } = 0 } = 0.
+    count : { within_stop(h5, p1_17, "decorated_definition"), kind(p1_17, "decorated_definition"), child(p1_17, c2_17, _), kind(c2_17, "function_definition"), field(c2_17, "parameters", c3_17), kind(c3_17, "parameters"), child(c3_17, c4_17, _), (fast003_alias_form(c4_17, AL), value(K, t1_3_16_17), value(AL, t1_3_16_17) ; !fast003_alias_form(c4_17, _), fast003_param_eq(c4_17, K) ; (kind(c4_17, "default_parameter") ; kind(c4_17, "typed_default_parameter")), field(c4_17, "value", c3_5_16_17), fast003_depends_call(c3_5_16_17), child(c3_5_16_17, c1_15_16_17, _), kind(c1_15_16_17, "argument_list"), child(c1_15_16_17, c2_15_16_17, _), ((kind(c2_15_16_17, "identifier"), count : { ref_site(c2_15_16_17, b1_10_12_15_16_17), site_only(b1_10_12_15_16_17), (st1_10_12_15_16_17 = b1_10_12_15_16_17 ; within(b1_10_12_15_16_17, st1_10_12_15_16_17)), (kind(st1_10_12_15_16_17, "function_definition"), !fast003_fn_has(st1_10_12_15_16_17, K) ; kind(st1_10_12_15_16_17, "class_definition"), count : { kind(st1_10_12_15_16_17, "class_definition"), fast003_alt_10(st1_10_12_15_16_17, K) } = 0) } = 0 ; kind(c2_15_16_17, "call"), field(c2_15_16_17, "function", c1_10_12_15_16_17), kind(c1_10_12_15_16_17, "identifier"), count : { ref_site(c1_10_12_15_16_17, b2_10_12_15_16_17), site_only(b2_10_12_15_16_17), (st2_10_12_15_16_17 = b2_10_12_15_16_17 ; within(b2_10_12_15_16_17, st2_10_12_15_16_17)), kind(st2_10_12_15_16_17, "class_definition"), count : { kind(st2_10_12_15_16_17, "class_definition"), fast003_alt_13(st2_10_12_15_16_17, K) } = 0 } = 0), count : { precedes(s1_12_15_16_17, c2_15_16_17), !fast003_alt_14(s1_12_15_16_17) } = 0 ; kind(c2_15_16_17, "keyword_argument"), fast003_tok_has_12(c2_15_16_17), field(c2_15_16_17, "value", c10_13_15_16_17), (kind(c10_13_15_16_17, "identifier"), count : { ref_site(c10_13_15_16_17, b1_11_13_15_16_17), site_only(b1_11_13_15_16_17), (st1_11_13_15_16_17 = b1_11_13_15_16_17 ; within(b1_11_13_15_16_17, st1_11_13_15_16_17)), (kind(st1_11_13_15_16_17, "function_definition"), !fast003_fn_has(st1_11_13_15_16_17, K) ; kind(st1_11_13_15_16_17, "class_definition"), count : { kind(st1_11_13_15_16_17, "class_definition"), fast003_alt_10(st1_11_13_15_16_17, K) } = 0) } = 0 ; kind(c10_13_15_16_17, "call"), field(c10_13_15_16_17, "function", c1_11_13_15_16_17), kind(c1_11_13_15_16_17, "identifier"), count : { ref_site(c1_11_13_15_16_17, b2_11_13_15_16_17), site_only(b2_11_13_15_16_17), (st2_11_13_15_16_17 = b2_11_13_15_16_17 ; within(b2_11_13_15_16_17, st2_11_13_15_16_17)), kind(st2_11_13_15_16_17, "class_definition"), count : { kind(st2_11_13_15_16_17, "class_definition"), fast003_alt_13(st2_11_13_15_16_17, K) } = 0 } = 0)) ; fast003_typed_param(c4_17), field(c4_17, "type", c4_6_16_17), has(c4_6_16_17, c5_6_16_17, "call"), fast003_elem_meta(c5_6_16_17), fast003_depends_call(c5_6_16_17), child(c5_6_16_17, c1_14_16_17, _), kind(c1_14_16_17, "argument_list"), child(c1_14_16_17, c2_14_16_17, _), ((kind(c2_14_16_17, "identifier"), count : { ref_site(c2_14_16_17, b1_10_12_14_16_17), site_only(b1_10_12_14_16_17), (st1_10_12_14_16_17 = b1_10_12_14_16_17 ; within(b1_10_12_14_16_17, st1_10_12_14_16_17)), (kind(st1_10_12_14_16_17, "function_definition"), !fast003_fn_has(st1_10_12_14_16_17, K) ; kind(st1_10_12_14_16_17, "class_definition"), count : { kind(st1_10_12_14_16_17, "class_definition"), fast003_alt_10(st1_10_12_14_16_17, K) } = 0) } = 0 ; kind(c2_14_16_17, "call"), field(c2_14_16_17, "function", c1_10_12_14_16_17), kind(c1_10_12_14_16_17, "identifier"), count : { ref_site(c1_10_12_14_16_17, b2_10_12_14_16_17), site_only(b2_10_12_14_16_17), (st2_10_12_14_16_17 = b2_10_12_14_16_17 ; within(b2_10_12_14_16_17, st2_10_12_14_16_17)), kind(st2_10_12_14_16_17, "class_definition"), count : { kind(st2_10_12_14_16_17, "class_definition"), fast003_alt_13(st2_10_12_14_16_17, K) } = 0 } = 0), count : { precedes(s1_12_14_16_17, c2_14_16_17), !fast003_alt_14(s1_12_14_16_17) } = 0 ; kind(c2_14_16_17, "keyword_argument"), fast003_tok_has_12(c2_14_16_17), field(c2_14_16_17, "value", c10_13_14_16_17), (kind(c10_13_14_16_17, "identifier"), count : { ref_site(c10_13_14_16_17, b1_11_13_14_16_17), site_only(b1_11_13_14_16_17), (st1_11_13_14_16_17 = b1_11_13_14_16_17 ; within(b1_11_13_14_16_17, st1_11_13_14_16_17)), (kind(st1_11_13_14_16_17, "function_definition"), !fast003_fn_has(st1_11_13_14_16_17, K) ; kind(st1_11_13_14_16_17, "class_definition"), count : { kind(st1_11_13_14_16_17, "class_definition"), fast003_alt_10(st1_11_13_14_16_17, K) } = 0) } = 0 ; kind(c10_13_14_16_17, "call"), field(c10_13_14_16_17, "function", c1_11_13_14_16_17), kind(c1_11_13_14_16_17, "identifier"), count : { ref_site(c1_11_13_14_16_17, b2_11_13_14_16_17), site_only(b2_11_13_14_16_17), (st2_11_13_14_16_17 = b2_11_13_14_16_17 ; within(b2_11_13_14_16_17, st2_11_13_14_16_17)), kind(st2_11_13_14_16_17, "class_definition"), count : { kind(st2_11_13_14_16_17, "class_definition"), fast003_alt_13(st2_11_13_14_16_17, K) } = 0 } = 0)), count : { field(c4_17, "value", c6_6_16_17), fast003_dep_arg_some(c6_6_16_17) } = 0 ; fast003_typed_param(c4_17), field(c4_17, "type", c7_7_16_17), has(c7_7_16_17, c8_7_16_17, "identifier"), fast003_elem_1(c8_7_16_17), (kind(c8_7_16_17, "identifier"), count : { ref_site(c8_7_16_17, b1_9_16_17), site_only(b1_9_16_17), (st1_9_16_17 = b1_9_16_17 ; within(b1_9_16_17, st1_9_16_17)), (kind(st1_9_16_17, "function_definition"), !fast003_fn_has(st1_9_16_17, K) ; kind(st1_9_16_17, "class_definition"), count : { kind(st1_9_16_17, "class_definition"), fast003_alt_10(st1_9_16_17, K) } = 0) } = 0 ; kind(c8_7_16_17, "call"), field(c8_7_16_17, "function", c1_9_16_17), kind(c1_9_16_17, "identifier"), count : { ref_site(c1_9_16_17, b2_9_16_17), site_only(b2_9_16_17), (st2_9_16_17 = b2_9_16_17 ; within(b2_9_16_17, st2_9_16_17)), kind(st2_9_16_17, "class_definition"), count : { kind(st2_9_16_17, "class_definition"), fast003_alt_13(st2_9_16_17, K) } = 0 } = 0), field(c4_17, "type", c9_7_16_17), has(c9_7_16_17, c10_7_16_17, "call"), fast003_elem_meta(c10_7_16_17), fast003_depends_call(c10_7_16_17), child(c10_7_16_17, c11_7_16_17, _), kind(c11_7_16_17, "argument_list"), match("\\(\\s*\\)", c11_7_16_17), count : { field(c4_17, "value", c12_7_16_17), fast003_dep_arg_some(c12_7_16_17) } = 0 ; fast003_typed_param(c4_17), field(c4_17, "type", c13_8_16_17), has(c13_8_16_17, c14_8_16_17, "call"), fast003_elem_meta(c14_8_16_17), fast003_dep_call_some(c14_8_16_17), (child(p1_8_16_17, c14_8_16_17, _), kind(p1_8_16_17, "type"), precedes(p1_8_16_17, s1_8_16_17), kind(s1_8_16_17, "type"), child(s1_8_16_17, c1_8_16_17, _), fast003_dep_call_some(c1_8_16_17) ; precedes(c14_8_16_17, s2_8_16_17), fast003_dep_call_some(s2_8_16_17)), count : { field(c4_17, "value", c19_8_16_17), fast003_dep_arg_some(c19_8_16_17) } = 0), count : { precedes(c4_17, s5_17), kind(s5_17, "positional_separator") } = 0 } = 0.
 
 // route_ctor(n): the JSON util `route-ctor`, used where the JSON says `matches: "route-ctor"`
 .decl fast003_route_ctor(n: node)
@@ -56,9 +56,9 @@ fast003_route_receiver(n) :- kind(n, "parenthesized_expression"), child(n, c1, _
 // route_attr(n): the JSON util `route-attr`, used where the JSON says `matches: "route-attr"`
 .decl fast003_route_attr(n: node)
 fast003_route_attr(n) :- kind(n, "attribute"), field(n, "object", c1), fast003_route_receiver(c1),
-    field(n, "attribute", c2),
-    glob("{get,post,put,delete,patch,options,head,trace}", c2).
-fast003_route_attr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fast003_route_attr(c3).
+    fast003_tok_has_2(n).
+fast003_route_attr(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    fast003_route_attr(c10).
 
 // route_call(n): the JSON util `route-call`, used where the JSON says `matches: "route-call"`
 .decl fast003_route_call(n: node)
@@ -134,20 +134,20 @@ fast003_annotated_s(n) :- kind(n, "subscript"), field(n, "value", c1), fast003_a
 
 // elem_1(n): the JSON util `elem-1`, used where the JSON says `matches: "elem-1"`
 .decl fast003_elem_1(n: node)
-fast003_elem_1(n) :- child(p1, n, _), kind(p1, "type"), fast003_ann_slot(p1), !fast003_tok_follows_2(p1).
-fast003_elem_1(n) :- fast003_ann_slot(n), !fast003_tok_follows_3(n).
+fast003_elem_1(n) :- child(p1, n, _), kind(p1, "type"), fast003_ann_slot(p1), !fast003_tok_follows_3(p1).
+fast003_elem_1(n) :- fast003_ann_slot(n), !fast003_tok_follows_4(n).
 
 // elem_2(n): the JSON util `elem-2`, used where the JSON says `matches: "elem-2"`
 .decl fast003_elem_2(n: node)
-fast003_elem_2(n) :- child(p1, n, _), kind(p1, "type"), fast003_ann_slot(p1), fast003_tok_follows_2(p1),
-    count : { precedes(s9, p1), glob("\\,", s9), fast003_tok_follows_4(s9) } = 0.
-fast003_elem_2(n) :- fast003_ann_slot(n), fast003_tok_follows_5(n),
-    count : { precedes(s24, n), glob("\\,", s24), fast003_tok_follows_6(s24) } = 0.
+fast003_elem_2(n) :- child(p1, n, _), kind(p1, "type"), fast003_ann_slot(p1), fast003_tok_follows_3(p1),
+    count : { precedes(s9, p1), glob("\\,", s9), fast003_tok_follows_5(s9) } = 0.
+fast003_elem_2(n) :- fast003_ann_slot(n), fast003_tok_follows_6(n),
+    count : { precedes(s24, n), glob("\\,", s24), fast003_tok_follows_7(s24) } = 0.
 
 // elem_meta(n): the JSON util `elem-meta`, used where the JSON says `matches: "elem-meta"`
 .decl fast003_elem_meta(n: node)
-fast003_elem_meta(n) :- child(p1, n, _), kind(p1, "type"), fast003_ann_slot(p1), fast003_tok_follows_2(p1).
-fast003_elem_meta(n) :- fast003_ann_slot(n), fast003_tok_follows_3(n).
+fast003_elem_meta(n) :- child(p1, n, _), kind(p1, "type"), fast003_ann_slot(p1), fast003_tok_follows_3(p1).
+fast003_elem_meta(n) :- fast003_ann_slot(n), fast003_tok_follows_4(n).
 
 // param_eq(n, …): the JSON util `param-eq`, called with `matches` and arguments K
 .decl fast003_param_eq(n: node, k: node)
@@ -159,8 +159,7 @@ fast003_param_eq(n, K) :- fast003_alt_2(n, K).
 fast003_alias_form(n, AL) :- fast003_typed_param(n), field(n, "type", c1), has(c1, c2, "call"),
     fast003_elem_2(c2), field(c2, "function", c3), fast003_ref_of(c3, "path"), child(c2, c4, _),
     kind(c4, "argument_list"), child(c4, c5, _), kind(c5, "keyword_argument"),
-    field(c5, "name", c6), glob("alias", c6), field(c5, "value", c7),
-    fast003_alias_str(c7, AL).
+    fast003_tok_has_8(c5), field(c5, "value", c14), fast003_alias_str(c14, AL).
 
 // fn_has(n, …): the JSON util `fn-has`, called with `matches` and arguments K
 .decl fast003_fn_has(n: node, k: node)
@@ -183,22 +182,22 @@ fast003_pyd_field(n, K) :- node(_, K, _, _, _), fast003_pyd_base(n), field(n, "b
 // init_has(n, …): the JSON util `init-has`, called with `matches` and arguments K
 .decl fast003_init_has(n: node, k: node)
 fast003_init_has(n, K) :- kind(n, "class_definition"), field(n, "body", c1), kind(c1, "block"),
-    within_stop(c2, c1, fast003_stop_3), kind(c2, "function_definition"),
-    field(c2, "name", c3), glob("__init__", c3), field(c2, "parameters", c4),
-    kind(c4, "parameters"), child(c4, c5, _), fast003_param_eq(c5, K),
-    count : { precedes(c5, s6), kind(s6, "positional_separator") } = 0,
-    precedes(s7, c5), fast003_plain_param(s7),
-    count : { precedes(s7, s8), kind(s8, "positional_separator") } = 0.
+    within_stop(c2, c1, fast003_stop_3), kind(c2, "function_definition"), fast003_tok_has_9(c2),
+    field(c2, "parameters", c11), kind(c11, "parameters"), child(c11, c12, _),
+    fast003_param_eq(c12, K),
+    count : { precedes(c12, s13), kind(s13, "positional_separator") } = 0,
+    precedes(s14, c12), fast003_plain_param(s14),
+    count : { precedes(s14, s15), kind(s15, "positional_separator") } = 0.
 
 // call_has(n, …): the JSON util `call-has`, called with `matches` and arguments K
 .decl fast003_call_has(n: node, k: node)
 fast003_call_has(n, K) :- kind(n, "class_definition"), field(n, "body", c1), kind(c1, "block"),
-    within_stop(c2, c1, fast003_stop_3), kind(c2, "function_definition"),
-    field(c2, "name", c3), glob("__call__", c3), field(c2, "parameters", c4),
-    kind(c4, "parameters"), child(c4, c5, _), fast003_param_eq(c5, K),
-    count : { precedes(c5, s6), kind(s6, "positional_separator") } = 0,
-    precedes(s7, c5), fast003_plain_param(s7),
-    count : { precedes(s7, s8), kind(s8, "positional_separator") } = 0.
+    within_stop(c2, c1, fast003_stop_3), kind(c2, "function_definition"), fast003_tok_has_10(c2),
+    field(c2, "parameters", c11), kind(c11, "parameters"), child(c11, c12, _),
+    fast003_param_eq(c12, K),
+    count : { precedes(c12, s13), kind(s13, "positional_separator") } = 0,
+    precedes(s14, c12), fast003_plain_param(s14),
+    count : { precedes(s14, s15), kind(s15, "positional_separator") } = 0.
 
 // route_arg(n): the JSON util `route-arg`, used where the JSON says `matches: "route-arg"`
 //   FN: metavariable this relation binds for the calling rule
@@ -216,7 +215,7 @@ fast003_route_arg(n, FN) :- fast003_demand_route_arg(n), child(p9, n, _),
 .decl fast003_ann_slot(n: node)
 fast003_ann_slot(n) :- kind(n, "type"), child(p1, n, _), kind(p1, "type_parameter"),
     child(p2, p1, _), fast003_annotated_g(p2).
-fast003_ann_slot(n) :- child(p3, n, _), fast003_annotated_s(p3), fast003_tok_follows_7(n).
+fast003_ann_slot(n) :- child(p3, n, _), fast003_annotated_s(p3), fast003_tok_follows_13(n).
 
 // dep_target(n): the JSON util `dep-target`, used where the JSON says `matches: "dep-target"`
 .decl fast003_dep_target(n: node)
@@ -228,15 +227,15 @@ fast003_dep_target(n) :- kind(n, "call"), field(n, "function", c1), kind(c1, "id
 fast003_dep_arg_some(n) :- fast003_depends_call(n), child(n, c1, _), kind(c1, "argument_list"),
     child(c1, c2, _),
     ( fast003_dep_target(c2), count : { precedes(s1, c2), !fast003_alt_14(s1) } = 0
-    ; kind(c2, "keyword_argument"), field(c2, "name", c3), glob("dependency", c3), field(c2, "value", c4), fast003_dep_target(c4)
+    ; kind(c2, "keyword_argument"), fast003_tok_has_12(c2), field(c2, "value", c3), fast003_dep_target(c3)
     ).
 
 
 // first_ident_slot(n): the JSON util `first-ident-slot`, used where the JSON says `matches: "first-ident-slot"`
 .decl fast003_first_ident_slot(n: node)
 fast003_first_ident_slot(n) :- kind(n, "type"), child(n, c1, _), kind(c1, "identifier"),
-    !fast003_tok_follows_2(n).
-fast003_first_ident_slot(n) :- kind(n, "identifier"), fast003_tok_follows_8(n), !fast003_tok_follows_9(n).
+    !fast003_tok_follows_3(n).
+fast003_first_ident_slot(n) :- kind(n, "identifier"), fast003_tok_follows_14(n), !fast003_tok_follows_15(n).
 
 // dep_call_some(n): the JSON util `dep-call-some`, used where the JSON says `matches: "dep-call-some"`
 .decl fast003_dep_call_some(n: node)
@@ -257,84 +256,157 @@ fast003_tok_precedes_1(n) :- structural_after(n, g11),
 fast003_tok_precedes_1(n) :- precedes(n, o13), structural_after(o13, g11),
     match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g11).
 
-// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl fast003_tok_follows_2(n: node)
-.stored fast003_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast003_tok_follows_2(n) :- precedes(s2, n), glob("\\,", s2).
-fast003_tok_follows_2(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
-    en8 <= st7, match(",", t3).
-fast003_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^(?:.*(?:,).*)$", g4).
-fast003_tok_follows_2(n) :- precedes(o6, n), structural_before(o6, g4),
-    match("(?s)^(?:.*(?:,).*)$", g4).
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(get|post|put|delete|patch|options|head|trace)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_has_2(n: node)
+.stored fast003_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_has_2(n) :- field(n, "attribute", c2),
+    glob("{get,post,put,delete,patch,options,head,trace}", c2).
+fast003_tok_has_2(n) :- op(n, t3), match("(get|post|put|delete|patch|options|head|trace)", t3).
+fast003_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:get)(?:\\W.*)?|(?:.*\\W)?(?:post)(?:\\W.*)?|(?:.*\\W)?(?:put)(?:\\W.*)?|(?:.*\\W)?(?:delete)(?:\\W.*)?|(?:.*\\W)?(?:patch)(?:\\W.*)?|(?:.*\\W)?(?:options)(?:\\W.*)?|(?:.*\\W)?(?:head)(?:\\W.*)?|(?:.*\\W)?(?:trace)(?:\\W.*)?)$", g4).
+fast003_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:get)(?:\\W.*)?|(?:.*\\W)?(?:post)(?:\\W.*)?|(?:.*\\W)?(?:put)(?:\\W.*)?|(?:.*\\W)?(?:delete)(?:\\W.*)?|(?:.*\\W)?(?:patch)(?:\\W.*)?|(?:.*\\W)?(?:options)(?:\\W.*)?|(?:.*\\W)?(?:head)(?:\\W.*)?|(?:.*\\W)?(?:trace)(?:\\W.*)?)$", g4).
+fast003_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:get)(?:\\W.*)?|(?:.*\\W)?(?:post)(?:\\W.*)?|(?:.*\\W)?(?:put)(?:\\W.*)?|(?:.*\\W)?(?:delete)(?:\\W.*)?|(?:.*\\W)?(?:patch)(?:\\W.*)?|(?:.*\\W)?(?:options)(?:\\W.*)?|(?:.*\\W)?(?:head)(?:\\W.*)?|(?:.*\\W)?(?:trace)(?:\\W.*)?)$", g4).
 
 // tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl fast003_tok_follows_3(n: node)
 .stored fast003_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast003_tok_follows_3(n) :- precedes(s9, n), glob("\\,", s9).
-fast003_tok_follows_3(n) :- child(p12, n, _), node(_, n, _, st14, _),
-    token(p12, _, t10, _, en15), en15 <= st14, match(",", t10).
-fast003_tok_follows_3(n) :- structural_before(n, g11), match("(?s)^(?:.*(?:,).*)$", g11).
-fast003_tok_follows_3(n) :- precedes(o13, n), structural_before(o13, g11),
-    match("(?s)^(?:.*(?:,).*)$", g11).
+fast003_tok_follows_3(n) :- precedes(s2, n), glob("\\,", s2).
+fast003_tok_follows_3(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match(",", t3).
+fast003_tok_follows_3(n) :- structural_before(n, g4), match("(?s)^(?:.*(?:,).*)$", g4).
+fast003_tok_follows_3(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
 
 // tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl fast003_tok_follows_4(n: node)
 .stored fast003_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast003_tok_follows_4(n) :- precedes(s10, n), glob("\\,", s10).
-fast003_tok_follows_4(n) :- child(p13, n, _), node(_, n, _, st15, _),
-    token(p13, _, t11, _, en16), en16 <= st15, match(",", t11).
-fast003_tok_follows_4(n) :- structural_before(n, g12), match("(?s)^(?:.*(?:,).*)$", g12).
-fast003_tok_follows_4(n) :- precedes(o14, n), structural_before(o14, g12),
-    match("(?s)^(?:.*(?:,).*)$", g12).
+fast003_tok_follows_4(n) :- precedes(s9, n), glob("\\,", s9).
+fast003_tok_follows_4(n) :- child(p12, n, _), node(_, n, _, st14, _),
+    token(p12, _, t10, _, en15), en15 <= st14, match(",", t10).
+fast003_tok_follows_4(n) :- structural_before(n, g11), match("(?s)^(?:.*(?:,).*)$", g11).
+fast003_tok_follows_4(n) :- precedes(o13, n), structural_before(o13, g11),
+    match("(?s)^(?:.*(?:,).*)$", g11).
 
 // tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl fast003_tok_follows_5(n: node)
 .stored fast003_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast003_tok_follows_5(n) :- precedes(s17, n), glob("\\,", s17).
-fast003_tok_follows_5(n) :- child(p20, n, _), node(_, n, _, st22, _),
-    token(p20, _, t18, _, en23), en23 <= st22, match(",", t18).
-fast003_tok_follows_5(n) :- structural_before(n, g19), match("(?s)^(?:.*(?:,).*)$", g19).
-fast003_tok_follows_5(n) :- precedes(o21, n), structural_before(o21, g19),
-    match("(?s)^(?:.*(?:,).*)$", g19).
+fast003_tok_follows_5(n) :- precedes(s10, n), glob("\\,", s10).
+fast003_tok_follows_5(n) :- child(p13, n, _), node(_, n, _, st15, _),
+    token(p13, _, t11, _, en16), en16 <= st15, match(",", t11).
+fast003_tok_follows_5(n) :- structural_before(n, g12), match("(?s)^(?:.*(?:,).*)$", g12).
+fast003_tok_follows_5(n) :- precedes(o14, n), structural_before(o14, g12),
+    match("(?s)^(?:.*(?:,).*)$", g12).
 
 // tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl fast003_tok_follows_6(n: node)
 .stored fast003_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast003_tok_follows_6(n) :- precedes(s25, n), glob("\\,", s25).
-fast003_tok_follows_6(n) :- child(p28, n, _), node(_, n, _, st30, _),
-    token(p28, _, t26, _, en31), en31 <= st30, match(",", t26).
-fast003_tok_follows_6(n) :- structural_before(n, g27), match("(?s)^(?:.*(?:,).*)$", g27).
-fast003_tok_follows_6(n) :- precedes(o29, n), structural_before(o29, g27),
-    match("(?s)^(?:.*(?:,).*)$", g27).
+fast003_tok_follows_6(n) :- precedes(s17, n), glob("\\,", s17).
+fast003_tok_follows_6(n) :- child(p20, n, _), node(_, n, _, st22, _),
+    token(p20, _, t18, _, en23), en23 <= st22, match(",", t18).
+fast003_tok_follows_6(n) :- structural_before(n, g19), match("(?s)^(?:.*(?:,).*)$", g19).
+fast003_tok_follows_6(n) :- precedes(o21, n), structural_before(o21, g19),
+    match("(?s)^(?:.*(?:,).*)$", g19).
 
-// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl fast003_tok_follows_7(n: node)
 .stored fast003_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast003_tok_follows_7(n) :- precedes(s4, n), glob("\\[", s4).
-fast003_tok_follows_7(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
+fast003_tok_follows_7(n) :- precedes(s25, n), glob("\\,", s25).
+fast003_tok_follows_7(n) :- child(p28, n, _), node(_, n, _, st30, _),
+    token(p28, _, t26, _, en31), en31 <= st30, match(",", t26).
+fast003_tok_follows_7(n) :- structural_before(n, g27), match("(?s)^(?:.*(?:,).*)$", g27).
+fast003_tok_follows_7(n) :- precedes(o29, n), structural_before(o29, g27),
+    match("(?s)^(?:.*(?:,).*)$", g27).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^alias$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_has_8(n: node)
+.stored fast003_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_has_8(n) :- field(n, "name", c6), glob("alias", c6).
+fast003_tok_has_8(n) :- op(n, t7), match("alias", t7).
+fast003_tok_has_8(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:alias)(?:\\W.*)?)$", g8).
+fast003_tok_has_8(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:alias)(?:\\W.*)?)$", g8).
+fast003_tok_has_8(n) :- node_text(n, g8), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:alias)(?:\\W.*)?)$", g8).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^__init__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_has_9(n: node)
+.stored fast003_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_has_9(n) :- field(n, "name", c3), glob("__init__", c3).
+fast003_tok_has_9(n) :- op(n, t4), match("__init__", t4).
+fast003_tok_has_9(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g5).
+fast003_tok_has_9(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g5).
+fast003_tok_has_9(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g5).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^__call__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_has_10(n: node)
+.stored fast003_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_has_10(n) :- field(n, "name", c3), glob("__call__", c3).
+fast003_tok_has_10(n) :- op(n, t4), match("__call__", t4).
+fast003_tok_has_10(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__call__).*)$", g5).
+fast003_tok_has_10(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__call__).*)$", g5).
+fast003_tok_has_10(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__call__).*)$", g5).
+
+// tok_has_11(n): a child of n, a named node or an anonymous token, matches "^dependency$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_has_11(n: node)
+.stored fast003_tok_has_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_has_11(n) :- field(n, "name", c4), glob("dependency", c4).
+fast003_tok_has_11(n) :- op(n, t5), match("dependency", t5).
+fast003_tok_has_11(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:dependency)(?:\\W.*)?)$", g6).
+fast003_tok_has_11(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:dependency)(?:\\W.*)?)$", g6).
+fast003_tok_has_11(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:dependency)(?:\\W.*)?)$", g6).
+
+// tok_has_12(n): a child of n, a named node or an anonymous token, matches "^dependency$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_has_12(n: node)
+.stored fast003_tok_has_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_has_12(n) :- field(n, "name", c2), glob("dependency", c2).
+fast003_tok_has_12(n) :- op(n, t3), match("dependency", t3).
+fast003_tok_has_12(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:dependency)(?:\\W.*)?)$", g4).
+fast003_tok_has_12(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:dependency)(?:\\W.*)?)$", g4).
+fast003_tok_has_12(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:dependency)(?:\\W.*)?)$", g4).
+
+// tok_follows_13(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_follows_13(n: node)
+.stored fast003_tok_follows_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_follows_13(n) :- precedes(s4, n), glob("\\[", s4).
+fast003_tok_follows_13(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
     en10 <= st9, match("\\[", t5).
-fast003_tok_follows_7(n) :- structural_before(n, g6), match("(?s)^(?:.*(?:\\[).*)$", g6).
-fast003_tok_follows_7(n) :- precedes(o8, n), structural_before(o8, g6),
+fast003_tok_follows_13(n) :- structural_before(n, g6), match("(?s)^(?:.*(?:\\[).*)$", g6).
+fast003_tok_follows_13(n) :- precedes(o8, n), structural_before(o8, g6),
     match("(?s)^(?:.*(?:\\[).*)$", g6).
 
-// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl fast003_tok_follows_8(n: node)
-.stored fast003_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast003_tok_follows_8(n) :- precedes(s9, n), glob("\\[", s9).
-fast003_tok_follows_8(n) :- child(p12, n, _), node(_, n, _, st14, _),
+// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_follows_14(n: node)
+.stored fast003_tok_follows_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_follows_14(n) :- precedes(s9, n), glob("\\[", s9).
+fast003_tok_follows_14(n) :- child(p12, n, _), node(_, n, _, st14, _),
     token(p12, _, t10, _, en15), en15 <= st14, match("\\[", t10).
-fast003_tok_follows_8(n) :- structural_before(n, g11), match("(?s)^(?:.*(?:\\[).*)$", g11).
-fast003_tok_follows_8(n) :- precedes(o13, n), structural_before(o13, g11),
+fast003_tok_follows_14(n) :- structural_before(n, g11), match("(?s)^(?:.*(?:\\[).*)$", g11).
+fast003_tok_follows_14(n) :- precedes(o13, n), structural_before(o13, g11),
     match("(?s)^(?:.*(?:\\[).*)$", g11).
 
-// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl fast003_tok_follows_9(n: node)
-.stored fast003_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast003_tok_follows_9(n) :- precedes(s16, n), glob("\\,", s16).
-fast003_tok_follows_9(n) :- child(p19, n, _), node(_, n, _, st21, _),
+// tok_follows_15(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast003_tok_follows_15(n: node)
+.stored fast003_tok_follows_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast003_tok_follows_15(n) :- precedes(s16, n), glob("\\,", s16).
+fast003_tok_follows_15(n) :- child(p19, n, _), node(_, n, _, st21, _),
     token(p19, _, t17, _, en22), en22 <= st21, match(",", t17).
-fast003_tok_follows_9(n) :- structural_before(n, g18), match("(?s)^(?:.*(?:,).*)$", g18).
-fast003_tok_follows_9(n) :- precedes(o20, n), structural_before(o20, g18),
+fast003_tok_follows_15(n) :- structural_before(n, g18), match("(?s)^(?:.*(?:,).*)$", g18).
+fast003_tok_follows_15(n) :- precedes(o20, n), structural_before(o20, g18),
     match("(?s)^(?:.*(?:,).*)$", g18).
 
 // demand_alt_10: the rows of alt_10 its callers ask for (the metavariable columns they pass in)
@@ -369,9 +441,9 @@ fast003_demand_alt_10(st1_11_13_15_16_17, K) :- fast003_plain_str(n), fast003_ro
     field(c4_17, "value", c3_5_16_17), fast003_depends_call(c3_5_16_17),
     child(c3_5_16_17, c1_15_16_17, _), kind(c1_15_16_17, "argument_list"),
     child(c1_15_16_17, c2_15_16_17, _), kind(c2_15_16_17, "keyword_argument"),
-    field(c2_15_16_17, "name", c2_13_15_16_17), glob("dependency", c2_13_15_16_17),
-    field(c2_15_16_17, "value", c3_13_15_16_17), kind(c3_13_15_16_17, "identifier"),
-    ref_site(c3_13_15_16_17, b1_11_13_15_16_17), site_only(b1_11_13_15_16_17),
+    fast003_tok_has_12(c2_15_16_17), field(c2_15_16_17, "value", c10_13_15_16_17),
+    kind(c10_13_15_16_17, "identifier"), ref_site(c10_13_15_16_17, b1_11_13_15_16_17),
+    site_only(b1_11_13_15_16_17),
     ( st1_11_13_15_16_17 = b1_11_13_15_16_17
     ; within(b1_11_13_15_16_17, st1_11_13_15_16_17)
     ),
@@ -406,10 +478,9 @@ fast003_demand_alt_10(st1_11_13_14_16_17, K) :- fast003_plain_str(n), fast003_ro
     field(c4_17, "type", c4_6_16_17), has(c4_6_16_17, c5_6_16_17, "call"),
     fast003_elem_meta(c5_6_16_17), fast003_depends_call(c5_6_16_17), child(c5_6_16_17, c1_14_16_17, _),
     kind(c1_14_16_17, "argument_list"), child(c1_14_16_17, c2_14_16_17, _),
-    kind(c2_14_16_17, "keyword_argument"), field(c2_14_16_17, "name", c2_13_14_16_17),
-    glob("dependency", c2_13_14_16_17), field(c2_14_16_17, "value", c3_13_14_16_17),
-    kind(c3_13_14_16_17, "identifier"), ref_site(c3_13_14_16_17, b1_11_13_14_16_17),
-    site_only(b1_11_13_14_16_17),
+    kind(c2_14_16_17, "keyword_argument"), fast003_tok_has_12(c2_14_16_17),
+    field(c2_14_16_17, "value", c10_13_14_16_17), kind(c10_13_14_16_17, "identifier"),
+    ref_site(c10_13_14_16_17, b1_11_13_14_16_17), site_only(b1_11_13_14_16_17),
     ( st1_11_13_14_16_17 = b1_11_13_14_16_17
     ; within(b1_11_13_14_16_17, st1_11_13_14_16_17)
     ),
@@ -467,9 +538,9 @@ fast003_demand_alt_13(st2_11_13_15_16_17, K) :- fast003_plain_str(n), fast003_ro
     field(c4_17, "value", c3_5_16_17), fast003_depends_call(c3_5_16_17),
     child(c3_5_16_17, c1_15_16_17, _), kind(c1_15_16_17, "argument_list"),
     child(c1_15_16_17, c2_15_16_17, _), kind(c2_15_16_17, "keyword_argument"),
-    field(c2_15_16_17, "name", c2_13_15_16_17), glob("dependency", c2_13_15_16_17),
-    field(c2_15_16_17, "value", c3_13_15_16_17), kind(c3_13_15_16_17, "call"),
-    field(c3_13_15_16_17, "function", c1_11_13_15_16_17),
+    fast003_tok_has_12(c2_15_16_17), field(c2_15_16_17, "value", c10_13_15_16_17),
+    kind(c10_13_15_16_17, "call"),
+    field(c10_13_15_16_17, "function", c1_11_13_15_16_17),
     kind(c1_11_13_15_16_17, "identifier"),
     ref_site(c1_11_13_15_16_17, b2_11_13_15_16_17), site_only(b2_11_13_15_16_17),
     ( st2_11_13_15_16_17 = b2_11_13_15_16_17
@@ -507,9 +578,9 @@ fast003_demand_alt_13(st2_11_13_14_16_17, K) :- fast003_plain_str(n), fast003_ro
     field(c4_17, "type", c4_6_16_17), has(c4_6_16_17, c5_6_16_17, "call"),
     fast003_elem_meta(c5_6_16_17), fast003_depends_call(c5_6_16_17), child(c5_6_16_17, c1_14_16_17, _),
     kind(c1_14_16_17, "argument_list"), child(c1_14_16_17, c2_14_16_17, _),
-    kind(c2_14_16_17, "keyword_argument"), field(c2_14_16_17, "name", c2_13_14_16_17),
-    glob("dependency", c2_13_14_16_17), field(c2_14_16_17, "value", c3_13_14_16_17),
-    kind(c3_13_14_16_17, "call"), field(c3_13_14_16_17, "function", c1_11_13_14_16_17),
+    kind(c2_14_16_17, "keyword_argument"), fast003_tok_has_12(c2_14_16_17),
+    field(c2_14_16_17, "value", c10_13_14_16_17), kind(c10_13_14_16_17, "call"),
+    field(c10_13_14_16_17, "function", c1_11_13_14_16_17),
     kind(c1_11_13_14_16_17, "identifier"),
     ref_site(c1_11_13_14_16_17, b2_11_13_14_16_17), site_only(b2_11_13_14_16_17),
     ( st2_11_13_14_16_17 = b2_11_13_14_16_17
@@ -552,14 +623,13 @@ fast003_ref_of_case("pydantic", "pydantic.BaseModel").
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl fast003_alt_1(n: node)
-fast003_alt_1(n) :- ref_site(n, b1), binding_value(b1, x2), fast003_route_init(x2),
-    (st3 = b1 ; within(b1, st3)), count : { child(st3, c4, _), kind(c4, "type") } = 0.
+fast003_alt_1(n) :- ref_site(n, b1), binding_value(b1, x2), fast003_route_init(x2), st3 = b1,
+    count : { child(st3, c4, _), kind(c4, "type") } = 0.
 fast003_alt_1(n) :- ref_site(n, b5), (st6 = b5 ; within(b5, st6)), kind(st6, "as_pattern"),
     child(p7, st6, _), kind(p7, "with_item"), child(st6, c8, _), fast003_route_init(c8),
     fast003_tok_precedes_1(c8), child(st6, c16, _), kind(c16, "as_pattern_target"),
     child(c16, c17, _), fast003_plain_target(c17).
-fast003_alt_1(n) :- ref_site(n, b18), site_annotation(b18, o19), fast003_route_ann(o19),
-    (st20 = b18 ; within(b18, st20)),
+fast003_alt_1(n) :- ref_site(n, b18), site_annotation(b18, o19), fast003_route_ann(o19), st20 = b18,
     count : { child(st20, c21, _), (kind(c21, "list_splat_pattern") ; kind(c21, "dictionary_splat_pattern")) } = 0.
 fast003_alt_1(n) :- ref_site(n, b22), (st23 = b22 ; within(b22, st23)),
     kind(st23, "function_definition"), field(st23, "return_type", c24), fast003_route_ann(c24).

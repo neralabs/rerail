@@ -248,7 +248,10 @@ Each language is one file, `languages/<id>.json`, so changing one language touch
 Each dialect has:
 
 - **`label`**: the file language hosts and the store use.
-- **`suffixes`**: lowercase, with the dot. Compound ones such as `.blade.php` win over shorter ones.
+- **`suffixes`**: lowercase, with the dot. Compound ones such as `.blade.php` win over shorter ones. A dialect with
+  none is read only as a guest grammar, never selected by a file: Markdown's `markdown-inline`, the content of its
+  block grammar's `inline` nodes ([decision 0238](final-shape/decisions/0238-html-and-markdown-guests.md)). A
+  language has at least one dialect with a suffix.
 - **`variant`**, supported only: the engine's `GrammarDialect::<variant>`.
 - **`parser`**, supported only: `tree-sitter`; `forte`, Rerail's port of Forte ([docs/blade-parser.md](blade-parser.md));
   `rr`, the rule engine's own parser of `.rr` files (decision 0061); or `bitlex`, a Bitlex grammar the transducer
@@ -257,7 +260,7 @@ Each dialect has:
 - **`grammar`**, supported only: `vendored:<name>` (built by `build.rs`), `native:<name>` (a parser Rerail implements)
   or `ast-grep:<Language>`.
 - **`tapeTag`**: required when supported; a `planned` dialect may declare one to reserve it. Persisted, unique across
-  entries, never reused. Taken: Rust 9, SQL 10, Vue 12, rr 13 and JSON 14 (11 is free for a second SQL dialect).
+  entries, never reused. Taken: Rust 9, SQL 10, Vue 12, rr 13, JSON 14, Python's percent- and brace-format strings 15 and 16, ESLint directives 17, Java 18, C# 19, HTML 20, CSS 21, and Markdown 22 and its inline texts 23 (11 is free for a second SQL dialect).
 
 </details>
 
@@ -356,7 +359,7 @@ Register the language as planned, add its grammar and adapter, then flip capabil
 
 1. **Register it.** Add `languages/<id>.json` with `status: "planned"`: family, dialect labels and suffixes, every
    capability `not-supported-yet`, suppressions and embeds. Give each dialect the `tapeTag` it reserves (Rust 9, SQL
-   10, Vue 12, rr 13 and JSON 14 are taken; 11 is free for a second SQL dialect). Run `npm run generate:languages` and commit the
+   10, Vue 12, rr 13, JSON 14, Python's format strings 15 and 16, ESLint directives 17, Java 18, C# 19, HTML 20, CSS 21, and Markdown 22 and its inline texts 23 are taken; 11 is free for a second SQL dialect). Run `npm run generate:languages` and commit the
    regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs can land now.
 2. **Add its grammar.** Vendor or pick one (add a vendored one to `GRAMMARS` in `native/build.rs`). Flip the entry to
    `supported` with each dialect's `variant`, `parser` and `grammar`. The build fails until `adapter::<Family>` exists.

@@ -15,27 +15,35 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[derive(Clone)]
 pub struct Name(Arc<str>);
 
-/// The process's names. An entry no name holds any more (its count one: the table's own) goes when the table has
-/// doubled since the last sweep, so a long-lived process preparing many programs does not keep every name it made.
+/// The process's names, in shards chosen by the text's hash: one text always lands in one shard, so a name stays one
+/// allocation, and the pool's threads lowering and simplifying programs at once mostly take different locks (one lock
+/// for the process was 6% of a cold batch's samples, most of it waiting). An entry no name holds any more (its count
+/// one: the table's own) goes when its shard has doubled since its last sweep, so a long-lived process preparing many
+/// programs does not keep every name it made.
 struct Table {
     names: HashSet<Arc<str>, rustc_hash::FxBuildHasher>,
     swept_at: usize,
 }
 
-fn table() -> &'static Mutex<Table> {
-    static TABLE: OnceLock<Mutex<Table>> = OnceLock::new();
-    TABLE.get_or_init(|| Mutex::new(Table { names: HashSet::default(), swept_at: 1 << 16 }))
+const SHARDS: usize = 64;
+
+fn table(text: &str) -> &'static Mutex<Table> {
+    static TABLE: OnceLock<Vec<Mutex<Table>>> = OnceLock::new();
+    let shards = TABLE.get_or_init(|| (0..SHARDS).map(|_| Mutex::new(Table { names: HashSet::default(), swept_at: 1 << 10 })).collect());
+    let mut h = rustc_hash::FxHasher::default();
+    text.hash(&mut h);
+    &shards[(h.finish() >> 32) as usize % SHARDS]
 }
 
 impl Name {
     pub fn new(text: &str) -> Name {
-        let mut t = table().lock().expect("the names");
+        let mut t = table(text).lock().expect("the names");
         if let Some(found) = t.names.get(text) {
             return Name(Arc::clone(found));
         }
         if t.names.len() >= 2 * t.swept_at {
             t.names.retain(|n| Arc::strong_count(n) > 1);
-            t.swept_at = t.names.len().max(1 << 16);
+            t.swept_at = t.names.len().max(1 << 10);
         }
         let made: Arc<str> = Arc::from(text);
         t.names.insert(Arc::clone(&made));

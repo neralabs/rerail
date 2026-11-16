@@ -654,7 +654,15 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
             let mut python = matchers.iter().enumerate().filter(|(_, m)| m.language == GrammarDialect::Python);
             let (grammar_at, grammar) = python.next()?;
             let (tree, paths) = gated_match_tree(grammar).ok()?;
-            let lowered = LoweredMatcher::lower(&tree).ok()?;
+            let lowered = match LoweredMatcher::lower(&tree) {
+                Ok(lowered) => lowered,
+                Err(e) => {
+                    // A clause the IR refuses runs on W's matcher, natively (decision 0202's `ir-form` list).
+                    let name = format!("{policy}/{}", clause.id);
+                    rerail_accel::forms::missing("ir-form", &name, &name, &format!("{e:?}"), 1);
+                    return None;
+                }
+            };
             clauses.push(Clause {
                 paths,
                 name: format!("{policy}/{}", clause.id),
@@ -826,7 +834,7 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
     // The chunk's documents and the `py.*` families the magic rules read are its inputs.
     let inputs = std::iter::once(WAVE.to_owned()).chain(referenced.iter().filter(|rel| is_bound(rel)).cloned()).collect();
     let demand = Program { decls, facts, rules, inputs, outputs: vec![DEMANDED.to_owned()], ..Program::default() };
-    front::strata(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
+    front::components_of(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
     Ok(Some(demand))
 }
 

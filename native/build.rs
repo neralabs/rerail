@@ -51,8 +51,11 @@ fn check_compiler_cache() {
     }
     let farm = home.join(".local/share/rerail-farm/rustc-wrapper");
     let wrapper = std::env::var_os("RUSTC_WRAPPER").unwrap_or_default();
-    // Relax (RELAX_STD set) builds its native dependencies with itself as the wrapper.
-    if PathBuf::from(&wrapper) == farm || std::env::var_os("RELAX_STD").is_some() {
+    // Relax drives its own cargo pass with itself as the wrapper (`RUSTC_WRAPPER=.../bin/relax`); its
+    // builds are outside the farm by design (AGENTS.md, "Relax: the live test loop").
+    let relax = std::env::var_os("RELAX_STD").is_some()
+        && (wrapper.is_empty() || Path::new(&wrapper).file_name().is_some_and(|n| n == "relax"));
+    if PathBuf::from(&wrapper) == farm || relax {
         return;
     }
     panic!(
@@ -218,6 +221,10 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     view_sources.push(manifest.join("src/code_rule_dsl/tape/tokens.rs"));
     view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/php/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/java/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/csharp/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/html/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/css/grammar.json"));
     view_sources.retain(|path| {
         !path
             .file_name()

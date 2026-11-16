@@ -26,6 +26,17 @@ thread_local! {static CURRENT:RefCell<Option<Arc<Ledger>>>=const{RefCell::new(No
 pub fn current() -> Option<Arc<Ledger>> {
     CURRENT.with(|v| v.borrow().clone())
 }
+/// While the guard lives, this thread's SQL is admitted by `ledger` (another thread's, `current`): a job on another
+/// thread works within its caller's allowance (`logic::run_state`).
+pub fn enter_current(ledger: Option<Arc<Ledger>>) -> impl Drop {
+    struct Entered(Option<Arc<Ledger>>);
+    impl Drop for Entered {
+        fn drop(&mut self) {
+            CURRENT.with(|v| v.replace(self.0.take()));
+        }
+    }
+    Entered(CURRENT.with(|v| v.replace(ledger)))
+}
 fn available(s: &State) -> usize {
     s.limit.map_or(usize::MAX, |limit| {
         limit.saturating_sub(

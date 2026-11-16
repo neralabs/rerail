@@ -14,16 +14,16 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation ARG004(at: node, n: loc) "Remove `{n}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
+.violation ARG004(at: node, n_mv: loc) "Remove `{n_mv}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
     suppress noqa "ARG004"
-ARG004_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
-    site_scope(n, "function"), site_latest(n), !site_used(n),
-    inside(n, p1, "parameters"), child(p2, p1, _), kind(p2, "function_definition"),
-    arg004_static_method(p2), !arg004_alt_122(n).
-ARG004_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
-    site_scope(n, "function"), site_latest(n), !site_used(n),
-    inside(n, p4, "parameters"), child(p5, p4, _), kind(p5, "function_definition"),
-    arg004_new_method(p5), !arg004_alt_122(n),
+ARG004_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    main_form(b1, "parameter"), site_scope(b1, "function"), site_latest(b1),
+    !site_used(b1), inside(n, p2, "parameters"), child(p3, p2, _),
+    kind(p3, "function_definition"), arg004_static_method(p3), !arg004_alt_122(n).
+ARG004_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b5),
+    main_form(b5, "parameter"), site_scope(b5, "function"), site_latest(b5),
+    !site_used(b5), inside(n, p6, "parameters"), child(p7, p6, _),
+    kind(p7, "function_definition"), arg004_new_method(p7), !arg004_alt_122(n),
     ( child(p1, n, _), (kind(p1, "list_splat_pattern") ; kind(p1, "dictionary_splat_pattern"))
     ; precedes(s1, n), arg004_plain_parameter(s1)
     ; child(p2, n, _), (kind(p2, "default_parameter") ; kind(p2, "typed_default_parameter") ; kind(p2, "typed_parameter")), precedes(s2, p2), arg004_plain_parameter(s2)
@@ -131,8 +131,7 @@ arg004_static_method(n) :- arg004_demand_static_method(n), arg004_up_1(n, p1),
 
 // new_method(n): the JSON util `new-method`, used where the JSON says `matches: "new-method"`
 .decl arg004_new_method(n: node)
-arg004_new_method(n) :- arg004_demand_new_method(n), arg004_up_2(n, p1), field(n, "name", c2),
-    glob("__new__", c2), !arg004_alt_112(n).
+arg004_new_method(n) :- arg004_demand_new_method(n), arg004_up_2(n, p1), arg004_tok_has_6(n), !arg004_alt_112(n).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl arg004_tok_has_1(n: node)
@@ -182,6 +181,18 @@ arg004_tok_follows_5(n) :- structural_before(n, g6), match("\\s*", g6), child(p7
 arg004_tok_follows_5(n) :- structural_before(n, g6),
     match("(?s)^(?:(?:.*\\W)?(?:raise)\\s*)$", g6).
 
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^__new__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl arg004_tok_has_6(n: node)
+.stored arg004_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+arg004_tok_has_6(n) :- field(n, "name", c2), glob("__new__", c2).
+arg004_tok_has_6(n) :- op(n, t3), match("__new__", t3).
+arg004_tok_has_6(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g4).
+arg004_tok_has_6(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g4).
+arg004_tok_has_6(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g4).
+
 // demand_alt_54: the rows of alt_54 its callers ask for (the metavariable columns they pass in)
 .decl arg004_demand_alt_54(n: node, var: loc)
 arg004_demand_alt_54(c6, VAR) :- precedes_stop(s1, n, arg004_stop_51), child(s1, c2, _),
@@ -191,15 +202,15 @@ arg004_demand_alt_54(c6, VAR) :- precedes_stop(s1, n, arg004_stop_51), child(s1,
 
 // demand_new_method: the nodes new_method is asked at (it looks at every ancestor of every node)
 .decl arg004_demand_new_method(n: node)
-arg004_demand_new_method(p5) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
-    site_scope(n, "function"), site_latest(n), inside(n, p4, "parameters"),
-    child(p5, p4, _), kind(p5, "function_definition").
+arg004_demand_new_method(p7) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b5),
+    main_form(b5, "parameter"), site_scope(b5, "function"), site_latest(b5),
+    inside(n, p6, "parameters"), child(p7, p6, _), kind(p7, "function_definition").
 
 // demand_static_method: the nodes static_method is asked at (it looks at every ancestor of every node)
 .decl arg004_demand_static_method(n: node)
-arg004_demand_static_method(p2) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
-    site_scope(n, "function"), site_latest(n), inside(n, p1, "parameters"),
-    child(p2, p1, _), kind(p2, "function_definition").
+arg004_demand_static_method(p3) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    main_form(b1, "parameter"), site_scope(b1, "function"), site_latest(b1),
+    inside(n, p2, "parameters"), child(p3, p2, _), kind(p3, "function_definition").
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl arg004_up_1(n: node, p: node)
@@ -208,7 +219,7 @@ arg004_up_1(n, p) :- arg004_demand_static_method(n), within_stop(n, p, arg004_st
 
 // up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl arg004_up_2(n: node, p: node)
-arg004_up_2(n, p) :- arg004_demand_new_method(n), within_stop(n, p, arg004_stop_103),
+arg004_up_2(n, p) :- arg004_demand_new_method(n), arg004_tok_has_6(n), within_stop(n, p, arg004_stop_103),
     kind(p, "class_definition").
 
 // set_97: symbols from the JSON `resolves.import`
@@ -330,5 +341,5 @@ arg004_alt_122(n) :- option("flake8-unused-arguments.ignore-variadic-names", "tr
     (kind(p1, "list_splat_pattern") ; kind(p1, "dictionary_splat_pattern")).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl ARG004_raw(at: node, n: loc)
+.decl ARG004_raw(at: node, n_mv: loc)
 ARG004(v0, v1) :- ARG004_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

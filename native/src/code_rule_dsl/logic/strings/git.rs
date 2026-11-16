@@ -212,7 +212,7 @@ pub mod tests {
         let root = dir.join("sub");
         std::fs::create_dir_all(root.join("docs")).unwrap();
         let git = |args: &[&str]| {
-            let out = std::process::Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap();
+            let out = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(&dir).args(args).output().unwrap();
             assert!(out.status.success(), "git {args:?}");
             String::from_utf8(out.stdout).unwrap().trim().to_owned()
         };

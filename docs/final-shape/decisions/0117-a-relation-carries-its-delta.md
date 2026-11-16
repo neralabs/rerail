@@ -591,6 +591,8 @@ rows became this run's single copy: 20 copies became 1, and later edits flipped 
 
 ### A run's use is one row, not a stamp on every frame
 
+Superseded by decision 0227: a frame is kept while a live program names its relation, not for `RUNS` runs.
+
 After the above, the end-of-run wait was mostly the `used` stamp. That `UPDATE` covered every frame of the 16,481
 relations a run used, 2.5 s of a 3.25 s wait. SQLite rewrites a whole record, blob included, to change one column.
 - **Each run's use of a space is one row** (`frame_used`): the relations its programs used, as sorted 8-byte keys,

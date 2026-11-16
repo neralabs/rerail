@@ -1,32 +1,50 @@
-//! The `percent-format` and `brace-format` dialects' tapes (decision 0176): a Python format string's tree as Ruff's
-//! parsers give it, through their ports (`literal::percent`, `literal::brace`), so that main's rules that parse a
-//! string as `percentFormat` or `braceFormat` (`parsed(s, "percentFormat", r)`) read the tree they were written
-//! for: a `format` root, its `literal`, `placeholder` and `field` parts, and an `error` node holding Ruff's message.
+//! The tapes of the dialects a literal grammar parses (decisions 0176 and 0194): a string's or a comment's tree as
+//! the engine's literal parser of its grammar gives it, so that main's rules that parse a value with a grammar
+//! (`parsed(s, "percentFormat", r)`, `parsed(c, "eslintDirective", r)`) read the tree they were written for. The
+//! dialects are `percent-format` and `brace-format` (Ruff's parsers' ports, `literal::percent` and `literal::brace`:
+//! a `format` root, its `literal`, `placeholder` and `field` parts, and an `error` node holding Ruff's message) and
+//! `eslint-directive` (`literal::eslint_directive`: a `directive` root, its `item`s and their `setting`s, and a
+//! `description`).
 //!
+//! A dialect's grammar is the registered literal grammar its label names in camel case (`eslint-directive` is
+//! `eslintDirective`), so this parser names no grammar: a dialect of a grammar another crate holds needs no edit here.
 //! The parsers are hand-written ports, which rank 0 allows until each grammar is a transducer program. A document of
-//! either dialect is a guest (its text a string's value), never a file of the corpus.
+//! these dialects is a guest (a string's value, a comment's text), never a file of the corpus.
 //!
-//! - Kinds: the grammar's `KINDS`, by id from 1 (`literal::Grammar::kind_id`), all named; no fields.
+//! - Kinds: the grammar's kinds, by id from 1 (`literal::Grammar::kind_id`), all named; no fields.
 //! - Nodes: the tree in preorder, so node `i` of the tape is node `i` of the parser's preorder ([`values`]).
-//! - Values: a node's value (an `error`'s message, a `field_name`'s argument), read by [`values`] off a parse of the
-//!   document's text (`core_rr`'s literal facts).
+//! - Values: a node's value (an `error`'s message, a `field_name`'s argument, a directive's label, an item's name),
+//!   read by [`values`] off a parse of the document's text (`core_rr`'s literal facts).
 
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::{Grammar as Literal, PNode};
 use crate::code_rule_dsl::tape::{FileImage, Grammar, OwnTable, Pending, TapeImage, TemplateError, TreeParser, checked};
 use crate::code_rule_dsl::value::Value;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
-/// The format strings' tree parser for one dialect: Ruff's parser of its grammar.
-pub struct FormatStrings(pub GrammarDialect);
+/// The tree parser of one dialect: the engine's parser of its literal grammar. Its kinds table is made once.
+pub struct FormatStrings(pub GrammarDialect, pub OnceLock<OwnTable>);
 
-/// The literal grammar a dialect's documents are parsed with.
-fn grammar(lang: GrammarDialect) -> Option<Literal> {
-    match lang {
-        GrammarDialect::PercentFormat => Some(super::percent::GRAMMAR),
-        GrammarDialect::BraceFormat => Some(super::brace::GRAMMAR),
-        _ => None,
+impl FormatStrings {
+    pub const fn new(lang: GrammarDialect) -> Self {
+        Self(lang, OnceLock::new())
     }
+}
+
+/// The literal grammar a dialect's documents are parsed with: the one its label names in camel case.
+fn grammar(lang: GrammarDialect) -> Option<Literal> {
+    let label = crate::code_rule_dsl::language::label(lang)?;
+    let mut name = String::with_capacity(label.len());
+    let mut upper = false;
+    for c in label.chars() {
+        if c == '-' {
+            upper = true;
+        } else {
+            name.push(if upper { c.to_ascii_uppercase() } else { c });
+            upper = false;
+        }
+    }
+    Literal::named(&name)
 }
 
 /// A grammar's kinds as an own table names them: `""` at 0, then its kinds (all named), so an id is the grammar's.
@@ -35,9 +53,6 @@ fn table(kinds: &'static [&'static str]) -> OwnTable {
     let names: &'static [&'static str] = Box::leak(names.into_boxed_slice());
     (names, names.len() as u16, &[""])
 }
-
-static PERCENT: LazyLock<OwnTable> = LazyLock::new(|| table(super::percent::KINDS));
-static BRACE: LazyLock<OwnTable> = LazyLock::new(|| table(super::brace::KINDS));
 
 /// The tree's nodes in preorder.
 fn preorder(root: &PNode) -> Vec<(&PNode, Option<u32>)> {
@@ -60,11 +75,20 @@ impl TreeParser for FormatStrings {
                 return Err("source exceeds tape range".into());
             }
             let root = literal.parse(source);
-            let nodes = preorder(&root)
+            let order = preorder(&root);
+            // A tape node lies within its parent. A literal tree may put a child past its parent (main's eslint
+            // directive: `b:off`'s item is over `b`, its setting over `off`), so a parent runs over its children.
+            let mut spans: Vec<(usize, usize)> =
+                order.iter().map(|(n, _)| (n.start.min(source.len()), n.end.clamp(n.start, source.len()))).collect();
+            for i in (1..order.len()).rev() {
+                let p = order[i].1.expect("a child") as usize;
+                spans[p] = (spans[p].0.min(spans[i].0), spans[p].1.max(spans[i].1));
+            }
+            let nodes = order
                 .into_iter()
-                .map(|(n, parent)| {
-                    let start = n.start.min(source.len()) as u32;
-                    let end = n.end.clamp(n.start, source.len()) as u32;
+                .zip(spans)
+                .map(|((n, parent), (start, end))| {
+                    let (start, end) = (start as u32, end as u32);
                     Pending { kf: n.kind, parent, start, length: end - start, size: 1, extra: n.extra, error: false, missing: false, kind_alias: None }
                 })
                 .collect();
@@ -74,11 +98,8 @@ impl TreeParser for FormatStrings {
     }
 
     fn kinds(&self) -> Option<OwnTable> {
-        match self.0 {
-            GrammarDialect::PercentFormat => Some(*PERCENT),
-            GrammarDialect::BraceFormat => Some(*BRACE),
-            _ => None,
-        }
+        let literal = grammar(self.0)?;
+        Some(*self.1.get_or_init(|| table(literal.kinds())))
     }
 }
 
@@ -90,6 +111,8 @@ pub fn values(lang: GrammarDialect, source: &str) -> Vec<Option<(String, &'stati
         .into_iter()
         .map(|(n, _)| match &n.value {
             Some(Value::Str(s)) => Some((s.clone(), "str")),
+            // A JavaScript string (the directive grammar's names): its text.
+            Some(Value::Utf16(u)) => Some((String::from_utf16_lossy(u), "str")),
             Some(Value::Int(i)) => Some((i.to_string(), "int")),
             Some(Value::Bool(b)) => Some(((if *b { "True" } else { "False" }).to_owned(), "bool")),
             _ => None,

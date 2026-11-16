@@ -28,7 +28,7 @@ pyi026_enum_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // enum_class(n): the JSON util `enum-class`, used where the JSON says `matches: "enum-class"`
 .decl pyi026_enum_class(n: node)
-pyi026_enum_class(n) :- pyi026_demand_enum_class(n), kind(n, "class_definition"), child(n, c1, _),
+pyi026_enum_class(n) :- kind(n, "class_definition"), child(n, c1, _),
     kind(c1, "argument_list"), child(c1, c2, _), pyi026_enum_base_expr(c2).
 
 // typing_any(n): the JSON util `typing-any`, used where the JSON says `matches: "typing-any"`
@@ -60,8 +60,8 @@ pyi026_union_member(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 
 // union(n): the JSON util `union`, used where the JSON says `matches: "union"`
 .decl pyi026_union(n: node)
-pyi026_union(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1),
-    field(n, "left", c2), pyi026_union_member(c2), field(n, "right", c3), pyi026_union_member(c3).
+pyi026_union(n) :- kind(n, "binary_operator"), pyi026_tok_has_1(n), field(n, "left", c9),
+    pyi026_union_member(c9), field(n, "right", c10), pyi026_union_member(c10).
 
 // alias_value(n): the JSON util `alias-value`, used where the JSON says `matches: "alias-value"`
 .decl pyi026_alias_value(n: node)
@@ -79,74 +79,58 @@ pyi026_plain_assignment(n) :- kind(n, "assignment"),
 
 // enum_ref(n): the JSON util `enum-ref`, used where the JSON says `matches: "enum-ref"`
 .decl pyi026_enum_ref(n: node)
-pyi026_enum_ref(n) :- pyi026_demand_enum_ref(n), pyi026_enum_base(n).
-pyi026_enum_ref(n) :- pyi026_demand_enum_ref(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), pyi026_enum_class(st2).
+pyi026_enum_ref(n) :- pyi026_enum_base(n).
+pyi026_enum_ref(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, pyi026_enum_class(st2).
 
 // alias_target(n): the JSON util `alias-target`, used where the JSON says `matches: "alias-target"`
 .decl pyi026_alias_target(n: node)
 pyi026_alias_target(n) :- field(p1, "left", n), pyi026_plain_assignment(p1), field(p1, "right", c2),
     pyi026_alias_value(c2).
-pyi026_alias_target(n) :- child(p3, n, _), kind(p3, "tuple_pattern"), !pyi026_tok_has_1(p3),
+pyi026_alias_target(n) :- child(p3, n, _), kind(p3, "tuple_pattern"), !pyi026_tok_has_2(p3),
     pyi026_alias_target(p3).
 
 // none_target(n): the JSON util `none-target`, used where the JSON says `matches: "none-target"`
 .decl pyi026_none_target(n: node)
 pyi026_none_target(n) :- field(p1, "left", n), pyi026_plain_assignment(p1), field(p1, "right", c2),
     pyi026_none_value(c2).
-pyi026_none_target(n) :- child(p3, n, _), kind(p3, "tuple_pattern"), !pyi026_tok_has_1(p3),
+pyi026_none_target(n) :- child(p3, n, _), kind(p3, "tuple_pattern"), !pyi026_tok_has_2(p3),
     pyi026_none_target(p3).
 
 // paren_enum_ref(n): the JSON util `paren-enum-ref`, used where the JSON says `matches: "paren-enum-ref"`
 .decl pyi026_paren_enum_ref(n: node)
-pyi026_paren_enum_ref(n) :- pyi026_demand_paren_enum_ref(n), pyi026_enum_ref(n).
-pyi026_paren_enum_ref(n) :- pyi026_demand_paren_enum_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c1, _), pyi026_paren_enum_ref(c1).
+pyi026_paren_enum_ref(n) :- pyi026_enum_ref(n).
+pyi026_paren_enum_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi026_paren_enum_ref(c1).
 
 // enum_base_expr(n): the JSON util `enum-base-expr`, used where the JSON says `matches: "enum-base-expr"`
 .decl pyi026_enum_base_expr(n: node)
-pyi026_enum_base_expr(n) :- pyi026_demand_enum_base_expr(n), pyi026_paren_enum_ref(n).
-pyi026_enum_base_expr(n) :- pyi026_demand_enum_base_expr(n), kind(n, "subscript"),
-    field(n, "value", c1), pyi026_paren_enum_ref(c1).
-pyi026_enum_base_expr(n) :- pyi026_demand_enum_base_expr(n), kind(n, "parenthesized_expression"),
-    child(n, c2, _), pyi026_enum_base_expr(c2).
+pyi026_enum_base_expr(n) :- pyi026_paren_enum_ref(n).
+pyi026_enum_base_expr(n) :- kind(n, "subscript"), field(n, "value", c1), pyi026_paren_enum_ref(c1).
+pyi026_enum_base_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi026_enum_base_expr(c2).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi026_tok_has_1(n: node)
 .stored pyi026_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi026_tok_has_1(n) :- child(n, c4, _), glob("\\,", c4).
-pyi026_tok_has_1(n) :- op(n, t5), match(",", t5).
-pyi026_tok_has_1(n) :- child(n, c11, _), structural_before(c11, g6),
+pyi026_tok_has_1(n) :- field(n, "operator", c1), glob("|", c1).
+pyi026_tok_has_1(n) :- op(n, t2), match("\\|", t2).
+pyi026_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi026_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi026_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi026_tok_has_2(n: node)
+.stored pyi026_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi026_tok_has_2(n) :- child(n, c4, _), glob("\\,", c4).
+pyi026_tok_has_2(n) :- op(n, t5), match(",", t5).
+pyi026_tok_has_2(n) :- child(n, c11, _), structural_before(c11, g6),
     match("(?s)^(?:.*(?:,).*)$", g6).
-pyi026_tok_has_1(n) :- child(n, c11, _), structural_after(c11, g6),
+pyi026_tok_has_2(n) :- child(n, c11, _), structural_after(c11, g6),
     match("(?s)^(?:.*(?:,).*)$", g6).
-pyi026_tok_has_1(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
-
-// demand_enum_base_expr: the nodes enum_base_expr is asked at (its recursion looks at every descendant)
-.decl pyi026_demand_enum_base_expr(n: node)
-pyi026_demand_enum_base_expr(c2) :- pyi026_demand_enum_class(n), kind(n, "class_definition"),
-    child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _).
-pyi026_demand_enum_base_expr(c2) :- pyi026_demand_enum_base_expr(n),
-    kind(n, "parenthesized_expression"), child(n, c2, _).
-
-// demand_enum_class: the nodes enum_class is asked at (its recursion looks at every descendant)
-.decl pyi026_demand_enum_class(n: node)
-pyi026_demand_enum_class(p2) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, pyi026_none_target(n),
-    within_stop(n, p2, "class_definition").
-pyi026_demand_enum_class(st2) :- pyi026_demand_enum_ref(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)).
-
-// demand_enum_ref: the nodes enum_ref is asked at (its recursion looks at every descendant)
-.decl pyi026_demand_enum_ref(n: node)
-pyi026_demand_enum_ref(n) :- pyi026_demand_paren_enum_ref(n).
-
-// demand_paren_enum_ref: the nodes paren_enum_ref is asked at (its recursion looks at every descendant)
-.decl pyi026_demand_paren_enum_ref(n: node)
-pyi026_demand_paren_enum_ref(c1) :- pyi026_demand_paren_enum_ref(n),
-    kind(n, "parenthesized_expression"), child(n, c1, _).
-pyi026_demand_paren_enum_ref(n) :- pyi026_demand_enum_base_expr(n).
-pyi026_demand_paren_enum_ref(c1) :- pyi026_demand_enum_base_expr(n), kind(n, "subscript"),
-    field(n, "value", c1).
+pyi026_tok_has_2(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
 
 // set_1: symbols from the JSON `resolves.import`
 .decl pyi026_set_1(v: symbol)

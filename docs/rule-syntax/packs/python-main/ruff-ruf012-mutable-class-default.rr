@@ -55,9 +55,8 @@ ruf012_immutable_annotation(n) :- ruf012_immutable_annotation_u7(n).
 .decl ruf012_class_var_import_follows(n: node)
 ruf012_class_var_import_follows(n) :- ruf012_demand_class_var_import_follows(n),
     inside(n, p1, "module"), within_stop(c2, p1, ruf012_stop_28),
-    kind(c2, "import_from_statement"), field(c2, "module_name", c3),
-    glob("{typing,typing_extensions,_typeshed}", c3), child(c2, c4, _),
-    kind(c4, "dotted_name"), glob("ClassVar", c4).
+    kind(c2, "import_from_statement"), ruf012_tok_has_25(c2), child(c2, c11, _),
+    kind(c11, "dotted_name"), glob("ClassVar", c11).
 
 // class_var_ref(n): the JSON util `class-var-ref`, used where the JSON says `matches: "class-var-ref"`
 .decl ruf012_class_var_ref(n: node)
@@ -135,9 +134,8 @@ ruf012_attrs_expression(n) :- kind(n, "parenthesized_expression"), child(n, c2, 
 // final_import_follows(n): the JSON util `final-import-follows`, used where the JSON says `matches: "final-import-follows"`
 .decl ruf012_final_import_follows(n: node)
 ruf012_final_import_follows(n) :- ruf012_demand_final_import_follows(n), inside(n, p1, "module"),
-    within_stop(c2, p1, ruf012_stop_28), kind(c2, "import_from_statement"),
-    field(c2, "module_name", c3), glob("{typing,typing_extensions,_typeshed}", c3),
-    child(c2, c4, _), kind(c4, "dotted_name"), glob("Final", c4).
+    within_stop(c2, p1, ruf012_stop_28), kind(c2, "import_from_statement"), ruf012_tok_has_25(c2),
+    child(c2, c11, _), kind(c11, "dotted_name"), glob("Final", c11).
 
 // final_ref(n): the JSON util `final-ref`, used where the JSON says `matches: "final-ref"`
 .decl ruf012_final_ref(n: node)
@@ -237,7 +235,7 @@ ruf012_good_target(n) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
     c5 ~ `$_V`, field(c3, "left", c6), kind(c6, "identifier"), node(_, c6, _, _, _), N = c6.
 ruf012_good_target(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
     ruf012_good_target(c7).
-ruf012_good_target(n) :- kind(n, "tuple_pattern"), !ruf012_tok_has_25(n), child(n, c16, _),
+ruf012_good_target(n) :- kind(n, "tuple_pattern"), !ruf012_tok_has_26(n), child(n, c16, _),
     ruf012_good_target(c16).
 
 // assigned_mutable(n): the JSON util `assigned-mutable`, used where the JSON says `matches: "assigned-mutable"`
@@ -1118,6 +1116,19 @@ ruf012_tok_has_24(n) :- child(n, c75, _), structural_after(c75, g70),
     match("(?s)^(?:.*(?:,).*)$", g70).
 ruf012_tok_has_24(n) :- node_text(n, g70), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g70).
 
+// tok_has_25(n): a child of n, a named node or an anonymous token, matches "^(typing|typing_extensions|_typeshed)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_25(n: node)
+.stored ruf012_tok_has_25 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_25(n) :- field(n, "module_name", c3),
+    glob("{typing,typing_extensions,_typeshed}", c3).
+ruf012_tok_has_25(n) :- op(n, t4), match("(typing|typing_extensions|_typeshed)", t4).
+ruf012_tok_has_25(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:typing)(?:\\W.*)?|(?:.*\\W)?(?:typing_extensions)(?:\\W.*)?|(?:.*\\W)?(?:_typeshed)(?:\\W.*)?)$", g5).
+ruf012_tok_has_25(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:typing)(?:\\W.*)?|(?:.*\\W)?(?:typing_extensions)(?:\\W.*)?|(?:.*\\W)?(?:_typeshed)(?:\\W.*)?)$", g5).
+ruf012_tok_has_25(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:typing)(?:\\W.*)?|(?:.*\\W)?(?:typing_extensions)(?:\\W.*)?|(?:.*\\W)?(?:_typeshed)(?:\\W.*)?)$", g5).
+
 // all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
 //   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
 .decl ruf012_all_expr(x: node)
@@ -1141,16 +1152,16 @@ ruf012_all_entry(e, x) :- ruf012_all_expr(l), (kind(l, "list") ; kind(l, "tuple"
     (kind(e, "string") ; kind(e, "concatenated_string")),
     count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
 
-// tok_has_25(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ruf012_tok_has_25(n: node)
-.stored ruf012_tok_has_25 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf012_tok_has_25(n) :- child(n, c8, _), glob("\\,", c8).
-ruf012_tok_has_25(n) :- op(n, t9), match(",", t9).
-ruf012_tok_has_25(n) :- child(n, c15, _), structural_before(c15, g10),
+// tok_has_26(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_26(n: node)
+.stored ruf012_tok_has_26 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_26(n) :- child(n, c8, _), glob("\\,", c8).
+ruf012_tok_has_26(n) :- op(n, t9), match(",", t9).
+ruf012_tok_has_26(n) :- child(n, c15, _), structural_before(c15, g10),
     match("(?s)^(?:.*(?:,).*)$", g10).
-ruf012_tok_has_25(n) :- child(n, c15, _), structural_after(c15, g10),
+ruf012_tok_has_26(n) :- child(n, c15, _), structural_after(c15, g10),
     match("(?s)^(?:.*(?:,).*)$", g10).
-ruf012_tok_has_25(n) :- node_text(n, g10), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g10).
+ruf012_tok_has_26(n) :- node_text(n, g10), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g10).
 
 // demand_plain_default: the nodes plain_default is asked at (its recursion looks at every descendant)
 .decl ruf012_demand_plain_default(n: node)

@@ -9,7 +9,7 @@
 // PIE794(n): a finding at node n, from clause `duplicate-class-field-definition`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PIE794(at: node, n: loc) "Class field `{n}` is defined multiple times"
+.violation PIE794(at: node, n_mv: loc) "Class field `{n_mv}` is defined multiple times"
     suppress noqa "PIE794"
 PIE794(n, N) :- pie794_field_def(n, N), child(p1, n, _), kind(p1, "block"), child(p2, p1, _),
     kind(p2, "class_definition"), precedes(s3, n), pie794_field_def(s3, N).

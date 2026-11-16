@@ -2,7 +2,7 @@
 
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -394,11 +394,13 @@ INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1
 -- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
 -- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
 -- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
--- Additive: an older binary ignores it.
+-- Additive: an older binary ignores it. `swept`: the decision whose unreachable frames were last collected (decision
+-- 0227); the `frames` upkeep job is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
 CREATE TABLE IF NOT EXISTS corpus_decided (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
-    time INTEGER NOT NULL
+    time INTEGER NOT NULL,
+    swept INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
 -- A root's stat index (corpus_runs.rs), as git's: a file's size, mtime and inode when its source was last read, and
@@ -698,6 +700,9 @@ END;
 CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
     part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
     types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+-- A memo frame's digest is its document's key, a function of its path (`memo::doc_keys`): a path's contents are found
+-- by it, without reading every frame of the relation (each a page, its rows inline).
+CREATE INDEX IF NOT EXISTS frames_by_digest ON frames(space, rel, digest);
 -- The run each frame was last used by (decision 0138): apart from `frames`, whose records hold the frame's encoded
 -- rows, since SQLite rewrites a whole record (its overflow pages too) to change one column, and reads past `data`
 -- to read `used`. Every frame has its row here: put with it, forgotten with it. `frames.used` is the run that put
@@ -711,15 +716,13 @@ CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT
 -- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.
 CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;
 -- Each run's use of a space (decision 0117 step 5): the relations its programs used, as sorted keys, one row a
--- run, the last `frames::RUNS` runs'. A frame is collected once the run that put it is that old and no run since
+-- run, the last four runs'. A frame is collected once the run that put it is that old and no run since
 -- used its relation.
 CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
     PRIMARY KEY (space, run)) WITHOUT ROWID;
--- Each run's use of a space by program (decision 0117 step 5, O-store-single-program): the relations it used, as
--- sorted keys, one row a program a run, each program's last `frames::RUNS`. Programs over one root share its space;
--- counted by the space's runs alone, one policy's frames went unused while the others ran, and were collected. A
--- frame is collected once the run that put it is that old and none of these rows names its relation. `frame_used`
--- (one row a run, of every program) is read no more: it stays for an older binary.
+-- What each program derives in a space (decision 0227): its relations, as sorted keys, one row a program (`run` 0),
+-- written when it first puts there. A relation's frames are kept while a live program's row names it
+-- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
 CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
     rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
 "#;
@@ -741,6 +744,9 @@ impl ContentStore {
                         let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
                         // Another open may have created the store since the read above.
                         let version = compatible_version(&transaction)?;
+                        for (table, column, declaration) in missing_columns(&transaction)? {
+                            transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
+                        }
                         transaction.execute_batch(SCHEMA)?;
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -807,25 +813,70 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
     let expected = SCHEMA_OBJECTS
         .as_ref()
         .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
-    Ok(expected.iter().all(|object| present.contains(object)))
+    Ok(expected.iter().all(|object| present.contains(object)) && missing_columns(connection)?.is_empty())
 }
 
-/// Every object SCHEMA creates, as `(type, name)`: read once from SCHEMA applied to an in-memory
-/// database, so it cannot drift from SCHEMA.
-/// Made on a writer's thread (decision 0104: a run's own threads only read).
-static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| {
-    rerail_accel::exec::scoped(|scope| {
-        scope
-            .spawn(|| {
-                super::hazards::behind_the_run();
-                let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-                connection.execute_batch(SCHEMA).map_err(|error| error.to_string())?;
-                schema_object_names(&connection).map_err(|error| error.to_string())
-            })
-            .join()
-            .unwrap_or_else(|p| std::panic::resume_unwind(p))
-    })
-});
+/// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
+/// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
+/// Each has a default, so an older binary's inserts, which do not name it, still apply.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0")];
+
+/// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
+fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
+    let mut missing = Vec::new();
+    for added in ADDED_COLUMNS {
+        let (table, column, _) = added;
+        let (tables, columns): (i64, i64) = connection.query_row(
+            "SELECT (SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1), (SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2)",
+            params![table, column],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if tables > 0 && columns == 0 {
+            missing.push(added);
+        }
+    }
+    Ok(missing)
+}
+
+/// Every object SCHEMA creates, as `(type, name)`, read from its `CREATE … IF NOT EXISTS` statements. Its text is
+/// the whole of it, so this cannot drift from SCHEMA (`schema_objects_are_what_schema_creates` applies SCHEMA and
+/// compares). It was SCHEMA applied to an in-memory database, once a process: 124 statements written on every
+/// open, which a warm run's check refuses (`RERAIL_WARM`). An object SQLite makes along with one of these (a
+/// table's `sqlite_autoindex_*`, a full-text table's shadow tables) comes and goes with it.
+static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| Ok(schema_objects(SCHEMA)));
+
+fn schema_objects(schema: &str) -> Vec<(String, String)> {
+    let text: String = schema.lines().map(|l| l.split("--").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+    let words: Vec<&str> = text.split(|c: char| c.is_whitespace() || c == '(' || c == ';').filter(|w| !w.is_empty()).collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        if words[i].eq_ignore_ascii_case("CREATE") {
+            let rest = &words[i + 1..];
+            let (kind, at) = match rest {
+                [t, ..] if t.eq_ignore_ascii_case("TABLE") => ("table", 1),
+                [v, t, ..] if v.eq_ignore_ascii_case("VIRTUAL") && t.eq_ignore_ascii_case("TABLE") => ("table", 2),
+                [u, t, ..] if u.eq_ignore_ascii_case("UNIQUE") && t.eq_ignore_ascii_case("INDEX") => ("index", 2),
+                [t, ..] if t.eq_ignore_ascii_case("INDEX") => ("index", 1),
+                [t, ..] if t.eq_ignore_ascii_case("TRIGGER") => ("trigger", 1),
+                [t, ..] if t.eq_ignore_ascii_case("VIEW") => ("view", 1),
+                _ => {
+                    i += 1;
+                    continue;
+                }
+            };
+            let rest = &rest[at..];
+            let name = match rest {
+                [a, b, c, name, ..] if a.eq_ignore_ascii_case("IF") && b.eq_ignore_ascii_case("NOT") && c.eq_ignore_ascii_case("EXISTS") => name,
+                [name, ..] => name,
+                [] => break,
+            };
+            out.push((kind.to_owned(), name.to_string()));
+        }
+        i += 1;
+    }
+    out
+}
 
 fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, String)>> {
     connection
@@ -833,4 +884,55 @@ fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, Stri
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(StoreError::from)
+}
+
+#[cfg(test)]
+mod schema_object_tests {
+    use super::*;
+
+    /// A store made before a column of `ADDED_COLUMNS` (here `corpus_decided.swept`, decision 0227) gains it when
+    /// opened, its rows keeping their values.
+    #[test]
+    fn an_older_store_gains_the_added_columns() {
+        let dir = std::env::temp_dir().join(format!("rerail-added-columns-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("store.sqlite");
+        let _ = std::fs::remove_file(&path);
+        drop(ContentStore::open(&path).unwrap());
+        {
+            let c = Connection::open(&path).unwrap();
+            // The table as an older binary made it.
+            c.execute_batch(
+                "DROP TABLE corpus_decided; \
+                 CREATE TABLE corpus_decided (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), run INTEGER NOT NULL, time INTEGER NOT NULL) STRICT; \
+                 INSERT INTO corpus_decided VALUES (1, 7, 0)",
+            )
+            .unwrap();
+            assert_eq!(missing_columns(&c).unwrap().len(), 1);
+        }
+        drop(ContentStore::open(&path).unwrap());
+        let c = Connection::open(&path).unwrap();
+        assert!(missing_columns(&c).unwrap().is_empty());
+        assert_eq!(c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap(), (7, 0));
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The objects read from SCHEMA's text are those SCHEMA creates, less what SQLite makes along with them.
+    #[test]
+    fn schema_objects_are_what_schema_creates() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        let fts: Vec<String> = schema_objects(SCHEMA).into_iter().filter(|(_, n)| n.ends_with("_fts")).map(|(_, n)| n).collect();
+        let mut applied: Vec<(String, String)> = schema_object_names(&connection)
+            .unwrap()
+            .into_iter()
+            .filter(|(_, n)| !n.starts_with("sqlite_") && !fts.iter().any(|f| n.starts_with(&format!("{f}_"))))
+            .collect();
+        let mut read = schema_objects(SCHEMA);
+        applied.sort();
+        read.sort();
+        assert_eq!(read, applied);
+        assert!(read.len() > 100, "{} objects", read.len());
+    }
 }

@@ -13,6 +13,7 @@
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 .violation F402(at: node, name: loc) "Import `{name}` shadowed by loop variable"
     suppress noqa "F402"
-F402(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, site_form(n, "for"),
-    (st1 = n, kind(st1, "for_statement") ; inside(n, st1, "for_statement")),
-    binding(sc2, x3, n, _), binding(sc2, x3, s4, "import"), s4 < n.
+F402(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, bind_name(n, b1),
+    main_form(b1, "for"),
+    (st2 = b1, kind(st2, "for_statement") ; inside(b1, st2, "for_statement")),
+    binding(sc3, x4, b1, _), binding(sc3, x4, s5, _), main_form(s5, "import"), s5 < b1.

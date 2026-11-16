@@ -54,7 +54,7 @@ pyi014_real_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi0
 
 // minus(n): the JSON util `minus`, used where the JSON says `matches: "minus"`
 .decl pyi014_minus(n: node)
-pyi014_minus(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1).
+pyi014_minus(n) :- kind(n, "unary_operator"), pyi014_tok_has_1(n).
 
 // complex_left(n): the JSON util `complex-left`, used where the JSON says `matches: "complex-left"`
 .decl pyi014_complex_left(n: node)
@@ -71,9 +71,9 @@ pyi014_scalar(n) :- kind(n, "concatenated_string"),
     count : { child(n, c1, _), pyi014_fstring(c1) } = 0.
 pyi014_scalar(n) :- pyi014_number(n).
 pyi014_scalar(n) :- pyi014_minus(n), field(n, "argument", c2), pyi014_neg_arg(c2).
-pyi014_scalar(n) :- kind(n, "binary_operator"), field(n, "operator", c3), glob("[+-]", c3),
-    field(n, "left", c4), pyi014_complex_left(c4), field(n, "right", c5), pyi014_complex_arg(c5).
-pyi014_scalar(n) :- kind(n, "attribute"), sym_of(n, q6), pyi014_set_1(q6).
+pyi014_scalar(n) :- kind(n, "binary_operator"), pyi014_tok_has_2(n), field(n, "left", c11),
+    pyi014_complex_left(c11), field(n, "right", c12), pyi014_complex_arg(c12).
+pyi014_scalar(n) :- kind(n, "attribute"), sym_of(n, q13), pyi014_set_1(q13).
 
 // elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
 .decl pyi014_elem(n: node)
@@ -104,6 +104,30 @@ pyi014_valid(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pyi014_
 pyi014_default_slot(n) :- field(p1, "value", n), kind(p1, "default_parameter").
 pyi014_default_slot(n) :- child(p2, n, _), pyi014_default_slot(p2),
     kind(p2, "parenthesized_expression"), !kind(n, "comment").
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^-$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi014_tok_has_1(n: node)
+.stored pyi014_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi014_tok_has_1(n) :- field(n, "operator", c1), glob("-", c1).
+pyi014_tok_has_1(n) :- op(n, t2), match("-", t2).
+pyi014_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi014_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi014_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^[+-]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi014_tok_has_2(n: node)
+.stored pyi014_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi014_tok_has_2(n) :- field(n, "operator", c3), glob("[+-]", c3).
+pyi014_tok_has_2(n) :- op(n, t4), match("[+-]", t4).
+pyi014_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi014_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi014_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
 
 // set_1: symbols from the JSON `resolves.import`
 .decl pyi014_set_1(v: symbol)

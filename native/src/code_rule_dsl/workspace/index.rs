@@ -727,6 +727,8 @@ impl WorkspaceIndexTask {
             self.lock()?.repository_index = Some(index);
             return Err(invalid(WORKSPACE_BUSY));
         };
+        // Upkeep yields to the batch (decision 0190 §8).
+        let _run = rerail_accel::upkeep::run_begins(&[]);
         let mut failures = std::mem::take(&mut index.failures);
         let batch = self.read_batch(repository, &mut index, &mut failures)?;
         let evaluation = self.apply_batch(batch)?;

@@ -42,6 +42,7 @@ pub(in crate::code_rule_dsl) fn run(
     stats: &mut crate::code_rule_dsl::logic::plan::Stats,
     keep: &BTreeSet<String>,
     modes: &str,
+    texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 ) -> Result<Ran> {
     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("maintained/{name}"));
     let digests: HashMap<String, u64> = inputs.iter().map(|(rel, _, d, _)| (rel.clone(), *d)).collect();
@@ -49,43 +50,50 @@ pub(in crate::code_rule_dsl) fn run(
     // A cone's program has no split: its inputs' rows are grouped by their first node column (`group_col`).
     let no_locations = retain::Locations::new();
     let s = span("cut and rewrite");
-    let (sccs, _) = crate::code_rule_dsl::logic::front::strata(&prog.program).map_err(|e| super::Error::Plan(e.to_string()))?;
-    let cut = retain::cut(kept.as_ref(), key, &prog.program, &sccs, &digests)?;
+    // The run reads the program's version, not its tree (t36 item 7).
+    let placed = prog.placed()?;
+    let sccs = placed.components()?;
+    let cut = retain::cut(kept.as_ref(), key, &placed, &sccs, &digests)?;
     // What the strata that run read of a part kept in the frames is read back now; the rest stays in the store.
     if let (Some(k), Some(store)) = (kept.as_mut(), store) {
-        k.load(store, &cut, &prog.program, &no_locations, false)?;
+        k.load(store, &cut, &placed, &no_locations, false)?;
     }
     let frames = kept.as_mut().and_then(retain::Retained::take_frames);
     let by_name: HashMap<&str, &Arc<dyn Source>> = inputs.iter().map(|(r, s, ..)| (r.as_str(), s)).collect();
     let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
-    // An input's delta, found from its old rows by document.
+    // An input's delta, found from its old rows by document: hashed by content, as the frames hold its documents'.
+    let atoms = store.map_or_else(|| crate::content_store::atoms::Atoms::for_connection(db), |s| s.atoms_handle());
     let mut given = |rel: &str| -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
         let kept = kept.as_ref()?;
         let new = by_name.get(rel)?;
         let old = kept.input_source(rel)?;
-        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&prog.program, &no_locations, rel))?;
+        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&placed, &no_locations, rel), &retain::cells_of(&atoms, &placed, &prog.domains, rel, new.columns().len()))?;
         input_docs.insert(rel.to_owned(), docs);
         Some(delta)
     };
     let mut maintained = maintain::rewrite(&cut, kept.as_ref(), prog, &sccs, &mut given)?;
     let derived = cut.derived(&sccs)?;
-    {
-        let program = &mut maintained.program.program;
-        if maintain::levels_wanted() {
-            for rel in program.rules.iter().map(|r| r.head.rel.clone()).collect::<BTreeSet<_>>() {
-                program.qualifiers.entry(rel.to_string().to_string()).or_default().insert("levels".to_owned());
+    // On the part's version (`qualify`): no tree decoded or copied.
+    let levels = maintain::levels_wanted();
+    super::qualify(&mut maintained.program, |heads, qualifiers| {
+        if levels {
+            for rel in heads {
+                qualifiers.entry(rel.clone()).or_default().insert("levels".to_owned());
             }
         }
         // What is kept for the next run is stored, not inlined into its readers (decision 0099).
         for rel in derived.iter().chain(keep) {
-            let q = program.qualifiers.entry(rel.clone()).or_default();
+            let q = qualifiers.entry(rel.clone()).or_default();
             q.remove("inline");
             q.insert("no_inline".to_owned());
         }
-    }
+    });
     drop(s);
     let s = span("bind and measure");
     let part = &maintained.program;
+    // The part's fields, read from its version: no reader below decodes its tree.
+    let part_placed = part.placed()?;
+    let part_f = part_placed.fields()?;
     // Its statistics made when a stratum first plans with it (decision 0101 §4): most strata a round reaches are
     // quiet or join an empty delta, and never do.
     let mut bind = |rel: &str, source: Arc<dyn Source>| -> Result<()> {
@@ -103,7 +111,7 @@ pub(in crate::code_rule_dsl) fn run(
             bind(rel, Arc::clone(source))?;
         }
     }
-    let clean = kept.as_ref().map(|k| cut.sources(k, &part.program)).unwrap_or_default();
+    let clean = kept.as_ref().map(|k| cut.sources(k, &|r| part_f.is_input(r))).unwrap_or_default();
     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
         // A derived relation kept is read in place, with its indexes (decision 0090 step 3).
         if let Some(held) = &held {
@@ -112,17 +120,17 @@ pub(in crate::code_rule_dsl) fn run(
         bind(&rel, source)?;
     }
     let mut wanted = keep.clone();
-    wanted.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
+    wanted.extend(derived.iter().filter(|rel| !part_f.is_output(rel)).cloned());
     drop(s);
     let s = span("plan and evaluate");
-    let got = super::super::run_atoms_native_over(part, db, "main", stats.clone(), wanted, modes)?;
+    let got = super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, super::super::Hooks { texts: Some(Arc::clone(texts)), ..Default::default() })?;
     drop(s);
     let s = span("collect");
     let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
     let rows = derived
         .iter()
         .filter(|rel| !got.inlined.contains(rel.as_str()) && !maintained.views.contains(rel.as_str()))
-        .map(|rel| (rel, part.program.decls[rel.as_str()].len()))
+        .map(|rel| (rel, part_f.width(rel)))
         .filter(|(_, width)| *width > 0)
         .map(|(rel, width)| {
             let held = got
@@ -134,7 +142,7 @@ pub(in crate::code_rule_dsl) fn run(
             let held = match held {
                 Some(h) => h,
                 None => {
-                    let types = part.program.decls[rel.as_str()].iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect();
+                    let types = retain::types_of(&part_placed, &part.domains, rel);
                     InRel::flat(&held_rows(db, &got, rel, width)?, types)
                 }
             };

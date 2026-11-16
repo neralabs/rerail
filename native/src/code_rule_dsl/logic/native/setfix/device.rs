@@ -30,6 +30,7 @@
 
 use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_dead, rowcode, thread_cpu};
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -116,8 +117,6 @@ enum TextOp {
     Replace { pattern: i64, with: i64, literal: bool },
 }
 
-// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
-// the constants, into `d`'s keys `0..` as slots or constants.
 thread_local! {
     /// The step that first bound each slot of the rule being compiled (its name): what a refusal of a slot names.
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -147,6 +146,8 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
     })
 }
 
+/// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
+/// the constants, into `d`'s keys `0..` as slots or constants.
 fn text_keys(d: &mut mj::Stage, keys: &[Key], origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>, what: &str) -> Result<Kind, String> {
     let (mut cols, mut consts): (Vec<(Arc<InRel>, usize)>, Vec<i64>) = (Vec::new(), Vec::new());
     for (k, a) in keys.iter().enumerate() {
@@ -787,7 +788,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
             }
-            Step::Func { name, kinds, args, out, bind } => {
+            Step::Func { name, kinds, args, out, bind, .. } => {
                 // Integer arithmetic: a filter of its own whose bind computes the value (`mj::BIND_ARITH`); a row
                 // where it has none is dropped, as on the CPU.
                 let op = arith_op(name).filter(|_| kinds.iter().all(|k| *k == crate::code_rule_dsl::logic::strings::functions::Kind::Number) && args.len() == 2);
@@ -888,19 +889,7 @@ fn binds_slot(step: &Step, x: usize) -> bool {
 
 /// Whether `step` reads slot `x`.
 fn mentions(step: &Step, x: usize) -> bool {
-    let k = |key: &Key| matches!(key, Key::Slot(s) if *s == x);
-    match step {
-        Step::Unused { .. } => false,
-        Step::Atom { keys, .. } | Step::Scalar { keys, .. } | Step::StrJoin { keys, .. } => keys.iter().any(|(_, key)| k(key)),
-        Step::Cat { a, b, .. } => k(a) || k(b),
-        Step::Split { whole, ka, kb, .. } => k(whole) || k(ka) || k(kb),
-        Step::Eq { a, b } | Step::Ne { a, b } | Step::Lt { a, b, .. } | Step::Doc { a, b, .. } => k(a) || k(b),
-        Step::Let { b, .. } => k(b),
-        Step::Func { args, .. } => args.iter().any(k),
-        Step::DocOf { out, n, bind } => k(n) || (!*bind && *out == x),
-        Step::Test { s, p, .. } => k(s) || k(p),
-        Step::In { a, .. } => k(a),
-    }
+    step.mentions(x)
 }
 
 /// The literal text tests the device runs of any texts (`mj::TEXTOP`): `equals`, `prefix`, `suffix`.
@@ -1157,6 +1146,56 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
         e.indexes.push((cols.to_vec(), ix.clone()));
         Ok((dev, Some(ix)))
     })
+}
+
+/// Decision 0209 §6 on the device, with decision 0261: columns' statistics in one batch
+/// (`rerail_accel::gpu::join::column_stats_of`). A relation this thread holds on the device, as it is now (its live
+/// rows), is read in place: its column of the resident upload. Any other's values are gathered on the host. Also how
+/// many columns were read in place.
+pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
+    use rerail_accel::gpu::join::{StatCol, column_stats_of};
+    let devs: Vec<Option<Rc<mj::DevRel>>> = RESIDENT.with_borrow(|res| {
+        cols.iter()
+            .map(|c| {
+                let StatColumn::Rel(rel, col) = c else { return None };
+                let weak = Arc::downgrade(rel);
+                let e = res.entries.iter().find(|e| Weak::ptr_eq(&e.rel, &weak))?;
+                (e.dev.rows == rel.len() - rel.ndead && *col < e.dev.cols).then(|| e.dev.clone())
+            })
+            .collect()
+    });
+    let gathered: Vec<Option<Vec<i64>>> = cols
+        .iter()
+        .zip(&devs)
+        .map(|(c, d)| match (c, d) {
+            (StatColumn::Rel(rel, col), None) => Some(column_values(rel, *col)),
+            _ => None,
+        })
+        .collect();
+    let stat: Vec<StatCol<'_>> = cols
+        .iter()
+        .zip(&devs)
+        .zip(&gathered)
+        .map(|((c, d), g)| match (c, d, g) {
+            (StatColumn::Values(v), _, _) => StatCol::Host(v),
+            (StatColumn::Rel(_, col), Some(d), _) => StatCol::Device { buffer: &d.held().buffer, at: col * d.rows, rows: d.rows },
+            (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
+        })
+        .collect();
+    let made = column_stats_of(&stat, k)?;
+    let in_place = devs.iter().filter(|d| d.is_some()).count();
+    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top }).collect(), in_place))
+}
+
+/// Column `col` of `rel`'s live rows, in row order (as the resident upload lays them out).
+fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
+    let n = rel.len();
+    let live = (0..n).filter(|&id| rel.ndead == 0 || !is_dead(&rel.dead, id as u32));
+    if rel.view.is_none() {
+        live.map(|id| rel.row(id)[col]).collect()
+    } else {
+        live.map(|id| rel.at(id).read().at(col)).collect()
+    }
 }
 
 /// The names of column `col`'s distinct symbols on the device, kept with the relation's entry `e` (copied once).

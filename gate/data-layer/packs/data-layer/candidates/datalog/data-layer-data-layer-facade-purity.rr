@@ -35,7 +35,7 @@
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, line, syntax_error, node_text, value_type_of, end_line, token
+.input doc, node, child, field, line, syntax_error, value_type_of, end_line, node_text, token
 .output violation
 option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("data_layer/_file_locking.py", p).

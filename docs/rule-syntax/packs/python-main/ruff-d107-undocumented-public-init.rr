@@ -37,10 +37,10 @@ d107_public_class(n) :- d107_demand_public_class(n), kind(n, "class_definition")
 .decl d107_exempt_decorator(n: node)
 d107_exempt_decorator(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, q1), d107_set_11(q1).
-d107_exempt_decorator(n) :- kind(n, "attribute"), field(n, "attribute", c2),
-    glob("{setter,deleter}", c2), field(n, "object", c3), d107_alt_13(c3).
-d107_exempt_decorator(n) :- kind(n, "parenthesized_expression"), child(n, c6, _),
-    d107_exempt_decorator(c6).
+d107_exempt_decorator(n) :- kind(n, "attribute"), d107_tok_has_2(n), field(n, "object", c10),
+    d107_alt_13(c10).
+d107_exempt_decorator(n) :- kind(n, "parenthesized_expression"), child(n, c13, _),
+    d107_exempt_decorator(c13).
 
 // undocumented_method(n): the JSON util `undocumented-method`, used where the JSON says `matches: "undocumented-method"`
 .decl d107_undocumented_method(n: node)
@@ -75,6 +75,18 @@ d107_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
 d107_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
     match("(?s)^(?:.*(?:,).*)$", g8).
 d107_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(?:setter|deleter)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d107_tok_has_2(n: node)
+.stored d107_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d107_tok_has_2(n) :- field(n, "attribute", c2), glob("{setter,deleter}", c2).
+d107_tok_has_2(n) :- op(n, t3), match("(?:setter|deleter)", t3).
+d107_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+d107_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+d107_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
 
 // demand_alt_6: the nodes alt_6 is asked at (its recursion looks at every descendant)
 .decl d107_demand_alt_6(n: node)
@@ -116,7 +128,7 @@ d107_alt_6(n) :- d107_demand_alt_6(n),
     count : { within(n, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0,
     field(n, "name", c3),
     ( count : { inside(c3, p1, "module"), d107_stop_10_within(c1, p1), d107_dunder_all(c1) } = 0
-    ; site_exported(c3)
+    ; bind_name(c3, b1), site_exported(b1)
     ).
 
 

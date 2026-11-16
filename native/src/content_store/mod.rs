@@ -27,7 +27,7 @@ mod facts_memo;
 mod objects;
 pub mod journal;
 pub mod observe;
-pub use objects::{ResidentFrames, TapeFrame};
+pub use objects::{ResidentFrames, SourceAndTapeFrames, TapeFrame};
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -52,10 +52,13 @@ mod search_index;
 mod snapshots;
 mod tree_diff;
 mod tree_pages;
+pub mod upkeep;
 /// G's tree result segments as copied, beside `tree_pages` (O19).
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
 mod tree_result_segments;
+#[cfg(test)]
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 mod workspaces;
@@ -65,10 +68,10 @@ pub mod hazards;
 
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
-pub use frames::{Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use frames::{Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, SymbolReader as FrameSymbolReader, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
-pub use atoms::Sym;
+pub use atoms::{ProcessIds, StoreIds, Sym};
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
 pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
@@ -144,12 +147,18 @@ pub fn reset_search_index_family_writes() {
     SEARCH_INDEX_FAMILY_WRITES.store(0, Ordering::Relaxed);
 }
 
+/// The store handles open on the database at `path` in this process, and the thread connections to it still open.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn holding(path: &Path) -> (usize, usize) {
+    connection::holding(path)
+}
+
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn search_index_family_writes() -> usize {
     SEARCH_INDEX_FAMILY_WRITES.load(Ordering::Relaxed)
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 thread_local! {
     static WRITE_LOCK_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static WRITE_LOCK_SECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -157,10 +166,10 @@ thread_local! {
 }
 
 /// Marks this thread as holding a publication write transaction until dropped.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) struct WriteLockSection;
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 impl WriteLockSection {
     pub(super) fn enter() -> Self {
         WRITE_LOCK_HELD.with(|held| held.set(true));
@@ -169,7 +178,7 @@ impl WriteLockSection {
     }
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 impl Drop for WriteLockSection {
     fn drop(&mut self) {
         WRITE_LOCK_HELD.with(|held| held.set(false));
@@ -208,7 +217,7 @@ impl HashKey {
     }
 
     pub fn sha256(bytes: &[u8]) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
             HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
         }
@@ -220,7 +229,7 @@ impl HashKey {
     /// named-only tape holds no source text, so two sources of one shape and one set of token
     /// lengths store the same bytes; each is its own tape, as it carries its own source.
     pub fn tape_identity(source: Self, tape: &[u8]) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
             HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
         }
@@ -649,7 +658,8 @@ pub struct ContentStore {
     /// The store's writer, shared by its handles in this process (`write_back`, decision 0102); `None` for the
     /// writer's own handle, which writes at once.
     write_back: Option<std::sync::Arc<write_back::Writer>>,
-    /// This handle's shared collection lease (`hold_collection`).
+    /// This handle's shared collection lease (`hold_collection`): a file lock, which WASI has not.
+    #[cfg(not(target_family = "wasm"))]
     lease: std::sync::Arc<collection_guard::SharedLease>,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_lookup_count: AtomicUsize,
@@ -668,7 +678,7 @@ impl Drop for ContentStore {
         // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
         // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
         if self.atoms.pending() && self.write_back.is_some() {
-            self.write_back("the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+            self.write_back_syms(crate::content_store::write_back::Syms::None, "the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
             self.end_writer();
         } else {
             self.end_writer();
@@ -709,6 +719,7 @@ impl ContentStore {
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
             write_back: None,
+            #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),
@@ -725,6 +736,16 @@ impl ContentStore {
     }
 
     pub fn open(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, true)
+    }
+
+    /// A store opened beside the run's own (the rule images', decision 0264): as `open`, but the Neural Engine's
+    /// models stay the run's store's.
+    pub fn open_images(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, false)
+    }
+
+    fn open_with(path: &Path, models: bool) -> StoreResult<Self> {
         // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
         private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -738,7 +759,11 @@ impl ContentStore {
         drop(connection);
         // Compiled Neural Engine models are facts of this store (decision 0098 §3).
         #[cfg(target_os = "macos")]
-        rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
+        if models {
+            rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = models;
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection::new(path.to_path_buf(), identity),
@@ -755,6 +780,7 @@ impl ContentStore {
             holder: parking_lot::Mutex::new(None),
             // A store created again at its path has a writer of its own too.
             write_back: Some(write_back::register_store(path, identity)),
+            #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),

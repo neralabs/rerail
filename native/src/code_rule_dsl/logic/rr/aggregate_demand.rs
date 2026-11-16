@@ -21,18 +21,45 @@ fn dependencies(p: &Program) -> BTreeMap<String, BTreeSet<String>> {
     deps
 }
 
-fn reaches(deps: &BTreeMap<String, BTreeSet<String>>, start: &str, target: &str) -> bool {
-    let mut todo = vec![start];
-    let mut seen = BTreeSet::new();
-    while let Some(at) = todo.pop() {
-        if at == target {
+/// The relations that reach each target through `deps`, found once a target (a reverse walk) and dropped when the
+/// edges change. `guards` asks it of every literal of every consumer, so a walk each was quadratic in the program.
+#[derive(Default)]
+struct Reach {
+    to: std::cell::RefCell<BTreeMap<String, std::rc::Rc<BTreeSet<String>>>>,
+}
+
+impl Reach {
+    fn reaches(&self, deps: &BTreeMap<String, BTreeSet<String>>, start: &str, target: &str) -> bool {
+        if start == target {
             return true;
         }
-        if seen.insert(at) {
-            todo.extend(deps.get(at).into_iter().flatten().map(String::as_str));
-        }
+        let set = self.to.borrow().get(target).cloned();
+        let set = set.unwrap_or_else(|| {
+            let mut rev: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+            for (from, tos) in deps {
+                for t in tos {
+                    rev.entry(t.as_str()).or_default().push(from.as_str());
+                }
+            }
+            let mut seen = BTreeSet::new();
+            let mut todo = vec![target];
+            while let Some(at) = todo.pop() {
+                for &f in rev.get(at).into_iter().flatten() {
+                    if seen.insert(f.to_owned()) {
+                        todo.push(f);
+                    }
+                }
+            }
+            let set = std::rc::Rc::new(seen);
+            self.to.borrow_mut().insert(target.to_owned(), set.clone());
+            set
+        });
+        set.contains(start)
     }
-    false
+
+    fn clear(&self) {
+        self.to.borrow_mut().clear();
+    }
 }
 
 /// Safe positive guards, then comparisons whose inputs those guards bind. A context is a superset
@@ -42,82 +69,84 @@ fn guards(
     helper: &str,
     keys: &BTreeSet<String>,
     deps: &BTreeMap<String, BTreeSet<String>>,
+    reach: &Reach,
 ) -> Option<Vec<Literal>> {
     let safe: Vec<_> = rule
         .body
         .iter()
         .filter(|l| match l {
             Literal::Atom(a) => {
-                !a.neg && !reaches(deps, &a.rel, helper) && !reaches(deps, &a.rel, &rule.head.rel)
+                !a.neg && !reach.reaches(deps, &a.rel, helper) && !reach.reaches(deps, &a.rel, &rule.head.rel)
             }
             Literal::Nearest { .. } => true,
             _ => false,
         })
         .cloned()
         .collect();
-    // Do not introduce unrelated cross products when projecting a demand.
+    // Do not introduce unrelated cross products when projecting a demand: a guard joins once it shares a variable with
+    // the keys or a guard joined before. A comparison that can run on what the guards bind joins too, and connects its
+    // variables: `p1 = @sub(p, 1)` brings in `byte(p1, 92)`, which reads none of the keys itself (without it, the
+    // demand of "the byte before p is a backslash" was every position).
     let mut connected = keys.clone();
-    loop {
-        let before = connected.len();
-        for l in &safe {
-            let vars = l.vars();
-            if !vars.is_disjoint(&connected) {
-                connected.extend(vars);
-            }
-        }
-        if connected.len() == before {
-            break;
-        }
-    }
-    let mut out: Vec<_> = safe
-        .into_iter()
-        .filter(|l| !l.vars().is_disjoint(&connected))
-        .collect();
-    let mut bound: BTreeSet<_> = out
-        .iter()
-        .filter_map(|l| match l {
-            Literal::Atom(a) => Some(a.vars()),
-            _ => None,
-        })
-        .flatten()
-        .collect();
-    // Nearest cannot start with a free subject. All other variables must be grounded too.
-    for l in &out {
-        if let Literal::Nearest { n, a, .. } = l {
-            if !bound.contains(n) {
-                return None;
-            }
-            bound.insert(a.clone());
-        }
-    }
+    // The atoms' variables (a nearest's subject must be one of them), and every variable bound so far.
+    let mut grounded = BTreeSet::new();
+    let mut bound = BTreeSet::new();
+    let mut joined = vec![false; safe.len()];
     let mut added = BTreeSet::new();
+    let mut compared = Vec::new();
     loop {
-        let before = added.len();
+        let before = (connected.len(), bound.len(), added.len());
+        for (k, l) in safe.iter().enumerate() {
+            let vars = l.vars();
+            if joined[k] || vars.is_disjoint(&connected) {
+                continue;
+            }
+            joined[k] = true;
+            connected.extend(vars.iter().cloned());
+            if let Literal::Atom(a) = l {
+                grounded.extend(a.vars());
+                bound.extend(a.vars());
+            }
+        }
+        // A nearest binds its node once its subject is an atom's.
+        for (l, _) in safe.iter().zip(&joined).filter(|(_, j)| **j) {
+            if let Literal::Nearest { n, a, .. } = l
+                && grounded.contains(n)
+            {
+                bound.insert(a.clone());
+            }
+        }
         for (i, l) in rule.body.iter().enumerate() {
             if added.contains(&i) {
                 continue;
             }
-            if let Literal::Cmp {
-                l: left,
-                op,
-                r: right,
-            } = l
+            if let Literal::Cmp { l: left, op, r: right } = l
+                && let Some(more) = front::cmp_binds(left, op, right, &bound)
             {
-                if let Some(more) = front::cmp_binds(left, op, right, &bound) {
-                    // Constants can test/alias a key; do not pull an aggregate's result into demand.
-                    let vars = l.vars();
-                    if vars.is_empty() || !vars.is_disjoint(&connected) {
-                        bound.extend(more);
-                        out.push(l.clone());
-                        added.insert(i);
-                    }
+                // Constants can test/alias a key; do not pull an aggregate's result into demand.
+                let vars = l.vars();
+                if vars.is_empty() || !vars.is_disjoint(&connected) {
+                    bound.extend(more);
+                    connected.extend(vars);
+                    compared.push(l.clone());
+                    added.insert(i);
                 }
             }
         }
-        if added.len() == before {
+        if (connected.len(), bound.len(), added.len()) == before {
             break;
         }
     }
+    let mut out: Vec<Literal> = safe.into_iter().zip(joined).filter_map(|(l, j)| j.then_some(l)).collect();
+    // Nearest cannot start with a free subject. All other variables must be grounded too.
+    for l in &out {
+        if let Literal::Nearest { n, .. } = l
+            && !grounded.contains(n)
+        {
+            return None;
+        }
+    }
+    out.extend(compared);
     (keys.is_subset(&bound) && !out.is_empty()).then_some(out)
 }
 
@@ -170,6 +199,7 @@ pub fn optimize(program: &mut Program) {
     // declared demand relation, so it stays as it was, and only the demand rules' reads are checked). A candidate is
     // placed in the program itself, and taken out again where stratifying refuses it.
     let mut deps = dependencies(program);
+    let reach = Reach::default();
     let declared = front::declared(program).is_ok();
     let mut readers: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut makers: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -233,7 +263,7 @@ pub fn optimize(program: &mut Program) {
                         v
                     })
                     .collect();
-                let Some(body) = guards(rule, &name, &keys, &deps) else {
+                let Some(body) = guards(rule, &name, &keys, &deps, &reach) else {
                     refused = true;
                     break;
                 };
@@ -296,6 +326,7 @@ pub fn optimize(program: &mut Program) {
         }
         deps.entry(name.clone()).or_default().insert(demand.clone());
         deps.entry(demand.clone()).or_default().extend(guards);
+        reach.clear();
         for i in first..program.rules.len() {
             index(&mut readers, i, &program.rules[i]);
         }

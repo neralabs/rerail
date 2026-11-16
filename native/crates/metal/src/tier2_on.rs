@@ -17,17 +17,21 @@ pub fn image_on(parser: &Parser, run: &Resident, i: usize) -> Result<Vec<u8>, Re
     // `pos_base` (`capacity` a stream), its output words from `out_base` (`blocks` an output),
     // with slack past the last of each for tier 2's reads; the device finished writing them.
     let count = |c: usize| unsafe { *tot.add(f.tot_base + c) } as usize;
+    // The records where the device's layout has them (`records::RecordLayout`).
+    let extracts = parser.tier1.extracts.len();
+    let cols = [parser.tier2.starts.unwrap_or(0) as u64, parser.tier2.lasts.unwrap_or(0) as u64, extracts as u64];
+    let field = |k: usize| pos.wrapping_add(f.pos_base + run.layout.index(k, 0, cols, f.capacity as u64) as usize);
+    use rerail_compiler::records::{FIELD_CODE, FIELD_LAST, FIELD_START};
     let starts = match parser.tier2.starts {
-        Some(e) => (pos.wrapping_add(f.pos_base + e * f.capacity), count(e)),
+        Some(e) => (field(FIELD_START), count(e)),
         None => (pos, 0),
     };
     let outputs = out.wrapping_add(f.out_base);
-    // The records' other columns: the last bytes, and the codes after the extracts'.
     let lasts = match parser.tier2.lasts {
-        Some(e) => (pos.wrapping_add(f.pos_base + e * f.capacity), count(e)),
+        Some(e) => (field(FIELD_LAST), count(e)),
         None => (pos, 0),
     };
-    let codes = pos.wrapping_add(f.pos_base + parser.tier1.extracts.len() * f.capacity);
+    let codes = field(FIELD_CODE);
     let view = Tier1View {
         starts: starts.0,
         nstarts: starts.1.min(lasts.1),
@@ -39,6 +43,7 @@ pub fn image_on(parser: &Parser, run: &Resident, i: usize) -> Result<Vec<u8>, Re
         totals: tot.wrapping_add(f.tot_base + parser.tier1.extracts.len()).cast(),
         totals_stride: 4,
         totals_mask: u64::from(u32::MAX),
+        record_stride: run.layout.stride() as usize,
     };
     let mut tape = parser.tier2.tape(starts.1);
     // SAFETY: as above; the source's bytes have `SOURCE_MARGIN` readable bytes after them in

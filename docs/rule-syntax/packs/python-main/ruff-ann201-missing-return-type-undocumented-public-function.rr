@@ -94,16 +94,16 @@ ann201_static_or_class_expr(n) :- ann201_imports_builtins(n),
     (kind(n, "identifier") ; kind(n, "attribute")),
     (global_ref(n, "staticmethod") ; global_ref(n, "classmethod")),
     (sym_of(n, "builtins.staticmethod") ; sym_of(n, "builtins.classmethod")).
-ann201_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
-    ann201_static_or_class_expr(c5).
+ann201_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    ann201_static_or_class_expr(c11).
 
 // accessor_expr(n): the JSON util `accessor-expr`, used where the JSON says `matches: "accessor-expr"`
 //   FN: metavariable this relation binds for the calling rule
 .decl ann201_accessor_expr(n: node, fn: loc)
 ann201_accessor_expr(n, FN) :- kind(n, "attribute"), field(n, "object", c1),
-    ann201_accessor_object(c1, FN), field(n, "attribute", c2), glob("{setter,deleter}", c2).
-ann201_accessor_expr(n, FN) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    ann201_accessor_expr(c3, FN).
+    ann201_accessor_object(c1, FN), ann201_tok_has_1(n).
+ann201_accessor_expr(n, FN) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    ann201_accessor_expr(c10, FN).
 
 // underscore_named(n): the JSON util `underscore-named`, used where the JSON says `matches: "underscore-named"`
 .decl ann201_underscore_named(n: node)
@@ -214,10 +214,6 @@ ann201_public_class(n) :- !ann201_alt_15(n),
     ).
 
 
-// method(n): the JSON util `method`, used where the JSON says `matches: "method"`
-.decl ann201_method(n: node)
-ann201_method(n) :- within_stop(n, p1, ann201_stop_11), kind(p1, "class_definition").
-
 // accessor_object(n): the JSON util `accessor-object`, used where the JSON says `matches: "accessor-object"`
 //   FN: metavariable this relation binds for the calling rule
 .decl ann201_accessor_object(n: node, fn: loc)
@@ -231,6 +227,18 @@ ann201_accessor_object(n, FN) :- kind(n, "parenthesized_expression"), child(n, c
 ann201_export_entry(n, DEFNAME) :- ann201_demand_export_entry(n, DEFNAME), ann201_export_string(n, DEFNAME).
 ann201_export_entry(n, DEFNAME) :- ann201_demand_export_entry(n, DEFNAME),
     kind(n, "parenthesized_expression"), child(n, c1, _), ann201_export_entry(c1, DEFNAME).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(setter|deleter)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann201_tok_has_1(n: node)
+.stored ann201_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann201_tok_has_1(n) :- field(n, "attribute", c2), glob("{setter,deleter}", c2).
+ann201_tok_has_1(n) :- op(n, t3), match("(setter|deleter)", t3).
+ann201_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+ann201_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+ann201_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
 
 // demand_all_value: the rows of all_value its callers ask for (the metavariable columns they pass in)
 .decl ann201_demand_all_value(n: node, defname: loc)
@@ -319,19 +327,19 @@ ann201_stop_3(n) :- ann201_holds_definition(n).
 ann201_alt_6(n) :- ann201_imports_builtins(n).
 ann201_alt_6(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
-    site_scope(c2, "module"), !ann201_alt_10(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann201_alt_10(c2).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 .decl ann201_alt_10(n: node)
-ann201_alt_10(n) :- site_form(n, "annotation").
-ann201_alt_10(n) :- site_form(n, "except").
+ann201_alt_10(n) :- bind_name(n, b1), main_form(b1, "annotation").
+ann201_alt_10(n) :- bind_name(n, b2), main_form(b2, "except").
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl ann201_alt_9(n: node)
 ann201_alt_9(n) :- ann201_imports_builtins(n).
 ann201_alt_9(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("classmethod", c2),
-    site_scope(c2, "module"), !ann201_alt_10(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann201_alt_10(c2).
 
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 .decl ann201_alt_15(n: node)

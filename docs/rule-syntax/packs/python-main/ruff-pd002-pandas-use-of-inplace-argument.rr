@@ -16,18 +16,17 @@ pd002_true_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 
 // inplace_method(n): the JSON util `inplace-method`, used where the JSON says `matches: "inplace-method"`
 .decl pd002_inplace_method(n: node)
-pd002_inplace_method(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("{where,mask,query,clip,eval,backfill,bfill,ffill,fillna,interpolate,dropna,pad,replace,drop,drop_duplicates,rename,rename_axis,reset_index,set_index,sort_values,sort_index,set_names}", c1).
-pd002_inplace_method(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
-    pd002_inplace_method(c2).
+pd002_inplace_method(n) :- kind(n, "attribute"), pd002_tok_has_1(n).
+pd002_inplace_method(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    pd002_inplace_method(c9).
 
 // inplace_keyword(n): the JSON util `inplace-keyword`, used where the JSON says `matches: "inplace-keyword"`
 .decl pd002_inplace_keyword(n: node)
-pd002_inplace_keyword(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("inplace", c1), field(n, "value", c2), pd002_true_literal(c2),
-    count : { precedes(n, s3), kind(s3, "keyword_argument"), field(s3, "name", c4), glob("inplace", c4) } = 0,
-    child(p5, n, _), kind(p5, "argument_list"), child(p6, p5, _), kind(p6, "call"),
-    field(p6, "function", c7), pd002_inplace_method(c7).
+pd002_inplace_keyword(n) :- kind(n, "keyword_argument"), pd002_tok_has_2(n), field(n, "value", c9),
+    pd002_true_literal(c9),
+    count : { precedes(n, s10), kind(s10, "keyword_argument"), pd002_tok_has_3(s10) } = 0,
+    child(p19, n, _), kind(p19, "argument_list"), child(p20, p19, _),
+    kind(p20, "call"), field(p20, "function", c21), pd002_inplace_method(c21).
 
 // pandas_import_file(n): the JSON util `pandas-import-file`, used where the JSON says `matches: "pandas-import-file"`
 .decl pd002_pandas_import_file(n: node)
@@ -91,6 +90,44 @@ PD002(KW, n) :- pd002_in_string(n, KW).
     suppress noqa "PD002"
 PD002_stub_annotation_raw(KW, n) :- pd002_inplace_keyword(n), node(_, n, _, _, _), KW = n, pd002_up_1(n, p1),
     pd002_up_2(n, p2), !pd002_pandas_gate(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(where|mask|query|clip|eval|backfill|bfill|ffill|fillna|interpolate|dropna|pad|replace|drop|drop_duplicates|rename|rename_axis|reset_index|set_index|sort_values|sort_index|set_names)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd002_tok_has_1(n: node)
+.stored pd002_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd002_tok_has_1(n) :- field(n, "attribute", c1),
+    glob("{where,mask,query,clip,eval,backfill,bfill,ffill,fillna,interpolate,dropna,pad,replace,drop,drop_duplicates,rename,rename_axis,reset_index,set_index,sort_values,sort_index,set_names}", c1).
+pd002_tok_has_1(n) :- op(n, t2),
+    match("(where|mask|query|clip|eval|backfill|bfill|ffill|fillna|interpolate|dropna|pad|replace|drop|drop_duplicates|rename|rename_axis|reset_index|set_index|sort_values|sort_index|set_names)", t2).
+pd002_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:where)(?:\\W.*)?|(?:.*\\W)?(?:mask)(?:\\W.*)?|(?:.*\\W)?(?:query)(?:\\W.*)?|(?:.*\\W)?(?:clip)(?:\\W.*)?|(?:.*\\W)?(?:eval)(?:\\W.*)?|(?:.*\\W)?(?:backfill)(?:\\W.*)?|(?:.*\\W)?(?:bfill)(?:\\W.*)?|(?:.*\\W)?(?:ffill)(?:\\W.*)?|(?:.*\\W)?(?:fillna)(?:\\W.*)?|(?:.*\\W)?(?:interpolate)(?:\\W.*)?|(?:.*\\W)?(?:dropna)(?:\\W.*)?|(?:.*\\W)?(?:pad)(?:\\W.*)?|(?:.*\\W)?(?:replace)(?:\\W.*)?|(?:.*\\W)?(?:drop)(?:\\W.*)?|(?:.*\\W)?(?:drop_duplicates)(?:\\W.*)?|(?:.*\\W)?(?:rename)(?:\\W.*)?|(?:.*\\W)?(?:rename_axis)(?:\\W.*)?|(?:.*\\W)?(?:reset_index)(?:\\W.*)?|(?:.*\\W)?(?:set_index)(?:\\W.*)?|(?:.*\\W)?(?:sort_values)(?:\\W.*)?|(?:.*\\W)?(?:sort_index)(?:\\W.*)?|(?:.*\\W)?(?:set_names)(?:\\W.*)?)$", g3).
+pd002_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:where)(?:\\W.*)?|(?:.*\\W)?(?:mask)(?:\\W.*)?|(?:.*\\W)?(?:query)(?:\\W.*)?|(?:.*\\W)?(?:clip)(?:\\W.*)?|(?:.*\\W)?(?:eval)(?:\\W.*)?|(?:.*\\W)?(?:backfill)(?:\\W.*)?|(?:.*\\W)?(?:bfill)(?:\\W.*)?|(?:.*\\W)?(?:ffill)(?:\\W.*)?|(?:.*\\W)?(?:fillna)(?:\\W.*)?|(?:.*\\W)?(?:interpolate)(?:\\W.*)?|(?:.*\\W)?(?:dropna)(?:\\W.*)?|(?:.*\\W)?(?:pad)(?:\\W.*)?|(?:.*\\W)?(?:replace)(?:\\W.*)?|(?:.*\\W)?(?:drop)(?:\\W.*)?|(?:.*\\W)?(?:drop_duplicates)(?:\\W.*)?|(?:.*\\W)?(?:rename)(?:\\W.*)?|(?:.*\\W)?(?:rename_axis)(?:\\W.*)?|(?:.*\\W)?(?:reset_index)(?:\\W.*)?|(?:.*\\W)?(?:set_index)(?:\\W.*)?|(?:.*\\W)?(?:sort_values)(?:\\W.*)?|(?:.*\\W)?(?:sort_index)(?:\\W.*)?|(?:.*\\W)?(?:set_names)(?:\\W.*)?)$", g3).
+pd002_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:where)(?:\\W.*)?|(?:.*\\W)?(?:mask)(?:\\W.*)?|(?:.*\\W)?(?:query)(?:\\W.*)?|(?:.*\\W)?(?:clip)(?:\\W.*)?|(?:.*\\W)?(?:eval)(?:\\W.*)?|(?:.*\\W)?(?:backfill)(?:\\W.*)?|(?:.*\\W)?(?:bfill)(?:\\W.*)?|(?:.*\\W)?(?:ffill)(?:\\W.*)?|(?:.*\\W)?(?:fillna)(?:\\W.*)?|(?:.*\\W)?(?:interpolate)(?:\\W.*)?|(?:.*\\W)?(?:dropna)(?:\\W.*)?|(?:.*\\W)?(?:pad)(?:\\W.*)?|(?:.*\\W)?(?:replace)(?:\\W.*)?|(?:.*\\W)?(?:drop)(?:\\W.*)?|(?:.*\\W)?(?:drop_duplicates)(?:\\W.*)?|(?:.*\\W)?(?:rename)(?:\\W.*)?|(?:.*\\W)?(?:rename_axis)(?:\\W.*)?|(?:.*\\W)?(?:reset_index)(?:\\W.*)?|(?:.*\\W)?(?:set_index)(?:\\W.*)?|(?:.*\\W)?(?:sort_values)(?:\\W.*)?|(?:.*\\W)?(?:sort_index)(?:\\W.*)?|(?:.*\\W)?(?:set_names)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^inplace$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd002_tok_has_2(n: node)
+.stored pd002_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd002_tok_has_2(n) :- field(n, "name", c1), glob("inplace", c1).
+pd002_tok_has_2(n) :- op(n, t2), match("inplace", t2).
+pd002_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:inplace)(?:\\W.*)?)$", g3).
+pd002_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:inplace)(?:\\W.*)?)$", g3).
+pd002_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:inplace)(?:\\W.*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^inplace$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd002_tok_has_3(n: node)
+.stored pd002_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd002_tok_has_3(n) :- field(n, "name", c11), glob("inplace", c11).
+pd002_tok_has_3(n) :- op(n, t12), match("inplace", t12).
+pd002_tok_has_3(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:inplace)(?:\\W.*)?)$", g13).
+pd002_tok_has_3(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:inplace)(?:\\W.*)?)$", g13).
+pd002_tok_has_3(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:inplace)(?:\\W.*)?)$", g13).
 
 // seen_import: import statement s imports absolute module h (its first segment), inside k function bodies
 .decl pd002_seen_import(s: node, h: symbol, k: number)

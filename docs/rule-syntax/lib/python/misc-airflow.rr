@@ -51,7 +51,7 @@ air_call(c, q) :- call_q(c, q), prefix("airflow.", q), docof(c, d), seen_module(
 .decl air_dag(q: symbol)
 air_dag(q) :- air_call(_, q), split_dot(q, m, x), m != "", (x = "DAG" ; x = "dag").
 
-.decl air_kind_ask(m: symbol, s: symbol)
+.decl air_kind_ask(m: symbol, s: symbol) extensible
 .decl air_kind(q: symbol, m: symbol, s: symbol)
 air_kind(q, m, s) :- air_kind_ask(m, s), (air_call(_, q) ; air_instance(_, q)),
     match(cat("airflow\\.(providers\\.([^.]+\\.)*)?", cat(m, cat("\\.([^.]+\\.)*[^.]*", s))), q).
@@ -79,7 +79,7 @@ air_guarded(e, m, x) :- air_needs_guard(e, m, x), ast_name(e, y), look(e, y, s),
     (air_catches(t, "ImportError") ; air_catches(t, "ModuleNotFoundError")),
     field(t, "body", b), within(i2, b), kind(i2, "import_from_statement"), import_alias(i2, _, m, x, _).
 // air_needs_guard(e, m, x): a rule asks whether e is guarded for `m.x` (the rule's own table fills it).
-.decl air_needs_guard(e: node, m: symbol, x: symbol)
+.decl air_needs_guard(e: node, m: symbol, x: symbol) extensible
 // air_in_handler(n, t): t is the innermost try statement around n, and n is in one of its except clauses.
 .decl air_in_handler(n: node, t: node)
 air_in_handler(n, t) :- nearest(n, t, "try_statement"), child(t, h, _), kind(h, "except_clause"), within(n, h).

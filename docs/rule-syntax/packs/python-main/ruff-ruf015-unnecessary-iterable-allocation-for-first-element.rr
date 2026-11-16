@@ -57,15 +57,15 @@ ruf015_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
 // pop_of_comp(n): the JSON util `pop-of-comp`, used where the JSON says `matches: "pop-of-comp"`
 .decl ruf015_pop_of_comp(n: node)
 ruf015_pop_of_comp(n) :- kind(n, "attribute"), field(n, "object", c1), ruf015_comp_target(c1),
-    field(n, "attribute", c2), glob("pop", c2).
-ruf015_pop_of_comp(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    ruf015_pop_of_comp(c3).
+    ruf015_tok_has_1(n).
+ruf015_pop_of_comp(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    ruf015_pop_of_comp(c10).
 
 // first_comp(n): the JSON util `first-comp`, used where the JSON says `matches: "first-comp"`
 //   W: metavariable this relation binds for the calling rule
 .decl ruf015_first_comp(n: node, w: loc)
 ruf015_first_comp(n, W) :- node(_, n, _, _, _), W = n,
-    ( kind(n, "subscript"), field(n, "value", c1), ruf015_comp_target(c1), !ruf015_tok_has_1(n), field(n, "subscript", c2), ruf015_zero(c2)
+    ( kind(n, "subscript"), field(n, "value", c1), ruf015_comp_target(c1), !ruf015_tok_has_2(n), field(n, "subscript", c2), ruf015_zero(c2)
     ; kind(n, "call"), field(n, "function", c3), ruf015_pop_of_comp(c3), field(n, "arguments", c4), kind(c4, "argument_list"), k1 = count : { child(c4, c5, _), !ruf015_alt_11(c5) }, k1 >= 1, k1 <= 1, child(c4, c6, _), ruf015_zero(c6)
     ).
 
@@ -79,15 +79,15 @@ ruf015_first_comp_in_annotation(n, W) :- (kind(n, "string") ; kind(n, "concatena
 // pop_of_plain(n): the JSON util `pop-of-plain`, used where the JSON says `matches: "pop-of-plain"`
 .decl ruf015_pop_of_plain(n: node)
 ruf015_pop_of_plain(n) :- kind(n, "attribute"), field(n, "object", c1), ruf015_plain_target(c1),
-    field(n, "attribute", c2), glob("pop", c2).
-ruf015_pop_of_plain(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    ruf015_pop_of_plain(c3).
+    ruf015_tok_has_1(n).
+ruf015_pop_of_plain(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    ruf015_pop_of_plain(c10).
 
 // first_plain(n): the JSON util `first-plain`, used where the JSON says `matches: "first-plain"`
 //   W: metavariable this relation binds for the calling rule
 .decl ruf015_first_plain(n: node, w: loc)
 ruf015_first_plain(n, W) :- node(_, n, _, _, _), W = n,
-    ( kind(n, "subscript"), field(n, "value", c1), ruf015_plain_target(c1), !ruf015_tok_has_1(n), field(n, "subscript", c2), ruf015_zero(c2)
+    ( kind(n, "subscript"), field(n, "value", c1), ruf015_plain_target(c1), !ruf015_tok_has_2(n), field(n, "subscript", c2), ruf015_zero(c2)
     ; kind(n, "call"), field(n, "function", c3), ruf015_pop_of_plain(c3), field(n, "arguments", c4), kind(c4, "argument_list"), k1 = count : { child(c4, c5, _), !ruf015_alt_11(c5) }, k1 >= 1, k1 <= 1, child(c4, c6, _), ruf015_zero(c6)
     ).
 
@@ -108,16 +108,28 @@ RUF015(W, n, "Take the first item lazily with `next(...)` over a generator expre
 RUF015(W, n, "Use `next(iter(x))` (just `next(x)` when x is already an iterator) instead of copying x into a list or tuple for one item; an empty x then raises StopIteration, not IndexError") :- ruf015_first_plain(n, W).
 RUF015(W, n, "Use `next(iter(x))` (just `next(x)` when x is already an iterator) instead of copying x into a list or tuple for one item; an empty x then raises StopIteration, not IndexError") :- ruf015_first_plain_in_annotation(n, W).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^pop$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf015_tok_has_1(n: node)
 .stored ruf015_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf015_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
-ruf015_tok_has_1(n) :- op(n, t3), match(",", t3).
+ruf015_tok_has_1(n) :- field(n, "attribute", c2), glob("pop", c2).
+ruf015_tok_has_1(n) :- op(n, t3), match("pop", t3).
 ruf015_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
-    match("(?s)^(?:.*(?:,).*)$", g4).
+    match("(?s)^(?:(?:.*\\W)?(?:pop)(?:\\W.*)?)$", g4).
 ruf015_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:pop)(?:\\W.*)?)$", g4).
+ruf015_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:pop)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf015_tok_has_2(n: node)
+.stored ruf015_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf015_tok_has_2(n) :- child(n, c2, _), glob("\\,", c2).
+ruf015_tok_has_2(n) :- op(n, t3), match(",", t3).
+ruf015_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
-ruf015_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+ruf015_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf015_tok_has_2(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl ruf015_alt_1(n: node)

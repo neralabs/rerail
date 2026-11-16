@@ -624,6 +624,11 @@ pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
     BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
 }
 
+/// `bound_source` by the connection's scope (`Scoped::at`), for a callback that holds the scope, not the connection.
+pub fn bound_source_at(at: usize, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(at, name.to_owned())).map(Binding::current)
+}
+
 /// Rebind through the existing cell so its owning Modules and prepared cursors agree.
 pub fn replace_bound_source(db:&Connection,name:&str,source:Arc<dyn Source>)->Result<bool>{
     let binding=BOUND.lock().get(&(unsafe{db.handle()} as usize,name.to_owned())).cloned();
@@ -1174,7 +1179,12 @@ pub struct Relation {
 struct ColumnIndex {
     rows: Vec<u32>,
     distinct: usize,
+    /// Every `FENCE`th row's value, in order: a search reads these, contiguous, before the rows they bound, whose
+    /// values it reads one random access each (a search of 100 k rows was 34 of them a probe, two bounds).
+    fence: Vec<i64>,
 }
+/// Rows a fence entry stands for (0.125 bytes a row).
+const FENCE: usize = 64;
 impl Relation {
     pub fn new(columns: &[&str]) -> Self {
         assert!(!columns.is_empty());
@@ -1195,14 +1205,27 @@ impl Relation {
             let mut rows: Vec<u32> = (0..self.len() as u32).collect();
             rows.sort_by_key(|&r| self.value(r as usize, column));
             let distinct = 1 + rows.windows(2).filter(|w| self.value(w[0] as usize, column) != self.value(w[1] as usize, column)).count();
-            ColumnIndex { rows, distinct }
+            let fence = rows.iter().step_by(FENCE).map(|&r| self.value(r as usize, column)).collect();
+            ColumnIndex { rows, distinct, fence }
         })
     }
     /// The positions in `column`'s index of the rows with values in `lo..=hi`.
     fn between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
-        let rows = &self.index(column).rows;
-        let start = rows.partition_point(|&r| self.value(r as usize, column) < lo);
-        let end = rows.partition_point(|&r| self.value(r as usize, column) <= hi);
+        let index = self.index(column);
+        // The first position whose value is not `below` (ascending): the fence's entry past it bounds the rows to
+        // search to one fence's span.
+        // `RERAIL_FENCE=off`: every row searched, as before (to measure the fence).
+        static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off"));
+        let first = |below: &dyn Fn(i64) -> bool| -> usize {
+            if *OFF {
+                return index.rows.partition_point(|&r| below(self.value(r as usize, column)));
+            }
+            let j = index.fence.partition_point(|&k| below(k));
+            let (from, to) = (j.saturating_sub(1) * FENCE, (j * FENCE).min(index.rows.len()));
+            from + index.rows[from..to].partition_point(|&r| below(self.value(r as usize, column)))
+        };
+        let start = first(&|v| v < lo);
+        let end = first(&|v| v <= hi);
         start..end.max(start)
     }
 }

@@ -88,7 +88,7 @@ k6("dictionary").
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl within(n: node, a: node)
-.input doc, node, child, field, text, line, syntax_error, within, value, value_type_of
+.input doc, node, child, field, text, line, syntax_error, within, value_type_of, value
 .output violation
 complete_identity_key("upstream_namespace").
 complete_identity_key("authority_namespace").

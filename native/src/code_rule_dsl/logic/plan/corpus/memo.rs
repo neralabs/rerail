@@ -11,7 +11,10 @@
 
 use crate::content_store::{ContentStore, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+mod numbering;
+use numbering::Stored;
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
 /// When it changes, the old number joins `RETIRED_CORPUS_MEMO_SCHEMAS` only if its rows could outlive their plans
@@ -22,6 +25,139 @@ const SCHEMA: u32 = crate::content_store::live_fact_schema(7);
 /// file hands on its base rows as an evaluated one does.
 pub(super) fn base_key(rel: &str) -> String {
     format!("base:{rel}")
+}
+
+/// The entry's key for the identities of the relations it holds (decision 0225 §2): two words of each export's and
+/// file-local output's identity (`identities`) it was made under. A relation's rows in an entry are its rows only
+/// when its identity now is among them; a relation with no rows for the file has no key in `rows`, so whether it
+/// is held is read here, not from `rows`. An `own:` key: it holds no symbol, and stays with the outputs' frame.
+pub(super) const COVERED: &str = "own:covered";
+
+/// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
+/// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
+/// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
+/// running the slice. Not an output: they are no relation of the file-local part.
+pub(super) const GUESTS: &str = "guests:";
+
+/// An entry's `lines` key for round `round`'s lines of slice relation `rel`.
+pub(super) fn guest_key(round: usize, rel: &str) -> String {
+    format!("{GUESTS}{round}:{rel}")
+}
+
+/// The round and slice relation of a `guest_key`, `None` for an output's key.
+pub(super) fn guest_round(key: &str) -> Option<(usize, &str)> {
+    let (round, rel) = key.strip_prefix(GUESTS)?.split_once(':')?;
+    Some((round.parse().ok()?, rel))
+}
+
+/// Whether `a` and `b` hold the same guests' requests (`GUESTS`).
+pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
+    let of = |e: &Entry| -> Vec<(String, Vec<String>)> {
+        e.lines.iter().filter(|(k, _)| k.starts_with(GUESTS)).map(|(k, (_, l))| {
+            let mut l = l.clone();
+            l.sort_unstable();
+            l.dedup();
+            (k.clone(), l)
+        }).filter(|(_, l)| !l.is_empty()).collect()
+    };
+    of(a) == of(b)
+}
+
+/// The words `identity` is held by in `COVERED`.
+pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
+    [i64::from_le_bytes(identity[..8].try_into().expect("8 bytes")), i64::from_le_bytes(identity[8..16].try_into().expect("8 bytes"))]
+}
+
+/// The identities `entry` holds (`COVERED`).
+pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
+    entry.rows.get(COVERED).map(|(_, v)| v.chunks_exact(2).map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
+}
+
+/// Whether `a` and `b` hold the same rows (or lines) of relation `rel`, in any order.
+pub(super) fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
+    let rows = |e: &Entry| -> Option<(usize, Vec<Vec<i64>>)> {
+        e.rows.get(rel).filter(|(_, v)| !v.is_empty()).map(|(w, v)| {
+            let mut rows: Vec<Vec<i64>> = v.chunks_exact((*w).max(1)).map(<[i64]>::to_vec).collect();
+            rows.sort_unstable();
+            (*w, rows)
+        })
+    };
+    let lines = |e: &Entry| -> Option<Vec<String>> {
+        e.lines.get(rel).filter(|(_, l)| !l.is_empty()).map(|(_, l)| {
+            let mut l = l.clone();
+            l.sort_unstable();
+            l
+        })
+    };
+    rows(a) == rows(b) && lines(a) == lines(b)
+}
+
+/// Records that `entry` holds the relations of `identities`.
+pub(super) fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32]>) {
+    let mut words: Vec<[i64; 2]> = covered(entry).into_iter().chain(identities.map(covered_words)).collect();
+    words.sort_unstable();
+    words.dedup();
+    entry.rows.insert(COVERED.to_owned(), (2, words.into_iter().flatten().collect()));
+}
+
+/// Each of `rels`' identity in the file-local program `local` (decision 0225 §2): `plan::identities`, a digest of its
+/// stratum's rules and of what they read down to the inputs, with the inputs whose rows are not in the program's
+/// text digested with their values where a relation's rules reach them: the run's options (`option_input`) and the
+/// earlier phases' exports (`phased`). So an export's identity changes when a rule it is derived from does, and only
+/// then.
+pub(in crate::code_rule_dsl) fn identities(
+    local: &crate::code_rule_dsl::logic::plan::body::Placed,
+    rels: &BTreeSet<String>,
+    options: &serde_json::Value,
+    phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
+) -> Result<BTreeMap<String, [u8; 32]>, String> {
+    // Read from the program's version (t36 item 7): its components, dependencies first, and each one's rules by head.
+    let sccs = local.components().map_err(|e| e.to_string())?;
+    let ids = crate::code_rule_dsl::logic::plan::Leaves::of_placed(local.clone()).identities_by_heads(&sccs).map_err(|e| e.to_string())?;
+    let v = &local.v;
+    let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
+    let mut reads: Vec<Vec<&str>> = vec![Vec::new(); sccs.len()];
+    for k in 0..local.len() {
+        let rule = local.rule(k);
+        if let Some(&i) = at.get(v.rel_name(rule.head().rel())) {
+            reads[i].extend(rule.reads().map(|a| v.rel_name(a.rel())));
+        }
+    }
+    // The value inputs each stratum reaches, in the strata's order.
+    let mut reach: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for (scc, reads) in sccs.iter().zip(&reads) {
+        let mut leaves: BTreeSet<&str> = BTreeSet::new();
+        for &rel in reads {
+            if crate::code_rule_dsl::typing::file_local::option_input(rel) || phased.contains_key(rel) {
+                leaves.insert(rel);
+            } else if let Some(more) = reach.get(rel) {
+                leaves.extend(more.iter().copied());
+            }
+        }
+        for rel in scc {
+            reach.insert(rel.as_str(), leaves.clone());
+        }
+    }
+    let mut out = BTreeMap::new();
+    for rel in rels {
+        let Some(id) = ids.get(rel) else { continue };
+        let leaves = reach.get(rel.as_str()).cloned().unwrap_or_default();
+        if leaves.is_empty() {
+            out.insert(rel.clone(), *id);
+            continue;
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.corpus-local-identity/v1\0");
+        hash.update(id);
+        let options_read = leaves.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r));
+        if options_read {
+            hash.update(options.to_string().as_bytes());
+        }
+        let by_rows: Vec<&str> = leaves.into_iter().filter(|r| phased.contains_key(*r)).collect();
+        let digest = with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r])));
+        out.insert(rel.clone(), digest);
+    }
+    Ok(out)
 }
 
 /// Which column of a base relation's row (in `input_columns` order) names the file the row is kept for.
@@ -77,6 +213,47 @@ pub fn doc_keys(paths: &[String]) -> Vec<i64> {
         .collect()
 }
 
+/// The memo's frames' program part (decision 0225 §2): the phase that runs, and the names of the file-local part's
+/// relations (those an entry holds, those its rules derive, its inputs), not their rules, which each entry's
+/// `COVERED` identities name. Two programs of other relations (a phase's, a nested run's) keep their entries apart;
+/// a rule's edit keeps the space, and misses only the relations it reaches.
+pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code_rule_dsl::logic::plan::body::Placed, phase: Option<&str>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-space/v2\0");
+    hash.update(phase.unwrap_or("").as_bytes());
+    // Read from the program's version (t36 item 7).
+    let v = &local.v;
+    let derived: BTreeSet<&str> = (0..local.len()).map(|k| v.rel_name(local.rule(k).head().rel())).collect();
+    let inputs: BTreeSet<&str> = v.inputs().map(|a| v.text(a)).collect();
+    for part in [ids.keys().map(String::as_str).collect::<BTreeSet<&str>>(), derived, inputs] {
+        hash.update(b"\x01");
+        for rel in part {
+            hash.update(rel.as_bytes());
+            hash.update(b"\0");
+        }
+    }
+    hash.finalize().into()
+}
+
+/// Where the memo's space `space` names the whole file-local program whose entries it holds last (`set_last_program`).
+fn last_key(space: &[u8; 32]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-last/v1\0");
+    hash.update(space);
+    hash.finalize().into()
+}
+
+/// The whole file-local program whose run last wrote the entries of space `space`, if it ended (decision 0225 §2).
+/// What is kept of every file together (the kept statistics) is of that program's entries, and of no other's.
+pub(super) fn last_program(store: &ContentStore, space: &[u8; 32]) -> Option<[u8; 32]> {
+    store.stat_blob(last_key(space)).ok().flatten().and_then(|b| b.try_into().ok()).filter(|w: &[u8; 32]| *w != [0; 32])
+}
+
+/// Records `whole` as `last_program` of `space`, queued behind the run's writes; `None`: a run is under way.
+pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Option<[u8; 32]>) {
+    store.queue_stat_blob(last_key(space), whole.unwrap_or([0; 32]).to_vec());
+}
+
 /// The run's plan: the engine build, the grammar version and `program` (a digest of the file-local part as lowered,
 /// its atoms included).
 pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
@@ -93,23 +270,24 @@ pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
 }
 
 /// A digest of a program part: its rules, declarations, inputs and outputs as lowered, every fact, those the engine
-/// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it.
-pub(in crate::code_rule_dsl) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
-    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
+/// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it, all
+/// of which its version's image holds. The version's digest (decision 0173 §7), kept as the version was made: the
+/// key reads no rule. A sum, so it does not see the rules' order, which a part's rows do not depend on.
+pub(in crate::code_rule_dsl) fn program_digest(v: &crate::code_rule_dsl::logic::program_image::Version) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-program/v3\0");
-    hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
-    // What the batch makes for the part besides its rules' reads: the regex spans and AST patterns it matches
-    // (O-stored-patterns).
-    hash.update(format!("\n{:?}\n{:?}", program.rx_spans, program.ast_patterns).as_bytes());
+    hash.update(b"rerail.corpus-local-program/v4\0");
+    hash.update(v.digest().to_le_bytes());
     let digest: [u8; 32] = hash.finalize().into();
     // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
     if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
         let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
-        let text = format!(
-            "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
-            program.rules, program.decls, facts, program.inputs, program.outputs, program.rx_spans, program.ast_patterns
-        );
+        let text = match v.program(&crate::code_rule_dsl::logic::front::Lists::default()) {
+            Ok(p) => format!(
+                "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
+                p.rules, p.decls, p.facts, p.inputs, p.outputs, p.rx_spans, p.ast_patterns
+            ),
+            Err(e) => format!("no program: {e}\n"),
+        };
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), text);
     }
     digest
@@ -122,6 +300,25 @@ pub(super) fn with_tree_demand(digest: [u8; 32], tree: bool) -> [u8; 32] {
     hash.update(b"rerail.corpus-local-tree-demand/v1\0");
     hash.update(digest);
     hash.update([u8::from(tree)]);
+    hash.finalize().into()
+}
+
+/// `digest` with the modules named by package roots, not paths, folded in (`corpus::package_root_modules`): a file's
+/// `doc` row names its module, which an `__init__.py` added or removed elsewhere in the tree changes. None leaves the
+/// digest as it was.
+pub(super) fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>) -> [u8; 32] {
+    if modules.is_empty() {
+        return digest;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-modules/v1\0");
+    hash.update(digest);
+    for (path, module) in modules {
+        hash.update(path.as_bytes());
+        hash.update(b"\0");
+        hash.update(module.as_bytes());
+        hash.update(b"\0");
+    }
     hash.finalize().into()
 }
 
@@ -178,17 +375,29 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
     off();
     let found = store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten();
     if let Some(id) = found {
-        store.write_back("a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
+        store.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
     }
     Ok(found)
 }
 
 /// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
 /// on the store's writer, behind the run (decision 0104): the source the store holds then, pinned, or, where `store`,
-/// one it stores. Queued after a write that stores it (FIFO), it finds that one.
-pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+/// one it stores. Queued after a write that stores it (FIFO), it finds that one. `stored_by`: what that write is
+/// queued under (`write_back::Key`), where only it stores the text.
+pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: Option<&crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    // Stored already (decision 0223): named now, and only its pin queued (a lock, as `stored_source` takes it). The
+    // writer is for what a queued write stores: the lookup there was a write a warm run made.
+    if let Some(id) = stored_source(cache, &text).ok().flatten() {
+        late.lock().expect("the late sources").push(id);
+        return;
+    }
+    // Not stored, and nothing queued stores it: the writer would find nothing either.
+    if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
+        return;
+    }
     let late = std::sync::Arc::clone(late);
-    cache.write_back(
+    cache.write_back_syms(
+        crate::content_store::write_back::Syms::None,
         "a source the manifest names",
         text.len(),
         Vec::new(),
@@ -205,13 +414,159 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late
     );
 }
 
-/// How many runs of a plan may leave an entry unread before it is forgotten (decision 0146 §4): the plan's runs are
-/// every root's, so worktrees that take turns keep theirs.
-const MEMO_RUNS: i64 = 32;
-
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
 /// branches that take turns at a file keep theirs (decision 0146 §4); an edited file's earlier contents go.
 const MEMO_CONTENTS: usize = 4;
+
+/// A memo plan's symbol columns, by relation (decision 0170): its program's columns that hold atoms, by their domains
+/// (`Name`). Made once by the run that reads or writes its entries, and carried with its program (`Program`).
+///
+/// Not its declaration's `sym` columns: a kind's or a field's is a `sym` that holds the grammar's code
+/// (`core::kind_atom`, `syntax::field_atom`: `node`'s `kind` 1132, `field`'s `f` 65555), not an atom, and so is a
+/// derived relation's column the domains find holds one. Taken as atoms, a forked process would map those codes as
+/// this process's ids, and the check where an entry is made refused it (`symbol 65555 is no atom of this process's`).
+#[derive(Clone, Default)]
+pub(super) struct Syms(std::sync::Arc<HashMap<String, Vec<bool>>>);
+
+impl Syms {
+    pub(super) fn of(domains: &super::super::lower::Domains) -> Syms {
+        Syms(std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| matches!(d, super::super::lower::Domain::Name)).collect())).collect()))
+    }
+
+    /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own, a base
+    /// relation's (`base:`); the `own:` rows hold none. None for a relation the plan does not declare.
+    ///
+    /// A posting (`own:postings:rel:col`) is a count of a program's integer constant (`Own::constants`) in a column,
+    /// as the column's source encodes it: a kind's or a field's is the grammar's code (`field`'s `f`, 65555), not an
+    /// atom, whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for
+    /// a constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one,
+    /// the posting's column was looked up by number, found none, and a forked run refused every entry holding one.
+    /// `columns`, for statistics kept at the columns `names` (a base relation's: some of its columns, by name).
+    pub(super) fn columns_named(&self, key: &str, names: &[String]) -> Option<Vec<bool>> {
+        let Some(rel) = key.strip_prefix("base:") else { return self.columns(key, names.len()) };
+        let (all, syms) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel)?, self.0.get(rel)?);
+        names.iter().map(|n| all.iter().position(|c| c == n).and_then(|i| syms.get(i).copied())).collect()
+    }
+
+    pub(super) fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
+        if let Some(rel) = key.strip_prefix("base:") {
+            return self.0.get(rel).cloned();
+        }
+        if key.starts_with("own:") {
+            return Some(vec![false; width]);
+        }
+        self.0.get(key).cloned()
+    }
+
+    /// The store's ids an entry's frame names in its symbol columns, as the frame holds them: those its reader holds
+    /// before a run's waves (`ContentStore::hold_frame_symbols`), so a wave decodes an entry another process stored
+    /// without reading the store.
+    pub(super) fn read(&self, frame: &crate::content_store::AdmittedFrame, out: &mut Vec<i64>) -> StoreResult<()> {
+        let Ok(entry) = Stored::decoded(&frame.rows()?, &|_| true) else { return Ok(()) };
+        for (key, (w, rows)) in entry.rows() {
+            let Some(cols) = self.columns(key, *w) else { continue };
+            for row in rows.chunks_exact((*w).max(1)) {
+                out.extend(row.iter().zip(&cols).filter(|(_, s)| **s).map(|(v, _)| *v));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A memo's program (its key, `plan_digest`'s input) with its symbol columns: what reads and writes its entries.
+#[derive(Clone)]
+pub(super) struct Program {
+    pub(super) id: [u8; 32],
+    pub(super) syms: Syms,
+}
+
+impl Program {
+    pub(super) fn new(id: [u8; 32], domains: &super::super::lower::Domains) -> Program {
+        Program { id, syms: Syms::of(domains) }
+    }
+}
+
+impl std::ops::Deref for Program {
+    type Target = [u8; 32];
+    fn deref(&self) -> &[u8; 32] {
+        &self.id
+    }
+}
+
+/// The first symbol of `entries`' rows (by a memo plan's columns, `syms`) that is no atom of an arena of `atoms` atoms:
+/// its key and value. An entry is made of the run's rows, so each symbol in it is this process's; one past its atoms
+/// came from a read that gave the store's ids unmapped (decision 0170), and is caught here, where the entry is made,
+/// not by the writer mapping it later.
+fn foreign_symbol(entries: &[&Entry], syms: &Syms, atoms: usize) -> Option<(String, i64)> {
+    for entry in entries {
+        for (key, (w, rows)) in &entry.rows {
+            let Some(cols) = syms.columns(key, *w) else { continue };
+            let at: Vec<usize> = (0..(*w).min(cols.len())).filter(|&c| cols[c]).collect();
+            if at.is_empty() || *w == 0 {
+                continue;
+            }
+            if let Some(v) = rows.chunks_exact(*w).flat_map(|row| at.iter().map(move |&c| row[c])).find(|&v| v < 0 || v as u64 >= atoms as u64) {
+                return Some((key.clone(), v));
+            }
+        }
+    }
+    None
+}
+
+/// Maps the symbols of `entries`' rows with `f` (decision 0170), by a memo plan's columns (`syms`), in one call: every
+/// symbol of the batch gathered, mapped, and put back. `strict` (forked): an entry read without its plan's columns, or
+/// of a relation it does not declare, is refused, its rows may name ids of the other numbering; else such rows are
+/// left as they are.
+fn map_entries(entries: &mut [Entry], syms: Option<&Syms>, strict: bool, f: impl FnOnce(&mut [i64]) -> StoreResult<()>) -> StoreResult<()> {
+    // The refusal names what was not mapped: a key whose columns the plan does not register is a miss of every
+    // entry holding it, for as long as the run is forked.
+    let refused = |what: &str| StoreError::Invalid(format!("{} ({what})", crate::content_store::atoms::DIVERGED_TEXT));
+    let Some(syms) = syms else {
+        return if strict { Err(refused("read without the plan's symbol columns")) } else { Ok(()) };
+    };
+    // Each key's symbol columns, in the entries' order, gathered once and put back in the same order.
+    let mut columns: Vec<Option<Vec<usize>>> = Vec::new();
+    let mut values: Vec<i64> = Vec::new();
+    for entry in entries.iter() {
+        for (key, (w, rows)) in entry.rows.iter() {
+            let Some(cols) = syms.columns(key, *w) else {
+                if strict {
+                    return Err(refused(&format!("{key}, {w} wide: no registered columns")));
+                }
+                columns.push(None);
+                continue;
+            };
+            if cols.len() != *w {
+                return Err(refused(&format!("{key}: {w} wide, its columns {}", cols.len())));
+            }
+            let at: Vec<usize> = (0..*w).filter(|&c| cols[c]).collect();
+            if *w > 0 {
+                for row in rows.chunks_exact(*w) {
+                    values.extend(at.iter().map(|&c| row[c]));
+                }
+            }
+            columns.push(Some(at));
+        }
+    }
+    if values.is_empty() {
+        return Ok(());
+    }
+    f(&mut values)?;
+    let (mut columns, mut values) = (columns.into_iter(), values.into_iter());
+    for entry in entries.iter_mut() {
+        for (_, (w, rows)) in entry.rows.iter_mut() {
+            let Some(at) = columns.next().expect("one a key") else { continue };
+            if *w > 0 {
+                for row in rows.chunks_exact_mut(*w) {
+                    for &c in &at {
+                        row[c] = values.next().expect("one a symbol");
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 /// The memo's relation in its plan's space: one frame per entry (decision 0146).
 pub(super) fn entry_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
@@ -251,13 +606,18 @@ fn frame_reads(path: &str, key: i64, digest: &[u8; 32]) -> Vec<(String, u64)> {
 #[derive(Clone)]
 pub struct Frame {
     pub path: String,
+    /// The symbol columns of the memo plan whose entry it is (`Program`); none read outside a run (`read_run`).
+    syms: Option<Syms>,
     key: i64,
     digest: [u8; 32],
     frame: std::sync::Arc<crate::content_store::AdmittedFrame>,
+    /// Its outputs' frame (`outputs_rel`), for the identities it holds (`COVERED`): a run that derived the entry's
+    /// rows again and found them as they were writes only that frame (decision 0225 §2).
+    outputs: Option<std::sync::Arc<crate::content_store::AdmittedFrame>>,
 }
 
 impl Frame {
-    fn of(frame: std::sync::Arc<crate::content_store::AdmittedFrame>) -> Option<Frame> {
+    fn of(frame: std::sync::Arc<crate::content_store::AdmittedFrame>, syms: Option<Syms>) -> Option<Frame> {
         let reads = &frame.stored.reads;
         let (path, key) = reads.first()?.clone();
         if reads.len() != 5 || reads[1..].iter().any(|(n, _)| n != "sha256") {
@@ -267,7 +627,7 @@ impl Frame {
         for (c, (_, v)) in digest.chunks_exact_mut(8).zip(&reads[1..]) {
             c.copy_from_slice(&v.to_le_bytes());
         }
-        Some(Frame { path, key: key as i64, digest, frame })
+        Some(Frame { path, syms, key: key as i64, digest, frame, outputs: None })
     }
 
     fn entry(&self) -> StoreResult<Entry> {
@@ -275,8 +635,21 @@ impl Frame {
     }
 
     fn projected(&self, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
-        let mut entry = from_rows_projected(&self.frame.rows()?, keep)?;
-        entry.key = self.key;
+        // Read from the store (decision 0170): its symbols are the store's, this process's once mapped (another
+        // process's past this one's end, or any once forked).
+        let mut entry = Stored::decoded(&self.frame.rows()?, keep)?.to_process(self.syms.as_ref(), self.key, self.frame.store_atoms().as_deref())?;
+        // The identities its rows hold: those it was written with, and those a later run found its rows hold too. A
+        // frame's rows are of its content under each identity it names, so both are true while it stands.
+        if let Some(outputs) = self.outputs.as_ref().filter(|_| keep(COVERED)) {
+            let more = Stored::decoded(&outputs.rows()?, &|k| k == COVERED)?.to_process(self.syms.as_ref(), self.key, outputs.store_atoms().as_deref())?;
+            let held: Vec<[i64; 2]> = covered(&more).into_iter().collect();
+            if !held.is_empty() {
+                let mut all: Vec<[i64; 2]> = covered(&entry).into_iter().chain(held).collect();
+                all.sort_unstable();
+                all.dedup();
+                entry.rows.insert(COVERED.to_owned(), (2, all.into_iter().flatten().collect()));
+            }
+        }
         Ok(entry)
     }
 }
@@ -291,7 +664,7 @@ pub fn read_run(store: &ContentStore, root: &str) -> StoreResult<Option<(BTreeMa
     let mut frames: Vec<Frame> = store
         .admit_all_parts(&crate::content_store::local_space(&plan), &entry_rel(&plan))?
         .into_iter()
-        .filter_map(|(_, f)| Frame::of(f))
+        .filter_map(|(_, f)| Frame::of(f, None))
         .filter(|f| contents.contains(&f.digest))
         .collect();
     frames.sort_by(|a, b| a.path.cmp(&b.path));
@@ -309,7 +682,7 @@ pub fn decode_frame(frame: &Frame) -> StoreResult<Entry> {
 }
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.
-pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
+pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &Program) -> StoreResult<Option<Entry>> {
     off();
     match found_all(store, program, &[(source, path)])?.pop().flatten() {
         Some(found) => found.entry(key),
@@ -318,7 +691,7 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
 }
 
 /// `lookup` of many documents, each `(source, path, key)`, in their order: one statement whatever their number.
-pub(super) fn lookup_all(store: &ContentStore, program: &[u8; 32], docs: &[(SourceId, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
+pub(super) fn lookup_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
     off();
     let keys: Vec<(SourceId, &str)> = docs.iter().map(|(s, p, _)| (*s, *p)).collect();
     found_all(store, program, &keys)?.into_iter().zip(docs).map(|(f, (_, _, key))| f.map_or(Ok(None), |f| f.entry(*key))).collect()
@@ -342,7 +715,7 @@ impl Found {
     /// of rows, by its content's digest, read from the store. A held entry is whole already. It is asked only when the
     /// kept inputs were not taken, inside the waves; the waves' snapshot holds no entry of a file looked up before
     /// them (`admit_memo_entries`), so a read of the snapshot found none ("its memo entry is gone").
-    pub(super) fn whole(&self, store: &ContentStore, program: &[u8; 32]) -> StoreResult<Option<Found>> {
+    pub(super) fn whole(&self, store: &ContentStore, program: &Program) -> StoreResult<Option<Found>> {
         match self {
             Found::Held(e) => Ok(Some(Found::Held(std::sync::Arc::clone(e)))),
             // From the store, inside the waves too: a hit read for its outputs alone was looked up before the first
@@ -350,7 +723,7 @@ impl Found {
             // snapshot, its entry was always missing when the kept inputs were not taken (O-store-single-program).
             Found::Frame(f) => {
                 let plan = plan_digest(program);
-                Ok(by_digest_from(store, &plan, &[f.path.as_str()], vec![(0, f.digest)], entry_rel(&plan), true)?.pop().map(|(_, found)| found))
+                Ok(by_digest_from(store, program, &[f.path.as_str()], vec![(0, f.digest)], entry_rel(&plan), true)?.pop().map(|(_, found)| found))
             }
         }
     }
@@ -361,25 +734,35 @@ impl Found {
             Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
                 rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
                 lines: e.lines.clone() },
-            Found::Frame(f) => f.projected(keep)?,
+            // Forked (decision 0170), an entry whose symbols cannot be mapped (its relation's columns not
+            // registered) is a miss: its rows may name the other numbering's ids.
+            Found::Frame(f) => match f.projected(keep) {
+                Err(e) if e.to_string().contains(crate::content_store::atoms::DIVERGED_TEXT) => {
+                    static SAID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 {
+                        eprintln!("rerail: memo entry of {} refused: {e}", f.path);
+                    }
+                    return Ok(None);
+                }
+                entry => entry?,
+            },
         };
         Ok(Some(entry).filter(|e| e.key == key))
     }
 
 }
 
-/// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. The
-/// frames found are marked as used by this run, behind it (a lookup writes nothing itself: decision 0104).
-pub(super) fn found_all(store: &ContentStore, program: &[u8; 32], docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
+/// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. A
+/// lookup writes nothing, and marks nothing (decisions 0104, 0227).
+pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
     off();
-    let plan = plan_digest(program);
     let held: Vec<Option<std::sync::Arc<Entry>>> = docs.iter().map(|(s, p)| store.pending::<Entry>(&queued(*s, p, program))).collect();
     let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
     let digests = store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?;
     let wanted: Vec<(usize, [u8; 32])> = asked.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
     let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
     let mut out: Vec<Option<Found>> = held.into_iter().map(|h| h.map(Found::Held)).collect();
-    for (i, f) in by_digest(store, &plan, &paths, wanted)? {
+    for (i, f) in by_digest(store, program, &paths, wanted)? {
         out[i] = Some(f);
     }
     Ok(out)
@@ -387,47 +770,53 @@ pub(super) fn found_all(store: &ContentStore, program: &[u8; 32], docs: &[(Sourc
 
 /// The frames of `wanted`, each `(at, content digest)` of the document at `paths[at]`: a frame's part is its
 /// content's and path's, and the frame names both. No source is read: in the waves, the frames are in memory.
-fn by_digest(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
-    by_digest_in(store, plan, paths, wanted, entry_rel(plan))
+fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
+    by_digest_in(store, program, paths, wanted, entry_rel(&plan_digest(program)))
 }
 
 /// `by_digest`, of the frames of `rel`: the entries' (`entry_rel`) or their outputs' (`outputs_rel`).
-fn by_digest_in(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel) -> StoreResult<Vec<(usize, Found)>> {
+fn by_digest_in(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel) -> StoreResult<Vec<(usize, Found)>> {
+    let plan = &plan_digest(program);
     // An entry (not its outputs) looked up before the waves is read from the store by its key: the snapshot holds a
     // run's entries only for what its waves look up (`admit_memo_entries`, decision 0117).
     let stored = rel.name == entry_rel(plan).name && !crate::code_rule_dsl::logic::profile::inside_waves();
-    by_digest_from(store, plan, paths, wanted, rel, stored)
+    by_digest_from(store, program, paths, wanted, rel, stored)
 }
 
 /// `by_digest_in`, from the store (`stored`) or from the run's snapshot.
-fn by_digest_from(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel, stored: bool) -> StoreResult<Vec<(usize, Found)>> {
+fn by_digest_from(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel, stored: bool) -> StoreResult<Vec<(usize, Found)>> {
+    let plan = &plan_digest(program);
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let docs: Vec<((), &str)> = paths.iter().map(|p| ((), *p)).collect();
     let space = crate::content_store::local_space(plan);
     let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
     let mut frames = if stored {
-        store.admit_parts_stored(&space, &rel, &parts)?
+        // Read from the store, its entries' symbols are held as they are read (decision 0170): a wave decodes them
+        // without reading the store. The snapshot's are held as they are admitted (`admit_memo_entries`).
+        let frames = store.admit_parts_stored(&space, &rel, &parts)?;
+        store.hold_frame_symbols(frames.values(), &|f, out| program.syms.read(f, out))?;
+        frames
     } else {
         store.admit_parts_of(&space, &rel, &parts)?
     };
+    // A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept manifest names its
+    // content (`collect_unreachable_frames`), not by the runs that read it.
+    // An entry's outputs' frame beside it, for the identities a later run found its rows hold (`Frame::outputs`).
+    let mut outputs = if rel.name != entry_rel(plan).name {
+        HashMap::new()
+    } else if stored {
+        store.admit_parts_stored(&space, &outputs_rel(plan), &parts)?
+    } else {
+        store.admit_parts_of(&space, &outputs_rel(plan), &parts)?
+    };
     let mut out = Vec::new();
-    let mut used = Vec::new();
     for (i, digest, part) in wanted {
-        let Some(frame) = frames.remove(&part).and_then(Frame::of) else { continue };
+        let Some(mut frame) = frames.remove(&part).and_then(|f| Frame::of(f, Some(program.syms.clone()))) else { continue };
+        frame.outputs = outputs.remove(&part).and_then(|f| Frame::of(f, None)).filter(|o| o.digest == digest && o.path == frame.path).map(|o| o.frame);
         // A part another content or path collides into is a miss.
         if frame.digest == digest && frame.path == docs[i].1 {
-            used.push(part);
             out.push((i, Found::Frame(frame)));
         }
-    }
-    if !used.is_empty() {
-        // An outputs frame is used with its entry's (O-store-single-program): a hit read for its outputs alone falls
-        // back to its whole entry when the kept inputs are not taken. Marked alone, the entry aged out after
-        // `MEMO_RUNS` runs that read only outputs (one 44-policy batch), and the next batch's fallback found it gone.
-        if rel.name == outputs_rel(plan).name {
-            store.queue_frame_parts_used(space.clone(), entry_rel(plan), used.clone(), super::run_token(), MEMO_RUNS);
-        }
-        store.queue_frame_parts_used(space, rel, used, super::run_token(), MEMO_RUNS);
     }
     Ok(out)
 }
@@ -467,7 +856,7 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
     let found = store.sources_by_hashes(&hashes)?;
     let pins: Vec<SourceId> = found.iter().flatten().copied().collect();
     if !pins.is_empty() {
-        store.write_back("the pins of the sources the run read", pins.len() * 8, Vec::new(), Box::new(move |store| store.pin_held_sources(&pins)));
+        store.write_back_syms(crate::content_store::write_back::Syms::None, "the pins of the sources the run read", pins.len() * 8, Vec::new(), Box::new(move |store| store.pin_held_sources(&pins)));
     }
     Ok(found)
 }
@@ -476,16 +865,36 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 /// one transaction (decision 0146). Queued behind the run (decision 0102): encoded and written by the store's
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
-pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) {
+pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
+    remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+}
+
+/// `remember_all`, each entry with whether its rows frame stands as stored (decision 0225 §2): its rows were derived
+/// again and found as they were, so only its outputs' frame is written, with the identities they now hold.
+pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
+    let standing: HashSet<(String, i64)> = entries.iter().filter(|e| e.4).map(|e| (e.1.clone(), e.2)).collect();
+    let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
     off();
     let plan = plan_digest(program);
+    // The atom table the entries' symbols are numbered by: the writer maps them with it, or refuses them (below).
+    let made_under = store.atoms_handle();
+    let atoms = made_under.len();
+    if let Some((key, v)) = foreign_symbol(&entries.iter().map(|e| &e.3).collect::<Vec<_>>(), &program.syms, atoms) {
+        return Err(StoreError::Invalid(format!("the memo's entry for {key}: symbol {v} is no atom of this process's (it holds {atoms}): a read gave the store's ids unmapped")));
+    }
     if crate::code_rule_dsl::logic::profile::on() {
         let _t = crate::code_rule_dsl::logic::profile::span(|| "tally the entries (profiling)".into());
         tally(entries.iter().map(|e| &e.3));
     }
     let _queue = crate::code_rule_dsl::logic::profile::span(|| "queue the entries to the store".into());
     let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
-    let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
+    // Nothing to keep is no job: an empty one still takes the writer's transaction (`RERAIL_WARM`).
+    if held.is_empty() {
+        return Ok(());
+    }
+    // What the writer writes, the queue's measure: of an entry whose rows frame stands, its outputs alone. The rest of
+    // it stays held for this process's readers (`pending`) until it is written; it was the chunk's already.
+    let bytes: usize = held.iter().map(|(_, path, e)| if standing.contains(&(path.clone(), e.key)) { e.outputs_bytes() } else { e.bytes() }).sum();
     if bytes > 32 << 20 && crate::code_rule_dsl::logic::profile::on() {
         let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
         for (_, _, e) in &held {
@@ -504,16 +913,35 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", bytes as f64 / 1048576.0, held.len(), top.join("; "));
     }
     let keys = held.iter().filter_map(|(content, path, e)| Some((queued_content(*content, path, program)?, Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))).collect();
-    let token = super::run_token();
-    store.write_back(
+    let syms = program.syms.clone();
+    store.write_back_syms(
+        crate::content_store::write_back::Syms::Mapped,
         "the memo's entries",
         bytes,
         keys,
         Box::new(move |store| {
+            // The entries' symbols are of the table they were made under: mapped by another (a second table of this
+            // store in the process), they would name other strings, or no atom (`symbol 4291 is no atom of this
+            // process's (it holds 2765)`, seen twice in concurrent cold runs). Refused, never mapped by the wrong one.
+            let writes_with = store.atoms_handle();
+            if !std::sync::Arc::ptr_eq(&made_under, &writes_with) {
+                return Err(StoreError::Invalid(format!(
+                    "the memo's entries were made under another atom table of this store than its writer's ({} atoms, forked {}; the writer's {} atoms, forked {})",
+                    made_under.len(), made_under.forked(), writes_with.len(), writes_with.forked()
+                )));
+            }
             let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
             let mut stored = store.source_digests(&ids)?.into_iter();
+            // Each entry's symbols as the store numbers them, in the writer's transaction (decision 0170): every
+            // entry's in one call, where this process forked from the store.
+            // Of an entry whose rows frame stands, only its outputs are written: only they are mapped and encoded.
+            let written: Vec<std::borrow::Cow<'_, Entry>> = held
+                .iter()
+                .map(|(_, path, e)| if standing.contains(&(path.clone(), e.key)) { std::borrow::Cow::Owned(outputs_of(e)) } else { std::borrow::Cow::Borrowed(&**e) })
+                .collect();
+            let mapped = numbering::to_store(&written.iter().map(|e| &**e).collect::<Vec<_>>(), &syms, store)?;
             let mut puts = Vec::with_capacity(held.len());
-            for (content, path, e) in &held {
+            for ((content, path, _), e) in held.iter().zip(&mapped) {
                 let digest = match content {
                     Content::Stored(_) => stored.next().flatten(),
                     Content::Unstored(d) => Some(*d),
@@ -522,28 +950,36 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
                 // A source collected since the run found it leaves the entry unwritten: the next run misses it.
                 let Some(digest) = digest else { continue };
                 let part = part_of(&digest, path);
-                puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key as u64, reads: frame_reads(path, e.key, &digest), rows: to_rows(e) });
-                puts.push(crate::content_store::FramePut { rel: outputs_rel(&plan), part, digest: e.key as u64, reads: frame_reads(path, e.key, &digest), rows: to_rows(&outputs_of(e)) });
+                if !standing.contains(&(path.clone(), e.key())) {
+                    puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.encode() });
+                }
+                puts.push(crate::content_store::FramePut { rel: outputs_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.outputs().encode() });
             }
             let space = crate::content_store::local_space(&plan);
             store.keep_frames(&space, &puts, &[], None)?;
-            let parts: Vec<i64> = puts.iter().filter(|p| p.rel.name == "local").map(|p| p.part).collect();
-            store.use_frame_parts(&space, &entry_rel(&plan), &parts, token, MEMO_RUNS)?;
-            store.use_frame_parts(&space, &outputs_rel(&plan), &parts, token, MEMO_RUNS)?;
             // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for
-            // one file of the 20, was kept `MEMO_RUNS` runs: 450 MB of one space).
+            // one file of the 20, was kept 32 runs: 450 MB of one space).
+            let mut keys: Vec<u64> = puts.iter().map(|p| p.digest).collect();
+            keys.sort_unstable();
+            keys.dedup();
             for rel in [entry_rel(&plan), outputs_rel(&plan)] {
-                store.keep_newest_by_path(&space, &rel.name, MEMO_CONTENTS)?;
+                store.keep_newest_by_path(&space, &rel.name, MEMO_CONTENTS, &keys)?;
             }
             Ok(())
         }),
     );
+    Ok(())
 }
 
 impl Entry {
     /// The bytes the entry holds (its rows and lines), about.
     fn bytes(&self) -> usize {
         self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
+    }
+
+    /// `bytes` of `outputs_of(self)`, the part written of an entry whose rows frame stands.
+    fn outputs_bytes(&self) -> usize {
+        self.rows.iter().filter(|(r, _)| r.starts_with("own:")).map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
     }
 }
 
@@ -642,7 +1078,7 @@ impl Memo<'_> {
     }
 
     /// `lookup` of many documents, each `(content, path, key)`, in their order: stored ones in one statement.
-    pub(super) fn lookup_all(self, program: &[u8; 32], docs: &[(Content, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
+    pub(super) fn lookup_all(self, program: &Program, docs: &[(Content, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
         match self {
             Memo::Stored(store) => {
                 let mut out: Vec<Option<Entry>> = vec![None; docs.len()];
@@ -658,7 +1094,7 @@ impl Memo<'_> {
 
     /// The entries of many documents, each `(content, path)`, found and not decoded (`Found`): stored ones in one
     /// statement, held ones from memory.
-    pub(super) fn found_all(self, program: &[u8; 32], docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
+    pub(super) fn found_all(self, program: &Program, docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
         match self {
             Memo::Stored(store) => {
                 let mut out: Vec<Option<Found>> = (0..docs.len()).map(|_| None).collect();
@@ -678,7 +1114,7 @@ impl Memo<'_> {
                 }
                 if !by_frame.is_empty() {
                     let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
-                    for (i, f) in by_digest(store, &plan_digest(program), &paths, by_frame)? {
+                    for (i, f) in by_digest(store, program, &paths, by_frame)? {
                         out[i] = Some(f);
                     }
                 }
@@ -689,7 +1125,7 @@ impl Memo<'_> {
                 Ok(docs
                     .iter()
                     .map(|(c, p)| match c {
-                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), *program)).map(|e| Found::Held(std::sync::Arc::new(e.clone()))),
+                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), program.id)).map(|e| Found::Held(std::sync::Arc::new(e.clone()))),
                         Content::Stored(_) | Content::Unstored(_) => None,
                     })
                     .collect())
@@ -700,7 +1136,7 @@ impl Memo<'_> {
     /// `found_all`, of the entries' outputs alone (`outputs_rel`): a stored memo's frames of them, else (a held
     /// entry, queued by this process or a session's) the entry. `None` where the store keeps no outputs frame (an
     /// entry written before them): the caller finds the whole entry.
-    pub(super) fn found_outputs_all(self, program: &[u8; 32], docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
+    pub(super) fn found_outputs_all(self, program: &Program, docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
         let Memo::Stored(store) = self else { return self.found_all(program, docs) };
         off();
         let plan = plan_digest(program);
@@ -710,37 +1146,44 @@ impl Memo<'_> {
         let mut wanted: Vec<(usize, [u8; 32])> = stored.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
         wanted.extend((0..docs.len()).filter(|i| out[*i].is_none()).filter_map(|i| match docs[i].0 { Content::Unstored(d) => Some((i, d)), _ => None }));
         let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
-        for (i, f) in by_digest_in(store, &plan, &paths, wanted, outputs_rel(&plan))? {
+        for (i, f) in by_digest_in(store, program, &paths, wanted, outputs_rel(&plan))? {
             out[i] = Some(f);
         }
         Ok(out)
     }
 
-    pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
+    pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &Program) -> StoreResult<Option<Entry>> {
         match (self, content) {
             (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
             (Memo::Stored(store), Content::Unstored(d)) => match store.pending::<Entry>(&queued_unstored(&d, path, program)) {
                 Some(e) => Ok(Some((*e).clone()).filter(|e| e.key == key)),
                 // Found in the waves by its digest (`by_digest`): its frame.
-                None => match by_digest(store, &plan_digest(program), &[path], vec![(0, d)])?.pop() {
+                None => match by_digest(store, program, &[path], vec![(0, d)])?.pop() {
                     Some((_, found)) => found.entry(key),
                     None => Ok(None),
                 },
             },
             (Memo::Held(held), Content::Held(digest)) => {
-                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned())
+                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), program.id)).filter(|e| e.key == key).cloned())
             }
             _ => Ok(None),
         }
     }
 
     /// `remember` of many documents, stored ones written as one wave (`remember_all`), behind the run.
-    pub(super) fn remember_all(self, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
+    pub(super) fn remember_all(self, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
+        self.remember_all_but(program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+    }
+
+    /// `remember_all`, each with whether its stored rows frame stands (`remember_all_but`).
+    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
+        let entries: Vec<(Content, String, i64, Entry, bool)> = entries;
+        if let Memo::Stored(store) = self {
+            return remember_all_but(store, program, entries);
+        }
+        let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
         match self {
-            Memo::Stored(store) => {
-                remember_all(store, program, entries);
-                Ok(())
-            }
+            Memo::Stored(store) => remember_all(store, program, entries),
             Memo::Held(_) => {
                 for (content, path, key, entry) in &entries {
                     self.remember(*content, path, *key, program, entry)?;
@@ -750,18 +1193,15 @@ impl Memo<'_> {
         }
     }
 
-    pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
+    pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &Program, entry: &Entry) -> StoreResult<()> {
         match (self, content) {
-            (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => {
-                remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]);
-                Ok(())
-            }
+            (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]),
             (Memo::Held(held), Content::Held(digest)) => {
                 let mut held = held.lock().expect("the session memo");
                 if held.len() >= HELD_ENTRIES {
                     held.clear();
                 }
-                held.insert((digest, path.to_owned(), *program), Entry { key, ..entry.clone() });
+                held.insert((digest, path.to_owned(), program.id), Entry { key, ..entry.clone() });
                 Ok(())
             }
             _ => Ok(()),
@@ -772,136 +1212,6 @@ impl Memo<'_> {
 /// The document a row's location value names: a node (`key << 32 | index`) or a document key.
 pub(super) fn document_of(value: i64) -> i64 {
     if value >= 1 << 32 { value >> 32 } else { value }
-}
-
-// An entry's frame (decision 0146): typed rows of integers, each row's first value its kind, its second the
-// relation or output it is of. A relation's rows are rows of it, a value to a column; text (names, lines) is packed
-// eight bytes to a value.
-const NODES: i64 = 0;
-const REL: i64 = 2;
-const REL_NAME: i64 = 3;
-const REL_ROW: i64 = 4;
-const OUT: i64 = 5;
-const OUT_NAME: i64 = 6;
-const OUT_COLUMN: i64 = 7;
-const LINE: i64 = 8;
-const LINE_TEXT: i64 = 9;
-
-/// The entry's rows; the frame's width: two, and the widest relation's, at least eight.
-fn to_rows(entry: &Entry) -> crate::content_store::FrameRows {
-    let width = 2 + entry.rows.values().map(|(w, _)| *w).max().unwrap_or(0).max(8);
-    let mut rows: Vec<i64> = Vec::new();
-    let mut n = 0;
-    let mut row = |rows: &mut Vec<i64>, values: &[i64]| {
-        rows.extend_from_slice(values);
-        rows.extend(std::iter::repeat_n(0, width - values.len()));
-        n += 1;
-    };
-    // Text after a row that gives its length: `width - 3` values a row, after the kind, the owner and a sequence.
-    let text = |rows: &mut Vec<i64>, row: &mut dyn FnMut(&mut Vec<i64>, &[i64]), kind: i64, owner: i64, at: i64, s: &str| {
-        for chunk in s.as_bytes().chunks((width - 3) * 8) {
-            let mut values = vec![kind, owner, at];
-            values.extend(chunk.chunks(8).map(|b| {
-                let mut word = [0u8; 8];
-                word[..b.len()].copy_from_slice(b);
-                i64::from_le_bytes(word)
-            }));
-            row(rows, &values);
-        }
-    };
-    row(&mut rows, &[NODES, 0, entry.nodes as i64]);
-    for (r, (name, (w, values))) in entry.rows.iter().enumerate() {
-        let r = r as i64;
-        let count = if *w == 0 { 0 } else { values.len() / w };
-        row(&mut rows, &[REL, r, *w as i64, count as i64, name.len() as i64]);
-        text(&mut rows, &mut row, REL_NAME, r, 0, name);
-        for v in values.chunks(*w.max(&1)) {
-            let mut values = vec![REL_ROW, r];
-            values.extend_from_slice(v);
-            row(&mut rows, &values);
-        }
-    }
-    for (o, (name, (columns, lines))) in entry.lines.iter().enumerate() {
-        let o = o as i64;
-        row(&mut rows, &[OUT, o, columns.len() as i64, lines.len() as i64, name.len() as i64]);
-        text(&mut rows, &mut row, OUT_NAME, o, 0, name);
-        for c in columns {
-            row(&mut rows, &[OUT_COLUMN, o, *c as i64]);
-        }
-        for (i, line) in lines.iter().enumerate() {
-            row(&mut rows, &[LINE, o, i as i64, line.len() as i64]);
-            text(&mut rows, &mut row, LINE_TEXT, o, i as i64, line);
-        }
-    }
-    crate::content_store::FrameRows { types: vec![b'i'; width], rows, n }
-}
-
-/// The entry `to_rows` made (its key is the frame's).
-fn from_rows(frame: &crate::content_store::FrameRows) -> StoreResult<Entry> {
-    from_rows_projected(frame, &|_| true)
-}
-
-/// `from_rows` keeping only the relations `keep` takes: the others' rows are checked, not kept.
-fn from_rows_projected(frame: &crate::content_store::FrameRows, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
-    let bad = |what: &str| StoreError::Invalid(format!("a corpus memo entry's frame {what}"));
-    let width = frame.types.len();
-    if width < 3 || frame.rows.len() != width * frame.n {
-        return Err(bad("has no rows of its width"));
-    }
-    let mut entry = Entry::default();
-    let mut rels: Vec<(String, usize, usize, Vec<u8>, Vec<i64>)> = Vec::new();
-    let mut outs: Vec<(Vec<u8>, usize, Vec<usize>, Vec<(usize, Vec<u8>)>)> = Vec::new();
-    let bytes = |values: &[i64]| values.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
-    for row in frame.rows.chunks_exact(width) {
-        let owner = row[1] as usize;
-        match row[0] {
-            NODES => entry.nodes = row[2] as u64,
-            REL => {
-                if owner != rels.len() {
-                    return Err(bad("names a relation out of order"));
-                }
-                rels.push((String::new(), row[2] as usize, row[4] as usize, Vec::new(), Vec::new()));
-            }
-            REL_NAME => rels.get_mut(owner).ok_or_else(|| bad("names no relation"))?.3.extend(bytes(&row[3..])),
-            REL_ROW => {
-                let r = rels.get_mut(owner).ok_or_else(|| bad("has a row of no relation"))?;
-                let w = r.1;
-                r.4.extend_from_slice(row.get(2..2 + w).ok_or_else(|| bad("has a row wider than itself"))?);
-            }
-            OUT => {
-                if owner != outs.len() {
-                    return Err(bad("names an output out of order"));
-                }
-                outs.push((Vec::new(), row[4] as usize, Vec::new(), Vec::new()));
-            }
-            OUT_NAME => outs.get_mut(owner).ok_or_else(|| bad("names no output"))?.0.extend(bytes(&row[3..])),
-            OUT_COLUMN => outs.get_mut(owner).ok_or_else(|| bad("has a column of no output"))?.2.push(row[2] as usize),
-            LINE => outs.get_mut(owner).ok_or_else(|| bad("has a line of no output"))?.3.push((row[3] as usize, Vec::new())),
-            LINE_TEXT => {
-                let o = outs.get_mut(owner).ok_or_else(|| bad("has a line of no output"))?;
-                o.3.last_mut().ok_or_else(|| bad("has text of no line"))?.1.extend(bytes(&row[3..]));
-            }
-            _ => return Err(bad("has a row of no kind")),
-        }
-    }
-    let text = |mut b: Vec<u8>, len: usize| -> StoreResult<String> {
-        if b.len() < len {
-            return Err(bad("has text shorter than its length"));
-        }
-        b.truncate(len);
-        String::from_utf8(b).map_err(|_| bad("has text that is not UTF-8"))
-    };
-    for (_, w, len, name, values) in rels {
-        let name = text(name, len)?;
-        if keep(&name) {
-            entry.rows.insert(name, (w, values));
-        }
-    }
-    for (name, len, columns, lines) in outs {
-        let lines = lines.into_iter().map(|(n, b)| text(b, n)).collect::<StoreResult<Vec<_>>>()?;
-        entry.lines.insert(text(name, len)?, (columns, lines));
-    }
-    Ok(entry)
 }
 
 #[cfg(test)]
@@ -915,9 +1225,9 @@ pub mod tests {
         entry.rows.insert("unused".into(), (2, vec![1;2000]));
         entry.lines.insert("diagnostic".into(), (vec![0], vec!["5\tbad".into()]));
         let keep = |r: &str| r == "wanted";
-        let rows = to_rows(&entry);
+        let rows = Stored::unmapped(entry.clone()).encode();
         let entry_copy = entry.clone();
-        let projected = Entry { key: 5, ..from_rows_projected(&rows, &keep).unwrap() };
+        let projected = Entry { key: 5, ..Stored::decoded(&rows, &keep).unwrap().into_unmapped() };
         assert_eq!(projected.rows.len(),1);
         assert_eq!(projected.rows["wanted"],entry.rows["wanted"]);
         assert_eq!(projected.lines,entry.lines);
@@ -925,10 +1235,64 @@ pub mod tests {
         let held = Found::Held(std::sync::Arc::new(entry));
         assert_eq!(held.projected(5,&keep).unwrap(),Some(projected));
         assert!(held.projected(6,&keep).unwrap().is_none());
-        let mut cut = to_rows(&entry_copy);
+        let mut cut = Stored::unmapped(entry_copy.clone()).encode();
         cut.rows.truncate(cut.rows.len() - 1);
-        assert!(from_rows_projected(&cut,&keep).is_err(),"a truncated unused payload is still corrupt");
+        assert!(Stored::decoded(&cut,&keep).is_err(),"a truncated unused payload is still corrupt");
         assert_ne!(with_tree_demand([0;32],false),with_tree_demand([0;32],true),"wider consumers cannot hit narrower frames");
+    }
+
+    /// An entry symbol past the process's atoms is refused where the entry is made (decision 0170): a read gave the
+    /// store's ids unmapped. It was found only by the writer, mapping it later (`symbol 2767 is no atom of this
+    /// process's (it holds 2760)`), far from the read.
+    #[test]
+    fn an_entry_naming_no_atom_of_the_process_is_refused_where_it_is_made() {
+        use super::super::super::lower::Domain;
+        let domains: BTreeMap<String, Vec<Domain>> = [("named".to_owned(), vec![Domain::Int, Domain::Name])].into();
+        let syms = Syms::of(&domains);
+        let mut entry = Entry { key: 1, ..Entry::default() };
+        entry.rows.insert("named".into(), (2, vec![9_999, 3, 10_000, 4]));
+        assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "numbers past the atoms are not symbols");
+        entry.rows.insert("named".into(), (2, vec![1, 3, 2, 5]));
+        assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("named".to_owned(), 5)));
+        entry.rows.insert("base:named".into(), (2, vec![1, -1]));
+        entry.rows.insert("named".into(), (2, vec![1, 3]));
+        assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("base:named".to_owned(), -1)));
+    }
+
+    /// A posting counts a constant as its column's source encodes it (`own:postings:field:f`: a grammar's field code,
+    /// 65555, not an atom): its columns are known (a forked run refused every entry holding one when they were not),
+    /// and none is a symbol, so none is mapped, whatever the relation declares.
+    #[test]
+    fn a_posting_and_a_grammar_code_hold_no_symbol() {
+        use super::super::super::lower::Domain;
+        let domains: BTreeMap<String, Vec<Domain>> = [("field".to_owned(), vec![Domain::Node, Domain::Field, Domain::Node]), ("named".to_owned(), vec![Domain::Kind, Domain::Name])].into();
+        let syms = Syms::of(&domains);
+        assert_eq!(syms.columns("own:postings:field:f", 2), Some(vec![false, false]));
+        assert_eq!(syms.columns("base:field", 3), Some(vec![false, false, false]), "a field's code is no atom");
+        assert_eq!(syms.columns("named", 2), Some(vec![false, true]), "a kind's neither; a name is");
+        let mut entry = Entry { key: 1, ..Entry::default() };
+        entry.rows.insert("own:postings:field:f".into(), (2, vec![65_555, 10]));
+        map_entries(std::slice::from_mut(&mut entry), Some(&syms), true, |v| {
+            v.iter_mut().for_each(|x| *x += 100);
+            Ok(())
+        })
+        .expect("a posting's columns are known");
+        assert_eq!(entry.rows["own:postings:field:f"].1, vec![65_555, 10], "not mapped");
+        assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "nor taken for an atom");
+    }
+
+    #[test]
+    fn an_entry_holds_the_identities_it_was_made_under_and_no_others() {
+        let (a, b, c) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+        let mut entry = Entry { key: 7, ..Entry::default() };
+        cover(&mut entry, [a, b].iter());
+        cover(&mut entry, [b].iter());
+        let held = covered(&entry);
+        assert_eq!(held.len(), 2);
+        assert!(held.contains(&covered_words(&a)) && held.contains(&covered_words(&b)) && !held.contains(&covered_words(&c)));
+        // It is an `own:` key: the outputs' frame keeps it, and it names no symbol.
+        assert!(outputs_of(&entry).rows.contains_key(COVERED));
+        assert_eq!(Syms::default().columns(COVERED, 2), Some(vec![false, false]));
     }
 
     #[test]
@@ -939,10 +1303,11 @@ pub mod tests {
         entry.rows.insert("wide".into(), (11, (0..22).collect()));
         entry.rows.insert("empty".into(), (2, Vec::new()));
         entry.lines.insert("a name longer than one row of text holds, which is fifty-six bytes".into(), (vec![], vec![String::new(), "ünïcode".into()]));
-        assert_eq!(from_rows(&to_rows(&entry)).map(|e| Entry { key: 5, ..e }).unwrap(), entry);
-        let mut cut = to_rows(&entry);
+        let all = |_: &str| true;
+        assert_eq!(Stored::decoded(&Stored::unmapped(entry.clone()).encode(), &all).map(|e| Entry { key: 5, ..e.into_unmapped() }).unwrap(), entry);
+        let mut cut = Stored::unmapped(entry.clone()).encode();
         cut.rows.truncate(cut.rows.len() - 1);
-        assert!(from_rows(&cut).is_err());
+        assert!(Stored::decoded(&cut, &all).is_err());
         let paths = ["a.py".to_owned(), "b/c.py".to_owned()];
         let keys = doc_keys(&paths);
         assert_eq!(keys, doc_keys(&paths));

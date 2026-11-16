@@ -15,36 +15,37 @@
 .violation ICN001(at: node, mod: loc, e: symbol) "Write `import {mod} as {e}` and rename its uses to match; keep the current name only if `{e}` already means something else in this module."
     suppress noqa "ICN001"
 ICN001(n, MOD, E) :- icn001_key(n), node(_, n, _, _, _), MOD = n, child(p2, n, _), kind(p2, "import_statement"),
+    E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET"),
     text(MOD, t1), E0 = @replace_all(t1, "^altair$", "alt"),
     E1 = @replace_all(E0, "^matplotlib$", "mpl"),
-    E2 = @replace_all(E1, "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$", "plt"),
-    E3 = @replace_all(E2, "^networkx$", "nx"), E4 = @replace_all(E3, "^numpy$", "np"),
-    E5 = @replace_all(E4, "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$", "npt"),
-    E6 = @replace_all(E5, "^pandas$", "pd"), E7 = @replace_all(E6, "^seaborn$", "sns"),
-    E8 = @replace_all(E7, "^tensorflow$", "tf"),
-    E9 = @replace_all(E8, "^tkinter$", "tk"),
     E10 = @replace_all(E9, "^holoviews$", "hv"),
     E11 = @replace_all(E10, "^panel$", "pn"),
     E12 = @replace_all(E11, "^plotly[\\s\\\\]*\\.[\\s\\\\]*express$", "px"),
     E13 = @replace_all(E12, "^polars$", "pl"),
     E14 = @replace_all(E13, "^pyarrow$", "pa"),
-    E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET").
+    E2 = @replace_all(E1, "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$", "plt"),
+    E3 = @replace_all(E2, "^networkx$", "nx"), E4 = @replace_all(E3, "^numpy$", "np"),
+    E5 = @replace_all(E4, "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$", "npt"),
+    E6 = @replace_all(E5, "^pandas$", "pd"), E7 = @replace_all(E6, "^seaborn$", "sns"),
+    E8 = @replace_all(E7, "^tensorflow$", "tf"),
+    E9 = @replace_all(E8, "^tkinter$", "tk").
 ICN001(n, MOD, E) :- kind(n, "identifier"), node(_, n, _, _, _), ALIAS = n, field(p3, "alias", n),
     kind(p3, "aliased_import"), field(p3, "name", c4), icn001_key(c4), node(_, c4, _, _, _), MOD = c4,
-    text(ALIAS, t5), t5 != E, text(MOD, t1), E0 = @replace_all(t1, "^altair$", "alt"),
+    text(ALIAS, t5), t5 != E,
+    E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET"),
+    text(MOD, t1), E0 = @replace_all(t1, "^altair$", "alt"),
     E1 = @replace_all(E0, "^matplotlib$", "mpl"),
-    E2 = @replace_all(E1, "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$", "plt"),
-    E3 = @replace_all(E2, "^networkx$", "nx"), E4 = @replace_all(E3, "^numpy$", "np"),
-    E5 = @replace_all(E4, "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$", "npt"),
-    E6 = @replace_all(E5, "^pandas$", "pd"), E7 = @replace_all(E6, "^seaborn$", "sns"),
-    E8 = @replace_all(E7, "^tensorflow$", "tf"),
-    E9 = @replace_all(E8, "^tkinter$", "tk"),
     E10 = @replace_all(E9, "^holoviews$", "hv"),
     E11 = @replace_all(E10, "^panel$", "pn"),
     E12 = @replace_all(E11, "^plotly[\\s\\\\]*\\.[\\s\\\\]*express$", "px"),
     E13 = @replace_all(E12, "^polars$", "pl"),
     E14 = @replace_all(E13, "^pyarrow$", "pa"),
-    E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET").
+    E2 = @replace_all(E1, "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$", "plt"),
+    E3 = @replace_all(E2, "^networkx$", "nx"), E4 = @replace_all(E3, "^numpy$", "np"),
+    E5 = @replace_all(E4, "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$", "npt"),
+    E6 = @replace_all(E5, "^pandas$", "pd"), E7 = @replace_all(E6, "^seaborn$", "sns"),
+    E8 = @replace_all(E7, "^tensorflow$", "tf"),
+    E9 = @replace_all(E8, "^tkinter$", "tk").
 
 // key(n): the JSON util `key`, used where the JSON says `matches: "key"`
 .decl icn001_key(n: node)
@@ -58,18 +59,22 @@ icn001_key(n) :- kind(n, "dotted_name"),
 // The JSON `transform` computes E, E0, E1, E2 from other metavariables' text; its literals end each rule.
 .violation ICN001_from_import(at: node, pkg: loc, mod: loc, e: symbol) code "ICN001" "Write `from {pkg} import {mod} as {e}` and rename its uses to match; keep the current name only if `{e}` already means something else in this module."
     suppress noqa "ICN001"
-ICN001_from_import(n, PKG, MOD, E) :- node(_, MOD, _, _, _),
-    inside(n, p2, "import_from_statement"), field(p2, "module_name", c3), node(_, c3, _, _, _), PKG = c3,
+ICN001_from_import(n, PKG, MOD, E) :- inside(n, p2, "import_from_statement"),
+    field(p2, "module_name", c3), node(_, c3, _, _, _), PKG = c3,
     ( icn001_member(n), node(_, n, _, _, _), MOD = n, child(p1_1, n, _), kind(p1_1, "import_from_statement")
     ; kind(n, "identifier"), node(_, n, _, _, _), ALIAS = n, field(p2_2, "alias", n), kind(p2_2, "aliased_import"), field(p2_2, "name", c3_2), icn001_member(c3_2), node(_, c3_2, _, _, _), MOD = c3_2, text(ALIAS, t4_2), t4_2 != E
     ),
-    text(MOD, t1), E0 = @replace_all(t1, "^pyplot$", "plt"),
-    E1 = @replace_all(E0, "^typing$", "npt"), E2 = @replace_all(E1, "^express$", "px"),
-    E = @replace_all(E2, "^ElementTree$", "ET").
+    unset(E).
 
 // member(n): the JSON util `member`, used where the JSON says `matches: "member"`
 .decl icn001_member(n: node)
-icn001_member(n) :- kind(n, "dotted_name"), icn001_alt_1(n).
+icn001_member(n) :- kind(n, "dotted_name"),
+    ( glob("pyplot", n), inside(n, p1, "import_from_statement"), icn001_tok_has_1(p1)
+    ; glob("typing", n), inside(n, p2, "import_from_statement"), icn001_tok_has_2(p2)
+    ; glob("express", n), inside(n, p3, "import_from_statement"), icn001_tok_has_3(p3)
+    ; glob("ElementTree", n), inside(n, p4, "import_from_statement"), icn001_tok_has_4(p4)
+    ).
+
 
 // ICN001_non_ascii_spelling(n): a finding at node n, from clause `non-ascii-spelling`.
 // Each rule below is one way the JSON `rule` can match.
@@ -93,6 +98,55 @@ icn001_spelled(n) :- kind(n, "dotted_name"), imported_sym(n, q1), icn001_set_3(q
     ).
 
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^matplotlib$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl icn001_tok_has_1(n: node)
+.stored icn001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+icn001_tok_has_1(n) :- field(n, "module_name", c2), glob("matplotlib", c2).
+icn001_tok_has_1(n) :- op(n, t3), match("matplotlib", t3).
+icn001_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:matplotlib)(?:\\W.*)?)$", g4).
+icn001_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:matplotlib)(?:\\W.*)?)$", g4).
+icn001_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:matplotlib)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^numpy$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl icn001_tok_has_2(n: node)
+.stored icn001_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+icn001_tok_has_2(n) :- field(n, "module_name", c11), glob("numpy", c11).
+icn001_tok_has_2(n) :- op(n, t12), match("numpy", t12).
+icn001_tok_has_2(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:numpy)(?:\\W.*)?)$", g13).
+icn001_tok_has_2(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:numpy)(?:\\W.*)?)$", g13).
+icn001_tok_has_2(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:numpy)(?:\\W.*)?)$", g13).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^plotly$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl icn001_tok_has_3(n: node)
+.stored icn001_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+icn001_tok_has_3(n) :- field(n, "module_name", c20), glob("plotly", c20).
+icn001_tok_has_3(n) :- op(n, t21), match("plotly", t21).
+icn001_tok_has_3(n) :- child(n, c27, _), structural_before(c27, g22),
+    match("(?s)^(?:(?:.*\\W)?(?:plotly)(?:\\W.*)?)$", g22).
+icn001_tok_has_3(n) :- child(n, c27, _), structural_after(c27, g22),
+    match("(?s)^(?:(?:.*\\W)?(?:plotly)(?:\\W.*)?)$", g22).
+icn001_tok_has_3(n) :- node_text(n, g22), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:plotly)(?:\\W.*)?)$", g22).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^xml[\\s\\\\]*\\.[\\s\\\\]*etree$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl icn001_tok_has_4(n: node)
+.stored icn001_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+icn001_tok_has_4(n) :- field(n, "module_name", c29),
+    match("xml[\\s\\\\]*\\.[\\s\\\\]*etree", c29).
+icn001_tok_has_4(n) :- op(n, t30), match("xml[\\s\\\\]*\\.[\\s\\\\]*etree", t30).
+icn001_tok_has_4(n) :- child(n, c36, _), structural_before(c36, g31),
+    match("(?s)^(?:(?:.*\\W)?(?:xml[\\s\\\\]*\\.[\\s\\\\]*etree)(?:\\W.*)?)$", g31).
+icn001_tok_has_4(n) :- child(n, c36, _), structural_after(c36, g31),
+    match("(?s)^(?:(?:.*\\W)?(?:xml[\\s\\\\]*\\.[\\s\\\\]*etree)(?:\\W.*)?)$", g31).
+icn001_tok_has_4(n) :- node_text(n, g31), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:xml[\\s\\\\]*\\.[\\s\\\\]*etree)(?:\\W.*)?)$", g31).
+
 // set_3: symbols from the JSON `resolves.imported`
 .decl icn001_set_3(v: symbol)
 icn001_set_3("altair"). icn001_set_3("matplotlib"). icn001_set_3("matplotlib.pyplot"). icn001_set_3("networkx").
@@ -100,14 +154,3 @@ icn001_set_3("numpy"). icn001_set_3("numpy.typing"). icn001_set_3("pandas"). icn
 icn001_set_3("tensorflow"). icn001_set_3("tkinter"). icn001_set_3("holoviews"). icn001_set_3("panel").
 icn001_set_3("plotly.express"). icn001_set_3("polars"). icn001_set_3("pyarrow").
 icn001_set_3("xml.etree.ElementTree").
-
-// alt_1(n): the JSON `any`: n matches if any one of these rules does
-.decl icn001_alt_1(n: node)
-icn001_alt_1(n) :- glob("pyplot", n), inside(n, p1, "import_from_statement"),
-    field(p1, "module_name", c2), glob("matplotlib", c2).
-icn001_alt_1(n) :- glob("typing", n), inside(n, p3, "import_from_statement"),
-    field(p3, "module_name", c4), glob("numpy", c4).
-icn001_alt_1(n) :- glob("express", n), inside(n, p5, "import_from_statement"),
-    field(p5, "module_name", c6), glob("plotly", c6).
-icn001_alt_1(n) :- glob("ElementTree", n), inside(n, p7, "import_from_statement"),
-    field(p7, "module_name", c8), match("xml[\\s\\\\]*\\.[\\s\\\\]*etree", c8).

@@ -4,8 +4,8 @@
 //! grammar, and which capabilities a language supports. The language registry
 //! (`languages/*.json`, `docs/language-packs.md`) is their one source: `build.rs` validates it
 //! and generates `GrammarDialect`'s production variants, `DIALECTS`, `CodeRuleLanguage`,
-//! `PLANNED_LANGUAGES`, `Family`, `Family::of`, `Family::honours` and `with_adapter!` from it
-//! (`language_registry.rs` in `OUT_DIR`). The host routes files by the same registry's suffixes
+//! `PLANNED_LANGUAGES`, `Family`, `Family::of` and `Family::honours` from it (`language_registry.rs`
+//! in `OUT_DIR`), and `with_adapter!` (`with_adapter.rs`, for the crates that dispatch by family). The host routes files by the same registry's suffixes
 //! (`SOURCE_LANGUAGES` in code-rule-languages.ts); the repository index receives them.
 //!
 //! Three layers:
@@ -404,16 +404,13 @@ struct Dialect {
 }
 
 // `grammar_dialect!`, `DIALECTS`, `registry_grammar`, `CodeRuleLanguage` (`ALL`, `name`,
-// `dialects`, `family`, `capability`), `PLANNED_LANGUAGES`, `Family` (`ALL`, `of`, `honours`) and
-// `with_adapter!`.
+// `dialects`, `family`, `capability`), `PLANNED_LANGUAGES` and `Family` (`ALL`, `of`, `honours`).
 include!(concat!(env!("OUT_DIR"), "/language_registry.rs"));
 
 // `GrammarDialect`: the registry's supported dialects, then grammars only tests parse (tape round
 // trips over other shapes, the transducer's grammar census), each with the ast-grep language that
 // lends it pattern syntax. No file or code rule selects a test-only grammar.
 grammar_dialect! {
-    Java => SupportLang::Java,
-    CSharp => SupportLang::CSharp,
     Cpp => SupportLang::Cpp,
     C => SupportLang::C,
     Bash => SupportLang::Bash,
@@ -422,8 +419,7 @@ grammar_dialect! {
     Kotlin => SupportLang::Kotlin,
     Scala => SupportLang::Scala,
     Swift => SupportLang::Swift,
-    Html => SupportLang::Html,
-    Css => SupportLang::Css,
+    TestHtml => SupportLang::Html,
     Lua => SupportLang::Lua,
     Go => SupportLang::Go,
 }
@@ -448,7 +444,7 @@ const TEST_DIALECT_FAMILY: Family = Family::Ecma;
 const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
     (GrammarDialect::Scala, 4),
     (GrammarDialect::Go, 5),
-    (GrammarDialect::Html, 250),
+    (GrammarDialect::TestHtml, 250),
 ];
 
 /// The embeddings of the test-only grammars (`GrammarDialect::embeds`): an HTML file's scripts and
@@ -457,7 +453,7 @@ const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
 #[cfg(any(test, feature = "test-hooks"))]
 const fn test_embeds(dialect: GrammarDialect) -> &'static [(Via, GrammarDialect)] {
     match dialect {
-        GrammarDialect::Html => &[
+        GrammarDialect::TestHtml => &[
             (Via::TestScript, GrammarDialect::TypeScript),
             (Via::TestScript, GrammarDialect::Tsx),
             (Via::TestScript, GrammarDialect::JavaScript),
@@ -477,10 +473,11 @@ pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
     FRAGMENTS.iter().find(|(n, _, _)| *n == name).map(|(_, dialect, start)| (*dialect, *start))
 }
 
-/// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, or
-/// a fragment (decision 0082). A dialect this build leaves out is still a name.
+/// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, a
+/// fragment (decision 0082), or an embedding's id (`script-block`: the program its embedder writes, decision 0222).
+/// A dialect this build leaves out is still a name.
 pub fn is_grammar(name: &str) -> bool {
-    fragment(name).is_some() || dialect_by_label(name).is_some()
+    fragment(name).is_some() || dialect_by_label(name).is_some() || GrammarDialect::ALL.iter().any(|d| d.embeds().iter().any(|(via, _)| via.id() == name))
 }
 
 /// A dialect by its label. A grammar named as main's rules name theirs, in camel case (`percentFormat`), is the

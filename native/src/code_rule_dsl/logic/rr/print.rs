@@ -192,6 +192,12 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
             let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
             format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(&head.rel), relation(reach), relation(map))
         }
+        // The text test over its input's rows, as the rule it was made from (`strings::as_relations`).
+        Native::TextTest { input, column, op, patterns } => {
+            let s = head.args.get(*column).cloned().unwrap_or_else(|| Term::Var("rr_text0".into()));
+            let set = Term::Call(crate::code_rule_dsl::logic::strings::SET.into(), patterns.iter().map(|p| Term::Str(p.as_str().into())).collect::<Vec<_>>().into());
+            format!("{} :- {}({}), {}.", atom(head, prog)?, relation(input), terms(&head.args)?, test(op, &s, &set, false)?)
+        }
         Native::MatchAll { input, pattern, groups, positions } => {
             let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
             let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();
@@ -202,8 +208,18 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
     })
 }
 
-/// The program's `.rr` text.
+/// The program's `.rr` text: as written, its node attributes inputs again where the lowering answered them on request
+/// (decision 0174, `lower::undo_on_request`), which reading the text makes again.
 pub fn print(prog: &Program) -> Result<String, Error> {
+    if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| prog.decls.contains_key(a.req)) {
+        let mut written = prog.clone();
+        super::lower::undo_on_request(&mut written);
+        return print_written(&written);
+    }
+    print_written(prog)
+}
+
+fn print_written(prog: &Program) -> Result<String, Error> {
     // Keep the public schema when printing frontend unit columns back to rule source.
     let mut logical;
     let prog = if prog.nullary.is_empty() { prog } else {

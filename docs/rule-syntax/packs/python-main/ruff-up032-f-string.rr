@@ -109,7 +109,7 @@ up032_gen_template(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
 .violation UP032(at: node) "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
     suppress noqa "UP032"
 UP032(n) :- up032_alt_13(n),
-    count : { inside(n, p28, "call"), field(p28, "function", c29), (sym_of(c29, "django.utils.translation.gettext") ; sym_of(c29, "django.utils.translation.gettext_lazy")) } = 0.
+    count : { inside(n, p42, "call"), field(p42, "function", c43), (sym_of(c43, "django.utils.translation.gettext") ; sym_of(c43, "django.utils.translation.gettext_lazy")) } = 0.
 
 // UP032_f_string_annotation(n): a finding at node n, from clause `f-string-annotation`.
 // Each rule below is one way the JSON `rule` can match.
@@ -118,6 +118,54 @@ UP032(n) :- up032_alt_13(n),
     suppress noqa "UP032"
 UP032_f_string_annotation(CALL, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, up032_alt_16(c2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^format$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up032_tok_has_1(n: node)
+.stored up032_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up032_tok_has_1(n) :- field(n, "attribute", c23), glob("format", c23).
+up032_tok_has_1(n) :- op(n, t24), match("format", t24).
+up032_tok_has_1(n) :- child(n, c30, _), structural_before(c30, g25),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g25).
+up032_tok_has_1(n) :- child(n, c30, _), structural_after(c30, g25),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g25).
+up032_tok_has_1(n) :- node_text(n, g25), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g25).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^format$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up032_tok_has_2(n: node)
+.stored up032_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up032_tok_has_2(n) :- field(n, "attribute", c33), glob("format", c33).
+up032_tok_has_2(n) :- op(n, t34), match("format", t34).
+up032_tok_has_2(n) :- child(n, c40, _), structural_before(c40, g35),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g35).
+up032_tok_has_2(n) :- child(n, c40, _), structural_after(c40, g35),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g35).
+up032_tok_has_2(n) :- node_text(n, g35), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g35).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^format$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up032_tok_has_3(n: node)
+.stored up032_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up032_tok_has_3(n) :- field(n, "attribute", c1), glob("format", c1).
+up032_tok_has_3(n) :- op(n, t2), match("format", t2).
+up032_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g3).
+up032_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g3).
+up032_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^format$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up032_tok_has_4(n: node)
+.stored up032_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up032_tok_has_4(n) :- field(n, "attribute", c11), glob("format", c11).
+up032_tok_has_4(n) :- op(n, t12), match("format", t12).
+up032_tok_has_4(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g13).
+up032_tok_has_4(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g13).
+up032_tok_has_4(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g13).
 
 // set_5: node kinds from a JSON `any`
 .decl up032_set_5(v: symbol)
@@ -156,8 +204,7 @@ up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c1, "name"), H1 = c1, precede
     kind(s2, "field"), has(s2, c3, "name"), F2 = s2, value(F1, t4), value(F2, t4),
     docof(n, d6), guest(d6, _, h7, _), inside(h7, p8, "call"),
     field(p8, "arguments", c9), child(c9, c10, _), kind(c10, "keyword_argument"),
-    up032_effectful(c10), field(c10, "name", c11), node(_, c11, _, _, _), KN = c11,
-    value(H1, t12), value(KN, t12).
+    up032_effectful(c10), field(c10, "name", c11), node(_, c11, _, _, _), KN = c11, text(H1, t12), text(KN, t12).
 up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c14, "index"), H1 = c14, precedes(n, s15),
     kind(s15, "field"), has(s15, c16, "index"), F2 = s15,
     value(F1, t17), value(F2, t17), docof(n, d19), guest(d19, _, h20, _),
@@ -192,8 +239,8 @@ up032_alt_13(n) :- n ~ `($S.format)($$$A)`, field(n, "function", c10), child(c10
     !fa_unknown(n), !fa_brace_missing_open(n).
 up032_alt_13(n) :- kind(n, "call"), field(n, "arguments", c21),
     kind(c21, "generator_expression"), !up032_alt_11(c21), field(n, "function", c22),
-    ( kind(c22, "attribute"), field(c22, "attribute", c1), glob("format", c1), field(c22, "object", c2), up032_gen_template(c2)
-    ; kind(c22, "parenthesized_expression"), child(c22, c3, _), kind(c3, "attribute"), field(c3, "attribute", c4), glob("format", c4), field(c3, "object", c5), up032_gen_template(c5)
+    ( kind(c22, "attribute"), up032_tok_has_3(c22), field(c22, "object", c1), up032_gen_template(c1)
+    ; kind(c22, "parenthesized_expression"), child(c22, c2, _), kind(c2, "attribute"), up032_tok_has_4(c2), field(c2, "object", c3), up032_gen_template(c3)
     ).
 
 

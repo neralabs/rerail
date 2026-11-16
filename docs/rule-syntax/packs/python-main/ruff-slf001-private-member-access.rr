@@ -43,8 +43,7 @@ slf001_in_annotation(n) :- inside(n, p1, "type"), child(p2, p1, _),
 
 // dunder_operator_function(n): the JSON util `dunder-operator-function`, used where the JSON says `matches: "dunder-operator-function"`
 .decl slf001_dunder_operator_function(n: node)
-slf001_dunder_operator_function(n) :- kind(n, "function_definition"), field(n, "name", c1),
-    glob("{__lt__,__le__,__eq__,__ne__,__gt__,__ge__,__add__,__sub__,__mul__,__matmul__,__truediv__,__floordiv__,__mod__,__divmod__,__pow__,__lshift__,__rshift__,__and__,__xor__,__or__,__radd__,__rsub__,__rmul__,__rmatmul__,__rtruediv__,__rfloordiv__,__rmod__,__rdivmod__,__rpow__,__rlshift__,__rrshift__,__rand__,__rxor__,__ror__,__iadd__,__isub__,__imul__,__imatmul__,__itruediv__,__ifloordiv__,__imod__,__ipow__,__ilshift__,__irshift__,__iand__,__ixor__,__ior__}", c1).
+slf001_dunder_operator_function(n) :- kind(n, "function_definition"), slf001_tok_has_1(n).
 
 // scope_start(n): the JSON util `scope-start`, used where the JSON says `matches: "scope-start"`
 .decl slf001_scope_start(n: node)
@@ -91,7 +90,7 @@ slf001_static_decorator(n) :- kind(n, "parenthesized_expression"), child(n, c1, 
 slf001_decorated_static(n) :- child(p1, n, _), kind(p1, "decorated_definition"),
     child(p1, c2, _), kind(c2, "decorator"), within_stop(c3, c2, slf001_stop_5),
     ( slf001_static_decorator(c3)
-    ; kind(c3, "call"), within_stop(c1, c3, slf001_stop_5), field(_, "function", c1), slf001_static_decorator(c1)
+    ; kind(c3, "call"), within_stop(c1, c3, slf001_stop_5), field(c3, "function", f1), (f1 = c1 ; within(c1, f1)), slf001_static_decorator(c1)
     ).
 
 
@@ -140,7 +139,7 @@ slf001_free(n, CLS, SELFTAG) :- node(_, n, _, _, _), CLS = n, node(_, n, _, _, _
 // SELFTAG: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
 slf001_same_class_type(n, CLS, SELFTAG) :-
     ( slf001_self_type(n), slf001_free(n, CLS, SELFTAG)
-    ; kind(n, "identifier"), node(_, n, _, _, _), CLS = n, unset(SELFTAG)
+    ; kind(n, "identifier"), node(_, n, _, _, _), CLS = n, unset(SELFTAG), count : { slf001_self_type(n),slf001_free(n, CLS_e0, SELFTAG_e0) } = 0
     ).
 
 slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression"),
@@ -151,15 +150,14 @@ slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "generic_type"), child(n, c3,
     child(_, c3, 0), !slf001_annotated_head(c3), slf001_same_class_type(c3, CLS, SELFTAG).
 slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "generic_type"), child(n, c4, _),
     child(_, c4, 0), slf001_annotated_head(c4), child(n, c5, _), kind(c5, "type_parameter"),
-    slf001_tok_has_1(c5), child(c5, c14, _), kind(c14, "type"),
+    slf001_tok_has_2(c5), child(c5, c14, _), kind(c14, "type"),
     child(p15, c14, _), slf001_counted_12(c14),
     k17 = count : { child(p15, s16, _), precedes(s16, c14), slf001_counted_12(s16) }, k17 = 0,
     slf001_same_class_type(c14, CLS, SELFTAG).
 slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "subscript"), field(n, "value", c18),
     !slf001_annotated_head(c18), slf001_same_class_type(c18, CLS, SELFTAG).
 slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "subscript"), field(n, "value", c19),
-    slf001_annotated_head(c19), slf001_tok_has_2(n), field(n, "subscript", c28),
-    precedes_stop(s29, c28, slf001_counted_11), glob("\\[", s29),
+    slf001_annotated_head(c19), slf001_tok_has_3(n), field(n, "subscript", c28), slf001_tok_follows_4(c28),
     slf001_same_class_type(c28, CLS, SELFTAG).
 
 // same_class_callee(n): the JSON util `same-class-callee`, used where the JSON says `matches: "same-class-callee"`
@@ -173,16 +171,16 @@ slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "identifier"), node(_, n, _
 slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "subscript"),
     slf001_same_class_type(n, CLS, SELFTAG).
 slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "attribute"), field(n, "object", c1),
-    kind(c1, "call"), field(c1, "function", c2), slf001_super_name(c2),
-    field(n, "attribute", c3), glob("__new__", c3), slf001_free(n, CLS, SELFTAG).
+    kind(c1, "call"), field(c1, "function", c2), slf001_super_name(c2), slf001_tok_has_5(n),
+    slf001_free(n, CLS, SELFTAG).
 slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression"),
-    child(n, c4, _), slf001_same_class_callee(c4, CLS, SELFTAG).
+    child(n, c11, _), slf001_same_class_callee(c11, CLS, SELFTAG).
 
 // same_class_value(n): the JSON util `same-class-value`, used where the JSON says `matches: "same-class-value"`
 //   CLS, SELFTAG: metavariables this relation binds for the calling rule
 .decl slf001_same_class_value(n: node, cls: loc, selftag: loc)
 slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "identifier"), glob("self", n),
-    ref_site(n, b1), site_form(b1, "parameter"), slf001_free(n, CLS, SELFTAG).
+    ref_site(n, b1), main_form(b1, "parameter"), slf001_free(n, CLS, SELFTAG).
 slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "call"), field(n, "function", c2),
     slf001_same_class_callee(c2, CLS, SELFTAG).
 slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression"),
@@ -202,10 +200,11 @@ slf001_plain_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sl
 
 // class_itself(n): the JSON util `class-itself`, used where the JSON says `matches: "class-itself"`
 .decl slf001_class_itself(n: node)
-slf001_class_itself(n) :- kind(n, "identifier"), ref_site(n, b1), site_form(b1, "definition"),
+slf001_class_itself(n) :- kind(n, "identifier"), ref_site(n, b1), main_form(b1, "definition"),
     (st2 = b1 ; within(b1, st2)), kind(st2, "class_definition"), node(_, st2, _, _, _), DEF = st2,
-    inside(n, p3, "class_definition"), field(_, "body", n), node(_, p3, _, _, _), DEF = p3,
-    count : { slf001_stop_14_within(n, p4), (kind(p4, "list_comprehension") ; kind(p4, "set_comprehension") ; kind(p4, "dictionary_comprehension") ; kind(p4, "generator_expression")), count : { slf001_stop_14_within(p4, p5), (kind(p5, "function_definition") ; kind(p5, "lambda")) } = 0 } = 0.
+    inside(n, p3, "class_definition"), field(p3, "body", f4), (f4 = n ; within(n, f4)),
+    node(_, p3, _, _, _), DEF = p3,
+    count : { slf001_stop_14_within(n, p5), (kind(p5, "list_comprehension") ; kind(p5, "set_comprehension") ; kind(p5, "dictionary_comprehension") ; kind(p5, "generator_expression")), count : { slf001_stop_14_within(p5, p6), (kind(p6, "function_definition") ; kind(p6, "lambda")) } = 0 } = 0.
 
 // scope_node(n): the JSON util `scope-node`, used where the JSON says `matches: "scope-node"`
 .decl slf001_scope_node(n: node)
@@ -214,8 +213,8 @@ slf001_scope_node(n) :- (kind(n, "function_definition") ; kind(n, "lambda") ; ki
 // same_class_instance(n): the JSON util `same-class-instance`, used where the JSON says `matches: "same-class-instance"`
 .decl slf001_same_class_instance(n: node)
 slf001_same_class_instance(n) :- kind(n, "identifier"),
-    ( ref_site(n, b1), site_form(b1, "parameter"), (st1 = b1 ; within(b1, st1)), slf001_receiver_parameter(st1)
-    ; slf001_alt_18(n, CLS, SELFTAG), (text(SELFTAG, t1_1), text(CLS, t1_1), @doc(SELFTAG) = @doc(CLS) ; inside(n, p3_2, "class_definition"), field(_, "body", n), field(p3_2, "name", c4_2), text(c4_2, t_cls1_2), text(CLS, t_cls1_2), @doc(c4_2) = @doc(CLS) )
+    ( ref_site(n, b1), main_form(b1, "parameter"), st1 = b1, slf001_receiver_parameter(st1)
+    ; slf001_alt_18(n, CLS, SELFTAG), (text(SELFTAG, t1_1), text(CLS, t1_1), @doc(SELFTAG) = @doc(CLS) ; inside(n, p3_2, "class_definition"), field(p3_2, "body", f4_2), (f4_2 = n ; within(n, f4_2)), field(p3_2, "name", c5_2), text(c5_2, t_cls1_2), text(CLS, t_cls1_2), @doc(c5_2) = @doc(CLS) )
     ).
 
 
@@ -228,27 +227,62 @@ slf001_exempt_object(n) :- slf001_same_class_instance(n).
 slf001_exempt_object(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     slf001_exempt_object(c1).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(?:__lt__|__le__|__eq__|__ne__|__gt__|__ge__|__add__|__sub__|__mul__|__matmul__|__truediv__|__floordiv__|__mod__|__divmod__|__pow__|__lshift__|__rshift__|__and__|__xor__|__or__|__radd__|__rsub__|__rmul__|__rmatmul__|__rtruediv__|__rfloordiv__|__rmod__|__rdivmod__|__rpow__|__rlshift__|__rrshift__|__rand__|__rxor__|__ror__|__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl slf001_tok_has_1(n: node)
 .stored slf001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-slf001_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
-slf001_tok_has_1(n) :- op(n, t7), match(",", t7).
-slf001_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
-    match("(?s)^(?:.*(?:,).*)$", g8).
-slf001_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
-    match("(?s)^(?:.*(?:,).*)$", g8).
-slf001_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+slf001_tok_has_1(n) :- field(n, "name", c1),
+    glob("{__lt__,__le__,__eq__,__ne__,__gt__,__ge__,__add__,__sub__,__mul__,__matmul__,__truediv__,__floordiv__,__mod__,__divmod__,__pow__,__lshift__,__rshift__,__and__,__xor__,__or__,__radd__,__rsub__,__rmul__,__rmatmul__,__rtruediv__,__rfloordiv__,__rmod__,__rdivmod__,__rpow__,__rlshift__,__rrshift__,__rand__,__rxor__,__ror__,__iadd__,__isub__,__imul__,__imatmul__,__itruediv__,__ifloordiv__,__imod__,__ipow__,__ilshift__,__irshift__,__iand__,__ixor__,__ior__}", c1).
+slf001_tok_has_1(n) :- op(n, t2),
+    match("(?:__lt__|__le__|__eq__|__ne__|__gt__|__ge__|__add__|__sub__|__mul__|__matmul__|__truediv__|__floordiv__|__mod__|__divmod__|__pow__|__lshift__|__rshift__|__and__|__xor__|__or__|__radd__|__rsub__|__rmul__|__rmatmul__|__rtruediv__|__rfloordiv__|__rmod__|__rdivmod__|__rpow__|__rlshift__|__rrshift__|__rand__|__rxor__|__ror__|__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)", t2).
+slf001_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__lt__).*|(?:.*\\W)?(?:__le__).*|(?:.*\\W)?(?:__eq__).*|(?:.*\\W)?(?:__ne__).*|(?:.*\\W)?(?:__gt__).*|(?:.*\\W)?(?:__ge__).*|(?:.*\\W)?(?:__add__).*|(?:.*\\W)?(?:__sub__).*|(?:.*\\W)?(?:__mul__).*|(?:.*\\W)?(?:__matmul__).*|(?:.*\\W)?(?:__truediv__).*|(?:.*\\W)?(?:__floordiv__).*|(?:.*\\W)?(?:__mod__).*|(?:.*\\W)?(?:__divmod__).*|(?:.*\\W)?(?:__pow__).*|(?:.*\\W)?(?:__lshift__).*|(?:.*\\W)?(?:__rshift__).*|(?:.*\\W)?(?:__and__).*|(?:.*\\W)?(?:__xor__).*|(?:.*\\W)?(?:__or__).*|(?:.*\\W)?(?:__radd__).*|(?:.*\\W)?(?:__rsub__).*|(?:.*\\W)?(?:__rmul__).*|(?:.*\\W)?(?:__rmatmul__).*|(?:.*\\W)?(?:__rtruediv__).*|(?:.*\\W)?(?:__rfloordiv__).*|(?:.*\\W)?(?:__rmod__).*|(?:.*\\W)?(?:__rdivmod__).*|(?:.*\\W)?(?:__rpow__).*|(?:.*\\W)?(?:__rlshift__).*|(?:.*\\W)?(?:__rrshift__).*|(?:.*\\W)?(?:__rand__).*|(?:.*\\W)?(?:__rxor__).*|(?:.*\\W)?(?:__ror__).*|(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g3).
+slf001_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__lt__).*|(?:.*\\W)?(?:__le__).*|(?:.*\\W)?(?:__eq__).*|(?:.*\\W)?(?:__ne__).*|(?:.*\\W)?(?:__gt__).*|(?:.*\\W)?(?:__ge__).*|(?:.*\\W)?(?:__add__).*|(?:.*\\W)?(?:__sub__).*|(?:.*\\W)?(?:__mul__).*|(?:.*\\W)?(?:__matmul__).*|(?:.*\\W)?(?:__truediv__).*|(?:.*\\W)?(?:__floordiv__).*|(?:.*\\W)?(?:__mod__).*|(?:.*\\W)?(?:__divmod__).*|(?:.*\\W)?(?:__pow__).*|(?:.*\\W)?(?:__lshift__).*|(?:.*\\W)?(?:__rshift__).*|(?:.*\\W)?(?:__and__).*|(?:.*\\W)?(?:__xor__).*|(?:.*\\W)?(?:__or__).*|(?:.*\\W)?(?:__radd__).*|(?:.*\\W)?(?:__rsub__).*|(?:.*\\W)?(?:__rmul__).*|(?:.*\\W)?(?:__rmatmul__).*|(?:.*\\W)?(?:__rtruediv__).*|(?:.*\\W)?(?:__rfloordiv__).*|(?:.*\\W)?(?:__rmod__).*|(?:.*\\W)?(?:__rdivmod__).*|(?:.*\\W)?(?:__rpow__).*|(?:.*\\W)?(?:__rlshift__).*|(?:.*\\W)?(?:__rrshift__).*|(?:.*\\W)?(?:__rand__).*|(?:.*\\W)?(?:__rxor__).*|(?:.*\\W)?(?:__ror__).*|(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g3).
+slf001_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__lt__).*|(?:.*\\W)?(?:__le__).*|(?:.*\\W)?(?:__eq__).*|(?:.*\\W)?(?:__ne__).*|(?:.*\\W)?(?:__gt__).*|(?:.*\\W)?(?:__ge__).*|(?:.*\\W)?(?:__add__).*|(?:.*\\W)?(?:__sub__).*|(?:.*\\W)?(?:__mul__).*|(?:.*\\W)?(?:__matmul__).*|(?:.*\\W)?(?:__truediv__).*|(?:.*\\W)?(?:__floordiv__).*|(?:.*\\W)?(?:__mod__).*|(?:.*\\W)?(?:__divmod__).*|(?:.*\\W)?(?:__pow__).*|(?:.*\\W)?(?:__lshift__).*|(?:.*\\W)?(?:__rshift__).*|(?:.*\\W)?(?:__and__).*|(?:.*\\W)?(?:__xor__).*|(?:.*\\W)?(?:__or__).*|(?:.*\\W)?(?:__radd__).*|(?:.*\\W)?(?:__rsub__).*|(?:.*\\W)?(?:__rmul__).*|(?:.*\\W)?(?:__rmatmul__).*|(?:.*\\W)?(?:__rtruediv__).*|(?:.*\\W)?(?:__rfloordiv__).*|(?:.*\\W)?(?:__rmod__).*|(?:.*\\W)?(?:__rdivmod__).*|(?:.*\\W)?(?:__rpow__).*|(?:.*\\W)?(?:__rlshift__).*|(?:.*\\W)?(?:__rrshift__).*|(?:.*\\W)?(?:__rand__).*|(?:.*\\W)?(?:__rxor__).*|(?:.*\\W)?(?:__ror__).*|(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g3).
 
 // tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl slf001_tok_has_2(n: node)
 .stored slf001_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-slf001_tok_has_2(n) :- child(n, c20, _), glob("\\,", c20).
-slf001_tok_has_2(n) :- op(n, t21), match(",", t21).
-slf001_tok_has_2(n) :- child(n, c27, _), structural_before(c27, g22),
+slf001_tok_has_2(n) :- child(n, c6, _), glob("\\,", c6).
+slf001_tok_has_2(n) :- op(n, t7), match(",", t7).
+slf001_tok_has_2(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+slf001_tok_has_2(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+slf001_tok_has_2(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl slf001_tok_has_3(n: node)
+.stored slf001_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+slf001_tok_has_3(n) :- child(n, c20, _), glob("\\,", c20).
+slf001_tok_has_3(n) :- op(n, t21), match(",", t21).
+slf001_tok_has_3(n) :- child(n, c27, _), structural_before(c27, g22),
     match("(?s)^(?:.*(?:,).*)$", g22).
-slf001_tok_has_2(n) :- child(n, c27, _), structural_after(c27, g22),
+slf001_tok_has_3(n) :- child(n, c27, _), structural_after(c27, g22),
     match("(?s)^(?:.*(?:,).*)$", g22).
-slf001_tok_has_2(n) :- node_text(n, g22), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g22).
+slf001_tok_has_3(n) :- node_text(n, g22), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g22).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl slf001_tok_follows_4(n: node)
+.stored slf001_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+slf001_tok_follows_4(n) :- next_sibling(s29, n), glob("\\[", s29).
+slf001_tok_follows_4(n) :- structural_before(n, g31), match("\\s*", g31), child(p32, n, _),
+    node(_, n, _, st34, _), o33 = st34 - strlen(g31), token(p32, _, t30, _, o33),
+    match("\\[", t30).
+slf001_tok_follows_4(n) :- structural_before(n, g31), match("(?s)^(?:.*(?:\\[)\\s*)$", g31).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^__new__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl slf001_tok_has_5(n: node)
+.stored slf001_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+slf001_tok_has_5(n) :- field(n, "attribute", c3), glob("__new__", c3).
+slf001_tok_has_5(n) :- op(n, t4), match("__new__", t4).
+slf001_tok_has_5(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g5).
+slf001_tok_has_5(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g5).
+slf001_tok_has_5(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g5).
 
 // set_2: node kinds from a JSON `any`
 .decl slf001_set_2(v: symbol)
@@ -287,23 +321,22 @@ slf001_stop_14(n) :- slf001_scope_node(n).
 //   CLS, SELFTAG: metavariables this relation binds for the calling rule
 .decl slf001_alt_18(n: node, cls: loc, selftag: loc)
 slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b1),
-    (site_form(b1, "assignment") ; site_form(b1, "named")), binding_value(b1, x2),
+    (main_form(b1, "assignment") ; main_form(b1, "named")), binding_value(b1, x2),
     slf001_same_class_value(x2, CLS, SELFTAG).
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b3), site_form(b3, "with"),
-    (st4 = b3 ; within(b3, st4)),
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b3), main_form(b3, "with"), st4 = b3,
     ( slf001_with_same_class_value(st4, CLS, SELFTAG)
     ; within(st4, p1), slf001_with_same_class_value(p1, CLS, SELFTAG)
     ).
 
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b6), site_form(b6, "annotated"),
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b6), main_form(b6, "annotated"),
     site_annotation(b6, o7), slf001_same_class_type(o7, CLS, SELFTAG).
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b8), site_form(b8, "parameter"),
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b8), main_form(b8, "parameter"),
     (st9 = b8 ; within(b8, st9)),
     ( kind(st9, "typed_default_parameter")
     ; kind(st9, "typed_parameter"), child(st9, c1, _), kind(c1, "identifier")
     ),
     field(st9, "type", c11), slf001_same_class_type(c11, CLS, SELFTAG).
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b12), site_form(b12, "definition"),
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b12), main_form(b12, "definition"),
     (st13 = b12 ; within(b12, st13)), kind(st13, "function_definition"),
     field(st13, "return_type", c14), slf001_same_class_type(c14, CLS, SELFTAG).
 

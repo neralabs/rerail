@@ -1,10 +1,16 @@
     use super::{NATIVE_TAGS, View};
+    use crate::code_rule_dsl::embed::host::{HostNode, Tape};
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::vue::template::Directive;
     use ast_grep_language::LanguageExt;
     use std::ops::Range;
     use std::path::{Path, PathBuf};
     use tree_sitter::{Node, Parser, Tree};
+
+    /// The host tape of `source` (`embed::host`).
+    fn host(source: &str) -> Tape {
+        Tape::of(GrammarDialect::Vue, source)
+    }
 
     fn parse(source: &str) -> Tree {
         let mut parser = Parser::new();
@@ -38,21 +44,19 @@
     /// The `v-for` and directive spans the view must give statements: each `v-for` element's
     /// range, and each directive's range that reads its value as one expression statement.
     fn template_spans(
-        node: Node<'_>,
+        node: HostNode<'_>,
         source: &str,
         loops: &mut Vec<Range<usize>>,
         directives: &mut Vec<Range<usize>>,
     ) {
         if matches!(node.kind(), "element" | "template_element") {
-            let mut cursor = node.walk();
             let start = node
-                .named_children(&mut cursor)
+                .named_children()
                 .find(|child| matches!(child.kind(), "start_tag" | "self_closing_tag"));
             let read: Vec<Directive<'_>> = start
                 .map(|start| {
-                    let mut cursor = start.walk();
                     start
-                        .named_children(&mut cursor)
+                        .named_children()
                         .filter_map(|attribute| Directive::read(attribute, source))
                         .collect()
                 })
@@ -73,8 +77,7 @@
                 }
             }
         }
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
+        for child in node.named_children() {
             template_spans(child, source, loops, directives);
         }
     }
@@ -91,9 +94,10 @@
     fn checked(source: &str, identifiers: bool) -> View {
         let tree = parse(source);
         assert!(!tree.root_node().has_error(), "Vue tree of {source:?}");
-        let view = View::build(tree.root_node(), source).expect("a program");
+        let view = View::build(host(source).root(), source, &|| false).expect("a program");
         let text = view.text();
         assert!(!view.root().has_error(), "syntax error in {text:?}");
+        assert!(view.read_by_the_lean_parser(), "the lean parser refuses {text:?}");
         check_copies(&view, source).expect("copies");
         let mut nodes = Vec::new();
         named(view.root(), &mut nodes);
@@ -141,7 +145,7 @@
         let mut expected_loops = Vec::new();
         let mut directives = Vec::new();
         template_spans(
-            tree.root_node(),
+            host(source).root(),
             source,
             &mut expected_loops,
             &mut directives,
@@ -548,11 +552,11 @@
     #[test]
     fn script_dialects() {
         let coffee = "<template><p>{{ a }}</p></template><script lang=\"coffee\">a = 1</script>";
-        assert!(View::build(parse(coffee).root_node(), coffee).is_none());
+        assert!(View::build(host(coffee).root(), coffee, &|| false).is_none());
         let template_only = "<template><p>{{ a }}</p></template>";
         assert_eq!(view(template_only).dialect(), GrammarDialect::JavaScript);
         let style_only = "<style>p {}</style>";
-        assert!(View::build(parse(style_only).root_node(), style_only).is_none());
+        assert!(View::build(host(style_only).root(), style_only, &|| false).is_none());
     }
 
     /// Builds the view of `source`, whose template error recovery leaves a dynamic argument of
@@ -560,7 +564,7 @@
     fn dynamic_argument_without_value(source: &str) {
         let tree = parse(source);
         assert!(tree.root_node().has_error(), "Vue tree of {source:?}");
-        let view = View::build(tree.root_node(), source);
+        let view = View::build(host(source).root(), source, &|| false);
         assert!(
             view.is_none_or(|view| !view.text().contains('[')),
             "{source:?}"
@@ -607,33 +611,37 @@
         files.sort();
         let mut built = 0;
         let mut broken = Vec::new();
+        let mut refused = Vec::new();
         for path in &files {
             let source = std::fs::read_to_string(path).expect("fixture");
             let tree = parse(&source);
-            let Some(view) = View::build(tree.root_node(), &source) else {
+            let Some(view) = View::build(host(&source).root(), &source, &|| false) else {
                 continue;
             };
             built += 1;
             if let Err(error) = check_copies(&view, &source) {
                 panic!("{}: {error}", path.display());
             }
+            let name = || path.strip_prefix(fixtures).unwrap_or(path).display().to_string();
             if view.root().has_error() && !tree.root_node().has_error() {
-                broken.push(
-                    path.strip_prefix(fixtures)
-                        .unwrap_or(path)
-                        .display()
-                        .to_string(),
-                );
+                broken.push(name());
+            }
+            // The lean parser reads every program without syntax errors.
+            if !view.root().has_error() && !view.read_by_the_lean_parser() {
+                refused.push(name());
             }
         }
         eprintln!(
-            "{} files, {built} programs, {} with errors only in the program:\n{}",
+            "{} files, {built} programs, {} with errors only in the program:\n{}\n{} without errors the lean parser refuses:\n{}",
             files.len(),
             broken.len(),
-            broken.join("\n")
+            broken.join("\n"),
+            refused.len(),
+            refused.join("\n")
         );
         assert!(files.len() > 700, "{} files", files.len());
         assert!(broken.len() * 50 <= files.len(), "{broken:#?}");
+        assert!(refused.is_empty(), "{refused:#?}");
     }
 
     /// A node of the program stands for the file bytes of its pieces, never a range widened over

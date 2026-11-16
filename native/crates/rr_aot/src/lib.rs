@@ -20,6 +20,11 @@ mod tier2_aot {
 
 #[cfg(feature = "generated")]
 
+// Each of tier 1's functions is structured control, as rustc lays out a hand-written loop: none
+// is the irreducible fallback, a loop over a `match` (`clif_rust`).
+const _: () = assert!(tier1_aot::STRUCTURED.0 == tier1_aot::STRUCTURED.1, "a tier 1 function is irreducible: a loop over a match");
+
+#[cfg(feature = "generated")]
 use rerail_compiler::{clif_rust, native_cpu_block, native_cpu_stream, native_ir, rust_stream};
 
 /// Which tiers run the ahead-of-time build.
@@ -46,8 +51,10 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     c.parser.tier1.ir.clear();
     c.parser.tier2.ir.clear();
     if tiers.one {
-        let tables = c.parser.tier1.tables_address().unwrap_or(0);
-        tier1_aot::TABLES.store(tables as u64, std::sync::atomic::Ordering::Relaxed);
+        // The code reads its own copy of the tables (`TABLES_DATA`): the program's.
+        if c.parser.tier1.tables_words() != Some(&tier1_aot::TABLES_DATA[..]) {
+            return Err("the ahead-of-time tables are of another program: run `cargo run -p rerail-rr-aot-gen`".into());
+        }
         type Raw = unsafe extern "C" fn(u64, u64, u64, u64, u64, u64, u64);
         let raw: &[Raw] = tier1_aot::ENTRIES;
         // SAFETY: each is the pass's code (the fingerprint), taking the JIT's entry's

@@ -16,7 +16,7 @@
 N816(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     match("[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]?[\\p{Lowercase}--[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}]].*", n),
     match(".*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}].*", n),
-    ( site_form(n, f1), n816_set_4(f1), site_scope(n, "module"), !site_outer(n)
+    ( bind_name(n, b1), main_form(b1, f1), n816_set_4(f1), site_scope(b1, "module"), !site_outer(b1)
     ; within_stop(n, p1, n816_stop_5), kind(p1, "tuple_pattern"), field(p2, "left", p1), kind(p2, "augmented_assignment"), count : { within(p2, p3), (kind(p3, "function_definition") ; kind(p3, "class_definition")) } = 0
     ),
     !n816_alt_9(n).
@@ -86,11 +86,14 @@ n816_stop_5(n) :- node(_, n, _, _, _), !kind(n, "tuple_pattern").
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl n816_alt_9(n: node)
 n816_alt_9(n) :- within(n, p1), n816_nt_assign(p1).
-n816_alt_9(n) :- inside(n, p2, "class_definition"), field(_, "superclasses", n).
-n816_alt_9(n) :- within(n, p3), field(_, "type", n),
-    (kind(p3, "typed_parameter") ; kind(p3, "typed_default_parameter")).
-n816_alt_9(n) :- inside(n, p4, "function_definition"), field(_, "return_type", n).
-n816_alt_9(n) :- inside(n, p5, "type_alias_statement"), field(_, "right", n).
+n816_alt_9(n) :- inside(n, p2, "class_definition"),
+    field(p2, "superclasses", f3), (f3 = n ; within(n, f3)).
+n816_alt_9(n) :- within(n, p4), field(p4, "type", f5), (f5 = n ; within(n, f5)),
+    (kind(p4, "typed_parameter") ; kind(p4, "typed_default_parameter")).
+n816_alt_9(n) :- inside(n, p6, "function_definition"),
+    field(p6, "return_type", f7), (f7 = n ; within(n, f7)).
+n816_alt_9(n) :- inside(n, p8, "type_alias_statement"),
+    field(p8, "right", f9), (f9 = n ; within(n, f9)).
 n816_alt_9(n) :- n816_in_comprehension_scope(n).
 n816_alt_9(n) :- node(_, n, _, _, _),
     glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", n).

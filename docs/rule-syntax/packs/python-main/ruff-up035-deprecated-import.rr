@@ -194,8 +194,7 @@ UP035_typing_re_to_typing_raw(n) :- kind(n, "import_from_statement"),
     suppress noqa "UP035"
 UP035_typing_builtin_generics(n, NAME, LOWER) :- kind(n, "import_from_statement"),
     field(n, "module_name", c2), kind(c2, "dotted_name"), glob("typing", c2),
-    child(n, c3, _), up035_alt_of(c3, "23", NAME), text(NAME, t1),
-    LOWER = @convert(t1, "lowerCase", "").
+    child(n, c3, _), up035_alt_of(c3, "23", NAME), unset(LOWER).
 
 // UP035_typing_deque(n, detail): findings from clauses `typing-asynccontextmanager`, `typing-contextmanager`, `typing-abstractset`, `typing-deque` and 1 more. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.

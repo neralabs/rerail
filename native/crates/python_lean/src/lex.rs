@@ -215,6 +215,11 @@ struct Lexer<'s> {
     p: usize,
     /// Interpolations nested.
     depth: u32,
+    /// The open blocks' indents, the module's (0) first.
+    indents: Vec<u32>,
+    /// The scanner's flag of the same name: set at a string's start (whether it is a format
+    /// string), cleared at any string's end, a nested one's too.
+    inside_interpolated_string: bool,
     /// Where the scanner does not run (each a NEWLINE the parser did not take), in order.
     joins: &'s [u32],
 }
@@ -227,7 +232,7 @@ pub fn lex(src: &[u8]) -> Result<Lexed, Refusal> {
 
 /// `src` lexed, the line ends at `joins` (where a NEWLINE was, in order) read as blanks.
 pub fn lex_joined(src: &[u8], joins: &[u32]) -> Result<Lexed, Refusal> {
-    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, joins };
+    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, joins };
     l.module()?;
     Ok(Lexed { toks: l.toks, extras: l.extras })
 }
@@ -278,56 +283,32 @@ const WORD_LIST: [(&[u8], T, u8); 41] = [
     (b"_", T::Name, soft::WILD),
 ];
 
-/// A word of at most 8 bytes as one integer, little-endian, zeros past its end.
-const fn word_key(w: &[u8]) -> u64 {
-    let mut k = 0u64;
-    let mut i = 0;
-    while i < w.len() {
-        k |= (w[i] as u64) << (8 * i);
-        i += 1;
-    }
-    k
-}
-
-/// A word's slot in `WORDS`, by its key and length: a multiplier under which the 41 words take 41
-/// slots of 128 (a perfect hash; `WORDS` is refused at compile time where two share one).
-#[inline(always)]
-const fn word_slot(key: u64, len: usize) -> usize {
-    ((key ^ len as u64).wrapping_mul(0x8f58_640b_360e_7c81) >> 57) as usize
-}
-
-/// Each slot's word: its key, its length (0: none), its kind and soft keyword.
-static WORDS: [(u64, u8, T, u8); 128] = {
-    let mut t = [(0u64, 0u8, T::Name, 0u8); 128];
+/// `WORD_LIST`'s words, the code of each its index plus one (0: none).
+const WORD_TEXT: [&[u8]; WORD_LIST.len() + 1] = {
+    let mut t: [&[u8]; WORD_LIST.len() + 1] = [b""; WORD_LIST.len() + 1];
     let mut i = 0;
     while i < WORD_LIST.len() {
-        let (w, kind, soft) = WORD_LIST[i];
-        assert!(w.len() <= 8);
-        let k = word_key(w);
-        let slot = word_slot(k, w.len());
-        assert!(t[slot].1 == 0, "two words in a slot");
-        t[slot] = (k, w.len() as u8, kind, soft);
+        t[i + 1] = WORD_LIST[i].0;
         i += 1;
     }
     t
 };
 
-/// The word `src[i..end]`'s kind and soft keyword: its first 8 bytes loaded as one integer, masked
-/// to its length, hashed to its one slot and compared once (simdjson's check of `true`, `false`
-/// and `null`, as one masked compare).
+rerail_simd8::keyword_switch!(
+    /// The keyword switch (`rerail_simd8::words`) over `WORD_TEXT`.
+    static WORDS = &WORD_TEXT, fold: false
+);
+
+/// The word `src[i..end]`'s kind and soft keyword: one probe of the keyword switch.
 #[inline(always)]
 fn keyword(src: &[u8], i: usize, end: usize) -> (T, u8) {
-    let len = end - i;
-    if len.wrapping_sub(1) >= 8 {
-        return (T::Name, 0);
+    match WORDS.find(src, i, end) as usize {
+        0 => (T::Name, 0),
+        code => {
+            let (_, kind, soft) = WORD_LIST[code - 1];
+            (kind, soft)
+        }
     }
-    let raw = match src.get(i..i + 8) {
-        Some(b) => u64::from_le_bytes(b.try_into().expect("8 bytes")),
-        None => word_key(&src[i..]),
-    };
-    let w = raw & (u64::MAX >> (64 - 8 * len));
-    let (k, l, kind, soft) = WORDS[word_slot(w, len)];
-    if k == w && usize::from(l) == len { (kind, soft) } else { (T::Name, 0) }
 }
 
 impl<'s> Lexer<'s> {
@@ -372,10 +353,10 @@ impl<'s> Lexer<'s> {
         }
     }
 
-    /// The scanner's look from `p`: whether a line ended, the next line's indent `L` and the
-    /// first comment line's `F` (-1: none). `None` where the scanner gives no layout token here (a
-    /// comment or other text on this line).
-    fn scan(&self, p: usize) -> Result<Option<(u32, i64)>, Refusal> {
+    /// The scanner's look from `p`: whether a line ended, the next line's indent `L`, the first
+    /// comment line's `F` (-1: none) and where its look stops (the next token). `None` where the
+    /// scanner gives no layout token here (a comment or other text on this line).
+    fn scan(&self, p: usize) -> Result<Option<(u32, i64, usize)>, Refusal> {
         let src = self.src;
         let (mut i, mut eol, mut indent, mut first_comment) = (p, false, 0u32, -1i64);
         loop {
@@ -432,18 +413,17 @@ impl<'s> Lexer<'s> {
                     }
                 }
                 _ if i >= src.len() => {
-                    return Ok(Some((0, first_comment)));
+                    return Ok(Some((0, first_comment, i)));
                 }
                 _ => break,
             }
         }
-        Ok(if eol { Some((indent, first_comment)) } else { None })
+        Ok(if eol { Some((indent, first_comment, i)) } else { None })
     }
 
     /// The whole file.
     fn module(&mut self) -> Result<(), Refusal> {
         let src = self.src;
-        let mut indents: Vec<u32> = vec![0];
         // A statement is open (NEWLINE is valid), and the last token was a header's `:`.
         let (mut open, mut header) = (false, false);
         let mut brackets = 0u32;
@@ -454,12 +434,16 @@ impl<'s> Lexer<'s> {
             while matches!(self.at(k), b' ' | b'\t') {
                 k += 1;
             }
-            if brackets == 0 && (k >= src.len() || matches!(src[k], b'\n' | b'\r' | b'#' | b'\\' | 0x0c)) && !self.joined() {
-                while let Some((indent, first_comment)) = self.scan(self.p)? {
-                    let current = *indents.last().expect("an indent");
+            let line_end = k >= src.len() || matches!(src[k], b'\n' | b'\r' | b'#' | b'\\' | 0x0c);
+            if brackets > 0 && line_end && self.dedent_in_brackets(self.p)? {
+                return Err(self.refuse(self.p));
+            }
+            if brackets == 0 && line_end && !self.joined() {
+                while let Some((indent, first_comment, _)) = self.scan(self.p)? {
+                    let current = *self.indents.last().expect("an indent");
                     let p = self.p;
                     if header && indent > current {
-                        indents.push(indent);
+                        self.indents.push(indent);
                         self.push(T::Indent, p, p);
                         open = false;
                         header = false;
@@ -470,7 +454,7 @@ impl<'s> Lexer<'s> {
                         open = false;
                         header = false;
                     } else if indent < current && first_comment < i64::from(current) {
-                        indents.pop();
+                        self.indents.pop();
                         self.push(T::Dedent, p, p);
                     } else {
                         break;
@@ -537,6 +521,37 @@ impl<'s> Lexer<'s> {
             open = true;
             header = kind == T::Colon && brackets == 0;
         }
+    }
+
+    /// Whether the scanner gives a DEDENT at `p` inside brackets (an error: no rule takes it). It
+    /// does where a line ends, the next is indented below the block (its first comment too), no
+    /// closer may follow the last token, no string starts the next line (where one may start,
+    /// the scanner leaves the line alone; where none may, the parser refuses the string), and the
+    /// last string to start or end was not a format string's start (`inside_interpolated_string`:
+    /// in `f"""{(a +⏎b)}"""` the line goes on, in `f"""{(f"a" +⏎b)}"""` the inner string's end
+    /// cleared it).
+    fn dedent_in_brackets(&self, p: usize) -> Result<bool, Refusal> {
+        if self.inside_interpolated_string || self.closer_may_follow() {
+            return Ok(false);
+        }
+        let current = i64::from(*self.indents.last().expect("an indent"));
+        Ok(match self.scan(p)? {
+            Some((indent, first_comment, next)) => i64::from(indent) < current && first_comment < current && !matches!(self.at(next), b'\'' | b'"' | b'`'),
+            None => false,
+        })
+    }
+
+    /// Whether a closing bracket may follow the last token: after an operand's end, an opening
+    /// bracket (but a subscript's `[`), or a `,`.
+    fn closer_may_follow(&self) -> bool {
+        let n = self.toks.len();
+        let kind = |k: usize| self.toks[k].kind;
+        n > 0
+            && match kind(n - 1) {
+                T::Name | T::Int | T::Float | T::True | T::False | T::None | T::Ellipsis | T::StrEnd | T::RParen | T::RBracket | T::RBrace | T::LParen | T::LBrace | T::Comma => true,
+                T::LBracket => n < 2 || !matches!(kind(n - 2), T::Name | T::StrEnd | T::RParen | T::RBracket | T::RBrace),
+                _ => false,
+            }
     }
 
     /// Whether a string starts at `i`: its prefix's length and how it reads.
@@ -747,6 +762,7 @@ impl<'s> Lexer<'s> {
         let src = self.src;
         let open = prefix + if q.triple { 3 } else { 1 };
         self.push(T::StrStart, i, i + open);
+        self.inside_interpolated_string = q.format;
         let mut j = i + open;
         // The text since the last piece, and whether any of it is more than a raw string's
         // backslashes (which the scanner steps over without counting them as text: where nothing
@@ -769,6 +785,7 @@ impl<'s> Lexer<'s> {
                     } else {
                         self.push(T::StrEnd, text, s + close);
                     }
+                    self.inside_interpolated_string = false;
                     return Ok(());
                 }
                 j = s + 1;
@@ -894,6 +911,10 @@ impl<'s> Lexer<'s> {
         let mut brackets = 0u32;
         let mut i = s + 1;
         loop {
+            // The interpolation's `}` is a closer too: the check runs at any depth.
+            if self.dedent_in_brackets(i)? {
+                return Err(self.refuse(i));
+            }
             // Blanks and line ends (a triple-quoted string's interpolation may span lines).
             loop {
                 match self.at(i) {

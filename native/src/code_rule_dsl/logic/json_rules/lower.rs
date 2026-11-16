@@ -76,6 +76,13 @@ fn underscores(s: &str) -> String {
     out
 }
 
+/// A util's relation: its name in snake case, and `_util` after a name core.rr declares (a util `field` is not the
+/// core `field(p, f, c)` the rules beside it read).
+pub fn util_name(name: &str) -> String {
+    let s = snake(name);
+    if crate::code_rule_dsl::logic::rr::lower::is_core(&s) { format!("{s}_util") } else { s }
+}
+
 pub fn snake(name: &str) -> String {
     let cs: Vec<char> = name.chars().collect();
     let mut s = String::new();
@@ -152,7 +159,7 @@ pub fn opt_alts(arg: &Value, render: &dyn Fn(&Lit) -> String) -> String {
     }
     let o = arg.as_obj().expect("an object");
     if !(truthy(o.get("cases")) || o.has("default")) {
-        return render_option(o.get("$option").expect("$option"), render);
+        return render_option(o, render);
     }
     let name = q_val(o.get("$option").expect("$option"));
     let cases = cases_of(arg);
@@ -166,9 +173,30 @@ pub fn opt_alts(arg: &Value, render: &dyn Fn(&Lit) -> String) -> String {
     if parts.len() > 1 { format!("({})", parts.join(" ; ")) } else { parts.remove(0) }
 }
 
-fn render_option(name: &Value, render: &dyn Fn(&Lit) -> String) -> String {
+/// An option's value as an operand. A list option has no `option` row, only `option_item` rows (core.rr), so
+/// `{"$option": L, "join": "|", "template": T}` (the regex T around the items joined by `|`) is read per item: the
+/// joined regex matches where the regex T around some one item does. A `template` with no `join` puts a scalar
+/// option's value where the template's first `{}` is (`"^.{0,{}}$"`), as main does.
+fn render_option(opt: &Obj, render: &dyn Fn(&Lit) -> String) -> String {
+    let name = opt.get("$option").expect("$option");
     let o = format!("o_{}", snake(&py_str(name)));
-    format!("option({}, {o}), {}", q_val(name), render(&Lit::Opt(o.clone())))
+    let template = opt.get("template").and_then(Value::as_str);
+    let around = |v: &str| -> Option<(String, String)> {
+        let (pre, post) = template?.split_once("{}")?;
+        let r = format!("{v}_t");
+        Some((format!("{r} = cat({}, cat({v}, {}))", q(pre), q(post)), r))
+    };
+    if opt.get("join").and_then(Value::as_str) == Some("|") {
+        let item = format!("option_item({}, _, {o})", q_val(name));
+        return match around(&o) {
+            Some((lit, r)) => format!("{item}, {lit}, {}", render(&Lit::Opt(r))),
+            None => format!("{item}, {}", render(&Lit::Opt(o.clone()))),
+        };
+    }
+    match around(&o) {
+        Some((lit, r)) if !opt.has("join") => format!("option({}, {o}), {lit}, {}", q_val(name), render(&Lit::Opt(r))),
+        _ => format!("option({}, {o}), {}", q_val(name), render(&Lit::Opt(o.clone()))),
+    }
 }
 
 /// `match(pattern, subject)`: a glob-family test where it is exactly the regex, `match` otherwise.
@@ -407,7 +435,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
         } else if k == "capture" && val.is_str() {
             lits.push(format!("{} = {v}", cap(val.as_str().expect("a string"))));
         } else if k == "compare" && vo.is_some_and(|o| o.has("left") && o.has("op") && o.has("right")) {
-            lits.extend(compare(vo.expect("an object"), vs));
+            lits.extend(compare(prog, vo.expect("an object"), vs));
         } else if k == "count" && vo.is_some() {
             lits.extend(count(px, prog, vo.expect("an object"), v, vs)?);
         } else if k == "layout" && vo.is_some() && main_terms::layout(prog, vo.expect("an object"), v, &mut Vars::default()).is_some() {
@@ -418,16 +446,24 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             let c = Obj(vec![("position".to_owned(), val.clone())]);
             lits.extend(nth_child(px, prog, &c, v, vs)?);
         } else if k == "binds" && vo.is_some_and(Obj::is_empty) {
+            // `binds: {}`: v is some binding's name node (names.rr's `bind_name`, in every language).
             prog.use_("names");
-            lits.push(format!("(bind_only({v}) ; aug_target({v}))"));
+            lits.push(format!("bind_name({v}, _)"));
         } else if k == "binds" && vo.is_some() {
+            // Main's `binds` holds at the binding's name node, and its filters are about the binding's site.
             prog.use_("names");
-            lits.extend(site_filters(px, prog, vo.expect("an object"), v, vs)?);
+            let s = vs.fresh("b");
+            lits.push(format!("bind_name({v}, {s})"));
+            lits.extend(site_filters(px, prog, vo.expect("an object"), &s, Some(v), vs)?);
         } else if k == "parse" && vo.is_some_and(|o| o.has("grammar")) {
             let o = vo.expect("an object");
             let r = vs.fresh("r");
             lits.push(format!("parsed({v}, {}, {r})", q_val(o.get("grammar").expect("grammar"))));
-            lits.extend(lower(px, prog, &Value::Obj(o.without(&["grammar"])), &r, vs, &[])?);
+            // A `host` inside reads the node parsed, not an embedded program's file node.
+            let outer = prog.embedded.take();
+            let inner = lower(px, prog, &Value::Obj(o.without(&["grammar"])), &r, vs, &[]);
+            prog.embedded = outer;
+            lits.extend(inner?);
         } else if k == "pattern" && vo.is_some_and(|o| o.has("context")) {
             let o = vo.expect("an object");
             let sel = o.get("selector").map_or(String::new(), |s| format!(" at {}", q_val(s)));
@@ -447,6 +483,9 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
         } else if k == "$option" && val.is_str() && (ro.has("cases") || ro.has("default")) {
             lits.extend(option_cases(px, prog, val, ro, v, false)?);
         } else if (k == "cases" || k == "default") && ro.has("$option") {
+            continue;
+        } else if k == "stored" && ro.has("regex") {
+            // Main's note on why the regex reads a stored token's text: the `regex` beside it is the test.
             continue;
         } else if k == "value" && vo.is_some_and(|o| o.len() == 1) {
             let (op, arg) = vo.expect("an object").0[0].clone();
@@ -513,6 +552,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             lits.extend(main_terms::arguments(prog, vo.expect("an object"), v, vs)?);
         } else if k == "resolves" && vo.is_some() {
             lits.extend(resolves(px, prog, vo.expect("an object"), v, vs)?);
+        } else if k == "host" && vo.is_some() && prog.embedded.is_some() {
+            lits.extend(super::embedded::host(px, prog, val, v, vs)?);
+            prog.host_reads.extend(host_reads(px, val));
+        } else if k == "embedded" && vo.is_some() {
+            lits.extend(super::embedded::term(px, prog, val, v)?);
         } else if k == "host" && vo.is_some() {
             // inside a `parse`: the host node the parse holds, matched by the host language's rule; a guest capture
             // it reads is the guest node, compared by its text
@@ -535,15 +579,38 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
     Ok(lits)
 }
 
-fn compare(c: &Obj, vs: &mut Vars) -> Vec<String> {
+fn compare(prog: &mut Program, c: &Obj, vs: &mut Vars) -> Vec<String> {
     let op = c.get("op").expect("op");
     if !op.is_str() {
         return vec![format!("ast({}, {})", mv_v(c.get("left").expect("left")), compact(&Value::obj(vec![("compare", Value::Obj(c.clone()))])))];
     }
     let (l, r, op) = (mv_v(c.get("left").expect("left")), mv_v(c.get("right").expect("right")), py_str(op));
     let (a, b) = (vs.fresh("t"), vs.fresh("t"));
-    let text = c.get("text").cloned().unwrap_or(Value::Str("node".into()));
-    let reader = if matches!(text.as_str(), Some("node" | "text")) { "text" } else { "value" };
+    // Main's default is the source text. `node` is node identity (same range and kind: one node), not equal text: two
+    // components spelt alike are two components (no-dupe-keys' `compare CQ eq CP, text: node`).
+    let text = c.get("text").cloned().unwrap_or(Value::Str("source".into()));
+    // Two captures: both are nodes (an unset capture is none) and the same one, or not. A capture against itself is
+    // main's "is set", which stays the text test the passes after read as one (negated, `unset(X)`).
+    if text.as_str() == Some("node") && matches!(op.as_str(), "eq" | "ne") && l != r {
+        let is_node = |x: &str| format!("node(_, {x}, _, _, _)");
+        return vec![format!("{}, {}, {l} {} {r}", is_node(&l), is_node(&r), if op == "eq" { "=" } else { "!=" })];
+    }
+    let reader = match text.as_str() {
+        Some("source" | "node" | "text") => "text",
+        // `name` is the name the language resolves the node to. SQL's is PostgreSQL's (`ident_pg`: unquoted names
+        // fold to lower case); its identifiers have no `value`.
+        Some("name") if prog.lang == "sql" => {
+            prog.use_("names");
+            "ident_pg"
+        }
+        // ESLint's static property name and the quote-stripped text, which a key or identifier has with no value
+        // (decision 0222): a library's, for the ECMAScript languages.
+        Some(mode @ ("key" | "unquoted")) if matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue") => {
+            prog.use_("compare");
+            if mode == "key" { "cmp_key" } else { "cmp_unquoted" }
+        }
+        _ => "value",
+    };
     if op == "eq" {
         return vec![format!("{reader}({l}, {a}), {reader}({r}, {a})")];
     }
@@ -696,21 +763,46 @@ fn nth_child(px: &Patterns, prog: &mut Program, c: &Obj, v: &str, vs: &mut Vars)
     Ok(out)
 }
 
-fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &mut Vars) -> R<Vec<String>> {
+/// x is the name identifier n spells as a binding: its text, or in SQL the name PostgreSQL folds it to.
+/// Not in Python, where a bound identifier need not spell its name (`import a.b` binds `a`).
+fn name_tie(prog: &Program, n: &str, x: &str) -> Option<String> {
+    match prog.lang.as_str() {
+        "python" => None,
+        "sql" => Some(format!("ident_pg({n}, {x})")),
+        _ => Some(format!("text({n}, {x})")),
+    }
+}
+
+/// `name`: the identifier that names the binding, where the term is on it (`binds` on a node), which ties a site that
+/// binds several names (`let (a, b)`) to the one it names.
+fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, name: Option<&str>, vs: &mut Vars) -> R<Vec<String>> {
     let mut lits = Vec::new();
+    // Main's `directives: "eslint"` is no filter of its own: `builtin` and `exported` also read ESLint's `/* global */`
+    // and `/* exported */` comments (the names library's `site_builtin_directives`, `site_exported_directives`).
+    let directives = filters.get("directives").is_some_and(|d| d.as_str() == Some("eslint"));
     for (bk, bv) in filters.iter() {
         let bo = bv.as_obj();
-        if bk == "form" && bv.is_str() {
-            lits.push(format!("site_form({s}, {})", q_val(bv)));
+        if bk == "directives" && directives {
+            continue;
+        } else if directives && (bk == "builtin" || bk == "exported") && matches!(bv, Value::Bool(_)) {
+            let not = if bv.is_true() { "" } else { "!" };
+            lits.push(format!("{not}site_{bk}_directives({s})"));
+        } else if bk == "form" && bv.is_str() {
+            lits.push(format!("main_form({s}, {})", q_val(bv)));
         } else if bk == "form" && bv.is_list() {
-            lits.push(one_of(prog, vs, &format!("site_form({s}, {{}})"), bv.as_list().expect("a list"), "f", "binding forms the JSON accepts"));
+            lits.push(one_of(prog, vs, &format!("main_form({s}, {{}})"), bv.as_list().expect("a list"), "f", "binding forms the JSON accepts"));
         } else if bk == "site" && bo.is_some_and(|o| o.key_set_is(&["kind"])) && bv.get("kind").is_some_and(Value::is_str) {
             let st = vs.fresh("st");
             let kq = q_val(bv.get("kind").expect("kind"));
             lits.push(format!("({st} = {s}, kind({st}, {kq}) ; inside({s}, {st}, {kq}))"));
         } else if bk == "site" {
+            // The names library's site can sit below main's site construct (a name under its declaration), so a
+            // test that names a kind climbs to it. One that names none is main's one site node itself: climbing
+            // would let any ancestor pass a `not` (no-dupe-keys' `{pattern: $SITE, not: {matches:
+            // props-initialized}}` held at the program).
             let st = vs.fresh("st");
-            lits.push(format!("({st} = {s} ; within({s}, {st}))"));
+            let names_kind = bo.is_some_and(|o| o.has("kind") || o.get("any").and_then(Value::as_list).is_some_and(|l| l.iter().any(|a| a.get("kind").is_some())));
+            lits.push(if names_kind { format!("({st} = {s} ; within({s}, {st}))") } else { format!("{st} = {s}") });
             lits.extend(lower(px, prog, bv, &st, vs, &[])?);
         } else if bk == "value" {
             let x = vs.fresh("x");
@@ -720,6 +812,22 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &
             let x = vs.fresh("o");
             lits.push(format!("site_{bk}({s}, {x})"));
             lits.extend(lower(px, prog, bv, &x, vs, &[])?);
+        } else if let Some(l) = bv.as_list().filter(|l| l.iter().any(|x| is_option(x) && x.has("cases")) && l.iter().all(|x| x.is_str() || (is_option(x) && x.has("cases"))))
+        {
+            // A list that splices in an option's cases (`scope: [..., {$option: vars, cases: {all: [global]},
+            // default: [], spread: true}]`): each case's items under `option(name, case)`, the default's under none.
+            let test = |x: &Value| format!("site_{}({s}, {})", snake(bk), q_val(x));
+            let mut alts: Vec<String> = l.iter().filter(|x| x.is_str()).map(test).collect();
+            for o in l.iter().filter(|x| is_option(x)) {
+                let name = q_val(o.get("$option").expect("$option"));
+                let cases = cases_of(o);
+                for (c, items) in &cases {
+                    alts.extend(items.as_list().into_iter().flatten().map(|x| format!("option({name}, {}), {}", q(c), test(x))));
+                }
+                let none = cases.iter().map(|(c, _)| format!("!option({name}, {})", q(c))).collect::<Vec<_>>().join(", ");
+                alts.extend(o.get("default").and_then(Value::as_list).into_iter().flatten().map(|x| if none.is_empty() { test(x) } else { format!("{none}, {}", test(x)) }));
+            }
+            lits.push(format!("({})", alts.join(" ; ")));
         } else if bv.as_list().is_some_and(|l| l.iter().all(Value::is_str)) {
             lits.push(one_of(prog, vs, &format!("site_{}({s}, {{}})", snake(bk)), bv.as_list().expect("a list"), "f", &format!("the JSON `binds.{bk}` list")));
         } else if bv.is_true() {
@@ -747,16 +855,35 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &
             let (sc, x, s2) = (vs.fresh("sc"), vs.fresh("x"), vs.fresh("s"));
             let form = bv.get("form");
             lits.push(format!("binding({sc}, {x}, {s}, _)"));
+            lits.extend(name.and_then(|n| name_tie(prog, n, &x)));
             match form {
-                Some(f @ Value::Str(_)) => lits.push(format!("binding({sc}, {x}, {s2}, {})", q_val(f))),
+                Some(f @ Value::Str(_)) => lits.push(format!("binding({sc}, {x}, {s2}, _), main_form({s2}, {})", q_val(f))),
                 Some(Value::List(fs)) => {
                     let f = vs.fresh("f");
-                    lits.push(format!("binding({sc}, {x}, {s2}, {f})"));
+                    lits.push(format!("binding({sc}, {x}, {s2}, _), main_form({s2}, {f})"));
                     lits.push(format!("({})", fs.iter().map(|x_| format!("{f} = {}", q_val(x_))).collect::<Vec<_>>().join(" ; ")));
                 }
                 _ => lits.push(format!("binding({sc}, {x}, {s2}, _)")),
             }
             lits.push(format!("{s2} < {s}"));
+        } else if bk == "redefines"
+            && let Some(o) = bo.filter(|o| o.keys_within(&["every", "site", "form", "scope", "used", "referenced", "exported", "builtin", "directives", "value", "annotation"]))
+        {
+            // The variable's other definitions: some earlier one the term accepts (its filters and sub-rules on it),
+            // or with `every`, each other one (main's TypeScript `redefines`; vacuous where there is no other).
+            let every = o.get("every").is_some_and(Value::is_true);
+            let accepts = prog.helper("redefined", "the definitions the JSON `binds.redefines` accepts");
+            let mut body = vec!["binding(_, _, n, _)".to_owned()];
+            body.extend(site_filters(px, prog, &o.without(&["every"]), "n", None, &mut Vars::default())?);
+            prog.add_rule(format!("{accepts}(n)"), body);
+            let (sc, x, s2) = (vs.fresh("sc"), vs.fresh("x"), vs.fresh("s"));
+            lits.push(format!("binding({sc}, {x}, {s}, _)"));
+            lits.extend(name.and_then(|n| name_tie(prog, n, &x)));
+            if every {
+                lits.push(format!("count : {{ binding({sc}, {x}, {s2}, _), {s2} != {s}, !{accepts}({s2}) }} = 0"));
+            } else {
+                lits.push(format!("binding({sc}, {x}, {s2}, _), {s2} < {s}, {accepts}({s2})"));
+            }
         } else {
             let term = Value::obj(vec![("binds", Value::obj(vec![(bk, bv.clone())]))]);
             lits.push(ast_atom(prog, s, term));
@@ -865,7 +992,25 @@ fn stop_set(px: &Patterns, prog: &mut Program, stop: &Value) -> R<String> {
             prog.add_rule(format!("{name}(n)"), body);
         }
     } else {
-        let body = lower(px, prog, stop, "n", &mut Vars::default(), &[])?;
+        let mut body = lower(px, prog, stop, "n", &mut Vars::default(), &[])?;
+        // A rule of negations only (`stopBy: {not: …}`) ranges over the nodes.
+        let stmt = format!("{name}(n) :- {}.", body.join(", "));
+        // n named by a positive literal, outside any aggregate's braces.
+        let names_n = |l: &String| {
+            let (mut depth, mut out) = (0i32, String::new());
+            for c in l.chars() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ if depth == 0 => out.push(c),
+                    _ => {}
+                }
+            }
+            !l.trim_start().starts_with('!') && fullmatch(r"(?s).*(?<![\w$])n\b.*", &out).is_some()
+        };
+        if !body.iter().any(names_n) || super::souffle::check_rule(px, &stmt, &BTreeSet::new(), &[]).is_ok_and(|b| b.iter().any(|x| x == "n")) {
+            body.insert(0, "node(_, n, _, _, _)".to_owned());
+        }
         prog.add_rule(format!("{name}(n)"), body);
     }
     Ok(name)
@@ -1141,7 +1286,11 @@ fn relation(px: &Patterns, prog: &mut Program, k: &str, sub_: &Obj, v: &str, vs:
             lits.push(format!("within_stop({lo}, {hi}, {})", stop_set(px, prog, &stop)?));
         }
         if f_truthy && !is("neighbor") {
-            lits.push(format!("field(_, {}, {lo})", qf()));
+            // ast-grep's `field` names the step at hi: `inside` takes an ancestor whose field child is the node the
+            // path came up through, and `has` searches under hi's field child. lo is that child or below it
+            // (`data: () => ({ … })`: the object is in the parentheses that are the arrow's body).
+            let q = vs.fresh("f");
+            lits.push(format!("field({hi}, {}, {q}), ({q} = {lo} ; within({lo}, {q}))", qf()));
         }
     } else {
         if let Some(chain) = token_chain(px, prog, k, sub_, v, vs)? {
@@ -1157,8 +1306,37 @@ fn relation(px: &Patterns, prog: &mut Program, k: &str, sub_: &Obj, v: &str, vs:
         }
     }
     lits.extend(lower(px, prog, &Value::Obj(sub_.clone()), &c, vs, &skip)?);
-    let only_regex = sub_.keys().filter(|k| *k != "field" && *k != "stopBy").collect::<Vec<_>>() == vec!["regex"];
-    if only_regex && !f_truthy && (is("neighbor") || is("end")) && !((k == "has" || k == "inside") && is("end")) && k != "inside" {
+    // `regex`, with at most a `not: {kind: K}` that no token the regex matches can be: an anonymous token's kind is
+    // its text, so where K fails the regex the `not` holds for every token (main's `{regex: "^set$", not: {kind:
+    // property_identifier}}`, a getter's or setter's keyword). The stored-child rule keeps the `not`.
+    let not_kind_of_no_token = || {
+        let (Some(Value::Str(r)), Some(Value::Obj(no))) = (sub_.get("regex"), sub_.get("not")) else { return false };
+        let Some(Value::Str(kind)) = no.get("kind").filter(|_| no.key_set_is(&["kind"])) else { return false };
+        fancy_regex::Regex::new(r).is_ok_and(|r| r.is_match(kind).is_ok_and(|m| !m))
+    };
+    let keys = sub_.keys().filter(|k| *k != "field" && *k != "stopBy").collect::<Vec<_>>();
+    let only_regex = keys == vec!["regex"] || (keys.len() == 2 && keys.contains(&"regex") && keys.contains(&"not") && not_kind_of_no_token());
+    // A field's token (`for_in_statement`'s `operator`, `in` or `of`) has no node, and `op` rows name no field: its
+    // token rules read any of n's tokens the regex matches. The stored-child rule keeps the field.
+    // Only for a regex that names whole tokens (`^of$`): an open one (`.`, a return type is there) would hold of any
+    // token of n, `def` or `:`, so it reads the field's stored child alone.
+    let whole_token = sub_.get("regex").and_then(Value::as_str).is_some_and(|r| r.starts_with('^') && r.ends_with('$'));
+    let token_field = f_truthy && k == "has" && is("neighbor") && whole_token;
+    // A sibling search that stops at the first sibling not a comment (`stopBy: {not: {kind: comment}}`) is the
+    // neighbor test past comments: main's `precedes: {stopBy: {not: {kind: comment}}, regex: "^\\)$"}`, an object
+    // that is a call's last argument. Its token is read as the neighbor's; the stored-sibling rule keeps the stop.
+    let past_comments = (k == "precedes" || k == "follows")
+        && stop.as_obj().and_then(|o| o.get("not")).and_then(Value::as_obj).is_some_and(|n| n.key_set_is(&["kind"]) && n.get("kind").and_then(Value::as_str) == Some("comment"))
+        && stop.as_obj().is_some_and(|o| o.key_set_is(&["not"]));
+    let is = |s: &str| stop.as_str() == Some(s) || (s == "neighbor" && past_comments);
+    if only_regex && (!f_truthy || token_field) && (is("neighbor") || is("end")) && !((k == "has" || k == "inside") && is("end")) && k != "inside" {
+        if past_comments {
+            // The token relation is a library relation, which names no stop helper: its stored sibling is the
+            // neighbor (a comment between is read past only for tokens, in the gap).
+            let (a, b) = if k == "precedes" { (v.to_owned(), c.clone()) } else { (c.clone(), v.to_owned()) };
+            lits = vec![format!("next_sibling({a}, {b})")];
+            lits.extend(lower(px, prog, &Value::Obj(sub_.clone()), &c, vs, &skip)?);
+        }
         let (t, gv) = (vs.fresh("t"), vs.fresh("g"));
         let rx = sub_.get("regex").expect("regex").clone();
         let rx_str = rx.as_str().map(str::to_owned);
@@ -1276,6 +1454,17 @@ fn resolves(px: &Patterns, prog: &mut Program, r: &Obj, v: &str, vs: &mut Vars) 
     {
         return Ok(main_terms::statement_imported(prog, imported, v, vs, truthy(r.get("prefix"))));
     }
+    // `write: "last"`: v is where ESLint reports its variable (the names library's `write_anchor`), and `binding`
+    // filters that variable's site. Main allows no other key beside them.
+    if r.get("write").and_then(Value::as_str) == Some("last") && prog.lang != "python" {
+        prog.use_("names");
+        let s = vs.fresh("b");
+        lits.push(format!("write_anchor({v}, {s})"));
+        if let Some(b) = r.get("binding").and_then(Value::as_obj) {
+            lits.extend(site_filters(px, prog, b, &s, None, vs)?);
+        }
+        return Ok(lits);
+    }
     for (k, val) in r.iter() {
         if k == "import" && val.is_true() {
             prog.use_("names");
@@ -1294,23 +1483,44 @@ fn resolves(px: &Patterns, prog: &mut Program, r: &Obj, v: &str, vs: &mut Vars) 
             }
         } else if k == "prefix" {
             continue;
+        } else if (k == "directives" || k == "scriptDeclarations") && r.has("global") {
+            // They widen `global` (below): no filter of their own.
+            continue;
         } else if k == "directives" && val.is_str() {
             lits.push(format!("global_directives({v}, {})", q_val(val)));
         } else if k == "global" {
             prog.use_("names");
+            // Main's `directives: "eslint"` adds `/* global */` comments' names (less those turned off), and
+            // `scriptDeclarations` a script's top-level declarations, which are the global variables themselves.
+            let dir = r.get("directives").and_then(Value::as_str) == Some("eslint");
+            let script = r.get("scriptDeclarations").is_some_and(Value::is_true);
+            let rel = |g: &str| if dir || script { format!("global_ref_with({v}, {g}, {}, {})", dir as u8, script as u8) } else { format!("global_ref({v}, {g})") };
             if let Value::List(l) = val {
-                lits.push(one_of(prog, vs, &format!("global_ref({v}, {{}})"), l, "g", "names from the JSON `resolves.global`"));
+                lits.push(one_of(prog, vs, &rel("{}"), l, "g", "names from the JSON `resolves.global`"));
             } else {
-                lits.push(format!("global_ref({v}, _)"));
+                lits.push(rel("_"));
             }
+        } else if k == "sloppyFunctions" && r.get("this").and_then(Value::as_str) == Some("global") {
+            continue;
+        } else if k == "this" && val.as_str() == Some("global") {
+            // `this` is the global object: a script's top level, and with `sloppyFunctions` a sloppy function
+            // called plainly (tsx/eslint-a-globals).
+            prog.use_("eslint-a-globals");
+            let sloppy = r.get("sloppyFunctions").is_some_and(Value::is_true);
+            lits.push(if sloppy { format!("global_this({v})") } else { format!("global_this_top({v})") });
         } else if k == "unresolved" && (matches!(val, Value::Bool(true) | Value::Int(1)) || matches!(val, Value::Float(f) if *f == 1.0) || val.as_str() == Some("star")) {
             prog.use_("names");
-            lits.extend(main_terms::unresolved(prog, val, v, vs));
+            if prog.lang == "python" {
+                lits.extend(main_terms::unresolved(prog, val, v, vs));
+            } else {
+                // Another language's names library says it: `unresolved_ref(r)`, r resolves to nothing.
+                lits.push(format!("unresolved_ref({v})"));
+            }
         } else if k == "binding" && val.is_obj() {
             prog.use_("names");
             let s = vs.fresh("b");
             lits.push(format!("ref_site({v}, {s})"));
-            lits.extend(site_filters(px, prog, val.as_obj().expect("an object"), &s, vs)?);
+            lits.extend(site_filters(px, prog, val.as_obj().expect("an object"), &s, None, vs)?);
         } else {
             rest.insert(k, val.clone());
         }
@@ -1406,12 +1616,21 @@ pub fn transform_lits(prog: &mut Program, tr: &Value, vs: &mut Vars, defined: &B
         let (op, a) = single.0[0].clone();
         let ao = a.as_obj();
         let src = ao.map(|ao| mv_v(ao.get("source").unwrap_or(&Value::Str(String::new())))).unwrap_or_default();
+        // A value, else the name an ECMAScript node has (`cmp_value`, decision 0222): main's `value: true`.
+        let ecma = matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue");
+        if ecma && truthy(a.get("value")) {
+            prog.use_("compare");
+        }
         let read = |lits: &mut Vec<String>, vs: &mut Vars| -> String {
             if defined.contains(&src) {
                 return src.clone();
             }
             let x = vs.fresh("t");
-            let reader = if truthy(a.get("value")) { "value" } else { "text" };
+            let reader = match (truthy(a.get("value")), ecma) {
+                (true, true) => "cmp_value",
+                (true, false) => "value",
+                (false, _) => "text",
+            };
             lits.push(format!("{reader}({src}, {x})"));
             x
         };
@@ -1532,22 +1751,48 @@ pub fn violation_columns(viol: &Obj) -> Vec<String> {
     out
 }
 
+/// A message that depends on an option (`{"$option": O, "cases": {…}, "default": …}`, or a `template` with `{}`), as
+/// one text. A finding's key is its policy, code, path and line; its message is free, so the message need not
+/// follow the option. It is the first plain text a case or the default gives, else the template with the option's
+/// name in the place of its value (`limit <max>`).
+fn plain_message(v: &Value) -> String {
+    match v {
+        Value::Str(s) => s.clone(),
+        Value::Obj(o) if o.has("$option") => {
+            let name = o.get("$option").map(py_str).unwrap_or_default();
+            if let Some(t) = o.get("template").and_then(Value::as_str) {
+                return t.replacen("{}", &format!("<{name}>"), 1);
+            }
+            let cases: Vec<Value> = cases_of(v).into_iter().map(|(_, b)| b).collect();
+            let plain = o.get("default").filter(|d| d.is_str()).or_else(|| cases.iter().find(|c| c.is_str()));
+            match plain.or(o.get("default")).or(cases.first()) {
+                Some(x) => plain_message(x),
+                None => String::new(),
+            }
+        }
+        other => py_str(other),
+    }
+}
+
 pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeric: &BTreeSet<String>, symbolic: &BTreeSet<String>) -> Vec<String> {
     let code = viol.get("code").cloned().unwrap_or_else(|| Value::Str(rel.to_owned()));
     let mut msg = viol.get("message").cloned().unwrap_or(Value::Str(String::new()));
+    if is_option(&msg) {
+        msg = Value::Str(plain_message(&msg));
+    }
     if let Value::Str(m) = &msg {
         let mut m = m.clone();
         let mut sorted: Vec<&String> = cols.iter().collect();
         sorted.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
         for c in sorted {
-            let rep = format!("{{{}}}", c.to_lowercase());
+            let rep = format!("{{{}}}", col(c));
             m = sub(&re(&format!(r"\$\$?\$?{}\b", esc(c))), &m, |_| rep.clone());
         }
         msg = Value::Str(m);
     }
     let colsig: String = cols
         .iter()
-        .map(|c| format!(", {}: {}", c.to_lowercase(), if numeric.contains(c) { "number" } else if symbolic.contains(c) { "symbol" } else { "loc" }))
+        .map(|c| format!(", {}: {}", col(c), if numeric.contains(c) { "number" } else if symbolic.contains(c) { "symbol" } else { "loc" }))
         .collect();
     let mut head = format!(".violation {rel}(at: node{colsig})");
     if code.as_str() != Some(rel) {
@@ -1557,14 +1802,15 @@ pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeri
     let anchor = viol.get("anchor").filter(|a| a.truthy()).map(py_str);
     if let Some(a) = &anchor {
         if let Some(c) = a.strip_prefix("capture.") {
-            lines.push(format!("    anchor {}", c.to_lowercase()));
+            lines.push(format!("    anchor {}", col(c)));
         } else if a != "witness.span" {
             lines.push(format!("    anchor {}", a.replace("witness.", "")));
         }
     }
     if let Some(Value::Obj(sup)) = viol.get("suppress").filter(|s| s.truthy()) {
         for (tool, spec) in sup.iter() {
-            let names = spec.get("codes").filter(|c| c.truthy()).or_else(|| spec.get("rules").filter(|c| c.truthy()));
+            // ESLint's and noqa's `rules`/`codes`, clippy's `lints`.
+            let names = ["codes", "rules", "lints"].into_iter().find_map(|k| spec.get(k).filter(|c| c.truthy()));
             match names.and_then(Value::as_list) {
                 Some(ns) if !ns.is_empty() => lines.push(format!("    suppress {tool} {}", ns.iter().map(q_val).collect::<Vec<_>>().join(", "))),
                 _ => lines.push(format!("    suppress {tool}")),

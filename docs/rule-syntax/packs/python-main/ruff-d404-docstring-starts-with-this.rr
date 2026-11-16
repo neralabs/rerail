@@ -14,9 +14,9 @@
 D404(n) :- d404_docstring(n), child(n, c3, _), kind(c3, "string_content"), node(_, c3, _, _, _), DOC = c3,
     WORD = THIS, text(DOC, t1),
     FIRST = @replace_all(t1, "^\\s*([^ ]*)[\\s\\S]*$", "$1"),
-    LETTERS = @replace_all(FIRST, "[^\\p{Alphabetic}\\p{N}]", ""),
-    WORD = @convert(LETTERS, "lowerCase", ""), text(DOC, t2),
-    THIS = @replace_all(t2, "^[\\s\\S]*$", "this").
+    LETTERS = @replace_all(FIRST, "[^\\p{Alphabetic}\\p{N}]", ""), text(DOC, t2),
+    THIS = @replace_all(t2, "^[\\s\\S]*$", "this"),
+    WORD = @convert(LETTERS, "lowerCase", "").
 
 // doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
 .decl d404_doc_stmt(n: node)

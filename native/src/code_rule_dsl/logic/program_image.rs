@@ -53,9 +53,9 @@ pub mod strings;
 mod tree;
 pub mod version;
 
-pub use about::{About, LatticeRef, NativeKind, NativeRef};
+pub use about::{About, GateRef, LatticeRef, NativeKind, NativeRef, NativeSpec, ShapeRef, ShapeWaitRef};
 pub use analyses::{Edges, Strata};
-pub use build::{Builder, Rel, Rewrite, RuleBuilder, Site, T};
+pub use build::{Builder, PartFields, Rel, Rewrite, RuleBuilder, Site, T};
 pub use extents::Extents;
 pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
@@ -69,7 +69,7 @@ pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x04";
 /// 4: a derivation's rules record their sources (`R::From`); the about rows hold no `fact_rel`.
 pub const FORMAT: u32 = 4;
 /// The program the `.about` rows are written as (`program_facts`), as the text has them.
-const ABOUT: &str = "a";
+pub(crate) const ABOUT: &str = "a";
 
 // ---- ids ----
 

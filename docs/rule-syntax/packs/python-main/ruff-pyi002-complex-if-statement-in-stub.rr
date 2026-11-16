@@ -15,13 +15,11 @@ pyi002_in_test(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pyi0
 
 // chain_and(n): the JSON util `chain-and`, used where the JSON says `matches: "chain-and"`
 .decl pyi002_chain_and(n: node)
-pyi002_chain_and(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("and", c1),
-    pyi002_alt_1(n).
+pyi002_chain_and(n) :- kind(n, "boolean_operator"), pyi002_tok_has_1(n), pyi002_alt_1(n).
 
 // chain_or(n): the JSON util `chain-or`, used where the JSON says `matches: "chain-or"`
 .decl pyi002_chain_or(n: node)
-pyi002_chain_or(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("or", c1),
-    pyi002_alt_2(n).
+pyi002_chain_or(n) :- kind(n, "boolean_operator"), pyi002_tok_has_2(n), pyi002_alt_2(n).
 
 // operand_slot(n): the JSON util `operand-slot`, used where the JSON says `matches: "operand-slot"`
 .decl pyi002_operand_slot(n: node)
@@ -55,23 +53,47 @@ pyi002_plain_left(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), py
     suppress noqa "PYI002"
 PYI002_raw(n) :- pyi002_test_value(n),
     ( !kind(n, "comparison_operator")
-    ; kind(n, "comparison_operator"), k1 = count : { pyi002_tok_has_1(n) }, k1 >= 2
+    ; kind(n, "comparison_operator"), k1 = count : { pyi002_tok_has_3(n) }, k1 >= 2
     ; kind(n, "comparison_operator"), count : { child(n, c1, _), child(_, c1, 0), pyi002_plain_left(c1) } = 0
     ).
 
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi002_tok_has_1(n: node)
 .stored pyi002_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi002_tok_has_1(n) :- child(n, c1, _),
-    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", c1).
-pyi002_tok_has_1(n) :- op(n, t2),
-    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", t2).
+pyi002_tok_has_1(n) :- field(n, "operator", c1), glob("and", c1).
+pyi002_tok_has_1(n) :- op(n, t2), match("and", t2).
 pyi002_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
 pyi002_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
 pyi002_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi002_tok_has_2(n: node)
+.stored pyi002_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi002_tok_has_2(n) :- field(n, "operator", c1), glob("or", c1).
+pyi002_tok_has_2(n) :- op(n, t2), match("or", t2).
+pyi002_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+pyi002_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+pyi002_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi002_tok_has_3(n: node)
+.stored pyi002_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi002_tok_has_3(n) :- child(n, c1, _),
+    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", c1).
+pyi002_tok_has_3(n) :- op(n, t2),
+    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", t2).
+pyi002_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+pyi002_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+pyi002_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does

@@ -88,8 +88,8 @@ ruf037_count_ok(n) :- field(n, "arguments", c1), kind(c1, "argument_list"),
 .decl ruf037_target_str(n: node)
 ruf037_target_str(n) :- kind(n, "call"), field(n, "function", c1), ruf037_callee(c1), ruf037_count_ok(n),
     field(n, "arguments", c2), kind(c2, "argument_list"),
-    ( child(c2, c3, _), ruf037_empty_iterable(c3), precedes_stop(s1, c3, ruf037_stop_7), glob("(", s1)
-    ; child(c2, c4, _), kind(c4, "keyword_argument"), field(c4, "name", c5), glob("iterable", c5), field(c4, "value", c6), ruf037_empty_iterable(c6)
+    ( child(c2, c3, _), ruf037_empty_iterable(c3), ruf037_tok_follows_3(c3)
+    ; child(c2, c4, _), kind(c4, "keyword_argument"), ruf037_tok_has_4(c4), field(c4, "value", c5), ruf037_empty_iterable(c5)
     ).
 
 
@@ -312,6 +312,48 @@ ruf037_empty_part_u6(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037
 .decl ruf037_empty_part_u7(n: node)
 ruf037_empty_part_u7(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037_alt_3_u6(c1) } = 0.
 
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\($": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf037_tok_follows_1(n: node)
+.stored ruf037_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf037_tok_follows_1(n) :- next_sibling(s4, n), glob("(", s4).
+ruf037_tok_follows_1(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("\\(", t5).
+ruf037_tok_follows_1(n) :- structural_before(n, g6), match("(?s)^(?:.*(?:\\()\\s*)$", g6).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^iterable$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf037_tok_has_2(n: node)
+.stored ruf037_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf037_tok_has_2(n) :- field(n, "name", c12), glob("iterable", c12).
+ruf037_tok_has_2(n) :- op(n, t13), match("iterable", t13).
+ruf037_tok_has_2(n) :- child(n, c19, _), structural_before(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:iterable)(?:\\W.*)?)$", g14).
+ruf037_tok_has_2(n) :- child(n, c19, _), structural_after(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:iterable)(?:\\W.*)?)$", g14).
+ruf037_tok_has_2(n) :- node_text(n, g14), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:iterable)(?:\\W.*)?)$", g14).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\($": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf037_tok_follows_3(n: node)
+.stored ruf037_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf037_tok_follows_3(n) :- next_sibling(s2, n), glob("(", s2).
+ruf037_tok_follows_3(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("\\(", t3).
+ruf037_tok_follows_3(n) :- structural_before(n, g4), match("(?s)^(?:.*(?:\\()\\s*)$", g4).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^iterable$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf037_tok_has_4(n: node)
+.stored ruf037_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf037_tok_has_4(n) :- field(n, "name", c10), glob("iterable", c10).
+ruf037_tok_has_4(n) :- op(n, t11), match("iterable", t11).
+ruf037_tok_has_4(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:iterable)(?:\\W.*)?)$", g12).
+ruf037_tok_has_4(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:iterable)(?:\\W.*)?)$", g12).
+ruf037_tok_has_4(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:iterable)(?:\\W.*)?)$", g12).
+
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl ruf037_args_plain(l: node, a: node, i: number)
 ruf037_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
@@ -442,10 +484,6 @@ ruf037_alt_5(n) :- ruf037_alt_5_u7(n).
 .decl ruf037_alt_6(n: node)
 ruf037_alt_6(n) :- ruf037_alt_1_family(n, "trivia").
 ruf037_alt_6(n) :- ruf037_empty_part(n).
-
-// stop_7(n): the JSON `stopBy` rule: the tree search stops at these nodes
-.decl ruf037_stop_7(n: node)
-ruf037_stop_7(n) :- node(_, n, _, _, _), !kind(n, "comment").
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule

@@ -4,6 +4,7 @@
 
 pub mod crypto;
 pub mod derived;
+pub mod run_state;
 #[cfg(test)]
 pub mod facts_only;
 /// This crate's own test binary, which the engine does not load: strict mode on every connection, as the engine's
@@ -21,10 +22,10 @@ mod test_load {
 }
 pub mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
-#[path = "logic/front"]
+#[cfg_attr(any(test, feature = "test-hooks"), path = "logic/front")]
 pub mod front {
     pub use rerail_rr::code_rule_dsl::logic::front::*;
-    #[path = "."]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = ".")]
     pub mod caches {
         pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
         #[cfg(any(test, feature = "test-hooks"))]
@@ -39,7 +40,7 @@ pub mod front {
     pub mod data_layer_tests;
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
-    #[path = "yaml"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "yaml")]
     pub mod yaml {
         pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
         #[cfg(any(test, feature = "test-hooks"))]
@@ -53,12 +54,6 @@ pub mod front {
     use std::collections::{BTreeMap, BTreeSet};
     #[allow(unused_imports)]
     use std::fmt;
-    #[allow(unused_imports, hidden_glob_reexports)]
-    pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
-    #[allow(unused_imports, hidden_glob_reexports)]
-    pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
-    #[allow(unused_imports, hidden_glob_reexports)]
-    pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
 }
 pub mod costs;
 // The logic's device interface; the engine registers a device as it loads (`crate::install_devices`).
@@ -67,7 +62,7 @@ pub mod lanes;
 #[allow(dead_code)]
 pub mod answers;
 pub mod liveness;
-#[path = "logic/magic"]
+#[cfg_attr(any(test, feature = "test-hooks"), path = "logic/magic")]
 pub mod magic {
     pub use rerail_rr::code_rule_dsl::logic::magic::*;
     #[cfg(any(test, feature = "test-hooks"))]
@@ -76,8 +71,6 @@ pub mod magic {
     use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
     #[allow(unused_imports)]
     use std::collections::{BTreeMap, BTreeSet};
-    #[allow(unused_imports, hidden_glob_reexports)]
-    pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 }
 #[allow(dead_code)]
 pub mod native;
@@ -98,8 +91,6 @@ pub mod profile {
     use std::sync::atomic::{AtomicBool, Ordering};
     #[allow(unused_imports)]
     use std::sync::{LazyLock, Mutex};
-    #[allow(unused_imports, hidden_glob_reexports)]
-    pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
 }
 pub mod program_facts;
 pub mod program_image;
@@ -115,7 +106,7 @@ pub mod sql;
 pub mod simplify;
 /// The reach index's form found in a program (decision 0119).
 pub mod reach_form;
-#[path = "logic/strings"]
+#[cfg_attr(any(test, feature = "test-hooks"), path = "logic/strings")]
 pub mod strings {
     pub use rerail_facts::code_rule_dsl::logic::strings::*;
     #[cfg(any(test, feature = "test-hooks"))]

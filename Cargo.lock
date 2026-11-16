@@ -3149,6 +3149,7 @@ version = "0.1.0"
 dependencies = [
  "block",
  "cc",
+ "core-foundation-sys",
  "libc",
  "metal",
  "objc",
@@ -3170,6 +3171,23 @@ dependencies = [
  "libc",
  "rayon",
  "rerail-compiler",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-csharp-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
+name = "rerail-css-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
@@ -3298,9 +3316,13 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-compiler",
+ "rerail-csharp-lean",
+ "rerail-css-lean",
  "rerail-device-metal",
  "rerail-ecma-lean",
  "rerail-facts",
+ "rerail-html-lean",
+ "rerail-java-lean",
  "rerail-lang",
  "rerail-lang-ecma",
  "rerail-lang-json",
@@ -3309,18 +3331,24 @@ dependencies = [
  "rerail-lang-rust",
  "rerail-lang-sql",
  "rerail-logic",
+ "rerail-markdown-inline-lean",
+ "rerail-markdown-lean",
  "rerail-metal",
  "rerail-parser-tests",
+ "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-rust-lean",
  "rerail-sessions",
  "rerail-simdjson",
+ "rerail-sql-lean",
  "rerail-store",
  "rerail-tape-format",
  "rerail-transducer",
+ "rerail-vue-lean",
  "rerail-w",
  "roaring",
  "ruff_python_ast",
@@ -3428,6 +3456,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-html-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-java-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-lang"
 version = "0.1.0"
 dependencies = [
@@ -3469,14 +3514,24 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-compiler",
+ "rerail-csharp-lean",
+ "rerail-css-lean",
  "rerail-ecma-lean",
+ "rerail-html-lean",
+ "rerail-java-lean",
  "rerail-lang",
+ "rerail-markdown-inline-lean",
+ "rerail-markdown-lean",
+ "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-rust-lean",
+ "rerail-sql-lean",
  "rerail-store",
  "rerail-tape-format",
+ "rerail-vue-lean",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -3994,6 +4049,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-markdown-inline-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-markdown-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-metal"
 version = "0.1.0"
 dependencies = [
@@ -4018,6 +4089,14 @@ dependencies = [
  "rerail-rr-syntax",
  "tree-sitter",
  "tree-sitter-json",
+]
+
+[[package]]
+name = "rerail-php-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4248,6 +4327,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-rust-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-sessions"
 version = "0.1.0"
 dependencies = [
@@ -4337,6 +4425,14 @@ name = "rerail-simdjson-native"
 version = "0.1.0"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "rerail-sql-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4438,6 +4534,15 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-vue-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-html-lean",
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]

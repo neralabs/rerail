@@ -79,16 +79,16 @@ ann202_static_or_class_expr(n) :- ann202_imports_builtins(n),
     (kind(n, "identifier") ; kind(n, "attribute")),
     (global_ref(n, "staticmethod") ; global_ref(n, "classmethod")),
     (sym_of(n, "builtins.staticmethod") ; sym_of(n, "builtins.classmethod")).
-ann202_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
-    ann202_static_or_class_expr(c5).
+ann202_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    ann202_static_or_class_expr(c11).
 
 // accessor_expr(n): the JSON util `accessor-expr`, used where the JSON says `matches: "accessor-expr"`
 //   FN: metavariable this relation binds for the calling rule
 .decl ann202_accessor_expr(n: node, fn: loc)
 ann202_accessor_expr(n, FN) :- kind(n, "attribute"), field(n, "object", c1),
-    ann202_accessor_object(c1, FN), field(n, "attribute", c2), glob("{setter,deleter}", c2).
-ann202_accessor_expr(n, FN) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    ann202_accessor_expr(c3, FN).
+    ann202_accessor_object(c1, FN), ann202_tok_has_1(n).
+ann202_accessor_expr(n, FN) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    ann202_accessor_expr(c10, FN).
 
 // underscore_named(n): the JSON util `underscore-named`, used where the JSON says `matches: "underscore-named"`
 .decl ann202_underscore_named(n: node)
@@ -234,6 +234,18 @@ ANN202(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n, ann202_alt_
 ANN202_missing_return_type_function_in_private_module(n, FN) :- kind(n, "identifier"),
     node(_, n, _, _, _), FN = n, ann202_alt_36(n, FN).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(setter|deleter)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann202_tok_has_1(n: node)
+.stored ann202_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann202_tok_has_1(n) :- field(n, "attribute", c2), glob("{setter,deleter}", c2).
+ann202_tok_has_1(n) :- op(n, t3), match("(setter|deleter)", t3).
+ann202_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+ann202_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+ann202_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+
 // demand_all_value: the rows of all_value its callers ask for (the metavariable columns they pass in)
 .decl ann202_demand_all_value(n: node, defname: loc)
 ann202_demand_all_value(c1, DEFNAME) :- ann202_demand_all_value(n, DEFNAME),
@@ -349,19 +361,19 @@ ann202_stop_3(n) :- ann202_holds_definition(n).
 ann202_alt_6(n) :- ann202_imports_builtins(n).
 ann202_alt_6(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
-    site_scope(c2, "module"), !ann202_alt_10(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann202_alt_10(c2).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 .decl ann202_alt_10(n: node)
-ann202_alt_10(n) :- site_form(n, "annotation").
-ann202_alt_10(n) :- site_form(n, "except").
+ann202_alt_10(n) :- bind_name(n, b1), main_form(b1, "annotation").
+ann202_alt_10(n) :- bind_name(n, b2), main_form(b2, "except").
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl ann202_alt_9(n: node)
 ann202_alt_9(n) :- ann202_imports_builtins(n).
 ann202_alt_9(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("classmethod", c2),
-    site_scope(c2, "module"), !ann202_alt_10(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann202_alt_10(c2).
 
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 .decl ann202_alt_15(n: node)

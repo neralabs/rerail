@@ -44,6 +44,28 @@ fn scalar(v: &Value) -> String {
     }
 }
 
+/// The run's options over the defaults its programs declare (`.options {"name": {"default": …}, …}`): an option the
+/// run does not set has its declared default, so a rule's option reads the same whether or not its caller passes
+/// options. A run option that is not an object (none given) leaves only the defaults.
+pub fn with_declared(settings: &[(String, String)], opts: &Value) -> Value {
+    let mut merged = serde_json::Map::new();
+    for (_, text) in settings.iter().filter(|(k, _)| k == "options") {
+        let Ok(Value::Object(decl)) = serde_json::from_str::<Value>(text) else { continue };
+        for (name, spec) in decl {
+            if let Some(d) = spec.get("default") {
+                merged.entry(name).or_insert_with(|| d.clone());
+            }
+        }
+    }
+    if merged.is_empty() {
+        return opts.clone();
+    }
+    if let Value::Object(given) = opts {
+        merged.extend(given.clone());
+    }
+    Value::Object(merged)
+}
+
 /// `option` and `option_item` of a policy's `options`.
 pub fn options(opts: &Value, rows: &mut Rows) {
     let merged;

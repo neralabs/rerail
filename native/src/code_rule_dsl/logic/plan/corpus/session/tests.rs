@@ -214,14 +214,20 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
     assert_eq!(findings(), full());
     assert_eq!(findings().len(), 1, "a.py's import of h: {:?}", findings());
     std::fs::write(src.join("a.py"), "from h import x\nfrom d import y\n").unwrap();
-    let quiet = crate::code_rule_dsl::logic::plan::quiet_strata();
+    // This test's runs' counts: other tests' sessions run beside it (decision 0204).
+    let (counts, counting) = crate::code_rule_dsl::logic::plan::counting_quiet();
     let report = run();
-    let quiet = crate::code_rule_dsl::logic::plan::quiet_strata() - quiet;
+    drop(counting);
+    let quiet = counts.strata.load(std::sync::atomic::Ordering::Relaxed);
+    let unmeasured = counts.unmeasured.load(std::sync::atomic::Ordering::Relaxed);
     let got = findings();
     eprintln!("{:?} strata run, {:?} maintained; {quiet} quiet; {} findings", report.cross_strata, report.cross_maintained, got.len());
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_eq!(got.len(), 2, "both of a.py's imports: {got:?}");
     assert!(quiet > 0, "`seen`'s stratum is quiet: nothing deleted, nothing to derive");
+    // Each relation held as kept is planned with its columns' statistics, not its rows' count alone (t39: a probe of
+    // one was priced as all its rows, and a 3-row delta was read after a scan of it).
+    assert_eq!(unmeasured, 0, "quiet relations held with no column measured");
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
