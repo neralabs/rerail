@@ -128,6 +128,22 @@ thread_local! {
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The slots of the rule being compiled whose values are arena texts (`mj::ROWTEXT`'s).
     static ARENA: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The component's own columns whose values are arena texts (decision 0307: a `shortlex_min` relation's value,
+    /// made by its rules' rounds into one arena), as (relation, column): set while its plans compile (`own_texts`).
+    static OWN_TEXTS: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `f` (a component's plans compiled) with `cols` its own columns of arena texts (decision 0307).
+pub(in crate::code_rule_dsl) fn own_texts<T>(cols: Vec<(usize, usize)>, f: impl FnOnce() -> T) -> T {
+    let was = OWN_TEXTS.with_borrow_mut(|o| std::mem::replace(o, cols));
+    let out = f();
+    OWN_TEXTS.with_borrow_mut(|o| *o = was);
+    out
+}
+
+/// Whether column `c` of own relation `rel` holds arena texts (`own_texts`).
+fn own_text(rel: usize, c: usize) -> bool {
+    OWN_TEXTS.with_borrow(|o| o.contains(&(rel, c)))
 }
 
 /// Whether slot `x` of the rule being compiled holds an arena text (a text function's value).
@@ -149,6 +165,7 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         SqlSubstr => mj::TEXTFN_SQL_SUBSTR,
         Slice => mj::TEXTFN_SLICE,
         ToString => mj::TEXTFN_TO_STRING,
+        ZeroPad => mj::TEXTFN_ZERO_PAD,
         Replace => mj::TEXTFN_REPLACE,
     };
     Some((f, texts, nums))
@@ -446,6 +463,17 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 };
                 if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS || atom_binds.len() > mj::MAX_BINDS {
                     return Err("an atom with more keys, tests or binds than a stage holds".into());
+                }
+                // An own column of arena texts (decision 0307) is read as the binding's text, never matched by value:
+                // one text made in two rounds has two values.
+                if let Some((rel, _)) = own && OWN_TEXTS.with_borrow(|o| o.iter().any(|&(r, _)| r == rel)) {
+                    let text = |c: usize| own_text(rel, c);
+                    if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused[i].is_some() || *neg {
+                        return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
+                    }
+                    for &(_, s) in atom_binds.iter().filter(|&&(c, _)| text(c)) {
+                        ARENA.with_borrow_mut(|x| x.push(s));
+                    }
                 }
                 let mut d = mj::Stage { mode: if *neg { mj::ANTI } else if atom_binds.is_empty() { mj::SEMI } else { mj::JOIN }, ..mj::Stage::default() };
                 for (k, &(c, key)) in keys.iter().enumerate() {
@@ -2225,8 +2253,12 @@ pub(in crate::code_rule_dsl) fn reads_own(plan: &Plan) -> bool {
 
 /// One round's rules run in one batch: each one's head rows made distinct on the device, with their count. A rule
 /// over an own relation with no rows, or over an empty input (`reads_empty_input`), is not run (`None`).
-fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
-    let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+/// `shared`: the component's text arena (decision 0307), which every round's texts go into.
+fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report, shared: Option<&Rc<mj::Arena>>) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
+    let mut batch = match shared {
+        Some(a) => mj::Batch::with_shared_arena(Rc::clone(a)),
+        None => mj::Batch::new(),
+    }.map_err(|e| format!("{e:?}"))?;
     let mut runs: Vec<Option<Run<'p>>> = Vec::with_capacity(rules.len());
     for (plan, j, _) in rules {
         if !own.ready(plan) || super::reads_empty_input(j) {
@@ -2307,8 +2339,35 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: (seeds.len() + deltas.len()) as u32, stages: seeds.iter().chain(deltas).map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
-    if seeds.iter().chain(deltas).any(|r| r.0.stages.iter().any(|s| makes_text(s.desc.mode))) {
-        return Err("a made text in a recursive component (its rounds would join texts not yet symbols)".into());
+    // A made text crosses rounds only as a `shortlex_min` relation's value (decision 0307): its fold compares texts,
+    // so one text made in two rounds (two arena values) is one value to it. Anywhere else its rounds would join or
+    // make distinct texts by their arena values.
+    let text_head = |h: usize| matches!(store.rels[h].device_lattice(), Some(Ok((3, ..))));
+    for &(plan, _, h) in seeds.iter().chain(deltas) {
+        let value = store.rels[h].k - 1;
+        let makes = plan.stages.iter().any(|s| makes_text(s.desc.mode)) || plan.arena.iter().any(|&a| a);
+        if makes && !(text_head(h) && plan.arena.iter().enumerate().all(|(c, &a)| !a || c == value)) {
+            return Err("a made text in a recursive component outside a shortlex_min value (its rounds would join texts not yet symbols)".into());
+        }
+        if text_head(h) && !plan.arena.get(value).copied().unwrap_or(false) && plan.head.get(value).copied().flatten().is_none() {
+            return Err("a shortlex_min value its rule neither makes nor names (decision 0307)".into());
+        }
+    }
+    // The component's text arena, every round's (decision 0307), and the texts its rules name as constants there.
+    let shared: Option<Rc<mj::Arena>> = if heads.iter().any(|&h| text_head(h)) {
+        Some(Rc::new(mj::Arena::new(arena_max()).map_err(|e| format!("{e:?}: the component's text arena"))?))
+    } else {
+        None
+    };
+    let mut named: HashMap<i64, i64> = HashMap::new();
+    if let Some(a) = &shared {
+        for &(plan, _, h) in seeds.iter().chain(deltas) {
+            let value = store.rels[h].k - 1;
+            if let (true, Some(Some(v))) = (text_head(h), plan.head.get(value).copied()) && !named.contains_key(&v) {
+                let text = u32::try_from(v).ok().and_then(|atom| names.atoms().with_str(atom, |t| t.as_bytes().to_vec())).ok_or("a shortlex_min constant that is no symbol")?;
+                named.insert(v, a.put(&text).ok_or("the component's text arena too small for its constants")?);
+            }
+        }
     }
     for &h in heads {
         let rel = &store.rels[h];
@@ -2337,7 +2396,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             return Err(format!("a recursive component past {ROUNDS_MAX} rounds"));
         }
         let (rules, base) = if first { (seeds, 0) } else { (deltas, seeds.len()) };
-        let ran = round(rules, &mut own, names, &mut rep)?;
+        let ran = round(rules, &mut own, names, &mut rep, shared.as_ref())?;
         first = false;
         // Each head's rows this round, from every rule that made some, into one union; made distinct; less the
         // relation's rows: its new rows.
@@ -2364,7 +2423,9 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             let mut at = 0;
             for (x, r, n) in &from {
                 let plan = rules[*x].0;
-                let cols: Vec<mj::Col> = plan.head.iter().zip(&plan.head_slots).map(|(c, s)| match c {
+                let cols: Vec<mj::Col> = plan.head.iter().zip(&plan.head_slots).enumerate().map(|(col, (c, s))| match c {
+                    // A shortlex_min value named as a constant: its text in the arena (decision 0307).
+                    Some(v) if col == k - 1 && text_head(h) => mj::Col::Const(named[v]),
                     Some(v) => mj::Col::Const(*v),
                     None => mj::Col::From(r.uniq_cols.iter().position(|u| u == s).unwrap_or(0)),
                 }).collect();
@@ -2376,7 +2437,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 let changed = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                 let counters = mj::Words::zeroed(2).map_err(|e| format!("{e:?}"))?;
                 let total = own.total.get(&h).cloned();
-                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed).map_err(|e| format!("{e:?}"))?;
+                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed, shared.as_deref()).map_err(|e| format!("{e:?}"))?;
                 folded.push((h, new_keys, changed, counters));
                 hold.push(union);
                 continue;
@@ -2484,10 +2545,29 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         let Some(total) = own.total.get(&h) else { continue };
         let k = store.rels[h].k;
         let cols: Vec<&[i64]> = (0..k).map(|c| total.column(c)).collect();
+        // A shortlex_min value is an arena text (decision 0307): stored as a symbol, all of the head's at once.
+        let symbols: Option<HashMap<i64, i64>> = match &shared {
+            Some(a) if text_head(h) => {
+                // The top (no arena text) stays as it is.
+                let mut values: Vec<i64> = cols[k - 1].iter().copied().filter(|&v| v & mj::ARENA_TEXT != 0 && v != -1).collect();
+                values.sort_unstable();
+                values.dedup();
+                let strs = values.iter().map(|&v| {
+                    let b = a.text(v).ok_or("a shortlex_min value past the arena")?;
+                    std::str::from_utf8(b).map_err(|_| "an arena text that is not UTF-8".to_owned())
+                }).collect::<Result<Vec<&str>, String>>()?;
+                let ids = names.atoms().intern_all(&strs).map_err(|e| format!("the component's texts' symbols: {e}"))?;
+                Some(values.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect())
+            }
+            _ => None,
+        };
         let mut row = vec![0i64; k];
         for x in 0..total.rows {
             for c in 0..k {
                 row[c] = cols[c][x];
+            }
+            if let Some(m) = &symbols && let Some(&id) = m.get(&row[k - 1]) {
+                row[k - 1] = id;
             }
             fresh[h].add(&row);
         }

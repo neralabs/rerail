@@ -127,6 +127,8 @@ pub(in crate::code_rule_dsl) const TEXTFN_ASCII_LOWER: u32 = 8;
 pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
 /// X's text whole: a cat's (operand `OPND_DOT` or `OPND_PLAIN`), made for the head or a text function.
 pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
+/// `zero_pad(n, w)`: key 5's digits zero-padded to key 6's width (0 to 64), the sign first, never truncated.
+pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
 pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// An operand that is an arena text (a text function's value).
@@ -1290,7 +1292,7 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
         }
         Txt y = txt_of(s, L, row, R, A, 2, s.agg[1] >> 4), z = y;
         uint f = (s.agg[0] >> 16) & 255;
-        uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0;
+        uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         ulong u = 0;
         bool neg = false;
         if (op == 0 || op == 1) {
@@ -1298,14 +1300,20 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             len = lx + dot + txt_len(y);
         } else if (op == 2) {
             len = rx_replace_txt(G, x, y, false, (device uchar*)A, fs, lane);
-        } else if (f == 5) {
-            // to_string(n): its decimal digits, a lane each (at most 20).
+        } else if (f == 5 || f == 11) {
+            // to_string(n): its decimal digits, a lane each (at most 20). zero_pad(n, w): zeros after the sign up to
+            // w columns (0 to 64, as the host's `{:0w$}`).
             long n0 = key_value(s, L, row, 5);
             neg = n0 < 0;
             u = neg ? ulong(-(n0 + 1)) + 1 : ulong(n0);
             ndig = 1;
             while (ndig < 20 && u >= POW10[ndig]) ndig++;
             len = ndig + (neg ? 1 : 0);
+            if (f == 11) {
+                uint w = uint(clamp(key_value(s, L, row, 6), 0l, 64l));
+                pad = w > len ? w - len : 0;
+                len += pad;
+            }
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, R, A, 2, 0);
@@ -1335,10 +1343,11 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             if (op == 2) rx_replace_txt(G, x, y, true, o, fs, lane);
             else if (op <= 1) for (uint i = lane; i < len; i += 32) o[i] = i < lx ? txt_byte(x, i) : (i < lx + dot ? uchar('.') : txt_byte(y, i - lx - dot));
             else if (f == 6) lit_replace_txt(x, y, z, true, o, lane);
-            else if (f == 5) {
+            else if (f == 5 || f == 11) {
+                uint sign = neg ? 1 : 0;
                 for (uint i = lane; i < len; i += 32) {
-                    uint d = i - (neg ? 1 : 0);
-                    o[i] = neg && i == 0 ? uchar('-') : uchar('0' + (u / POW10[ndig - 1 - d]) % 10);
+                    uint d = i - sign - pad;
+                    o[i] = neg && i == 0 ? uchar('-') : i < sign + pad ? uchar('0') : uchar('0' + (u / POW10[ndig - 1 - d]) % 10);
                 }
             } else {
                 for (uint i = lane; i < len; i += 32) {
@@ -1633,17 +1642,38 @@ static inline uint lat_place(device const long* U, device const uint* P, constan
     return 0xffffffffu;
 }
 
-// Whether value `a` (of row `ra`) is chosen over `b` (of `rb`): the top absorbs; min the least, max the greatest;
-// a tie to the first row.
-static inline bool lat_better(constant LatP& p, long a, uint ra, long b, uint rb) {
+// Code 3 (`shortlex_min`, decision 0307): whether arena text `a` is before `b`, by their characters, then their
+// bytes (as `ShortlexMin`: `(chars, bytes)`), a word of eight at a time.
+static inline bool lat_text_less(device atomic_uint* A, long a, long b) {
+    ulong ua = ulong(a), ub = ulong(b);
+    Txt x = txt_raw(arena_bytes(A) + uint((ua & 0x7ffffffffffffffful) >> 24), uint(ua & 0xfffffful));
+    Txt y = txt_raw(arena_bytes(A) + uint((ub & 0x7ffffffffffffffful) >> 24), uint(ub & 0xfffffful));
+    uint cx = txt_chars(x), cy = txt_chars(y);
+    if (cx != cy) return cx < cy;
+    uint lx = txt_len(x), ly = txt_len(y), m = min(lx, ly);
+    for (uint at = 0; at < m; at += 8) {
+        ulong u = txt_word(x, at, m), v = txt_word(y, at, m);
+        if (u != v) return u < v;
+    }
+    return lx < ly;
+}
+
+// Whether value `a` (of row `ra`) is chosen over `b` (of `rb`): the top absorbs; min the least, max the greatest,
+// shortlex the least text (code 3, over the arena `A`); a tie to the first row.
+static inline bool lat_better(constant LatP& p, device atomic_uint* A, long a, uint ra, long b, uint rb) {
     if (b == p.top) return false;
     if (a == p.top) return true;
     if (a == b) return ra < rb;
+    if (p.code == 3) {
+        if (lat_text_less(A, a, b)) return true;
+        return !lat_text_less(A, b, a) && ra < rb;
+    }
     return p.code == 0 ? a < b : a > b;
 }
 
 kernel void lat_best(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device atomic_uint* best [[buffer(2)]],
-                     device atomic_uint* flags [[buffer(3)]], constant LatP& p [[buffer(4)]], uint x [[thread_position_in_grid]]) {
+                     device atomic_uint* flags [[buffer(3)]], device atomic_uint* A [[buffer(4)]], constant LatP& p [[buffer(5)]],
+                     uint x [[thread_position_in_grid]]) {
     if (x >= p.n) return;
     uint s = lat_place(U, P, p, x);
     if (s == 0xffffffffu) return;
@@ -1654,20 +1684,23 @@ kernel void lat_best(device const long* U [[buffer(0)]], device const uint* P [[
     }
     uint cur = atomic_load_explicit(&best[s], memory_order_relaxed);
     for (uint k = 0; k < 4 * p.n + 8; k++) {
-        if (cur != 0xffffffffu && !lat_better(p, v, x, U[ulong(p.nkeys) * p.n + cur], cur)) return;
+        if (cur != 0xffffffffu && !lat_better(p, A, v, x, U[ulong(p.nkeys) * p.n + cur], cur)) return;
         if (atomic_compare_exchange_weak_explicit(&best[s], &cur, x, memory_order_relaxed, memory_order_relaxed)) return;
     }
 }
 
-// The join of two present values (`code`: 0 min, 1 max, 2 flat), the top absorbing.
-static inline long lat_lub(constant LatP& p, long a, long b) {
+// The join of two present values (`code`: 0 min, 1 max, 2 flat, 3 shortlex over the arena `A`, a tie to `a`), the
+// top absorbing.
+static inline long lat_lub(constant LatP& p, device atomic_uint* A, long a, long b) {
     if (a == p.top || b == p.top) return p.top;
+    if (p.code == 3) return lat_text_less(A, b, a) ? b : a;
     if (p.code == 0) return min(a, b);
     if (p.code == 1) return max(a, b);
     return a == b ? a : p.top;
 }
 
-// A key changed past `after` times: min's or max's value moving on is its top (a finite chain); flat's is kept.
+// A key changed past `after` times: min's or max's value moving on is its top (a finite chain); flat's and
+// shortlex's are kept (finite lattices: `widen` keeps the route, decision 0124).
 static inline long lat_widen(constant LatP& p, long old, long now) {
     if (p.code == 0 && now < old) return p.top;
     if (p.code == 1 && now > old) return p.top;
@@ -1677,7 +1710,7 @@ static inline long lat_widen(constant LatP& p, long old, long now) {
 kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device const uint* best [[buffer(2)]],
                       device const uint* flags [[buffer(3)]], device long* R [[buffer(4)]], device atomic_uint* H [[buffer(5)]],
                       device long* N [[buffer(6)]], device long* D [[buffer(7)]], device atomic_uint* counters [[buffer(8)]],
-                      constant LatP& p [[buffer(9)]], uint s [[thread_position_in_grid]]) {
+                      device atomic_uint* A [[buffer(9)]], constant LatP& p [[buffer(10)]], uint s [[thread_position_in_grid]]) {
     if (s > p.pmask) return;
     uint rep = P[s];
     if (rep == 0xffffffffu) return;
@@ -1699,7 +1732,7 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
     }
     if (held != 0xffffffffu) {
         long o = R[ulong(p.nkeys) * p.had + held];
-        long m = lat_lub(p, o, v);
+        long m = lat_lub(p, A, o, v);
         if (m == o) return;
         long changes = R[ulong(k) * p.had + held];
         if (p.after != 0xffffffffu && changes >= long(p.after)) {
@@ -2119,6 +2152,23 @@ impl Arena {
         unsafe { *self.buffer.buffer.contents().cast::<u32>() as usize }
     }
 
+    /// `bytes` put into the arena by the host, between batches (no command buffer writing it is pending): their
+    /// value, or none when it has no room.
+    pub(in crate::code_rule_dsl) fn put(&self, bytes: &[u8]) -> Option<i64> {
+        let off = self.wanted();
+        if off + bytes.len() > self.cap || bytes.len() > 0xff_ffff {
+            return None;
+        }
+        // SAFETY: the header's first word and `bytes.len()` bytes within `cap` past the header; no command buffer is
+        // using the arena (the caller's between batches).
+        unsafe {
+            let base = self.buffer.buffer.contents().cast::<u8>();
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), base.add(16 + off), bytes.len());
+            *base.cast::<u32>() = (off + bytes.len()) as u32;
+        }
+        Some(ARENA_TEXT | ((off as i64) << 24) | bytes.len() as i64)
+    }
+
     /// The text of arena value `v` (`ARENA_TEXT`'s), once the command buffers that made it completed.
     pub(in crate::code_rule_dsl) fn text(&self, v: i64) -> Option<&[u8]> {
         if v & ARENA_TEXT == 0 || v == -1 {
@@ -2180,6 +2230,14 @@ impl Batch {
     /// Keeps `what` (encoded work's buffers, given up by its maker) until the batch is done.
     pub(in crate::code_rule_dsl) fn hold(&mut self, what: Box<dyn std::any::Any>) {
         self.held.push(what);
+    }
+
+    /// A batch whose text arena is `arena`, kept across batches: a recursive component's rounds (decision 0307),
+    /// whose texts one round makes the next reads.
+    pub(in crate::code_rule_dsl) fn with_shared_arena(arena: std::rc::Rc<Arena>) -> Result<Batch, Error> {
+        let mut b = Batch::with_arena(arena.cap)?;
+        b.arena = Some(arena);
+        Ok(b)
     }
 
     /// Its text arena, shared by its jobs.
@@ -2756,7 +2814,8 @@ pub(in crate::code_rule_dsl) struct LatKeys {
     places: usize,
 }
 
-/// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat; its top; `widen`'s count.
+/// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat, 3 shortlex (its values arena texts,
+/// decision 0307); its top; `widen`'s count.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::code_rule_dsl) struct LatCode {
     pub(in crate::code_rule_dsl) code: u32,
@@ -2774,8 +2833,10 @@ impl Batch {
     /// key's row updated in place, a new key's row into `new_keys` (as `total`'s columns), each changed key's row (key
     /// and value) into `delta`. `counters`: `[changed, new]`.
     #[allow(clippy::too_many_arguments)]
+    /// Code 3 compares its values' texts in `arena`, which holds every value the fold reads.
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, total: Option<&DevRel>, nkeys: usize, lat: LatCode, keys: &mut LatKeys,
-                                                 counters: &Words, new_keys: &Table, delta: &Table) -> Result<(), Error> {
+                                                 counters: &Words, new_keys: &Table, delta: &Table, arena: Option<&Arena>) -> Result<(), Error> {
+        assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
         assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && new_keys.cap == n && delta.cap == n);
         let had = total.map_or(0, |t| t.rows);
         let pplaces = (2 * n).next_power_of_two().max(16);
@@ -2809,12 +2870,13 @@ impl Batch {
         let chosen = Held::new(4 * pplaces)?;
         let flags = Held::new(4 * pplaces)?;
         let h: metal::Buffer = keys.table.as_ref().expect("a key table").buffer.to_owned();
+        let a: metal::Buffer = arena.map_or_else(|| self.dummy.buffer.to_owned(), |a| a.buffer.buffer.to_owned());
         let pass = self.pass(4)?;
         let ub: &BufferRef = &u.buffer.buffer;
         pass.run_bytes(&clear, &[&places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(pplaces));
         pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));
-        pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(n));
-        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r, &h, &new_keys.buffer.buffer, &delta.buffer.buffer, &counters.buffer.buffer], bytes, groups(pplaces));
+        pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &a], bytes, groups(n));
+        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r, &h, &new_keys.buffer.buffer, &delta.buffer.buffer, &counters.buffer.buffer, &a], bytes, groups(pplaces));
         self.keep.extend([places, chosen, flags]);
         Ok(())
     }

@@ -520,7 +520,9 @@ impl Rel {
             "min" => Ok((0, lat.lattice.top(), lat.widen)),
             "max" => Ok((1, lat.lattice.top(), lat.widen)),
             "flat" => Ok((2, lat.lattice.top(), lat.widen)),
-            other => Err(format!("the lattice {other} (the device folds min, max and flat)")),
+            // Its values are texts the component's rules make into one arena, compared there (decision 0307).
+            "shortlex_min" => Ok((3, lat.lattice.top(), lat.widen)),
+            other => Err(format!("the lattice {other} (the device folds min, max, flat and shortlex_min)")),
         })
     }
     /// A lattice relation's new rows `rows` (row-major): each key's values joined with its row's, and a key whose
@@ -1564,10 +1566,12 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         } else {
             None
         };
+        // A shortlex_min relation's value column holds the texts its rules make (decision 0307): read as texts.
+        let own_texts: Vec<(usize, usize)> = rels.iter().enumerate().filter(|(_, r)| matches!(r.device_lattice(), Some(Ok((3, ..))))).map(|(i, r)| (i, r.k - 1)).collect();
         let plans = match refused {
             Some(r) => Err(r),
             None => seed_specs.iter().map(|(pi, js)| (*pi, js.to_text())).chain(delta_specs.iter().cloned()).map(|(pi, text)| match &probes[pi].body {
-                Body::Join(j) => dev.compile_join(j, &text).map(|p| (pi, p)),
+                Body::Join(j) => dev.compile_join(j, &text, &own_texts).map(|p| (pi, p)),
                 Body::Sql(_) => Err("a SQL seed".to_owned()),
                 Body::Unplanned => Err("a probe not planned yet".to_owned()),
             }).collect::<std::result::Result<Vec<_>, String>>(),
