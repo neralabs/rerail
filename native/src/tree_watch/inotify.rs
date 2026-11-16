@@ -7,7 +7,9 @@
 //! engine takes at most a quarter of it, and at most 131,072: a root past that is not watched.
 //! Neither is a root on a file system inotify cannot see others' writes on (NFS, SMB, FUSE, 9p).
 //! The kernel's overflow (`IN_Q_OVERFLOW`) makes every root `lost`; the root folder's own delete,
-//! move or unmount ends its watch.
+//! move or unmount ends its watch. A folder below that is deleted or moved away is let go of with
+//! the folders below it (a watch follows its folder, not the path), so the host's next watch of
+//! that folder set watches whatever is at those paths then.
 //!
 //! One thread, `rerail-tree-watch`, reads the instance; the host's thread adds and removes
 //! watches under the same lock that thread resolves them with.
@@ -116,6 +118,25 @@ impl Watches {
         }
     }
 
+    /// Releases `root`'s watches of `folder` and of every folder below it.
+    fn release_below(&mut self, instance: RawFd, root: &str, folder: &str) {
+        let Some(folders) = self.roots.get_mut(root) else {
+            return;
+        };
+        let below = |held: &String| {
+            held.strip_prefix(folder)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        };
+        let gone: Vec<(String, i32)> = folders.extract_if(|held, _| below(held)).collect();
+        for (folder, descriptor) in gone {
+            let owner = Owner {
+                root: root.to_owned(),
+                folder,
+            };
+            self.release(instance, descriptor, &owner);
+        }
+    }
+
     /// Forgets `descriptor`, which the kernel dropped (its folder went).
     fn forget(&mut self, descriptor: i32) {
         for owner in self.owners.remove(&descriptor).unwrap_or_default() {
@@ -180,18 +201,23 @@ impl Shared {
         }
     }
 
-    /// A watched folder's own event: the root's going ends the watch; a folder below goes as an
-    /// entry of its parent's watch, so only its unmount is told, as lost.
+    /// A watched folder's own event: the root's going ends the watch. A folder below goes as an
+    /// entry of its parent's watch; its own watch, and those below it, no longer stand for their
+    /// paths and are let go of. Its unmount is also told, as lost.
     fn folder(&self, watches: &mut Watches, owner: &Owner, mask: u32) {
         if mask & SELF_GONE == 0 {
             return;
         }
+        let instance = self.instance.as_raw_fd();
         if owner.folder.is_empty() {
             self.notices.ended(&owner.root);
-            watches.release_root(self.instance.as_raw_fd(), &owner.root);
-        } else if mask & libc::IN_UNMOUNT != 0 {
+            watches.release_root(instance, &owner.root);
+            return;
+        }
+        if mask & libc::IN_UNMOUNT != 0 {
             self.notices.lost(&owner.root);
         }
+        watches.release_below(instance, &owner.root, &owner.folder);
     }
 }
 
@@ -549,6 +575,51 @@ mod tests {
                 .iter()
                 .chain(&notice.renamed)
                 .all(|path| !path.starts_with("node_modules/"))
+        );
+        backend.close();
+    }
+
+    /// Creates the folder `marker` and waits until it is reported: every event before it has been
+    /// handled by then.
+    fn settle(notices: &Notices, scratch: &Scratch, marker: &str) {
+        std::fs::create_dir(scratch.path(marker)).expect("create marker");
+        wait_for(notices, &scratch.root(), |notice| {
+            notice.renamed.iter().any(|path| path == marker)
+        });
+    }
+
+    #[test]
+    fn a_folder_moved_away_or_deleted_is_watched_again_at_its_path() {
+        let notices = Arc::new(Notices::default());
+        let mut backend = Inotify::open(Arc::clone(&notices)).expect("inotify opens");
+        let scratch = Scratch::new("folder-gone");
+        scratch.write("a/deep/x.ts", "x");
+        scratch.write("c/x.ts", "x");
+        let root = scratch.root();
+        let folders = ["", "a", "a/deep", "c"].map(str::to_owned).to_vec();
+        notices.start(&root);
+        assert!(backend.watch(&root, &folders));
+
+        // Moved away: the watches follow the folders to `b`, where they no longer stand for `a`.
+        std::fs::rename(scratch.path("a"), scratch.path("b")).expect("move a away");
+        std::fs::create_dir_all(scratch.path("a/deep")).expect("create a again");
+        // Deleted, and created again.
+        std::fs::remove_dir_all(scratch.path("c")).expect("delete c");
+        std::fs::create_dir(scratch.path("c")).expect("create c again");
+        settle(&notices, &scratch, "marker");
+
+        // The host's next read walks into the same folders, now other folders at those paths.
+        assert!(backend.watch(&root, &folders));
+        scratch.write("a/deep/y.ts", "y");
+        scratch.write("c/y.ts", "y");
+        scratch.write("b/deep/z.ts", "z");
+        let notice = wait_for(&notices, &root, |notice| {
+            notice.renamed.iter().any(|path| path == "a/deep/y.ts")
+                && notice.renamed.iter().any(|path| path == "c/y.ts")
+        });
+        assert!(
+            !notice.renamed.iter().any(|path| path == "a/deep/z.ts"),
+            "the moved folder's old watch reports nothing"
         );
         backend.close();
     }
