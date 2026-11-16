@@ -457,6 +457,10 @@ pass.
   not read for `within`.
 - **Done when**: `within` read from its container is priced by the container's subtree size (the kinds' `size`
   statistics, as `nearest`'s descend is), and `pth_deferred` keeps the cheap order run after run.
+- **Record** (2026-11-16): decision 0299 prices `within` from its container by the subtree size of the container's
+  kind, else the mean over kinds with children (`Stats::subtree_fan`). `pth_deferred` kept the cheap order and ran
+  0.26 M rows priced 0.26 M in two runs of the 300-file bench; `annotation` and `ann_ctx` (the other readers from the
+  container) kept theirs (0.35 M and 0.36 M, as with 0297). Self-reviewed per reviewer-brief.md; tests in 0299.
 
 ## Questions for the user
 
