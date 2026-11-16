@@ -79,7 +79,11 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   interleaved on pinned cores under the same memory and time caps, and the verdict (`verdict.ts`) fails a metric (wall,
   CPU and peak RSS, cold and warm) above 1.10 times main's median, a lost true positive or a new false positive against
   the upstream recording, a run main completes that the candidate does not, and a rule main ships that the candidate
-  cannot run. `prepare` exports the baseline and the corpora anywhere; `run` measures on Linux only; `run` and
-  `verdict` write `verdict.json` and `report.md`.
+  cannot run. A cell failing at the median runs `--confirm` more repetitions (a metric passing them is noisy: reported,
+  not counted), and a confirmed slowdown is attributed to rules by timing each rule alone (`--drill`). `prepare` exports
+  the baseline and the corpora anywhere; `run` measures on Linux only, signed in to AWS for the pack data; `run` and
+  `verdict` write `report.json` (`report-model.ts`, schema `ship-no-ship/report/v1`) and `report.md` (`report.ts`): one
+  row per pack naming its worst metric and the rule behind it, each pack's metrics, rules and raw runs behind
+  `<details>`.
 - `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,
   `npm run upstream:bump`) the upstream workflows run (docs/upstream.md).

@@ -211,9 +211,3 @@ export function missingRules(mainRules: readonly string[], candidate: ReadonlyMa
   }
   return missing;
 }
-
-/** The worst of several statuses: fail over pass over not-compared (a cell with nothing compared is not a pass). */
-export function overall(statuses: readonly Status[]): Status {
-  if (statuses.includes("fail")) return "fail";
-  return statuses.includes("pass") ? "pass" : "not-compared";
-}

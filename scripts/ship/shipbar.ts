@@ -17,12 +17,12 @@
 //       Needs git and the pack data cache; runs anywhere.
 //   node --import tsx scripts/ship/shipbar.ts run --baseline <dir | ref> --out <dir> [--candidate <dir>] [--corpora <dir>]
 //       [--packs a,b] [--corpus fixtures|real|all] [--runs 3] [--cpus 8-11] [--mem-cap 24G] [--time-cap 2700]
-//       [--candidates ships,rr] [--gate ships,rr] [--build]
+//       [--candidates ships,rr] [--gate ships,rr] [--confirm 3] [--drill 2] [--drill-candidates ships] [--build]
 //       Linux only (taskset, GNU time, a systemd user manager for the memory cap): prepares what is missing, measures
-//       every pack and corpus, then writes the verdict. Resumable: a run already in runs.jsonl is not made again.
+//       every pack and corpus, then writes the report. Resumable: a run already in a cell's logs is not made again.
 //   node --import tsx scripts/ship/shipbar.ts verdict --baseline <dir> --out <dir> [--candidate <dir>] [--corpora <dir>]
 //       [--packs a,b] [--candidates ships,rr] [--gate ships,rr]
-//       verdict.json and report.md from the runs under <out>/runs (several runs' directories merged, say).
+//       report.json and report.md from the runs under <out>/runs (several runs' directories merged, say).
 //
 // Exit status of run and verdict: 0 only when every candidate in --gate (default: every one in --candidates) passes.
 //
@@ -31,18 +31,24 @@
 // each process under the same memory cgroup cap and time cap. Cold: a fresh, empty RERAIL_TAPE_CACHE store and engine
 // TMPDIR; warm: a second process on that store right after. A side that fails a cold run makes no further run of that
 // pack and corpus. Each metric is the median of the side's completed runs: wall, CPU (user + sys) and peak RSS, cold
-// and warm, each failing above 1.10 times main's. Findings come from each side's first cold run on the same corpus
+// and warm, each failing above 1.10 times main's. A cell whose median fails runs --confirm more repetitions of main and
+// that candidate (confirm.jsonl): a metric failing again is confirmed, one passing is noisy, reported and not counted.
+// A confirmed slowdown of a candidate in --drill-candidates is then attributed to rules (rules.jsonl): each rule alone,
+// and an empty rule set, --drill cold runs per side, alternating; the product path's in-process evaluation time, or
+// process wall time on the `.rr` side. Findings come from each side's first cold run on the same corpus
 // directory and are scored by one function (verdict.ts) against the tool's upstream recording with main's
 // divergences.json, on (rule, path, line, code) keys: the candidate keeps every true positive of main's and adds no
-// false positive main lacks. Real code has no truth: its agreement is reported and does not gate.
+// false positive main lacks. Real code has no truth: its agreement is reported and does not gate. The report
+// (report-model.ts, schema ship-no-ship/report/v1) is rendered as Markdown by report.ts.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
+import { cpus as logicalCpus, hostname, release } from "node:os";
 import { dirname, join, matchesGlob, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { buildReport, type RunMeta } from "./report-model.js";
 import { renderReport } from "./report.js";
 import {
   agreement,
@@ -54,12 +60,11 @@ import {
   findingKey,
   type FindingsVerdict,
   type MetricVerdict,
+  median,
   missingRules,
   newRuleFailures,
-  overall,
   type RunOutcome,
   scoreFindings,
-  type Status,
   TOLERANCE_PERCENT,
 } from "./verdict.js";
 
@@ -69,9 +74,9 @@ const SELF = resolve(HERE, "..", "..");
 const MANIFEST = join(HERE, "corpora.json");
 
 export const CANDIDATES = { ships: "the candidate's packs as they ship, through the product's path", rr: "the hand-written .rr rewrites, through rerail-engine run-policies" } as const;
-type Candidate = keyof typeof CANDIDATES;
+export type Candidate = keyof typeof CANDIDATES;
 type Side = "main" | Candidate;
-type Corpus = "fixtures" | "real";
+export type Corpus = "fixtures" | "real";
 const CORPORA: readonly Corpus[] = ["fixtures", "real"];
 export const METRICS = ["wall-cold", "wall-warm", "cpu-cold", "cpu-warm", "rss-cold", "rss-warm"] as const;
 
@@ -131,6 +136,8 @@ function copyInto(source: string, destination: string): void {
 interface Checkout {
   dir: string;
   sha: string;
+  /** The ref it was resolved from (a tag, a branch), when one was given. */
+  ref?: string;
 }
 
 const SOURCE_FILE = ".rerail/shipbar-source.json";
@@ -147,12 +154,16 @@ function checkoutSha(dir: string): string {
 
 /** The baseline: an existing checkout, or a git ref of this repository exported to <out>/baseline (pack data pulled). */
 function resolveBaseline(spec: string, out: string, packDataCache: string | undefined): Checkout {
-  if (existsSync(join(spec, "packs"))) return { dir: resolve(spec), sha: checkoutSha(resolve(spec)) };
+  if (existsSync(join(spec, "packs"))) {
+    const source = join(spec, SOURCE_FILE);
+    const ref = existsSync(source) ? readJson<{ ref?: string }>(source).ref : undefined;
+    return { dir: resolve(spec), sha: checkoutSha(resolve(spec)), ...(ref === undefined ? {} : { ref }) };
+  }
   const parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${spec}^{commit}`]);
   if (parsed.status !== 0) fail(`--baseline ${spec} is neither a checkout (no packs/) nor a commit of ${SELF}`);
   const sha = parsed.stdout.trim();
   const dir = join(out, "baseline");
-  if (existsSync(join(dir, SOURCE_FILE)) && readJson<{ sha: string }>(join(dir, SOURCE_FILE)).sha === sha) return { dir, sha };
+  if (existsSync(join(dir, SOURCE_FILE)) && readJson<{ sha: string }>(join(dir, SOURCE_FILE)).sha === sha) return { dir, sha, ref: spec };
   if (existsSync(dir)) fail(`${dir} holds another baseline; remove it or pass it as --baseline`);
   mkdirSync(dir, { recursive: true });
   const tar = join(out, "baseline.tar");
@@ -167,7 +178,7 @@ function resolveBaseline(spec: string, out: string, packDataCache: string | unde
   console.log(`shipbar: baseline ${sha} exported to ${dir}; pulling its pack data`);
   const pull = spawnSync("node", ["scripts/s3/pack-fixtures.mjs", "pull"], { cwd: dir, stdio: "inherit" });
   if (pull.status !== 0) fail(`the baseline's pack data pull failed; run \`node scripts/s3/pack-fixtures.mjs pull\` in ${dir}`);
-  return { dir, sha };
+  return { dir, sha, ref: spec };
 }
 
 function shippedRules(checkout: string, pack: string): string[] {
@@ -501,6 +512,10 @@ interface RunRow {
   timeCapS: number;
   command: string;
   started: string;
+  /** The product path's in-process evaluation time (product-run.ts evaluateMs); null on the `.rr` side or a failure. */
+  evaluateMs: number | null;
+  /** rules.jsonl: the rule this run timed alone, "(none)" for the empty rule set; null elsewhere. */
+  drillRule: string | null;
 }
 
 interface Settings {
@@ -514,6 +529,11 @@ interface Settings {
   siblings: number[];
   memCap: string;
   timeCapS: number;
+  /** Confirmation repetitions of a cell whose median fails (0: none). */
+  confirm: number;
+  /** Cold runs per side of each rule alone, for a confirmed slowdown (0: no drill-down). */
+  drill: number;
+  drillCandidates: Candidate[];
 }
 
 function readRows(path: string): RunRow[] {
@@ -532,11 +552,11 @@ function rrIds(rr: RrRules, cell: string): string[] {
   return Object.entries(rr.rules).filter(([id, rule]) => rule.unavailable === null && excluded[id] === undefined).map(([id]) => id);
 }
 
-/** The side's command and its working directory. */
-function sideCommand(settings: Settings, side: Side, pack: string, corpus: string, result: string, rundir: string, rrPaths: readonly string[]): { command: string[]; cwd: string } {
+/** The side's command and its working directory; `rulesDir` replaces the pack's rules for a run of one rule. */
+function sideCommand(settings: Settings, side: Side, pack: string, corpus: string, result: string, rundir: string, rrPaths: readonly string[], rulesDir: string | undefined): { command: string[]; cwd: string } {
   if (side === "rr") return { command: [settings.engine!, "run-policies", corpus, rundir, ...rrPaths], cwd: settings.candidate.dir };
   const checkout = side === "main" ? settings.baseline.dir : settings.candidate.dir;
-  return { command: ["node", "--import", "tsx", join(HERE, "product-run.ts"), checkout, corpus, result, join(checkout, "packs", pack, "rules")], cwd: checkout };
+  return { command: ["node", "--import", "tsx", join(HERE, "product-run.ts"), checkout, corpus, result, rulesDir ?? join(checkout, "packs", pack, "rules")], cwd: checkout };
 }
 
 interface Process {
@@ -546,10 +566,14 @@ interface Process {
   tag: string;
   /** The store directory: emptied for a cold run, reused by the warm run after it. */
   store: string;
-  /** The cell file its row goes to: runs.jsonl, or alone.jsonl for a `.rr` rule's run alone. */
+  /** The cell file its row goes to: runs.jsonl, confirm.jsonl, rules.jsonl, or alone.jsonl for a `.rr` rule alone. */
   log: string;
   /** run-policies: the rule ids it runs, in order. */
   rules: readonly string[];
+  /** The product path: a directory holding the rules to run instead of the pack's. */
+  rulesDir?: string;
+  /** rules.jsonl: the rule this run times alone, "(none)" for the empty rule set. */
+  drillRule?: string;
 }
 
 /** One process of one side, pinned and capped, measured by GNU time; its row is appended to the cell's log. */
@@ -562,7 +586,7 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   const result = join(cell, `${tag}.json`);
   const rundir = join(cell, `${tag}.out`);
   rmSync(rundir, { recursive: true, force: true });
-  const { command, cwd } = sideCommand(settings, side, pack, corpus, result, rundir, p.rules.map((id) => rr!.rules[id]!.path!));
+  const { command, cwd } = sideCommand(settings, side, pack, corpus, result, rundir, p.rules.map((id) => rr!.rules[id]!.path!), p.rulesDir);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !key.startsWith("RERAIL_") && !key.startsWith("SHIPBAR_")) env[key] = value;
   env.RERAIL_TAPE_CACHE = join(store, "store.sqlite");
@@ -594,9 +618,11 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   let completed = exit === 0;
   let reason: string | null = null;
   let stoppedOn: string | null = null;
+  let evaluateMs: number | null = null;
   if (completed) {
     try {
-      readJson(result);
+      const output = readJson<{ evaluateMs?: number }>(result);
+      if (side !== "rr" && typeof output.evaluateMs === "number") evaluateMs = Math.round(output.evaluateMs);
     } catch {
       completed = false;
       reason = "exited 0 with no readable result";
@@ -622,7 +648,7 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
     wallMs: Math.round(wall * 1000), cpuMs: Math.round((user + sys) * 1000), rssKB: rss,
     load, pinnedBusy: busiest(before, after, settings.cpus), siblingBusy: busiest(before, after, settings.siblings),
     cpus: settings.cpus.join(","), threads: settings.cpus.length, host: hostname(),
-    memCap: settings.memCap, timeCapS: settings.timeCapS, command: command.join(" "), started,
+    memCap: settings.memCap, timeCapS: settings.timeCapS, command: command.join(" "), started, evaluateMs, drillRule: p.drillRule ?? null,
   };
   appendFileSync(join(cell, p.log), `${JSON.stringify(row)}\n`);
   // Kept: the first cold run's findings (and every failure's stderr). The rest is scratch.
@@ -684,22 +710,109 @@ function measureCell(settings: Settings, pack: string, corpus: Corpus, sides: re
   }
 }
 
-// ---------------------------------------------------------------- the verdict
-
-interface Failure {
-  pack: string;
-  corpus: Corpus | null;
-  item: string;
-  reason: string;
+/**
+ * A cell whose median fails a metric runs again before the report counts it: --confirm more repetitions of main and of
+ * each candidate failing there, interleaved as the first ones, into confirm.jsonl. A metric failing again is
+ * confirmed; passing, it is noisy. Only cells where both sides completed every run are confirmed: a cell that did not
+ * complete fails on completion, which more runs do not change.
+ */
+function confirmCell(settings: Settings, pack: string, corpus: Corpus, candidates: readonly Candidate[], rr: RrRules | undefined): void {
+  if (settings.confirm === 0) return;
+  const cell = join(settings.out, "runs", pack, corpus);
+  const rows = readRows(join(cell, "runs.jsonl"));
+  const main = rows.filter((row) => row.side === "main");
+  if (main.length === 0 || main.some((row) => !row.completed)) return;
+  const failing = candidates.filter((c) => {
+    const mine = rows.filter((row) => row.side === c);
+    return mine.length > 0 && mine.every((row) => row.completed) && measuredMetrics(main, mine, [], []).some((m) => m.verdict.status === "fail");
+  });
+  if (failing.length === 0) return;
+  const dir = corpusDirectory(settings.corpora, pack, corpus);
+  const sides: Side[] = ["main", ...failing];
+  for (let rep = 1; rep <= settings.confirm; rep += 1) {
+    const order = sides.map((_, i) => sides[(i + rep - 1) % sides.length]!);
+    for (const side of order) {
+      const tag = (mode: "cold" | "warm"): string => `confirm.${side}.${mode}${rep}`;
+      // A repetition already made (or started: its cold run logged) is not made again.
+      if (readRows(join(cell, "confirm.jsonl")).some((row) => row.tag === tag("cold"))) continue;
+      const store = join(cell, `confirm.${side}.r${rep}.store`);
+      const proc = (mode: "cold" | "warm"): Process => ({ side, mode, rep, tag: tag(mode), store, log: "confirm.jsonl", rules: side === "rr" ? rrIds(rr!, cell) : [] });
+      if (measure(settings, cell, proc("cold"), pack, dir, rr).completed) measure(settings, cell, proc("warm"), pack, dir, rr);
+      rmSync(store, { recursive: true, force: true });
+    }
+  }
 }
 
-interface CellVerdict {
+/** Whether a candidate's wall or CPU time fails in a cell after confirmation: a slowdown worth attributing to rules. */
+function confirmedSlowdown(cell: string, candidate: Candidate): boolean {
+  const rows = readRows(join(cell, "runs.jsonl"));
+  const confirm = readRows(join(cell, "confirm.jsonl"));
+  const measured = measuredMetrics(rows.filter((row) => row.side === "main"), rows.filter((row) => row.side === candidate), confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === candidate));
+  return measured.some((m) => !m.verdict.metric.startsWith("rss") && m.verdict.status === "fail" && (m.confirm === null || m.confirm.verdict.status === "fail"));
+}
+
+/**
+ * A confirmed slowdown attributed to rules: the empty rule set (start-up) and each rule both sides have, alone, as
+ * --drill cold runs per side, alternating, into rules.jsonl. The product path times its own evaluation in process;
+ * the `.rr` side's run-policies takes no empty set and is timed by process wall.
+ */
+function drillCell(settings: Settings, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): void {
+  if (settings.drill === 0 || !settings.drillCandidates.includes(candidate)) return;
+  const cell = join(settings.out, "runs", pack, corpus);
+  if (!confirmedSlowdown(cell, candidate)) return;
+  const dir = corpusDirectory(settings.corpora, pack, corpus);
+  const mainRules = shippedRules(settings.baseline.dir, pack);
+  const rules = candidate === "rr" ? rrIds(rr!, cell) : shippedRules(settings.candidate.dir, pack).filter((rule) => mainRules.includes(rule));
+  const scratch = join(cell, "rules.scratch");
+  for (const rule of ["(none)", ...rules]) {
+    for (let rep = 1; rep <= settings.drill; rep += 1) {
+      const order: Side[] = rep % 2 === 1 ? ["main", candidate] : [candidate, "main"];
+      for (const side of order) {
+        if (side === "rr" && rule === "(none)") continue;
+        const tag = `rule.${side}.${rule}.${rep}`;
+        if (readRows(join(cell, "rules.jsonl")).some((row) => row.tag === tag)) continue;
+        let rulesDir: string | undefined;
+        if (side !== "rr") {
+          rulesDir = join(scratch, `${side}.${rule}`);
+          mkdirSync(rulesDir, { recursive: true });
+          const link = join(rulesDir, `${rule}.json`);
+          if (rule !== "(none)" && !existsSync(link)) symlinkSync(join(side === "main" ? settings.baseline.dir : settings.candidate.dir, "packs", pack, "rules", `${rule}.json`), link);
+        }
+        const store = join(scratch, `${side}.store`);
+        measure(settings, cell, { side, mode: "cold", rep, tag, store, log: "rules.jsonl", rules: side === "rr" ? [rule] : [], ...(rulesDir === undefined ? {} : { rulesDir }), drillRule: rule }, pack, dir, rr);
+        rmSync(store, { recursive: true, force: true });
+      }
+    }
+  }
+  rmSync(scratch, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------- the verdict
+
+/** One metric of a cell: the first runs' verdict and each side's values, and the confirmation runs' when made. */
+export interface MeasuredMetric {
+  verdict: MetricVerdict;
+  mainRuns: number[];
+  candidateRuns: number[];
+  confirm: { verdict: MetricVerdict; mainRuns: number[]; candidateRuns: number[] } | null;
+}
+
+/** One rule alone on each side: the median of its drill-down runs, null where that side's runs failed. */
+export interface RuleTiming {
+  rule: string;
+  main: number | null;
+  candidate: number | null;
+}
+
+export interface CellVerdict {
   corpus: Corpus;
-  status: Status;
+  /** Why the cell is not compared; "" when it is. */
   note: string;
+  /** Why the cell fails without a measurement (the `.rr` side runs no rule on this corpus); null otherwise. */
+  blocked: string | null;
   completion: (CompletionVerdict & { stoppedOn: string | null }) | null;
   ruleFailures: { rule: string; reason: string }[];
-  metrics: MetricVerdict[];
+  metrics: MeasuredMetric[];
   /** fixtures: the set-wise findings bar, with each side's TP/FP/FN; real: agreement only. */
   findings: (Omit<FindingsVerdict, "lostTp" | "newFp"> & { lostTp: number; newFp: number; samples: string[]; main: Counts; candidate: Counts }) | null;
   agreement: { both: number; mainOnly: number; candidateOnly: number; samples: string[] } | null;
@@ -708,6 +821,8 @@ interface CellVerdict {
   runs: { main: number; candidate: number };
   /** How many rules each side ran: main's shipped rules; the candidate's shipped rules, or the `.rr` rules that run. */
   rules: { main: number; candidate: number };
+  /** A confirmed slowdown's rules, each timed alone (rules.jsonl); null where none was made. */
+  drill: { measure: "evaluate_ms" | "wall_ms"; reps: number; startup: { main: number | null; candidate: number | null }; rules: RuleTiming[] } | null;
 }
 
 interface Counts {
@@ -718,9 +833,10 @@ interface Counts {
   explainedFn: number;
 }
 
-interface PackVerdict {
+export interface PackVerdict {
   pack: string;
-  status: Status | "no-baseline";
+  /** A pack only the candidate ships: nothing to compare it with. */
+  noBaseline: boolean;
   missing: { rule: string; reason: string }[];
   extra: string[];
   cells: CellVerdict[];
@@ -729,19 +845,28 @@ interface PackVerdict {
 export interface CandidateVerdict {
   candidate: Candidate;
   description: string;
-  status: "PASS" | "FAIL" | "INCOMPLETE";
-  failures: Failure[];
   packs: PackVerdict[];
 }
 
+/** A host the runs were made on, as `run` found it (<out>/machines/<host>.json). */
+export interface MachineInfo {
+  host: string;
+  cpu_model: string | null;
+  logical_cpus: number;
+  kernel: string;
+  os: string | null;
+  /** The EC2 instance type, when the instance metadata service answers. */
+  instance_type: string | null;
+}
+
 export interface Verdict {
-  generated: string;
   tolerancePercent: number;
   runs: number;
   baseline: Checkout;
   candidate: Checkout;
   corpora: CorporaLock;
   machine: { hosts: string[]; cpus: string[]; threads: number[]; memCap: string[]; timeCapS: number[] };
+  machines: MachineInfo[];
   candidates: CandidateVerdict[];
   gate: Candidate[];
 }
@@ -813,8 +938,42 @@ function metricValues(rows: readonly RunRow[], metric: (typeof METRICS)[number])
   return rows.filter((row) => row.completed && row.mode === mode).map((row) => (what === "wall" ? row.wallMs : what === "cpu" ? row.cpuMs : row.rssKB));
 }
 
+/** Each metric of a cell from both sides' first runs, with the confirmation runs' verdict where both sides made some. */
+function measuredMetrics(main: readonly RunRow[], candidate: readonly RunRow[], confirmMain: readonly RunRow[], confirmCandidate: readonly RunRow[]): MeasuredMetric[] {
+  return METRICS.map((metric) => {
+    const mainRuns = metricValues(main, metric);
+    const candidateRuns = metricValues(candidate, metric);
+    const confirmedMain = metricValues(confirmMain, metric);
+    const confirmedCandidate = metricValues(confirmCandidate, metric);
+    return {
+      verdict: compareMetric(metric, mainRuns, candidateRuns),
+      mainRuns,
+      candidateRuns,
+      confirm: confirmedMain.length > 0 && confirmedCandidate.length > 0 ? { verdict: compareMetric(metric, confirmedMain, confirmedCandidate), mainRuns: confirmedMain, candidateRuns: confirmedCandidate } : null,
+    };
+  });
+}
+
+/** A cell's drill-down for one candidate from rules.jsonl: each rule's median time alone on both sides. */
+function drillOf(cell: string, candidate: Candidate): CellVerdict["drill"] {
+  const rows = readRows(join(cell, "rules.jsonl")).filter((row) => row.side === "main" || row.side === candidate);
+  if (!rows.some((row) => row.side === candidate)) return null;
+  const measure = candidate === "rr" ? "wall_ms" : "evaluate_ms";
+  const time = (rule: string, side: Side): number | null => {
+    const values = rows.filter((row) => row.drillRule === rule && row.side === side && row.completed).flatMap((row) => (measure === "evaluate_ms" ? (row.evaluateMs === null ? [] : [row.evaluateMs]) : [row.wallMs]));
+    return values.length > 0 ? median(values) : null;
+  };
+  const rules = [...new Set(rows.flatMap((row) => (row.drillRule === null || row.drillRule === "(none)" ? [] : [row.drillRule])))].sort();
+  return {
+    measure,
+    reps: Math.max(...rows.map((row) => row.rep)),
+    startup: { main: time("(none)", "main"), candidate: time("(none)", candidate) },
+    rules: rules.map((rule) => ({ rule, main: time(rule, "main"), candidate: time(rule, candidate) })),
+  };
+}
+
 function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, lock: CorporaLock, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): CellVerdict {
-  const empty: CellVerdict = { corpus, status: "not-compared", note: "", completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 } };
+  const empty: CellVerdict = { corpus, note: "", blocked: null, completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 }, drill: null };
   const fixtures = lock.fixtures[pack];
   if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) return { ...empty, note: `no fixtures corpus: ${fixtures.absent}` };
   const cell = join(settings.out, "runs", pack, corpus);
@@ -822,14 +981,13 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
   const main = all.filter((row) => row.side === "main");
   const mine = all.filter((row) => row.side === candidate);
   if (main.length === 0) return { ...empty, note: "not measured" };
-  if (candidate === "rr" && rr !== undefined && rrIds(rr, cell).length === 0) {
-    return { ...empty, status: "fail", note: "no rule of the pack runs on the .rr side on this corpus" };
-  }
+  if (candidate === "rr" && rr !== undefined && rrIds(rr, cell).length === 0) return { ...empty, blocked: "no rule of the pack runs on the .rr side on this corpus" };
   if (mine.length === 0) return { ...empty, note: "candidate not measured" };
   const outcome = (rows: RunRow[]): RunOutcome[] => rows.map((row) => (row.completed ? { completed: true } : { completed: false, reason: `${row.tag}: ${row.reason ?? ""}${row.stoppedOn === null ? "" : `; stopped on ${row.stoppedOn}`}` }));
   const completion = { ...compareCompletion(outcome(main), outcome(mine), 2 * settings.runs), stoppedOn: mine.find((row) => !row.completed)?.stoppedOn ?? null };
   const ruleFailures = candidate === "rr" ? [] : newRuleFailures(ruleFailuresOf(cell, "main"), ruleFailuresOf(cell, candidate));
-  const metrics = METRICS.map((metric) => compareMetric(metric, metricValues(main, metric), metricValues(mine, metric)));
+  const confirm = readRows(join(cell, "confirm.jsonl"));
+  const metrics = measuredMetrics(main, mine, confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === candidate));
   // Findings are compared over the rules the candidate ran (main's shipped rules it has, and any it adds): a rule it
   // cannot run fails coverage once, not again as every key of that rule.
   const mainRules = shippedRules(settings.baseline.dir, pack);
@@ -853,11 +1011,10 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
       agree = { both: a.both, mainOnly: a.mainOnly.length, candidateOnly: a.candidateOnly.length, samples: [...a.mainOnly.slice(0, 3).map((k) => `main only ${k.replaceAll("\u0000", " ")}`), ...a.candidateOnly.slice(0, 3).map((k) => `candidate only ${k.replaceAll("\u0000", " ")}`)] };
     }
   }
-  const statuses: Status[] = [completion.status, ...metrics.map((m) => m.status), ...(findings === null ? [] : [findings.status]), ...(ruleFailures.length > 0 ? (["fail"] as Status[]) : [])];
   return {
     corpus,
-    status: overall(statuses),
     note: "",
+    blocked: null,
     completion,
     ruleFailures,
     metrics,
@@ -866,7 +1023,8 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     load: { main: main.map((row) => row.load), candidate: mine.map((row) => row.load) },
     siblingBusyMax: Math.max(0, ...all.map((row) => row.siblingBusy)),
     runs: { main: main.length, candidate: mine.length },
-    rules: { main: shippedRules(settings.baseline.dir, pack).length, candidate: candidate === "rr" && rr !== undefined ? rrIds(rr, cell).length : shippedRules(settings.candidate.dir, pack).length },
+    rules: { main: mainRules.length, candidate: candidate === "rr" && rr !== undefined ? rrIds(rr, cell).length : shippedRules(settings.candidate.dir, pack).length },
+    drill: drillOf(cell, candidate),
   };
 }
 
@@ -875,7 +1033,6 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
   const rows = packs.flatMap((pack) => corpusKinds.flatMap((corpus) => readRows(join(settings.out, "runs", pack, corpus, "runs.jsonl"))));
   const distinct = <T>(values: T[]): T[] => [...new Set(values)];
   const verdicts: CandidateVerdict[] = candidates.map((candidate) => {
-    const failures: Failure[] = [];
     const packVerdicts: PackVerdict[] = packs.map((pack) => {
       const mainRules = shippedRules(settings.baseline.dir, pack);
       const rrPath = join(settings.out, "runs", pack, "rr-rules.json");
@@ -892,25 +1049,13 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
       }
       const missing = candidate === "rr" && rr === undefined ? [{ rule: "*", reason: "the .rr side was not measured" }] : missingRules(mainRules, available);
       const extra = candidate === "ships" ? [...available.keys()].filter((rule) => !mainRules.includes(rule)) : [];
-      for (const m of missing) failures.push({ pack, corpus: null, item: "coverage", reason: `${m.rule}: ${m.reason}` });
-      const cells = corpusKinds.map((corpus) => cellVerdict(settings, lock, pack, corpus, candidate, rr));
-      for (const cell of cells) {
-        if (cell.status === "fail" && cell.note !== "") failures.push({ pack, corpus: cell.corpus, item: "completion", reason: cell.note });
-        if (cell.completion?.status === "fail") failures.push({ pack, corpus: cell.corpus, item: "completion", reason: cell.completion.reason });
-        for (const f of cell.ruleFailures) failures.push({ pack, corpus: cell.corpus, item: "rule failure", reason: `${f.rule}: ${f.reason}` });
-        for (const m of cell.metrics) if (m.status === "fail") failures.push({ pack, corpus: cell.corpus, item: m.metric, reason: m.reason + (m.withinSpread ? " (within the run-to-run spread)" : "") });
-        if (cell.findings?.status === "fail") failures.push({ pack, corpus: cell.corpus, item: "findings", reason: `${cell.findings.reason}; e.g. ${cell.findings.samples.slice(0, 2).join(", ")}` });
-      }
-      const status = overall([...cells.map((cell) => cell.status), ...(missing.length > 0 ? (["fail"] as Status[]) : [])]);
-      return { pack, status, missing, extra, cells };
+      return { pack, noBaseline: false, missing, extra, cells: corpusKinds.map((corpus) => cellVerdict(settings, lock, pack, corpus, candidate, rr)) };
     });
-    for (const pack of candidateOnly) packVerdicts.push({ pack, status: "no-baseline", missing: [], extra: [], cells: [] });
-    const incomplete = packVerdicts.some((p) => p.cells.some((cell) => cell.status === "not-compared" && !cell.note.startsWith("no fixtures corpus")));
-    const status = failures.length > 0 ? "FAIL" : incomplete ? "INCOMPLETE" : "PASS";
-    return { candidate, description: CANDIDATES[candidate], status, failures, packs: packVerdicts };
+    for (const pack of candidateOnly) packVerdicts.push({ pack, noBaseline: true, missing: [], extra: [], cells: [] });
+    return { candidate, description: CANDIDATES[candidate], packs: packVerdicts };
   });
+  const machinesDir = join(settings.out, "machines");
   return {
-    generated: new Date().toISOString(),
     tolerancePercent: TOLERANCE_PERCENT,
     runs: settings.runs,
     baseline: settings.baseline,
@@ -923,17 +1068,48 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
       memCap: distinct(rows.map((row) => row.memCap)),
       timeCapS: distinct(rows.map((row) => row.timeCapS)),
     },
+    machines: existsSync(machinesDir) ? readdirSync(machinesDir).filter((name) => name.endsWith(".json")).sort().map((name) => readJson<MachineInfo>(join(machinesDir, name))) : [],
     candidates: verdicts,
     gate: [...gate],
   };
 }
 
-function writeVerdict(verdict: Verdict, out: string): number {
-  writeFileSync(join(out, "verdict.json"), `${JSON.stringify(verdict, null, 1)}\n`);
-  writeFileSync(join(out, "report.md"), renderReport(verdict));
-  for (const c of verdict.candidates) console.log(`shipbar: ${c.candidate}: ${c.status} (${c.failures.length} failing items)`);
-  console.log(`shipbar: ${join(out, "verdict.json")}, ${join(out, "report.md")}`);
-  return verdict.candidates.filter((c) => verdict.gate.includes(c.candidate)).every((c) => c.status === "PASS") ? 0 : 1;
+/** report.json and report.md; the exit status: 0 only when every gated candidate passes. */
+function writeReport(verdict: Verdict, out: string, meta: RunMeta): number {
+  const report = buildReport(verdict, meta);
+  writeFileSync(join(out, "report.json"), `${JSON.stringify(report, null, 1)}\n`);
+  writeFileSync(join(out, "report.md"), renderReport(report));
+  for (const c of report.candidates) console.log(`shipbar: ${c.candidate}: ${c.status} (${c.counts.failing_items} failing items, ${c.counts.noisy_items} noisy)`);
+  console.log(`shipbar: ${join(out, "report.json")}, ${join(out, "report.md")}`);
+  return report.verdict.status === "PASS" ? 0 : 1;
+}
+
+/** This host as the report names it: CPU model, kernel, OS, and its EC2 instance type when the metadata service answers. */
+function machineInfo(): MachineInfo {
+  const cpuModel = existsSync("/proc/cpuinfo") ? (/^model name\s*:\s*(.+)$/m.exec(readFileSync("/proc/cpuinfo", "utf8"))?.[1] ?? null) : null;
+  const os = existsSync("/etc/os-release") ? (/^PRETTY_NAME="?([^"\n]+)"?$/m.exec(readFileSync("/etc/os-release", "utf8"))?.[1] ?? null) : null;
+  const token = run("curl", ["-s", "-m", "1", "-X", "PUT", "http://169.254.169.254/latest/api/token", "-H", "X-aws-ec2-metadata-token-ttl-seconds: 60"]);
+  const type = token.status === 0 && token.stdout !== "" ? run("curl", ["-s", "-m", "1", "-H", `X-aws-ec2-metadata-token: ${token.stdout}`, "http://169.254.169.254/latest/meta-data/instance-type"]).stdout.trim() : "";
+  return { host: hostname(), cpu_model: cpuModel, logical_cpus: logicalCpus().length, kernel: release(), os, instance_type: /^[a-z0-9-]+\.[a-z0-9-]+$/.test(type) ? type : null };
+}
+
+/**
+ * The run's metadata: when it ran (its logs' first run to now), who started it and how, this harness's commit, and the
+ * confirmation and drill-down settings `run` recorded (none, for runs made before it recorded them).
+ */
+function runMeta(out: string, packs: readonly string[], corpusKinds: readonly Corpus[]): RunMeta {
+  const settingsPath = join(out, "settings.json");
+  const recorded = existsSync(settingsPath) ? readJson<{ invokedBy?: string | null; command?: string; confirm?: number; drill?: number }>(settingsPath) : {};
+  const starts = packs.flatMap((pack) => corpusKinds.flatMap((corpus) => ["runs.jsonl", "confirm.jsonl", "rules.jsonl"].flatMap((log) => readRows(join(out, "runs", pack, corpus, log)).map((row) => row.started)))).sort();
+  return {
+    startedAt: starts[0] ?? null,
+    finishedAt: new Date().toISOString(),
+    invokedBy: recorded.invokedBy ?? null,
+    command: recorded.command ?? null,
+    harnessSha: checkoutSha(SELF),
+    confirmRuns: recorded.confirm ?? 0,
+    drillReps: recorded.drill ?? 0,
+  };
 }
 
 // ---------------------------------------------------------------- the command line
@@ -954,6 +1130,9 @@ function main(): void {
       "time-cap": { type: "string", default: "2700" },
       candidates: { type: "string", default: "ships,rr" },
       gate: { type: "string" },
+      confirm: { type: "string", default: "3" },
+      drill: { type: "string", default: "2" },
+      "drill-candidates": { type: "string", default: "ships" },
       build: { type: "boolean", default: false },
       record: { type: "boolean", default: false },
       "pack-data-cache": { type: "string" },
@@ -969,8 +1148,16 @@ function main(): void {
   const gate = (values.gate?.split(",").map((c) => c.trim()) ?? candidates) as Candidate[];
   for (const c of gate) if (!candidates.includes(c)) fail(`--gate ${c} is not among --candidates`);
   const corpusKinds: Corpus[] = values.corpus === "all" ? [...CORPORA] : values.corpus === "fixtures" || values.corpus === "real" ? [values.corpus] : fail(`--corpus ${values.corpus}: fixtures, real or all`);
-  const runs = Number(values.runs);
-  if (!Number.isInteger(runs) || runs < 1) fail(`--runs ${values.runs} is not a positive integer`);
+  const count = (name: string, value: string, least: number): number => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < least) fail(`--${name} ${value} is not an integer of at least ${least}`);
+    return n;
+  };
+  const runs = count("runs", values.runs, 1);
+  const confirm = count("confirm", values.confirm, 0);
+  const drill = count("drill", values.drill, 0);
+  const drillCandidates = values["drill-candidates"].split(",").map((c) => c.trim()).filter((c) => c !== "") as Candidate[];
+  for (const c of drillCandidates) if (!(c in CANDIDATES)) fail(`--drill-candidates: no candidate ${c} (ships, rr)`);
   if (command === "run") requirePlatform();
 
   const baseline = resolveBaseline(values.baseline, out, values["pack-data-cache"]);
@@ -996,8 +1183,14 @@ function main(): void {
     requireBuilt(baseline.dir, { product: true, engine: false }, values.build);
     const { engine } = requireBuilt(candidate.dir, { product: candidates.includes("ships"), engine: candidates.includes("rr") }, values.build);
     const cpus = cpuList(values.cpus);
-    const settings: Settings = { ...settingsBase, engine, cpus, siblings: idleSiblings(cpus), memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]) };
-    writeFileSync(join(out, "settings.json"), JSON.stringify({ ...settings, candidates, corpusKinds, packs, productBuild: PRODUCT_BUILD, engineBuild: ENGINE_BUILD }, null, 1));
+    const settings: Settings = { ...settingsBase, engine, cpus, siblings: idleSiblings(cpus), memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), confirm, drill, drillCandidates };
+    // Who runs it: the AWS identity this shell is signed in as, the one the pack data pull reads with.
+    const caller = run("aws", ["sts", "get-caller-identity", "--query", "Arn", "--output", "text"]);
+    const invokedBy = caller.status === 0 && caller.stdout.trim() !== "" ? caller.stdout.trim() : null;
+    const command = ["npm run bench:ship --", ...process.argv.slice(2)].join(" ");
+    writeFileSync(join(out, "settings.json"), JSON.stringify({ ...settings, candidates, corpusKinds, packs, productBuild: PRODUCT_BUILD, engineBuild: ENGINE_BUILD, invokedBy, command }, null, 1));
+    mkdirSync(join(out, "machines"), { recursive: true });
+    writeFileSync(join(out, "machines", `${hostname()}.json`), JSON.stringify(machineInfo(), null, 1));
     const sides: Side[] = ["main", ...candidates];
     for (const pack of packs) {
       let rr: RrRules | undefined;
@@ -1011,10 +1204,12 @@ function main(): void {
         const fixtures = lock.fixtures[pack];
         if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) continue;
         measureCell(settings, pack, corpus, sides, rr);
+        confirmCell(settings, pack, corpus, candidates, rr);
+        for (const c of candidates) drillCell(settings, pack, corpus, c, rr);
       }
     }
   }
-  process.exitCode = writeVerdict(computeVerdict(settingsBase, packs, candidateOnly, corpusKinds, candidates, gate), out);
+  process.exitCode = writeReport(computeVerdict(settingsBase, packs, candidateOnly, corpusKinds, candidates, gate), out, runMeta(out, packs, corpusKinds));
 }
 
 main();
