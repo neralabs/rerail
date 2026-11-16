@@ -4852,7 +4852,32 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             f.switch_to_block(look);
             // The skip and the run words from one window of the block's bytes.
             let all: Vec<u16> = std::iter::once(o).chain(outs.iter().copied()).collect();
-            let got = rd.words_inline(f, c, q, &all, heads);
+            // The block's rare starts' set (`RecordTables::rare`), as the lean lexer's `rare`:
+            // tested in the same window as the skip and run words, its classes packed with
+            // theirs (`class_pack`), a skipped byte's answer free (no start is one).
+            let rare_need = match (t.rare, rd.bytes) {
+                (Some(n), Some((b, _))) if lean.is_some() => {
+                    let set: crate::class_pack::ByteSet = std::array::from_fn(|k| (0..64).filter(|&i| {
+                        let x = 64 * k + i;
+                        n[0][x & 15] & n[1][x >> 4] != 0
+                    }).fold(0u64, |a, i| a | 1 << i));
+                    let skip = usize::from(b.native.outputs[usize::from(o)]);
+                    let care = match crate::native_cpu_lanes::byte_set(b.native, skip) {
+                        Some(sk) if b.native.output_delays[usize::from(o)] == 0 => std::array::from_fn(|k| !sk[k]),
+                        _ => [u64::MAX; 4],
+                    };
+                    Some(crate::class_pack::Need { set, care })
+                }
+                _ => None,
+            };
+            let (got, rare_got) = match (rare_need, rd.bytes.filter(|(b, _)| all.iter().all(|&x| b.can(x)))) {
+                (Some(need), Some((b, file))) => {
+                    let p = f.ins().ishl_imm(q, 6);
+                    let (w, more) = b.words_with(f, &file, &all, &[need], p, heads);
+                    (w, Some(more[0]))
+                }
+                _ => (rd.words_inline(f, c, q, &all, heads), None),
+            };
             let (x, mut words) = (got[0], got[1..].to_vec());
             if let (Some(n), Some((_, file))) = (&pairs, rd.bytes) {
                 let p = f.ins().ishl_imm(q, 6);
@@ -4907,8 +4932,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 x = f.ins().band_not(x, seconds);
             }
             // The block's rare starts' word (`RecordTables::rare`), as the lean lexer's `rare`.
-            let rare_w = match (t.rare, rd.bytes) {
-                (Some(n), Some((_, file))) if lean.is_some() => Some(set_word(f, &file, &n, q64)),
+            let rare_w = match (rare_got, t.rare, rd.bytes) {
+                (Some(w), _, _) => Some(w),
+                (None, Some(n), Some((_, file))) if lean.is_some() => Some(set_word(f, &file, &n, q64)),
                 _ => None,
             };
             let tz = f.ins().ctz(x);

@@ -18,12 +18,18 @@
 //! a body with those values folded runs (its UTF-8 checks, typically, are all zero).
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::block::ClassTable;
 use crate::native_cpu_block::{Sym, bitmask};
 use crate::block_native::{BlockInst, BlockNative};
 use cranelift_codegen::ir::{ConstantData, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::FunctionBuilder;
+
+/// The backend tests a vector's bits against a mask in one instruction (NEON's `vtst`, which
+/// `clif_rust`'s Rust has; Cranelift's aarch64 lowering does not): a class's lane is then the
+/// test itself, not its complement. Set by a build for such a backend (`rr_aot_gen`).
+pub static BIT_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// How far back a byte-local value may look: the bytes before a file (`FRONT`).
 const MAX_LAG: u8 = 16;
@@ -125,6 +131,89 @@ pub fn set_range(set: [u64; 4]) -> Option<(u8, u8)> {
     let lo = (0..256).find(|&b| has(b))?;
     let hi = (0..256).rev().find(|&b| has(b))?;
     (lo..=hi).all(has).then_some((lo as u8, hi as u8))
+}
+
+/// A body's classes packed into shared tables (`class_pack`), as simdjson's one lookup answers
+/// all its classes: each class instruction's `(table, bits)` to its test, and the body's extra
+/// sets' tests after them (from `extra`).
+#[derive(Clone, Debug, Default)]
+pub struct BodyPack {
+    pub packing: crate::class_pack::Packing,
+    pub of: HashMap<(u16, u8), usize>,
+    pub extra: usize,
+}
+
+/// The pack of the classes the values `roots` read, with `extras` (sets the body tests besides
+/// its program's). A class whose table a `pair` reads keeps that table: its lookup is the
+/// pair's. Where the packing would take more lookups than the program's own tables, the
+/// classes keep theirs (the extras are packed alone).
+pub fn body_pack(native: &BlockNative, roots: &[usize], extras: &[crate::class_pack::Need]) -> BodyPack {
+    use crate::class_pack::{Need, pack};
+    let mut seen = vec![false; native.insts.len()];
+    let mut stack: Vec<usize> = roots.to_vec();
+    let (mut classes, mut paired): (Vec<(u16, u8)>, Vec<u16>) = (Vec::new(), Vec::new());
+    while let Some(x) = stack.pop() {
+        if std::mem::replace(&mut seen[x], true) {
+            continue;
+        }
+        match native.insts[x] {
+            BlockInst::Class { table, bits } if !classes.contains(&(table, bits)) => classes.push((table, bits)),
+            BlockInst::Pair { before, table, .. } => paired.extend([before, table]),
+            _ => {}
+        }
+        stack.extend(native.insts[x].operands());
+    }
+    classes.retain(|(t, _)| !paired.contains(t));
+    let set_of = |&(t, bits): &(u16, u8)| -> crate::class_pack::ByteSet {
+        let mut s = [0u64; 4];
+        for b in 0..=255u8 {
+            if native.tables[usize::from(t)].member(b, bits) {
+                s[usize::from(b >> 6)] |= 1 << (b & 63);
+            }
+        }
+        s
+    };
+    let needs: Vec<Need> = classes.iter().map(|c| Need::exact(set_of(c))).chain(extras.iter().copied()).collect();
+    let packing = pack(&needs);
+    // The program's own lookups for these classes: a table each, but a class of one run.
+    let mut own: Vec<u16> = classes.iter().filter(|(t, bits)| byte_range(&native.tables[usize::from(*t)], *bits).is_none()).map(|c| c.0).collect();
+    own.sort_unstable();
+    own.dedup();
+    let extra_alone = pack(extras);
+    if packing.tables.len() > own.len() + extra_alone.tables.len() {
+        return BodyPack { packing: extra_alone, of: HashMap::new(), extra: 0 };
+    }
+    let of = classes.iter().enumerate().map(|(k, &c)| (c, k)).collect();
+    BodyPack { packing, of, extra: classes.len() }
+}
+
+/// The bytes at which value `x` holds, where it is a function of its own byte alone (classes,
+/// byte tests, planes and their logic): `None` for any other.
+pub fn byte_set(native: &BlockNative, x: usize) -> Option<crate::class_pack::ByteSet> {
+    let one = |native: &BlockNative, x: usize, b: u8| -> Option<bool> {
+        fn go(native: &BlockNative, x: usize, b: u8) -> Option<bool> {
+            Some(match native.insts[x] {
+                BlockInst::Const(c) if c == 0 || c == u64::MAX => c != 0,
+                BlockInst::EqByte(e) => b == e,
+                BlockInst::Class { table, bits } => native.tables[usize::from(table)].member(b, bits),
+                BlockInst::Plane(k) => b >> k & 1 == 1,
+                BlockInst::Not(a) => !go(native, usize::from(a), b)?,
+                BlockInst::And(a, c) => go(native, usize::from(a), b)? && go(native, usize::from(c), b)?,
+                BlockInst::Or(a, c) => go(native, usize::from(a), b)? || go(native, usize::from(c), b)?,
+                BlockInst::Xor(a, c) => go(native, usize::from(a), b)? != go(native, usize::from(c), b)?,
+                BlockInst::AndNot(a, c) => go(native, usize::from(a), b)? && !go(native, usize::from(c), b)?,
+                _ => return None,
+            })
+        }
+        go(native, x, b)
+    };
+    let mut s = [0u64; 4];
+    for b in 0..=255u8 {
+        if one(native, x, b)? {
+            s[usize::from(b >> 6)] |= 1 << (b & 63);
+        }
+    }
+    Some(s)
 }
 
 /// Which values are byte-local, on the vectors, and how far back each reads (its leaves' bytes at
@@ -699,6 +788,11 @@ pub struct Lanes<'a> {
     splats: [Option<Value>; 256],
     index: Option<Value>,
     memo: HashMap<(usize, usize, u8), Lane>,
+    /// The body's classes packed (`body_pack`): their tables, and each table's lookups.
+    pack: Option<Rc<BodyPack>>,
+    packed: Vec<Option<(Value, Value)>>,
+    packed_lookups: HashMap<(usize, usize, u8), Value>,
+    tests: HashMap<(usize, usize, u8), Lane>,
 }
 
 impl<'a> Lanes<'a> {
@@ -728,6 +822,10 @@ impl<'a> Lanes<'a> {
             splats: [None; 256],
             index: None,
             memo: HashMap::new(),
+            pack: None,
+            packed: Vec::new(),
+            packed_lookups: HashMap::new(),
+            tests: HashMap::new(),
         }
     }
 
@@ -751,6 +849,10 @@ impl<'a> Lanes<'a> {
             splats: [None; 256],
             index: None,
             memo: HashMap::new(),
+            pack: None,
+            packed: Vec::new(),
+            packed_lookups: HashMap::new(),
+            tests: HashMap::new(),
         }
     }
 
@@ -775,15 +877,7 @@ impl<'a> Lanes<'a> {
         if let Some(&v) = self.lookups.get(&(t, c, lag)) {
             return v;
         }
-        let (lo, hi) = match self.nibbles.get(&(c, lag)) {
-            Some(&x) => x,
-            None => {
-                let b = self.bytes(f, c, lag);
-                let x = (f.ins().band(b, self.nibble), f.ins().ushr_imm(b, 4));
-                self.nibbles.insert((c, lag), x);
-                x
-            }
-        };
+        let (lo, hi) = self.nibbles_at(f, c, lag);
         let (tlo, thi) = match self.tables[t] {
             Some(x) => x,
             None => {
@@ -802,6 +896,93 @@ impl<'a> Lanes<'a> {
         v
     }
 
+    /// This body's classes by the pack `p` (`body_pack`): their lookups its tables'.
+    pub fn packed(mut self, p: Option<Rc<BodyPack>>) -> Self {
+        self.packed = vec![None; p.as_ref().map_or(0, |p| p.packing.tables.len())];
+        self.pack = p;
+        self
+    }
+
+    /// Packed table `t`'s class bytes at chunk `c`, lag `lag`, shared by the tests that read it.
+    fn packed_lookup(&mut self, f: &mut FunctionBuilder<'_>, t: usize, c: usize, lag: u8) -> Value {
+        if let Some(&v) = self.packed_lookups.get(&(t, c, lag)) {
+            return v;
+        }
+        let (lo, hi) = self.nibbles_at(f, c, lag);
+        let (tlo, thi) = match self.packed[t] {
+            Some(x) => x,
+            None => {
+                let table = &self.pack.as_ref().expect("a pack").packing.tables[t];
+                let tlo = f.func.dfg.constants.insert(ConstantData::from(&table.lo[..]));
+                let thi = f.func.dfg.constants.insert(ConstantData::from(&table.hi[..]));
+                let x = (f.ins().vconst(types::I8X16, tlo), f.ins().vconst(types::I8X16, thi));
+                self.packed[t] = Some(x);
+                x
+            }
+        };
+        let l = f.ins().swizzle(tlo, lo);
+        let h = f.ins().swizzle(thi, hi);
+        let v = f.ins().band(l, h);
+        self.packed_lookups.insert((t, c, lag), v);
+        v
+    }
+
+    /// The pack's test `k` at chunk `c`, lag `lag`: its range's subtract and compare, its
+    /// tables' bits, ORed, complemented where the test is.
+    fn test(&mut self, f: &mut FunctionBuilder<'_>, k: usize, c: usize, lag: u8) -> Lane {
+        if let Some(&l) = self.tests.get(&(k, c, lag)) {
+            return l;
+        }
+        let t = self.pack.as_ref().expect("a pack").packing.tests[k].clone();
+        let mut acc = Lane::Known(false);
+        let or = |f: &mut FunctionBuilder<'_>, a: Lane, b: Lane| Lane::and(f, a.not(), b.not()).not();
+        if let Some((lo, span)) = t.range {
+            let lane = if span == 255 {
+                Lane::Known(true)
+            } else {
+                let b = self.bytes(f, c, lag);
+                if span == 0 {
+                    let s = self.splat(f, lo);
+                    Lane::V(f.ins().icmp(IntCC::Equal, b, s), false)
+                } else {
+                    let from = self.splat(f, lo);
+                    let d = f.ins().isub(b, from);
+                    let sp = self.splat(f, span);
+                    Lane::V(f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d, sp), false)
+                }
+            };
+            acc = or(f, acc, lane);
+        }
+        for &(tb, bits) in &t.tables {
+            let v = self.packed_lookup(f, usize::from(tb), c, lag);
+            // `none_of` is the class, complemented: its compare is the bytes outside it.
+            let lane = self.none_of(f, v, bits);
+            acc = or(f, acc, lane);
+        }
+        let lane = if t.negated { acc.not() } else { acc };
+        self.tests.insert((k, c, lag), lane);
+        lane
+    }
+
+    /// The pack's extra set `k` (`body_pack`'s `extras`) at chunk `c`.
+    pub fn extra(&mut self, f: &mut FunctionBuilder<'_>, k: usize, c: usize) -> Lane {
+        let at = self.pack.as_ref().expect("a pack").extra + k;
+        self.test(f, at, c, 0)
+    }
+
+    /// Chunk `c`'s nibbles at lag `lag`, made once.
+    fn nibbles_at(&mut self, f: &mut FunctionBuilder<'_>, c: usize, lag: u8) -> (Value, Value) {
+        match self.nibbles.get(&(c, lag)) {
+            Some(&x) => x,
+            None => {
+                let b = self.bytes(f, c, lag);
+                let x = (f.ins().band(b, self.nibble), f.ins().ushr_imm(b, 4));
+                self.nibbles.insert((c, lag), x);
+                x
+            }
+        }
+    }
+
     fn splat(&mut self, f: &mut FunctionBuilder<'_>, byte: u8) -> Value {
         if byte == 0 {
             return self.zero16;
@@ -815,10 +996,15 @@ impl<'a> Lanes<'a> {
         v
     }
 
-    /// The bytes with none of `bits` set in `v`: the complement of the test, free.
+    /// The bytes with any of `bits` set in `v`. Where the backend tests bits in one instruction
+    /// (`BIT_TEST`: NEON's `vtst`, as the lean lexer's window reads its classes), the test
+    /// itself; else its complement, a compare with zero, the polarity free.
     fn none_of(&mut self, f: &mut FunctionBuilder<'_>, v: Value, bits: u8) -> Lane {
         let sel = self.splat(f, bits);
         let picked = f.ins().band(v, sel);
+        if BIT_TEST.load(std::sync::atomic::Ordering::Relaxed) {
+            return Lane::V(f.ins().icmp(IntCC::NotEqual, picked, self.zero16), false);
+        }
         Lane::V(f.ins().icmp(IntCC::Equal, picked, self.zero16), true)
     }
 
@@ -870,6 +1056,11 @@ impl<'a> Lanes<'a> {
                 let b = self.bytes(f, c, lag);
                 let s = self.splat(f, byte);
                 Lane::V(f.ins().icmp(IntCC::Equal, b, s), false)
+            }
+            // A class of the body's pack (`body_pack`): its test, its lookup the pack's.
+            BlockInst::Class { table, bits } if self.pack.as_ref().is_some_and(|p| p.of.contains_key(&(table, bits))) => {
+                let k = self.pack.as_ref().expect("a pack").of[&(table, bits)];
+                self.test(f, k, c, lag)
             }
             // A class of one run of bytes, its table not looked up here already: a subtract
             // and a compare, as a compiler lowers a range test (a digit's `b - '0' <= 9`).

@@ -16,6 +16,7 @@ pub mod bitlex_prove;
 pub mod bitlex_sat;
 pub mod bitlex_tier2;
 pub mod block;
+pub mod class_pack;
 pub mod block_native;
 pub mod clif_text;
 pub mod grammar;

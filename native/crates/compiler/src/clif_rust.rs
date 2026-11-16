@@ -759,6 +759,33 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
     })
 }
 
+/// A vector compare `band(x, y) != 0` (either side the zero): `x` and `y`, for NEON's `vtst`.
+fn tested_bits(f: &ir::Function, inst: ir::Inst) -> Option<(ir::Value, ir::Value)> {
+    let dfg = &f.dfg;
+    let def = |v: ir::Value| match dfg.value_def(dfg.resolve_aliases(v)) {
+        ir::ValueDef::Result(i, _) => Some(i),
+        _ => None,
+    };
+    let zero = |v: ir::Value| -> bool {
+        let Some(i) = def(v) else { return false };
+        match dfg.insts[i] {
+            ir::InstructionData::Unary { opcode: Opcode::Splat, arg } => def(arg).is_some_and(|c| matches!(dfg.insts[c], ir::InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } if imm.bits() == 0)),
+            ir::InstructionData::UnaryConst { opcode: Opcode::Vconst, constant_handle } => f.dfg.constants.get(constant_handle).as_slice().iter().all(|&b| b == 0),
+            _ => false,
+        }
+    };
+    let args = dfg.inst_args(inst);
+    let (and, other) = (args[0], args[1]);
+    let (and, other) = if zero(other) { (and, other) } else { (other, and) };
+    if !zero(other) {
+        return None;
+    }
+    match dfg.insts[def(and)?] {
+        ir::InstructionData::Binary { opcode: Opcode::Band, args: [x, y] } => Some((dfg.resolve_aliases(x), dfg.resolve_aliases(y))),
+        _ => None,
+    }
+}
+
 /// An instruction on vectors: NEON's intrinsic for it (`uint8x16_t` for `i8x16`).
 #[allow(clippy::too_many_arguments)]
 fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[String], rt: Option<ir::Type>, at: Option<ir::Type>, set: &dyn Fn(String) -> String, addr: &dyn Fn(&str) -> String) -> Result<String, String> {
@@ -786,7 +813,11 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
             let sg = |x: &str| format!("vreinterpretq_s8_u8({x})");
             u(match data.cond_code().ok_or("a compare with no condition")? {
                 IntCC::Equal => format!("vceqq_u8({a}, {b})"),
-                IntCC::NotEqual => format!("vmvnq_u8(vceqq_u8({a}, {b}))"),
+                // Bits of an `and` against zero: NEON's bit test, one instruction.
+                IntCC::NotEqual => match tested_bits(f, inst) {
+                    Some((x, y)) => format!("vtstq_u8(v{}, v{})", x.as_u32(), y.as_u32()),
+                    None => format!("vmvnq_u8(vceqq_u8({a}, {b}))"),
+                },
                 IntCC::UnsignedGreaterThan => format!("vcgtq_u8({a}, {b})"),
                 IntCC::UnsignedGreaterThanOrEqual => format!("vcgeq_u8({a}, {b})"),
                 IntCC::UnsignedLessThan => format!("vcltq_u8({a}, {b})"),
@@ -881,5 +912,38 @@ mod tests {
         assert!(src.contains("STRUCTURED: (usize, usize) = (1, 1)"), "{src}");
         assert!(!src.contains("match b {"), "no loop over the blocks: {src}");
         assert!(src.contains("loop {"), "{src}");
+    }
+
+    /// A vector's bits against a mask, compared with zero for any set (`(x & m) != 0`), is
+    /// one bit test (`vtstq_u8`), either operand order; a compare with zero for none is not.
+    #[test]
+    fn bits_against_zero_are_one_test() {
+        use cranelift_codegen::ir::condcodes::IntCC;
+        use cranelift_codegen::ir::types::{I8, I8X16};
+        for (cc, zero_first) in [(IntCC::NotEqual, false), (IntCC::NotEqual, true), (IntCC::Equal, false)] {
+            let mut sig = Signature::new(CallConv::Tail);
+            sig.params.push(AbiParam::new(I64));
+            sig.returns.push(AbiParam::new(I64));
+            let mut f = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, 0), sig);
+            let mut ctx = FunctionBuilderContext::new();
+            let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+            let entry = b.create_block();
+            b.append_block_params_for_function_params(entry);
+            b.switch_to_block(entry);
+            let p = b.block_params(entry)[0];
+            let x = b.ins().load(I8X16, cranelift_codegen::ir::MemFlags::trusted(), p, 0);
+            let m = b.ins().iconst(I8, 6);
+            let m = b.ins().splat(I8X16, m);
+            let z = b.ins().iconst(I8, 0);
+            let z = b.ins().splat(I8X16, z);
+            let and = b.ins().band(x, m);
+            let t = if zero_first { b.ins().icmp(cc, z, and) } else { b.ins().icmp(cc, and, z) };
+            b.ins().store(cranelift_codegen::ir::MemFlags::trusted(), t, p, 0);
+            b.ins().return_(&[p]);
+            b.seal_all_blocks();
+            b.finalize();
+            let src = super::translate(&[(0, f)], &[(0, "entry")], &[]).expect("translates");
+            assert_eq!(src.contains("vtstq_u8"), cc == IntCC::NotEqual, "{cc:?}, zero first {zero_first}: {src}");
+        }
     }
 }

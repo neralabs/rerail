@@ -5,10 +5,12 @@
 //!
 //! `cargo run -p rerail-rr-aot-gen` before building `rerail-rr-aot`.
 
-use rerail_compiler::{clif_rust, native_cpu_stream, native_ir, rust_stream};
+use rerail_compiler::{clif_rust, native_cpu_lanes, native_cpu_stream, native_ir, rust_stream};
 
 fn main() {
     native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
+    // Rust's NEON tests bits in one instruction (`vtst`): classes as the tests themselves.
+    native_cpu_lanes::BIT_TEST.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = rerail_rr_parser::compiled().expect("the grammar compiles");
     let one = clif_rust::rust_source(&c.parser).unwrap_or_else(|e| panic!("to Rust: {e}"));
     let native = native_ir::lower(&c.program, 0, 0).expect("lowers");

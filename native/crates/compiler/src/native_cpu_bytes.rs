@@ -19,7 +19,8 @@ use std::collections::HashMap;
 
 use crate::block_native::{BlockInst, BlockNative};
 use crate::native_cpu_block::Sym;
-use crate::native_cpu_lanes::{Lanes, Plan};
+use crate::native_cpu_lanes::{BodyPack, Lanes, Plan};
+use std::rc::Rc;
 use crate::native_cpu_shape::Step;
 use cranelift_codegen::ir::{InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::FunctionBuilder;
@@ -39,6 +40,9 @@ pub struct Bytewise<'a> {
     /// call, with the function's own parameters, a rare carry's way returns instead of calling
     /// the carry's function, so the short one calls nothing on its way.
     pub bail: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature)>,
+    /// Each body's classes packed (`native_cpu_lanes::body_pack`), by its roots and extra sets:
+    /// made once.
+    packs: std::cell::RefCell<HashMap<(Vec<usize>, Vec<crate::class_pack::Need>), Rc<BodyPack>>>,
 }
 
 /// `escaped`'s carries through a window (`Bytewise::words_carried`): given in, by run, and
@@ -49,6 +53,8 @@ struct Carry {
     ins: Vec<(usize, Value)>,
     outs: Vec<(usize, Value)>,
     short: bool,
+    /// The body's classes packed: its windows' lookups.
+    pack: Option<Rc<BodyPack>>,
 }
 
 /// Where the reads are: the file's first byte and length, and the body's constants.
@@ -75,7 +81,7 @@ impl<'a> Bytewise<'a> {
                     _ => false,
                 };
         }
-        Bytewise { native, plan, can, carries: Vec::new(), bail: None }
+        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default() }
     }
 
     /// The runs whose `escaped` the bytes make: each `a`, once.
@@ -127,6 +133,25 @@ impl<'a> Bytewise<'a> {
         self.native.outputs.get(usize::from(o)).is_some_and(|&v| self.can[usize::from(v)])
     }
 
+    /// The pack of the classes values `roots` read, and of `extras` (`body_pack`), made once.
+    fn pack_for(&self, roots: &[usize], extras: &[crate::class_pack::Need]) -> Rc<BodyPack> {
+        let mut key_roots = roots.to_vec();
+        key_roots.sort_unstable();
+        key_roots.dedup();
+        let key = (key_roots, extras.to_vec());
+        if let Some(p) = self.packs.borrow().get(&key) {
+            return p.clone();
+        }
+        let p = Rc::new(crate::native_cpu_lanes::body_pack(self.native, &key.0, extras));
+        self.packs.borrow_mut().insert(key, p.clone());
+        p
+    }
+
+    /// The instructions of outputs `os`.
+    fn roots(&self, os: &[u16]) -> Vec<usize> {
+        os.iter().map(|&o| usize::from(self.native.outputs[usize::from(o)])).collect()
+    }
+
     /// Output `o`'s bits for the file's bytes `p .. p + 64` (`p` at least 0), none past its end.
     pub fn word(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         let x = usize::from(self.native.outputs[usize::from(o)]);
@@ -154,12 +179,59 @@ impl<'a> Bytewise<'a> {
         self.words_carried(f, at, os, p, &[], heads).0
     }
 
+    /// `words`, and the words of sets `extras` the body tests besides (a byte set each, at
+    /// `p .. p + 64`, none past the file's end): their classes and the outputs' packed into
+    /// shared tables (`class_pack`), one lookup for all, as a lexer's window classifies a byte
+    /// once for every set it asks.
+    pub fn words_with(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], extras: &[crate::class_pack::Need], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, Vec<Value>) {
+        let pack = self.pack_for(&self.roots(os), extras);
+        let mut carry = Carry { pack: Some(pack.clone()), ..Carry::default() };
+        let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
+        let mut memo = HashMap::new();
+        let cut = self.cut64(f, at, p);
+        let words: Vec<Value> = os.iter().map(|&o| {
+            let x = usize::from(self.native.outputs[usize::from(o)]);
+            let d = i64::from(self.native.output_delays[usize::from(o)]);
+            let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, &mut carry, heads);
+            f.ins().band(m, cut)
+        }).collect();
+        let lanes = windows.entry(0).or_insert_with(|| {
+            let base = f.ins().iadd(at.bytes, p);
+            Lanes::window(f, self.native, &self.plan, base, p, at.len, at.nibble).packed(Some(pack.clone()))
+        });
+        let more: Vec<Value> = (0..extras.len()).map(|k| {
+            let parts: Vec<_> = (1..=4).map(|c| lanes.extra(f, k, c)).collect();
+            let m = match lanes.mask(f, &parts, at.weights) {
+                Sym::Known(k) => f.ins().iconst(types::I64, k as i64),
+                Sym::Value(v, false) => v,
+                Sym::Value(v, true) => f.ins().bnot(v),
+                Sym::Slot(..) => unreachable!("a window's mask is a value"),
+            };
+            f.ins().band(m, cut)
+        }).collect();
+        (words, more)
+    }
+
+    /// The file's bytes' bits from `p`: `len - p` of them, at most 64.
+    fn cut64(&self, f: &mut FunctionBuilder<'_>, at: &File, p: Value) -> Value {
+        let rem = f.ins().isub(at.len, p);
+        let zero = f.ins().iconst(types::I64, 0);
+        let sixty_four = f.ins().iconst(types::I64, 64);
+        let rem = f.ins().smax(rem, zero);
+        let full = f.ins().icmp(IntCC::SignedGreaterThanOrEqual, rem, sixty_four);
+        let one = f.ins().iconst(types::I64, 1);
+        let low = f.ins().ishl(one, rem);
+        let low = f.ins().iadd_imm(low, -1);
+        let ones = f.ins().iconst(types::I64, -1);
+        f.ins().select(full, ones, low)
+    }
+
     /// `words`, with `escaped(a)`'s carry in at `p` given for each `(a, carry)` of `cins`
     /// where the outputs read it at their window's start (`carried_runs`), not read back from
     /// the bytes; and each one's carry out, at `p + 64` (simdjson's add overflow), in `cins`'
     /// order: a loop of windows 64 bytes apart passes it on, as the lean lexer's reader does.
     pub fn words_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, Vec<Value>) {
-        let mut carry = Carry { ins: cins.to_vec(), outs: Vec::new(), short: false };
+        let mut carry = Carry { ins: cins.to_vec(), outs: Vec::new(), short: false, pack: Some(self.pack_for(&self.roots(os), &[])) };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
         let rem = f.ins().isub(at.len, p);
@@ -196,7 +268,7 @@ impl<'a> Bytewise<'a> {
     /// `short_word` for each of outputs `os`, from one window's vectors shared among them, as
     /// a lexer reads a number's digits and asks of its `.` in one pass.
     pub fn short_words(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
-        let mut carry = Carry { short: true, ..Carry::default() };
+        let mut carry = Carry { short: true, pack: Some(self.pack_for(&self.roots(os), &[])), ..Carry::default() };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
         let Some((&first, rest)) = os.split_first() else { return Vec::new() };
@@ -330,7 +402,8 @@ impl<'a> Bytewise<'a> {
     fn mask(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, start: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
-        self.mask_at(f, at, x, start, 0, &mut windows, &mut memo, &mut Carry::default(), heads)
+        let mut carry = Carry { pack: Some(self.pack_for(&[x], &[])), ..Carry::default() };
+        self.mask_at(f, at, x, start, 0, &mut windows, &mut memo, &mut carry, heads)
     }
 
     /// `x`'s word from `start - back`; the windows' vectors and the words shared.
@@ -344,7 +417,7 @@ impl<'a> Bytewise<'a> {
             let pos = here(f);
             let lanes = windows.entry(back).or_insert_with(|| {
                 let base = f.ins().iadd(at.bytes, pos);
-                Lanes::window(f, self.native, &self.plan, base, pos, at.len, at.nibble)
+                Lanes::window(f, self.native, &self.plan, base, pos, at.len, at.nibble).packed(carry.pack.clone())
             });
             let parts: Vec<_> = (1..=if carry.short { 1 } else { 4 }).map(|c| lanes.get(f, x, c)).collect();
             match lanes.mask(f, &parts, at.weights) {
@@ -1142,5 +1215,114 @@ mod tests {
         assert_eq!(b.fold(3, -1, None, quote), None, "`\"` one back at a `\"`: true but for the bound");
         assert_eq!(b.fold(3, 0, None, (1, set(b"'"))), Some(false), "`\"` one back at a `'`: false");
         assert_eq!(b.fold(4, 0, None, (1, set(b"\""))), None, "the byte at p not known");
+    }
+
+    /// A program of two classes spread over two tables (as products are allocated in order of
+    /// first use), and a third set the body tests besides: one window looks them all up in
+    /// one table (`class_pack`), two nibble lookups a 16 bytes, and each word is its set's.
+    #[test]
+    fn a_windows_classes_share_one_lookup() {
+        use crate::block::ClassTable;
+        use crate::class_pack::{Need, has};
+        use cranelift_codegen::ir::{AbiParam, Opcode};
+        use cranelift_module::{Linkage, Module};
+        let mut t0 = ClassTable::default();
+        let mut t1 = ClassTable::default();
+        let mut put = |t: &mut ClassTable, bit: u8, hi: &[usize], lo: std::ops::RangeInclusive<usize>, also: &[usize]| {
+            for &h in hi {
+                t.hi[h] |= 1 << bit;
+            }
+            for l in lo.chain(also.iter().copied()) {
+                t.lo[l] |= 1 << bit;
+            }
+        };
+        // Table 0: whitespace in bits 0 and 1, six products of other classes after them.
+        put(&mut t0, 0, &[2], 0..=0, &[]);
+        put(&mut t0, 1, &[0], 9..=10, &[13]);
+        for bit in 2..8u8 {
+            put(&mut t0, bit, &[8 + usize::from(bit)], 0..=3, &[]);
+        }
+        // Table 1: a word's bytes, digits, letters and `_`.
+        put(&mut t1, 0, &[3], 0..=9, &[]);
+        put(&mut t1, 1, &[4, 6], 1..=15, &[]);
+        put(&mut t1, 2, &[5, 7], 0..=10, &[]);
+        put(&mut t1, 3, &[5], 15..=15, &[]);
+        let native = BlockNative {
+            tables: vec![t0, t1],
+            insts: vec![BlockInst::Class { table: 0, bits: 0b11 }, BlockInst::Class { table: 1, bits: 0b1111 }],
+            outputs: vec![0, 1],
+            extracts: Vec::new(),
+            totals: Vec::new(),
+            masks: Vec::new(),
+            delay: 0,
+            output_delays: vec![0, 0],
+            groups: Vec::new(),
+            records: None,
+            walks: Vec::new(),
+        };
+        let space = crate::native_cpu_lanes::byte_set(&native, 0).expect("a class");
+        let word = crate::native_cpu_lanes::byte_set(&native, 1).expect("a class");
+        let mut rare = [0u64; 4];
+        for b in [b'"', b'#', b'/'].into_iter().chain(b'0'..=b'9').chain(0xc0..=0xff) {
+            rare[usize::from(b >> 6)] |= 1 << (b & 63);
+        }
+        let need = Need { set: rare, care: std::array::from_fn(|k| !space[k]) };
+        let b = Bytewise::of(&native);
+        let mut module = cranelift_jit::JITModule::new(crate::native_cpu_codegen::tier1_builder().expect("a JIT"));
+        let mut sig = module.make_signature();
+        sig.params.extend([AbiParam::new(types::I64); 4]);
+        let id = module.declare_function("window", Linkage::Local, &sig).expect("declared");
+        let mut ctx = module.make_context();
+        ctx.func.signature = sig;
+        let mut fctx = cranelift_frontend::FunctionBuilderContext::new();
+        {
+            let mut f = FunctionBuilder::new(&mut ctx.func, &mut fctx);
+            let entry = f.create_block();
+            f.append_block_params_for_function_params(entry);
+            f.switch_to_block(entry);
+            let p = f.block_params(entry).to_vec();
+            let k = crate::native_cpu_block::Consts::make(&mut f);
+            let file = File { bytes: p[0], len: p[1], nibble: k.nibble, weights: k.weights, even: k.even };
+            let mut heads = Vec::new();
+            let (w, more) = b.words_with(&mut f, &file, &[0, 1], &[need], p[2], &mut heads);
+            for (i, v) in w.iter().chain(&more).enumerate() {
+                f.ins().store(MemFlags::trusted(), *v, p[3], 8 * i as i32);
+            }
+            f.ins().return_(&[]);
+            f.seal_all_blocks();
+            f.finalize();
+        }
+        let swizzles = ctx.func.layout.blocks().flat_map(|bk| ctx.func.layout.block_insts(bk)).filter(|&i| ctx.func.dfg.insts[i].opcode() == Opcode::Swizzle).count();
+        assert_eq!(swizzles, 8, "one table's two lookups for each of four 16 bytes:\n{}", ctx.func.display());
+        module.define_function(id, &mut ctx).expect("defined");
+        module.finalize_definitions().expect("finalized");
+        let run: extern "C" fn(*const u8, i64, i64, *mut u64) = unsafe { std::mem::transmute(module.get_finalized_function(id)) };
+        let alphabet: Vec<u8> = b" \t\n\r\"#/_09azAZ_.,;-+$\x0b\x0c\x7f\x80\xbf\xc0\xff".to_vec();
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for round in 0..300 {
+            let n = 1 + (round % 90);
+            // 16 bytes before and 80 after the file, zeros, as a window may read.
+            let mut buf = vec![0u8; 16 + n + 80];
+            for byte in &mut buf[16..16 + n] {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                *byte = alphabet[(x % alphabet.len() as u64) as usize];
+            }
+            let p = (round % 3).min(n - 1);
+            let mut out = [0u64; 3];
+            run(buf[16..].as_ptr(), n as i64, p as i64, out.as_mut_ptr());
+            for i in 0..64usize {
+                let at = p + i;
+                let byte = if at < n { buf[16 + at] } else { continue };
+                let bit = |w: u64| w >> i & 1 == 1;
+                assert_eq!(bit(out[0]), has(&space, byte), "space at {i} ({byte:#04x})");
+                assert_eq!(bit(out[1]), has(&word, byte), "word at {i} ({byte:#04x})");
+                if !has(&space, byte) {
+                    assert_eq!(bit(out[2]), has(&rare, byte), "rare at {i} ({byte:#04x})");
+                }
+            }
+            assert_eq!(out.iter().map(|w| if n - p >= 64 { 0 } else { w >> (n - p) }).fold(0, |a, w| a | w), 0, "none past the file");
+        }
     }
 }

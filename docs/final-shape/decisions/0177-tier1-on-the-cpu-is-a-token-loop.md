@@ -2344,3 +2344,67 @@ Not changed: the values the main loop reloads after a call. They are
 live across it, more than the callee-saved registers hold.
 
 Counts, reported: unchanged but strings 302.1 and comments 228.2.
+
+## A window's classes share one lookup
+
+The lean lexer classifies a block with one table lookup. Two
+16-byte tables, one indexed by the byte's low nibble and one by its
+high nibble, are `and`ed. Each of the eight result bits is a class,
+and one `vtst` reads a class. Whitespace, a word's bytes and a rare
+token's first bytes all come from that one lookup. simdjson's
+`classify` works the same way.
+
+Our refill made three lookups. The grammar's classes took products
+(a set of high nibbles times a set of low nibbles) in order of first
+use, eight to a table. So whitespace sat in one table, a word's bytes
+in another, and the rare set in a third table of its own. The third
+also loaded the block's bytes again.
+
+**The change.** `class_pack` packs the sets a body tests into as few
+tables as it can, by four means a hand-written lexer's tables use:
+
+- **Shared products.** The digits are one product, used by a word
+  and by a rare start.
+- **Don't-cares.** A byte the body never asks about may be in a set
+  or out of it. The rare set is only read at starts, so a skipped
+  byte's answer is free.
+- **Ranges.** A run of bytes, wrapping past 0xff, is one subtract
+  and compare. The control bytes, DEL and every byte past 0x7f are
+  one test.
+- **Complements.** A set whose complement takes fewer products is
+  tested by it.
+
+A set's products are in one table, so a set is one lookup.
+`body_pack` packs the classes a window's values read. A class whose
+table a `pair` reads keeps that table. The packing is dropped where
+it would make more lookups than the program's own tables.
+`Bytewise::words_with` makes extra sets' words in the same window.
+The refill tests the rare set that way.
+
+```text
+before: lookup A (whitespace), lookup B (word), load again,
+        lookup C (rare)
+after:  lookup 1 (whitespace), lookup 2 (word and rare, 8 bits),
+        one range compare (rare's control and high bytes)
+```
+
+rr's three sets take ten products, so they need two tables. Lean's
+take eight, because its rare set is narrower: our grammar's rare
+starts include `$`, `'`, `?`, `\` and DEL.
+
+A class is the bit test itself where the backend has one
+(`BIT_TEST`). Rust's NEON has `vtstq_u8`, and `clif_rust` prints
+`(x & m) != 0` as one. Cranelift's aarch64 lowering has none, so the
+JIT keeps the compare with zero and the free complement. The
+ahead-of-time build sets the flag (`rr_aot_gen`, and `aot()` when it
+checks the fingerprint).
+
+Tests: `class_pack`'s seven (a lexer's classes in one table, a shared
+product, a wrapping range, don't-cares merging rows, a complement,
+a second table past eight, random sets answered exactly);
+`a_windows_classes_share_one_lookup` (two program tables and an
+extra set: eight swizzles, each word its set's, on random bytes);
+`bits_against_zero_are_one_test`.
+
+Counts, reported: words 99.3, punctuation 54.3, mixed 55.9,
+strings 314.3, numbers 154.5, comments 236.5.
