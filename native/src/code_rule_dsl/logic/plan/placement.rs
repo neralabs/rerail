@@ -256,6 +256,12 @@ pub(in crate::code_rule_dsl) struct Shape {
     /// For each form the device lacks, the operations that use it (`@sql_instr in a comparison`, `aggregate
     /// sum`): what the profile's hazards name.
     pub(in crate::code_rule_dsl) uses: BTreeMap<Form, BTreeSet<String>>,
+    /// The rows its seeds make, by the relation they make (the planner's estimates): a recursive relation's first
+    /// delta.
+    pub(in crate::code_rule_dsl) seeds: BTreeMap<String, f64>,
+    /// Its recursive probes, each with its delta relation, its planned work and rows, and the delta its plan was
+    /// priced at: totalled over every row the relation gains (`close_rounds`).
+    pub(in crate::code_rule_dsl) probes: Vec<(String, f64, f64, f64)>,
 }
 
 /// A call's name and arguments.
@@ -340,6 +346,36 @@ impl Shape {
         if !DEVICE_FORMS.contains(&f) {
             self.uses.entry(f).or_default().insert(what());
         }
+    }
+
+    /// Seeds' rows `rows` made into `rel`.
+    pub(in crate::code_rule_dsl) fn seeded(&mut self, rel: &str, rows: f64) {
+        *self.seeds.entry(rel.to_owned()).or_default() += rows.max(0.0);
+    }
+
+    /// A recursive probe of delta `rel`, planned at `work` and `rows` for a delta of `delta` rows.
+    pub(in crate::code_rule_dsl) fn probe(&mut self, rel: &str, work: f64, rows: f64, delta: f64) {
+        self.probes.push((rel.to_owned(), work.max(0.0), rows.max(0.0), delta));
+    }
+
+    /// The probes' work over the stratum's rounds, as the executor counts it (decision 0304 §3): each row a
+    /// recursive relation gains is a delta once, and each probe of it reads every such row. A probe's plan was priced
+    /// at the delta the planner saw (one round's, often the relation's few rows when it opened); the rows its
+    /// relation gains are at least its seeds' rows, and the rows its probes make from them: one round more, at most
+    /// as many again (a round's estimate is rough, and its rounds after that compound its error).
+    pub(in crate::code_rule_dsl) fn close_rounds(&mut self) {
+        let mut by: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
+        for (rel, work, rows, delta) in &self.probes {
+            let d = delta.max(1.0);
+            let at = by.entry(rel.as_str()).or_default();
+            at.0 += work / d;
+            at.1 += rows / d;
+        }
+        for (rel, (per_row, out_per_row)) in by {
+            let first = self.probes.iter().filter(|p| p.0 == rel).map(|p| p.3).fold(0.0, f64::max).max(self.seeds.get(rel).copied().unwrap_or(0.0)).max(1.0);
+            self.work += per_row * first * (1.0 + out_per_row.min(1.0));
+        }
+        self.probes.clear();
     }
 
     /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
@@ -742,6 +778,20 @@ pub mod tests {
         let cut = |walked: f64| Shape { work: 2e6, rows: 1e3, rules: 1, steps: 2, joins: vec![JoinEst { rel: "node".into(), input: 1e3, relation: 1e6, output: 1e3, walked: (1e3, walked), keys: 1, range: false }], ..Shape::default() };
         assert!(place(&cut(1e3)).gpu_s < place(&cut(1e7)).gpu_s, "every row walked costs the device more");
         set_device(was);
+        // A recursive probe planned for the delta it saw at open is priced over the rows its relation gains: its
+        // seeds' rows (here 500, against the 18 it saw) and one round more, at most as many again.
+        let mut rounds = Shape { work: 100.0, ..Shape::default() };
+        rounds.seeded("q", 500.0);
+        rounds.probe("q", 3600.0, 9.0, 18.0);
+        rounds.close_rounds();
+        assert_eq!(rounds.work, 100.0 + 200.0 * 500.0 * 1.5);
+        // A probe that makes more rows than it reads adds one round, not a divergent sum; one with no seeds keeps
+        // the delta it was priced at.
+        let mut many = Shape::default();
+        many.probe("r", 40.0, 80.0, 20.0);
+        many.close_rounds();
+        assert_eq!(many.work, 2.0 * 20.0 * 2.0);
+        assert!(many.probes.is_empty());
         // Recursion and computed terms are forms too.
         let mut rec = Shape::default();
         adds(&mut rec, &[atom("edge", false)], &[Term::Call("add".into(), vec![].into())], 1.0, true);

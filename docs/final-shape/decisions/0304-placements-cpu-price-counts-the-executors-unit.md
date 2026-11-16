@@ -65,25 +65,54 @@ the same at 0.7 ms.
 The three strata that left the GPU (`miss`, `rr_ctx15`, `xk_fz286_fl279_violation_3`) ran a few of their runs
 there. Their CPU is the same either way, within 2 ms. The findings are the same: 1,629.
 
+## A recursive probe's rounds (added the same day)
+
+The first version of this record said the recursive strata missed by their join statistics, not by their rounds.
+The explain of each probe says otherwise. A probe's plan is priced at the delta the planner sees when the stratum
+opens: one round's, often the relation's few rows. The executor runs it over every row the relation gains, since
+each row is a delta once:
+
+| stratum | the delta priced (a plan) | the delta run (a loop) | the probe's fan-out, priced / run |
+|---|---|---|---|
+| `qualname` | 18 | about 500 | 107 / 103 rows a scope |
+| `qn` | 6.4 | about 1,480 | |
+| `walk` | 3,992 | about 18,400 | |
+| the `ask_*` stratum | 1 | hundreds to thousands | |
+
+`qualname`'s fan-out at `rr_nearest_scope($f, $s)` was priced right.
+
+3. **A recursive probe is priced over the rows its relation gains** (`Shape::close_rounds`). The probe's planned
+   work per delta row, times its relation's first delta and one round more. The first delta is the larger of what
+   the seeds make and the delta the plan saw. The round more is at most as many rows again: a round's estimate is
+   rough, and the rounds after it compound its error.
+
+On the same run:
+
+| stratum | planned before | planned after | work done |
+|---|---|---|---|
+| `qualname` | 80 K | 137 K | 903 K |
+| `parsed_in` | 18 K | 39 K | 29 K |
+| `ask_p0_*` | 57 | 109 | 373 |
+| `exports/resolve_export` | 137 K | 259 K | 27 K |
+| `exported/public_name` | 34 K | 43 K | 10 K |
+
+The rest of the miss is in the seeds' estimates, which this count multiplies. `qualname`'s seed `def_name($f, $x),
+rr_nearest_scope($f, $s), modname($s, $m)` is priced at 32.5 rows a plan and makes about 181 a loop: `modname` after
+`rr_nearest_scope` is given a containment of 0.056, while about 30% of definitions sit at module scope. With the
+seed right, the count gives about 71 K a loop against 52 K run. `exports`' seeds are priced over their rows, and the
+count multiplies that too. `qn`'s seed (`ibind`, `bound_in`, `walk`) did 72 K units against 405 priced. These are
+the planner's statistics: work queue Q44.
+
 ## What it does not fix
 
-- **Recursive strata miss by their join statistics, not by their rounds.** Q36 had blamed rounds: a probe priced
-  for one round. After 0297, `walk` and `tgt` are priced within 2× of their work (1.53 M against 2.43 M, 0.08 M
-  against 0.12 M). The large misses traced are in a join's fan-out or a seed's estimate:
-
-  | stratum | planned | done | cause |
-  |---|---|---|---|
-  | `qualname` | 0.07 M | 0.97 M | `rr_nearest_scope($f, $s)` with `$s` bound fans 8,778 rows to 919,420 |
-  | `qn` | 0.01 M | 0.10 M | a seed (`ibind`, `bound_in`, `walk`) did 72 K units |
-  | the 50-relation `ask_*` stratum | 1,350 | 144 K | not yet traced |
-
-  These are the planner's statistics. They are cost-classifier's to fix, after 0299, and are in the work queue.
-- **Some views' rows cost far more than a unit.** `ann_root`'s seed reads `kind` and `field` at about 1.5 µs a
-  unit. `fzk287`'s reads `line` and `col` at about 18 µs a unit. `rdefn` and `attr_of` read `text`. Their strata
-  are priced at a quarter to a tenth of what they cost. A per-relation price for a view's row would cover them. The
-  cost belongs to the view, not to placement: Q36 keeps it open.
+- **The seeds' estimates** above (Q44).
+- **Some views' rows cost far more than a unit.** Two shapes were fixed after this record (Q36: a field probed by
+  parent and field reads the tape; a column pushed in order is its own index). `attr_of`, `rdefn` and `fzk287`
+  are still priced at a fifth or less of their CPU. A per-view price needs each step's CPU, which the profile does
+  not split by step.
 
 ## Tests
 
 `placement::tests::a_stratum_is_placed_by_its_price_and_named_by_the_forms_the_device_lacks`: the copy that stays
-on the CPU is now one run of `kind` as measured, 50,000 rows scanned and made.
+on the CPU is now one run of `kind` as measured, 50,000 rows scanned and made; a recursive probe priced over its
+seeds' rows and one round more, and one that makes more rows than it reads adding one round, not a divergent sum.

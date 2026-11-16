@@ -742,7 +742,7 @@ pass.
   costs about 1.5 µs a unit, `fzk287`'s (`line`, `col`) about 18 µs, and `rdefn` and `attr_of` read `text`. Each
   is priced at a quarter to a tenth of its CPU. The next step is a per-relation price for a view's row, measured
   per view, or else a cheaper read of those views (the row read above).
-- **Not placement's**: the recursive strata's misses are join statistics, now Q41.
+- **Not placement's**: the recursive strata's misses are join statistics, now Q44.
 - **Two view reads made cheaper** (2026-11-16, a sample of the whole run, 1 ms): of the join engine's time, 23% was
   `View::find`, a probe into a view. Two shapes in it were wasted:
   - A field probed by its parent with its field a constant (`field($a, #f65565, $t)`, `$a` bound): the parent's
@@ -803,22 +803,26 @@ pass.
 - **Done when**: phased-facts holds the fix or its replacement, and a strict cold run writes its entries with no
   SQL in the waves.
 
-### Q41. Recursive strata's joins mispriced by their fan-out (cost-classifier's to take)
+### Q44. (Q41 at df7124e20) Recursive strata's seeds priced far under their rows (cost-classifier's to take)
 
 - **Found** (2026-11-16, Native-and-GPU-strata, decision 0304's run over PostHog's `posthog/hogql`, after 0297 and
-  0299): three strata whose planned work misses the work done by 10× or more, all of them recursive:
-  - `qualname`: 0.07 M planned, 0.97 M done. Its probe `qualname($s, $p), !kind($s, #k1132),
-    rr_nearest_scope($f, $s), def_name($f, $x)` was priced at 1,380 units a plan. At `rr_nearest_scope` with `$s`
-    bound, 8,778 rows became 919,420, and `def_name` then kept 5,384.
-  - `qn`: 0.01 M planned, 0.10 M done. The seed `ibind($s, $x, $q), bound_in($s, $x), walk($n, $x, $s)` did
-    72 K units.
-  - The 50-relation `ask_loaded_bff/ask_py_before_bb/…` stratum: 1,350 planned, 144 K done. Not yet traced.
-- **Why it matters**: placement prices a stratum by its planned work (0304). A stratum planned at a tenth of its work
-  is priced at a tenth of its CPU.
-- **Whose**: the planner's statistics: `atom_rows_`, and the fan of a `nearest` relation read with its scope bound
-  (0299's line of work).
+  0299): the recursive strata's planned work misses their work by 10× or more. Two causes:
+  - **The rounds** (fixed, 0304 §3): a probe was priced at the delta the planner saw at open, one round's. It is
+    now priced over its seeds' rows and one round more.
+  - **The seeds' estimates** (open): the rounds multiply them.
+    - `qualname`: the seed `def_name($f, $x), rr_nearest_scope($f, $s), modname($s, $m)` is priced at 32.5 rows a
+      plan and makes about 181 a loop. `modname` after `rr_nearest_scope` is given a containment of 0.056, while
+      about 30% of definitions sit at module scope. With it right, the count is about 71 K a loop against 52 K
+      run, not 8 K.
+    - `qn`: the seed `ibind($s, $x, $q), bound_in($s, $x), walk($n, $x, $s)` is priced at 405 units and did 72 K;
+      `walk` by `(x, s)` is priced at 1 row a binding and gives 7.
+    - `exports/resolve_export`: priced over its work (259 K against 27 K).
+    - The 50-relation `ask_*` stratum: every probe priced at a delta of 1 row, with no seeds' rows to go on.
+- **Why it matters**: placement prices a stratum by its planned work (0304). A stratum planned at a tenth of its
+  work is priced at a tenth of its CPU.
+- **Whose**: the planner's statistics: the containment of a lookup after a `nearest` relation, and a lookup on two
+  derived columns (0299's line of work).
 - **Done when**: these strata's planned work is within 2× of their work.
-
 
 ## Questions for the user
 

@@ -7375,6 +7375,7 @@ impl<'a> Run<'a, '_> {
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
             shape.add(Order::new(b, &order), work, false);
+            shape.seeded(head, rows);
             if let Some(x) = &x {
                 shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
             }
@@ -7488,10 +7489,13 @@ impl<'a> Run<'a, '_> {
                 plan_site("a stratum's probe");
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
-                let ((order, work, _), x) = self.model.plan_rule_reused(pf, b, Some(ai))?;
+                let ((order, work, rows), x) = self.model.plan_rule_reused(pf, b, Some(ai))?;
                 let key = self.model.reused_key(b, Some(ai));
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
-                shape.add(Order::new(b, &order), work, true);
+                // Its delta as the plan priced it (`atom_rows`: the relation's rows, at most its last delta's).
+                let delta = self.model.stats.delta_rows.get(a).copied().map_or(self.model.card(a), |d| d.min(self.model.card(a)));
+                shape.add(Order::new(b, &order), 0.0, true);
+                shape.probe(a, work, rows, delta);
                 if let Some(x) = &x {
                     shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
                 }
@@ -7576,6 +7580,7 @@ impl<'a> Run<'a, '_> {
         // (`device`): its seed joins run there, in one submission, and a recursive one's rounds to its fixpoint
         // (`device::fixpoint`), unless the device refuses one of them, which the profile then names. Gates and
         // requests are forms the device lacks.
+        shape.close_rounds();
         let placed = placement::place(&shape);
         // Placed there but a shape the device's run does not take: named, as a refusal.
         let not_taken = if !placed.gpu {
