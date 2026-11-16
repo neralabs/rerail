@@ -9,6 +9,11 @@ import { openRerailDatabase } from "../engine/storage/database.js";
 
 /** How often a running daemon forgets gone checkouts, so a worktree Git removed stays recorded at most this long. */
 const CHECKOUT_PRUNING_INTERVAL_MS = 60 * 60 * 1000;
+/**
+ * How long a pass may wait on the filesystem before it gives up. A stat on a hard-mounted share whose server is down
+ * never answers, and a pass waiting on it would keep every later one from starting for the daemon's life.
+ */
+const CHECKOUT_PRUNING_PASS_LIMIT_MS = 15 * 60 * 1000;
 
 export interface CheckoutPruning {
   /**
@@ -20,32 +25,47 @@ export interface CheckoutPruning {
 
 export interface CheckoutPruningOptions {
   readonly intervalMs?: number;
+  /** How long one pass may take before it gives up, forgetting nothing, so the next one can start. */
+  readonly passLimitMs?: number;
   readonly log?: (line: string) => void;
 }
 
 /**
  * Forget gone checkouts now and every `intervalMs`, one pass at a time, each over its own connection so the API's
  * reads see the change. A daemon with no database yet does not create one. It never throws and never holds the
- * daemon open; a failed pass is logged and the next one tries again.
+ * daemon open; a failed pass is logged and the next one tries again, as is a pass still waiting on the filesystem after
+ * `passLimitMs`: it gives up, forgetting nothing, and the call it waits on keeps its pool thread until answered.
  */
 export function startCheckoutPruning(databasePath: string, options: CheckoutPruningOptions = {}): CheckoutPruning {
   const log = options.log ?? (line => process.stderr.write(line));
-  let running: Promise<void> | undefined;
-  const abort = new AbortController();
+  const passLimitMs = options.passLimitMs ?? CHECKOUT_PRUNING_PASS_LIMIT_MS;
+  let stopped = false;
+  let running: { readonly done: Promise<void>; readonly abort: AbortController } | undefined;
   const pass = (): void => {
-    if (abort.signal.aborted || running !== undefined || !existsSync(databasePath)) return;
-    running = prune(databasePath, abort.signal)
+    if (stopped || running !== undefined || !existsSync(databasePath)) return;
+    const abort = new AbortController();
+    const limit = setTimeout(() => {
+      log(`rerail daemon: forgetting removed checkouts: gave up on a pass the filesystem had not answered after ${Math.round(passLimitMs / 1000)} s; the next pass tries again\n`);
+      abort.abort();
+    }, passLimitMs);
+    limit.unref();
+    const done = prune(databasePath, abort.signal)
       .catch((error: unknown) => log(`rerail daemon: forgetting removed checkouts: ${error instanceof Error ? error.message : String(error)}\n`))
-      .finally(() => { running = undefined; });
+      .finally(() => {
+        clearTimeout(limit);
+        running = undefined;
+      });
+    running = { done, abort };
   };
   const timer = setInterval(pass, options.intervalMs ?? CHECKOUT_PRUNING_INTERVAL_MS);
   timer.unref();
   pass();
   return {
     async stop() {
+      stopped = true;
       clearInterval(timer);
-      abort.abort();
-      await running;
+      running?.abort.abort();
+      await running?.done;
     },
   };
 }
