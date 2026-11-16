@@ -42,15 +42,21 @@ The pool (`accel/src/gpu/shared.rs`, 0266 §15–16) holds every GPU buffer unde
 eviction order (`make_room`). A **deferrable lease** is a lease of that pool whose slab is a file-backed shared
 mapping (`MAP_SHARED`) in the store's WAL directory, not anonymous memory. Everything else is as for any lease:
 
-- it is wrapped for the GPU once (`newBufferWithBytesNoCopy` over the mapping) and the wrap kept with the slab;
 - blocks are made in it by `lease_block` (a `deferrable` variant), grow by `grow_block`, and are frozen as any block;
 - while it is open it counts in the one budget, as any live lease.
 
-At a wave's end each deferrable slab the wave wrote is frozen (truncated to its length, its header written last),
-its writeback is started without waiting (`msync(MS_ASYNC)`), and the lease is **released to the OS**: the engine
-unmaps it, and the pages, dirty or clean, are the file's. They leave the budget. The OS writes them back and drops
-them under pressure. Nothing is `fsync`ed: a segment that did not reach the disk whole does not check when read,
-and its wave is made again (0024 §5).
+It differs in one thing, measured (§7): **the GPU never writes a deferrable slab.** A kernel's output is written to
+an anonymous pooled slab, as today, and the host copies the frozen range into the deferrable slab at the wave's end
+(one `memcpy`, about 0.1 s a GiB on one thread, split across threads for large ranges). The GPU may read a
+deferrable slab through a no-copy wrap; reading is not affected.
+
+At a wave's end each deferrable slab the wave wrote is frozen (truncated to its length, its header written last)
+and **released to the OS**: it leaves the budget, and the mapping goes to the store's writer thread. Dirty pages of a
+file mapping are not charged to the process (`phys_footprint`, measured §7), so the release is the hand-off; the
+OS writes them back and drops them under pressure. No `msync` and no `munmap` on the wave's thread: on macOS both
+write the dirty pages back before they return (§7). The writer unmaps a segment after archiving it. Nothing is
+`fsync`ed: a segment that did not reach the disk whole does not check when read, and its wave is made again
+(0024 §5).
 
 The pool keeps archived segments' files as idle buffers of their class, as it keeps idle anonymous slabs, so a new
 wave's lease reuses a file whose pages may still be cached instead of making one.
@@ -122,6 +128,28 @@ needs now.
 4. **Kills in deltas.** By content (0239's 128-bit row hash): needed when facts persist across processes, so decided
    with step 4. By range: only programs' views need it; decided with the program image's port.
 
+### 7. Measured: file pages, the GPU, and writeback
+
+`native/crates/blocks/examples/deferrable.rs` (0260's open Q-R5): a block in a `MAP_SHARED` file, 64 MiB to 1 GiB,
+filled by a Metal kernel through a no-copy wrap or by the host; frozen; `msync(MS_ASYNC)` or not; unmapped; read
+back from the file; then polled with `mincore` until no page is dirty, and the file's allocated blocks counted (it is
+sparse, so blocks on disk are bytes written back). M5 Max, macOS 26.4, under load (load average 7 to 37).
+
+| Filled by | Read back equal | Dirty (`mincore`) | Written back after 3–20 s | `msync` | `munmap` of dirty pages |
+|---|---|---|---|---|---|
+| host | yes | 100% | all (1 GiB: 1,024 MiB on disk) | 0.1–13 s at 1 GiB: waits for the writes | 0.1–17 s at 1 GiB: waits for the writes |
+| GPU, wrap | yes (the cached pages) | 100% | **none: 0 MiB on disk**, all pages still dirty | 0.1–7 ms: finds nothing to write | 0.1 ms |
+| GPU, wrap released, host touch | yes | 100% | at 1 GiB all; at 64 and 256 MiB none | as host / as GPU | |
+
+Neither releasing the wrap, an autorelease pool around the dispatch, nor the host touching each page while the wrap
+lives made the GPU's writes reach the disk. Touching after the release did at 1 GiB only: when Metal lets go of the
+pages is not the engine's to know. A page the OS takes as clean is dropped under pressure, and a later read gets the
+file's old bytes, so GPU writes through a wrap of file pages could be lost. Hence §1's copy.
+
+`phys_footprint` did not count dirty file-backed pages the host wrote (0 MiB where an anonymous block counted
+1,024), mapped or not; resident size did while they were mapped. Neither counter saw pages a kernel wrote through a
+wrap, anonymous or file-backed, so the pool's own budget is what counts those.
+
 ## Supersedes and keeps
 
 - **0259 §2's one transaction a wave** becomes one transaction an archive, of whole waves; §1, §3 and §4 stand.
@@ -134,11 +162,9 @@ needs now.
 
 ## Path
 
-1. **Measure** (seconds): a no-copy Metal buffer over `MAP_SHARED` file pages that a kernel writes; then frozen,
-   `msync(MS_ASYNC)`, unmapped; that the bytes read back from the file equal the kernel's; and whether macOS stops
-   counting the pages against the process (`phys_footprint`) once unmapped.
-2. **The tier**: deferrable leases in the pool, release at a wave's end, the files reused as idle buffers,
-   `blocks::journal` as its first user.
+1. **Measured** (§7): the GPU does not write file pages; the release hands the mapping to the writer.
+2. **The tier**: deferrable leases in the pool, the host copy of GPU output at freeze, release at a wave's end to
+   the writer thread, the files reused as idle buffers, `blocks::journal` as its first user.
 3. **Outputs on blocks** (0266 path step 1), 0239's tests unchanged.
 4. **The memo's entries in segments**: 0240's rows found by the archive, the pack retired.
 5. **Frames** (the largest writes), then tapes and sources; 0259's guard (no `write_back` queues a closure).

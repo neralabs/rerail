@@ -151,6 +151,14 @@ impl Block {
         b
     }
 
+    /// Lets go of the no-copy wrap `gpu_buffer` kept; the device must be done with it. A file block's pages that a
+    /// kernel wrote through a wrap are not written back by the OS (decision 0295, measured by `examples/deferrable`),
+    /// with or without this, so the GPU never writes a file block.
+    #[cfg(target_os = "macos")]
+    pub fn release_gpu_buffer(&self) {
+        self.gpu.lock().unwrap().take();
+    }
+
     /// The device buffer to bind this block with: its slab's own, or a no-copy wrap of its used extent made once
     /// and kept (remade, twice as long, only when the block has outgrown it).
     #[cfg(target_os = "macos")]
