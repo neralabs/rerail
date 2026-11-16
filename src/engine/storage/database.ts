@@ -1,4 +1,4 @@
-import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import Database from "better-sqlite3";
 import { basename, dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
@@ -214,8 +214,9 @@ export interface AsIsOpenOptions {
   /**
    * True for a reader beside a running daemon, which it asks instead where this open cannot read the file whole and at
    * once: its statements wait on no lock (`SQLITE_BUSY` at the first read that meets one), and a file without its WAL
-   * or the WAL's index, or on Windows one of the three that Windows refuses to open now, is refused before SQLite opens
-   * it ({@link wholeNow}). False, the default, opens as every connection does and waits as every connection waits.
+   * or the WAL's index, or on Windows one of the three that Windows refuses to open or read now, is refused before
+   * SQLite opens it ({@link wholeNow}). False, the default, opens as every connection does and waits as every
+   * connection waits.
    */
   besideDaemon?: boolean;
 }
@@ -245,9 +246,8 @@ export function openRerailDatabaseAsIs(path: string, options: AsIsOpenOptions = 
  * under it: SQLite would make new empty ones and read the file alone, without what the daemon wrote since its last
  * checkpoint. Each of the three must be a plain file, looked at without following a link: SQLite's open waits for a
  * writer on a named pipe, and follows a link to another file than the one the daemon holds. On Windows each must also
- * open now: another program may hold one without sharing, or this user may not read it, and SQLite's own open retries
- * such a refusal for about 1.4 s, which no busy timeout bounds. Elsewhere SQLite's open of a plain file fails at once,
- * and on POSIX closing a descriptor of a database file would drop every lock SQLite holds on it in this process.
+ * be read now ({@link readsNowOnWindows}). Elsewhere SQLite's open of a plain file fails at once, and on POSIX closing
+ * a descriptor of a database file would drop every lock SQLite holds on it in this process.
  */
 function wholeNow(path: string): void {
   const companions = [`${path}-wal`, `${path}-shm`];
@@ -255,7 +255,49 @@ function wholeNow(path: string): void {
   if (missing !== undefined) throw new Error(`${missing} is missing beside the database a daemon holds open`);
   const odd = [path, ...companions].find(file => fileKind(file) === "other");
   if (odd !== undefined) throw new Error(`${odd} is not a plain file, which SQLite could wait on or read elsewhere`);
-  if (process.platform === "win32") for (const file of [path, ...companions]) closeSync(openSync(file, "r"));
+  if (process.platform === "win32") readsNowOnWindows(path);
+}
+
+/** The size of SQLite's database header, and of the WAL's. */
+const DATABASE_HEADER_BYTES = 100;
+const WAL_HEADER_BYTES = 32;
+
+/**
+ * What {@link readsNowOnWindows} reads of each file through the descriptor it opens: the database's first page, which
+ * SQLite reads before any other; the WAL's header; and nothing of the WAL's index, which SQLite reads through a mapped
+ * view that a lock over its bytes does not stop.
+ */
+const FIRST_READS: ReadonlyArray<readonly [suffix: string, read: (descriptor: number) => void]> = [
+  ["", firstPage],
+  ["-wal", descriptor => readSync(descriptor, Buffer.alloc(WAL_HEADER_BYTES), 0, WAL_HEADER_BYTES, 0)],
+  ["-shm", () => undefined],
+];
+
+/** Reads the database's first page: its size is in the header (bytes 16 and 17, where 1 means 65,536). */
+function firstPage(descriptor: number): void {
+  const header = Buffer.alloc(DATABASE_HEADER_BYTES);
+  const read = readSync(descriptor, header, 0, DATABASE_HEADER_BYTES, 0);
+  const size = read === DATABASE_HEADER_BYTES ? header.readUInt16BE(16) : 0;
+  const page = size === 1 ? 65_536 : size;
+  if (page > DATABASE_HEADER_BYTES) readSync(descriptor, Buffer.alloc(page), 0, page, 0);
+}
+
+/**
+ * Throws where Windows refuses now to open the database at `path`, its WAL or the WAL's index, or to read what
+ * {@link FIRST_READS} names through that descriptor: another program may hold one without sharing, this user may not
+ * read it, or another program may lock a range of its bytes, as a backup or a scanner can. SQLite's own open and read
+ * retry such a refusal for about 1.4 s, which no busy timeout bounds. A lock over later pages of the database, or over
+ * frames of the WAL past its header, alone still costs that once SQLite reads one of them.
+ */
+function readsNowOnWindows(path: string): void {
+  for (const [suffix, read] of FIRST_READS) {
+    const descriptor = openSync(`${path}${suffix}`, "r");
+    try {
+      read(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+  }
 }
 
 /** What is at `path`, not followed through a link: a plain file, nothing, or anything else (a link, a folder, a pipe, a device). */
