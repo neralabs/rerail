@@ -152,7 +152,7 @@ impl Within {
         let members = batch
             .dialects
             .iter()
-            .map(|(&tag, d)| {
+            .map(|(tag, d)| {
                 let table = (0..KIND_STRIDE as usize)
                     .map(|code| kinds.contains(&i64::from(kind_atom(tag, d.canonical.get(code).copied().unwrap_or(code as u16)))))
                     .collect();

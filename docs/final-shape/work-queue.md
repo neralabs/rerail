@@ -650,6 +650,13 @@ pass.
   CPU: `pre_120`'s 0.34–0.58 s against a GPU estimate of 0.08 s.
 - **With the costs store kept** (a second run, cold store, `RERAIL_COSTS` from the first): 69.7 G instructions
   against 90.7 G cold; `pre_120`'s plan did 0.36 M units, not 5 M. Placement still put 8 strata on the GPU.
+- **A view's row read on the host** (2026-11-16, a profiling build, `node`'s 15,831 rows of the syntax tests'
+  documents, `Viewed::row_at` through `dyn Source`): 156 instructions a row for the key column, 178 for `n`, 307 for
+  `k`. The kind's extra was its document's dialect, found per row in a SipHash map; a table the tag indexes
+  (`Dialects`) brings `k` to 183, and `n, k` from 375 to 251. The rest, about 150 a row in every column, is the call
+  structure: `locate` (the thread-local hint, the view's offsets) and `value_at`'s dispatch, per row. Less than that
+  needs a read of a run of rows of one document per call, from the join walk (setfix's `RowRef::read`, `Rows::row`),
+  which is the engine's, not placement's: not taken here.
 - **Whose**: the planned work is the planner's (cost-classifier's estimates and trials, 0226; their 0297 is open).
   The per-unit prices are placement's (Native-and-GPU-strata: `CPU_PER_SCANNED` of 0277 prices `kind`'s scan of a
   view at 30 ns, measured then on a stored copy).

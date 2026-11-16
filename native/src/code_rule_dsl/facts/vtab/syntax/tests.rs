@@ -561,7 +561,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
         let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local] as usize]);
-        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
     // Nested kinds: the root's, and two from inside the documents.
     let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();

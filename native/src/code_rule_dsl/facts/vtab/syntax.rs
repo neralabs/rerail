@@ -405,7 +405,7 @@ impl LongTexts {
         if let Some(k) = granules::comment_of(low) {
             // The k-th comment kind's node not inside another that no node is, as `Extra::nodes` numbers them.
             use crate::code_rule_dsl::language::is_comment_kind;
-            let dialect = self.batch.dialects.get(&p.tag)?;
+            let dialect = self.batch.dialects.get(p.tag)?;
             let mut j = 0;
             for id in 0..f.len() as u32 {
                 if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || f.parent(id).is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
@@ -1486,6 +1486,39 @@ impl Class {
     }
 }
 
+/// A batch's dialects by tape tag: a table the tag indexes, since a row's `kind` reads its document's dialect per
+/// row (a hash map's probe was a third of that read).
+#[derive(Default)]
+pub struct Dialects(Vec<Option<Dialect>>);
+
+impl Dialects {
+    pub fn get(&self, tag: u8) -> Option<&Dialect> {
+        self.0.get(usize::from(tag)).and_then(Option::as_ref)
+    }
+    /// Tag `tag`'s dialect, made on first use.
+    fn get_or_new(&mut self, tag: u8) -> StoreResult<&Dialect> {
+        let at = usize::from(tag);
+        if self.0.len() <= at {
+            self.0.resize_with(at + 1, || None);
+        }
+        if self.0[at].is_none() {
+            self.0[at] = Some(Dialect::new(tag)?);
+        }
+        Ok(self.0[at].as_ref().expect("just made"))
+    }
+    /// Each dialect with its tag, in tag order.
+    pub fn iter(&self) -> impl Iterator<Item = (u8, &Dialect)> {
+        self.0.iter().filter_map(Option::as_ref).map(|d| (d.tag, d))
+    }
+}
+
+impl std::ops::Index<u8> for Dialects {
+    type Output = Dialect;
+    fn index(&self, tag: u8) -> &Dialect {
+        self.get(tag).expect("a document's dialect")
+    }
+}
+
 /// A dialect's kinds as T's exporter reads them. T's kinds were names, and a grammar gives some names several codes
 /// (aliases): the `kind` column holds each name's canonical code (`KindCatalog::kind_id`, what a program's constant
 /// lowers to), and a lookup reads the postings of every code of that name.
@@ -2011,7 +2044,7 @@ pub struct Batch {
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
     valued: Vec<Option<Valued>>,
-    pub dialects: HashMap<u8, Dialect>,
+    pub dialects: Dialects,
     pub nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
@@ -2977,7 +3010,7 @@ impl Batch {
         if documents.windows(2).any(|w| w[0].key == w[1].key) {
             return Err(StoreError::Invalid("a batch holds a document key twice".into()));
         }
-        let mut dialects: HashMap<u8, Dialect> = HashMap::new();
+        let mut dialects = Dialects::default();
         let mut strings: Vec<String> = Vec::new();
         // Every string of every node passes here: Fx, not SipHash (a third of the projection's time with SipHash).
         let mut at: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
@@ -3112,10 +3145,7 @@ impl Batch {
             let dialect = if tag == TEXT {
                 None
             } else {
-                if let std::collections::hash_map::Entry::Vacant(e) = dialects.entry(tag) {
-                    e.insert(Dialect::new(tag)?);
-                }
-                Some(&dialects[&tag])
+                Some(dialects.get_or_new(tag)?)
             };
             // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
             // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
@@ -3271,7 +3301,7 @@ impl Batch {
             .iter()
             .map(|f| {
                 crate::code_rule_dsl::language::tape_tag(f.dialect())
-                    .filter(|tag| dialects.contains_key(tag))
+                    .filter(|&tag| dialects.get(tag).is_some())
                     .map(|tag| (tag, f.strings().iter().map(|name| string(name) as i64).collect()))
             })
             .collect();
@@ -3289,7 +3319,7 @@ impl Batch {
         let bound: Vec<Option<Box<dyn BoundFamilies>>> = families()
             .iter()
             .zip(vocabulary)
-            .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[&tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>(), docs.len())))
+            .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>(), docs.len())))
             .collect();
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
@@ -3358,7 +3388,7 @@ impl Batch {
             documents
                 .iter()
                 .zip(&docs)
-                .map(|(d, p)| d.tape.clone().filter(|_| dialects.get(&p.tag).is_some_and(|x| x.values)).map(|(tape, file)| Valued { tape, file, values: OnceLock::new() }))
+                .map(|(d, p)| d.tape.clone().filter(|_| dialects.get(p.tag).is_some_and(|x| x.values)).map(|(tape, file)| Valued { tape, file, values: OnceLock::new() }))
                 .collect()
         } else {
             Vec::new()
@@ -3657,7 +3687,7 @@ impl Viewed {
                 let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
                     continue;
                 };
-                let Some(dialect) = b.dialects.get(&tag).filter(|_| v >= 0) else { continue };
+                let Some(dialect) = b.dialects.get(tag).filter(|_| v >= 0) else { continue };
                 let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
                 for (doc, p) in b.docs.iter().enumerate().filter(|(doc, p)| p.tag == tag && kept(doc)) {
                     for &kind in &atoms {
@@ -3707,7 +3737,7 @@ impl Viewed {
         match (self.view, column) {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id as i64,
-            (View::Node, 2) => self.batch.dialects[&p.tag].kind(&p.facts, id as u32),
+            (View::Node, 2) => self.batch.dialects[p.tag].kind(&p.facts, id as u32),
             (View::Node, 3) => i64::from(p.facts.start[id]),
             (View::Node, 4) => i64::from(p.facts.end[id]),
             (View::Line, 1) => i64::from(p.facts.start_line(id as u32)),

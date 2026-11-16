@@ -145,7 +145,7 @@ pub fn build(batch: &Batch) -> Chunk {
     let docs: *mut ChunkDoc = b.alloc_t(batch.docs.len().max(1));
     // Each dialect's canonical codes, once.
     let mut canon: HashMap<u8, (*const u16, usize)> = HashMap::new();
-    for (&tag, d) in &batch.dialects {
+    for (tag, d) in batch.dialects.iter() {
         let p: *mut u16 = b.alloc_t(d.canonical.len().max(1));
         // SAFETY: just allocated for `canonical.len()` items.
         unsafe { std::ptr::copy_nonoverlapping(d.canonical.as_ptr(), p, d.canonical.len()) };
