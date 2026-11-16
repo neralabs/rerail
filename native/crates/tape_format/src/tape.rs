@@ -17,13 +17,14 @@
 use crate::{CHECKPOINT_STRIDE, HEADER_BYTES, MAGIC, FORMAT_VERSION, TAIL_FROM_START, header, padded};
 
 /// What a code is: the grammar's kind and field, the flags (`CODE_EXTRA`, `CODE_ERROR`, `CODE_MISSING`), a
-/// contextual alias (`SENTINEL`: none) and the supertype classes the node is a member of, ascending.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// contextual alias (its displayed name and whether it is named; format 15 numbers them per tape, so a table
+/// holds the name) and the supertype classes the node is a member of, ascending.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Entry {
     pub kind: u16,
     pub field: u16,
     pub flags: u8,
-    pub alias: u16,
+    pub alias: Option<(String, bool)>,
     pub classes: Vec<u16>,
 }
 
@@ -269,16 +270,32 @@ pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> 
         Ok(c)
     };
     let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
-    let mut entries = Vec::with_capacity(count);
+    let mut raw = Vec::with_capacity(count);
     let mut c = at;
     for _ in 0..count {
         let e = bytes.get(c..c + 6).ok_or("a short code table")?;
         let kf = u16::from_le_bytes([e[0], e[1]]);
         let k = usize::from(e[5]);
-        let classes = bytes.get(c + 6..c + 6 + 2 * k).ok_or("a short code table")?.as_chunks::<2>().0.iter().map(|&p| u16::from_le_bytes(p)).collect();
-        entries.push(Entry { kind: kf & ((1 << crate::KIND_BITS) - 1), field: kf >> crate::KIND_BITS, flags: e[2], alias: u16::from_le_bytes([e[3], e[4]]), classes });
+        let classes: Vec<u16> = bytes.get(c + 6..c + 6 + 2 * k).ok_or("a short code table")?.as_chunks::<2>().0.iter().map(|&p| u16::from_le_bytes(p)).collect();
+        raw.push((kf, e[2], u16::from_le_bytes([e[3], e[4]]), classes));
         c += 6 + 2 * k;
     }
+    // The alias table: each alias's named byte, its name's length (u32) and its name.
+    let mut aliases = Vec::new();
+    for _ in 0..u64_at(header::ALIASES)? {
+        let named = *bytes.get(c).ok_or("a short alias table")? != 0;
+        let len = u32::from_le_bytes(bytes.get(c + 1..c + 5).ok_or("a short alias table")?.try_into().expect("4 bytes")) as usize;
+        let name = std::str::from_utf8(bytes.get(c + 5..c + 5 + len).ok_or("a short alias table")?).map_err(|_| "an alias's name is not UTF-8")?;
+        aliases.push((name.to_owned(), named));
+        c += 5 + len;
+    }
+    let entries = raw
+        .into_iter()
+        .map(|(kf, flags, alias, classes)| {
+            let alias = if alias == crate::SENTINEL { None } else { Some(aliases.get(usize::from(alias)).ok_or("a code's alias is not in the table")?.clone()) };
+            Ok(Entry { kind: kf & ((1 << crate::KIND_BITS) - 1), field: kf >> crate::KIND_BITS, flags, alias, classes })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok((F15Columns { code, size, base, off, tail, widths, from_start }, CodeTable::new(entries)))
 }
 

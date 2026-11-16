@@ -65,6 +65,72 @@ impl Lang {
     pub fn revision(&self) -> u8 {
         self.revision
     }
+
+    /// The choices as text, as the lab writes them and the crate ships them (`tables/<tag>.tsv`): the revision, the
+    /// widths, then each code in number order: kind, field, flags, alias (`-`, or `named:name`), classes (`-`, or
+    /// ids joined by commas).
+    pub fn to_text(&self, comment: &str) -> String {
+        let mut out = String::new();
+        for line in comment.lines() {
+            out.push_str("# ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(&format!("revision\t{}\nwidths\t{}\t{}\t{}\n", self.revision, self.widths[0], self.widths[1], self.widths[2]));
+        for e in self.table.entries() {
+            let alias = e.alias.as_ref().map_or("-".to_owned(), |(name, named)| format!("{}:{name}", u8::from(*named)));
+            let classes = if e.classes.is_empty() { "-".to_owned() } else { e.classes.iter().map(u16::to_string).collect::<Vec<_>>().join(",") };
+            out.push_str(&format!("code\t{}\t{}\t{}\t{alias}\t{classes}\n", e.kind, e.field, e.flags));
+        }
+        out
+    }
+
+    /// The choices from their text (`to_text`).
+    pub fn from_text(text: &str) -> Result<Self, String> {
+        let (mut revision, mut widths, mut entries) = (None, None, Vec::new());
+        for (k, line) in text.lines().enumerate() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let bad = || format!("line {}: {line}", k + 1);
+            let c: Vec<&str> = line.split('\t').collect();
+            let num = |s: &str| s.parse::<u64>().map_err(|_| bad());
+            match c[0] {
+                "revision" if c.len() == 2 => revision = Some(num(c[1])? as u8),
+                "widths" if c.len() == 4 => widths = Some([num(c[1])? as usize, num(c[2])? as usize, num(c[3])? as usize]),
+                "code" if c.len() == 6 => {
+                    let alias = match c[4] {
+                        "-" => None,
+                        a => {
+                            let (named, name) = a.split_once(':').ok_or_else(bad)?;
+                            Some((name.to_owned(), named == "1"))
+                        }
+                    };
+                    let classes = if c[5] == "-" { Vec::new() } else { c[5].split(',').map(|x| x.parse::<u16>().map_err(|_| bad())).collect::<Result<_, _>>()? };
+                    entries.push(Entry { kind: num(c[1])? as u16, field: num(c[2])? as u16, flags: num(c[3])? as u8, alias, classes });
+                }
+                _ => return Err(bad()),
+            }
+        }
+        Lang::new(CodeTable::new(entries), widths.ok_or("no widths")?, revision.ok_or("no revision")?)
+    }
+}
+
+/// The choices format 16 ships for the language of tape tag `tag` (`tables/<tag>.tsv`, written by the lab's
+/// `tape16 table`), read once; none for a language without them, whose documents keep format 15 (0293 §3).
+pub fn lang(tag: u8) -> Option<&'static Lang> {
+    static LANGS: [std::sync::OnceLock<Option<Lang>>; 256] = [const { std::sync::OnceLock::new() }; 256];
+    LANGS[usize::from(tag)]
+        .get_or_init(|| {
+            let text = tables::text(tag)?;
+            Some(Lang::from_text(text).unwrap_or_else(|e| panic!("format 16's table for tag {tag}: {e}")))
+        })
+        .as_ref()
+}
+
+/// The shipped tables' text, by tape tag.
+mod tables {
+    include!("../tables/index.rs");
 }
 
 /// One array's side list: its parts end to end, each part's start, and a value's bytes.
@@ -525,7 +591,7 @@ mod tests {
     /// and deep tree over a table of 600 codes, with gaps, lengths and sizes past a byte.
     #[test]
     fn escapes_and_codes_past_the_cutoff_read_from_their_side_lists() {
-        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: crate::SENTINEL, classes: Vec::new() }).collect();
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
         // A root over 3,000 children; every 7th child holds a chain 9 deep. Spans grow past one byte's gap.
@@ -583,6 +649,21 @@ mod tests {
         plain.match_groups(&set, |base, m| a.push((base, m)));
         t.reader(&lang).unwrap().match_groups(&set, |base, m| b.push((base, m)));
         assert_eq!(a, b, "a set past the cutoff");
+    }
+
+    /// Every shipped table loads, and its text reads back to the same choices.
+    #[test]
+    fn shipped_tables_load_and_read_back() {
+        let tags: Vec<u8> = (0..=255).filter(|&t| tables::text(t).is_some()).collect();
+        assert!(!tags.is_empty(), "no shipped tables");
+        for tag in tags {
+            let l = lang(tag).unwrap();
+            assert!(!l.table().is_empty(), "tag {tag}");
+            let back = Lang::from_text(&l.to_text("again")).unwrap();
+            assert_eq!(back.table().entries(), l.table().entries(), "tag {tag}");
+            assert_eq!((back.widths, back.revision, back.cut), (l.widths, l.revision, l.cut), "tag {tag}");
+        }
+        assert!(lang(255).is_none());
     }
 
     /// A tape of another revision is not read.
