@@ -25,13 +25,14 @@ const GITHUB_ENVIRONMENT: Record<string, true> = {
 };
 
 /**
- * A `gh` that is installed and signed in nowhere (it exits 1, as `gh auth status` does when signed out), first on the
- * scenario's `PATH`: every machine then shows the same `gh`, and no scenario reads GitHub with the person's sign-in.
+ * A `gh` that is installed and signed in nowhere (it says so on stderr and exits 1, as `gh auth status` does when
+ * signed out), first on the scenario's `PATH`: every machine then shows the same `gh`, and no scenario reads GitHub
+ * with the person's sign-in.
  */
 function signedOutGh(root: string): string {
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, "gh"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  writeFileSync(join(bin, "gh"), "#!/bin/sh\necho 'You are not logged into any GitHub hosts. To log in, run: gh auth login' >&2\nexit 1\n", { mode: 0o755 });
   return bin;
 }
 

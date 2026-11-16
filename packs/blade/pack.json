@@ -3,7 +3,7 @@
   "id": "blade",
   "name": "Blade",
   "category": "language",
-  "covers": "Bladestan, tlint and blade-parser rules for clean, correct Laravel Blade templates.",
+  "covers": "Linter-equivalent to Bladestan 0.11.7, tlint 9.7.0 and blade-parser 2.1.0, for clean, correct Blade templates.",
   "reason": "matches Blade templates",
   "match": {
     "any": [

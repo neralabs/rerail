@@ -180,6 +180,11 @@ export function checkoutName(workspace: string, wholeRepository: boolean): strin
  */
 export interface RepositorySetupIo {
   readonly lane: "terminal" | "agent" | "json";
+  /**
+   * The agent lane under `--relay`: a coding agent runs set-up and relays its questions, so the person reads them in a
+   * coding agent session. The json lane always is. An agent lane without it, such as a run piped to a file, is not.
+   */
+  readonly relayed?: boolean;
   say(text: string): void;
   /** The terminal lane's answer to a question; undefined when input ended. Absent in the other lanes. */
   ask?(prompt: string): Promise<string | undefined>;

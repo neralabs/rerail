@@ -1,4 +1,4 @@
-# Rerail rule pack: Cyclomatic complexity
+# Rerail rule pack: Function complexity
 
 Cyclomatic complexity rules for Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue, with the decision points of
 [lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. A `switch` or `match` counts once

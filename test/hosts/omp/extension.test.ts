@@ -38,6 +38,9 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/nat
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { withExperiments } from "../../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 /** The steer block a `mode` conversation rule delivers for a step of the conversation. */
 function deliveredSteer(ruleId: string, guidance: string, mode: RuleMode = "steer"): string {
@@ -153,6 +156,18 @@ const sentenceRule: ConversationRule = {
 };
 
 describe("OMP conversation-rules extension", () => {
+  it.each([["on", "1"], ["off", "0"]] as const)("registers conversation_rules, /cosine-rules and the semantic tools only while their experiments are %s", async (state, value) => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", value);
+    vi.stubEnv("RERAIL_EXPERIMENTAL_SEMANTIC_TOOLS", value);
+    const harness = await createHarness();
+    const tools: string[] = [];
+    harness.pi.registerTool = ((tool: { name: string }) => { tools.push(tool.name); }) as typeof harness.pi.registerTool;
+    createConversationRulesExtension({ modelPath: resolve("model") })(harness.pi);
+    const experimental = ["conversation_rules", "rerail_mark", "rerail_select", "rerail_project", "rerail_relate"];
+    expect(tools.filter(name => experimental.includes(name)).sort()).toEqual(state === "on" ? [...experimental].sort() : []);
+    expect(harness.commands.has("cosine-rules")).toBe(state === "on");
+  });
+
   it.each(["steer", "block"] as const)("steers immediately when a streamed sentence matches a %s rule", async mode => {
     const harness = await createHarness({ rules: [{ ...sentenceRule, mode }] });
     createConversationRulesExtension({
