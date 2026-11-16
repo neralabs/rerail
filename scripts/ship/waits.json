@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "repos": {
+    "rerail-typescript": {
+      "corpus": "rerail-typescript",
+      "packs": [
+        "complexity",
+        "javascript",
+        "typescript"
+      ],
+      "rule": "typescript-eslint-no-explicit-any"
+    }
+  },
+  "sessions": {
+    "rerail-main-history": {
+      "kind": "git-history",
+      "source": "https://github.com/neralabs/rerail",
+      "repo": "rerail-typescript",
+      "from": "53f5b92a1c148821a9a393a424753f6bbc881d69",
+      "to": "bdd805c1320a628bffd6d581faecae25d510ca26",
+      "paths": [
+        "src",
+        "test"
+      ],
+      "extensions": [
+        ".ts"
+      ],
+      "maxEdits": 200,
+      "pauses": {
+        "edit_ms": 300,
+        "turn_ms": 1000
+      },
+      "edits": 200,
+      "sha256": "d9c12474659a225a16a9ebc8dfc061b6b56067d934a41e2fa2fbe3a36e38d969"
+    }
+  },
+  "limits": {
+    "W1.p95_ms": null,
+    "W1.hook_timeout_ms": null,
+    "W5.scan_wait_ms": null
+  },
+  "reportOnly": [
+    "W4"
+  ]
+}
