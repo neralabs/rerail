@@ -83,9 +83,62 @@ impl<T> DerefMut for WriteGuard<'_, T> {
     }
 }
 
+/// State kept per scope (a connection's address) in one process-wide map, split by scope: each scope's entries sit in
+/// one shard, under that shard's lock alone. Runs on different connections (the chunks evaluating at once, decision
+/// 0278) then take different locks, where one lock over the whole map made them queue for each other
+/// (`__psynch_mutexwait` in every stratum of every chunk, notes/t40). `M` is the map itself, keyed by scope or by
+/// (scope, name); every key of a shard's map is of a scope that shard is chosen by.
+pub struct ByScope<M> {
+    shards: Box<[Locked<M>]>,
+}
+
+#[repr(align(128))]
+struct Locked<M>(std::sync::Mutex<M>);
+
+impl<M: Default> Default for ByScope<M> {
+    fn default() -> Self {
+        let n = std::thread::available_parallelism().map_or(8, |n| n.get()).next_power_of_two().clamp(8, 64) * 4;
+        ByScope { shards: (0..n).map(|_| Locked(std::sync::Mutex::new(M::default()))).collect() }
+    }
+}
+
+impl<M> ByScope<M> {
+    /// The map holding `scope`'s entries (and others' that share its shard), locked. A panic while it was held does
+    /// not poison it: the maps hold whole entries.
+    pub fn lock(&self, scope: usize) -> std::sync::MutexGuard<'_, M> {
+        // A scope is an address: its low bits are alignment. Fibonacci hashing: the product's top bits mix them all.
+        let bits = self.shards.len().trailing_zeros();
+        let h = (scope as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - bits);
+        self.shards[h as usize].0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Every shard in turn (tests that look across scopes).
+    pub fn each(&self, mut f: impl FnMut(&mut M)) {
+        for s in self.shards.iter() {
+            f(&mut s.0.lock().unwrap_or_else(|p| p.into_inner()));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Sharded;
+
+    /// One scope's entries are always in the shard its lock gives, and scopes spread over the shards.
+    #[test]
+    fn a_scope_has_one_shard_and_scopes_spread() {
+        let m: super::ByScope<std::collections::HashMap<(usize, u32), u32>> = Default::default();
+        let scopes: Vec<usize> = (0..64).map(|i| 0x1_0000_0000 + i * 0x2_8000).collect();
+        for &s in &scopes {
+            m.lock(s).insert((s, 1), 7);
+        }
+        for &s in &scopes {
+            assert_eq!(m.lock(s).get(&(s, 1)), Some(&7));
+        }
+        let mut used = 0;
+        m.each(|shard| used += usize::from(!shard.is_empty()));
+        assert!(used > scopes.len() / 2, "64 scopes in {used} shards");
+    }
     use std::sync::Arc;
 
     /// Readers on many threads see only whole writes: each write keeps the two halves equal.
