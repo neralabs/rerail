@@ -869,14 +869,18 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2015-2022 mldb.ai inc.", "2021-2022 Jeremy Barnes", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0"
 # docs/rule-syntax/packs/<pack>/: the .rr ports of the upstream tools' rules, with the tables generated beside them
-# (and under lib/) from the packs' rule documents, annotated as their pack's rule documents above. The rest of
+# (and under lib/) from the packs' rule documents, annotated as their pack's rule documents above; python-main's are
+# main's Python rule documents (source/rules/) and their translations, annotated likewise. The rest of
 # docs/rule-syntax/ (the complexity and rr rules, the libraries, the scripts, the notes) is Rerail's own and stays
-# under the catch-all. Override, as ruff-era001-commented-out-code.rr quotes `SPDX-License-Identifier:` in Ruff's
-# pragma regex, which REUSE would read as the file's tag.
+# under the catch-all. Override, as ruff-era001-commented-out-code.rr (and python-main's .json and .rr of it) quotes
+# `SPDX-License-Identifier:` in Ruff's pragma regex, which REUSE would read as the file's tag.
 [[annotations]]
 path = [
   "docs/rule-syntax/packs/python/bandit-*.rr",
   "docs/rule-syntax/packs/python/ruff-*.rr",
+  "docs/rule-syntax/packs/python-main/bandit-*.rr",
+  "docs/rule-syntax/packs/python-main/ruff-*.rr",
+  "docs/rule-syntax/packs/python-main/source/rules/**",
   "docs/rule-syntax/lib/python/security-blacklist.rr",
 ]
 precedence = "override"
