@@ -241,6 +241,26 @@ describe("readiness", () => {
     expect(gh.calls.map(call => call.args)).toEqual([["auth", "status", "--hostname", "github.example.com"]]);
   });
 
+  it("is signed-out in each wording gh uses for a host it holds no login for", async () => {
+    for (const stderr of [
+      "You are not logged into any GitHub hosts. To log in, run: gh auth login\n",
+      "You are not logged into any GitHub hosts. Run gh auth login to authenticate.\n",
+      "Hostname \"github.example.com\" not found among authenticated GitHub hosts\n",
+    ]) {
+      const gh = fakeGh(() => ({ code: 1, stderr }));
+      await expect(createGithubClient({ env, spawn: gh.spawn }).readiness({ ...REPOSITORY, host: "github.example.com" }), stderr)
+        .resolves.toMatchObject({ state: "signed-out" });
+    }
+  });
+
+  it("is unavailable, not signed-out, when gh auth status fails with a login it could not check", async () => {
+    // gh prints this for a rejected token, and for one it could not check because the network failed.
+    const stderr = "github.com\n  X Failed to log in to github.com account tbelanger (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n";
+    const gh = fakeGh(() => ({ code: 1, stderr }));
+    await expect(createGithubClient({ env, spawn: gh.spawn }).readiness(REPOSITORY))
+      .resolves.toEqual({ state: "unavailable", login: null, repository: "neralabs/rerail" });
+  });
+
   it("is unavailable, not signed-out, when gh auth status does not answer in time", async () => {
     const gh = fakeGh(() => ({ hang: true }));
     await expect(createGithubClient({ env, spawn: gh.spawn, timeoutMs: 20 }).readiness(REPOSITORY))

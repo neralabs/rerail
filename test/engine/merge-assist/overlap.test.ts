@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +13,15 @@ afterEach(() => {
 });
 
 const LINES = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
+
+const UNIX = process.platform !== "win32";
+/**
+ * Names Git prints in a diff's `---`/`+++` and `Binary files` labels otherwise than `--name-only -z` and `ls-files -z`
+ * list them: a tab after one with a space, and quotes and C-style escapes (a control byte in octal) around one with a
+ * `"`, `\` or control byte, which Windows does not allow in a name.
+ */
+const QUOTED_NAMES = ["a b.txt", "é.txt", ...(UNIX ? ["q\"t.txt", "q\" t.txt", "q\"é.txt", "back\\slash.txt", "c\u0001d.txt"] : [])];
+const BINARY_NAMES = ["bin a.dat", ...(UNIX ? ["q\"b.dat"] : [])];
 
 /** A repository on `main` with `f.txt` of 40 lines, and how to change lines of it. */
 interface Repository {
@@ -188,6 +197,54 @@ describe("work the base already holds, and a ref that forked elsewhere", { timeo
     repo.git("switch", "-q", "-c", "mine", "main");
     for (const name of ["constructor", "__proto__", "toString"]) writeFileSync(join(repo.root, name), "mine\n");
     expect((await overlapping(repo, theirs)).sort()).toEqual(["__proto__", "constructor", "toString"]);
+  });
+
+  it("finds conflicts in files whose names Git quotes or ends with a tab, changed or new on both sides", async () => {
+    const write = (repo: Repository, names: readonly string[], content: string | Buffer) => {
+      for (const name of names) writeFileSync(join(repo.root, name), content);
+    };
+    // Theirs changes every file and deletes a binary one, which Git labels `/dev/null` after its name.
+    const gone = UNIX ? "gone \"b\".dat" : "gone b.dat";
+    const tracked = repository();
+    write(tracked, [...QUOTED_NAMES, ...BINARY_NAMES], "base\n");
+    write(tracked, [gone], Buffer.from([0, 0]));
+    tracked.git("add", "-A");
+    tracked.git("commit", "-q", "-m", "Quoted names");
+    tracked.git("switch", "-q", "-c", "theirs");
+    write(tracked, QUOTED_NAMES, "theirs\n");
+    write(tracked, BINARY_NAMES, Buffer.from([0, 1]));
+    tracked.git("rm", "-q", "--", gone);
+    tracked.git("commit", "-q", "-am", "Their change");
+    const changed = tracked.git("rev-parse", "HEAD");
+    tracked.git("switch", "-q", "-c", "mine", "main");
+    write(tracked, QUOTED_NAMES, "mine\n");
+    write(tracked, [...BINARY_NAMES, gone], Buffer.from([0, 2]));
+    expect((await overlapping(tracked, changed)).sort()).toEqual([...QUOTED_NAMES, ...BINARY_NAMES, gone].sort());
+
+    // Untracked here, added there: a different new file conflicts, the same one does not, with or without a last newline.
+    const untracked = repository();
+    untracked.git("switch", "-q", "-c", "theirs");
+    write(untracked, QUOTED_NAMES, "theirs\n");
+    write(untracked, BINARY_NAMES, Buffer.from([0, 1]));
+    writeFileSync(join(untracked.root, "last.txt"), "one\ntwo");
+    untracked.git("add", "-A");
+    untracked.git("commit", "-q", "-m", "Their files");
+    const added = untracked.git("rev-parse", "HEAD");
+    untracked.git("switch", "-q", "-c", "mine", "main");
+    write(untracked, [...QUOTED_NAMES, ...BINARY_NAMES, "last.txt"], "mine\n");
+    expect((await overlapping(untracked, added)).sort()).toEqual([...QUOTED_NAMES, ...BINARY_NAMES, "last.txt"].sort());
+    for (const name of BINARY_NAMES) rmSync(join(untracked.root, name));
+    write(untracked, QUOTED_NAMES, "theirs\n");
+    writeFileSync(join(untracked.root, "last.txt"), "one\ntwo");
+    expect(await overlapping(untracked, added)).toEqual([]);
+  });
+
+  it("reads hunks apart whatever the repository's diff.interHunkContext", async () => {
+    const repo = repository();
+    repo.git("config", "diff.interHunkContext", "30");
+    const theirs = theirBranch(repo, { 20: "theirs 20" });
+    repo.write({ 10: "mine 10", 30: "mine 30" });
+    expect(await overlapping(repo, theirs)).toEqual([]);
   });
 });
 

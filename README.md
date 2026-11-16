@@ -156,7 +156,7 @@ When the agent decides not to follow a steer, it records its one-line reason wit
 > still testing them internally. They are not supported, they may change or be removed in any release without notice,
 > and nothing in this README promises they work. Do not build on them or rely on them in your workflow.
 
-Their list, and where each one surfaces, is in [Internal testing](docs/internal-testing.md). Found one? Feedback is welcome in an issue, labelled as internal testing.
+Each is off until its `RERAIL_EXPERIMENTAL_<FEATURE>` variable is set. Their list, where each one surfaces and which variable turns it on are in [Internal testing](docs/internal-testing.md). Found one? Feedback is welcome in an issue, labelled as internal testing.
 
 ## Repository structure
 

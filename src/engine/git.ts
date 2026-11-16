@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, realpathSync, statSync } from "node:
 import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
-import { endProcessTree, execFile, spawn, spawnSync } from "./child-process.js";
+import { endProcessTree, spawn, spawnSync } from "./child-process.js";
 import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -325,7 +325,7 @@ export interface GitResult {
   status: number | null;
   stdout: string;
   stderr: string;
-  /** Set when Git could not be started, timed out or overflowed `maxBuffer`. */
+  /** Set when Git could not be started, timed out, was stopped by a signal, or overflowed `maxBuffer`. */
   error?: Error;
 }
 
@@ -365,28 +365,55 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
 /**
  * {@link runGit} without blocking: the same safe configuration, environment and timeout, and `input` written to Git's
  * stdin. Rejects with {@link GitUnavailableError} when Git is missing, never on a non-zero exit; a Git that could not
- * start, timed out or overflowed `maxBuffer` (1 MiB by default) answers a null status with its error.
+ * start, timed out, was stopped by `signal` or overflowed `maxBuffer` (1 MiB by default, for stdout and stderr each)
+ * answers a null status with its error. The timeout and `signal` end Git as they end a batch read
+ * ({@link settleWhenDone}), with every process it started, and the answer comes once that Git has exited
+ * ({@link GitReadOptions}); once `signal` is aborted it starts no Git.
  */
-export async function runGitAsync(cwd: string, args: readonly string[], options: RunGitOptions & { input?: string } = {}): Promise<GitResult> {
+export async function runGitAsync(
+  cwd: string,
+  args: readonly string[],
+  options: RunGitOptions & GitReadOptions & { input?: string } = {},
+): Promise<GitResult> {
   const executable = gitExecutable();
+  const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
+  if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = execFile(
-    executable,
-    [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", maxBuffer: options.maxBuffer ?? 1024 * 1024, timeout: options.timeout ?? DEFAULT_TIMEOUT_MS, env: gitEnvironment() },
-    (error, stdout, stderr) => {
-      if (error === null) {
-        settle({ status: 0, stdout, stderr });
-        return;
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { env: gitEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
+  const printed = { stdout: [] as string[], stderr: [] as string[] };
+  let failure: Error | undefined;
+  for (const stream of ["stdout", "stderr"] as const) {
+    let bytes = 0;
+    child[stream].setEncoding("utf8");
+    child[stream].on("data", (chunk: string) => {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes <= maxBuffer) printed[stream].push(chunk);
+      else if (failure === undefined) {
+        failure = new Error(`Git printed more than maxBuffer (${maxBuffer} bytes) to ${stream}`);
+        endPastMaxBuffer(child);
       }
-      const status = typeof error.code === "number" && error.killed !== true ? error.code : null;
-      settle({ status, stdout, stderr, ...(status === null ? { error } : {}) });
-    },
-  );
+    });
+  }
+  // Registered before `settleWhenDone`'s listeners, so the answer below sees why Git ended.
+  child.on("error", error => {
+    failure ??= error;
+  });
+  settleWhenDone(child, ended => {
+    // Once answered, keeps no pipe open that a process Git started may still hold.
+    child.stderr.destroy();
+    const output = { stdout: printed.stdout.join(""), stderr: printed.stderr.join("") };
+    if (ended) {
+      const why = signal?.aborted === true ? "the read was stopped" : `it ran past its time limit of ${timeout} ms`;
+      settle({ status: null, ...output, error: new Error(`Git was ended: ${why}`) });
+    } else if (failure !== undefined || child.exitCode === null) {
+      settle({ status: null, ...output, error: failure ?? new Error(`Git was ended by ${child.signalCode ?? "a signal"}`) });
+    } else settle({ status: child.exitCode, ...output });
+  }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
-  child.stdin?.on("error", () => undefined);
-  child.stdin?.end(options.input ?? "");
-  return await promise;
+  child.stdin.on("error", () => undefined);
+  child.stdin.end(options.input ?? "");
+  const [result] = await Promise.all([promise, exited(child)]);
+  return result;
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */

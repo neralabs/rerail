@@ -11,6 +11,8 @@
  * blocking, and no diff runs a program a repository's config names (external diff, textconv).
  */
 import { createHash } from "node:crypto";
+import { lstat, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { gitReadAsync, mergeBaseAsync } from "./branch-git.js";
 
 /** The most unchanged base lines two hunks may leave between them and still conflict. */
@@ -20,6 +22,8 @@ export const HUNK_LINES = 40;
 /** A binary file's change covers the whole file. */
 const WHOLE_FILE = 1e9;
 const DIFF_OPTIONS = { maxBuffer: 512 * 1024 * 1024, timeout: 60_000 };
+/** The most bytes of untracked files one pass reads to tell them apart from another side's new files. */
+const UNTRACKED_BYTES = 8 * 1024 * 1024;
 
 /**
  * A hunk's lines in the base, as a closed range: `lo..hi` for changed lines, `s + 0.5` for an insertion after line
@@ -54,18 +58,32 @@ interface RawHunk {
   readonly lines: string[];
 }
 
+/** A hunk's `-`/`+` lines as its digest. */
+const digest = (lines: readonly string[]): string => createHash("sha1").update(lines.join("\n")).digest("hex").slice(0, 16);
+
 /** A parsed hunk as a base range with its digest. */
 function rangeOf(hunk: RawHunk): LineRange {
-  const sig = createHash("sha1").update(hunk.lines.slice(1).join("\n")).digest("hex").slice(0, 16);
+  const sig = digest(hunk.lines.slice(1));
   const start = hunk.oldStart;
   return hunk.oldCount === 0 ? { lo: start + 0.5, hi: start + 0.5, sig } : { lo: start, hi: start + hunk.oldCount - 1, sig };
 }
 
 const HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
-const BINARY = /^Binary files (?:a\/(.+)|\/dev\/null) and (?:b\/(.+)|\/dev\/null) differ$/u;
+const BINARY = /^Binary files ("?a\/.+|\/dev\/null) and ("?b\/.+|\/dev\/null) differ$/u;
+const ESCAPES: Readonly<Record<string, string>> = { a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v" };
 
-function unquote(path: string): string {
-  return path.startsWith("\"") && path.endsWith("\"") ? path.slice(1, -1) : path;
+/**
+ * The path a diff's `---`/`+++` or `Binary files` label names, without its `a/` or `b/`. Git ends a `---`/`+++` label
+ * with a tab when the name has a space, and quotes a name with a `"`, `\` or control byte, escaping those C-style (a
+ * byte in octal); other characters stay as they are (`core.quotePath=false`).
+ */
+function labelPath(label: string): string {
+  const quoted = label.endsWith("\t") ? label.slice(0, -1) : label;
+  if (quoted.length < 2 || !quoted.startsWith("\"") || !quoted.endsWith("\"")) return quoted.replace(/^[ab]\//u, "");
+  // One character per UTF-8 byte, so an octal escape is a byte of the name.
+  const bytes = Buffer.from(quoted.slice(1, -1), "utf8").toString("latin1")
+    .replace(/\\([0-7]{3}|.)/gu, (_, code: string) => (code.length === 3 ? String.fromCharCode(Number.parseInt(code, 8)) : ESCAPES[code] ?? code));
+  return Buffer.from(bytes, "latin1").toString("utf8").replace(/^[ab]\//u, "");
 }
 
 /** A diff being parsed: its files so far, the file and hunk lines go to, and the current file's header fields. */
@@ -81,9 +99,9 @@ interface DiffParse {
 function headerLine(state: DiffParse, line: string): boolean {
   if (state.hunk !== null) return false;
   if (line.startsWith("index ")) state.blobs = line;
-  else if (line.startsWith("--- ")) state.oldPath = line === "--- /dev/null" ? "" : unquote(line.slice(4)).replace(/^a\//u, "");
+  else if (line.startsWith("--- ")) state.oldPath = line === "--- /dev/null" ? "" : labelPath(line.slice(4));
   else if (line.startsWith("+++ ")) {
-    const path = line === "+++ /dev/null" ? state.oldPath : unquote(line.slice(4)).replace(/^b\//u, "");
+    const path = line === "+++ /dev/null" ? state.oldPath : labelPath(line.slice(4));
     state.current = state.files.get(path) ?? [];
     state.files.set(path, state.current);
   } else return false;
@@ -93,8 +111,9 @@ function headerLine(state: DiffParse, line: string): boolean {
 /** A binary file's change covers the whole file; the blob ids tell two binary changes apart. */
 function binaryLine(state: DiffParse, line: string): void {
   const match = BINARY.exec(line);
-  const path = match?.[2] ?? match?.[1];
-  if (path !== undefined) state.files.set(path, [{ oldStart: 0, oldCount: WHOLE_FILE, newStart: 0, newCount: WHOLE_FILE, lines: ["(binary file changed)", state.blobs] }]);
+  if (match === null) return;
+  const [, before = "", after = ""] = match;
+  state.files.set(labelPath(after === "/dev/null" ? before : after), [{ oldStart: 0, oldCount: WHOLE_FILE, newStart: 0, newCount: WHOLE_FILE, lines: ["(binary file changed)", state.blobs] }]);
 }
 
 function hunkHeader(state: DiffParse, line: string): void {
@@ -125,8 +144,11 @@ function parseDiff(text: string): Map<string, RawHunk[]> {
   return state.files;
 }
 
-/** A diff's options: no colour, no external diff or textconv program (a repository's config would choose them), no renames. */
-const DIFF_ARGS = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames"] as const;
+/**
+ * A diff's options: no colour, no external diff or textconv program (a repository's config would choose them), no
+ * renames, and no hunks joined across unchanged lines (`diff.interHunkContext`).
+ */
+const DIFF_ARGS = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--inter-hunk-context=0"] as const;
 /** Paths one `git diff` names on its command line: far below any system's argument limit. */
 const PATHS_PER_DIFF = 200;
 
@@ -348,12 +370,31 @@ export class OverlapReader {
   }
 }
 
+/**
+ * The digest {@link rangeOf} gives Git's diff of an untracked file as a new file, so the same new file on both sides
+ * does not conflict; `untracked`, which no hunk's digest matches, for a file it does not read: not a regular file, or
+ * larger than what is `left` of the pass's {@link UNTRACKED_BYTES}.
+ */
+async function untrackedSig(root: string, path: string, budget: { left: number }): Promise<string> {
+  const file = join(root, path);
+  const stats = await lstat(file).catch(() => null);
+  if (stats?.isFile() !== true || stats.size > budget.left) return "untracked";
+  budget.left -= stats.size;
+  const text = await readFile(file, "utf8").catch(() => null);
+  if (text === null) return "untracked";
+  const lines = text.split("\n").map(line => `+${line}`);
+  if (lines.at(-1) === "+") lines.pop();
+  else lines.push("\\ No newline at end of file");
+  return digest(lines);
+}
+
 /** The working files' changes against `base`, untracked files as new files, as base ranges with their text. Reads only. */
 export async function workspaceRanges(root: string, base: string): Promise<Map<string, RefHunk[]>> {
   const ranges = new Map<string, RefHunk[]>();
   for (const [path, hunks] of await diffText(root, base, null)) ranges.set(path, hunks.map(refHunk));
   const untracked = await gitReadAsync(root, ["ls-files", "--others", "--exclude-standard", "-z"], DIFF_OPTIONS) ?? "";
-  for (const path of untracked.split("\0").filter(item => item !== "")) ranges.set(path, [{ lo: 0.5, hi: 0.5, sig: "untracked", text: "(new file)" }]);
+  const budget = { left: UNTRACKED_BYTES };
+  for (const path of untracked.split("\0").filter(item => item !== "")) ranges.set(path, [{ lo: 0.5, hi: 0.5, sig: await untrackedSig(root, path, budget), text: "(new file)" }]);
   return ranges;
 }
 
