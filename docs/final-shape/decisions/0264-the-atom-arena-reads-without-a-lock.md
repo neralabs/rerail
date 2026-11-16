@@ -1,7 +1,7 @@
-# 0264: The atom arena is read without a lock (RCU over an append-only arena)
+# 0264: The atom arena is read without a shared lock word (a lock sharded by reader; RCU dropped)
 
-Status: §6–§8 built (2026-11-15); the RCU arena of §1–§5 is a draft, not built: §0's probe bounds its gain at
-about 0.4 s of a 40 s run, and §7's sharded lock takes that gain without it. Refines the arena of decisions 0049 and 0111 (`content_store::atoms`). Keeps the
+Status: §6–§8 built (2026-11-15). The RCU arena of §1–§5 is dropped, superseded by §7: §0's probe bounds the gain
+of lock-free reads at about 0.4 s of a 40 s run, and §7's sharded lock takes it without rewriting the arena. Refines the arena of decisions 0049 and 0111 (`content_store::atoms`). Keeps the
 reservations of 0114 §4, the provisional ids of 0160 and the fork map of 0170. Follows decision 0263, whose
 §4 keeps text-reading joins on one thread because of this lock.
 
@@ -43,7 +43,14 @@ readers and `store_upto` still copies. Joins that read texts are let into morsel
 Results: see Measured. The probe's patch is kept outside the tree (`working-data/probes/0264-sharded-arena-lock.patch`,
 git-ignored).
 
-### 1. The arena's memory never moves
+### 1–5. Dropped: an RCU arena (superseded by §7)
+
+Kept as the design considered. It was dropped (2026-11-15) because §7's sharded lock already removes the shared
+word that readers contended on. What RCU would add on top, `store_upto` copying no bytes, has not shown up in any
+profile, so it does not justify rewriting the arena. Should the copies or the writers' wait ever show, this is the
+design to start from.
+
+#### 1. The arena's memory never moves
 
 - **Atoms by id.** Bytes and ends sit in blocks of fixed size, which are allocated once and never reallocated. An
   atom's place is (block, offset), and a reader reads it in place.
@@ -52,7 +59,7 @@ git-ignored).
 - **Stored segments.** Segments read from the database (0111) are held in a directory of segment pointers, by
   segment number. A segment is published whole, then its pointer is stored with release ordering.
 
-### 2. An id by its text: atomic slots, the table swapped when it grows
+#### 2. An id by its text: atomic slots, the table swapped when it grows
 
 The table is open-addressed. Each slot is one `AtomicU64` holding the tag (the hash's high half, as now) and the
 id.
@@ -63,7 +70,7 @@ id.
 - Growing the table builds a new one, copies the slots into it, and swaps the table's pointer
   (`RcuProtected::replace`). The old table is freed once no reader can still hold it.
 
-### 3. Readers pin an epoch per stretch of reads
+#### 3. Readers pin an epoch per stretch of reads
 
 Reclamation is by epoch: `crossbeam-epoch` (already in the tree, through rayon), or a small `GcLock` of our own.
 Two things can be retired: old tables (§2) and old directories (§1).
@@ -76,7 +83,7 @@ A reader pins once per stretch of reads, as in MLDB's speculative section, not o
 
 A pin is a write to the thread's own word. The readers share none.
 
-### 4. What stays under a lock
+#### 4. What stays under a lock
 
 These are the rare paths, and they stay as they are:
 
@@ -88,7 +95,7 @@ These are the rare paths, and they stay as they are:
 
 "A miss is final" (`misses_are_final`) stays atomic loads.
 
-### 5. Then the text joins walk in morsels
+#### 5. Then the text joins walk in morsels
 
 0263 §4's exclusion goes. The text steps then cost each morsel a pin, not a lock a row.
 
@@ -199,8 +206,6 @@ gave the same 29,747 violations (483a6f116876).
 
 ## Open
 
-- **The unit of reclamation.** Per table and per directory are proposed here. Per block is not needed, since
-  blocks never move.
 - **The text steps a chunk at a time** (one `lookup_all` per chunk, as row programs read atoms). This is
   independent of the lock, and helps one thread too.
 - **The plan could make §8's key itself.** A split whose two parts are read only as keys of one positive atom of a
@@ -210,6 +215,5 @@ gave the same 29,747 violations (483a6f116876).
 - **`resolve_export(@dot(m, x), r) :- exports(m, x, r)`** (about 0.2 s, one thread): it interns each export's
   name. Carrying the name in `exports` would make it a copy, at the cost of a column in a recursive relation.
 - **What holds the chunk phase at 6–7 busy threads:** not this lock (Measured).
-- **Taking the sharded lock alone** (the probe's patch, cleaned up) would keep most of §0's 0.4 s at a few
-  lines' cost, with 0263 §4 lifted. Writers then take every shard. The probe showed no writer cost, but it was
-  not measured apart.
+- **The sharded lock's writers** take every shard (about 16 on the M3), a few thousand times a run. No cost showed
+  in §7's runs (chunk phase and peak memory unchanged within noise), but it was not measured apart.
