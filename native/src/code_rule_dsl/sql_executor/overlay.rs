@@ -54,6 +54,9 @@ impl Source for Overlay {
     fn made_on_lookup(&self) -> bool {
         self.current.made_on_lookup()
     }
+    fn complete_rows(&self) -> bool {
+        self.current.complete_rows()
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.current.expect_lookups(column, keys);
     }

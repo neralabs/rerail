@@ -33,6 +33,8 @@
 //! holds its committed blob's bytes. Its digest is the blob's, when the store has seen those bytes before
 //! (`git_alias`): a fresh clone or another worktree of the same repository is then not hashed.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use crate::content_store::RACY_NS;
 use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};
@@ -565,28 +567,37 @@ impl Observer {
 
     /// The sha256 of the file at `path` (`None`: not a readable file), read only when its stat changed.
     pub fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
+        match self.digest_step(path) {
+            DigestStep::Answered(d) => d,
+            DigestStep::Read(read) => {
+                let hashed = read.hash();
+                self.digest_read(read, hashed)
+            }
+        }
+    }
+
+    /// `digest` up to its read: the answer where none is needed, else the file to read and hash (`DigestRead::hash`,
+    /// which needs no observer, so many files are read at once, outside its lock) and then record (`digest_read`).
+    pub fn digest_step(&mut self, path: &Path) -> DigestStep {
         let path = &self.abs(path);
         self.ensure(path);
         if let Some(e) = self.trusted(path).filter(|e| e.kind == Kind::File) {
             self.counts.reused += 1;
-            return Some(e.digest);
+            return DigestStep::Answered(Some(e.digest));
         }
         let started = now_ns();
-        let (kind, now) = self.stat(path)?;
+        let Some((kind, now)) = self.stat(path) else { return DigestStep::Answered(None) };
         if kind != Kind::File {
-            return None;
+            return DigestStep::Answered(None);
         }
+        let read = |known, blob| DigestStep::Read(DigestRead { path: path.clone(), stat: now, started, known, blob });
         if let Some(e) = self.known(path).filter(|e| e.kind == Kind::File && e.holds(&now)) {
             if !self.checks(path) {
                 self.counts.reused += 1;
-                return Some(e.digest);
+                return DigestStep::Answered(Some(e.digest));
             }
             self.counts.validated += 1;
-            let (_, digest) = self.hash(path, now, started)?;
-            if digest != e.digest {
-                self.counts.mismatched += 1;
-            }
-            return Some(digest);
+            return read(Some(e.digest), None);
         }
         // A clean Git file whose stat is its index entry's holds its blob: the digest of bytes seen before under
         // that blob, unread; or read once, and the blob remembered.
@@ -603,13 +614,26 @@ impl Observer {
             if let Some(d) = self.alias(&key) {
                 self.counts.git += 1;
                 self.remember(path, Entry { kind: Kind::File, stat: now, digest: d, listing: None, recorded_ns: started });
-                return Some(d);
+                return DigestStep::Answered(Some(d));
             }
-            let (_, d) = self.hash(path, now, started)?;
-            self.record_alias(&key, d);
-            return Some(d);
+            return read(None, Some(key));
         }
-        self.hash(path, now, started).map(|(_, d)| d)
+        read(None, None)
+    }
+
+    /// Records a file read for `digest` (`digest_step`): its digest, `None` when it could not be read.
+    pub fn digest_read(&mut self, read: DigestRead, hashed: Option<(u64, [u8; 32])>) -> Option<[u8; 32]> {
+        let (len, digest) = hashed?;
+        self.counts.hashed += 1;
+        self.counts.bytes += len;
+        self.record_hash(&read.path, read.stat, read.started, digest);
+        if read.known.is_some_and(|k| k != digest) {
+            self.counts.mismatched += 1;
+        }
+        if let Some(key) = read.blob {
+            self.record_alias(&key, digest);
+        }
+        Some(digest)
     }
 
     /// Starts a run: the Git work trees are discovered again, as they may have changed since, and each root is
@@ -868,7 +892,7 @@ impl Observer {
                         let _ = one.execute([l.to_string_lossy()]);
                     }
                     if let Some((key, cursor)) = at {
-                        let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+                        let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
                     }
                 }
                 let _ = tx.commit();
@@ -906,11 +930,16 @@ impl Observer {
         self.counts.hashed += 1;
         self.counts.bytes += bytes.len() as u64;
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        self.record_hash(path, stat, started, digest);
+        Some((bytes, digest))
+    }
+
+    /// Keeps a file's digest as read with `stat`, where it is not kept so already.
+    fn record_hash(&mut self, path: &Path, stat: Stat, started: i64, digest: [u8; 32]) {
         let changed = self.entries.get(path).is_none_or(|e| e.digest != digest || e.stat != stat || e.kind != Kind::File);
         if changed || self.entries.get(path).is_some_and(|e| !e.holds(&stat)) {
             self.remember(path, Entry { kind: Kind::File, stat, digest, listing: None, recorded_ns: started });
         }
-        Some((bytes, digest))
     }
 
     /// The entries of the directory at `dir` (`None`: not a readable directory), listed only when its stat changed.
@@ -994,7 +1023,7 @@ impl Observer {
             k.records.insert(key.to_owned(), (consulted.to_owned(), outputs.to_owned()));
             let (key, consulted, outputs) = (key.to_owned(), consulted.to_owned(), outputs.to_owned());
             k.writer.send(move |db| {
-                let _ = db.execute("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
+                let _ = db.execute_cached("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
             });
         }
     }
@@ -1112,7 +1141,7 @@ impl Observer {
                         let _ = drop_key.execute([key]);
                     }
                     if let Some((key, cursor)) = at {
-                        let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+                        let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
                     }
                 }
                 let _ = tx.commit();
@@ -1377,6 +1406,31 @@ pub fn store_beside(content_store: &Path) -> PathBuf {
     let mut name = content_store.as_os_str().to_owned();
     name.push(".files");
     PathBuf::from(name)
+}
+
+/// `Observer::digest_step`'s answer: the digest (`None`: not a readable file), or a file to read first.
+pub enum DigestStep {
+    Answered(Option<[u8; 32]>),
+    Read(DigestRead),
+}
+
+/// A file `Observer::digest` reads: hashed with no observer (`hash`), then recorded (`Observer::digest_read`).
+pub struct DigestRead {
+    path: PathBuf,
+    stat: Stat,
+    started: i64,
+    /// The digest kept for it, which the read checks.
+    known: Option<[u8; 32]>,
+    /// Its clean Git blob's key, remembered with the digest.
+    blob: Option<[u8; 40]>,
+}
+
+impl DigestRead {
+    /// The file's length and bytes' digest; `None` when it cannot be read.
+    pub fn hash(&self) -> Option<(u64, [u8; 32])> {
+        let bytes = std::fs::read(&self.path).ok()?;
+        Some((bytes.len() as u64, Sha256::digest(&bytes).into()))
+    }
 }
 
 static OBSERVERS: OnceLock<Mutex<HashMap<Option<PathBuf>, Observer>>> = OnceLock::new();
