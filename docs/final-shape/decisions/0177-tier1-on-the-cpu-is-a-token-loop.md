@@ -2309,3 +2309,38 @@ that is too wide.
 
 Counts, reported: strings 301.1, comments 228.3, the others
 unchanged.
+
+## A rule's function takes what it reads
+
+A rare token's rule is a call, by the rule that only the main loop is
+inlined. Every rule's function took the same six arguments: the
+bytes, the file's length, its blocks, the token's first byte, its
+first eight bytes and its entry. The main loop moved all six into
+registers at each call.
+
+**The change.** The arguments are in the order the rules read them
+(`RULE_ARGS`): the bytes, the token's first byte, the length, the
+blocks, the first eight bytes, the entry. A function takes the first
+of them up to the last it reads (`rule_reads`), counted in its blocks
+reached from its entry. It is built with all six, then built again
+with those. A call passes as many as the callee's signature has
+(`rule_args`), and a short function's bail passes as many as its long
+function takes.
+
+What each takes in rr:
+
+| Function | Reads | Takes, was 6 |
+|---|---|---|
+| the string (`f31`) | bytes, first byte, length | 3 |
+| a pair rule's, a run's (`f33`, `f40`) | and the blocks | 4 |
+| the number, the comment (`f38`, `f36`) | all six | 6 |
+
+The number's function reads its first eight bytes and its entry too
+(its tests' bits by its first byte), so it keeps all six. Order is a
+prefix, not a set: rule 3 reads no bytes and no blocks, and the
+comment's long function no first eight bytes, but they take them.
+
+Not changed: the values the main loop reloads after a call. They are
+live across it, more than the callee-saved registers hold.
+
+Counts, reported: unchanged but strings 302.1 and comments 228.2.

@@ -2315,6 +2315,52 @@ fn tests_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_b
 /// `READ_CALL | rule << 3 | arm`, past the outputs.
 const READ_CALL: u16 = 0x1000;
 
+/// A rule's function's arguments (`rule_fn`), in this order: the bytes, the token's first
+/// byte, the file's length, its blocks, the token's first eight bytes and its first byte's
+/// entry. A function takes the first of them it reads to (`rule_reads`), as many as its
+/// signature has, as a lexer's number arm reads its bytes from its start alone.
+const RULE_ARGS: usize = 6;
+
+/// The arguments of a call to a rule's function of signature `sig`: the first of `all`
+/// (`RULE_ARGS`' order) as many as it takes.
+fn rule_args(sig: &cranelift_codegen::ir::Signature, all: [Value; RULE_ARGS]) -> Vec<Value> {
+    all[..sig.params.len()].to_vec()
+}
+
+/// How many of `RULE_ARGS`' a rule's function built with all of them reads once optimized (the
+/// code the backends compile and `clif_rust` writes: no value no instruction reads, no block
+/// not reached): one past the last it reads. Its signature is then those, and it is built
+/// again.
+fn rule_reads(func: &cranelift_codegen::ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa) -> usize {
+    let mut ctx = cranelift_codegen::Context::for_function(func.clone());
+    if ctx.optimize(isa, &mut cranelift_codegen::control::ControlPlane::default()).is_err() {
+        return RULE_ARGS;
+    }
+    let func = &ctx.func;
+    let Some(entry) = func.layout.entry_block() else { return RULE_ARGS };
+    let params = func.dfg.block_params(entry).to_vec();
+    let mut cfg = cranelift_codegen::flowgraph::ControlFlowGraph::new();
+    cfg.compute(func);
+    let mut reached = std::collections::HashSet::new();
+    let mut stack = vec![entry];
+    while let Some(b) = stack.pop() {
+        if reached.insert(b) {
+            stack.extend(cfg.succ_iter(b));
+        }
+    }
+    let mut read = 0;
+    for b in func.layout.blocks().filter(|b| reached.contains(b)) {
+        for inst in func.layout.block_insts(b) {
+            for v in func.dfg.inst_values(inst) {
+                if let Some(i) = params.iter().position(|&p| p == v) {
+                    read = read.max(i + 1);
+                }
+            }
+        }
+    }
+    read
+}
+
 /// A rule's function of its own (`rule_fn`): its key in the loop's calls, `RULES_CALL | rule`,
 /// past the outputs.
 const RULES_CALL: u16 = 0x0800;
@@ -2608,8 +2654,12 @@ fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let entry = f.create_block();
     f.append_block_params_for_function_params(entry);
     f.switch_to_block(entry);
+    // Its arguments, the first of `rule_args`' as many as its signature has: those past them
+    // it never reads (`rule_reads`), here a zero no instruction reads.
     let p = f.block_params(entry).to_vec();
-    let (bytes, len, blocks, s, raw, first) = (p[0], p[1], p[2], p[3], p[4], p[5]);
+    let none = if p.len() < RULE_ARGS { Some(f.ins().iconst(types::I64, 0)) } else { None };
+    let arg = |i: usize| p.get(i).copied().or(none).expect("an argument");
+    let (bytes, s, len, blocks, raw, first) = (arg(0), arg(1), arg(2), arg(3), arg(4), arg(5));
     let consts = Consts::make(&mut f);
     let (tables, mult, slots) = tables_consts(&mut f, t);
     // The records' columns: not read by the rules.
@@ -3051,7 +3101,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
             let signature = f.import_signature(sig.clone());
             let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
-            let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
+            let call = f.ins().call(callee, &rule_args(sig, [c.bytes, s, c.len, c.blocks, raw, entry]));
             let mut got = f.inst_results(call).to_vec();
             if packs(r) {
                 got = unpack_rule(f, got[0], got[1]).to_vec();
@@ -3178,7 +3228,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                 let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
                                 let signature = f.import_signature(sig.clone());
                                 let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
-                                let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
+                                let call = f.ins().call(callee, &rule_args(sig, [c.bytes, s, c.len, c.blocks, raw, entry]));
                                 let got = f.inst_results(call).to_vec();
                                 f.ins().return_(&got);
                                 continue;
@@ -3335,7 +3385,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         f.switch_to_block(none);
                         f.ins().jump(long, &[]);
                         f.switch_to_block(long);
-                        let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
+                        let call = f.ins().call(callee, &rule_args(sig, [c.bytes, s, c.len, c.blocks, raw, entry]));
                         let got = f.inst_results(call).to_vec();
                         f.ins().return_(&got);
                         f.switch_to_block(not);
@@ -3397,7 +3447,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
                         let signature = f.import_signature(sig.clone());
                         let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
-                        let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
+                        let call = f.ins().call(callee, &rule_args(sig, [c.bytes, s, c.len, c.blocks, raw, entry]));
                         let got = f.inst_results(call).to_vec();
                         f.ins().return_(&got);
                         f.switch_to_block(found);
@@ -6237,13 +6287,34 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let ids: Vec<ByteCall> = byte_calls.iter().map(|(o, id, sig, _)| (*o, *id, sig.clone())).collect();
         let t = records.map(|(_, t, _)| t).expect("records");
         for k in (0..rec.rules.len()).filter(|&k| k < 0xff && rule_bytewise(rec, &bytewise, k)) {
-            let mut sig = words_signature(module, 6);
-            for _ in 0..if packs(rec) { 2 } else { 4 } {
-                sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
-            }
+            // Its signature, the arguments it reads (`rule_reads`): built with all of them, then
+            // again with those.
+            let empty = module.make_signature();
+            let sig_of = |n: usize| {
+                let mut sig = empty.clone();
+                for _ in 0..n {
+                    sig.params.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+                }
+                for _ in 0..if packs(rec) { 2 } else { 4 } {
+                    sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+                }
+                sig
+            };
+            let built = |sig: &cranelift_codegen::ir::Signature, mode: RuleMode, bw: &crate::native_cpu_bytes::Bytewise<'_>, calls: &[ByteCall], isa: &dyn cranelift_codegen::isa::TargetIsa| -> Result<cranelift_codegen::ir::Function, Error> {
+                let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, u32::MAX), sig.clone());
+                rule_fn(&mut func, rec, t, bw, made.outputs.len(), mode, calls, &carry_names)?;
+                let n = rule_reads(&func, isa);
+                if n == sig.params.len() {
+                    return Ok(func);
+                }
+                let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, u32::MAX), sig_of(n));
+                rule_fn(&mut func, rec, t, bw, made.outputs.len(), mode, calls, &carry_names)?;
+                Ok(func)
+            };
+            let mut func = built(&sig_of(RULE_ARGS), RuleMode::Only(k), &bytewise, &ids, module.isa())?;
+            let sig = func.signature.clone();
             let id = module.declare_function(&format!("{name}_rule{k}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
-            let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
-            rule_fn(&mut func, rec, t, &bytewise, made.outputs.len(), RuleMode::Only(k), &ids, &carry_names)?;
+            func.name = cranelift_codegen::ir::UserFuncName::user(0, id.as_u32());
             // A run's or a reader's short function (`RuleMode::Short`), where it calls nothing
             // but its whole one: the loop calls it, a lexer's short number or comment with no
             // register saved.
@@ -6251,21 +6322,22 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             if matches!(rec.rules[k], crate::records::EndRule::Run(_) | crate::records::EndRule::Read(_)) {
                 let mut with = ids.clone();
                 with.push((LONG_CALL | k as u16, id, sig.clone()));
-                let mut sfunc = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, u32::MAX), sig.clone());
                 let mut short_bw = bytewise.clone();
                 short_bw.bail = Some((id, sig.clone()));
-                rule_fn(&mut sfunc, rec, t, &short_bw, made.outputs.len(), RuleMode::Short(k), &with, &carry_names)?;
+                let mut sfunc = built(&sig_of(RULE_ARGS), RuleMode::Short(k), &short_bw, &with, module.isa())?;
                 let made = calls_of(&sfunc);
                 if !made.is_empty() && made.iter().all(|&x| x == id.as_u32()) {
-                    let sid = module.declare_function(&format!("{name}_rule{k}_short"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+                    let ssig = sfunc.signature.clone();
+                    let sid = module.declare_function(&format!("{name}_rule{k}_short"), Linkage::Local, &ssig).map_err(|_| Error::BackendFailure)?;
                     sfunc.name = cranelift_codegen::ir::UserFuncName::user(0, sid.as_u32());
                     short = Some((sid, sfunc));
                 }
             }
             match short {
                 Some((sid, sfunc)) => {
+                    let ssig = sfunc.signature.clone();
                     byte_calls.push((LONG_CALL | k as u16, id, sig.clone(), func));
-                    byte_calls.push((RULES_CALL | k as u16, sid, sig, sfunc));
+                    byte_calls.push((RULES_CALL | k as u16, sid, ssig, sfunc));
                 }
                 None => byte_calls.push((RULES_CALL | k as u16, id, sig, func)),
             }

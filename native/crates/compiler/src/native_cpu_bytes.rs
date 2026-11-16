@@ -440,8 +440,9 @@ impl<'a> Bytewise<'a> {
             let signature = f.import_signature(sig.clone());
             let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
             let entry = f.func.layout.entry_block().expect("an entry");
+            // Its arguments the whole function's first (`native_cpu_block::rule_args`).
             let args = f.func.dfg.block_params(entry).to_vec();
-            let call = f.ins().call(callee, &args);
+            let call = f.ins().call(callee, &args[..sig.params.len()]);
             let got = f.inst_results(call).to_vec();
             f.ins().return_(&got);
             f.switch_to_block(join);
