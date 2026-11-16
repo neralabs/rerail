@@ -28,7 +28,8 @@
 //       checked against its pinned hash (--record pins it). Runs where the history is; copy <out>/sessions over.
 //   node --import tsx scripts/ship/shipbar.ts waits --baseline <dir> --candidate <dir> --out <dir> --corpora <dir>
 //       [--waits W1,W2,W5/scan-warm] [--shapes full,one-file,one-rule] [--wait-runs 5] [--replays 2] [--confirm 3]
-//       [--cpus 8-11] [--session <file>] [--work /tmp/shipbar-waits]
+//       [--cpus 8-11] [--session <file>] [--work /tmp/shipbar-waits] [--repo <waits.json repo>]
+//       A --repo without a replayed session (waits.json) runs the step benchmarks only (--waits W1,W5).
 //       W1 and W5 include the step benchmarks' edit sequence (waits-steps.ts) in each of --shapes (default full).
 //       Linux only: the user waits W1–W8 (waits.ts), through each checkout's built hooks, CLI and daemon (both need
 //       `npm run build:js` beside the native engine), then the report with a waits section.
@@ -1158,6 +1159,7 @@ function main(): void {
       work: { type: "string", default: "/tmp/shipbar-waits" },
       prepare: { type: "boolean", default: false },
       shapes: { type: "string", default: "full" },
+      repo: { type: "string" },
     },
   });
   const command = positionals[0];
@@ -1167,11 +1169,14 @@ function main(): void {
   const out = resolve(values.out);
   mkdirSync(out, { recursive: true });
   const waitsManifest = readJson<WaitsManifest>(WAITS_MANIFEST);
-  const [sessionName, sessionSpec] = Object.entries(waitsManifest.sessions)[0]!;
-  const sessionPath = resolve(values.session ?? join(out, "sessions", `${sessionName}.json`));
+  const repoName = values.repo ?? Object.values(waitsManifest.sessions)[0]!.repo;
+  // The repository's replayed session, if it has one: a repository without one runs the step benchmarks only.
+  const [sessionName, sessionSpec] = Object.entries(waitsManifest.sessions).find(([, s]) => s.repo === repoName) ?? [null, null];
+  const sessionPath = sessionName === null ? null : resolve(values.session ?? join(out, "sessions", `${sessionName}.json`));
   if (preparingSession) {
+    if (sessionName === null) fail(`waits.json declares no session of repo ${repoName}`);
     try {
-      const session = prepareSession(WAITS_MANIFEST, sessionName, SELF, sessionPath, values.record);
+      const session = prepareSession(WAITS_MANIFEST, sessionName, SELF, sessionPath!, values.record);
       console.log(`shipbar: session ${sessionName}: ${session.turns.length} turns, ${session.turns.reduce((sum, t) => sum + t.edits.length, 0)} edits, ${sessionPath}`);
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
@@ -1213,7 +1218,7 @@ function main(): void {
   }
   const settingsBase = { baseline, candidate, corpora, out, runs };
   if (command === "waits") {
-    const repo = waitsManifest.repos[sessionSpec.repo] ?? fail(`waits.json declares no repo ${sessionSpec.repo}`);
+    const repo = waitsManifest.repos[repoName] ?? fail(`waits.json declares no repo ${repoName}`);
     const corpusDir = join(corpora, "real", repo.corpus);
     const corpus = hashTree(corpusDir);
     if (corpus.sha256 !== readJson<Manifest>(MANIFEST).corpora[repo.corpus]?.sha256) fail(`real-code corpus ${repo.corpus} at ${corpusDir} does not match corpora.json: run prepare`);
@@ -1228,11 +1233,17 @@ function main(): void {
       const ids = (named.length > 0 ? named : SCENARIOS.filter((s) => s.wait === token.trim() && (s.shape === undefined || shapes.includes(s.shape)))).map(scenarioId);
       return ids.length > 0 ? ids : fail(`--waits: no wait or scenario ${token} (W1…W8, or W5/scan-warm)`);
     });
-    let session;
-    try {
-      session = loadSession(sessionSpec, sessionName, sessionPath);
-    } catch (error) {
-      fail(error instanceof Error ? error.message : String(error));
+    let session = null;
+    if (sessionSpec !== null) {
+      try {
+        session = loadSession(sessionSpec, sessionName!, sessionPath!);
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
+    } else if (scenarios.some((id) => !/\/steps-/.test(id))) {
+      console.log(`shipbar: repo ${repoName} has no replayed session in waits.json: it runs the step benchmarks only`);
+      scenarios.splice(0, scenarios.length, ...scenarios.filter((id) => /\/steps-/.test(id)));
+      if (scenarios.length === 0) fail(`--waits names no step benchmark scenario, the only ones repo ${repoName} runs`);
     }
     const cpus = cpuList(values.cpus);
     mkdirSync(join(out, "machines"), { recursive: true });
@@ -1240,7 +1251,7 @@ function main(): void {
     runWaits(
       {
         checkouts: { baseline: { dir: baseline.dir, sha: baseline.sha }, candidate: { dir: candidate.dir, sha: candidate.sha } },
-        out, repoName: sessionSpec.repo, repo, corpusDir, corpus, sessionName, session, sessionSha256: sessionSpec.sha256!,
+        out, repoName, repo, corpusDir, corpus, sessionName, session, sessionSha256: sessionSpec?.sha256 ?? null,
         cpus, siblings: idleSiblings(cpus), runs: count("wait-runs", values["wait-runs"], 1), replays: count("replays", values.replays, 1), confirm, scenarios,
         work: resolve(values.work), limits: waitsManifest.limits, reportOnly: waitsManifest.reportOnly, command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
       },

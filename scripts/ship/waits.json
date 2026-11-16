@@ -9,6 +9,13 @@
         "typescript"
       ],
       "rule": "typescript-eslint-no-explicit-any"
+    },
+    "samples-python": {
+      "corpus": "samples-python",
+      "packs": [
+        "python"
+      ],
+      "rule": "bandit-b101-assert-used"
     }
   },
   "sessions": {

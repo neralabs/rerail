@@ -44,9 +44,10 @@ export interface WaitsSettings {
   repo: RepoSpec;
   corpusDir: string;
   corpus: { files: number; sha256: string };
-  sessionName: string;
-  session: Session;
-  sessionSha256: string;
+  /** The repository's replayed session; null for a repository that runs the step benchmarks only. */
+  sessionName: string | null;
+  session: Session | null;
+  sessionSha256: string | null;
   cpus: number[];
   siblings: number[];
   /** Runs per side of each single wait (at least 5: they are under 2 s, or near it). */
@@ -196,7 +197,7 @@ class Home {
     this.git(["init", "-q", "-b", "main"]);
     this.git(["add", "-A"]);
     this.git(["commit", "-qm", "base"]);
-    if (options.switchBranch !== false) {
+    if (options.switchBranch !== false && this.settings.session !== null) {
       this.git(["checkout", "-qb", "switch"]);
       for (const turn of this.settings.session.turns) for (const edit of turn.edits) writeFile(join(this.repo, edit.path), edit.content);
       this.git(["add", "-A"]);
@@ -274,6 +275,12 @@ class Home {
       since,
     ).map((row) => ({ paths: JSON.parse(row.paths_json) as string[], started: row.started_at, finished: row.finished_at, status: row.status, failure: row.status === "failed" ? (JSON.parse(row.failures_json ?? "[]") as { message?: string }[])[0]?.message ?? null : null }));
   }
+}
+
+/** The replayed session, which every group but the step benchmarks needs (shipbar.ts runs only those without one). */
+function sessionOf(settings: WaitsSettings): Session {
+  if (settings.session === null) throw new Error(`repo ${settings.repoName} has no replayed session (waits.json)`);
+  return settings.session;
 }
 
 function writeFile(path: string, content: string): void {
@@ -378,7 +385,7 @@ function timing(path: string, pre: Result, post: Result & { steered: boolean }):
 
 /** W1 and W2: the session replayed with its pauses on a running daemon (`editVerdicts` for each edit's verdict). */
 function replay(home: Home, sessionId: string): Measured[] {
-  const { session } = home.settings;
+  const session = sessionOf(home.settings);
   const { edit_ms: editPause, turn_ms: turnPause } = session.pauses;
   home.resetRepo();
   home.startDaemon();
@@ -420,7 +427,7 @@ function replay(home: Home, sessionId: string): Measured[] {
  * agent ending its turn settles every check), up to 60 s.
  */
 function firstVerdict(home: Home, sessionId: string): { firstMs: number | null; startMs: number; reason: string | null } {
-  const first = home.settings.session.turns[0]!.edits[0]!;
+  const first = sessionOf(home.settings).turns[0]!.edits[0]!;
   const t0 = Date.now();
   const opened = sessionStart(home, sessionId);
   if (opened.quiet) return { firstMs: null, startMs: opened.ms, reason: `SessionStart answered {} (${lastLine(opened.stderr) || "no daemon"})` };
@@ -569,7 +576,7 @@ function busyGroup(settings: WaitsSettings, side: WaitSide, rep: number, phase: 
     if (sessionStart(home, sessionId).quiet) throw new Error("SessionStart answered {}");
     const warm = scan(home, sessionId);
     if (warm.reason !== null) throw new Error(`warm-up scan: ${warm.reason}`);
-    const probe = settings.session.turns[0]!.edits[0]!.path;
+    const probe = sessionOf(settings).turns[0]!.edits[0]!.path;
     while (status.length < BUSY_STATUS_SAMPLES && scans < BUSY_MAX_SCANS) {
       home.git(["checkout", "-q", scans % 2 === 0 ? "switch" : "main"]);
       const requested = home.cli(["scan", "--session", sessionId, "--scope", "repository", "--json"]);
@@ -618,8 +625,8 @@ const stepFiles = new Map<string, string>();
 function stepFile(settings: WaitsSettings): string {
   let file = stepFiles.get(settings.corpusDir);
   if (file === undefined) {
-    const extension = extname(settings.session.turns[0]!.edits[0]!.path);
-    const paths = (readdirSync(settings.corpusDir, { recursive: true }) as string[]).filter((path) => extname(path) === extension);
+    // Any file the step edits apply to (waits-steps.ts names the languages): the corpus's own language decides.
+    const paths = (readdirSync(settings.corpusDir, { recursive: true }) as string[]).filter((path) => extname(path) !== "");
     file = pickStepFile(paths.map((path) => ({ path, size: readFileSync(join(settings.corpusDir, path)).length, source: () => readFileSync(join(settings.corpusDir, path), "utf8") })));
     stepFiles.set(settings.corpusDir, file);
   }
@@ -741,7 +748,7 @@ interface RecordedSettings {
   baseline: { dir: string; sha: string };
   candidate: { dir: string; sha: string };
   repo: { name: string; corpus: string; packs: string[]; files: number; sha256: string };
-  session: { name: string; source: string; edits: number; sha256: string };
+  session: { name: string; source: string; edits: number; sha256: string } | null;
   cpus: string;
   runs: number;
   replays: number;
@@ -757,7 +764,7 @@ function recordedSettings(s: WaitsSettings): RecordedSettings {
     baseline: s.checkouts.baseline,
     candidate: s.checkouts.candidate,
     repo: { name: s.repoName, corpus: s.repo.corpus, packs: s.repo.packs, ...s.corpus },
-    session: { name: s.sessionName, source: `${s.session.source} ${s.session.from.slice(0, 10)}..${s.session.to.slice(0, 10)}`, edits: s.session.turns.reduce((sum, t) => sum + t.edits.length, 0), sha256: s.sessionSha256 },
+    session: s.session === null ? null : { name: s.sessionName!, source: `${s.session.source} ${s.session.from.slice(0, 10)}..${s.session.to.slice(0, 10)}`, edits: s.session.turns.reduce((sum, t) => sum + t.edits.length, 0), sha256: s.sessionSha256! },
     cpus: s.cpus.join(","),
     runs: s.runs,
     replays: s.replays,
@@ -781,7 +788,7 @@ export function waitsSection(out: string): WaitsSection | null {
     requested: s.scenarios,
     skipped: { ...notRequested, ...NOT_MEASURED },
     inputs: {
-      sessions: { [s.session.name]: { edits: s.session.edits, sha256: s.session.sha256, source: s.session.source } },
+      sessions: s.session === null ? {} : { [s.session.name]: { edits: s.session.edits, sha256: s.session.sha256, source: s.session.source } },
       repos: { [s.repo.name]: { corpus: s.repo.corpus, packs: s.repo.packs, files: s.repo.files, sha256: s.repo.sha256 } },
     },
     method: [
