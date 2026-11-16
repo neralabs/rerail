@@ -30,7 +30,7 @@ then offers it from that copy.
 
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|
-| Cyclomatic complexity | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
+| Function complexity | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Function complexity](#function-complexity). |
 | JavaScript | language | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
 | TypeScript | language | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
 | Python | language | 537 (316) | Python source outside tests, scripts and docs |
@@ -109,6 +109,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 - **`list`** names Rerail's packs by id and a third party's by package name.
 - **`add`** takes ids or package names (`@neralabs/rerail-pack-typescript`, `@acme/rerail-pack-sql`, `rerail-pack-lint`). It takes a version, range, dist-tag, or an existing tarball or folder; it refuses npm options, `npm:` aliases, git and URL specs. If a pack it installed is left out, or another stops loading, it puts the change back and fails with why.
+- **Updating a pack.** A pack is pinned to the version installed, so `add <id>` with no version leaves an installed pack where it is. Name the version (`add typescript@0.1.6`) or the tag (`add typescript@latest`); `rerail update` prints the command with the versions.
 - **`remove`** refuses to remove, by name, the package holding an id (the one loading under it, or Rerail's own) while another holder stays. Repositories adding the id would then run the other.
 
 </details>
@@ -122,7 +123,7 @@ Pack changes run one at a time, a running daemon picks them up without a restart
 
 - **Lock.** Set-up's install, `rerail packs add` and `remove` hold `$RERAIL_HOME/locks/packs.lock`. Others wait up to five minutes; the lock is free the moment the process holding it ends.
 - **Reload.** A running daemon re-reads the catalog at once after an install, removal or active-core change (`rerail update`), and rebuilds every checkout's rules and the dashboard's activity. Edits inside a folder-linked pack are seen only when its `pack.json` or `package.json` changes.
-- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs name the oldest and no newest (`>=0.1.0-0` today), so a newer core never leaves one out by its range; a third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>`).
+- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs name the oldest and no newest (`>=0.1.0-0` today), so a newer core never leaves one out by its range; a third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>@<version>`; `rerail update` ends by listing the newer versions that fit).
 
 </details>
 
@@ -187,7 +188,7 @@ It must be named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` (`<id>` from 
 - **Warning.** `rerail packs add`, and set-up before its question, say Rerail has not reviewed the pack, that its rules run in Log until a person approves this version, and that their steer text then reaches the coding agent.
 - **Approval.** Approve with `rerail rules approve <package>` or Approve on the pack's dashboard sheet. Each new version waits again. Rerail's own packs from npm need none.
 - **Clashes.** Pack and rule ids are not namespaced; repositories add packs by id. A third party's pack sharing a pack id or rule id with Rerail's is left out with why, and `rerail packs add` puts it back and fails.
-- **Set-up and updates.** Set-up fetches only Rerail's packs, but offers an installed third party's pack wherever it fits; `--packs` names it by package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` updates no pack; `rerail packs add <package>` does.
+- **Set-up and updates.** Set-up fetches only Rerail's packs, but offers an installed third party's pack wherever it fits; `--packs` names it by package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` installs no pack: it ends by listing each installed pack with a newer version on its channel (or on `next`, for a pack the channel has no version of) that fits the active core, a third party's marked as waiting for approval again, and the `rerail packs add <id>@<version>` command that installs them. A pack from a folder or tarball is not listed, and one installed newer than the channel's (from `next`) is never offered an older version.
 
 </details>
 
@@ -275,9 +276,9 @@ A language or framework pack goes in the folder holding all its matches (`web` w
 
 </details>
 
-## Cyclomatic complexity
+## Function complexity
 
-The `complexity` pack flags functions with cyclomatic complexity above 6, reproducing the Metrics-in-the-Loop study's feedback.
+The `complexity` pack keeps functions small enough to read, test and change. Each `if`, loop, `catch`, `&&` or `||` adds a path through a function, and the pack flags functions with more than 6: cyclomatic complexity above 6, as in the Metrics-in-the-Loop study's feedback. The limit of 6 is the study's: a strict standard a repository chooses to adopt, not a verdict on its code. Only functions an agent's edit touches are checked; a repository that works to another limit can set the pack to Log or leave it off.
 
 A finding names the function and number: `` CYCLOMATIC_COMPLEXITY src/grade.py:1: `grade` has cyclomatic complexity 8, over the ceiling of 6. Decompose it into smaller functions. ``
 

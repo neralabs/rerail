@@ -1,4 +1,4 @@
-import { ADAPTER_CAPABILITIES, type RerailHost, type SteerRule } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost, type SteerRule } from "../adapter-contract.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 
 /**
@@ -270,6 +270,12 @@ export function subagentSteer(content: string, host: RerailHost): string {
     + "keep working on your own task.";
 }
 
+/** One line of someone's text ({@link oneLine}), its runs of whitespace one space and its ends trimmed. */
+export const plainLine = (text: string): string => oneLine(text).replace(/\s+/gu, " ").trim();
+
+/** Someone's text fit to show on one line ({@link plainLine}), cut to at most `max` characters, `…` marking the cut. */
+export const cappedLine = (text: string, max: number = STEER_NAME_CHARS): string => capped(plainLine(text), max);
+
 /**
  * A steer the coding agent reads as a message of its own, not in a tool result, from a host that hands that message to
  * the model as the user's (Pi): a first line says it is Rerail's, not the user's, and that the agent's task stands, so
@@ -317,13 +323,26 @@ const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
  * agent that draws colour passes `mark` (the coloured `R E R A I L`) to show in place of the word Rerail.
  */
 export function headlineText({ header, url }: SteerHeadline, style: HeadlineLinkStyle, mark?: string): string {
+  return linkedLine(header, url, "why?", style, mark);
+}
+
+/** A line led by `◆ Rerail · ` (the word replaced by `mark` when given), then `word` linked to `url` in `style`. */
+function linkedLine(header: string, url: string | undefined, word: string, style: HeadlineLinkStyle, mark?: string): string {
   const plain = header.replace(CONTROL, "");
   const text = mark === undefined ? plain : plain.replace(/^([○◆]) Rerail · /u, (_, glyph: string) => `${glyph} ${mark} · `);
   if (url === undefined) return text;
   const target = url.replace(CONTROL, "");
-  if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007why?\u001b]8;;\u0007`;
-  if (style === "markdown") return `${text}  ·  [why?](${target})`;
-  return `${text}  ·  why? → ${target}`;
+  if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007${word}\u001b]8;;\u0007`;
+  if (style === "markdown") return `${text}  ·  [${word}](${target})`;
+  return `${text}  ·  ${word} → ${target}`;
+}
+
+/**
+ * The one line the person sees for an in-flight conflict a note surfaces: `◆ Rerail · your edit overlaps PR #398
+ * (Tim): model.rs  ·  open`, `open` linking its card on the Merge Assist page once the adapter knows the dashboard.
+ */
+export function conflictLine({ text, url }: ConflictNotice, style: HeadlineLinkStyle, mark?: string): string {
+  return linkedLine(`${STEER_GLYPHS.steered} Rerail · ${text}`, url, "open", style, mark);
 }
 
 /** This session's dashboard page on `origin`. */

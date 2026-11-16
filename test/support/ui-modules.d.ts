@@ -75,6 +75,9 @@ declare module "*/ui/poll.js" {
   export function queueInScope(scope: Scope, method: string, path: string, body: object | Promise<object | null> | null): Promise<boolean>;
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function saveFollowGitignore(follow: boolean, page: { toast(message: string): void; invalidate(): void }): Promise<void>;
+  export function writeMergeAssist(scope: Scope, method: string, path: string, body: object): Promise<import("../../src/engine/index.js").MergeAssistStatus | null>;
+  export function mergeAssistMark(): number;
+  export function mergeAssistReadAfter(mark: number): boolean;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function refresh(): Promise<void>;
   export function refreshNow(): Promise<void>;
@@ -148,9 +151,19 @@ declare module "*/ui/state.js" {
     sessionDetail: Map<string, SessionDetail>;
     missing: boolean;
     disconnected: boolean;
+    /** Whether a poll has answered for the scope: the sidebar's Merge Assist count waits for it. */
+    loaded: boolean;
+    /** `GET /api/merge-assist` for the scoped checkout (`MergeAssistStatus`). */
+    mergeAssist: import("../../src/engine/index.js").MergeAssistStatus | null;
+    mergeAssistError: string | null;
+    /** Whether the daemon runs Merge Assist's experiment: `null` until a read answers, `false` after `404 experimental-off`. */
+    mergeAssistExperiment: boolean | null;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
-  export const ui: { filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
+  export const ui: {
+    filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean;
+    selectedSession: string | null; panel: object | null;
+  };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
   export function runningCount(): number;
@@ -216,10 +229,10 @@ declare module "*/ui/pack-model.js" {
 }
 
 declare module "*/ui/routes.js" {
-  export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings";
+  export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge";
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
-    sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean;
+    sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean; conflict?: string;
   }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
@@ -289,6 +302,11 @@ declare module "*/ui/render/rule-sheet-model.js" {
   export function splitPath(path: string | null | undefined): { file: string; dir: string };
 }
 
+declare module "*/ui/views/merge.js" {
+  interface Patched { hidden: boolean; textContent: string; getAttribute(name: string): string | null; hasAttribute(name: string): boolean; setAttribute(name: string, value: string): void; removeAttribute(name: string): void }
+  export function patchProblem(form: { querySelector(selector: string): Patched | null }, fields: { problem: string | null; field: "command" | "timeout" | null }): void;
+}
+
 declare module "*/ui/views/create.js" {
   export interface CreateSuggestion { packId: string; name: string; reason: string }
   export function createSuggestions(
@@ -310,4 +328,29 @@ declare module "*/ui/first-open.js" {
   export function rulesOnSource(packCount: number, mineCount: number): string;
   export const LIVE_MINUTES: number;
   export function liveState(session: { endedAt: number | null; startedAt: number; lastEventAt: number | null }, now: number): "live" | "stale" | null;
+}
+
+declare module "*/ui/merge-model.js" {
+  type Status = import("../../src/engine/index.js").MergeAssistStatus;
+  type Conflict = import("../../src/engine/index.js").Conflict;
+  type Segment = string | { code: string };
+  export function safePeerUrl(url: unknown, context?: { repositoryKey?: string; repository?: string | null }): string | null;
+  export function openConflictCount(status: Status | null | undefined, dismissing?: Set<string>): number;
+  export function githubText(github: Status["readiness"]["github"]): { ok: boolean; text: string };
+  export function scannedWhat(lastScan: NonNullable<Status["lastScan"]>): string;
+  export function scanSummary(before: Status | null, after: Status): string;
+  export function readinessChecks(readiness: Status["readiness"]): Array<{ key: string; ok: boolean; text: Segment[] }>;
+  export function writeError(error: unknown): string;
+  export function quoted(text: string): string;
+  export function conflictSections(status: Status, dismissing?: Set<string>): { open: Conflict[]; dismissed: Conflict[] };
+  export function hunkLines(hunk: string): Array<{ kind: "add" | "del" | "meta" | "ctx"; text: string }>;
+  export function dismissToast(conflict: Conflict): { done: string; fail: string };
+  export function hookFailure(conflict: Conflict): string | null;
+  type MergeAssistSettings = import("../../src/engine/index.js").MergeAssistSettings;
+  export interface SettingsFields { command: string; timeout: string }
+  export function settingsDraft(settings: MergeAssistSettings): SettingsFields;
+  export function settingsChange(fields: SettingsFields): { body: MergeAssistSettings } | { problem: string; field: "command" | "timeout" };
+  export function settingsSummary(settings: MergeAssistSettings): string;
+  export interface FocusControl { act: string; i: string | null }
+  export function refocusIndex(used: FocusControl & { index: number }, controls: readonly FocusControl[]): number;
 }

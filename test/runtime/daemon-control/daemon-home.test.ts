@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
-import { LOCKS_DIR } from "../../src/engine/index.js";
+import { DAEMON_PORT_FILE } from "../../../src/daemon/index.js";
+import { LOCKS_DIR } from "../../../src/engine/index.js";
 import {
   type DaemonState,
   AUTOSTART_CLAIM_FILE,
@@ -18,7 +18,7 @@ import {
   readDaemonState,
   startDaemon,
   stopDaemon,
-} from "../../src/runtime/daemon-control.js";
+} from "../../../src/runtime/daemon-control.js";
 import {
   daemonProcess,
   exitMessage,
@@ -31,8 +31,8 @@ import {
   startedDaemons,
   until,
   watchedEnvironment,
-} from "../support/processes/daemon-home.js";
-import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
+} from "../../support/processes/daemon-home.js";
+import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;

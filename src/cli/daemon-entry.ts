@@ -24,6 +24,8 @@ if (!node.ok) {
   process.exit(1);
 }
 
+// A home runs one daemon, whatever starts it (`runHomeDaemon`). A TLS key other accounts can read keeps the daemon from
+// other machines only: it then serves this one (`serveRerailDaemon`).
 try {
   await runHomeDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),

@@ -202,10 +202,10 @@ function discoveredLine(found: DiscoveredPack, looksFor?: NoFitExplanation["pack
   return `  ${clean(found.packageName)}@${clean(found.version)} (${found.ruleCount} rules)${why}${installed}`;
 }
 
-/** What `recommend` says first: the packs that fit, or that none does and why. */
+/** What `recommend` says first: the packs suggested, or that none matches and why. */
 function recommendHeading(discovery: PackDiscovery, workspaceRoot: string): string[] {
-  if (discovery.recommended.length > 0) return [`Rule packs that fit ${workspaceRoot}:`];
-  return [`No rule pack fits ${workspaceRoot}.`, ...(discovery.nothingFits === undefined ? [] : noFitScanLines(discovery.nothingFits))];
+  if (discovery.recommended.length > 0) return [`Rule packs suggested for ${workspaceRoot}:`];
+  return [`No rule pack matches what ${workspaceRoot} is built with.`, ...(discovery.nothingFits === undefined ? [] : noFitScanLines(discovery.nothingFits))];
 }
 
 /** The packs that do not fit; when none fits, each says what it looks for. */

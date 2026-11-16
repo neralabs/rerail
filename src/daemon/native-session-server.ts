@@ -4,6 +4,7 @@ import { z } from "zod";
 import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSample, AdapterSession, RerailHost } from "../engine/adapter-contract.js";
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
+import { requireExperiment } from "../engine/experimental-features.js";
 import { AdapterEventSchema } from "../runtime/event-protocol.js";
 import type { OmpSessionEntryLike } from "../runtime/omp-semantic.js";
 import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "../engine/native/semantic-types.js";
@@ -14,6 +15,7 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { openCheckoutConversationRules } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type DroppedEvents, type RuleMutation } from "../runtime/session-state.js";
 import { RerailRuntime } from "../runtime/runtime.js";
+import type { MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 
 export type NativeSessionRequest = z.infer<typeof requestSchema>;
@@ -112,6 +114,8 @@ export class NativeSessionServer {
   readonly #workspaceRoot: string;
   readonly #modelPath: string;
   readonly #databasePath: string;
+  /** The daemon's Merge Assist, over `#databasePath`; a session over another database makes its own. */
+  readonly #mergeAssist: MergeAssistRuntime | undefined;
   readonly #sessionLeaseMs: number;
   readonly #sessions = new Map<string, NativeSession>();
   readonly #lanes = new SessionLanes();
@@ -127,6 +131,7 @@ export class NativeSessionServer {
     workspaceRoot: string;
     modelPath: string;
     databasePath: string;
+    mergeAssist?: MergeAssistRuntime;
     sessionLeaseMs?: number;
     sessionSweepIntervalMs?: number;
     replyWithinMs?: number;
@@ -134,6 +139,7 @@ export class NativeSessionServer {
     this.#workspaceRoot = resolve(options.workspaceRoot);
     this.#modelPath = resolve(options.modelPath);
     this.#databasePath = resolve(options.databasePath);
+    this.#mergeAssist = options.mergeAssist;
     this.#sessionLeaseMs = options.sessionLeaseMs ?? NATIVE_SESSION_LEASE_MS;
     this.#replyWithinMs = options.replyWithinMs ?? NATIVE_REPLY_WITHIN_MS;
     if (this.#replyWithinMs <= 0) throw new RangeError("native reply bound must be positive");
@@ -254,9 +260,13 @@ export class NativeSessionServer {
       return this.#reply(session);
     }
     if (input.operation === "cosine") {
+      // Internal testing: OMP's `conversation_rules` and `/cosine-rules`, refused while the daemon runs without them.
+      requireExperiment("CONVERSATION_RULES", "start the Rerail daemon with");
       const result = await this.#conversationRules(session, conversationRulesInputSchema.parse(input.input) as ConversationRulesInput, (customType, data) => session.appendEntries.push({ customType, data }));
       return { ...this.#reply(session), result };
     }
+    // Internal testing: OMP's semantic tools, refused while the daemon runs without them.
+    requireExperiment("SEMANTIC_TOOLS", "start the Rerail daemon with");
     const semantic = await this.#semantic(session, input.input);
     const reply = this.#reply(session);
     if (semantic.revisionEntry === undefined) return { ...reply, result: semantic.result };
@@ -332,6 +342,7 @@ export class NativeSessionServer {
       runtime = new RerailRuntime({
         storageRoot, modelPath, databasePath, workspaceRoot: cwd,
         autostart: false, startGate: true,
+        ...(this.#mergeAssist === undefined || databasePath !== this.#databasePath ? {} : { mergeAssist: this.#mergeAssist }),
         // Resolved per line so the daemon's stderr (its log file) is whatever it is when the line is written.
         timingLog: line => process.stderr.write(line),
         beforeSessionPublish: async () => {

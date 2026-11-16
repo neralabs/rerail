@@ -139,14 +139,15 @@ export async function exitMessage(daemon: ChildProcess): Promise<string> {
 }
 
 /**
- * A daemon in `home` as every build before the home's daemon lock ran one: its entry point called `runRerailDaemon`
- * straight away, so it takes no lock and writes daemon.json once. Resolves once daemon.json names it.
+ * A daemon in `home` as every build before the home's daemon lock ran one: its entry point called the daemon straight
+ * away (`serveRerailDaemon` now, `runRerailDaemon` before it), so it takes no lock and writes daemon.json once.
+ * Resolves once daemon.json names it.
  */
 export async function olderDaemon(home: string, env: NodeJS.ProcessEnv): Promise<ChildProcess> {
   const script = join(home, OLDER_DAEMON_FILE);
   const daemonModule = pathToFileURL(join(packageRoot, "dist", "daemon", "daemon.js")).href;
-  writeFileSync(script, `const { runRerailDaemon } = await import(${JSON.stringify(daemonModule)});
-await runRerailDaemon(process.argv.slice(2));
+  writeFileSync(script, `const { serveRerailDaemon } = await import(${JSON.stringify(daemonModule)});
+await serveRerailDaemon(process.argv.slice(2));
 `);
   const child = spawn(process.execPath, [script, "--state-file", join(home, DAEMON_STATE_FILE), "--workspace-root", home, "--dev", "--port", "0"], {
     cwd: home, env, stdio: "ignore", windowsHide: true,

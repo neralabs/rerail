@@ -386,7 +386,24 @@ Xcode installed.
 Set-up records the Node that ran it for the launcher, the hooks and the Claude Code status line. Homebrew's is
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
 recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
-Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux.
+Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux. Where
+set-up found another `node` first on `PATH`, or none, Claude Code's hooks on Windows start through `cmd.exe`, which
+runs the recorded Node itself while it exists and `node.exe` from `PATH` once it is gone, so each hook event runs one
+Node rather than two. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, or
+where `cmd.exe` would split a path of the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of
+`& ( ) ^ | < > , ; =`. Its look for `node` on `PATH` ends at the first folder on a server (`\\server\share`), which it
+never opens, since a share that does not answer holds each look for about 21 s, and it writes the `cmd.exe` entry
+there. A drive letter mapped to such a share is looked into: set-up then waits about 21 s once, and each hook event
+afterwards does not. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
+exits 0 with no answer, as the launcher answers for a hook that fails, so Claude Code shows no hook error.
+`rerail update` chooses again from the `PATH` it runs with, and `rerail status` and the dashboard count Claude Code as
+connected in either case, without reading `PATH`.
+
+Rerail 0.1.4 and earlier know only the `node` entry. Run `rerail install --remove` before installing one of them:
+its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twice, and its removal leaves the
+`cmd.exe` entries, which then fail on every event once its install is gone (Claude Code shows a hook error and goes
+on). If that has happened, delete from `~/.claude/settings.json` each hook entry whose `command` ends in `cmd.exe`
+and whose `args` name `hook-launcher.js`.
 
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
 says `needs Node 24 or newer`.
@@ -406,7 +423,7 @@ rerail status            # whether Rerail is started here, otherwise daemon/data
 rerail version           # the installed version
 rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
-rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
+rerail scan --session ID --scope repository --wait  # internal testing, experimental (RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1 for the daemon): inspect findings in Sessions
 rerail settings --session ID --mode log             # save this workspace's default
 rerail update check      # is a newer version on the channel?
 rerail update            # install it
@@ -447,6 +464,11 @@ Rerail updates only when you ask; nothing polls the registry or installs a versi
 
 The only paths are `rerail update` and re-running `npx @neralabs/rerail setup`. `rerail update --channel <tag>` picks
 the npm dist-tag (`latest`, `beta`, or `next`).
+
+`rerail update` names each step on stderr as it starts (checking npm, downloading, checking signatures, checking the
+new version starts, switching to it) and says when one runs long enough that npm may be stuck
+([reference](reference.md#update)). Rule packs update separately: it ends by listing each installed pack with a newer
+version on its channel and the `rerail packs add` command that installs them ([rule packs](rule-packs.md#rerail-packs)).
 
 <details>
 <summary>Registry and credentials</summary>
@@ -583,16 +605,61 @@ A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
 that cannot write the file gets an error naming those steps, and the file is left as it was.
 
+Moving each audit's rule provenance to one shared copy is not part of a step: the step adds two tables and a column,
+and records the last audit the database holds; the daemon moves the provenance of the audits up to that one once it
+starts, on a thread of its own, so it keeps answering hooks during the move. Each transaction moves as many audits as
+fit in about 100 ms, at most 100, with a pause between two, so the open that upgrades the file returns at once and
+other processes keep writing during the move. While another process holds the database, as `rerail scrub` does for
+seconds on a large file, or keeps it from being read, as while it recovers the database after a crash, the move waits
+and tries again every 150 ms, then goes on; stopping the daemon ends that wait at once. A daemon stopped partway goes
+on at its next start. Each check the daemon makes on the thread that answers hooks, whether audits are left to move
+and whether an older Rerail recorded one in the last 7 days, reads at most one audit through an index, however long
+the history, and one more for each audit whose damaged rule provenance the move left as it is (below): a later start
+finds nothing left to move that way and takes no write lock.
+
+The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
+them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds
+on a large file, and another process's write fails once it has waited 5 s. `rerail scrub` gives the space back to the
+disk when you run it. To copy the database while the daemon runs, copy `rerail.sqlite-wal` with it, or stop the daemon
+first: during the move it writes every few hundred milliseconds, and a copy of `rerail.sqlite` alone can come out
+damaged.
+
+A Rerail older than this one reads an audit's rule provenance only from the audit's own row, so the move waits while
+one may still be using the database: it starts only once the last audit an older Rerail recorded, with rules on or
+none, began 7 days ago. The new version marks every audit it records with its shared copy, an empty one included, and
+the move marks each audit it moves, so an audit without that mark is an older Rerail's. The audits recorded before the
+update count too, so with only the new version running the move starts 7 days after the last audit recorded before
+the update, and an older Rerail reads the audits recorded before the update in full that week, as before. While it
+waits, the daemon writes why and until when to `daemon.log` when the wait begins, and again when it finds another
+audit to wait for, as when an older Rerail has recorded one since. It looks again an hour later, or when the wait ends
+if that comes first, so an older Rerail that keeps recording adds at most one line an hour, and after the computer
+sleeps the move starts at most an hour late. A move that finds such an audit before its next batch stops there and
+waits the same way; the audits it has not reached keep their provenance in their row. The move takes the audits in
+the order they were recorded, up to the last one the update recorded, whatever the computer's clock read when each
+began, so it reads none of the rows an older Rerail recorded after the update. Where that audit is gone, as after
+`rerail reset` deleted its repository's history, the move takes them up to the first one that began after the update,
+and reads that one row. An audit whose rule provenance in its row is not a JSON array, which only a damaged file or a
+hand edit leaves, stays as it is and reads as before, while the others move. The move names such an audit in
+`daemon.log` when it reaches it: once when the move runs to its end, again when a move stopped partway goes on,
+which is at the next start after the daemon stopped or when the wait for an older Rerail's audit ends, and not at all
+when every audit left to move is such an audit, since no move starts then. Each daemon start reads every such audit in
+full on the thread that answers hooks: about 0.1 ms for one of 189 KB, and 0.4 ms when the file is not in the page
+cache (Linux x64).
+
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
 
 Storing each new audit's rule provenance once sets no floor, so coding agents on different Rerail versions keep
-sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote, in its
+sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote or moved, in its
 `audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
-provenance, and work as before. The audits it writes, and those recorded before the update, keep their provenance in
-their own row, where both versions read it.
+provenance, and work as before. The audits it writes keep their provenance in their own row, where both versions read
+it, and the move leaves them there. Since the move waits while an older Rerail records audits (above), one that keeps
+running beside the new version, and records an audit at least once every 7 days, reads the audits recorded before the
+update, and its own, in full, as before. One started again after the move reads those recorded before the update
+empty, while `rerail.sqlite.pre-update`, the copy `rerail update` took before the update, holds each in full until a
+later update replaces it.
 
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.
