@@ -3413,3 +3413,56 @@ Test: `a_tokens_record_is_written_once` (three adjacent stores in the run
 loop). `a_numbers_arm_is_leans_loop` now ends the arm where its whole
 rule's call joins it, not at the record's first store, which is past
 the tail now.
+
+## A block's bytes are classified as lean's window
+
+**Intro.** Lean classifies each 16 bytes of a block once: one lookup in
+its low-nibble and high-nibble tables gives eight bits, and SPACE, WORD
+and RARE are each a `vtst` of some of them (`micro.rs`). Its digits bit
+serves both a word and a number's first byte. Its pair mask makes the
+bytes after each 16 with `vextq_u8::<1>(x, v[k + 1])`, not a second load.
+
+Ours took two lookups a vector, the space set in a table of its own, and
+eight loads for the pair mask (`+0`, `+1`, `+16`, `+17`, …). Two causes,
+both in generic code:
+
+- **The packer (`class_pack::plan`) chose a set's range by the bytes it
+  covers,** not by the products the rest then needs. The word set's tie
+  between `A-Z` and `a-z` went to `A-Z`, which leaves four products
+  where `a-z` leaves three (`_` and `P-Z` share a row). The packer then
+  took the word set's complement, and the three sets needed nine
+  products, one more than a table holds. Now every longest run of
+  allowed bytes is tried (`ranges`), and the cover decides.
+- **Of forms adding as few products,** the packer now takes the one
+  whose new products the sets after it can share (`serves`). The word's
+  digits stay a product, not a range, so the rare set's digits reuse
+  it, as lean's `C_DIGIT`.
+
+Space 2 products, word 3 and a range, rare 3 more, the digits shared and
+a range: 8 products, one table, one lookup a vector.
+
+The pair mask (`pair_word`) loads the block's four vectors and one past
+it, and makes each next-byte vector by a `shuffle` of two of them.
+`clif_rust` emits a shuffle whose mask is sixteen bytes in a row as
+`vextq_u8::<N>`; any other is a `vqtbl2q_u8`, as before. The lanes'
+`prev` shuffles are rows too, so they become `ext` as well.
+
+Our rare set is larger than lean's. It also holds `$ ' \ ?`, the control
+bytes and `0x7f..`, as the grammar's rare starts are. Lean tests its
+non-ASCII bytes by `x >= 0xc0`; ours are in a range, and the word set
+has one too: two compares where lean has one.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 86.7 | 85.0 |
+| Punctuation | 50.2 | 48.3 |
+| Mixed code | 51.8 | 49.9 |
+| Strings | 234.3 | 237.6 |
+| Numbers | 117.4 | 121.8 |
+| Comments | 186.9 | 189.7 |
+
+Tests: `class_pack::a_lexers_sets_are_one_table`;
+`the_refill_is_leans_window` (one table's lookups a vector, the pair's
+next bytes an `ext`, no vector load at a block's byte after).

@@ -931,7 +931,12 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
         Opcode::Shuffle if is(rt, types::I8X16) => {
             let InstructionData::Shuffle { imm, .. } = data else { return Err("a shuffle with no mask".into()) };
             let mask = dfg.immediates.get(*imm).ok_or("a shuffle's mask")?.as_slice();
-            u(format!("vqtbl2q_u8(uint8x16x2_t({}, {}), {})", args[0], args[1], bytes16(mask)?))
+            // Sixteen bytes in a row of the pair, from byte `n`: an `ext`, one instruction
+            // and no table (as the lean lexer's `vextq_u8::<1>` makes a block's next bytes).
+            match mask.first().filter(|&&n| n < 16 && mask.iter().enumerate().all(|(k, &m)| usize::from(m) == usize::from(n) + k)) {
+                Some(&n) => u(format!("vextq_u8::<{n}>({}, {})", args[0], args[1])),
+                None => u(format!("vqtbl2q_u8(uint8x16x2_t({}, {}), {})", args[0], args[1], bytes16(mask)?)),
+            }
         }
         Opcode::Splat if is(rt, types::I8X16) => u(format!("vdupq_n_u8({} as u8)", args[0])),
         Opcode::Vconst if is(rt, types::I8X16) => {

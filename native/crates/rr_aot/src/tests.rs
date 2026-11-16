@@ -178,6 +178,27 @@ fn a_tokens_record_is_written_once() {
     assert!(writes.windows(2).all(|w| w[1] == w[0] + 1), "the record's stores apart: {body}");
 }
 
+/// The refill classifies a block's bytes as the lean lexer's window does (`micro`): one
+/// nibble lookup a 16 bytes for the space, word and rare sets (`class_pack`, their products in
+/// one table), and the pair's next bytes an `ext` of two loaded vectors, no load at `+1`.
+#[test]
+fn the_refill_is_leans_window() {
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let from = f0.find("vld1q_u8(").expect("the refill's loads");
+    let to = from + f0[from..].find("vextq_u8::<1>(").expect("the pair's next bytes by `ext`");
+    let window = &f0[from..to];
+    let mut tables: Vec<&str> = window.match_indices("vqtbl1q_u8(").map(|(i, m)| {
+        let rest = &window[i + m.len()..];
+        &rest[..rest.find(',').unwrap_or(0)]
+    }).collect();
+    tables.sort_unstable();
+    tables.dedup();
+    assert_eq!(tables.len(), 2, "the classes' lookups, one table's halves: {tables:?}\n{window}");
+    let odd = f0.lines().filter(|l| l.contains("vld1q_u8(") && [1, 17, 33, 49].iter().any(|off| l.contains(&format!("wrapping_add({off}isize as usize)"))));
+    assert_eq!(odd.count(), 0, "a vector load at a block's byte after");
+}
+
 /// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)
 /// is the 64-bit `addp` of its halves (`clif_rust`): rustc keeps one `addp` a step, simdjson's
 /// five instructions, where it made each `vpaddq_u8(a, a)` three.

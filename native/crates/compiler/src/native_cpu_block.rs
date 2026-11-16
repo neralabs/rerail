@@ -4152,7 +4152,9 @@ fn never_at(r: &crate::records::Records, native: Option<&crate::block_native::Bl
 
 /// The pair rule's word for the block at byte `p` (`PAIR_WORD`), as the lean lexer's window
 /// makes its `pair`: each 16 bytes and the 16 from the byte after, their nibbles' lookups
-/// `and`ed, a bit where not zero. The file's zero bytes after it end no pair.
+/// `and`ed, a bit where not zero. The 16 from the byte after are an `ext` of two loaded
+/// (`vextq_u8::<1>(x, v[k + 1])`), one load past the block, not a load each at `+1`. The
+/// file's zero bytes after it end no pair.
 fn pair_word(f: &mut FunctionBuilder<'_>, file: &crate::native_cpu_bytes::File, n: &[[u8; 16]; 4], p: Value) -> Value {
     use cranelift_codegen::ir::ConstantData;
     let at = f.ins().iadd(file.bytes, p);
@@ -4169,9 +4171,12 @@ fn pair_word(f: &mut FunctionBuilder<'_>, file: &crate::native_cpu_bytes::File, 
         let h = f.ins().swizzle(hi, xh);
         f.ins().band(l, h)
     };
+    let v: Vec<Value> = (0..5).map(|k| f.ins().load(types::I8X16, MemFlags::trusted(), at, 16 * k)).collect();
+    let next: Vec<u8> = (1..17).collect();
+    let next = f.func.dfg.immediates.push(ConstantData::from(&next[..]));
     let parts: Vec<Value> = (0..4).map(|k| {
-        let x = f.ins().load(types::I8X16, MemFlags::trusted(), at, 16 * k);
-        let d = f.ins().load(types::I8X16, MemFlags::trusted(), at, 16 * k + 1);
+        let x = v[k];
+        let d = f.ins().shuffle(v[k], v[k + 1], next);
         let a = class(f, x, tables[0], tables[1]);
         let b = class(f, d, tables[2], tables[3]);
         let both = f.ins().band(a, b);
