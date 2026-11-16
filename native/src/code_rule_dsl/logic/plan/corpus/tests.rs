@@ -1176,3 +1176,16 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
     assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());
 }
+
+/// Decision 0275: one program handed to its run (`run_read`) is hidden once and kept under its texts' digest, as a
+/// pack is: the hidden program read back is the one hiding makes, and a second combine is the store's.
+#[test]
+fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
+    let src = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+    let read = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
+    let (made, hidden, kept) = super::combine_handed(&read).unwrap();
+    assert_eq!(format!("{made:?}"), format!("{hidden:?}"), "a miss hides the program handed");
+    assert_eq!(kept.map(|k| format!("{k:?}")), Some(format!("{hidden:?}")), "kept under the texts' digest, read back as hidden");
+    let (again, _, _) = super::combine_handed(&read).unwrap();
+    assert_eq!(format!("{again:?}"), format!("{hidden:?}"), "the store's, the second time");
+}

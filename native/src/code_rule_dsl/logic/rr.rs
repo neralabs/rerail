@@ -596,14 +596,60 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
         crate::code_rule_dsl::prof::count("rr.program_reused", 1);
         return Ok((program.clone(), files.clone()));
     }
+    // Decision 0275: rederived until a key hits. The file's sha (by its `stat` while that holds), then the entry kept
+    // under its path and sha, taken while every file it read still reads as recorded (by `stat`, then sha).
+    let kept = kept_program(&key);
+    if let Some((_, _, Some((program, files)))) = &kept {
+        crate::code_rule_dsl::prof::count("rr.program_stored", 1);
+        files.iter().for_each(noted);
+        cache.lock().expect("the program cache").insert(key.clone(), (files.clone(), program.clone()));
+        return Ok((program.clone(), files.clone()));
+    }
     // The kept statements alone copied from the process's (`read_shared`): each policy copied its libraries whole,
     // to drop most of them (`unreached_dropped`).
     let (shared, files) = program_shared(path)?;
     let own = path.canonicalize().unwrap_or_else(|_| path.to_owned());
     let statements = reached_statements(&own, &shared.iter().collect::<Vec<_>>());
     let program = lower_files_dropping(path, statements, false)?;
+    // Kept behind the run (the store's writer), with what it read: the next run's check above.
+    if let Some((entry, Some(store), None)) = kept {
+        let (read, program) = (files.clone(), program.clone());
+        store.write_back_syms(crate::content_store::write_back::Syms::None, "a rule file's program", 0, vec![(super::plan::corpus::combined::queued(&entry), None)], Box::new(move |store| super::plan::corpus::combined::remember(store, &entry, &read, &program).map(drop)));
+        super::plan::corpus::combined::read_before_the_run(entry);
+    }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
     Ok((program, files))
+}
+
+/// The program and read record the store keeps for the rule file at `path` (canonical), when they still hold
+/// (`kept_program`): for the tests of decision 0275.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
+    kept_program(path).and_then(|(_, _, found)| found)
+}
+
+/// The entry of the rule file at `path` (canonical): its key, the store it is kept in, and its program and read
+/// record when the store keeps one that still holds (`combined::lookup_read`). `None` where there is no file to key
+/// by, or the program is phase 0's own (its builtin reader).
+#[allow(clippy::type_complexity)]
+fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
+    use super::plan::corpus::{combined, phases};
+    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() {
+        return None;
+    }
+    let sha = super::plan::corpus::observe(|o| o.digest(path))?;
+    let key = combined::rule_file_key(path, &sha);
+    let Some(store) = phases::reading_store() else { return Some((key, None, None)) };
+    let found = {
+        // Read while collection is held off, as a combined program's is (`combine_stored`).
+        let _held = store.hold_collection().ok()?;
+        store.settle(&combined::queued(&key));
+        combined::lookup_read(&store, &key, &Default::default()).ok().flatten()
+    };
+    if found.is_some() {
+        combined::read_before_the_run(key);
+    }
+    Some((key, Some(store), found))
 }
 
 /// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,

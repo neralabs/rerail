@@ -563,10 +563,10 @@ fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, re
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok((program.clone(), key));
     }
-    let program = match read {
-        Some(read) if programs.len() == 1 && extra.is_empty() => combine_read(programs, extra, Some(read))?,
-        _ => combine_stored(programs, extra, &key, lists)?,
-    };
+    // The one text a run was handed the program of: its hidden program kept under the texts' digest too, as a pack's
+    // is (decision 0275): the lowered program is the key, and hiding it again is the step a hit saves.
+    let one = read.filter(|_| programs.len() == 1 && extra.is_empty());
+    let program = combine_stored(programs, extra, &key, lists, one)?;
     let mut kept = cache.lock().expect("the combined programs");
     if kept.len() >= KEPT {
         kept.clear();
@@ -575,15 +575,36 @@ fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, re
     Ok((program, key))
 }
 
+/// One program handed to its run (`run_read`), combined as `combine_keyed` combines it, past the process's own kept
+/// programs: what the store gave or a miss made, what hiding it makes, and what the store then keeps under its texts'
+/// digest. For the tests of decision 0275.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn combine_handed(read: &front::Program) -> Result<(front::Program, front::Program, Option<front::Program>)> {
+    let text = crate::code_rule_dsl::logic::rr::print(read)?;
+    let key = texts_digest(&[text.as_str()], &[None], "");
+    let made = combine_stored(&[text.as_str()], "", &key, &front::Lists::default(), Some(read))?;
+    let hidden = combine_read(&[text.as_str()], "", Some(read))?;
+    let kept = phases::reading_store().and_then(|store| {
+        store.settle(&combined::queued(&key));
+        combined::lookup(&store, &key, &front::Lists::default()).ok().flatten()
+    });
+    Ok((made, hidden, kept))
+}
+
 /// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
 /// §6): keyed by the texts and checked against the library files the combine read.
-fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front::Lists) -> Result<front::Program> {
-    let store = if cfg!(feature = "tape-cache") && programs.len() > 1 && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
+fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front::Lists, read: Option<&front::Program>) -> Result<front::Program> {
+    // What a miss combines: the program handed (`combine_read`), or the texts.
+    let combine = || match read {
+        Some(read) => combine_read(programs, extra, Some(read)),
+        None => combine_texts(programs, extra),
+    };
+    let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
         None
     };
-    let Some(store) = store else { return combine_texts(programs, extra) };
+    let Some(store) = store else { return combine() };
     // The run's one hold on collection (O108) is taken later; this read and write hold it themselves.
     let _reading = store.hold_collection().map_err(|e| Error::Plan(e.to_string()))?;
     let found = {
@@ -596,7 +617,7 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front:
         crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || "read from the store: the same texts, and every library file they read reads the same".into());
         return Ok(program);
     }
-    let (program, read) = crate::code_rule_dsl::logic::rr::recording(|| combine_texts(programs, extra));
+    let (program, read) = crate::code_rule_dsl::logic::rr::recording(combine);
     let program = program?;
     {
         let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the combined program in the store, queued".into());
@@ -2715,12 +2736,20 @@ fn run_observed(
     // Their sources found (or stored) by the store's writer: the manifest, queued after, reads them.
     // The pins the combine made (`combined::remember`), released once the run's manifest names the entry.
     let _combined_pins = durable.is_some().then(|| combined::Pins::new(store, &texts));
+    // And the rule files' entries read before the run (`rr::read_file`, decision 0275), by the outermost run: a nested
+    // one (phase 0's) did not read them.
+    let rule_files = if durable.is_some() && !nested { combined::take_read_before() } else { Vec::new() };
+    let _rule_file_pins: Vec<combined::Pins> = rule_files.iter().map(|k| combined::Pins::new(store, k)).collect();
     if durable.is_some() {
-        let (text, plan) = combined::named(&texts);
-        memo::named_source(store, text, false, Some(&combined::queued(&texts)), &late_sources);
-        // And its program's text (decision 0155), a source of its own.
-        combined::name_program(store, &texts, &late_sources);
-        program_plans.push(plan);
+        for key in std::iter::once(&texts).chain(&rule_files) {
+            let (text, plan) = combined::named(key);
+            memo::named_source(store, text, false, Some(&combined::queued(key)), &late_sources);
+            // And its program's text (decision 0155), a source of its own.
+            combined::name_program(store, key, &late_sources);
+            if !program_plans.contains(&plan) {
+                program_plans.push(plan);
+            }
+        }
     }
     // The plans' whole-program choices (inline or store, demand), kept under the prepared program across processes
     // (`plan::choices`, decision 0090 §5); the manifest names their entries too.

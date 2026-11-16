@@ -3592,3 +3592,26 @@ fn has_over_a_guest_holds_with_two_programs() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(rows.contains("has_ref") && rows.contains("calls"), "both programs' findings: {rows}");
 }
+
+/// Decision 0275: a rule file's program is kept under its path and sha with the files it read, and found again while
+/// each still reads as recorded: by its `stat`, and by its sha where the stat moved. An edit to an included file reads
+/// the program again; its bytes put back, the stat moved but the sha holds, and the entry is found again.
+#[test]
+fn a_rule_files_program_is_found_while_what_it_read_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let (main, helper) = (dir.path().join("main.rr"), dir.path().join("helper_0275.rr"));
+    let original = ".decl helper(x: symbol)\nhelper(\"a\").\n";
+    std::fs::write(&helper, original).unwrap();
+    std::fs::write(&main, "#include \"helper_0275.rr\"\n.decl out(x: symbol)\nout(x) :- helper(x).\n.output out\n").unwrap();
+    let main = main.canonicalize().unwrap();
+    let found = || kept_program_found(&main);
+    assert!(found().is_none(), "nothing kept before the first read");
+    let (program, files) = read_file(&main).unwrap();
+    let (kept, kept_files) = found().expect("kept by the first read");
+    assert_eq!(format!("{kept:?}"), format!("{program:?}"), "the program kept is the program read");
+    assert_eq!(kept_files, files, "with the files it read, in reading order");
+    std::fs::write(&helper, ".decl helper(x: symbol)\nhelper(\"b\").\n").unwrap();
+    assert!(found().is_none(), "an included file edited: read again");
+    std::fs::write(&helper, original).unwrap();
+    assert!(found().is_some(), "its bytes put back: its sha holds though its stat moved");
+}
