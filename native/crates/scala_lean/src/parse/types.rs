@@ -280,7 +280,7 @@ impl P<'_> {
 
     /// A type's path: `C` (`type_identifier`), `a.C` (`stable_type_identifier`), `a.b.C` (its
     /// prefix a `stable_identifier`), `a.type` (`singleton_type`).
-    fn type_path(&mut self) -> R<u32> {
+    pub(super) fn type_path(&mut self) -> R<u32> {
         // The path's names: up to a name not followed by `.` and a name.
         let mut k = 0;
         while self.kind_at(k + 1) == T::Dot && matches!(self.kind_at(k + 2), T::Id | T::BackId) && !self.peek_at(k + 1).nl {
@@ -422,6 +422,12 @@ impl P<'_> {
         if self.peek() == T::LBracket {
             self.type_parameters(f::TYPE_PARAMETERS)?;
         }
+        self.bounds(true)
+    }
+
+    /// A type parameter's or type definition's bounds (`bound`): lower, upper, view bounds
+    /// (`view`), context bounds.
+    pub(super) fn bounds(&mut self, view: bool) -> R<()> {
         if self.is_op(op::SUPERTYPE) {
             let b = self.open_field(K::LowerBound, f::BOUND);
             self.tk(K::TSupertype)?;
@@ -434,7 +440,7 @@ impl P<'_> {
             self.bound_type()?;
             self.close(b);
         }
-        while self.is_op(op::VIEW) {
+        while view && self.is_op(op::VIEW) {
             let b = self.open_field(K::ViewBound, f::BOUND);
             self.tk(K::TViewBound)?;
             self.typ_f(f::TYPE)?;

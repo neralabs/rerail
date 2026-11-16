@@ -31,7 +31,10 @@ impl P<'_> {
     /// `_identifier`: a name (`identifier`) or an operator (`operator_identifier`), given `field`.
     pub(super) fn identifier(&mut self, field: u8) -> R<u32> {
         let t = self.tok();
-        self.not_keyword_after_dot(t)?;
+        // `extension` (`_soft_identifier`): the keyword's token in an identifier.
+        if t.kind == T::Id && t.code == w::EXTENSION {
+            return self.extension_identifier(field);
+        }
         if Self::is_name(t) {
             return self.leaf(K::Identifier, field);
         }
@@ -44,19 +47,26 @@ impl P<'_> {
     /// A name as a leaf of `kind` (`type_identifier`, …).
     pub(super) fn ident_as(&mut self, kind: K, field: u8) -> R<u32> {
         let t = self.tok();
-        self.not_keyword_after_dot(t)?;
+        if t.kind == T::Id && t.code == w::EXTENSION && (kind != K::Identifier || self.keyword_after_dot(t)) {
+            // A type's (`a.extension.B`): refused.
+            return self.refuse();
+        }
         if Self::is_name(t) || t.kind == T::Op && !op::is_reserved(t.code) && t.code != op::ARROW {
             return self.leaf(kind, field);
         }
         self.refuse()
     }
 
-    /// `extension` after a `.` (`a.extension.B`): tree-sitter reads its keyword there (refused).
-    fn not_keyword_after_dot(&mut self, t: Tok) -> R<()> {
-        if t.kind == T::Id && t.code == w::EXTENSION && self.i > 0 && self.toks[self.i - 1].kind == T::Dot {
-            return self.refuse();
-        }
-        Ok(())
+    /// Whether `t` is `extension` after a `.` (`a.extension.B`), where tree-sitter reads its keyword.
+    fn keyword_after_dot(&self, t: Tok) -> bool {
+        t.kind == T::Id && t.code == w::EXTENSION && self.i > 0 && self.toks[self.i - 1].kind == T::Dot
+    }
+
+    /// `extension` read as a name: an `identifier` holding the keyword's token.
+    pub(super) fn extension_identifier(&mut self, field: u8) -> R<u32> {
+        let n = self.open_field(K::Identifier, field);
+        self.tk(K::TExtension)?;
+        Ok(self.close(n))
     }
 
     // ---- Expressions.
@@ -226,6 +236,7 @@ impl P<'_> {
     fn infix(&mut self, min: u8) -> R<u32> {
         let m = self.mark();
         let mut n = self.prefix()?;
+        let mut first = true;
         loop {
             let t = self.tok();
             let (prec, right) = match t.kind {
@@ -247,7 +258,16 @@ impl P<'_> {
             let nx = self.peek_at(1);
             if matches!(nx.kind, T::RParen | T::RBracket | T::RBrace | T::Comma | T::Semi | T::Eof) || nx.nl {
                 if t.kind == T::Id || t.kind == T::BackId {
-                    return self.refuse();
+                    // `10 seconds`: a postfix expression (its operand and identifier unfielded),
+                    // where the operand is all the expression so far.
+                    if !(first && min == 0 && !self.right_operand) {
+                        return self.refuse();
+                    }
+                    self.t.refield(n, f::NONE);
+                    let x = self.t.wrap(m, K::PostfixExpression, f::NONE);
+                    self.leaf(K::Identifier, f::NONE)?;
+                    n = self.close(x);
+                    break;
                 }
                 if self.layout(AFTER_OPERAND)?.is_some_and(|x| matches!(x, Ext::PostfixOp | Ext::PostfixStar)) {
                     return self.refuse();
@@ -271,6 +291,7 @@ impl P<'_> {
             self.right_operand = saved;
             self.t.refield(r?, f::RIGHT);
             n = self.close(x);
+            first = false;
             if self.peek() == T::LBracket && !self.right_operand && !self.tok().nl {
                 // `a op b[T]`: the type arguments are the infix's, then its calls and fields.
                 n = self.suffixes(m, n)?;
@@ -374,8 +395,14 @@ impl P<'_> {
                     n = self.close(x);
                 }
                 T::Id if t.code == w::UNDERSCORE && !t.nl => {
-                    // `f _`: a method value.
-                    return self.refuse();
+                    // `f _`: a method value (the expression and a wildcard, unfielded).
+                    self.t.refield(n, f::NONE);
+                    let x = self.t.wrap(m, K::MethodValue, f::NONE);
+                    let y = self.open(K::Wildcard);
+                    self.tk(K::TUnderscore)?;
+                    self.close(y);
+                    n = self.close(x);
+                    break;
                 }
                 T::Op if t.code == op::COLON && !t.nl && !self.right_operand => {
                     let Some(eol) = self.colon_argument_ahead()? else { break };
@@ -447,6 +474,9 @@ impl P<'_> {
                     if self.kind_at(1) == T::Str && self.adjacent(0) {
                         return self.interpolated_string_expression();
                     }
+                    if t.code == w::EXTENSION {
+                        return self.extension_identifier(f::NONE);
+                    }
                     self.leaf(K::Identifier, f::NONE)
                 }
                 _ => self.refuse(),
@@ -457,7 +487,18 @@ impl P<'_> {
             T::Op if !op::is_reserved(t.code) && t.code != op::ARROW => self.leaf(K::OperatorIdentifier, f::NONE),
             T::LParen => self.paren_expression(),
             T::LBrace => self.block_or_cases(),
-            T::Quote => self.refuse(),
+            T::Quote => {
+                // `'a` (`quote_expression`: the identifier; the `'` not stored). `'{…}`, `'[…]`
+                // are refused.
+                let nx = self.peek_at(1);
+                if !(Self::is_name(nx) && nx.start == t.end) {
+                    return self.refuse();
+                }
+                let n = self.open(K::QuoteExpression);
+                self.tk(K::TQuote)?;
+                self.identifier(f::NONE)?;
+                Ok(self.close(n))
+            }
             _ => self.refuse(),
         }
     }

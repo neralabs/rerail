@@ -155,8 +155,36 @@ impl P<'_> {
                     if !matches!(self.layout(v::MODS)?, Some(Ext::Modifier(_))) {
                         break;
                     }
-                    // The scanner's token: the word, a named leaf of its own.
-                    return self.refuse();
+                    // The scanner's token (`_inline_modifier`, …): the word, a named leaf.
+                    self.take();
+                    let kind = match t.code {
+                        w::INLINE => K::InlineModifier,
+                        w::OPAQUE => K::OpaqueModifier,
+                        w::OPEN => K::OpenModifier,
+                        w::INFIX => K::InfixModifier,
+                        w::TRANSPARENT => K::TransparentModifier,
+                        w::ERASED => K::ErasedModifier,
+                        w::INTO => K::IntoModifier,
+                        w::TRACKED => K::TrackedModifier,
+                        w::UPDATE => K::UpdateModifier,
+                        _ => K::ConsumeModifier,
+                    };
+                    if t.code == w::OPAQUE {
+                        // `opaque` is the type definition's own, after its modifiers.
+                        if let Some(n) = n.take() {
+                            self.close(n);
+                        }
+                        self.leaf(kind, f::NONE)?;
+                        if !self.is_word(w::TYPE) {
+                            return self.refuse();
+                        }
+                        return Ok(());
+                    }
+                    if n.is_none() {
+                        n = Some(self.open(K::Modifiers));
+                    }
+                    self.leaf(kind, f::NONE)?;
+                    continue;
                 }
                 _ => break,
             };
@@ -194,8 +222,8 @@ impl P<'_> {
         }
         loop {
             let t = self.tok();
-            // `extension` in a path: tree-sitter takes its keyword (refused).
-            if !(Self::is_name(t) || t.kind == T::Id && matches!(t.code, w::ENUM | w::EXPORT)) || t.kind == T::Id && t.code == w::EXTENSION {
+            // `extension` in a path: tree-sitter takes its keyword (`identifier` reads it so).
+            if !(Self::is_name(t) || t.kind == T::Id && matches!(t.code, w::ENUM | w::EXPORT | w::EXTENSION)) {
                 return self.refuse();
             }
             if t.kind == T::Id && matches!(t.code, w::ENUM | w::EXPORT) {
@@ -327,8 +355,11 @@ impl P<'_> {
             }
         }
         self.close(n);
-        if self.peek() == T::LBrace || self.is_op(op::COLON) {
-            return self.refuse();
+        // `package a { … }` and `package a:` then indented statements: a template body, `body`.
+        if self.peek() == T::LBrace && !self.tok().nl {
+            self.template_body(f::BODY)?;
+        } else if self.is_op(op::COLON) && !self.tok().nl {
+            self.indented_template_body(f::BODY)?;
         }
         Ok(())
     }
@@ -401,7 +432,7 @@ impl P<'_> {
             self.extends_clause()?;
         }
         if self.is_word(w::DERIVES) && self.continues(HEAD)? {
-            return self.refuse();
+            self.derives_clause()?;
         }
         if self.peek() == T::LBrace {
             // `_definition_body`: a semicolon the scanner gives before the `{` is its (its dynamic
@@ -419,6 +450,23 @@ impl P<'_> {
         } else if self.is_op(op::COLON) && !self.tok().nl {
             self.indented_template_body(f::BODY)?;
         }
+        Ok(())
+    }
+
+    /// `derives A, b.C` (`derives_clause`, field `derive`: each name `type`).
+    fn derives_clause(&mut self) -> R<()> {
+        let n = self.open_field(K::DerivesClause, f::DERIVE);
+        self.tk(K::TDerives)?;
+        loop {
+            let t = self.type_path()?;
+            self.t.refield(t, f::TYPE);
+            if self.peek() == T::Comma {
+                self.tk(K::TComma)?;
+            } else {
+                break;
+            }
+        }
+        self.close(n);
         Ok(())
     }
 
@@ -453,8 +501,8 @@ impl P<'_> {
         if self.is_word(w::EXTENDS) && !self.tok().nl {
             self.extends_clause()?;
         }
-        if self.is_word(w::DERIVES) {
-            return self.refuse();
+        if self.is_word(w::DERIVES) && !self.tok().nl {
+            self.derives_clause()?;
         }
         let saved = std::mem::replace(&mut self.enum_cases, true);
         let r = if self.is_op(op::COLON) && !self.tok().nl {
@@ -513,14 +561,29 @@ impl P<'_> {
     /// `name`, `return_type`, `body`). Other forms are refused.
     fn given_rest(&mut self) -> R<()> {
         self.tk(K::TGiven)?;
-        if matches!(self.peek(), T::LBracket | T::LParen) {
-            return self.refuse();
-        }
-        if Self::is_name(self.tok()) && self.is_op_at(1, op::COLON) {
+        let named = Self::is_name(self.tok()) && !self.tok().nl;
+        if named && self.is_op_at(1, op::COLON) {
             self.identifier(f::NAME)?;
             self.tk(K::TColon)?;
-        } else if Self::is_name(self.tok()) && matches!(self.kind_at(1), T::LBracket | T::LParen) && self.adjacent(0) && self.lambda_or_colon_after_params() {
-            return self.refuse();
+        } else if let Some(colon) = self.given_constructor_ahead(named) {
+            if !colon {
+                // A conditional signature (`[T](x) =>`): refused.
+                return self.refuse();
+            }
+            // `_given_constructor`: name, type parameters, parameter lists, `:`.
+            if named {
+                self.identifier(f::NAME)?;
+            }
+            if self.peek() == T::LBracket {
+                self.type_parameters(f::TYPE_PARAMETERS)?;
+            }
+            while self.peek() == T::LParen && !self.tok().nl {
+                self.parameters()?;
+            }
+            if !self.is_op(op::COLON) {
+                return self.refuse();
+            }
+            self.tk(K::TColon)?;
         }
         let t = self.annotated_type()?;
         self.t.refield(t, f::RETURN_TYPE);
@@ -556,15 +619,25 @@ impl P<'_> {
         Ok(())
     }
 
-    /// Whether `name[…](…)` then `:` or `=>` (a given's signature, refused for now) comes next,
-    /// rather than a type `M[T]`.
-    fn lambda_or_colon_after_params(&mut self) -> bool {
-        let mut j = 1;
+    /// After `given`: whether `name[…](…)` (or the brackets alone) then `:` (`Some(true)`) or `=>`
+    /// (`Some(false)`) comes next, rather than a type `M[T]`.
+    fn given_constructor_ahead(&mut self, named: bool) -> Option<bool> {
+        let mut j = usize::from(named);
+        if !matches!(self.kind_at(j), T::LParen | T::LBracket) {
+            return None;
+        }
         while matches!(self.kind_at(j), T::LParen | T::LBracket) {
             j = self.matching(j) + 1;
         }
         let t = self.peek_at(j);
-        t.kind == T::Op && matches!(t.code, op::COLON | op::ARROW | op::QARROW)
+        if t.kind != T::Op {
+            return None;
+        }
+        match t.code {
+            op::COLON => Some(true),
+            op::ARROW | op::QARROW => Some(false),
+            _ => None,
+        }
     }
 
     /// `extension (x: T) def …`, or its definitions indented (`extension_definition`:
@@ -825,10 +898,11 @@ impl P<'_> {
     fn def_rest(&mut self) -> R<()> {
         self.tk(K::TDef)?;
         if self.is_word(w::EXTENSION) {
-            // `def extension`: tree-sitter reads the keyword.
-            return self.refuse();
+            // `def extension`: tree-sitter reads the keyword, in an identifier.
+            self.extension_identifier(f::NAME)?;
+        } else {
+            self.identifier(f::NAME)?;
         }
-        self.identifier(f::NAME)?;
         loop {
             match self.peek() {
                 T::LParen if !self.tok().nl => self.parameters()?,
@@ -963,10 +1037,20 @@ impl P<'_> {
         }
         // The pattern: names (`identifiers`) or a definition pattern.
         if Self::is_name(self.tok()) && self.kind_at(1) == T::Comma {
-            return self.refuse();
+            let n = self.open_field(K::Identifiers, f::PATTERN);
+            loop {
+                self.identifier(f::NONE)?;
+                if self.peek() == T::Comma {
+                    self.tk(K::TComma)?;
+                } else {
+                    break;
+                }
+            }
+            self.close(n);
+        } else {
+            let p = self.def_pattern()?;
+            self.t.refield(p, f::PATTERN);
         }
-        let p = self.def_pattern()?;
-        self.t.refield(p, f::PATTERN);
         if self.is_op(op::COLON) {
             self.tk(K::TColon)?;
             self.typ_f(f::TYPE)?;
@@ -982,6 +1066,12 @@ impl P<'_> {
         if Self::is_name(t) && t.code != w::UNDERSCORE && (self.is_op_at(1, op::COLON) || self.is_op_at(1, op::EQ)) {
             return self.identifier(f::NONE);
         }
+        if t.kind == T::Id && t.code == w::UNDERSCORE && self.is_op_at(1, op::COLON) {
+            // `val _: T = …`: the wildcard alone, the type the definition's.
+            let n = self.open(K::Wildcard);
+            self.tk(K::TUnderscore)?;
+            return Ok(self.close(n));
+        }
         self.pattern_f(f::NONE)
     }
 
@@ -992,9 +1082,10 @@ impl P<'_> {
         if self.peek() == T::LBracket {
             self.type_parameters(f::TYPE_PARAMETERS)?;
         }
-        if self.is_op(op::SUPERTYPE) || self.is_op(op::SUBTYPE) || self.is_op(op::COLON) {
+        if self.is_op(op::CARET) {
             return self.refuse();
         }
+        self.bounds(false)?;
         if self.is_op(op::EQ) {
             self.tk(K::TEq)?;
             self.typ_f(f::TYPE)?;
