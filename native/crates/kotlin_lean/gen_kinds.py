@@ -128,7 +128,7 @@ out = ['// Written by gen_kinds.py from the token grammar; do not edit.', '#![al
        '#[derive(Clone, Copy, Debug, PartialEq, Eq)]', '#[repr(u16)]', '#[allow(non_camel_case_types)]', 'pub enum K {']
 out += [f'    {v},' for v, _, _ in rows]
 out += ['}', '', '/// Each kind\'s name and whether it is named, in `K`\'s order.', 'pub const KINDS: &[(&str, bool)] = &[']
-out += [f'    ({json.dumps(n)}, {str(b).lower()}),' for _, n, b in rows]
+out += [f'    ({json.dumps(n, ensure_ascii=False)}, {str(b).lower()}),' for _, n, b in rows]
 out += ['];', '', '/// The last kind.', f'pub const LAST: K = K::{rows[-1][0]};', '']
 fields.sort()
 assert len(fields) < 64
@@ -188,6 +188,25 @@ for a, (kind, states, imp, end, kept) in enumerate(autos):
         implied_at.append(len(implied_rows))
         w = end.get(st)
         end_of.append(packed(w, kept) if w is not None and drops(w) else 0)
+# Tokens tree-sitter names at run time though the automata take them as tokens (Scala's `(`, whose
+# symbol the alias `arguments` shares). The engine's walk refuses such a child, and so stores every
+# child of its parent: an automaton that takes no other token before one is not used (a parent that
+# takes tokens before it, Scala's `for_expression`, is the parser's to write).
+RUNTIME_NAMED = {'scala': ['(']}.get(lang, [])
+for a, (kind, states, imp, end, kept) in enumerate(autos):
+    rn = {index[(n, False)] for n in RUNTIME_NAMED}
+    seen, todo = {0}, [0]
+    while todo:
+        st = todo.pop()
+        for l, to in states[st][1]:
+            if (l & 1023) not in rn and to not in seen:
+                seen.add(to)
+                todo.append(to)
+    # Before such a token it takes none: with one, all its children are stored; without, it has
+    # no tokens to leave out.
+    takes_token = any(not rows[l & 1023][2] and (l & 1023) not in rn for st in seen for l, _ in states[st][1])
+    if any((l & 1023) in rn for _, ms in states for l, _ in ms) and not takes_token:
+        auto_of[kind] = 0
 def table(name, ty, vals, per=16, doc=''):
     o = [doc, f'pub static {name}: &[{ty}] = &[']
     for i in range(0, len(vals), per):

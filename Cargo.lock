@@ -4372,6 +4372,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-scala-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-sessions"
 version = "0.1.0"
 dependencies = [

@@ -15,6 +15,10 @@
 use crate::kinds::{self, K};
 use rerail_tape_format::{Widths, Writer};
 
+/// In an extras entry's key: its depth under the extra before it (0: an extra of its own; 1: its
+/// child, 2: a grandchild), as Scala's comment holds its `//` and a `using` directive.
+pub const EXTRA_DEPTH: u32 = 30;
+
 /// A node's key in the writer: its kind (10 bits), field (6) and the extra flag.
 #[inline(always)]
 pub const fn key(kind: K, field: u8, extra: bool) -> u32 {
@@ -236,8 +240,35 @@ impl Tw {
                 break;
             }
             self.flushed += 1;
-            let at = self.w.push(k, s);
-            self.w.close(at, e);
+            let at = self.w.push(k & !(3 << EXTRA_DEPTH), s);
+            if self.extras.get(self.flushed).is_some_and(|x| x.0 >> EXTRA_DEPTH != 0) {
+                self.flush_children(at, e);
+            } else {
+                self.w.close(at, e);
+            }
+        }
+    }
+
+    /// The children of the extra just pushed (`at`, ending at `e`): the entries after it at depth 1
+    /// and on (`EXTRA_DEPTH`), each inside the one before it at a lesser depth.
+    #[cold]
+    fn flush_children(&mut self, at: usize, e: u32) {
+        let mut open: Vec<(usize, u32, u32)> = vec![(at, e, 0)];
+        while let Some(&(k, s, e)) = self.extras.get(self.flushed) {
+            let d = k >> EXTRA_DEPTH;
+            if d == 0 {
+                break;
+            }
+            self.flushed += 1;
+            while open.last().is_some_and(|o| o.2 >= d) {
+                let (a, e, _) = open.pop().expect("a frame");
+                self.w.close(a, e);
+            }
+            let a = self.w.push(k & !(3 << EXTRA_DEPTH), s);
+            open.push((a, e, d));
+        }
+        while let Some((a, e, _)) = open.pop() {
+            self.w.close(a, e);
         }
     }
 
@@ -301,6 +332,12 @@ impl Tw {
     /// A node of `kind` given `field` put at mark `m`, over what was read since (an operator's left
     /// operand), left open: what is read until its `close` is its too. `m` stays, now holding it.
     pub fn wrap(&mut self, m: Mark, kind: K, field: u8) -> Node {
+        self.wrap_from(m, kind, field, 0)
+    }
+
+    /// `wrap`, its start `s` where nothing was read since the mark.
+    #[inline]
+    pub fn wrap_from(&mut self, m: Mark, kind: K, field: u8, s: u32) -> Node {
         self.end_marks(m.0);
         let f = self.frames[m.0 as usize];
         let (at, held) = (f.at as usize, f.held as usize);
@@ -308,7 +345,7 @@ impl Tw {
         let start = match self.held.get(held) {
             Some(h) if h.at as usize == at => h.s,
             _ if at < self.w.len() => self.w.start(at),
-            _ => 0,
+            _ => s,
         };
         self.w.insert(at, key(kind, field, false), start);
         for h in &mut self.held[held..] {
@@ -505,6 +542,13 @@ impl Tw {
     pub fn refield(&mut self, id: u32, field: u8) {
         let k = self.w.key(id as usize) & !(0x3f << 10);
         self.w.set_key(id as usize, k | u32::from(field) << 10);
+    }
+
+    /// Node `id` put in supertype set `class` (bits 17 on: Scala's `{expression}`, where the grammar
+    /// reaches the node through its supertype).
+    pub fn set_class(&mut self, id: u32, class: u32) {
+        let k = self.w.key(id as usize);
+        self.w.set_key(id as usize, k | class << 17);
     }
 
     /// Node `id` given `kind`.
