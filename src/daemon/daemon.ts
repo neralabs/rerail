@@ -96,7 +96,7 @@ export interface RerailDaemonOptions {
   uiRoot?: string;
   /** `uiRoot` is the committed `ui/` source rather than the packaged copy; reported as `ui: "dev"`. */
   dev?: boolean;
-  /** Written once the server is listening and removed on close. */
+  /** Written once the server is listening and removed on close, while it still holds what this daemon wrote. */
   stateFile?: string;
   /**
    * Every `everyMs` the daemon checks that `stateFile` still holds what it wrote, and writes it again when it is gone or
@@ -481,6 +481,8 @@ export class RerailDaemon {
   #recordCheck: NodeJS.Timeout | undefined;
   /** The check of the state file in flight, which a close waits for before it removes the file. */
   #recordChecked: Promise<void> = Promise.resolve();
+  /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
+  #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
 
   private constructor({
@@ -620,6 +622,7 @@ export class RerailDaemon {
    */
   async #record(stateFile: string): Promise<void> {
     const text = `${JSON.stringify(this.state(), null, 2)}\n`;
+    this.#recordText = text;
     await replaceFile(stateFile, text, { mode: 0o600 });
     const check = this.#options.recordCheck;
     if (check === undefined) return;
@@ -733,9 +736,19 @@ export class RerailDaemon {
       } finally {
         await this.#mergeAssist?.stop();
         this.#stores.close();
-        if (this.#options.stateFile !== undefined) await rm(this.#options.stateFile, { force: true });
+        if (this.#options.stateFile !== undefined) await this.#removeOwnRecord(this.#options.stateFile);
       }
     }
+  }
+
+  /**
+   * Removes `stateFile` while it holds what this daemon wrote, and leaves anything else: a home moved away and made again
+   * at its path while this daemon ran can have a daemon of its own, whose record names it.
+   */
+  async #removeOwnRecord(stateFile: string): Promise<void> {
+    if (this.#recordText === undefined) return;
+    const found = await readFile(stateFile, "utf8").catch(() => undefined);
+    if (found === this.#recordText) await rm(stateFile, { force: true });
   }
 }
 

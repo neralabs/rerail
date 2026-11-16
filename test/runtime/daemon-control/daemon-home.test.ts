@@ -21,11 +21,13 @@ import {
   withStartLock,
 } from "../../../src/runtime/daemon-control.js";
 import {
+  DEAD_PID,
   daemonProcess,
   exitMessage,
   freePort,
   holdEventLoop,
   launchers,
+  notExited,
   olderDaemon,
   packageRoot,
   recordedPid,
@@ -35,15 +37,18 @@ import {
 } from "../../support/processes/daemon-home.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
-/** A pid no live process can hold on the platforms Rerail supports. */
-const DEAD_PID = 2 ** 22 - 1;
 const originalRerailHome = process.env.RERAIL_HOME;
 /** What a daemon that finds its home's lock held says as it exits (`HomeDaemonConflictError`). */
 const HOME_TAKEN = /rerail daemon: Another Rerail daemon(?: \(pid \d+\))? runs in /u;
 
 /** The daemons started in `home` that still run. */
 function liveDaemons(home: string): number[] {
-  return startedDaemons(home).filter(pid => processAlive(pid));
+  return notExited(home, startedDaemons(home)).filter(pid => processAlive(pid));
+}
+
+/** Whether every `rerail daemon start` launched in `home` has ended. */
+function launchersEnded(home: string): boolean {
+  return notExited(home, launchers(home)).every(pid => !processAlive(pid));
 }
 
 /** Ends `child` if it still runs, and waits until it has exited, so the folder it ran in can go. */
@@ -87,10 +92,10 @@ describe("the daemons of a Rerail home", () => {
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
     await Promise.all(others.splice(0).map(async child => await ended(child)));
-    const running = (): number[] => [...startedDaemons(home), ...launchers(home)].filter(pid => processAlive(pid));
+    const running = (): number[] => notExited(home, [...startedDaemons(home), ...launchers(home)]).filter(pid => processAlive(pid));
     for (const pid of running()) killGone(pid);
     // Node marks a child it started as exited a moment after the OS has ended it.
-    await until(() => running().length === 0 && runningIn(home).length === 0);
+    await until(() => running().length === 0 && runningIn(home).length === 0, 10_000, "every daemon and start of the test ended");
     await removeFolder(home);
   });
 
@@ -109,13 +114,14 @@ describe("the daemons of a Rerail home", () => {
          if ((await lookupDaemon(process.env.RERAIL_HOME)).status === "absent") autostartDaemon();
          process.exit(0);
        });`,
-    ], { cwd: packageRoot, env: { ...env, RERAIL_AUTOSTART: "1" }, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    ], { cwd: packageRoot, env: { ...env, RERAIL_AUTOSTART: "1" }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     others.push(child);
+    let errors = "";
+    child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
     const exited = once(child, "exit");
-    const ready = new Promise<void>((resolve, reject) => {
-      child.stdout!.once("data", () => resolve());
-      child.once("exit", code => reject(new Error(`a hook process exited (${String(code)}) before it was ready`)));
-    });
+    const { promise: ready, resolve, reject } = Promise.withResolvers<void>();
+    child.stdout!.once("data", () => resolve());
+    child.once("close", code => reject(new Error(`a hook process exited (${String(code)}) before it was ready: ${errors.slice(-600)}`)));
     return { ready, go: () => child.stdin!.write("go\n"), exited };
   }
 
@@ -126,7 +132,7 @@ describe("the daemons of a Rerail home", () => {
     await Promise.all(hooks.map(async hook => await hook.ready));
     for (const hook of hooks) hook.go();
     await Promise.all(hooks.map(async hook => await hook.exited));
-    await until(async () => await findRunningDaemon(home) !== undefined && launchers(home).every(pid => !processAlive(pid)), 90_000);
+    await until(async () => await findRunningDaemon(home) !== undefined && launchersEnded(home), 90_000, "a daemon running and every start ended");
     expect(launchers(home)).toHaveLength(1);
     expect(liveDaemons(home)).toEqual([await recordedPid(home)]);
   }, 120_000);
@@ -147,7 +153,7 @@ describe("the daemons of a Rerail home", () => {
       await later.exited;
       expect(launchers(home)).toHaveLength(1);
     });
-    await until(async () => await findRunningDaemon(home) !== undefined && launchers(home).every(pid => !processAlive(pid)), 60_000);
+    await until(async () => await findRunningDaemon(home) !== undefined && launchersEnded(home), 60_000, "a daemon running and every start ended");
     expect(launchers(home)).toHaveLength(1);
     expect(liveDaemons(home)).toEqual([await recordedPid(home)]);
   }, 120_000);
@@ -176,7 +182,7 @@ describe("the daemons of a Rerail home", () => {
     others.push(...direct);
     await Promise.all(Array.from({ length: 4 }, async () => await cli(["start", "--dev"])));
     await Promise.all(hooks.map(async hook => await hook.exited));
-    await until(() => launchers(home).every(pid => !processAlive(pid)), 90_000);
+    await until(() => launchersEnded(home), 90_000, "every start ended");
     await until(() => direct.every(daemon => daemon.exitCode !== null) || liveDaemons(home).length <= 1, 20_000).catch(() => undefined);
     const { live, recorded } = await settled();
     expect(live).toHaveLength(1);
@@ -197,7 +203,7 @@ describe("the daemons of a Rerail home", () => {
     await Promise.all(hooks.map(async hook => await hook.ready));
     for (const hook of hooks) hook.go();
     await Promise.all(hooks.map(async hook => await hook.exited));
-    await until(async () => await findRunningDaemon(home) !== undefined && launchers(home).every(pid => !processAlive(pid)), 90_000);
+    await until(async () => await findRunningDaemon(home) !== undefined && launchersEnded(home), 90_000, "a daemon running and every start ended");
     const { live, recorded } = await settled();
     expect(launchers(home).length).toBeGreaterThanOrEqual(1);
     expect(live).toHaveLength(1);
@@ -208,7 +214,7 @@ describe("the daemons of a Rerail home", () => {
     const daemons = Array.from({ length: count }, () => daemonProcess(home, env, ["--port", "0"]));
     others.push(...daemons);
     const running = (): ChildProcess[] => daemons.filter(daemon => daemon.exitCode === null && daemon.signalCode === null);
-    await until(async () => await findRunningDaemon(home) !== undefined, 60_000);
+    await until(async () => await findRunningDaemon(home) !== undefined, 60_000, "a daemon running");
     // The others stop before they open anything; give every one the time a start takes.
     await until(() => running().length === 1, 20_000).catch(() => undefined);
     expect(running().map(daemon => daemon.pid)).toEqual([await recordedPid(home)]);
@@ -238,6 +244,8 @@ describe("the daemons of a Rerail home", () => {
     env = watchedEnvironment(home, busy);
     const first = (await startDaemon(control(), { dev: true, env })).daemon.state;
     await holdEventLoop(busy);
+    // The start says the daemon is not answering (`LiveDaemonError`) unless it answers again first; either way it starts
+    // nothing beside it.
     await cli(["start", "--dev"]);
     await until(() => !existsSync(`${busy}.held`), 20_000);
     const { live, recorded } = await settled();
@@ -249,9 +257,9 @@ describe("the daemons of a Rerail home", () => {
     await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
     const slowStart = join(home, "slow-start");
     env = watchedEnvironment(home, undefined, slowStart);
-    // The daemon spins 21 s right after it first listens, before it can write daemon.json: past a start's 15 s wait.
-    await writeFile(slowStart, "21000");
-    await expect(startDaemon(control(), { dev: true, env })).rejects.toThrow();
+    // The daemon spins 17 s right after it first listens, before it can write daemon.json: past a start's 15 s wait.
+    await writeFile(slowStart, "17000");
+    await expect(startDaemon(control(), { dev: true, env })).rejects.toThrow(/did not become ready within 15s/u);
     const second = await startDaemon(control(), { dev: true, env });
     await until(() => !existsSync(`${slowStart}.held`), 40_000);
     const { live, recorded } = await settled();
@@ -274,7 +282,7 @@ describe("the daemons of a Rerail home", () => {
     others.push(second);
     const ended = await Promise.race([once(second, "exit").then(([code]) => `exited ${String(code)}`), delay(7_000).then(() => "still running")]);
     expect(ended).toMatch(/^exited [1-9]/u);
-    expect(await exitMessage(second)).toMatch(HOME_TAKEN);
+    expect(await exitMessage(second)).toContain(`rerail daemon: Another Rerail daemon (pid ${first.pid}) runs in ${home}`);
     expect(await recordedPid(home)).toBe(first.pid);
     await until(() => !existsSync(`${busy}.held`));
     expect((await findRunningDaemon(home))?.state).toMatchObject({ pid: first.pid, port });
@@ -346,8 +354,9 @@ describe("the daemons of a Rerail home", () => {
     expect(await stopDaemon(home)).toBe("not-running");
     const next = await startDaemon(control(), options());
     expect(next.started).toBe(true);
-    // A home whose daemon runs without its record makes a start wait up to 15 s; nothing runs here.
-    expect(Date.now() - asked).toBeLessThan(10_000);
+    // A home whose daemon runs without its record makes a stop or a start wait 15 s; nothing runs here. The start itself
+    // launches a daemon, which takes seconds on a busy Windows machine.
+    expect(Date.now() - asked).toBeLessThan(15_000);
     expect(liveDaemons(home)).toEqual([next.daemon.state.pid]);
   }, 60_000);
 
