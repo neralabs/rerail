@@ -55,12 +55,14 @@ pub struct Bytewise<'a> {
 }
 
 /// A split run's byte term's mask (`Bytewise::run_split`): its lanes from `s + 1`, `stride`
-/// bits apart, of the bytes in `set`.
+/// bits apart, of the bytes in `set`; the first `known` of them hold for any token (the
+/// window's 16; the byte loop's one, whether it ran a turn).
 #[derive(Clone, Copy)]
 pub struct RunLanes {
     pub mask: Value,
     pub stride: u32,
     pub set: [u64; 4],
+    pub known: i64,
 }
 
 /// `escaped`'s carries through a window (`Bytewise::words_carried`): given in, by run, and
@@ -701,22 +703,22 @@ impl<'a> Bytewise<'a> {
     }
 
     /// Whether output `o` at a token's first byte reads only that byte and bytes a split run's
-    /// lanes of `set` give (`bit_on_run`): no other byte read.
-    pub fn on_run_only(&self, o: u16, set: [u64; 4]) -> bool {
-        fn go(b: &Bytewise<'_>, x: usize, back: i64, d: i64, set: [u64; 4]) -> bool {
+    /// lanes of `set` give (`bit_on_run`), the first `known` of them: no other byte read.
+    pub fn on_run_only(&self, o: u16, set: [u64; 4], known: i64) -> bool {
+        fn go(b: &Bytewise<'_>, x: usize, back: i64, d: i64, set: [u64; 4], known: i64) -> bool {
             let j = d - back;
             match b.native.insts[x] {
-                BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => j == 0 || ((1..=16).contains(&j) && exact_at(b.native, x).is_some_and(|n| n.set == set)),
+                BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => j == 0 || ((1..=known).contains(&j) && exact_at(b.native, x).is_some_and(|n| n.set == set)),
                 BlockInst::Within(_) | BlockInst::Const(_) => true,
-                BlockInst::Not(a) => go(b, usize::from(a), back, d, set),
-                BlockInst::Prev(a, k) => go(b, usize::from(a), back + i64::from(k), d, set),
-                BlockInst::And(a, c) | BlockInst::Or(a, c) | BlockInst::Xor(a, c) | BlockInst::AndNot(a, c) => go(b, usize::from(a), back, d, set) && go(b, usize::from(c), back, d, set),
+                BlockInst::Not(a) => go(b, usize::from(a), back, d, set, known),
+                BlockInst::Prev(a, k) => go(b, usize::from(a), back + i64::from(k), d, set, known),
+                BlockInst::And(a, c) | BlockInst::Or(a, c) | BlockInst::Xor(a, c) | BlockInst::AndNot(a, c) => go(b, usize::from(a), back, d, set, known) && go(b, usize::from(c), back, d, set, known),
                 _ => false,
             }
         }
         let x = usize::from(self.native.outputs[usize::from(o)]);
         let d = i64::from(self.native.output_delays[usize::from(o)]);
-        go(self, x, 0, d, set)
+        go(self, x, 0, d, set, known)
     }
 
     /// A split run's rest (`run_split`, its byte term `a`) at the file's byte `p`, 0 or 1, by
@@ -983,7 +985,7 @@ impl<'a> Bytewise<'a> {
         // A byte of a split run's term (`run_lanes`, `bit_on_run`): its mask's lane.
         if let (Some(rl), Some(a)) = (self.run_lanes.get(), anchor)
             && matches!(self.native.insts[x], BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))
-            && (1..=16).contains(&(a - back))
+            && (1..=rl.known).contains(&(a - back))
             && exact_at(self.native, x).is_some_and(|n| n.set == rl.set)
         {
             let lane = (a - back - 1) * i64::from(rl.stride);

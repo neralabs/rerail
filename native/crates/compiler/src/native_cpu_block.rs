@@ -3178,7 +3178,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(fdone, &[l_sel.into(), nohits.into(), untag.into(), nohits.into()]);
         } else {
-            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], 1, None, heads);
+            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], 1, None, None, heads);
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(to, &[l_sel.into(), untag.into(), nohits.into()]);
         }
@@ -3367,11 +3367,17 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // The split's term's lanes, for the tests of the token's bytes (`Bytewise::bit_on_run`):
         // the window's (its 16 lanes all known).
         let lanes = match (split, &window, term_form) {
-            (Some((_, _, set)), Some(w), RunForm::Window) => Some(crate::native_cpu_bytes::RunLanes { mask: w[0], stride: pre_stride, set }),
+            (Some((_, _, set)), Some(w), RunForm::Window) => Some(crate::native_cpu_bytes::RunLanes { mask: w[0], stride: pre_stride, set, known: 16 }),
+            _ => None,
+        };
+        // The byte loop's: whether its first `while` ran a turn (the byte after the first in
+        // the set), given the tests' tail by each way's end (`tested`'s `way_lane`).
+        let way_lane = match (split, by_way, term_form) {
+            (Some((_, _, set)), Some(_), RunForm::Bytes) => Some(set),
             _ => None,
         };
         let firsts_k = first_bytes(r, k);
-        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, lanes.map(|l| (l, firsts_k)), heads) };
+        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, lanes.map(|l| (l, firsts_k)), way_lane.map(|w| (w, firsts_k)), heads) };
         debug_assert!(by_way.is_none() || rest.is_some(), "a split's counts by way with no tests' tail");
         // The split's term as the arm runs it, made after `tested`'s blocks (it starts from an
         // empty one).
@@ -3469,14 +3475,17 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                 (Some((a, _, set)), Some(term)) => {
                                     // A way's end: its counts known (`by_way`), on to the tests'
                                     // tail with them, else the tests from the start.
-                                    let way_end = |f: &mut FunctionBuilder<'_>, way: usize, l: Value| -> (cranelift_codegen::ir::Block, Vec<BlockArg>) {
+                                    // `lane`, the byte loop's first lane (`way_lane`).
+                                    let way_end = |f: &mut FunctionBuilder<'_>, way: usize, l: Value, lane: Option<Value>| -> (cranelift_codegen::ir::Block, Vec<BlockArg>) {
                                         match (by_way, rest) {
                                             (Some(ways), Some(tail)) => {
                                                 let (no, hits) = ways[way];
                                                 let always = always_hits(tests.iter().map(|(t, _)| t));
                                                 let refuse = if no || always.0 != 0 { f.ins().iconst(types::I64, -1) } else { nohits };
                                                 let hits = f.ins().iconst(types::I64, always.1 | hits);
-                                                (tail, vec![l.into(), untag.into(), refuse.into(), hits.into()])
+                                                let mut args = vec![l.into(), untag.into(), refuse.into(), hits.into()];
+                                                args.extend(lane.map(BlockArg::from));
+                                                (tail, args)
                                             }
                                             _ => (ended, vec![l.into(), untag.into(), nohits.into()]),
                                         }
@@ -3497,7 +3506,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                             f.switch_to_block(at_end);
                                             let e = f.ins().iadd(i, ones);
                                             let more = b.rest_after(f, &file, o, a, e, before, heads);
-                                            let (to, args) = way_end(f, 0, l);
+                                            let (to, args) = way_end(f, 0, l, None);
                                             f.ins().brif(more, on, &[], to, &args);
                                             // On past it: the term's run from the byte after, in
                                             // the same mask (lean's second `while digit`), else
@@ -3522,7 +3531,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                             let e2 = f.ins().iadd(i, total);
                                             let again = b.rest_after(f, &file, o, a, e2, before2, heads);
                                             let l2 = f.ins().iadd(s, total);
-                                            let (to, args) = way_end(f, 1, l2);
+                                            let (to, args) = way_end(f, 1, l2, None);
                                             f.ins().brif(again, long, &[], to, &args);
                                         }
                                         TermRun::Bytes => {
@@ -3554,13 +3563,19 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                                 }
                                             };
                                             let e = run_bytes(f, i, heads);
+                                            // Whether it ran a turn: the byte after the first in
+                                            // the set, the tests' lane (`way_lane`).
+                                            let lane = way_lane.map(|_| {
+                                                let ran = f.ins().icmp(IntCC::NotEqual, e, i);
+                                                f.ins().uextend(types::I64, ran)
+                                            });
                                             let l = f.ins().iadd_imm(e, -1);
                                             let more = b.rest_after(f, &file, o, a, e, before, heads);
                                             let (on, end1) = (f.create_block(), f.create_block());
                                             f.ins().brif(more, on, &[], end1, &[]);
                                             f.switch_to_block(end1);
                                             within(f, e);
-                                            let (to, args) = way_end(f, 0, l);
+                                            let (to, args) = way_end(f, 0, l, lane);
                                             f.ins().jump(to, &args);
                                             f.switch_to_block(on);
                                             let from = f.ins().iadd_imm(e, 1);
@@ -3568,7 +3583,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                             within(f, e2);
                                             let again = b.rest_after(f, &file, o, a, e2, before2, heads);
                                             let l2 = f.ins().iadd_imm(e2, -1);
-                                            let (to, args) = way_end(f, 1, l2);
+                                            let (to, args) = way_end(f, 1, l2, lane);
                                             f.ins().brif(again, long, &[], to, &args);
                                         }
                                     }
@@ -4603,8 +4618,9 @@ fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) 
 /// length, as the lean lexer asks of a number's `.` in its digits' pass. The output is never
 /// set at the token's first byte.
 #[allow(clippy::too_many_arguments)]
-fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, pre: &[(u16, Value)], pre_stride: u32, lanes: Option<(crate::native_cpu_bytes::RunLanes, [u64; 4])>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, pre: &[(u16, Value)], pre_stride: u32, lanes: Option<(crate::native_cpu_bytes::RunLanes, [u64; 4])>, way_lane: Option<([u64; 4], [u64; 4])>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
     let here = f.current_block().expect("a rule's block");
+    let mut lanes = lanes;
     let ended = f.create_block();
     f.append_block_param(ended, types::I64);
     f.append_block_param(ended, types::I64);
@@ -4741,14 +4757,25 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         hits = f.block_params(join)[1];
         // The other tests from here (`rest`), where a reader's fused read (`read_fn`) gives
         // the counts' hits with its last: `(l, tag, refusal, hits)`.
+        // And a split's byte loop's first lane (`way_lane`), given by each way's end: from
+        // here, its byte read.
+        let way_lane = way_lane.zip(rd.bytes);
         let after = f.create_block();
-        for _ in 0..4 {
+        for _ in 0..4 + usize::from(way_lane.is_some()) {
             f.append_block_param(after, types::I64);
         }
-        f.ins().jump(after, &[l.into(), tag.into(), refuse.into(), hits.into()]);
+        let mut args: Vec<BlockArg> = vec![l.into(), tag.into(), refuse.into(), hits.into()];
+        if let Some(((set, _), (b, file))) = way_lane {
+            let i = f.ins().iadd_imm(s, 1);
+            args.push(b.byte_in(f, &file, i, set).into());
+        }
+        f.ins().jump(after, &args);
         f.switch_to_block(after);
         let ps = f.block_params(after).to_vec();
         (l, tag, refuse, hits) = (ps[0], ps[1], ps[2], ps[3]);
+        if let Some(((set, firsts), _)) = way_lane {
+            lanes = Some((crate::native_cpu_bytes::RunLanes { mask: ps[4], stride: 1, set, known: 1 }, firsts));
+        }
         q0 = f.ins().ushr_imm(s, 6);
         sh = f.ins().band_imm(s, 63);
         ql = f.ins().ushr_imm(l, 6);
@@ -4774,7 +4801,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         // its bit inline, no byte read past the first, as lean's `b[pos] == b'0'` in its arm.
         if let (Some((rl, firsts)), Some((b, file)), false, 1) = (lanes, rd.bytes, t.count, t.least)
             && b.can(t.o)
-            && b.on_run_only(t.o, rl.set)
+            && b.on_run_only(t.o, rl.set, rl.known)
         {
             let bit = b.bit_on_run(f, &file, t.o, s, Some(firsts), rl, heads);
             let hit = into(f, bit, refuse, hits);

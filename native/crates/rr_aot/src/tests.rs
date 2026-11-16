@@ -456,7 +456,7 @@ fn a_slashs_arm_is_leans() {
 /// `.` and a digit asked at the run's end (`Bytewise::run_split`), then the second `while`; no
 /// window of the bytes before and after for the `prev` and the next of every byte, no digit set's
 /// word, its `.` known by its way; a token past 16 bytes the whole rule's call, cold, as lean's
-/// `end - pos < 19 || parse()`.
+/// `end - pos < 19 || parse()`; its leading zero asked of whether the first `while` ran a turn.
 #[test]
 fn a_numbers_arm_is_leans_loop() {
     let src = include_str!("tier1_aot.rs");
@@ -489,6 +489,9 @@ fn a_numbers_arm_is_leans_loop() {
     // Its one call, the whole rule's, cold.
     assert_eq!(arm.matches("unsafe { f").count(), 1, "the number arm's calls: {arm}");
     assert!(arm.contains("core::hint::cold_path();\nlet t = unsafe { f"), "the whole rule's call not cold: {arm}");
+    // A leading zero known from the first `while`'s turn (`way_lane`), inline: the long way's
+    // call alone cold.
+    assert_eq!(arm.matches("cold_path").count(), 1, "a cold test in the number arm: {arm}");
     // A digit asked as lean's `is_ascii_digit`, a subtract and a compare, not a set's word.
     let digits: u64 = (b'0'..=b'9').fold(0, |m, b| m | 1 << b);
     assert!(!arm.contains(&format!("{}i64", digits as i64)), "a digit set's word in the number arm: {arm}");

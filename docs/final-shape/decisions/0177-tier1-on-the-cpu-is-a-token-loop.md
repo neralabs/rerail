@@ -3281,9 +3281,21 @@ Measured, as information (one run, load average high): numbers 112.8
 instructions and 19.2 cycles a token, lean's 107.3 and 22.5. The
 other kinds are as before.
 
-Still not lean's: a number's leading-zero test is a cold check gated by
-the entry again, reading `b[s]` and `b[s + 1]`. In `window` it read the
-mask's first lane; the byte loop has no lanes to read.
+The leading-zero test (`0` then a digit) was briefly a cold check
+again, gated by the entry and reading `b[s]` and `b[s + 1]`: the byte
+loop has no mask whose lane it could read. Now each way's end gives the
+tests' tail one more value, whether the first `while` ran a turn (the
+byte after the first a digit), and `bit_on_run` reads it as a mask of
+one known lane (`RunLanes::known`: the window's 16, the loop's 1). The
+test is `b[s] == b'0' & ran`, inline:
+
+```rust
+let ran = (end != pos + 1) as u64;          // the first `while` took a turn
+let lead_zero = (b[pos] == b'0') as u64 & ran;
+```
+
+Numbers then 113.3 instructions, 17.1 cycles a token (lean 107.3,
+22.7), as information.
 
 Tests: `native_cpu_shape::tests::only_a_run_of_bytes_is_a_bytes_loop`;
 `a_numbers_arm_is_leans_loop` (the generated Rust: two `loop`s, no
