@@ -1630,6 +1630,30 @@ async function heldByAnotherProgram(path: string, access: "Read" | "ReadWrite", 
   return await holdingProcess(windowsTool("WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", command]);
 }
 
+/**
+ * Another program locking `length` bytes of the file at `path` from `offset` (.NET's `FileStream.Lock`), as a backup or a
+ * scanner can: Windows then refuses every other read of those bytes, and SQLite retries such a read about 1.4 s.
+ */
+async function bytesLockedByAnotherProgram(path: string, offset: number, length: number): Promise<DatabaseHolder> {
+  const command = `$f = [System.IO.File]::Open('${path.replaceAll("'", "''")}', 'Open', 'ReadWrite', 'ReadWrite'); $f.Lock(${offset}, ${length}); `
+    + "[Console]::Out.WriteLine('held'); [Console]::Out.Flush(); Start-Sleep -Seconds 600";
+  return await holdingProcess(windowsTool("WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", command]);
+}
+
+/** The first GiB of a file: up to the bytes SQLite locks in the database file itself, which another program cannot lock while SQLite holds them. */
+const BELOW_SQLITE_LOCKS = 1_073_741_824;
+
+/**
+ * Byte ranges of the Rerail database's files another program can lock, each of which SQLite meets when the hook's check
+ * reads the checkout's row from the WAL, as it is after a write of the daemon's.
+ */
+const lockedRanges = [
+  { what: "the whole database file", suffix: "", offset: 0, length: BELOW_SQLITE_LOCKS },
+  { what: "the database's header", suffix: "", offset: 0, length: 100 },
+  { what: "the database's first page past its header", suffix: "", offset: 100, length: 3_996 },
+  { what: "the whole WAL", suffix: "-wal", offset: 0, length: BELOW_SQLITE_LOCKS },
+];
+
 /** A file of the Rerail database, the database itself unless `path` names another, denied to this user by an NTFS deny entry, which `end` takes off. */
 function deniedToThisUser(path = defaultRerailDatabasePath()): Promise<DatabaseHolder> {
   const user = execFileSync(windowsTool("whoami.exe"), ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" }).trim().split(",").at(-1)!.replaceAll('"', "");
@@ -1742,6 +1766,50 @@ async function startedOnlyInTheWal(): Promise<DatabaseHolder> {
  */
 function companionsLeftByAReader(): void {
   heldOpen(defaultRerailDatabasePath())?.close();
+}
+
+/** Another process holding the Rerail database open, as the daemon's connection does once it has read it. */
+async function heldByAnotherProcess(): Promise<DatabaseHolder> {
+  const script = [
+    "const Database = require(require.resolve('better-sqlite3', { paths: [process.argv[1]] }));",
+    "const database = new Database(process.argv[2], { readonly: true });",
+    "database.prepare('SELECT count(*) FROM sqlite_master').get();",
+    "process.stdout.write('held\\n');",
+    "setInterval(() => undefined, 1 << 30);",
+  ].join("\n");
+  return await holdingProcess(process.execPath, ["-e", script, process.cwd(), defaultRerailDatabasePath()]);
+}
+
+/**
+ * The WAL written into the database file and emptied by a writable connection of its own, as the daemon's checkpoints
+ * do: a connection held open elsewhere keeps the WAL and its index from being removed when this one closes.
+ */
+function checkpointed(): void {
+  inDatabase(database => database.$client.pragma("wal_checkpoint(TRUNCATE)"));
+}
+
+/**
+ * The database moved aside to `<name>.live` under the connections that hold it, and the copy `backup` put at its name,
+ * as a restore that skips `rerail daemon stop` leaves it: the WAL and its index stay where they are.
+ */
+function movedAsideAndReplaced(backup: string): void {
+  const path = defaultRerailDatabasePath();
+  renameSync(path, `${path}.live`);
+  copyFileSync(backup, path);
+}
+
+/**
+ * A start check in `workspace` beside a daemon that answers stopped in time, named by `options`: the hook takes its
+ * answer and keeps none there.
+ */
+async function notKept(host: StartCheckHost, workspace: string, options: StandInOptions = {}): Promise<void> {
+  const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped", undefined, { scopeOf: host.daemonScope, ...options });
+  try {
+    const started = await host.hookRerailStarted("claude-code", workspace, undefined, GRACE_NO_ANSWER_MISSES);
+    expect({ started, kept: existsSync(keptAnswerFile(workspace, options)) }).toEqual({ started: false, kept: false });
+  } finally {
+    await daemon.close();
+  }
 }
 
 /** A Windows server address that never answers (TEST-NET-1), one per call: Windows remembers a server it gave up on. */
@@ -1946,7 +2014,9 @@ async function keptInAWorktree(host: StartCheckHost, root: string): Promise<{ ap
  * Names in a linked worktree's checkout, its Git folders and the Rerail home where a named pipe can be put after the
  * daemon's answer of stopped was kept there. A read that opened one as a file would wait for a writer, holding the hook
  * for good; the check of the kept answer reads none of them so, and waits for the daemon at once. A pipe at `.git` is
- * never opened: its own file id is not the one kept.
+ * never opened at all: the check opens `.git` only where its look finds a plain file, and the pipe's file id is not the
+ * one kept either, so this row shows the hook is not held there and pins neither guard; the case of a look that finds
+ * the file before the pipe takes its place pins the open without waiting.
  */
 const pipesTheCheckMeets: Array<{ what: string; at: (worktree: string, app: string) => string }> = [
   { what: "the kept answer's name", at: worktree => keptAnswerFile(worktree) },
@@ -2006,6 +2076,25 @@ function openFilesUnlisted(): void {
       throw Object.assign(new Error(`EACCES: permission denied, scandir '${String(args[0])}'`), { code: "EACCES" });
     };
     return { ...actual, default: { ...actual, readdirSync }, readdirSync };
+  });
+}
+
+/**
+ * `node:fs` for the hook host the test loads next (`startCheckHost`), whose `lstatSync` of `path` gives what it gives
+ * now, whatever is put there after: the check's look finds the file it was, and its open meets what is there then, as
+ * when a pipe is swapped in between the two.
+ */
+function lookFindsTheFileThatWas(path: string): void {
+  const was = { plain: lstatSync(path), big: lstatSync(path, { bigint: true }) };
+  vi.doMock("node:fs", async () => {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const look = (...args: Parameters<typeof actual.lstatSync>): ReturnType<typeof actual.lstatSync> => {
+      if (String(args[0]) !== path) return actual.lstatSync(...args);
+      return (args[1] as { bigint?: boolean } | undefined)?.bigint === true ? was.big : was.plain;
+    };
+    // `lstatSync` is overloaded by its options; `look` answers each overload as the real one does.
+    const lstatSync = look as typeof actual.lstatSync;
+    return { ...actual, default: { ...actual, lstatSync }, lstatSync };
   });
 }
 
@@ -2600,6 +2689,23 @@ describe("the hook start check", () => {
     }
   });
 
+  it.runIf(process.platform === "win32").for(lockedRanges)("waits for a late daemon that last answered stopped at once where another program locks $what", { timeout: 30_000 }, async ({ suffix, offset, length }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    // Written while the daemon's connection holds the database, so the checkout's row stays in the WAL.
+    inDatabase(database => database.$client.exec("UPDATE checkouts SET last_seen_at = last_seen_at + 1"));
+    const holder = await bytesLockedByAnotherProgram(`${defaultRerailDatabasePath()}${suffix}`, offset, length);
+    try {
+      await startedFromLateDaemon(host, daemon, app);
+    } finally {
+      await holder.end();
+      await daemon.close();
+    }
+  });
+
   it.each(checkoutPathsGoneAWhile)("waits for a late daemon that last answered stopped where $what while the hook checks the answer it kept", async ({ away, folderOf }) => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(join(root, "parent"));
@@ -2721,6 +2827,23 @@ describe("the hook start check", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")("waits for a late daemon at once where, after it last answered stopped there, the worktree's .git file is a named pipe once the check's look has found the file, and the repository is started", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const { worktree, repositoryKey } = await keptInAWorktree(await startCheckHost(), root);
+    const dotGit = join(realpathSync.native(worktree), ".git");
+    lookFindsTheFileThatWas(dotGit);
+    const pipe = pipeAt(dotGit);
+    inDatabase(database => setRepositoryStarted(database, repositoryKey, true));
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      await startedFromLateDaemon(host, daemon, worktree);
+    } finally {
+      await daemon.close();
+      await pipe.end();
+    }
+  });
+
   it.skipIf(process.platform === "win32")("takes the daemon's answer of stopped in time where a named pipe is at the kept answer's name, and keeps it in a file of its own there", { timeout: 30_000 }, async () => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
@@ -2788,17 +2911,65 @@ describe("the hook start check", () => {
     expect([dirname(dirname(file)), dirname(file), file].map(path => (statSync(path).mode & 0o777).toString(8))).toEqual(["700", "700", "600"]);
   });
 
-  it.runIf(process.platform === "linux")("waits for a late daemon that last answered stopped where the daemon's open files cannot be listed", async () => {
+  it.runIf(process.platform === "linux")("keeps no answer of stopped where the daemon's open files cannot be listed, and waits for a late daemon there", async () => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
     openFilesUnlisted();
     const host = await startCheckHost();
-    await keptStopped(host, app);
+    await notKept(host, app);
     const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
       await startedFromLateDaemon(host, daemon, app);
     } finally {
       await daemon.close();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("waits for a late daemon that last answered stopped where the database is moved aside under it and an older copy put at its name, the daemon reading started from the file it holds", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    // The daemon's connection, held from before its answer to the end, as a running daemon holds its database.
+    const daemonHolds = heldOpen(defaultRerailDatabasePath());
+    try {
+      await keptStopped(host, app);
+      const backup = join(root, "backup.sqlite");
+      checkpointed();
+      copyFileSync(defaultRerailDatabasePath(), backup);
+      inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true));
+      checkpointed();
+      movedAsideAndReplaced(backup);
+      const daemon = await daemonAnsweringAfterProof(host, "started");
+      try {
+        await startedFromLateDaemon(host, daemon, app);
+      } finally {
+        await daemon.close();
+      }
+    } finally {
+      daemonHolds?.close();
+    }
+  });
+
+  it.runIf(process.platform === "linux")("keeps no answer of stopped where the database at its name is not the one the daemon holds, moved aside under it and a copy put there before it answered, and waits for a late daemon there", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    const writer = await heldByAnotherProcess();
+    try {
+      const backup = join(root, "backup.sqlite");
+      checkpointed();
+      copyFileSync(defaultRerailDatabasePath(), backup);
+      movedAsideAndReplaced(backup);
+      const daemonProcess = { holdsDatabase: false, pid: writer.pid };
+      await notKept(host, app, daemonProcess);
+      const daemon = await daemonAnsweringAfterProof(host, "started", daemonProcess);
+      try {
+        await startedFromLateDaemon(host, daemon, app);
+      } finally {
+        await daemon.close();
+      }
+    } finally {
+      await writer.end();
     }
   });
 
