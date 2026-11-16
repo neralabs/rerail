@@ -1,25 +1,28 @@
 /**
  * What a tool's own result says the file it wrote held before it ran. The code-rule bridge reads an edit against this
- * only where the call reached Rerail after the tool had written the file, so the call's own capture holds the write.
+ * where the call reached Rerail after the tool had written the file, so the call's own capture holds the write.
  */
 
 /**
- * One hunk of the line diff a tool made: the line its lines start at in the file after the tool, counted from 1, and
- * those lines, each marked ` ` (on both sides), `-` (before only) or `+` (after only), with `\` after a line that ends
- * its file without a line feed. The lines carry no line ending.
+ * One hunk of the line diff a tool made: the line its lines start at in the file after the tool, counted from 1, the
+ * line they started at before it where the result says so, and those lines, each marked ` ` (on both sides), `-`
+ * (before only) or `+` (after only), with `\` after a line that ends its file without a line feed. The lines carry no
+ * line ending.
  */
 export interface ReportedHunk {
   readonly newStart: number;
+  readonly oldStart?: number;
   readonly lines: readonly string[];
 }
 
 /**
  * What a tool's result says the file it wrote (`path`, as the result names it) held: nothing, as the tool made it
- * (`created`), its whole text (`text`), or the line diff the tool made (`diff`), which rebuilds that text from the file
- * as the tool left it, with the whole text too where the result gives both.
+ * (`created`, with the text it wrote where the result gives it), its whole text (`text`), or the line diff the tool made
+ * (`diff`), which rebuilds that text from the file as the tool left it, with the whole text too where the result gives
+ * both.
  */
 export type ReportedPreimage =
-  | { readonly kind: "created"; readonly path: string }
+  | { readonly kind: "created"; readonly path: string; readonly content?: string }
   | { readonly kind: "text"; readonly path: string; readonly text: string }
   | { readonly kind: "diff"; readonly path: string; readonly hunks: readonly ReportedHunk[]; readonly text?: string };
 
@@ -32,20 +35,38 @@ const BYTE_ORDER_MARK = "\uFEFF";
 interface ClaudeCodeEditResult {
   readonly filePath: string;
   readonly type: unknown;
+  readonly content: unknown;
   readonly structuredPatch: unknown;
   readonly originalFile: unknown;
 }
 
 /**
  * What a Claude Code Write or Edit result (its `PostToolUse` `tool_response`) says the file held. The result names the
- * file (`filePath`). A Write that made it says `type: "create"`; any other gives the line diff it made
- * (`structuredPatch`) and the text it replaced (`originalFile`), which some results leave null. The line diff comes
- * first, as it is checked against the file (`reportedText`). Undefined when the result says none of these.
+ * file (`filePath`). A Write that made it says `type: "create"`, with the text it wrote (`content`); any other gives the
+ * line diff it made (`structuredPatch`) and the text it replaced (`originalFile`), which some results leave null. The
+ * line diff comes first, as it is checked against the file (`reportedText`). Undefined when the result says none of these.
  */
 export function claudeCodeReportedPreimage(output: unknown): ReportedPreimage | undefined {
   const result = claudeCodeEditResult(output);
   if (result === undefined) return undefined;
-  return result.type === "create" ? { kind: "created", path: result.filePath } : claudeCodeReportedEdit(result);
+  return result.type === "create" ? claudeCodeCreated(result) : claudeCodeReportedEdit(result);
+}
+
+/** What the result of a Write that made its file gives: that it made it, and the text it wrote where it says. */
+function claudeCodeCreated({ filePath: path, content }: ClaudeCodeEditResult): ReportedPreimage {
+  return typeof content === "string" ? { kind: "created", path, content } : { kind: "created", path };
+}
+
+/**
+ * Whether the call read the file the tool made, as `reported` says, before the tool ran, so the file was removed
+ * between the call and the tool: the file now, `after`, is the text the tool wrote (`content`, in the file's form), and
+ * the call's capture, `captured`, is not, in any form. A call taken up only after the tool wrote read that text, in the
+ * form the file had then; its capture could differ from it while the file still holds the write only if a change to
+ * the file were undone exactly before `after` was read. Never where the result does not say what the tool wrote.
+ */
+export function madeAfterCapture(reported: ReportedPreimage, captured: string, after: string | undefined): boolean {
+  if (reported.kind !== "created" || reported.content === undefined || after === undefined) return false;
+  return after === inFileForm(reported.content, after) && captured !== inFileForm(reported.content, captured);
 }
 
 /** What the result of an Edit, or of a Write that replaced the file, gives: the line diff, the text it replaced, or both. */
@@ -59,8 +80,8 @@ function claudeCodeReportedEdit({ filePath: path, structuredPatch, originalFile 
 /** `output`'s fields as a Write or Edit result's; undefined unless it names a file. */
 function claudeCodeEditResult(output: unknown): ClaudeCodeEditResult | undefined {
   if (typeof output !== "object" || output === null) return undefined;
-  const { filePath, originalFile, type, structuredPatch } = output as Record<string, unknown>;
-  return typeof filePath === "string" && filePath !== "" ? { filePath, type, structuredPatch, originalFile } : undefined;
+  const { filePath, originalFile, type, content, structuredPatch } = output as Record<string, unknown>;
+  return typeof filePath === "string" && filePath !== "" ? { filePath, type, content, structuredPatch, originalFile } : undefined;
 }
 
 /** `structuredPatch` as hunks; undefined when it has none, or holds anything that is no hunk. */
@@ -70,8 +91,8 @@ function reportedHunks(patch: unknown): readonly ReportedHunk[] | undefined {
 
 function isReportedHunk(hunk: unknown): hunk is ReportedHunk {
   if (typeof hunk !== "object" || hunk === null) return false;
-  const { newStart, lines } = hunk as Record<string, unknown>;
-  return isLineNumber(newStart) && isLineList(lines);
+  const { newStart, oldStart, lines } = hunk as Record<string, unknown>;
+  return isLineNumber(newStart) && (oldStart === undefined || isLineNumber(oldStart)) && isLineList(lines);
 }
 
 /** A hunk's first line: a whole number from 0, which a diff that empties the file gives. */
@@ -109,6 +130,68 @@ export function textBeforeWrite(reported: ReportedPreimage, captured: string, af
   return text === undefined || rebuiltText(reported, after) === captured ? undefined : { text };
 }
 
+/**
+ * What the file held before the tool, for a call whose capture, `captured` (what the call read of the file), the line
+ * diff does not place before the tool (`placesBeforeWrite`): nothing for a file the tool made; the text the result
+ * gives; or the text the line diff rebuilds from `captured`, which then holds the tool's lines where the diff places
+ * them, as a capture taken after the tool wrote does. Undefined when the result says none of these.
+ */
+export function unprovenCaptureBefore(reported: ReportedPreimage, captured: string, after: string | undefined): { readonly text?: string } | undefined {
+  if (reported.kind === "created") return {};
+  const given = givenText(reported, after);
+  if (given !== undefined) return { text: given };
+  const text = reported.kind === "diff" ? unpatched(captured, reported.hunks) : undefined;
+  return text === undefined ? undefined : { text };
+}
+
+/**
+ * Whether `captured`, what a call read of the file, is the file before the tool: it holds each hunk's lines before the
+ * diff (` ` and `-`) where the hunk's `oldStart` places them, and, in one hunk at least, a line the tool's write moved or
+ * removed, or the file's end, where the tool's lines go (`displacedBy`). A capture taken after the tool wrote holds the
+ * tool's lines there, in whatever form a formatter left them. Never without a line diff.
+ */
+export function placesBeforeWrite(reported: ReportedPreimage, captured: string): boolean {
+  if (reported.kind !== "diff") return false;
+  const lines = fileLines(captured);
+  return reported.hunks.every((hunk) => hunkHeldBefore(lines, hunk) !== undefined) && reported.hunks.some((hunk) => displacedBy(lines, hunk));
+}
+
+/**
+ * Whether a hunk shows a line of `lines`, the file before the tool, where the tool's write puts its own: a removed line,
+ * a line after one the tool added, or, where the tool's lines end the hunk, the file's end right after its lines before
+ * the diff.
+ */
+function displacedBy(lines: readonly string[], hunk: ReportedHunk): boolean {
+  const marks = hunk.lines.map((line) => line.charAt(0)).filter((mark) => mark !== "\\");
+  const firstAdded = marks.indexOf("+");
+  if (marks.includes("-")) return true;
+  if (firstAdded < 0) return false;
+  if (marks.slice(firstAdded).includes(" ")) return true;
+  return Math.max((hunk.oldStart ?? 1) - 1, 0) + firstAdded === lines.length;
+}
+
+/** How many lines before the diff a hunk places in `lines` from its `oldStart`; undefined when one is not there. */
+function hunkHeldBefore(lines: readonly string[], hunk: ReportedHunk): number | undefined {
+  if (hunk.oldStart === undefined) return undefined;
+  const from = Math.max(hunk.oldStart - 1, 0);
+  let at = from;
+  for (const [index, line] of hunk.lines.entries()) {
+    if (!line.startsWith(" ") && !line.startsWith("-")) continue;
+    if (!heldBeforeLine(line, hunk.lines[index + 1], lines[at])) return undefined;
+    at += 1;
+  }
+  return at - from;
+}
+
+/**
+ * Whether `held`, the file's line, is the hunk's line before the diff, `line` (` ` or `-`), read as `hunkLine` reads
+ * one: `following` marks it as ending its file without a line feed.
+ */
+function heldBeforeLine(line: string, following: string | undefined, held: string | undefined): boolean {
+  const ends = following?.startsWith("\\") !== true;
+  return held !== undefined && sameLine(held, line.slice(1).replace(/\r$/u, ""), ends);
+}
+
 /** The text a line diff rebuilds from `after`; undefined without a line diff, or where `after` does not fit it. */
 function rebuiltText(reported: ReportedEdit, after: string | undefined): string | undefined {
   return reported.kind === "diff" && after !== undefined ? unpatched(after, reported.hunks) : undefined;
@@ -137,7 +220,7 @@ function inFileForm(text: string, after: string): string {
  * where it places them in `after`, when hunks overlap, or when a line has no mark.
  */
 function unpatched(after: string, hunks: readonly ReportedHunk[]): string | undefined {
-  const lines = Array.from(after.matchAll(/[^\n]*\n|[^\n]+$/gu), (match) => match[0]);
+  const lines = fileLines(after);
   const ending = lineEnding(after);
   const parts: string[] = [];
   let next = 0;
@@ -151,6 +234,11 @@ function unpatched(after: string, hunks: readonly ReportedHunk[]): string | unde
   }
   parts.push(lines.slice(next).join(""));
   return parts.join("");
+}
+
+/** `text`'s lines, each with its line ending, the last one without where the text ends without one. */
+function fileLines(text: string): string[] {
+  return Array.from(text.matchAll(/[^\n]*\n|[^\n]+$/gu), (match) => match[0]);
 }
 
 /** The line ending `text` uses: CRLF where any line ends with one. */

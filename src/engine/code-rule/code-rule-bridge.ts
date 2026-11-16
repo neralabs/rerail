@@ -42,7 +42,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
-import { type ReportedPreimage, reportedText, textBeforeWrite } from "./reported-preimage.js";
+import { madeAfterCapture, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 
 
@@ -345,36 +345,49 @@ function failFolder(walk: SourceWalk, path: string, readError: string): void {
 function unchangedSince(source: Source, preimage: Preimage | undefined): boolean {
   return preimage?.withheld === undefined ? preimage?.text === source.text : preimage.withheld.sha256 === source.digest;
 }
-/** Why a late tool edit is checked over its whole file (`editPreimage`). */
+/** Why a tool edit whose call may have come after the tool wrote is checked over its whole file (`editPreimage`). */
 const UNREBUILT_PREIMAGE = "The tool's result no longer fits the file, so what it held before the tool ran is unknown";
 /**
- * The preimage a tool edit of `source` is read against: the call's own capture, or, where that capture already holds
- * what the tool wrote (the call reached Rerail only after the tool ran), what the tool's result says the file held.
- * That capture is the file as it is now, or one the file changed from since (`changedSinceWrite`).
+ * The preimage a tool edit of `source` is read against: the call's own capture, or, where the result shows that capture
+ * holds what the tool wrote (the call reached Rerail only after the tool ran), what the tool's result says the file
+ * held. That capture is the file as it is now, or one the file changed from since (`changedSinceWrite`).
  */
 function editPreimage(source: Source, captured: Preimage | undefined, reported: ReportedPreimage | undefined): Preimage | undefined {
   if (reported === undefined || captured === undefined) return captured;
-  return unchangedSince(source, captured) ? unchangedSinceWrite(source, reported) : changedSinceWrite(source, captured, reported);
+  return unchangedSince(source, captured) ? unchangedSinceWrite(source, captured, reported) : changedSinceWrite(source, captured, reported);
 }
 /**
- * What the file held before a tool whose late call captured the file as it is now, as the tool's result says. Where
- * the result says something of it that no longer fits the file and gives no text (`reportedText`), what the file held
- * is unknown: the edit is then read as one whose earlier text could not be read, so it is checked over its whole file
- * and says why, rather than read as no change.
+ * What the file held before a tool whose call captured the file as it is now, as the tool's result says: that capture
+ * holds what the tool wrote, unless the file was put back before the result. Where the result gives no text that fits
+ * the file (`reportedText`), the capture is kept where it is the file before the tool (`placesBeforeWrite`): the file
+ * was put back, and the edit changed nothing. Otherwise what the file held is unknown: the edit is read as one whose
+ * earlier text could not be read, so it is checked over its whole file and says why, rather than read as no change.
  */
-function unchangedSinceWrite(source: Source, reported: ReportedPreimage): Preimage {
+function unchangedSinceWrite(source: Source, captured: Preimage, reported: ReportedPreimage): Preimage {
   const preimage = reportedText(reported, source.text);
-  return preimage === undefined ? { readError: UNREBUILT_PREIMAGE } : keptPreimage(source.path, preimage);
+  if (preimage !== undefined) return keptPreimage(source.path, preimage);
+  return captured.text !== undefined && placesBeforeWrite(reported, captured.text) ? captured : { readError: UNREBUILT_PREIMAGE };
 }
 /**
- * The preimage of an edit whose file changed since its call's capture: that capture, as for every call that came on
- * time, unless the result's line diff fits it, which only a capture taken after the tool wrote does (`textBeforeWrite`).
- * The edit is then read against the text the diff rebuilds from it, with whatever changed the file since (a formatter,
- * the next edit), as an edit whose call came on time is.
+ * The preimage of an edit whose file changed since its call's capture: the text the result's line diff rebuilds from
+ * that capture where the diff fits it, which only a capture taken after the tool wrote does (`textBeforeWrite`), with
+ * whatever changed the file since (a formatter, the next edit), as an edit whose call came on time is read. Otherwise
+ * the capture, where the line diff places it before the tool (`placesBeforeWrite`), as it places every on-time capture,
+ * or where the tool made a file the call read before it ran (`madeAfterCapture`): the file was removed between the call
+ * and the tool. Otherwise, the capture not being the file before the tool, what the result says the file held
+ * (`unprovenCaptureBefore`): nothing, for a file the tool made; the text the tool replaced; or the text the diff
+ * rebuilds from the capture, which then holds the tool's lines where the diff places them. A result that says none of
+ * these shows nothing about the capture, which another writer between the call and the tool may have left as it is, so
+ * the edit is read against it, as an edit whose result says nothing is.
  */
 function changedSinceWrite(source: Source, captured: Preimage, reported: ReportedPreimage): Preimage {
-  const before = captured.text === undefined ? undefined : textBeforeWrite(reported, captured.text, source.text);
-  return before === undefined ? captured : keptPreimage(source.path, before);
+  const text = captured.text;
+  if (text === undefined) return captured;
+  const before = textBeforeWrite(reported, text, source.text);
+  if (before !== undefined) return keptPreimage(source.path, before);
+  if (placesBeforeWrite(reported, text) || madeAfterCapture(reported, text, source.text)) return captured;
+  const said = unprovenCaptureBefore(reported, text, source.text);
+  return said === undefined ? captured : keptPreimage(source.path, said);
 }
 function absentThroughout(source: Source, preimage: Preimage | undefined): boolean {
   return source.deleted === true && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined;
