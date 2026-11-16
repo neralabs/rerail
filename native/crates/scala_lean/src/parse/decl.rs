@@ -906,7 +906,7 @@ impl P<'_> {
         let mut j = 2;
         loop {
             let t = self.peek_at(j);
-            if t.nl && !self.type_continues_at(j) || t.kind == T::Eof || j > 40 {
+            if t.nl && !self.type_continues_at(j) || t.kind == T::Eof || j > 400 {
                 return false;
             }
             if t.kind == T::Op && t.code == op::ARROW {
@@ -937,7 +937,9 @@ impl P<'_> {
         self.tk(K::TLParen)?;
         if self.is_word(w::USING) {
             self.tk(K::TUsing)?;
-            if !(Self::is_name(self.tok()) && self.is_op_at(1, op::COLON)) {
+            // `(using x: T)`, `(using inline x: T)`: parameters; else types alone.
+            let k = usize::from(matches!(self.word(), w::INLINE | w::ERASED | w::CONSUME | w::TRACKED));
+            if !(Self::is_name(self.peek_at(k)) && self.is_op_at(k + 1, op::COLON)) {
                 return self.using_types(n);
             }
         } else if self.is_word(w::IMPLICIT) {
