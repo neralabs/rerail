@@ -5243,7 +5243,17 @@ chunk.
 
 ## O-pse-alone-strict. A pack of PSE's rule file alone aborts strict SQL (2026-11-15)
 
-Status: open. Found while bisecting O-cold-seed-join. With the data-layer candidates' `plan-scope-side-effects.rr`
+Status: closed (2026-11-15). The cause was the relation's name, not the single program. Alone, PSE's `plan` keeps
+its name (in the pack it is `p47_plan`), and PLAN is a SQLite keyword, so every statement writes it quoted
+(`sql::ident`, O106): `main."plan"`. setfix's `view`, which reads a bound input in place, looked up a bound source
+named `"plan"`, quotes and all. It found none and read the input through SQL, which strict mode refuses inside
+the waves. `view` now reads the name back unquoted (`sql::unquote`). Test:
+`setfix::view_tests::a_bound_input_named_like_a_sql_keyword_is_read_in_place`. PSE alone over 25 data-layer files
+runs strict in 1.2 s of CPU. Over a fixture with one finding of each code, it gives the same 9 rows as the pack.
+
+The guess below was wrong: the inputs were bound, and `base` held.
+
+Was open. Found while bisecting O-cold-seed-join. With the data-layer candidates' `plan-scope-side-effects.rr`
 as the only rule file, a cold strict run over 25 data-layer files stops with
 `RERAIL_SQL_STRICT: SQL inside the waves` at `SELECT c0 FROM main."plan"`, from `Fx::open` in the cross-file part.
 It still does so after 0267. The whole pack runs strict. The likely cause is that with one program, the cross part

@@ -73,6 +73,8 @@ mod survivor_tests;
 #[cfg(test)]
 mod cut_tests;
 #[cfg(test)]
+mod view_tests;
+#[cfg(test)]
 mod base_probe;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
@@ -4519,6 +4521,9 @@ fn view(conn: impl Scoped, table: &str, cols: &str) -> Option<View> {
     let conn = conn.db();
     let (schema, rest) = table.split_once('.')?;
     let (name, filters) = match rest.split_once(" WHERE ") { Some((n, f)) => (n, Some(f)), None => (rest, None) };
+    // The name as the statement writes it: a relation named like a SQLite keyword is quoted (`main."plan"`,
+    // `sql::ident`), and is bound by its own name (O-pse-alone-strict).
+    let name = &*crate::code_rule_dsl::logic::sql::unquote(name);
     let src = if schema == "main" {
         crate::code_rule_dsl::facts::vtab::bound_source(conn, name)?
     } else {
