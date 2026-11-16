@@ -276,14 +276,102 @@ pub struct Report {
 /// reads what the run read, and derives nothing. A program whose inputs come from elsewhere too (declarations,
 /// earlier phases, an explicit batch) is never judged unchanged.
 /// `graphs`: each program text's include graph's digest, as the run found it (`run_handed`).
-pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<bool> {
-    Ok(changes(programs, graphs, root, typing, options, consulted)?.is_some_and(|c| c.is_empty()))
+pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<bool> {
+    Ok(changes_of(programs, graphs, root, typing, options, consulted, summary)?.is_some_and(|c| c.is_empty()))
+}
+
+/// The parts of a run's combined program that `changes` reads, and nothing else: whether it reads `declared_ret`,
+/// its settings (its language, its artifacts), its scopes and text globs, its JSON policies (their scopes), and its
+/// `env` facts (the world's roots). A function of the texts and the rule files they read: the whole-run cutoff's
+/// record keeps it beside the run's (decision 0275), so its check does not combine the program again to read them.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Summary(front::Program);
+
+impl Summary {
+    /// The summary of the program `programs` combine to, as `changes` combines them (the root's settings in each).
+    pub(crate) fn of(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, options: &serde_json::Value) -> Result<Summary> {
+        Ok(Self::from_program(&combined_with_settings(programs, graphs, root, options)?))
+    }
+
+    fn from_program(prog: &front::Program) -> Summary {
+        Summary(front::Program {
+            decls: prog.decls.iter().filter(|(k, _)| k.as_str() == "declared_ret").map(|(k, v)| (k.clone(), v.clone())).collect(),
+            facts: prog.facts.iter().filter(|(k, _)| k.as_str() == "env").map(|(k, v)| (k.clone(), v.clone())).collect(),
+            settings: prog.settings.clone(),
+            policies: prog.policies.clone(),
+            doc_scopes: prog.doc_scopes.clone(),
+            text_globs: prog.text_globs.clone(),
+            ..front::Program::default()
+        })
+    }
+
+    /// Its bytes: the parts as JSON.
+    pub(crate) fn encode(&self) -> Option<Vec<u8>> {
+        let p = &self.0;
+        let env: Vec<Vec<serde_json::Value>> = p.facts.get("env").into_iter().flatten().map(|row| row.iter().map(|v| match v {
+            front::Value::Int(i) => serde_json::json!({ "i": i }),
+            front::Value::Str(s) => serde_json::json!({ "s": s.as_str() }),
+        }).collect()).collect();
+        let parts = serde_json::json!({
+            "declared_ret": p.decls.contains_key("declared_ret"),
+            "env": env,
+            "settings": p.settings,
+            "policies": p.policies,
+            "doc_scopes": p.doc_scopes,
+            "text_globs": p.text_globs,
+        });
+        serde_json::to_vec(&parts).ok()
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Option<Summary> {
+        let v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+        let mut p = front::Program::default();
+        if v["declared_ret"].as_bool()? {
+            p.decls.insert(front::Name::new("declared_ret"), Default::default());
+        }
+        let mut rows = Vec::new();
+        for row in v["env"].as_array()? {
+            let mut out = front::List::default();
+            for c in row.as_array()? {
+                out.push(match (c.get("i").and_then(serde_json::Value::as_i64), c.get("s").and_then(serde_json::Value::as_str)) {
+                    (Some(i), _) => front::Value::Int(i),
+                    (_, Some(s)) => front::Value::Str(front::Name::new(s)),
+                    _ => return None,
+                });
+            }
+            rows.push(out);
+        }
+        if !rows.is_empty() {
+            p.facts.insert("env".to_owned(), rows);
+        }
+        p.settings = serde_json::from_value(v["settings"].clone()).ok()?;
+        p.policies = serde_json::from_value(v["policies"].clone()).ok()?;
+        p.doc_scopes = serde_json::from_value(v["doc_scopes"].clone()).ok()?;
+        p.text_globs = serde_json::from_value(v["text_globs"].clone()).ok()?;
+        Some(Summary(p))
+    }
+}
+
+/// The program `programs` combine to with the root's settings (`<root>/rerail.env`, the `env` option) in each.
+fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, options: &serde_json::Value) -> Result<front::Program> {
+    let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
+    let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
+    // The settings are `env` facts added to each text: its includes, and so its graph, are the text's own.
+    Ok(combine_keyed(&programs, graphs, "", None, &front::Lists::default())?.0)
 }
 
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read).
 pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
+    changes_of(programs, graphs, root, typing, options, consulted, None)
+}
+
+/// `changes`, reading the program's parts off `summary` where one is given (the whole-run cutoff's record), else off
+/// the program combined again.
+fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<Option<Vec<String>>> {
     let trace = |why: String| if std::env::var_os("RERAIL_REUSE_TRACE").is_some() { eprintln!("rerail: changes: {why}"); };
     // A run given no file of its own (`inputFiles: []`, a phase's: phase 1 loads its documents by request) has no
     // listed documents to compare; what it loaded is among its requests, checked below. Other named files are not
@@ -293,12 +381,10 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Pat
         trace(format!("not comparable: input files {}, {} consulted", options.get("inputFiles").is_some(), consulted.len()));
         return Ok(None);
     }
-    let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
-    let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
-    let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
-    // The settings are `env` facts added to each text: its includes, and so its graph, are the text's own.
-    let (prog, _) = combine_keyed(&programs, graphs, "", None, &front::Lists::default())?;
+    let prog = match summary {
+        Some(Summary(prog)) => prog,
+        None => Summary::from_program(&combined_with_settings(programs, graphs, root, options)?).0,
+    };
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
     if prog.decls.contains_key("declared_ret") {

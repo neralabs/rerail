@@ -78,6 +78,28 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
 /// live plan of which it names is dropped (`observe::collect`).
 pub const CUTOFF: &str = "cutoff:";
 
+/// The record's line of the texts' include graphs (`Texts::graphs`), each one's digest or none: with every rule file
+/// as recorded, the same graphs list the same rule files, so the check need not list them again (decision 0275).
+const GRAPHS: &str = "graphs";
+
+/// The texts' include graphs as the record's line holds them.
+fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
+    let mut h = Sha256::new();
+    for g in graphs {
+        match g {
+            Some(d) => {
+                h.update([1]);
+                h.update(d);
+            }
+            None => h.update([0]),
+        }
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The record's line of the program's parts the check reads (`corpus::Summary`), as compact JSON (one line, no tab).
+const SUMMARY: &str = "program";
+
 /// The programs with the root's settings (`<root>/rerail.env`, the `env` option), as the run reads them.
 fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) -> Result<Vec<String>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
@@ -96,7 +118,7 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
     out.push(("rule".to_owned(), sources.to_string_lossy().into_owned(), digest));
     // The programs' includes, and every phase program they read (with its includes).
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
-    let mut paths = super::phases::phase_files(read, dir.as_deref())?;
+    let (mut paths, missed) = super::phases::phase_files(read, dir.as_deref())?;
     for t in read {
         paths.extend(t.included.iter().cloned());
     }
@@ -104,6 +126,8 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
         let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
         out.push(("rule".to_owned(), path.to_string_lossy().into_owned(), digest));
     }
+    // The places a phase program was looked for and not found: no digest, so one appearing there differs.
+    out.extend(missed.into_iter().map(|path| ("rule".to_owned(), path.to_string_lossy().into_owned(), String::new())));
     out.sort();
     out.dedup();
     Ok(out)
@@ -169,6 +193,8 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     // The plans it names are for collection (`CUTOFF`), not reads to check: the reused run names them, as the run
     // that made the record did, so its outer run records the manifest it recorded then.
     let (plans, consulted): (Vec<_>, Vec<_>) = decode_consulted(&consulted).into_iter().partition(|c| c.0 == "plan");
+    let (graphs, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == GRAPHS);
+    let (summary, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == SUMMARY);
     let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
     let Some(outputs) = decode_outputs(&outputs) else {
         miss("the record's outputs do not decode");
@@ -183,11 +209,25 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss(&format!("{} {} changed", c.0, c.1));
         return Ok(None);
     }
-    if rule_files(given, options)? != rules {
-        miss("the rule files differ");
-        return Ok(None);
+    // Decision 0275, rederived until a key settles it: with every rule file as recorded (a `stat` each, then its
+    // sha), the same include graphs list the same rule files; the record's are compared, and the rule files are
+    // listed again only for a record that has none.
+    match graphs.first() {
+        Some(g) if g.2 != graphs_line(&given.graphs) => {
+            miss("the include graphs differ");
+            return Ok(None);
+        }
+        Some(_) => {}
+        None if rule_files(given, options)? != rules => {
+            miss("the rule files differ");
+            return Ok(None);
+        }
+        None => {}
     }
-    if !unchanged(programs, &given.graphs, root, typing, options, &rest)? {
+    // The program's parts the check reads, as recorded: a function of the texts (the key) and the rule files (as
+    // recorded), so the program is not combined again to read them.
+    let summary = summary.first().and_then(|c| super::Summary::decode(c.2.as_bytes()));
+    if !unchanged(programs, &given.graphs, root, typing, options, &rest, summary)? {
         miss("a consulted file or read changed");
         return Ok(None);
     }
@@ -201,8 +241,13 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     }
     let now = super::thread_usage();
     report.phases.push(("unchanged: phase 0 checked every read, outputs kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
-    // The documents the run read: the workspace's and those its requests loaded.
-    report.files = rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").count();
+    // The documents the run read: the workspace's and those its requests loaded, each once. Phase 1 loads a
+    // workspace document by its absolute path, which the run lists by its path from the root: counted twice, a warm
+    // run of one file reported two.
+    let base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let read: std::collections::BTreeSet<std::path::PathBuf> =
+        rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| base.join(&c.1)).collect();
+    report.files = read.len();
     report.consulted = rest;
     Ok(Some(report))
 }
@@ -243,6 +288,10 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     read.retain(|c| !(c.0 == "doc" && c.2.is_empty() && read_docs.contains(&c.1)));
     consulted.extend(read);
     consulted.extend(report.plans.iter().map(|plan| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(plan))));
+    consulted.push((GRAPHS.to_owned(), String::new(), graphs_line(&given.graphs)));
+    if let Some(summary) = super::Summary::of(programs, &given.graphs, root, options)?.encode().and_then(|b| String::from_utf8(b).ok()).filter(|t| !t.contains(['\n', '\t'])) {
+        consulted.push((SUMMARY.to_owned(), String::new(), summary));
+    }
     let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
         eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..CUTOFF.len() + 12], consulted.len());
