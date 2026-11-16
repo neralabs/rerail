@@ -593,11 +593,18 @@ export class RerailDaemon {
   async #announce(remembered: number | undefined): Promise<void> {
     const options = this.#options;
     if (options.stateFile !== undefined) await this.#record(options.stateFile);
-    // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`), and nothing at all
-    // while it is off in the daemon.
-    if (options.remoteSink !== false && remoteSinkEnabled()) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
+    this.#startRemoteSink();
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
     if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
+  }
+
+  /**
+   * Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`), and nothing at all
+   * while it is off in the daemon.
+   */
+  #startRemoteSink(): void {
+    const sink = this.#options.remoteSink;
+    if (sink !== false && remoteSinkEnabled()) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(sink ?? {}) });
   }
 
   /**
@@ -622,23 +629,26 @@ export class RerailDaemon {
     this.#recordCheck.unref();
   }
 
+  /**
+   * Whether this daemon no longer holds its home (`check.holdsHome`); if so, ends the record check for good and says why
+   * in daemon.log. A check that throws cannot tell, and the home counts as held: the record is kept, as before the check.
+   */
+  #lostHome(stateFile: string, check: NonNullable<RerailDaemonOptions["recordCheck"]>): boolean {
+    try {
+      if (check.holdsHome()) return false;
+    } catch {
+      return false;
+    }
+    clearInterval(this.#recordCheck);
+    this.#recordCheck = undefined;
+    process.stderr.write(`rerail daemon: this daemon (pid ${process.pid}) no longer holds the Rerail home at ${check.home}: it was moved `
+      + `or removed. The daemon stops writing ${stateFile}; end it, then run rerail daemon start.\n`);
+    return true;
+  }
+
   /** Writes `text` to `stateFile` again unless the file holds it, while this daemon holds its home (`check.holdsHome`). */
   async #restoreRecord(stateFile: string, text: string, check: NonNullable<RerailDaemonOptions["recordCheck"]>): Promise<void> {
-    if (this.#closed || this.#recordCheck === undefined) return;
-    // A check that throws cannot tell, and the home counts as held: the record is kept, as before the check.
-    let holds = true;
-    try {
-      holds = check.holdsHome();
-    } catch {
-      // Held, as above.
-    }
-    if (!holds) {
-      clearInterval(this.#recordCheck);
-      this.#recordCheck = undefined;
-      process.stderr.write(`rerail daemon: this daemon (pid ${process.pid}) no longer holds the Rerail home at ${check.home}: it was moved `
-        + `or removed. The daemon stops writing ${stateFile}; end it, then run rerail daemon start.\n`);
-      return;
-    }
+    if (this.#closed || this.#recordCheck === undefined || this.#lostHome(stateFile, check)) return;
     const found = await readFile(stateFile, "utf8").catch(() => undefined);
     if (found === text) return;
     try {
@@ -1170,7 +1180,6 @@ async function packageVersion(): Promise<string> {
 }
 
 /**
-/**
  * What starts the daemon with besides its arguments: what the process entry point (`src/cli/daemon-entry.ts`) supplies
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
@@ -1268,44 +1277,27 @@ async function serveLoopback(argv: readonly string[], reason: string, services: 
   await runRerailDaemon(loopbackArguments(argv), { ...services, remoteRefused: reason });
 }
 
-async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
-  const arguments_ = parseDaemonArguments(argv);
-  // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
-  // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
-  const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
-  searchGitFrom(workspaceRoot);
-  const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
-  // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
-  // here naming the first. A checkout's daemon is a dev build with its own content store and skips this lock. Every
-  // build, a checkout's included, takes the home's daemon lock before this, in `runHomeDaemon`.
-  const build = isMainRerailBuild() ? currentRerailBuild() : undefined;
-  const mainInstance = build?.kind === "main" ? acquireMainInstance(build) : undefined;
-  // `--dev` serves the committed page straight from `ui/`, so an edit needs only a reload.
+/** The page the daemon serves: `--dev` serves the committed page straight from `ui/`, so an edit needs only a reload. */
+function daemonPage(arguments_: DaemonArguments): { dev: boolean; uiRoot: string } {
   const dev = arguments_.dev || process.env.RERAIL_DEV === "1";
   const uiRoot = dev ? sourceUiRoot() : bundledUiRoot();
   if (!existsSync(join(uiRoot, "index.html"))) {
     throw new Error(`Rerail page is missing at ${uiRoot}; run npm run build:ui.`);
   }
-  const databasePath = defaultRerailDatabasePath();
-  // A signal (macOS, Linux) or a shutdown request (Windows, where `process.kill` ends a process without running any
-  // handler) closes the daemon. `rerail daemon stop` kills a daemon that has not stopped within its wait.
-  let shutdown = (): void => undefined;
-  const daemon = await RerailDaemon.start({
-    onShutdownRequest: () => shutdown(),
-    version: await packageVersion(),
-    databasePath,
-    workspaceRoot,
-    host: arguments_.host,
-    publicHosts: arguments_.publicHosts,
+  return { dev, uiRoot };
+}
+
+/** The daemon options its arguments set only when given: its port, its state file and its TLS material. */
+function optionalDaemonOptions(arguments_: DaemonArguments, tls: DaemonTlsMaterial | undefined): Pick<RerailDaemonOptions, "port" | "stateFile" | "tls"> {
+  return {
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
-    portFile: join(defaultRerailHome(), DAEMON_PORT_FILE),
-    accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
-    uiRoot,
-    dev,
-    ...services,
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
     ...(tls === undefined ? {} : { tls }),
-  });
+  };
+}
+
+/** What a started daemon says on stdout, which is daemon.log: where it listens, and what it runs with. */
+function reportStart(daemon: RerailDaemon): void {
   const health = daemon.health();
   process.stdout.write(`rerail daemon ${health.version} listening at ${daemon.url} (pid ${process.pid})\n`);
   const { tlsFingerprint256 } = daemon.state();
@@ -1325,6 +1317,40 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   for (const skipped of catalog.skipped) {
     process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
   }
+}
+
+async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+  const arguments_ = parseDaemonArguments(argv);
+  // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
+  // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
+  const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
+  searchGitFrom(workspaceRoot);
+  const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
+  // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
+  // here naming the first. A checkout's daemon is a dev build with its own content store and skips this lock. Every
+  // build, a checkout's included, takes the home's daemon lock before this, in `runHomeDaemon`.
+  const build = isMainRerailBuild() ? currentRerailBuild() : undefined;
+  const mainInstance = build?.kind === "main" ? acquireMainInstance(build) : undefined;
+  const { dev, uiRoot } = daemonPage(arguments_);
+  const databasePath = defaultRerailDatabasePath();
+  // A signal (macOS, Linux) or a shutdown request (Windows, where `process.kill` ends a process without running any
+  // handler) closes the daemon. `rerail daemon stop` kills a daemon that has not stopped within its wait.
+  let shutdown = (): void => undefined;
+  const daemon = await RerailDaemon.start({
+    onShutdownRequest: () => shutdown(),
+    version: await packageVersion(),
+    databasePath,
+    workspaceRoot,
+    host: arguments_.host,
+    publicHosts: arguments_.publicHosts,
+    portFile: join(defaultRerailHome(), DAEMON_PORT_FILE),
+    accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
+    uiRoot,
+    dev,
+    ...services,
+    ...optionalDaemonOptions(arguments_, tls),
+  });
+  reportStart(daemon);
   const way = daemonExit({
     close: async () => await daemon.close(),
     release: () => mainInstance?.release(),
