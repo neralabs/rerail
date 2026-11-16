@@ -103,7 +103,7 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
                     }
                     out
                 }
-                // A node's document (`typing::cross_rounds`): nodes are `d << 32 | index`.
+                // A node's document (`@doc`): nodes are `d << 32 | index`.
                 ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
                 // A sibling's position (`logic::convert`: `precedes`, `follows`), and `.rr`'s arithmetic.
                 ("add", [x, y]) => bin(Op::Add, x.clone(), y.clone()),

@@ -530,6 +530,27 @@ pass.
 - **Done when**: every edit after the first finds its kept inputs, and taking them costs less than decoding the
   hits whole.
 
+### Q21. Red tests that predate 0281 step 4
+
+- **Found** (2026-11-16, while testing 0281 step 4's slices; both fail at 38d1272f5, before them):
+  - `corpus::phases::tests::a_phase_hands_on_its_exports_and_its_reader_follows_each_edit`: phase `p1` reads
+    `text(i, x)`, and its run fails with `@rr_node_text without the run's long-text nodes bound`
+    (`native/setfix.rs`, the function step's binding of `LONG_TEXT_NODES`). Some part of a phase's run evaluates a
+    node's text before the run binds its long-text nodes.
+  - `corpus::tests::every_switch_lowering_reads_is_classified`: `RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`,
+    `RERAIL_SHIPPED_IMAGES` (`rr/images.rs`) and `RERAIL_MODULE_IMAGES` (`combine_read`) are read in combining but
+    are in neither list. Each needs classifying: does it change a prepared program (`COMBINING`) or not?
+  - `sql_executor::tests::rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding` (red at aa36f9104):
+    running a rule file after binding a snapshot fails with `value: SQL output already exists; rebind inputs to
+    clear derived results` (`sql_executor/session.rs`): the core prelude's `value` is taken for an output that
+    clashes with a table the session holds.
+  - `convert::tests::helpers_take_the_metavariables_bound_around_them` and
+    `convert::tests::a_sample_of_the_replay_gives_the_recorded_findings` (77 of 268 events), red at a31a11e22 with
+    the phases test's error (`@rr_node_text without the run's long-text nodes bound`): the same cause, likely.
+  - Also: `sql_executor` as a whole, in parallel, passes 3 GB RSS (`tmp/capped.sh 3000`); with four threads too.
+- **Done when**: each passes, the first by binding the long-text nodes before whichever part reads them (or by the
+  part not reading node text), the second by classifying each switch from what it does, the third from the cause.
+
 ### Q35. Store the general forms through 0281 step 5's keyed preparation steps
 
 - **Keep**: 0298's general forms (steps 1–3, behind `RERAIL_GENERAL_FORMS`): every reached stratum not recursive

@@ -290,7 +290,8 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     assert!(local.contains("under") && local.contains("named"), "{local:?}");
     assert!(constant_relations(&program).contains("side"));
     let parts = programs(&program).unwrap();
-    assert!(parts.local.rules.iter().any(|r| r.head.rel == "side"), "the chunks derive side for named");
+    let lv = &parts.versions.local;
+    assert!(lv.rules().any(|r| lv.rel_name(r.head().rel()) == "side"), "the chunks derive side for named");
     assert!(cross_causes(&program).get("under").is_none(), "{:?}", cross_causes(&program));
 }
 

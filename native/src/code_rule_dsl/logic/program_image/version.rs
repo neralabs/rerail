@@ -436,8 +436,13 @@ impl Version {
         self.owner(2).outputs_hash()
     }
 
-    /// The program this version is, as the tree.
+    /// The program this version is, as the tree: a decode, counted (`trees_decoded`) and, when profiling, named by
+    /// the caller's place (the decision "a tree decoded from its version"), so what still reads a tree is seen.
+    #[track_caller]
     pub fn program(&self, lists: &Lists) -> Result<Program, String> {
+        let at = std::panic::Location::caller();
+        DECODED.with(|d| d.set((d.get().0 + 1, Some(at))));
+        crate::code_rule_dsl::logic::profile::decision("a tree decoded from its version", || format!("{}:{}", at.file(), at.line()));
         super::Tree::new(self, lists).program()
     }
 
@@ -445,4 +450,21 @@ impl Version {
     pub fn fold(&self) -> Result<Arc<Version>, String> {
         super::Builder::folding(self).finish().map(|(v, _)| v)
     }
+}
+
+thread_local! {
+    /// The trees this thread decoded from versions (`Version::program`): a count, and the place of the last.
+    static DECODED: std::cell::Cell<(usize, Option<&'static std::panic::Location<'static>>)> = const { std::cell::Cell::new((0, None)) };
+}
+
+/// How many trees this thread decoded from versions so far (`Version::program`), and where the last was
+/// (`file:line`): a run reads its versions on its own thread, so a check around a run on one thread reads that run's.
+pub fn trees_decoded() -> (usize, Option<String>) {
+    let (n, at) = DECODED.with(|d| d.get());
+    (n, at.map(|l| format!("{}:{}", l.file(), l.line())))
+}
+
+/// Forgets this thread's decodes (`trees_decoded`): a check counts a run's alone.
+pub fn forget_trees_decoded() {
+    DECODED.with(|d| d.set((0, None)));
 }

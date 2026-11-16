@@ -51,13 +51,9 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
     if pass.skipped {
         return (cross.clone(), 0, 0);
     }
+    let Some(made) = super::made_from(true, made, "the supports") else { return (cross.clone(), 0, 0) };
     let mut out = cross.clone();
-    out.version = super::made_from(true, made, "the supports");
-    match &out.version {
-        // The run reads the version; a reader of the tree decodes it (`lower::Tree`), none on the run's path.
-        Some(made) => out.program = lower::Tree::of(made.clone()),
-        None => return (cross.clone(), 0, 0),
-    }
+    out.version = made;
     for (name, d) in pass.made {
         out.domains.entry(name).or_insert(d);
     }
@@ -276,10 +272,10 @@ mod tests {
              h(x) :- p(x, y), q(y, _).\ng(x) :- p(x, _), !q(x, _).\nt(x, y) :- p(x, y).\nt(x, z) :- t(x, y), p(y, z).\n",
         )
         .unwrap();
-        let cross = lower::Lowered { program: lower::Tree::given(prog), version: None, maint: None, domains: Default::default(), ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
+        let cross = lower::Given { program: prog, domains: Default::default(), ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python }.image().unwrap();
         let (out, through, kept) = supports(&cross);
         assert_eq!((through, kept), (2, 2));
-        let v = out.version.clone().expect("a version made");
+        let v = out.version.clone();
         let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let tree = crate::code_rule_dsl::logic::plan::body::Placed::whole(v).program(&lists).unwrap();
         let rules: Vec<String> = tree.rules.iter().map(|r| r.to_string()).collect();
@@ -319,10 +315,10 @@ mod tests {
         )
         .unwrap();
         let domains = lower::domains(&prog).unwrap();
-        let cross = lower::Lowered { program: lower::Tree::given(prog), version: None, maint: None, domains, ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
+        let cross = lower::Given { program: prog, domains, ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python }.image().unwrap();
         let (out, through, _) = supports(&cross);
         assert_eq!(through, 1);
-        let v = out.version.clone().expect("a version made");
+        let v = out.version.clone();
         let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let tree = crate::code_rule_dsl::logic::plan::body::Placed::whole(v).program(&lists).unwrap();
         let sup = tree.decls.keys().find(|r| is_support(r)).expect("a support relation").to_string();
