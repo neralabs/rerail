@@ -891,3 +891,267 @@ impl<'a> P<'a> {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    /// tree-sitter's tape of a short text (the engine's `python_tape_expect`), against the parser's.
+    fn same(src: &str, want: &str) {
+        let got = crate::tape_text(&crate::tape(src.as_bytes()).expect("a tape"));
+        assert_eq!(got, want, "{src}");
+    }
+
+    #[test]
+    fn strings() {
+        same(
+            r#"val s = "a$ b${c}d$e\$"
+"#,
+            r#"source_file [0..24]
+  property_declaration [0..23]
+    binding_pattern_kind [0..3]
+      val [0..3]
+    variable_declaration [4..5]
+      simple_identifier [4..5]
+    string_literal [8..23]
+      string_content [9..10]
+      string_content [10..11]
+      string_content [11..13]
+      interpolation_expression_start [13..15]
+      interpolated_expression [15..16]
+        simple_identifier [15..16]
+      interpolation_expression_end [16..17]
+      string_content [17..18]
+      interpolation_identifier_start [18..19]
+      interpolated_identifier [19..20]
+"#,
+        );
+    }
+
+    #[test]
+    fn labels_and_jumps() {
+        same(
+            r#"fun f() { foo@ for (x in xs) { break@foo }; return@f 1 }
+"#,
+            r#"source_file [0..57]
+  function_declaration [0..56]
+    simple_identifier [4..5]
+    function_value_parameters [5..7]
+    function_body [8..56]
+      statements [10..54]
+        label [10..14]
+        for_statement [15..42]
+          variable_declaration [20..21]
+            simple_identifier [20..21]
+          simple_identifier [25..27]
+          control_structure_body [29..42]
+            statements [31..40]
+              jump_expression [31..40]
+                break@ [31..37]
+                label [37..40]
+        jump_expression [44..54]
+          return@ [44..51]
+          label [51..52]
+          integer_literal [53..54]
+"#,
+        );
+    }
+
+    #[test]
+    fn automatic_semicolons() {
+        same(
+            r#"fun f() {
+  a
+  .b()
+  c
+  + d
+}
+"#,
+            r#"source_file [0..33]
+  function_declaration [0..32]
+    simple_identifier [4..5]
+    function_value_parameters [5..7]
+    function_body [8..32]
+      statements [12..30]
+        call_expression [12..20]
+          navigation_expression [12..18]
+            simple_identifier [12..13]
+            navigation_suffix [16..18]
+              . [16..17]
+              simple_identifier [17..18]
+          call_suffix [18..20]
+            value_arguments [18..20]
+        simple_identifier [23..24]
+        prefix_expression [27..30]
+          + [27..28]
+          simple_identifier [29..30]
+"#,
+        );
+    }
+
+    #[test]
+    fn generic_calls_over_tighter_operations() {
+        same(
+            r#"val a = b ?: f<T>()!!
+val c = "x" to g<String>(y)
+val d = -h<T>()
+val e = p < q<T>()
+val f = p + q<T>()
+val g = p == q<T>()
+val h = x in q<T>()
+val i = !q<T>()
+val j = p * q<T>().z
+"#,
+            r#"source_file [0..181]
+  property_declaration [0..21]
+    binding_pattern_kind [0..3]
+      val [0..3]
+    variable_declaration [4..5]
+      simple_identifier [4..5]
+    postfix_expression [8..21]
+      call_expression [8..19]
+        elvis_expression [8..14]
+          simple_identifier [8..9]
+          simple_identifier [13..14]
+        call_suffix [14..19]
+          type_arguments [14..17]
+            type_projection [15..16]
+              user_type [15..16]
+                type_identifier [15..16]
+          value_arguments [17..19]
+      !! [19..21]
+  property_declaration [22..49]
+    binding_pattern_kind [22..25]
+      val [22..25]
+    variable_declaration [26..27]
+      simple_identifier [26..27]
+    call_expression [30..49]
+      infix_expression [30..38]
+        string_literal [30..33]
+          string_content [31..32]
+        simple_identifier [34..36]
+        simple_identifier [37..38]
+      call_suffix [38..49]
+        type_arguments [38..46]
+          type_projection [39..45]
+            user_type [39..45]
+              type_identifier [39..45]
+        value_arguments [46..49]
+          value_argument [47..48]
+            simple_identifier [47..48]
+  property_declaration [50..65]
+    binding_pattern_kind [50..53]
+      val [50..53]
+    variable_declaration [54..55]
+      simple_identifier [54..55]
+    call_expression [58..65]
+      prefix_expression [58..60]
+        - [58..59]
+        simple_identifier [59..60]
+      call_suffix [60..65]
+        type_arguments [60..63]
+          type_projection [61..62]
+            user_type [61..62]
+              type_identifier [61..62]
+        value_arguments [63..65]
+  property_declaration [66..84]
+    binding_pattern_kind [66..69]
+      val [66..69]
+    variable_declaration [70..71]
+      simple_identifier [70..71]
+    comparison_expression [74..84]
+      simple_identifier [74..75]
+      < [76..77]
+      call_expression [78..84]
+        simple_identifier [78..79]
+        call_suffix [79..84]
+          type_arguments [79..82]
+            type_projection [80..81]
+              user_type [80..81]
+                type_identifier [80..81]
+          value_arguments [82..84]
+  property_declaration [85..103]
+    binding_pattern_kind [85..88]
+      val [85..88]
+    variable_declaration [89..90]
+      simple_identifier [89..90]
+    call_expression [93..103]
+      additive_expression [93..98]
+        simple_identifier [93..94]
+        + [95..96]
+        simple_identifier [97..98]
+      call_suffix [98..103]
+        type_arguments [98..101]
+          type_projection [99..100]
+            user_type [99..100]
+              type_identifier [99..100]
+        value_arguments [101..103]
+  property_declaration [104..123]
+    binding_pattern_kind [104..107]
+      val [104..107]
+    variable_declaration [108..109]
+      simple_identifier [108..109]
+    equality_expression [112..123]
+      simple_identifier [112..113]
+      == [114..116]
+      call_expression [117..123]
+        simple_identifier [117..118]
+        call_suffix [118..123]
+          type_arguments [118..121]
+            type_projection [119..120]
+              user_type [119..120]
+                type_identifier [119..120]
+          value_arguments [121..123]
+  property_declaration [124..143]
+    binding_pattern_kind [124..127]
+      val [124..127]
+    variable_declaration [128..129]
+      simple_identifier [128..129]
+    call_expression [132..143]
+      check_expression [132..138]
+        simple_identifier [132..133]
+        in [134..136]
+        simple_identifier [137..138]
+      call_suffix [138..143]
+        type_arguments [138..141]
+          type_projection [139..140]
+            user_type [139..140]
+              type_identifier [139..140]
+        value_arguments [141..143]
+  property_declaration [144..159]
+    binding_pattern_kind [144..147]
+      val [144..147]
+    variable_declaration [148..149]
+      simple_identifier [148..149]
+    call_expression [152..159]
+      prefix_expression [152..154]
+        ! [152..153]
+        simple_identifier [153..154]
+      call_suffix [154..159]
+        type_arguments [154..157]
+          type_projection [155..156]
+            user_type [155..156]
+              type_identifier [155..156]
+        value_arguments [157..159]
+  property_declaration [160..180]
+    binding_pattern_kind [160..163]
+      val [160..163]
+    variable_declaration [164..165]
+      simple_identifier [164..165]
+    navigation_expression [168..180]
+      call_expression [168..178]
+        multiplicative_expression [168..173]
+          simple_identifier [168..169]
+          * [170..171]
+          simple_identifier [172..173]
+        call_suffix [173..178]
+          type_arguments [173..176]
+            type_projection [174..175]
+              user_type [174..175]
+                type_identifier [174..175]
+          value_arguments [176..178]
+      navigation_suffix [178..180]
+        . [178..179]
+        simple_identifier [179..180]
+"#,
+        );
+    }
+}
