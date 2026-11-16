@@ -321,7 +321,7 @@ function stepsTable(shape: string, items: readonly WaitItem[]): string[] {
     ...steps.map((step) => {
       const scan = items.find((i) => i.step === step && i.wait === "W5");
       const verdict = items.find((i) => i.step === step && i.wait === "W1");
-      const pair = (key: string, unit = ""): string => `${noteFigure(scan, "baseline", key)}${unit} / ${noteFigure(scan, "candidate", key)}${unit}`;
+      const pair = (key: string, unit = ""): string => (["baseline", "candidate"] as const).map((side) => noteFigure(scan, side, key)).map((v) => (v === "–" ? v : `${v}${unit}`)).join(" / ");
       return `| ${step} | ${figure(scan, "baseline")} | ${figure(scan, "candidate")} | ${ratio(scan)} | ${figure(verdict, "baseline")} | ${figure(verdict, "candidate")} | ${ratio(verdict)} | ${pair("findings")} | ${pair("daemon_cpu_ms", " ms")} |`;
     }),
     "",
