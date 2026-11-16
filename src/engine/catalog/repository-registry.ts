@@ -3,7 +3,7 @@
  * physical git top-level, and belongs to one repository: the repository of another checkout of the same clone, else
  * the one its `origin` (or sole) remote names, else a repository of its own keyed by its clone id.
  */
-import { readFile, stat } from "node:fs/promises";
+import { opendir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
@@ -543,7 +543,8 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
  * - `{ commonDirectory }`: a checkout of the clone whose common Git folder that is ({@link gitEntry}), which stays;
  * - `unlisted`: no checkout's top level now, as its folder, its `.git` entry or the Git folder that entry names is gone,
  *   which stays only while the registry of its clone names it ({@link unlistedByTheirClones});
- * - `unknown`: neither the folder nor its drive answers, or its `.git` entry can't be read, which stays.
+ * - `unknown`: off disk as far as Rerail can tell, as the folder does not answer, its drive may not be mounted
+ *   ({@link folderPresent}) or its `.git` entry can't be read, which stays with every checkout of its clone.
  */
 type OnDisk = { readonly commonDirectory: string } | "unlisted" | "unknown";
 
@@ -597,8 +598,10 @@ async function gitFolderClone(gitFolder: string): Promise<OnDisk> {
  * leaves them after `git worktree remove`, `prune` or `move`. Git runs in a checkout of the clone that is on disk, once
  * per clone. Where none is, or Git gives no answer, the clone's checkouts stay. So do those of a clone whose checkouts
  * on disk read more than one common Git folder: a copy made with its `.git` keeps the clone id but registers its own
- * worktrees, so neither registry speaks for the other's. The checkout Git runs in stays, so the clone keeps a recorded
- * checkout and the sessions recorded under its id stay in its repository's history ({@link repositoryHistoryIds}).
+ * worktrees, so neither registry speaks for the other's. A clone with a checkout off disk (`unknown`) keeps them all
+ * too, as that checkout may be such a copy on a drive that is unplugged. The checkout Git runs in stays, so the clone
+ * keeps a recorded checkout and the sessions recorded under its id stay in its repository's history
+ * ({@link repositoryHistoryIds}).
  */
 async function unlistedByTheirClones(looked: readonly LookedAt[], signal: AbortSignal | undefined): Promise<string[]> {
   const clones = cloneFolders(looked);
@@ -611,7 +614,10 @@ async function unlistedByTheirClones(looked: readonly LookedAt[], signal: AbortS
   return gone;
 }
 
-/** Each clone's common Git folders read from its checkouts on disk, each with the first of those checkouts. */
+/**
+ * Each clone's common Git folders read from its checkouts on disk, each with the first of those checkouts; none for a
+ * clone with a checkout off disk, whose common Git folder no pass can read.
+ */
 function cloneFolders(looked: readonly LookedAt[]): Map<string, Map<string, string>> {
   const clones = new Map<string, Map<string, string>>();
   for (const { path, cloneId, onDisk } of looked) {
@@ -620,6 +626,7 @@ function cloneFolders(looked: readonly LookedAt[]): Map<string, Map<string, stri
     if (!folders.has(onDisk.commonDirectory)) folders.set(onDisk.commonDirectory, path);
     clones.set(cloneId, folders);
   }
+  for (const { cloneId, onDisk } of looked) if (onDisk === "unknown") clones.delete(cloneId);
   return clones;
 }
 
@@ -702,21 +709,80 @@ async function storedPathOrAsGiven(path: string): Promise<string> {
 }
 
 /**
- * Whether a folder is at `path`: false where the filesystem says nothing is, undefined where it gives no answer (a
- * network share that is down, a folder Rerail may not read, a drive that is not mounted). Asked without blocking, so a
- * share that does not answer holds a pool thread and not the caller's. `drives` keeps each root's answer for the pass.
+ * Whether a folder is at `path`: false where the filesystem says nothing is and the folder was removed, undefined where
+ * it gives no answer (a network share that is down, a folder Rerail may not read) or the folder may be on a drive that
+ * is not mounted ({@link removedFrom}). Asked without blocking, so a share that does not answer holds a pool thread and
+ * not the caller's. `above` keeps each folder's answer for the pass.
  */
-async function folderPresent(path: string, drives: Map<string, Promise<boolean | undefined>>): Promise<boolean | undefined> {
+async function folderPresent(path: string, above: Map<string, Promise<boolean>>): Promise<boolean | undefined> {
   const present = await pathPresent(path);
   if (present !== false) return present;
-  // Windows answers for a path on a drive letter nothing is mounted at as for a deleted folder; the root tells them apart.
-  const root = parse(path).root;
-  let drive = drives.get(root);
-  if (drive === undefined) {
-    drive = pathPresent(root);
-    drives.set(root, drive);
+  return (await removedFrom(dirname(path), above)) ? false : undefined;
+}
+
+/**
+ * The folders drives mount in by default: `/Volumes` on macOS; `/mnt`, `/media`, a folder in `/media` and a user's
+ * folder in `/run/media` on Linux. Windows mounts a drive at a letter of its own.
+ */
+const MOUNT_FOLDERS: Partial<Record<NodeJS.Platform, RegExp>> = {
+  darwin: /^\/Volumes$/u,
+  linux: /^\/(?:mnt|media|media\/[^/]+|run\/media\/[^/]+)$/u,
+};
+
+/**
+ * Whether a folder gone from `folder` was removed, as the nearest folder at or above `folder` that is there tells. An
+ * unplugged drive takes every folder on it, and leaves the folder its mount point was in. So it may be off disk where no
+ * folder up to the root answers (Windows answers for a drive letter nothing is mounted at as for a deleted folder), and
+ * where the nearest one is a folder drives mount in ({@link MOUNT_FOLDERS}) or empty outside any checkout, as a mount
+ * point is once its drive is unmounted ({@link holdsRemovedFolders}). Read that way, a gone checkout is kept wrongly at
+ * worst, where reading it as removed could forget the settings of one that comes back.
+ */
+async function removedFrom(folder: string, above: Map<string, Promise<boolean>>): Promise<boolean> {
+  let answer = above.get(folder);
+  if (answer === undefined) {
+    answer = nearestFolderRemoved(folder, above);
+    above.set(folder, answer);
   }
-  return (await drive) === true ? false : undefined;
+  return await answer;
+}
+
+/** {@link removedFrom}, asked of the filesystem: `folder` decides when it is there, else the folder above it. */
+async function nearestFolderRemoved(folder: string, above: Map<string, Promise<boolean>>): Promise<boolean> {
+  const present = await pathPresent(folder);
+  if (present === true) return await holdsRemovedFolders(folder);
+  return present === false && dirname(folder) !== folder && (await removedFrom(dirname(folder), above));
+}
+
+/**
+ * Whether `folder`, there, is one a folder gone from it was removed from: not a folder drives mount in, and not empty
+ * unless it sits inside a checkout. A mount point practically never sits inside a checkout, while a folder of worktrees
+ * such as `<checkout>/.worktrees` does, and is left empty once Git removes the last of them.
+ */
+async function holdsRemovedFolders(folder: string): Promise<boolean> {
+  if (MOUNT_FOLDERS[process.platform]?.test(folder) === true) return false;
+  return (await holdsAnything(folder)) || (await insideCheckout(folder));
+}
+
+/** Whether a folder above `folder` holds a `.git` entry that answers, as a checkout's top level does. */
+async function insideCheckout(folder: string): Promise<boolean> {
+  for (let ancestor = dirname(folder); ; ancestor = dirname(ancestor)) {
+    if ((await pathPresent(join(ancestor, ".git"))) === true) return true;
+    if (dirname(ancestor) === ancestor) return false;
+  }
+}
+
+/** Whether `folder` holds an entry, read one entry deep; false where it can't be read. */
+async function holdsAnything(folder: string): Promise<boolean> {
+  try {
+    const entries = await opendir(folder);
+    try {
+      return (await entries.read()) !== null;
+    } finally {
+      await entries.close();
+    }
+  } catch {
+    return false;
+  }
 }
 
 async function pathPresent(path: string): Promise<boolean | undefined> {
@@ -781,10 +847,10 @@ export async function pruneCheckouts(
 /** {@link unlistedByTheirClones} of `rows`, their folders looked at one by one; none once `signal` aborts. */
 async function goneCheckouts(rows: ReadonlyArray<{ readonly path: string; readonly cloneId: string }>, signal: AbortSignal | undefined): Promise<string[]> {
   const looked: LookedAt[] = [];
-  const drives = new Map<string, Promise<boolean | undefined>>();
+  const above = new Map<string, Promise<boolean>>();
   for (const row of rows) {
     if (signal?.aborted === true) return [];
-    looked.push({ ...row, onDisk: await onDiskOf(row.path, drives) });
+    looked.push({ ...row, onDisk: await onDiskOf(row.path, above) });
   }
   return await unlistedByTheirClones(looked, signal);
 }
@@ -807,8 +873,8 @@ async function unlessAborted<T>(work: Promise<T>, signal: AbortSignal | undefine
   }
 }
 
-async function onDiskOf(path: string, drives: Map<string, Promise<boolean | undefined>>): Promise<OnDisk> {
-  const present = await folderPresent(path, drives);
+async function onDiskOf(path: string, above: Map<string, Promise<boolean>>): Promise<OnDisk> {
+  const present = await folderPresent(path, above);
   if (present === undefined) return "unknown";
   return present ? await gitEntry(path) : "unlisted";
 }

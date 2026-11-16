@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse, resolve, sep } from "node:path";
@@ -792,6 +792,54 @@ describe("the repository registry", () => {
     for (const path of own) renameSync(path, `${path}-away`);
     expect(await pruneCheckouts(database)).toEqual([]);
     expect(settingOwners(database)).toEqual(own.map(path => ({ owner_kind: "checkout", owner_id: path })));
+  });
+
+  it.each([
+    { when: "its folder is gone from an empty folder, as from the mount point of a drive that is unplugged", offDisk: (copy: string) => removeFolderSync(copy) },
+    {
+      when: "its .git can't be read",
+      offDisk: (copy: string) => {
+        removeFolderSync(join(copy, ".git"));
+        writeFileSync(join(copy, ".git"), "not a Git folder\n");
+      },
+    },
+  ])("keeps every checkout of a clone, with its settings, while a copy of the clone is off disk, when $when", async ({ offDisk }) => {
+    const root = await temporary("rerail-registry-prune-copy-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main);
+    // A copy made with its `.git` keeps the clone id; this one sits alone on a drive mounted at `drive`.
+    const copy = join(root, "drive", "main");
+    cpSync(main, copy, { recursive: true });
+    const recorded = [main, worktree, copy].map(path => recordCheckout(database, path).checkoutPath).sort();
+    expect(new Set(listRepositories(database).flatMap(repository => repository.checkouts.map(row => row.cloneId))).size).toBe(1);
+    for (const path of recorded) checkoutSetting(database, path);
+    git(main, "worktree", "remove", worktree);
+    offDisk(copy);
+
+    // main's registry never named the copy, and the copy's, which can't be read, may still name the worktree.
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toEqual(recorded.map(path => ({ owner_kind: "checkout", owner_id: path })));
+  });
+
+  it("forgets a removed worktree whose folder sat alone in a folder of worktrees inside a checkout, now empty", async () => {
+    const root = await temporary("rerail-registry-prune-nested-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(main, ".worktrees", "child");
+    git(main, "worktree", "add", "-q", "-b", "child", worktree);
+    recordCheckout(database, main);
+    recordCheckout(database, worktree);
+    checkoutSetting(database, worktree);
+    git(main, "worktree", "remove", worktree);
+    expect(existsSync(join(main, ".worktrees"))).toBe(true);
+
+    // An empty folder inside a checkout is no mount point a drive was unmounted from.
+    expect(await pruneCheckouts(database)).toEqual([worktree]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+    expect(settingOwners(database)).toEqual([]);
   });
 
   it.runIf(process.platform === "win32")("keeps a checkout on a drive letter nothing is mounted at, with its settings", async () => {

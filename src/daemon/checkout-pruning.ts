@@ -1,7 +1,10 @@
 /**
  * The daemon's upkeep of the recorded checkouts: when it starts and every hour after, it forgets the checkouts Git no
  * longer lists as checkouts of their clone ({@link pruneCheckouts}), so the reads that go over a repository's
- * checkouts on every request, and its checkout count, follow the worktrees Git knows.
+ * checkouts on every request, and its checkout count, follow the worktrees Git knows. Where a checkout may be off
+ * disk, every checkout of its clone stays: its `.git` can't be read, or its folder is gone and no folder above it is
+ * there, or the nearest one still there is one drives mount in, or is empty and inside no checkout, as an unplugged
+ * drive leaves its mount point. Such a checkout may be a copy of the clone, whose worktrees no registry on disk lists.
  */
 import { existsSync } from "node:fs";
 import { pruneCheckouts, type UnansweredLooks } from "../engine/catalog/repository-registry.js";
