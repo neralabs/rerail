@@ -3129,44 +3129,47 @@ fn run_observed(
             drop(lowering);
             let _step = crate::code_rule_dsl::logic::profile::span(|| "nearest sets made by the transducer".into());
             let sets = lowered.transduce_nearest();
-            bound(&lowered.program)?;
+            // The preparation passes edit the lowered tree, the last before its one image (below): a tree of their own,
+            // not the `Lowered`'s, which holds the image's.
+            let mut program: front::Program = std::mem::replace(&mut lowered.program, lower::Tree::given(Default::default())).into_program();
+            bound(&program)?;
             drop(_step);
             // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "push the file-local joins into the chunks".into());
-            let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut lowered.program);
+            let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program);
             drop(_step);
             // An export that is a join of parts meeting at a key it projects away is handed on as its parts (decision 0099).
             let _step = crate::code_rule_dsl::logic::profile::span(|| "factorize the exports".into());
-            let factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut lowered.program) } else { Vec::new() };
+            let factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut program) } else { Vec::new() };
             drop(_step);
             // Each export cut to what its cross-file readers can use: their demand, made file-local.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "cut the exports to their readers' demand".into());
-            for line in crate::code_rule_dsl::typing::file_local::demand_exports(&mut lowered.program) {
+            for line in crate::code_rule_dsl::typing::file_local::demand_exports(&mut program) {
                 crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
             }
             drop(_step);
             // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
             let _step = crate::code_rule_dsl::logic::profile::span(|| "locate the chunks' rows".into());
-            let located = crate::code_rule_dsl::typing::file_local::locate(&mut lowered.program);
+            let located = crate::code_rule_dsl::typing::file_local::locate(&mut program);
             drop(_step);
             // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
             // are the relations over them, before the program splits.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "merge identical relations again".into());
             let merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
-                crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program)
+                crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
             } else {
-                let (m, s, _) = merge_and_drop_repeats(&mut lowered.program);
+                let (m, s, _) = merge_and_drop_repeats(&mut program);
                 (m, s)
             };
             drop(_step);
-            let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
+            let read: BTreeSet<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
             // An input no rule reads is never bound or measured: it is not an input of what runs.
-            let outputs = lowered.program.outputs.clone();
-            lowered.program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
+            let outputs = program.outputs.clone();
+            program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
             // A measurement aid (decision 0173, open question 4): `RERAIL_RULE_ORDER=reverse|shuffle|head` reorders the
             // prepared program's rules, to find what depends on their order.
             if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
-                let rules = &mut lowered.program.rules;
+                let rules = &mut program.rules;
                 match order.as_str() {
                     "reverse" => rules.reverse(),
                     "head" => rules.sort_by(|a, b| a.head.rel.as_str().cmp(b.head.rel.as_str())),
@@ -3186,19 +3189,15 @@ fn run_observed(
             // (pushed joins, factorized and demanded exports, merged rules), which rename and combine relations
             // (`fl256_P`). Every part takes them from here: the split's, the frames' and the memo's symbol columns
             // (`lower::atom_columns`, decision 0170).
-            lowered.domains = lower::domains(&lowered.program)?;
+            lowered.domains = lower::domains(&program)?;
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
             // the tree, and held beside it, so its readers read the version (`Lowered::placed`) and the split's parts
             // are views of it.
-            let version = (lowered.program.again.is_empty() && lowered.program.together.is_empty())
-                .then(|| crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&lowered.program).and_then(|b| b.finish()).ok().map(|(v, _)| v))
-                .flatten();
-            let split = crate::code_rule_dsl::typing::file_local::programs_over(&lowered.program, version.clone());
-            if let Some(v) = version {
-                let tree = std::mem::replace(&mut lowered.program, lower::Tree::given(Default::default())).into_program();
-                lowered.program = lower::Tree::beside(v, tree);
-            }
+            // A program the image cannot hold is an error, not a run read from the tree.
+            let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
+            let split = crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
+            lowered.program = lower::Tree::beside(version, program);
             drop(_step);
             if let Some(path) = std::env::var_os("RERAIL_SPLIT_DUMP") {
                 dump_split(std::path::Path::new(&path), &split);
@@ -3270,17 +3269,10 @@ fn run_observed(
     // is such a program: an edit costs it what the exports' delta does, not a pass over every file.
     // The parts' versions (decision 0244), each dropped where the run edits its tree (the cross memo's split, the cone
     // of requests, the run's constants): that part's run makes its image of the tree, as before (t36 item 7 step 9).
-    let (mut local_version, mut cross_version) = split.versions.take().map_or((None, None), |p| (Some(p.local), Some(p.cross)));
-    // The parts as the split made them, which the memo's and the components' keys are digests of (decision 0173 §7):
-    // their versions, imaged from the trees only where the split has none.
-    let local_v = match &local_version {
-        Some(v) => Arc::clone(v),
-        None => super::body::Placed::of_program(&split.local)?.v,
-    };
-    let cross_v = match &cross_version {
-        Some(v) => Arc::clone(v),
-        None => super::body::Placed::of_program(&split.cross)?.v,
-    };
+    let (local_version, mut cross_version) = (split.versions.local.clone(), split.versions.cross.clone());
+    // The parts as the split made them, which the memo's and the components' keys are digests of (decision 0173 §7).
+    let local_v = Arc::clone(&local_version);
+    let cross_v = Arc::clone(&cross_version);
     // The file-local part's fields, as the split made it: the run reads the part's rules and fields from its version.
     let local_placed = super::body::Placed::whole(Arc::clone(&local_v));
     let local_f = local_placed.fields()?;
@@ -3394,9 +3386,8 @@ fn run_observed(
     };
     let cross_plan = match &cross_declared {
         Some(declared) => {
-            let had = cross_version.is_some();
-            let (plan, version) = cross_memo::split(&mut split.cross, cross_version.take(), &lowered.domains, declared, &cross_digest, &split.same_doc)?;
-            cross_version = made_from(had, version, "the cross memo's split");
+            let (plan, version) = cross_memo::split(&mut split.cross, Some(cross_version.clone()), &lowered.domains, declared, &cross_digest, &split.same_doc)?;
+            cross_version = version.ok_or_else(|| Error::Plan("the cross memo's split made no version of the part".into()))?;
             plan
         }
         None => None,
@@ -3434,7 +3425,7 @@ fn run_observed(
         format!(
             "{} rules run per chunk over its files (file-local); {} rules run once over all files (cross-file); {} relations exported to the cross part, {} base relations kept for it; exports and file-local outputs without a location column: {:?}",
             local_v.rules().count(),
-            cross_version.as_ref().map_or_else(|| split.cross.rules.len(), |v| v.rules().count()),
+            cross_version.rules().count(),
             split.exports.len(),
             split.base.len(),
             split.exports.iter().map(String::as_str).chain(local_f.outputs().filter(|o| !split.exports.iter().any(|x| x == o))).filter(|e| split.locations.get(*e).is_none_or(Vec::is_empty)).collect::<BTreeSet<_>>()
@@ -3460,31 +3451,24 @@ fn run_observed(
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the cone of requests".into()));
     let loading: Option<(Arc<crate::code_rule_dsl::logic::program_image::Version>, BTreeSet<String>, lower::Tree)> = if loading_run {
         // The prepared split's cone, made once; a run whose cross memo split the cross-file part (above) makes its own.
-        // Each of the cross-file part's version, imaged where it has none (a tree given, not a version's).
-        let placed = |version: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>, tree: &lower::Tree| match version {
-            Some(v) => Ok(super::body::Placed::whole(v)),
-            None => super::body::Placed::of_program(tree),
-        };
+        // Each of the cross-file part's version.
         let cone = match cross_declared.is_none() {
             true => shared_cone
-                .get_or_init(|| placed(shared_split.versions.as_ref().map(|p| p.cross.clone()), &shared_split.cross).and_then(|p| cone_of(&p, &split.exports, &split.base, &prog)).map(Arc::new).map_err(|e| e.to_string()))
+                .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, &prog).map(Arc::new).map_err(|e| e.to_string()))
                 .clone()
                 .map_err(Error::Plan)?,
-            false => Arc::new(cone_of(&placed(cross_version.take(), &split.cross)?, &split.exports, &split.base, &prog)?),
+            false => Arc::new(cone_of(&super::body::Placed::whole(cross_version.clone()), &split.exports, &split.base, &prog)?),
         };
         split.cross = cone.trees.1.clone();
-        cross_version = Some(cone.rest.clone());
+        cross_version = cone.rest.clone();
         Some((cone.load.clone(), cone.reads.clone(), cone.trees.0.clone()))
     } else {
         None
     };
     // Each output the run writes, other than what the requests' cone makes (what it asks), a union of file-local
     // rows: every rule of one made in the cross-file part one atom of a file-local export.
-    // Read from the parts' versions: the cross-file part's as the run made it, imaged where it has none.
-    let cross_now = match &cross_version {
-        Some(v) => Arc::clone(v),
-        None => super::body::Placed::of_program(&split.cross)?.v,
-    };
+    // Read from the parts' versions: the cross-file part's as the run made it.
+    let cross_now = Arc::clone(&cross_version);
     let load_heads: BTreeSet<String> = match &loading {
         Some((v, ..)) => v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect(),
         None => BTreeSet::new(),
@@ -3503,7 +3487,7 @@ fn run_observed(
         .filter(|o| cross_outputs.contains(o.as_str()) && !load_heads.contains(o.as_str()))
         .find(|o| cross_now.rel(o).is_some_and(|id| !cross_now.heads(id).all(&union_of_exports)))
         .cloned();
-    let (mut local, mut cross) = (part_of(split.local, local_version.take()), part_of(split.cross, cross_version.take()));
+    let (mut local, mut cross) = (part_of(split.local, Some(local_version)), part_of(split.cross, Some(cross_version)));
     // The run's constants made of earlier phases' exports (`v_enum(q, n) :- struct__base(q, _, b), …, n = count :
     // { struct__member(q, x, "") }`): one answer for the run, so derived once, before the chunks, by the same engine
     // over the bound exports, and bound beside them (`run_constants`). The split derives a constant in both parts

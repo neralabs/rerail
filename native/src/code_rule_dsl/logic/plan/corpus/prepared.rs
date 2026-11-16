@@ -310,12 +310,19 @@ pub fn prepared_of(
         vocabulary
     };
     // The stored image, which the lowered program's readers read: checked, in a debug build, to be its text's program.
-    let version_kept = version.clone().filter(|_| program.again.is_empty() && program.together.is_empty());
-    #[cfg(debug_assertions)]
-    if let Some(v) = &version_kept {
-        let of = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&program).map_err(|e| e.to_string())?;
-        assert_eq!(of.digest(), crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone()).digest(), "a stored program's image is not its text's program");
-    }
+    // A program stored as text has it made here.
+    let version = match version {
+        Some(v) => {
+            #[cfg(debug_assertions)]
+            {
+                let of = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&program).map_err(|e| e.to_string())?;
+                assert_eq!(of.digest(), crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone()).digest(), "a stored program's image is not its text's program");
+            }
+            v
+        }
+        None => crate::code_rule_dsl::logic::program_image::Builder::of_program(&program)?.finish()?.0,
+    };
+    let version_kept = version.clone();
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
@@ -333,18 +340,18 @@ pub fn prepared_of(
                 }).collect())
             };
             let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
-            crate::code_rule_dsl::typing::file_local::assemble(&program, version, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)
+            crate::code_rule_dsl::typing::file_local::assemble(&program, version, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
-            crate::code_rule_dsl::typing::file_local::programs_over(&program, version)
+            crate::code_rule_dsl::typing::file_local::programs_over(&program, version)?
         }
     };
     Ok(Prepared {
         prog,
         vocabulary: Arc::new(vocabulary),
         // Held beside its stored image, which its readers read (`Lowered::placed`).
-        lowered: lower::Lowered { program: match version_kept { Some(v) => lower::Tree::beside(v, program), None => lower::Tree::given(program) }, version: None, maint: None, domains, ops, dialect },
+        lowered: lower::Lowered { program: lower::Tree::beside(version_kept, program), version: None, maint: None, domains, ops, dialect },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
