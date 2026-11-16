@@ -1,6 +1,6 @@
 # 0301. The planner's shared state without a hot lock: plans published by RCU, their feedback in cells, the lines and the observed sums reduced
 
-Status: proposed (2026-11-16), for the user's choice. Builds on 0113 (strata as jobs, `enter_plans`), 0038 (kept
+Status: decided (2026-11-16, the user: "yes, please implement and validate it"); built as in "As built" below. Builds on 0113 (strata as jobs, `enter_plans`), 0038 (kept
 plans), 0122 (planning budget), 0203 §4 (the lines run), 0116 (stored plans).
 
 ## Intro
@@ -59,3 +59,46 @@ plan one key (each stratum plans its own rules).
   publications (hundreds), and `swtch_pri` under the planner's locks to about none.
 - How often a key gets a new order (a search again): those are publications too, counted with the new plans.
 - The same findings, and the plans kept across a session's runs (`KeepPlans`, `SESSION_PLANS`) as before.
+
+## As built
+
+Where the build departs from the proposal, and why:
+
+- **Plans** (`RunPlans::kept`): an `ArcSwap` of a map of `Arc<Entry>`. A job's new keys and new orders stay in its
+  own plans (`OWN_PLANS`) and are published together as it ends (`RunPlans::publish`, one `rcu`; the old map's
+  entries are shared, not copied). `stored` and `orders` are `ArcSwap`s of their own. `planned_now` is only
+  counted for the profile, so it sits behind a mutex no planner reads under.
+- **Feedback:** one cell per entry, not two. `Entry::rest` is an `ArcSwap<Learnt>`, which holds a plan's work per
+  node, EXPLAIN, gap, `Priced` and `ran`. A change is an `rcu` of that cell (`Entry::update`), so two changes to
+  one plan at once both land. A job's `plans_put` of a plan whose order the run already holds sets its cell at
+  once; the job's map is not involved.
+- **Lines run:** a channel (`std::sync::mpsc`, whose sends take no lock), not a collector fed at each job's end.
+  Each stratum sends its lines as it runs, and only `lines_take` receives them. Nothing reads the lines in
+  between, so a job needs no buffer of its own.
+- **Observed sums** (`ObservedShared`): published as an `ArcSwapOption<Observed>`. A job's sums are queued as it
+  ends (`hand_in`). The fold is not done by the main thread at `Step::Finish`, which would have needed a new
+  call site in the stream. Instead, the job that queues the 256th set of sums folds them all, if no fold is under
+  way (`try_lock`), and a chunk's choice (`choose`) folds whatever is waiting before it reads, waiting for any fold
+  under way. So an estimate read inside a job lags the run's sums by at most 255 jobs' sums, and a choice lags by
+  none. A thread observing outside a job (`observing_into` with no job) folds and changes the sums under the fold
+  lock at once. `choose` used to take the sums out of the run's while it priced by estimates alone. It now puts
+  an empty handle in the run's place on its own thread, and leaves the run's sums as they are.
+
+## Measured
+
+PostHog on the M3 Max (29,885 files, `RERAIL_CHUNKS_AT_ONCE=15`). All five runs found the same 29,747 findings
+(fa0efeaed6ff) as before.
+
+| | before | after |
+|---|---|---|
+| exclusive takes of the readers' state (plans + observed) | about 900,000 | 698 publications (795 plans or orders) + 152 folds |
+| `yield: rwlock` samples, whole cold run (`sample`, 1 ms) | 6,937 of 1.07 M | 734 of 1.32 M; most of these are the store's atom interner (`Atoms::give`, `cat_held`) and `joins::pending`, not 0301's state |
+| `yield: rwlock` samples, 8 s of the waves | 930 (plans part only) | 234 |
+| cold wall, unprofiled | 29.3–31.1 s | 29.8, 32.1 s (host load 8–11 from other work) |
+| cold user / sys CPU | — / 72–73 s | 190–196 / 66–67 s |
+| peak | 2.62 GB | 2.64–2.70 GB |
+| warm | 1.05 s | 1.05–1.13 s |
+
+The lock spin is gone, but the wall did not move: the cold run is bound elsewhere. The remaining kernel time is
+`open` (23 k samples), store `pwrite`/`fsync`/`pread` (24 k) and rayon's idle spin (8 k). The leftover rwlock
+yields belong to the store's interner, whose writers take a write lock per new atom; that is a separate decision.

@@ -1189,14 +1189,12 @@ fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
         if let Some(k) = OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())) {
             return Some(Some(k));
         }
-        let (found, stored) = {
-            let g = shared.read();
-            match g.kept.get(key) {
-                Some(k) => (Some(k.clone()), false),
-                None => (g.stored_near(key, len, nodes), true),
-            }
-        };
-        if stored && let Some(k) = &found {
+        // The run's plans as last published (decision 0301): read with no lock.
+        if let Some(e) = shared.kept.load().get(key) {
+            return Some(Some(e.kept()));
+        }
+        let found = shared.stored_near(key, len, nodes);
+        if let Some(k) = &found {
             plan_cache(7);
             plans_put(shared, *key, k.clone());
         }
@@ -1209,12 +1207,25 @@ fn plans_get(key: &PlanKey) -> Option<Kept> {
     PLANS.with(|p| {
         let p = p.borrow();
         let shared = p.as_ref()?;
-        OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.read().kept.get(key).cloned())
+        OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.kept.load().get(key).map(|e| e.kept()))
     })
 }
 
-/// Keeps `kept` for `key`: in this thread's job's plans, else the run's.
+/// Keeps `kept` for `key` (decision 0301): where the run holds `key` with the same order, in its entry's cell, seen
+/// by every job at once; a new key or a new order in this thread's job's plans (published as it ends), else published
+/// now.
 fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
+    let kept = OWN_PLANS.with(|o| match o.borrow_mut().as_mut() {
+        Some(m) if m.contains_key(&key) => {
+            m.insert(key, kept);
+            None
+        }
+        _ => Some(kept),
+    });
+    let Some(kept) = kept else { return };
+    if shared.kept.load().get(&key).is_some_and(|e| e.set(&kept)) {
+        return;
+    }
     let kept = OWN_PLANS.with(|o| match o.borrow_mut().as_mut() {
         Some(m) => {
             m.insert(key, kept);
@@ -1223,32 +1234,26 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
         None => Some(kept),
     });
     if let Some(kept) = kept {
-        shared.write().kept.insert(key, kept);
+        shared.publish(vec![(key, kept)]);
     }
 }
 
-/// Changes the plan kept for `key`, where one is: in this thread's job's plans (taken from the run's first), else the
-/// run's.
-fn plans_update(key: &PlanKey, f: impl FnOnce(&mut Kept)) {
+/// Changes the plan kept for `key`, where one is: this thread's job's, else the run's entry's cell in place (its
+/// order stays: `f` changes what was learnt of it, `Priced` and `ran`).
+fn plans_update(key: &PlanKey, f: impl Fn(&mut Kept)) {
     PLANS.with(|p| {
         let p = p.borrow();
         let Some(shared) = p.as_ref() else { return };
-        let f = OWN_PLANS.with(|o| {
+        let mine = OWN_PLANS.with(|o| {
             let mut o = o.borrow_mut();
-            let Some(m) = o.as_mut() else { return Some(f) };
-            if !m.contains_key(key) {
-                let Some(k) = shared.read().kept.get(key).cloned() else { return None };
-                m.insert(*key, k);
-            }
-            if let Some(k) = m.get_mut(key) {
-                f(k);
-            }
-            None
-        });
-        if let Some(f) = f
-            && let Some(k) = shared.write().kept.get_mut(key)
-        {
+            let k = o.as_mut()?.get_mut(key)?;
             f(k);
+            Some(())
+        });
+        if mine.is_none()
+            && let Some(e) = shared.kept.load().get(key)
+        {
+            e.update(&f);
         }
     });
 }
@@ -1287,23 +1292,96 @@ fn growth(then: &[f64], now: &[f64]) -> f64 {
 
 /// A run's kept plans, shared by the threads its strata run on (decision 0113): a stratum's job enters them
 /// (`enter_plans`). Each stratum plans its own rules, so no two jobs write one key.
-type SharedPlans = Arc<parking_lot::RwLock<RunPlans>>;
+type SharedPlans = Arc<RunPlans>;
+
+/// A kept plan as the run shares it (decision 0301): its order, fixed, and what was learnt of it (its work per node,
+/// EXPLAIN, gap, last price and the work its line did) in a cell, swapped whole. A run's plans are read 1.9 M times
+/// over PostHog and get a new order a few hundred times; what changes all the time is what is learnt, and that
+/// changes the cell, not the map.
+pub struct Entry {
+    order: Arc<[Step]>,
+    rest: arc_swap::ArcSwap<Learnt>,
+}
+
+/// What a kept plan's runs taught of it (`Entry::rest`): `Kept` less its order.
+#[derive(Clone)]
+struct Learnt {
+    per_node: f64,
+    explain: Option<super::profile::RulePlan>,
+    gap: f64,
+    priced: Option<Arc<Priced>>,
+    ran: Option<f64>,
+}
+
+impl Learnt {
+    fn of(k: &Kept) -> Learnt {
+        Learnt { per_node: k.1, explain: k.2.clone(), gap: k.3, priced: k.4.clone(), ran: k.5 }
+    }
+}
+
+impl Entry {
+    fn of(k: Kept) -> Arc<Entry> {
+        let rest = arc_swap::ArcSwap::from_pointee(Learnt::of(&k));
+        Arc::new(Entry { order: k.0, rest })
+    }
+
+    /// The plan as `Kept`.
+    fn kept(&self) -> Kept {
+        Self::view(&self.order, &self.rest.load())
+    }
+
+    fn view(order: &Arc<[Step]>, r: &Learnt) -> Kept {
+        (Arc::clone(order), r.per_node, r.explain.clone(), r.gap, r.priced.clone(), r.ran)
+    }
+
+    /// Takes `k` as this plan's where its order is this one's (else false: a new order is a new entry).
+    fn set(&self, k: &Kept) -> bool {
+        let same = Arc::ptr_eq(&self.order, &k.0) || *self.order == *k.0;
+        if same {
+            self.rest.store(Arc::new(Learnt::of(k)));
+        }
+        same
+    }
+
+    /// `f` applied to what was learnt (its order unchanged), against any other job's change at once (`rcu`).
+    fn update(&self, f: &impl Fn(&mut Kept)) {
+        self.rest.rcu(|r| {
+            let mut k = Self::view(&self.order, r);
+            f(&mut k);
+            Learnt::of(&k)
+        });
+    }
+}
+
+/// The run's plans by key, as published (`RunPlans::kept`).
+type Plans = rustc_hash::FxHashMap<PlanKey, Arc<Entry>>;
+
+/// Publications of new plans and of new orders (decision 0301), and the entries they carried: for the profile.
+static PUBLISHED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 /// A run's plans: those it made or took (`kept`), and those the store kept from earlier processes (`stored`,
-/// decision 0116 step 2), taken into `kept` when a rule is first planned.
-#[derive(Default)]
+/// decision 0116 step 2), taken into `kept` when a rule is first planned. Decision 0301: each part shared as it is
+/// used. `kept` is read with no lock (RCU: an immutable map, a new one published for new plans), its entries'
+/// learning in cells; the lines run and the keys planned are collected apart, under locks no planner reads under.
 pub struct RunPlans {
-    kept: rustc_hash::FxHashMap<PlanKey, Kept>,
-    stored: Arc<StoredPlans>,
-    /// The lines run since the last critical path (decision 0203 §4).
-    lines: Vec<joins::LineRun>,
+    kept: arc_swap::ArcSwap<Plans>,
+    stored: arc_swap::ArcSwap<StoredPlans>,
+    /// The lines run since the last critical path (decision 0203 §4): each stratum's sent as it ran (no lock),
+    /// received only by `lines_take`.
+    lines: (std::sync::mpsc::Sender<Vec<joins::LineRun>>, parking_lot::Mutex<std::sync::mpsc::Receiver<Vec<joins::LineRun>>>),
     /// The keys planned in this run (profiled), for the profile's account of the planning budget's misses: the run's,
     /// shared with its jobs as the plans are.
-    planned_now: rustc_hash::FxHashSet<PlanKey>,
+    planned_now: parking_lot::Mutex<rustc_hash::FxHashSet<PlanKey>>,
     /// The last order kept for each rule line (its body and delta, `line_key`), whatever component solved it: a line
     /// seen first under another key, or a maintenance rule of a rule planned before, starts from it (decision 0258).
     /// A session's, carried between its runs with its plans.
-    orders: rustc_hash::FxHashMap<u128, Arc<[Step]>>,
+    orders: arc_swap::ArcSwap<rustc_hash::FxHashMap<u128, Arc<[Step]>>>,
+}
+
+impl Default for RunPlans {
+    fn default() -> Self {
+        RunPlans::new(Default::default(), Default::default(), Default::default())
+    }
 }
 
 /// Decision 0258: a line's key apart from what solves it: its body and its delta.
@@ -1318,14 +1396,19 @@ fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
 
 /// The order last kept for line `line` (`RunPlans::orders`).
 fn orders_get(line: u128) -> Option<Arc<[Step]>> {
-    PLANS.with(|p| p.borrow().as_ref().and_then(|s| s.read().orders.get(&line).cloned()))
+    PLANS.with(|p| p.borrow().as_ref().and_then(|s| s.orders.load().get(&line).cloned()))
 }
 
 /// Keeps `order` as line `line`'s last (`RunPlans::orders`).
 fn orders_put(line: u128, order: &[Step]) {
     PLANS.with(|p| {
         if let Some(s) = p.borrow().as_ref() {
-            s.write().orders.insert(line, order.into());
+            let order: Arc<[Step]> = order.into();
+            s.orders.rcu(|o| {
+                let mut o = rustc_hash::FxHashMap::clone(o);
+                o.insert(line, Arc::clone(&order));
+                o
+            });
         }
     });
 }
@@ -1341,7 +1424,7 @@ fn source_orders() -> bool {
 /// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
 fn planned_now(key: &PlanKey) -> bool {
     OWN_PLANNED.with(|o| o.borrow().as_ref().is_some_and(|o| o.contains(key)))
-        || PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.read().planned_now.contains(key)))
+        || PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.planned_now.lock().contains(key)))
 }
 
 /// Notes `key` as planned in this run (`planned_now`): in this thread's job's set, else the run's.
@@ -1356,46 +1439,74 @@ fn note_planned(key: PlanKey) {
     if let Some(key) = key {
         PLANS.with(|p| {
             if let Some(s) = p.borrow().as_ref() {
-                s.write().planned_now.insert(key);
+                s.planned_now.lock().insert(key);
             }
         });
     }
 }
 
-impl std::ops::Deref for RunPlans {
-    type Target = rustc_hash::FxHashMap<PlanKey, Kept>;
-    fn deref(&self) -> &Self::Target {
-        &self.kept
-    }
-}
-
-impl std::ops::DerefMut for RunPlans {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.kept
-    }
-}
-
 impl RunPlans {
+    fn new(kept: rustc_hash::FxHashMap<PlanKey, Kept>, orders: rustc_hash::FxHashMap<u128, Arc<[Step]>>, stored: Arc<StoredPlans>) -> Self {
+        RunPlans {
+            kept: arc_swap::ArcSwap::from_pointee(kept.into_iter().map(|(k, v)| (k, Entry::of(v))).collect()),
+            stored: arc_swap::ArcSwap::new(stored),
+            lines: {
+                let (tx, rx) = std::sync::mpsc::channel();
+                (tx, parking_lot::Mutex::new(rx))
+            },
+            planned_now: Default::default(),
+            orders: arc_swap::ArcSwap::from_pointee(orders),
+        }
+    }
+
+    /// Tests: plans with `stored` as the store's.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn with_stored(stored: Arc<StoredPlans>) -> Self {
+        RunPlans::new(Default::default(), Default::default(), stored)
+    }
+
+    /// Publishes `plans`, new keys or new orders (decision 0301): a new map, the old one's entries shared.
+    fn publish(&self, plans: Vec<(PlanKey, Kept)>) {
+        if plans.is_empty() {
+            return;
+        }
+        let entries: Vec<(PlanKey, Arc<Entry>)> = plans.into_iter().map(|(k, v)| (k, Entry::of(v))).collect();
+        PUBLISHED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        PUBLISHED[1].fetch_add(entries.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        self.kept.rcu(|m| {
+            let mut m = Plans::clone(m);
+            m.extend(entries.iter().map(|(k, e)| (*k, Arc::clone(e))));
+            m
+        });
+    }
+
+    /// The run's plans as `Kept`, and its orders: a session keeps them for its next run.
+    fn into_kept(self) -> (rustc_hash::FxHashMap<PlanKey, Kept>, rustc_hash::FxHashMap<u128, Arc<[Step]>>) {
+        let kept = self.kept.load().iter().map(|(k, e)| (*k, e.kept())).collect();
+        (kept, rustc_hash::FxHashMap::clone(&self.orders.load()))
+    }
+
     /// The plan the store kept for `key` at the scale of `nodes`, else at the nearest scale stored (O-replan-churn:
     /// an edit's chunk and the cross part are a bucket or two apart, and a plan of the other's is re-priced before
     /// it is kept, so a plan from another scale is a better start than a search from nothing).
     fn stored_near(&self, key: &PlanKey, len: usize, nodes: f64) -> Option<Kept> {
         let at = scale(nodes);
-        let stored = (0..=12u8).find_map(|d| {
-            [at.checked_sub(d), at.checked_add(d)].into_iter().flatten().find_map(|s| self.stored.get(&(*key, s)))
+        let stored = self.stored.load();
+        let found = (0..=12u8).find_map(|d| {
+            [at.checked_sub(d), at.checked_add(d)].into_iter().flatten().find_map(|s| stored.get(&(*key, s)))
         })?;
-        stored.kept(len)
+        found.kept(len)
     }
 
     /// The plan kept for `key`: the run's, else the store's at the scale of `nodes` or the nearest stored, its steps
     /// taken from `body` by position (the key digests the body, so its literals are the planned ones).
-    fn find(&mut self, key: &PlanKey, len: usize, nodes: f64) -> Option<Kept> {
-        if let Some(k) = self.kept.get(key) {
-            return Some(k.clone());
+    #[cfg(test)]
+    fn find(&self, key: &PlanKey, len: usize, nodes: f64) -> Option<Kept> {
+        if let Some(e) = self.kept.load().get(key) {
+            return Some(e.kept());
         }
         let k = self.stored_near(key, len, nodes)?;
-        plan_cache(7);
-        self.kept.insert(*key, k.clone());
+        self.publish(vec![(*key, k.clone())]);
         Some(k)
     }
 }
@@ -1526,7 +1637,7 @@ impl StoredPlan {
 pub fn take_stored_plans(stored: Arc<StoredPlans>) {
     PLANS.with(|p| {
         if let Some(p) = p.borrow().as_ref() {
-            p.write().stored = stored;
+            p.stored.store(stored);
         }
     });
 }
@@ -1535,16 +1646,17 @@ pub fn take_stored_plans(stored: Arc<StoredPlans>) {
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
     let plans = PLANS.with(|p| p.borrow().clone())?;
-    let plans = plans.read();
+    let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
-    for (key, k) in &plans.kept {
+    for (key, e) in kept.iter() {
+        let k = &e.kept();
         // Its scale is the nodes its last price read (`read_sizes` and `live_sizes` start with them): a plan never
         // priced is not kept.
         let Some(nodes) = k.4.as_ref().and_then(|p| p.sizes.first().copied()) else { continue };
         let Some(s) = StoredPlan::of(k) else { continue };
         let key = (*key, scale(nodes));
-        if !plans.stored.get(&key).is_some_and(|t| t.same(&s)) {
-            out.get_or_insert_with(|| (*plans.stored).clone()).insert(key, s);
+        if !stored.get(&key).is_some_and(|t| t.same(&s)) {
+            out.get_or_insert_with(|| StoredPlans::clone(&stored)).insert(key, s);
         }
     }
     out
@@ -1561,23 +1673,27 @@ fn line_log() -> Option<&'static parking_lot::Mutex<std::fs::File>> {
     LOG.as_ref()
 }
 
-/// Adds a stratum's lines as they ran to the run's (decision 0203 §4).
+/// Adds a stratum's lines as they ran to the run's (decision 0203 §4): sent to its log (decision 0301: a channel,
+/// whose sends take no lock, that only `lines_take` reads).
 fn lines_push(runs: Vec<joins::LineRun>) {
+    if runs.is_empty() {
+        return;
+    }
     PLANS.with(|p| {
         if let Some(p) = p.borrow().as_ref() {
-            p.write().lines.extend(runs);
+            let _ = p.lines.0.send(runs);
         }
     });
 }
 
 /// The lines run since the last call.
 fn lines_take() -> Vec<joins::LineRun> {
-    PLANS.with(|p| p.borrow().as_ref().map(|p| std::mem::take(&mut p.write().lines)).unwrap_or_default())
+    PLANS.with(|p| p.borrow().as_ref().map(|p| p.lines.1.lock().try_iter().flatten().collect()).unwrap_or_default())
 }
 
 /// The plans the store kept for this thread's run, as read (the join memo's write, where no plan changed).
 pub fn stored_plans() -> Option<StoredPlans> {
-    PLANS.with(|p| p.borrow().as_ref().map(|p| (*p.read().stored).clone()))
+    PLANS.with(|p| p.borrow().as_ref().map(|p| StoredPlans::clone(&p.stored.load())))
 }
 
 /// This thread's kept plans, for a job on another thread to enter.
@@ -1586,22 +1702,25 @@ fn share_plans() -> Option<SharedPlans> {
 }
 
 /// While the guard lives, this thread plans with `plans` (another thread's, `share_plans`), into plans of its own
-/// (`OWN_PLANS`) taken into them as it ends.
+/// (`OWN_PLANS`: new keys and new orders) published as it ends, its keys planned handed on then too.
 fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
-    struct Entered(Option<SharedPlans>, Option<rustc_hash::FxHashMap<PlanKey, Kept>>, Option<rustc_hash::FxHashSet<PlanKey>>);
+    type Own = (Option<rustc_hash::FxHashMap<PlanKey, Kept>>, Option<rustc_hash::FxHashSet<PlanKey>>);
+    struct Entered(Option<SharedPlans>, Own);
     impl Drop for Entered {
         fn drop(&mut self) {
-            let own = OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take()));
-            let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.2.take()));
+            let own = OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.0.take()));
+            let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.1.take()));
             let entered = PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), self.0.take()));
-            let own = own.filter(|o| !o.is_empty());
-            let planned = planned.filter(|o| !o.is_empty());
-            if let Some(shared) = entered
-                && (own.is_some() || planned.is_some())
-            {
-                let mut s = shared.write();
-                s.kept.extend(own.into_iter().flatten());
-                s.planned_now.extend(planned.into_iter().flatten());
+            let Some(shared) = entered else { return };
+            // Decision 0301: the job's plans whose order the run holds go to their entries' cells; the others, new
+            // keys or new orders, are published together.
+            let new: Vec<(PlanKey, Kept)> = {
+                let kept = shared.kept.load();
+                own.into_iter().flatten().filter(|(k, v)| !kept.get(k).is_some_and(|e| e.set(v))).collect()
+            };
+            shared.publish(new);
+            if let Some(planned) = planned.filter(|p| !p.is_empty()) {
+                shared.planned_now.lock().extend(planned);
             }
         }
     }
@@ -1609,8 +1728,10 @@ fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
     let planned = plans.is_some().then(rustc_hash::FxHashSet::default);
     Entered(
         PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), plans)),
-        OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)),
-        OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), planned)),
+        (
+            OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)),
+            OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), planned)),
+        ),
     )
 }
 
@@ -1666,7 +1787,7 @@ impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
         let (kept, orders) = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _, _)| *k == g).map(|(_, p, o)| (p, o)))).unwrap_or_default();
-        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::RwLock::new(RunPlans { kept, orders, ..Default::default() }))));
+        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(RunPlans::new(kept, orders, Default::default()))));
         keeps::observing(true);
         KeepPlans(across)
     }
@@ -1684,10 +1805,18 @@ impl Drop for KeepPlans {
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
-        let plans = PLANS.with(|p| p.borrow_mut().take()).map(|p| Arc::try_unwrap(p).map_or_else(|p| std::mem::take(&mut *p.write()), parking_lot::RwLock::into_inner));
+        let plans = PLANS.with(|p| p.borrow_mut().take());
         keeps::observing(false);
+        let published = PUBLISHED.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
+        let folds = keeps::FOLDS.swap(0, std::sync::atomic::Ordering::Relaxed);
+        super::profile::decision("kept plans shared by RCU (decision 0301)", || format!("{} publications of {} new plans or orders; observed sums folded {folds} times", published[0], published[1]));
         if let (Some(g), Some(plans)) = (self.0, plans) {
-            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans.kept, plans.orders)));
+            // Every job that entered them has ended: the run's thread holds the last handle, or a copy is taken.
+            let (kept, orders) = match Arc::try_unwrap(plans) {
+                Ok(p) => p.into_kept(),
+                Err(p) => (p.kept.load().iter().map(|(k, e)| (*k, e.kept())).collect(), rustc_hash::FxHashMap::clone(&p.orders.load())),
+            };
+            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, kept, orders)));
         }
     }
 }

@@ -4007,6 +4007,7 @@ name = "rerail-logic"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "arc-swap",
  "ast-grep-core",
  "ast-grep-language",
  "base64 0.22.1",
