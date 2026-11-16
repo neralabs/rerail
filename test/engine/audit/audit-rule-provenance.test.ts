@@ -169,6 +169,26 @@ function upgradeAt(path: string, stepAt: number): void {
   }
 }
 
+/** Dates audit `auditId` as begun at `at` (epoch ms), as a clock that read `at` when it was recorded did. */
+function beganAt(path: string, auditId: string, at: number): void {
+  const database = new Database(path);
+  try {
+    database.prepare("UPDATE audits SET started_at = ? WHERE audit_id = ?").run(at, auditId);
+  } finally {
+    database.close();
+  }
+}
+
+/** Runs `statement` on the file, as a file in that state was written. */
+function rewrite(path: string, statement: string): void {
+  const database = new Database(path);
+  try {
+    database.exec(statement);
+  } finally {
+    database.close();
+  }
+}
+
 /** When the file ran the step that keeps each provenance once (epoch ms). */
 function stepAppliedAt(path: string): number {
   const database = new Database(path, { readonly: true });
@@ -355,7 +375,7 @@ async function fileOfTheBuildBefore(): Promise<string> {
   try {
     database.exec("DROP TRIGGER IF EXISTS audits_rule_provenance_delete; DROP INDEX IF EXISTS audits_rule_provenance");
     if (tableColumns(database, "audits").includes("rule_provenance_id")) database.exec("ALTER TABLE audits DROP COLUMN rule_provenance_id");
-    database.exec("DROP TABLE IF EXISTS audit_rule_provenances");
+    database.exec("DROP TABLE IF EXISTS audit_rule_provenances; DROP TABLE IF EXISTS audit_rule_provenance_step");
     database.prepare("DELETE FROM schema_migrations WHERE id = ?").run(STEP);
     // Nothing else of the step is left, so a later change to it shows up here rather than as a file older than claimed.
     expect(database.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%provenance%' OR sql LIKE '%rule_provenance_id%'").all()).toEqual([]);
@@ -1009,6 +1029,72 @@ describe("audit rule provenance", () => {
     expect(timed.totalMs()).toBeLessThan(20);
     expect(inlineAudits(path)).toBe(21);
   }, 60_000);
+
+  it("moves every audit recorded before the step, one begun after the time the step recorded among them, and reads one audit row a check on its calling thread", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 20)));
+    // This build upgrades the file a day on. The clock went back between the audits and that open, as an NTP
+    // correction sets it: the 16th audit recorded before the step began an hour after the time the step recorded.
+    const day = 24 * 3_600_000;
+    upgradeAt(path, day);
+    beganAt(path, "older-15", day + 3_600_000);
+    // An older Rerail sharing the file then records an audit its clock dates before the step, and 2,000 more, each with
+    // its provenance in its row: about 200 KB, with the audit's start after it.
+    const behind = provenanceOf("/home/dev/app-behind", 20);
+    recordAsOlder(path, "older-behind", behind, day - 1);
+    const text = JSON.stringify(provenanceOf("/home/dev/app", 700));
+    recordMany(path, { prefix: "older-after", count: 2_000, from: day + 1, text });
+    // Nine days on, so the move does not wait for them.
+    const clock = (): number => 10 * day;
+
+    // The move runs on a thread of its own; on the calling thread, the daemon's, which answers hooks, the start's check
+    // and the check once the move's thread ends each read one audit row at most. Taken up to the first audit that began
+    // after the time the step recorded, the move stopped at the 16th: it and the 14 after it kept their copy for good.
+    const moving = timeAuditReads();
+    try {
+      expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(30);
+    } finally {
+      moving.restore();
+    }
+    expect(moving.totalMs()).toBeLessThan(20);
+    // Every audit recorded before the step reads as written. The older Rerail's stay in their rows, where it reads
+    // them, the one its clock dated before the step included.
+    expect(inlineAudits(path)).toBe(2_001);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const audit of written) expect(JSON.stringify(store.get(audit.auditId)?.ruleProvenance), audit.auditId).toBe(audit.text);
+    } finally {
+      store.close();
+    }
+    expect(provenanceTexts(readAsOlder(path, ["older-behind"]))).toEqual([JSON.stringify(behind)]);
+
+    // A later start finds nothing left to move and starts no thread.
+    const starting = timeAuditReads();
+    try {
+      expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(0);
+    } finally {
+      starting.restore();
+    }
+    expect(starting.totalMs()).toBeLessThan(20);
+  }, 120_000);
+
+  it.each([
+    ["that ran the step before the step recorded it", "DELETE FROM audit_rule_provenance_step", 30],
+    ["whose recorded audit a reset of its repository's history deleted", "DELETE FROM audits WHERE audit_id = 'older-29'", 29],
+  ])("takes the audits up to the first that began after the step, as before, in a file %s", async (_, forget, recorded) => {
+    const path = await fileOfTheBuildBefore();
+    const app = provenanceOf("/home/dev/app", 20);
+    writeInlineAudits(path, Array.from({ length: 30 }, () => app));
+    const day = 24 * 3_600_000;
+    upgradeAt(path, day);
+    rewrite(path, forget);
+    // An older Rerail sharing the file records an audit a millisecond after the time the step recorded.
+    recordAsOlder(path, "older-after", app, day + 1);
+
+    expect(await move(path, { clock: () => 10 * day })).toBe(recorded);
+    expect(auditsNamingNoCopy(path)).toBe(1);
+    expect(provenanceTexts(readAsOlder(path, ["older-after"]))).toEqual([JSON.stringify(app)]);
+  });
 
   it("ends at once, moving nothing, when a stop comes before it opens its writer while another connection holds the write lock", async () => {
     const path = await fileOfTheBuildBefore();

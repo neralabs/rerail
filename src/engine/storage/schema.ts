@@ -454,6 +454,16 @@ export const auditRuleProvenances = sqliteTable(
   table => [check("audit_rule_provenances_json", sql`json_type(${table.ruleProvenance}) = 'array'`)],
 );
 
+/**
+ * The last audit a file held when it ran `audit-rule-provenance-once`, which writes the row: the daemon's move of the
+ * provenance older audits hold inline takes the audits up to this one, in the order they were recorded
+ * (`rule-provenance-move.ts`). No row in a new file, in one that held no audit then, or in one that ran the step before
+ * it wrote this table; an older Rerail never reads it.
+ */
+export const auditRuleProvenanceStep = sqliteTable("audit_rule_provenance_step", {
+  lastAuditId: text("last_audit_id").primaryKey(),
+});
+
 /** Workspace-owned ongoing audit defaults; first-repository audits are fixed log-only audits. */
 export const auditResultPages = sqliteTable(
   "audit_result_pages",

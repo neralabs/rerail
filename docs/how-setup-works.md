@@ -569,16 +569,16 @@ A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
 that cannot write the file gets an error naming those steps, and the file is left as it was.
 
-Moving each audit's rule provenance to one shared copy is not part of a step: the step adds a table and a column, and
-the daemon moves the provenance once it starts, on a thread of its own, so it keeps answering hooks during the move.
-Each transaction moves as many audits as fit in about 100 ms, at most 100, with a pause between two, so the open that
-upgrades the file returns at once and other processes keep writing during the move. While another process holds the
-database, as `rerail scrub` does for seconds on a large file, the move waits and tries again every 150 ms, then goes
-on; stopping the daemon ends that wait at once. A daemon stopped partway goes on at its next start. Each check the
-daemon makes on the thread that answers hooks, whether audits are left to move and whether an older Rerail recorded
-one in the last 7 days, reads one audit through an index, however long the history, and one more for each audit
-whose damaged rule provenance the move left as it is (below): a later start finds nothing left to move that way and
-takes no write lock.
+Moving each audit's rule provenance to one shared copy is not part of a step: the step adds two tables and a column,
+and records the last audit the database holds; the daemon moves the provenance of the audits up to that one once it
+starts, on a thread of its own, so it keeps answering hooks during the move. Each transaction moves as many audits as
+fit in about 100 ms, at most 100, with a pause between two, so the open that upgrades the file returns at once and
+other processes keep writing during the move. While another process holds the database, as `rerail scrub` does for
+seconds on a large file, the move waits and tries again every 150 ms, then goes on; stopping the daemon ends that wait
+at once. A daemon stopped partway goes on at its next start. Each check the daemon makes on the thread that answers
+hooks, whether audits are left to move and whether an older Rerail recorded one in the last 7 days, reads at most one
+audit through an index, however long the history, and one more for each audit whose damaged rule provenance the move
+left as it is (below): a later start finds nothing left to move that way and takes no write lock.
 
 The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
 them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds
@@ -598,8 +598,10 @@ audit to wait for, as when an older Rerail has recorded one since. It looks agai
 if that comes first, so an older Rerail that keeps recording adds at most one line an hour, and after the computer
 sleeps the move starts at most an hour late. A move that finds such an audit before its next batch stops there and
 waits the same way; the audits it has not reached keep their provenance in their row. The move takes the audits in
-the order they were recorded and stops at the first one an older Rerail recorded after the update, so it reads none of
-the later ones' rows. An audit whose rule provenance in its row is not a JSON array, which only a damaged file or a
+the order they were recorded, up to the last one the update recorded, whatever the computer's clock read when each
+began, so it reads none of the rows an older Rerail recorded after the update. Where that audit is gone, as after
+`rerail reset` deleted its repository's history, the move takes them up to the first one that began after the update,
+and reads that one row. An audit whose rule provenance in its row is not a JSON array, which only a damaged file or a
 hand edit leaves, stays as it is and reads as before, while the others move. The move names such an audit in
 `daemon.log` when it reaches it: once when the move runs to its end, again when a move stopped partway goes on,
 which is at the next start after the daemon stopped or when the wait for an older Rerail's audit ends, and not at all

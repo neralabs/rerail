@@ -4,11 +4,11 @@
  * the daemon starts it once it serves (`daemon.ts`), on a worker thread of its own (`moveRuleProvenancesInWorker`), so
  * its batches and checkpoints never hold the thread that answers requests. That thread only reads, on a read-only
  * connection, whether audits are left to move and whether an older Rerail's audit makes the move wait (`moveState`):
- * at the start, after each pass of the wait, and once the move's thread ends. Each of those reads is one audit row,
- * found through `audits_rule_provenance` (`UNNAMED`), however long the history, and one more, read in full, for each
- * audit whose damaged provenance a move left as it is (`takes`). Each batch of audits is one write transaction sized
- * to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep recording while it
- * runs; a process stopped partway loses at most one batch, and the next run goes on from what is left. Until an audit
+ * at the start, after each pass of the wait, and once the move's thread ends. Each of those reads is at most one audit
+ * row, found through `audits_rule_provenance` (`UNNAMED`), however long the history, and one more, read in full, for
+ * each audit whose damaged provenance a move left as it is (`takes`). Each batch of audits is one write transaction
+ * sized to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep recording while
+ * it runs; a process stopped partway loses at most one batch, and the next run goes on from what is left. Until an audit
  * moves, the audit store reads its provenance inline. The move never waits inside SQLite for another connection: it
  * awaits a pause and tries again, for as long as another connection holds the write lock, so a stop reaches it between
  * two tries, and a long hold, such as `rerail scrub`'s on a large file, pauses the move without ending it.
@@ -25,11 +25,15 @@
  * names one for every audit it takes, so only an older Rerail writes an audit that names none. With only this Rerail
  * running, the move starts a week after the last audit recorded before the step.
  *
- * Every audit is recorded as it begins, so rowids follow the order audits began in. The move takes the audits that
- * name no stored copy in that order, up to the first that began after the step: from there on each is an older
+ * Every audit is recorded as it begins, so rowids follow the order audits were recorded in. The step records the last
+ * audit the file held when it ran (`audit_rule_provenance_step`), and the move takes the audits that name no stored
+ * copy in that order up to that one, whatever the clock read when each began (`StepBound`): each after it is an older
  * Rerail's, recorded after the step, which keeps its provenance in its row, hundreds of kilobytes with its start after
- * it. Neither the move nor a read of its state reads such a row past that first one. An audit whose provenance in its
- * row is not a JSON array, which only a damaged file or a hand edit leaves, stays as it is (`moveBatch`).
+ * it. Neither the move nor a read of its state reads such a row. A file that ran the step before the step recorded that
+ * audit, or whose recorded audit a reset of its repository's history deleted, has no such bound: there the move takes
+ * them up to the first that began after the step, by the time the step recorded, and reads that one such row. An audit
+ * whose provenance in its row is not a JSON array, which only a damaged file or a hand edit leaves, stays as it is
+ * (`moveBatch`).
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -122,17 +126,27 @@ interface OlderWrites {
 }
 
 /**
- * What a file asks of the move: nothing; to move audits; or to wait until `until`, since the last recorded audit that
- * names no stored copy of its provenance, as an older Rerail writes each audit, began at `at`, less than the window
- * before.
+ * Which of the audits that name no stored copy the move takes. Where the file recorded the last audit it held when it
+ * ran the step, those recorded up to that one, by rowid (`lastRow`), whatever the clock read when each began (`upTo`
+ * null). Where it has no such record, or that audit is gone, those up to the first that began after the step (`upTo`,
+ * epoch ms), and `lastRow` bounds nothing.
+ */
+interface StepBound {
+  readonly lastRow: number;
+  readonly upTo: number | null;
+}
+
+/**
+ * What a file asks of the move: nothing; to move the audits `bound` names; or to wait until `until`, since the last
+ * recorded audit that names no stored copy of its provenance, as an older Rerail writes each audit, began at `at`, less
+ * than the window before.
  */
 type MoveState =
   | { readonly kind: "none" }
-  | { readonly kind: "move" }
+  | { readonly kind: "move"; readonly bound: StepBound }
   | { readonly kind: "wait"; readonly at: number; readonly until: number };
 
 const NONE: MoveState = { kind: "none" };
-const MOVE: MoveState = { kind: "move" };
 
 /** A wait for an older Rerail (`MoveState`). */
 type OlderWait = Extract<MoveState, { kind: "wait" }>;
@@ -179,20 +193,21 @@ type Free = <T>(step: () => T) => Promise<T | typeof STOPPED>;
  */
 export async function moveRuleProvenances(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
   const older = olderWritesOf(options);
-  if (!existsSync(path) || moveState(path, older).kind !== "move") return 0;
+  const state = existsSync(path) ? moveState(path, older) : NONE;
+  if (state.kind !== "move") return 0;
   // `moveState` opened the file through `openRerailDatabase`, which refuses a file this build cannot read and runs a
-  // pending step first. The writer only connects: a writable `openRerailDatabase` begins a write transaction, which
-  // waits inside SQLite up to 5 s while another process holds the lock, where a stop cannot reach it.
+  // pending step first, and read which audits the move takes. The writer only connects: a writable `openRerailDatabase`
+  // begins a write transaction, which waits inside SQLite up to 5 s while another process holds the lock, where a stop
+  // cannot reach it.
   const database = openSqliteDatabase(path);
   try {
     // From here SQLite reports another connection's lock at once, and the move waits for it between tries.
     database.$client.pragma("busy_timeout = 0");
-    const upTo = stepAppliedAt(database);
-    if (upTo === undefined) return 0;
     const client = database.$client;
-    const batching = batchingOf(options, () => takes(client, upTo) && lastOlderWrite(client, older) !== undefined);
+    const { bound } = state;
+    const batching = batchingOf(options, () => takes(client, bound) && lastOlderWrite(client, older) !== undefined);
     const free: Free = step => whenFree(step, batching.pause, options.signal);
-    const done = await moveInBatches(database, upTo, batching);
+    const done = await moveInBatches(database, bound, batching);
     if (done.ended && done.moved > 0) await emptyWalAfterMove(client, free);
     return done.moved;
   } finally {
@@ -218,16 +233,16 @@ function batchingOf(options: RuleProvenanceMoveOptions, postponed: () => boolean
 }
 
 /**
- * Moves the audits that started no later than `upTo`, a batch per write transaction with a pause before each, until
- * none is left, or `signal` or an older Rerail's audit (`postponed`) stops it: how many it moved, and whether none is
- * left. A batch another connection's lock is in the way of is tried again after the next pause, with no bound, and
- * `signal` and `postponed` are read before each try. The first batch takes `FIRST_BATCH` audits, and each later one as
- * many as the batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the write lock about that long
- * however loaded the machine and however large each audit's provenance.
+ * Moves the audits `bound` names, a batch per write transaction with a pause before each, until none is left, or
+ * `signal` or an older Rerail's audit (`postponed`) stops it: how many it moved, and whether none is left. A batch
+ * another connection's lock is in the way of is tried again after the next pause, with no bound, and `signal` and
+ * `postponed` are read before each try. The first batch takes `FIRST_BATCH` audits, and each later one as many as the
+ * batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the write lock about that long however loaded
+ * the machine and however large each audit's provenance.
  */
 async function moveInBatches(
   database: RerailDatabase,
-  upTo: number,
+  bound: StepBound,
   { most, pause, now, signal, postponed }: Batching,
 ): Promise<{ moved: number; ended: boolean }> {
   let moved = 0;
@@ -236,7 +251,7 @@ async function moveInBatches(
   for (;;) {
     await pause();
     if (signal?.aborted === true || postponed()) return { moved, ended: false };
-    const batch = timedBatch(() => moveBatch(database, { after, upTo, limit: size }), now);
+    const batch = timedBatch(() => moveBatch(database, { ...bound, after, limit: size }), now);
     if (batch === BUSY) continue;
     if (batch.done === undefined) return { moved, ended: true };
     sayLeftAsItIs(database.$client.name, batch.done.left);
@@ -278,9 +293,9 @@ function nextBatchSize(size: number, took: number, most: number): number {
  * once no audit is left to move or `signal` stops it. Its batches and checkpoints then never run on the calling
  * thread, which in the daemon answers the requests hooks send: on a loaded Windows machine one batch of 100 audits took
  * 3.6 s, past the 2 s a hook's health probe waits. `signal` stops the move before its next step. A file with nothing
- * to move, read on the calling thread, starts no thread. What the calling thread reads of the file is one audit row a
- * read (`moveState`), however long the history, and one more for each audit whose damaged provenance a move left as it
- * is.
+ * to move, read on the calling thread, starts no thread. What the calling thread reads of the file is at most one audit
+ * row a read (`moveState`), however long the history, and one more for each audit whose damaged provenance a move left
+ * as it is.
  *
  * While the last recorded audit that names no stored copy of its provenance began within `olderWindowMs`
  * (`OLDER_WRITE_WINDOW_MS` unless a test passes its own), one recorded before the step or by an older Rerail since,
@@ -467,10 +482,17 @@ async function emptyWalAfterMove(client: Client, free: Free): Promise<void> {
   }
 }
 
-/** When the file ran `audit-rule-provenance-once` (epoch ms), or undefined when it has no record of that. */
-function stepAppliedAt(database: RerailDatabase): number | undefined {
-  return database.$client.prepare<[string], number>("SELECT applied_at FROM schema_migrations WHERE id = ?").pluck()
-    .get(RULE_PROVENANCE_STEP);
+/**
+ * Which audits the move takes in a file that ran `audit-rule-provenance-once` (`StepBound`), or undefined when the file
+ * has no record of that step: the step's row of `schema_migrations`, its record of the last audit the file held, and
+ * that audit's rowid, which the index of audit ids holds, so no audit row is read.
+ */
+function stepBound(client: Client): StepBound | undefined {
+  const step = client.prepare<[string], { upTo: number; lastRow: number | null }>(`SELECT applied_at AS upTo,
+    (SELECT audit.rowid FROM audit_rule_provenance_step last JOIN audits audit ON audit.audit_id = last.last_audit_id)
+    AS lastRow FROM schema_migrations WHERE id = ?`).get(RULE_PROVENANCE_STEP);
+  if (step === undefined) return undefined;
+  return step.lastRow === null ? { lastRow: Number.MAX_SAFE_INTEGER, upTo: step.upTo } : { lastRow: step.lastRow, upTo: null };
 }
 
 /**
@@ -489,10 +511,15 @@ const UNNAMED = "audits INDEXED BY audits_rule_provenance WHERE rule_provenance_
  */
 const holdable = (value: string): string => `CASE WHEN json_valid(${value}) THEN json_type(${value}) = 'array' ELSE 0 END`;
 
-/** Which audits one batch takes: up to `limit` after rowid `after`, of those that began no later than `upTo`. */
-interface BatchRange {
+/**
+ * Whether an audit is one `StepBound` names by when it began: any, where the file recorded the last audit it held when
+ * it ran the step (`@upTo` null), and SQLite then reads no start; else one that began no later than the step.
+ */
+const BEGAN_BY_STEP = "(@upTo IS NULL OR started_at <= @upTo)";
+
+/** Which audits one batch takes: up to `limit` after rowid `after`, of those `StepBound` names. */
+interface BatchRange extends StepBound {
   readonly after: number;
-  readonly upTo: number;
   readonly limit: number;
 }
 
@@ -506,15 +533,15 @@ interface TakenAudit {
 /**
  * What the file asks of the move (`MoveState`), read on a read-only connection: once the move has ended, each later
  * daemon start finds nothing and opens no writer, so it takes no write lock. A read-only open runs a pending step
- * through a writable open first, as it does for any reader. Each of its reads is one audit row, however long the
- * history (`takes`, `lastOlderWrite`), and `takes` reads one more for each audit whose damaged provenance a move left
- * as it is.
+ * through a writable open first, as it does for any reader. Each of its reads is at most one audit row, however long
+ * the history (`stepBound`, `takes`, `lastOlderWrite`), and `takes` reads one more for each audit whose damaged
+ * provenance a move left as it is.
  */
 function moveState(path: string, older: OlderWrites): MoveState {
   const database = openRerailDatabase(path, { readonly: true });
   try {
-    const upTo = stepAppliedAt(database);
-    return upTo === undefined ? NONE : stateAt(database.$client, upTo, older);
+    const bound = stepBound(database.$client);
+    return bound === undefined ? NONE : stateAt(database.$client, bound, older);
   } finally {
     database.$client.close();
   }
@@ -522,27 +549,29 @@ function moveState(path: string, older: OlderWrites): MoveState {
 
 /**
  * Nothing when no audit is left to take; a wait while audits are left to take and the last recorded audit that names
- * no stored copy began within the window (`lastOlderWrite`); else the move.
+ * no stored copy began within the window (`lastOlderWrite`); else the move of the audits `bound` names.
  */
-function stateAt(client: Client, upTo: number, older: OlderWrites): MoveState {
-  if (!takes(client, upTo)) return NONE;
+function stateAt(client: Client, bound: StepBound, older: OlderWrites): MoveState {
+  if (!takes(client, bound)) return NONE;
   const at = lastOlderWrite(client, older);
-  return at === undefined ? MOVE : { kind: "wait", at, until: at + older.windowMs };
+  return at === undefined ? { kind: "move", bound } : { kind: "wait", at, until: at + older.windowMs };
 }
 
 /**
  * Whether an audit the move takes is left: the first recorded audit that names no stored copy, past those the move
- * leaves as they are (`holdable`), began no later than the step (`upTo`). The move takes them in the order they were
- * recorded, up to the first that began after the step, so once that one comes first none is left. One row, and one
- * more for each audit left as it is before it: the start of every audit an older Rerail recorded after the step sits
- * after its provenance, and reading the start of each of 2,400 such audits took 1.1 s on a cold cache. An audit left as
- * it is is read in full and its text parsed, at every start: about 0.1 ms, and 0.4 ms on a cold cache, for one of
- * 189 KB on Linux x64. Only a damaged file or a hand edit makes one.
+ * leaves as they are (`holdable`), is one `bound` names. The move takes them in the order they were recorded, up to
+ * the last the file held when it ran the step, or, where the file has no record of that audit, up to the first that
+ * began after the step; once none of those is left, none comes first. At most one row, and one more for each audit
+ * left as it is before it; where the step recorded its last audit, none once the move has taken every audit up to it
+ * that it can. Where it did not, the first audit an older Rerail recorded after the step: its start sits after its
+ * provenance, and reading the start of each of 2,400 such audits took 1.1 s on a cold cache. An audit left as it is is
+ * read in full and its text parsed, at every start: about 0.1 ms, and 0.4 ms on a cold cache, for one of 189 KB on
+ * Linux x64. Only a damaged file or a hand edit makes one.
  */
-function takes(client: Client, upTo: number): boolean {
-  const firsts = client.prepare<[number], number | null>(
-    `SELECT CASE WHEN started_at <= ? THEN ${holdable("rule_provenance_json")} END FROM ${UNNAMED} ORDER BY rowid`).pluck();
-  for (const taken of firsts.iterate(upTo)) if (taken !== 0) return taken === 1;
+function takes(client: Client, bound: StepBound): boolean {
+  const firsts = client.prepare<StepBound, number | null>(`SELECT CASE WHEN ${BEGAN_BY_STEP}
+    THEN ${holdable("rule_provenance_json")} END FROM ${UNNAMED} AND rowid <= @lastRow ORDER BY rowid`).pluck();
+  for (const taken of firsts.iterate(bound)) if (taken !== 0) return taken === 1;
   return false;
 }
 
@@ -562,22 +591,19 @@ function lastOlderWrite(client: Client, { clock, windowMs }: OlderWrites): numbe
 }
 
 /**
- * Moves up to `limit` audits after rowid `after` that name no stored copy, up to the first that began after the step
- * (`takenAfter`), in one write transaction: each names the stored copy of its JSON text instead, stored first when no
- * audit had the same text, and keeps `[]` inline. An audit whose provenance is `[]` names the stored copy of `[]`, as
- * the store's audits that run no rules do, so no audit recorded before the step is left naming none. The text moves as
- * it is, so every audit reads the same provenance after. Its key is the SHA-256 of the text, as the audit store keys
- * the provenance it writes, so the store's later audits of the same rules name the copy moved here. An audit whose text
- * no stored copy can hold (`holdable`) stays as it is, naming none, with its text in its row, where both versions read
- * it as before. The last rowid it read, how many it moved and which it left, or undefined when none was left.
+ * Moves up to `limit` audits after rowid `after` that name no stored copy, of those `StepBound` names (`takenAfter`),
+ * in one write transaction: each names the stored copy of its JSON text instead, stored first when no audit had the
+ * same text, and keeps `[]` inline. An audit whose provenance is `[]` names the stored copy of `[]`, as the store's
+ * audits that run no rules do, so no audit recorded before the step is left naming none. The text moves as it is, so
+ * every audit reads the same provenance after. Its key is the SHA-256 of the text, as the audit store keys the
+ * provenance it writes, so the store's later audits of the same rules name the copy moved here. An audit whose text no
+ * stored copy can hold (`holdable`) stays as it is, naming none, with its text in its row, where both versions read it
+ * as before. The last rowid it read, how many it moved and which it left, or undefined when none was left.
  */
-function moveBatch(
-  database: RerailDatabase,
-  { after, upTo, limit }: BatchRange,
-): { last: number; moved: number; left: string[] } | undefined {
+function moveBatch(database: RerailDatabase, range: BatchRange): { last: number; moved: number; left: string[] } | undefined {
   const client = database.$client;
   return client.transaction(() => {
-    const rows = takenAfter(client, { after, upTo, limit });
+    const rows = takenAfter(client, range);
     const copyOf = storedCopyOf(client);
     const name = client.prepare<[number, number]>("UPDATE audits SET rule_provenance_id = ?, rule_provenance_json = '[]' WHERE rowid = ?");
     const left: string[] = [];
@@ -611,17 +637,18 @@ function storedCopyOf(client: Client): (json: string) => number | undefined {
 
 /**
  * Up to `limit` audits after rowid `after` that name no stored copy of their provenance, in the order they were
- * recorded, each with its id and its provenance's text, ending before the first that began after the step (`upTo`).
- * From that one on, each such audit is one a Rerail older than the step recorded after it, whose provenance stays in
- * its row: the batch reads none of their rows past the first. Under the batch's write lock, reading the start of each
- * of 2,000 such rows took 125 ms on Linux and 470 ms on Windows.
+ * recorded, each with its id and its provenance's text, of those `range` names: up to the last audit the file held
+ * when it ran the step, or, where the file has no record of that audit, ending before the first that began after the
+ * step. Each audit after those is one a Rerail older than the step recorded after it, whose provenance stays in its
+ * row: the batch reads none of their rows, or, without that record, none past the first. Under the batch's write lock,
+ * reading the start of each of 2,000 such rows took 125 ms on Linux and 470 ms on Windows.
  */
-function takenAfter(client: Client, { after, upTo, limit }: BatchRange): TakenAudit[] {
-  const audits = client.prepare<[number, number, number], { row: number; auditId: string; json: string | null }>(`SELECT
-    rowid AS row, audit_id AS auditId, CASE WHEN started_at <= ? THEN rule_provenance_json END AS json FROM ${UNNAMED}
-    AND rowid > ? ORDER BY rowid LIMIT ?`);
+function takenAfter(client: Client, range: BatchRange): TakenAudit[] {
+  const audits = client.prepare<BatchRange, { row: number; auditId: string; json: string | null }>(`SELECT rowid AS row,
+    audit_id AS auditId, CASE WHEN ${BEGAN_BY_STEP} THEN rule_provenance_json END AS json FROM ${UNNAMED}
+    AND rowid > @after AND rowid <= @lastRow ORDER BY rowid LIMIT @limit`);
   const taken: TakenAudit[] = [];
-  for (const { row, auditId, json } of audits.iterate(upTo, after, limit)) {
+  for (const { row, auditId, json } of audits.iterate(range)) {
     if (json === null) break;
     taken.push({ row, auditId, json });
   }

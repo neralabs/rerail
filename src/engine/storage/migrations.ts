@@ -138,12 +138,15 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // the baseline keep opening the file, so agent hosts on different installed versions keep sharing it. An older
     // build writes its audits' provenance inline as before, and this build reads it there; for the audits this build
     // wrote or moved it reads `[]`, which only its audit API and remote sink show, as its dashboard reads no
-    // provenance.
+    // provenance. The step records the last audit the file holds (`audit_rule_provenance_step`): the move takes the
+    // audits up to that one, in the order they were recorded, whatever the clock read when each began. An older build
+    // never reads that table.
     id: RULE_PROVENANCE_STEP,
     up(database) {
       if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
       for (const statement of AUDIT_RULE_PROVENANCES_TABLE) database.run(sql.raw(statement));
       addColumn(database, "audits", "rule_provenance_id", "integer");
+      database.run(sql.raw("INSERT INTO audit_rule_provenance_step (last_audit_id) SELECT audit_id FROM audits ORDER BY rowid DESC LIMIT 1"));
     },
   },
   {
@@ -156,10 +159,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
   },
 ];
 
-/** `audit_rule_provenances` and its digest index as `audit-rule-provenance-once` introduced them. */
+/**
+ * `audit_rule_provenances` and its digest index, and `audit_rule_provenance_step`, as `audit-rule-provenance-once`
+ * introduced them.
+ */
 const AUDIT_RULE_PROVENANCES_TABLE: readonly string[] = [
   "CREATE TABLE IF NOT EXISTS `audit_rule_provenances` (\n\t`provenance_id` integer PRIMARY KEY NOT NULL,\n\t`digest` text NOT NULL,\n\t`rule_provenance_json` text NOT NULL,\n\tCONSTRAINT \"audit_rule_provenances_json\" CHECK(json_type(\"audit_rule_provenances\".\"rule_provenance_json\") = 'array')\n)",
   "CREATE UNIQUE INDEX IF NOT EXISTS `audit_rule_provenances_digest_unique` ON `audit_rule_provenances` (`digest`)",
+  "CREATE TABLE IF NOT EXISTS `audit_rule_provenance_step` (\n\t`last_audit_id` text PRIMARY KEY NOT NULL\n)",
 ];
 
 /**
