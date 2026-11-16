@@ -77,12 +77,13 @@ fn cpu_between_spans_is_named_by_the_spans_around_it() {
     let gaps = profile::gaps();
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("gaps");
     report::write(&dir, "header\n").unwrap();
-    let text = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
+    // gaps.tsv has every gap; profile.txt only the largest 12, which other tests' runs in this process may fill.
+    let text = std::fs::read_to_string(dir.join("gaps.tsv")).unwrap();
     profile::set(false);
     let _ = std::fs::remove_dir_all(&dir);
     let between = gaps.iter().find(|g| g.after == "xgap before" && g.before == "xgap after").expect("the gap between the spans");
     assert!(between.cpu > 0.08, "{} s between the spans", between.cpu);
-    assert!(text.contains("xgap before -> xgap after"), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("xgap before\txgap after\t")), "{text}");
 }
 
 /// Decision 0288: the run's thread's time is charged to the span innermost when it passed, phase by phase. A span's
