@@ -2245,7 +2245,11 @@ the pruned program (`types-failed`), as a run does when it plans. Six rules stil
 - **Types:** `ruff-pyi062` (`lit_key`: `$t is a Name and a Kind`) and `ruff-ruf028` (`stmt_level`: `$k is a
   Kind and a Name`).
 - **A span where text is compared (O120):** `ruff-pgh004` (`noqa_all_tail`: `R = ""` over a capture of a comment)
-  and `ruff-up009` (a fact of `utf8`, `"utf-8"` where a span goes).
+  and `ruff-up009` (a fact of `utf8`, `"utf-8"` where a span goes). **Fixed (2026-11-15)** as O120 was: the rules
+  were wrong. Each capture names a span and reads its text (`(?<Rs>…)`, `text(Rs, R)`; up009's `(?<xs>…)`). On a
+  file of our own, under `RERAIL_SQL_STRICT`: pgh004 finds its three (a bare `# noqa`, `# noqa X100`, `# noqa
+  #…`) where it failed to lower; up009 finds the `# -*- coding: utf-8 -*-` it had silently missed (0 rows: a span
+  never equals a string).
 
 Without those six, the pack (538 programs) combines in 29 s and then stops in the file-local split (O135).
 
