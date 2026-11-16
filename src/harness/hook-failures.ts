@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
@@ -91,7 +91,8 @@ export function recordHookFailure(
     appendFileSync(path, `${JSON.stringify({ startedAt: at } satisfies PartStart)}\n${line}`, { mode: 0o600 });
     removeStrandedLogs(home, at);
   } catch {
-    // Nowhere left to say it.
+    // Nowhere left to say it. A full log a person linked at the live name that cannot move to `.1` ends here too, with
+    // nothing written through the link, as on `main` ({@link moveLink}).
   }
 }
 
@@ -123,13 +124,11 @@ const TAKEN_LOG = new RegExp(`^${HOOK_FAILURES_FILE.replaceAll(".", "\\.")}\\.(\
  * took it still moves it on, out from under this hook's name. So each step gives up once the file is gone from that
  * name, leaving it to the hook that holds it last.
  *
- * A live name that is a link, as a person can make it to keep the log elsewhere, moves on to `.1` as the link, as `main`
- * moves it right after its one size check, which found the log full through the link; hooks begin no log as a link. The
- * move opens, reads, sizes and copies nothing through the link after that check: a person can point it elsewhere in the
- * meantime, a share it leads to can stop answering, and a copy could fill the Rerail home's disk. Status follows no link
- * at `.1` ({@link listLog}), so from then on the line counts the failures since the move.
+ * A live name that is a link, as a person can make it to keep the log elsewhere, is never taken: it moves as `main` moves
+ * the log ({@link moveLink}), and throws where `main`'s move fails.
  */
 function moveAside(path: string, movedAside: string): boolean {
+  if (isLink(path)) return moveLink(path, movedAside);
   const taken = takenName(path);
   try {
     renameWithRetrySync(path, taken);
@@ -137,16 +136,54 @@ function moveAside(path: string, movedAside: string): boolean {
     // Moved first by another hook, or held through the retries: this hook took nothing.
     return false;
   }
+  return moveTaken(taken, path, movedAside);
+}
+
+/**
+ * Moves the link a person made at the live name `path` to `movedAside` as `main` moves the log: the link itself, renamed
+ * there right after the size check with the retries of `main`'s one rename. When that rename fails, as when `.1` is a
+ * folder or another program holds it past the retries, this throws, so the hook writes nothing and the link stays at
+ * the live name, as on `main`. Given back and written through, the link would take the hook's failure, and the coding
+ * agent's event with it, to whatever it leads to: a file under a write lease, or a share that stopped answering, holds
+ * the hook until the agent stops it. The size check of the live name, as `main`'s, is the one call that follows the
+ * link. Hooks that find a linked log full at once fare as `main`'s do: one moves the link, and each other finds no live
+ * name and writes nothing, or moves the log the first one began over the link at `.1`, where status counts that log.
+ * Status reads no link at `.1` ({@link listLog}), so from the move on the line counts the failures since.
+ */
+function moveLink(path: string, movedAside: string): true {
+  renameWithRetrySync(path, movedAside);
+  return true;
+}
+
+/** Whether the name `path` itself is a link (a junction, on Windows); false when it is gone. */
+function isLink(path: string): boolean {
   try {
-    // A `.1` another program holds is waited out for the 2 s a rename retries, as `main`'s move waits: given back, the
-    // link would take this hook's own failure to the file it leads to, or lose it where that file takes no writes.
-    if (lstatSync(taken).isSymbolicLink()) {
-      renameWithRetrySync(taken, movedAside);
-      return true;
-    }
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    // Gone, as when another hook took it: the take finds nothing either.
+    return false;
+  }
+}
+
+/**
+ * Moves the log this hook took as `taken` from the live name `path` on to `movedAside` when it is full, and gives it
+ * back otherwise. A link there is one a person made at the live name between this hook's look and its take: it goes
+ * back as it was and moves as `main` moves it ({@link putBackLink}), so a give-back holds only a regular file. For a
+ * regular file `lstat` gives what `stat` gives, in the one call.
+ */
+function moveTaken(taken: string, path: string, movedAside: string): boolean {
+  let stats: Stats;
+  try {
+    stats = lstatSync(taken);
+  } catch {
+    // Moved on by another hook, which moves it aside or gives it back.
+    return false;
+  }
+  if (stats.isSymbolicLink()) return putBackLink(taken, path, movedAside);
+  try {
     // No wait for a `.1` another program holds: the log goes back at once and a later hook moves it, so it stays under
     // this hook's name for the moment of one rename, not for the 2 s of retries.
-    if (sizeOf(taken) > MAX_FAILURE_BYTES) {
+    if (stats.size > MAX_FAILURE_BYTES) {
       renameWithRetrySync(taken, movedAside, { retryMs: 0 });
       return true;
     }
@@ -159,12 +196,34 @@ function moveAside(path: string, movedAside: string): boolean {
 }
 
 /**
+ * Puts the link a person made at the live name `path`, which this hook took as `taken`, back as it was, by one rename
+ * with no retries, then moves it as `main` moves the log ({@link moveLink}). The rename replaces a log another hook
+ * began at the live name in that moment. When it fails, this throws: the hook writes nothing, and the link stays under
+ * the hook's name, where no hook reads through it.
+ */
+function putBackLink(taken: string, path: string, movedAside: string): true {
+  renameWithRetrySync(taken, path, { retryMs: 0 });
+  return moveLink(path, movedAside);
+}
+
+/**
+ * Throws when the name `path` is a link: a give-back holds only a regular file a hook took ({@link moveTaken}), and
+ * writes only into a live log Rerail began. A link here would have the give-back read a person's file through it, copy
+ * it and remove it, or write the log into it. The hook then writes nothing, and the log it took stays under its own
+ * name, where status counts it.
+ */
+function assertNoLink(path: string): void {
+  if (isLink(path)) throw new Error(`${path} is a link, which a hook never gives a log back through`);
+}
+
+/**
  * Puts the log taken as `taken` back at the live name `path`. A hook that opened the log to append before this one took
  * it writes into that file whenever it is next scheduled, so the file itself goes back, under a second name and then
  * under that name alone. When another hook has begun a live log since the take, or the file system has no hard links,
  * its lines go back instead.
  */
 function giveBack(taken: string, path: string): void {
+  assertNoLink(taken);
   try {
     linkSync(taken, path);
   } catch (error) {
@@ -181,8 +240,13 @@ function giveBack(taken: string, path: string): void {
   }
 }
 
-/** Appends the lines of the log taken as `taken` to the live log at `path`, and removes it. */
+/**
+ * Appends the lines of the log taken as `taken` to the live log at `path`, and removes it. The live name is a link only
+ * when a person made it one while this hook held the log: the lines then stay under the hook's name.
+ */
 function copyBack(taken: string, path: string): void {
+  assertNoLink(taken);
+  assertNoLink(path);
   let descriptor: number;
   try {
     descriptor = openSync(taken, "r");
@@ -487,8 +551,8 @@ type LogNames = Map<string, string | null>;
  * a name gone before it was looked at, would make every status read wait out all its pauses for as long as the link
  * stays. A named pipe, opened to read, waits for a program to write to it, and a folder at `.1`, read as a part that
  * holds nothing, would make the line count from the live part's start though no part was dropped. A status read opens
- * the live log before it lists, so a link at the live name is still read through, until a hook moves it to `.1` as the
- * link ({@link moveAside}).
+ * the live log before it lists, so a link at the live name is still read through, as `main` reads it, until a hook
+ * moves it to `.1` as the link ({@link moveLink}).
  */
 function listLog(home: string): LogNames {
   let listed: string[];
