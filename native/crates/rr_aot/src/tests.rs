@@ -415,3 +415,45 @@ fn tier1_by_kind() {
         eprintln!("  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions a token, lean lexer {:6.1}", ours as f64 / tokens as f64, lean as f64 / tokens as f64);
     }
 }
+
+/// The loop's arm of a first byte `b` in the generated Rust: from `b => {` in the rules'
+/// `match` to the next arm's pattern.
+fn arm_of<'s>(f0: &'s str, b: &str) -> &'s str {
+    let m = f0.find(" { 34 => {").expect("the rules' match");
+    let body = &f0[m..];
+    let at = body.find(&format!("{b} => {{")).expect("the arm");
+    let rest = &body[at + b.len() + 5..];
+    let end = [" 35 => {", " 47 => {", " 48..=57 => {", " 96 => {", " _ => {"].iter().filter_map(|p| rest.find(p)).min().expect("the next arm");
+    &rest[..end]
+}
+
+/// The string's arm reads like lean's `string_end` from the byte after the quote, its carry
+/// none: no byte before its quote read, nothing called before its window
+/// (`native_cpu_block::before_start`: no token ends with a `\` before a `"` the loop starts).
+#[test]
+fn a_strings_arm_reads_nothing_before_its_quote() {
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let arm = arm_of(f0, "34");
+    let window = arm.find("vld1q_u8").expect("the string's first window");
+    assert!(!arm[..window].contains("(pin, "), "a call before the string's window: {}", &arm[..window]);
+    assert!(!arm[..window].contains("-1i64 as u64);\nv"), "a read before the quote: {}", &arm[..window]);
+}
+
+/// The `/` arm reads like lean's: `//` and `/*` scanned in place, their long reads the whole
+/// reader's one call; `/` alone its pair test inline (no rule function), its code the
+/// punctuation's (no word hash), its next start the token's end (no `max`).
+#[test]
+fn a_slashs_arm_is_leans() {
+    let c = rerail_rr_parser::compiled().expect("compiles");
+    let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult as i64;
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let arm = arm_of(f0, "47");
+    let mut called: Vec<&str> = arm.match_indices("(pin, ").map(|(at, _)| &arm[arm[..at].rfind(' ').expect("a callee") + 1..at]).collect();
+    called.sort();
+    called.dedup();
+    assert_eq!(called.len(), 1, "the arm calls the whole reader alone: {called:?}");
+    assert!(!arm.contains(&format!("{mult}i64")), "a word hash in the `/` arm");
+    assert!(!arm.contains("as i64).max("), "a `max` in the `/` arm");
+}

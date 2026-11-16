@@ -4806,6 +4806,8 @@ cannot show the opener starts no run.
 opener is never escaped) and teach `apart` the escape's offset, or define the carry at an opener
 as none.
 
+**Closed 2026-11-16.** At a token's first byte the byte before is a gap byte or a token's last (`before_start`); no `\\` can be right before a `"`, so `escaped` there folds to none (decision 0177, "The string, `/` and number arms read like lean's").
+
 ## O-reader-last-at-start. A reader's tail takes `max(last, start)`
 
 Opened 2026-11-16 (decision 0177, shape list item 3). Every walked token's next start is
@@ -4815,3 +4817,5 @@ past the start.
 
 **Closure:** make each rule's exits carry whether their last is at the start at least (the long
 function taking the max itself, off the hot path), so an arm whose exits all are needs no max.
+
+**Closed 2026-11-16.** No `max` where the rule's last is never below its start (`last_below_start`; a refusal leaves the loop).

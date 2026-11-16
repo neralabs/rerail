@@ -2997,3 +2997,49 @@ with no wait and nothing done on the host:
   many segments refused in the first (dropped, with the carries
   speculated).
 
+## The string, `/` and number arms read like lean's
+
+**Intro.** Side by side with the lean lexer, three arms still did
+work lean's do not:
+
+- the string arm tested the byte before its quote (`b[s-1] == '\\'`)
+  and on a `\` called the escape carry's function, before its window;
+- the `/` arm, on a `/` alone, called a function for its pair test,
+  then hashed the token into the word table;
+- every rare arm's tail took `max(last, start)`.
+
+**The changes.**
+
+- **What can be before a token** (`before_start`). With the loop's
+  starts, the byte before a token's first byte is a gap byte or the
+  last byte of the token before. Each rule says what its last byte
+  can be: a run's run, a pair's second, a reader's closer at `off`
+  (`bytes_at`, the bytes at an offset of an output, through `prev`s
+  and delays). A reader whose closer starts right after its last (a
+  line comment's `\n`) is before a token only that closer's byte
+  starts. A byte with no rule refuses and leaves the loop. The first
+  byte's fold (`Bytewise::fold`) uses it: `escaped(a)` at a `"` is
+  none, since no `\` can be right before one. The opener's carry
+  folds away.
+- **A pair rule is read in its arm.** A pair rule with no tests
+  (`EndRule::Next`) gets no function of its own; the loop reads its
+  row and the next byte's bit inline, as lean's `TOKEN` table.
+- **A pair rule's class is punctuation.** Its code comes from the
+  punctuation table by length, with no word hash, as lean's
+  `tok!(SLASH)`.
+- **No `max` where the last is never below the start**
+  (`last_below_start`). Only a reader arm that ends with no closer
+  at `s - 1`, or a `Last` rule without the loop's starts, gives a
+  last below the start. A refusal leaves the loop.
+
+```rust
+// generated, the string arm's head, after:
+34 => { /* the window from s + 1, cut where past the file */ … }
+// before:
+34 => { if b[s - 1] == b'\\' { cold_path(); carry = f3(…) } if carry == 0 { /* window */ } … }
+```
+
+Tests: `a_strings_arm_reads_nothing_before_its_quote`,
+`a_slashs_arm_is_leans` (the generated Rust, `rr_aot`). Functions 19
+to 18.
+

@@ -43,6 +43,11 @@ pub struct Bytewise<'a> {
     /// Each body's classes packed (`native_cpu_lanes::body_pack`), by its roots and extra sets:
     /// made once.
     packs: std::cell::RefCell<HashMap<(Vec<usize>, Vec<crate::class_pack::Need>), Rc<BodyPack>>>,
+    /// The bytes that can be right before a token's first byte (`native_cpu_block::
+    /// before_start`): each `(next, bytes)`, `bytes` where the token's first byte can be in
+    /// `next`. `scalar`'s `first` folds by them what reads the byte before the token, as the
+    /// lean lexer never asks whether its `"` is escaped.
+    pub before_start: Option<Vec<([u64; 4], [u64; 4])>>,
 }
 
 /// `escaped`'s carries through a window (`Bytewise::words_carried`): given in, by run, and
@@ -86,7 +91,7 @@ impl<'a> Bytewise<'a> {
                     _ => false,
                 };
         }
-        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default() }
+        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None }
     }
 
     /// The runs whose `escaped` the bytes make: each `a`, once.
@@ -716,7 +721,7 @@ impl<'a> Bytewise<'a> {
                     // simdjson's find_escaped_branchless, its carry the run before the window.
                     let pos = here(f);
                     let given = if back == 0 { carry.ins.iter().find(|c| c.0 == usize::from(a)).map(|c| c.1) } else { None };
-                    let cin = match given {
+                            let cin = match given {
                         Some(c) => c,
                         None => self.carry_in(f, at, usize::from(a), pos, heads),
                     };
@@ -1017,6 +1022,15 @@ impl Bytewise<'_> {
             BlockInst::Plane(k) if back == at => decide(plane(k)),
             BlockInst::PlaneBefore(k) if back + 1 == at => decide(plane(k)),
             BlockInst::Not(a) => self.fold(usize::from(a), back, anchor, fi).map(|v| !v),
+            // `escaped(a)` at the token's first byte: its run of `a` ends at the byte before,
+            // none where `a` holds on no byte that can be there (`before_start`).
+            BlockInst::Escaped(a) if back == at => {
+                let pre = self.before_start.as_ref()?;
+                let n = needs_at(self.native, usize::from(a), &mut HashMap::new())?;
+                let meets = |x: &[u64; 4], y: &[u64; 4]| x.iter().zip(y).any(|(p, q)| p & q != 0);
+                let none = pre.iter().filter(|(next, _)| meets(next, &set)).all(|(_, bytes)| !meets(bytes, &n.set));
+                (n.lo == 0 && n.hi == 0 && none).then_some(false)
+            }
             BlockInst::And(a, b) => match (self.fold(usize::from(a), back, anchor, fi), self.fold(usize::from(b), back, anchor, fi)) {
                 (Some(false), _) | (_, Some(false)) => Some(false),
                 (Some(true), Some(true)) => Some(true),
@@ -1207,6 +1221,41 @@ impl Needs {
         }
         v
     }
+}
+
+/// The bytes that can be at offset `at` from where output `o` holds: every byte where its
+/// instructions do not say (an over-set), as `needs` at one offset, but at any of them: a
+/// conjunction's sets met, a `prev`'s and a delay's offsets followed.
+pub fn bytes_at(native: &BlockNative, o: u16, at: i32) -> [u64; 4] {
+    fn go(native: &BlockNative, x: usize, d: i32, depth: u32) -> [u64; 4] {
+        let all = [u64::MAX; 4];
+        if depth > 64 {
+            return all;
+        }
+        let here = |n: Option<Needs>| n.filter(|n| n.lo == d && n.hi == d).map_or(all, |n| n.set);
+        let one = |x: usize| needs_at(native, x, &mut HashMap::new());
+        match native.insts[x] {
+            BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => here(one(x)),
+            BlockInst::And(a, b) => {
+                let (p, q) = (go(native, usize::from(a), d, depth + 1), go(native, usize::from(b), d, depth + 1));
+                std::array::from_fn(|k| p[k] & q[k])
+            }
+            BlockInst::Or(a, b) => {
+                let (p, q) = (go(native, usize::from(a), d, depth + 1), go(native, usize::from(b), d, depth + 1));
+                std::array::from_fn(|k| p[k] | q[k])
+            }
+            BlockInst::AndNot(a, _) => go(native, usize::from(a), d, depth + 1),
+            // `a` `k` back: the byte at `d` is `d + k` from where `a` holds.
+            BlockInst::Prev(a, k) => go(native, usize::from(a), d + i32::from(k), depth + 1),
+            // A bit only after a byte of `a`'s run: `a` held one byte back.
+            BlockInst::Escaped(a) if d == -1 => go(native, usize::from(a), 0, depth + 1),
+            BlockInst::Const(0) => [0; 4],
+            _ => all,
+        }
+    }
+    let Some(&x) = native.outputs.get(usize::from(o)) else { return [u64::MAX; 4] };
+    // The output at `p` is its instruction at `p + delay`.
+    go(native, usize::from(x), at - i32::from(native.output_delays[usize::from(o)]), 0)
 }
 
 /// What output `o` needs of the bytes (`Needs`), where its instructions say: byte tests, their
