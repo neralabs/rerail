@@ -39,6 +39,9 @@ pub struct SerialRun {
     /// Segments in the batch, and segments run again in all.
     pub segments: usize,
     pub reruns: usize,
+    /// Segments listed to run again but not run: their file refused by a total in a segment
+    /// before them, whose start was final (`serial_check`). The file goes to the fallback.
+    pub dropped: usize,
     /// Checks until every start agreed (1 when the speculation was right everywhere).
     pub rounds: usize,
     /// GPU seconds of the first pass, of the runs again with their checks, and of the positions.
@@ -1114,6 +1117,12 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
             .collect();
         lwrite_cases.push_str(&format!("    case {p}u: {{\n{write}      break; }}\n"));
     }
+    // A segment's totals' flag, its count after the extracts' (`counted_outputs`), in lanes form
+    // made by its run: else zero, and no file is refused before the records.
+    let total_cases: String = (0..programs.len())
+        .filter(|&p| !programs[p].totals.is_empty())
+        .map(|p| format!("      case {p}u: total = counts[t * {counted}u + {}u] != 0u; break;\n", programs[p].extracts.len()))
+        .collect();
     let extracts: String = (0..programs.len()).map(|p| format!("    case {p}u: e_count = {}u; x_count = {}u; break;\n", counted_outputs(programs[p]).len(), programs[p].extracts.len())).collect();
     out.push_str(&format!(
         "#define SLAB device const uint4* bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3\n\
@@ -1168,10 +1177,20 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
          \x20   device const uint4* segs [[buffer(3)]], device ulong* records [[buffer(4)]], device const uint* list [[buffer(5)]],\n\
          \x20   device const ulong* given [[buffer(6)]], constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]],\n\
          \x20   device const ulong* cw [[buffer(14)]], device const uint* marks [[buffer(12)]], device atomic_uint* hopped [[buffer(13)]], device uint* counts [[buffer(15)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
-         \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
+         \x20   device const uint4* s3 [[buffer(18)]], device atomic_uint* refusal [[buffer(20)]], uint t [[thread_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
          \x20 const uint i = t / {GROUP}u;\n\
          \x20 if (i >= q.x) return;\n\
          \x20 uint s = list[i];\n\
+         \x20 // A file with a total in a segment before its first listed (the check's, `serial_check`)\n\
+         \x20 // is refused: its segments are not run again, its later checks list none.\n\
+         \x20 {{\n\
+         \x20   device atomic_uint* fate = refusal + segs[s].x * 6u;\n\
+         \x20   const uint par = 1u + 2u * (q.w & 1u);\n\
+         \x20   if (atomic_load_explicit(fate + par + 1u, memory_order_relaxed) > atomic_load_explicit(fate + par, memory_order_relaxed)) {{\n\
+         \x20     if (l == 0u) {{ atomic_store_explicit(fate, 1u, memory_order_relaxed); atomic_fetch_add_explicit(&hopped[2], 1u, memory_order_relaxed); }}\n\
+         \x20     return;\n\
+         \x20   }}\n\
+         \x20 }}\n\
          \x20 ulong st[{sw}];\n\
          \x20 for (uint k = 0u; k < {sw}u; k++) st[k] = given[i * {sw}u + k];\n\
          \x20 const uint hops = files[segs[s].x].halo_base;\n\
@@ -1240,15 +1259,35 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
          \x20 switch (f.program) {{\n{prefix_cases}    default: break;\n  }}\n\
          }}\n\n\
          // The check: a segment whose start is not its predecessor's end is listed, with that end.\n\
+         // A file refused (`refusal`, its first word) lists none: it goes to the fallback. Each\n\
+         // file's first segment listed and first segment agreeing with a total set, this check's\n\
+         // (`q.w`'s parity: words 1 and 2, or 3 and 4), as `~t` (zeroed: none); its first segment\n\
+         // clears the other parity's for the next check. A total in a segment before the first\n\
+         // listed is final: the runs again find the file refused (`lanes_again`).\n\
          kernel void serial_check(device const uint4* segs [[buffer(3)]], device const ulong* records [[buffer(4)]], device uint* list [[buffer(5)]],\n\
          \x20   device ulong* given [[buffer(6)]], constant uint4& q [[buffer(7)]], device atomic_uint* listed [[buffer(9)]],\n\
-         \x20   device uint* marks [[buffer(12)]], uint t [[thread_position_in_grid]]) {{\n\
-         \x20 if (t >= q.x || segs[t].w == 0u) return;\n\
-         \x20 device const ulong* mine = records + t * {r}u;\n\
-         \x20 device const ulong* end = records + (t - 1u) * {r}u + {sw}u;\n\
-         \x20 bool same = true;\n\
-         \x20 for (uint i = 0u; i < {sw}u; i++) same = same && mine[i] == end[i];\n\
-         \x20 if (same) return;\n\
+         \x20   device uint* marks [[buffer(12)]], device const uint* counts [[buffer(15)]], device atomic_uint* refusal [[buffer(20)]],\n\
+         \x20   device const FileRow* files [[buffer(2)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20 if (t >= q.x) return;\n\
+         \x20 const uint4 seg = segs[t];\n\
+         \x20 device atomic_uint* fate = refusal + seg.x * 6u;\n\
+         \x20 if (atomic_load_explicit(fate, memory_order_relaxed) != 0u) return;\n\
+         \x20 const uint par = 1u + 2u * (q.w & 1u);\n\
+         \x20 if (seg.w == 0u) {{ atomic_store_explicit(fate + 4u - par, 0u, memory_order_relaxed); atomic_store_explicit(fate + 5u - par, 0u, memory_order_relaxed); }}\n\
+         \x20 bool same = seg.w == 0u;\n\
+         \x20 device const ulong* end = records + (t - min(t, 1u)) * {r}u + {sw}u;\n\
+         \x20 if (!same) {{\n\
+         \x20   device const ulong* mine = records + t * {r}u;\n\
+         \x20   same = true;\n\
+         \x20   for (uint i = 0u; i < {sw}u; i++) same = same && mine[i] == end[i];\n\
+         \x20 }}\n\
+         \x20 if (same) {{\n\
+         \x20   bool total = false;\n\
+         \x20   switch (files[seg.x].program) {{\n{total_cases}      default: break;\n    }}\n\
+         \x20   if (total) atomic_fetch_max_explicit(fate + par + 1u, ~t, memory_order_relaxed);\n\
+         \x20   return;\n\
+         \x20 }}\n\
+         \x20 atomic_fetch_max_explicit(fate + par, ~t, memory_order_relaxed);\n\
          \x20 const uint at = atomic_fetch_add_explicit(listed, 1u, memory_order_relaxed);\n\
          \x20 list[at] = t;\n\
          \x20 marks[t] = q.w;\n\
@@ -1405,14 +1444,16 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20 (void)len; (void)on;\n\
              \x20 return hits;\n\
              }}\n\
-             static inline void records_{p}(device const uint4* bytes, FileRow f, uint lane, device const ulong* out, device uint* positions, device const uint* tot, device atomic_uint* flag) {{\n\
-             \x20 const uint cap = max(f.len, 1u);\n\
+             static inline void records_{p}(device const uint4* bytes, FileRow f, uint lane, device const ulong* out, device uint* positions, device const uint* tot, device atomic_uint* flag, device atomic_uint* stop) {{\n\
+             \x20 const uint cap = max(f.len, 1u);{refused}\n\
              \x20 device const uint* starts = positions + f.pos_base + {se}u * cap;\n\
              \x20 device const uint* lasts = positions + f.pos_base + {le}u * cap;\n\
              \x20 device uint* codes = positions + f.pos_base + {e}u * cap;\n\
              \x20 const uint ns = tot[f.tot_base + {se}u], nl = tot[f.tot_base + {le}u], n = min(ns, nl);\n\
-             \x20 bool bad = lane == 0u && ns != nl;\n\
+             \x20 bool bad = lane == 0u && ns != nl, told = bad;\n\
              \x20 for (uint k = lane; k < n; k += {lanes}u) {{\n\
+             \x20   // Past the first token refused (`stop`: `~n`, the tokens coded): the file goes to the fallback.\n\
+             \x20   if (atomic_load_explicit(stop, memory_order_relaxed) >= ~k) break;\n\
              \x20   const uint s = starts[k], l = lasts[k], after = k > 0u ? lasts[k - 1u] + 1u : 0u;\n\
              \x20   bad = bad || l < s || s < after;\n\
              \x20   const uint len = l + 1u - s;\n\
@@ -1420,10 +1461,14 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20   uint word = record_word_{p}(bytes, f, s, len);{unword}\n\
              \x20   uint marks = 0u;{marks}{retags}{gaps}{checks}\n\
              \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
+             \x20   if (bad && !told) {{ told = true; atomic_fetch_max_explicit(stop, ~(k + 1u), memory_order_relaxed); }}\n\
              \x20 }}\n\
              {unplaced}\
              \x20 if (bad) atomic_fetch_or_explicit(flag + f.tot_base + {x}u, 1u, memory_order_relaxed);\n\
              }}\n",
+            // A file its totals refused (`serial_prefix`'s flag) goes to the fallback: no token
+            // of it is coded (`stop` at all of them).
+            refused = if n.totals.is_empty() { String::new() } else { format!("\n  if (tot[f.tot_base + {x}u] != 0u) {{ if (lane == 0u) atomic_store_explicit(stop, ~0u, memory_order_relaxed); return; }}") },
             kinds = list(&mut r.kinds.iter().map(|k| k.to_string())),
             // The token tests (`Records::checks`): by its first byte, the tests of a token's
             // rule, each a bit; a count over its words, a run from a window of one word or two.
@@ -1548,13 +1593,14 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 )
             },
         ));
-        cases.push_str(&format!("    case {p}u: records_{p}(bytes, f, lane, out, positions, tot, flag); break;\n"));
+        cases.push_str(&format!("    case {p}u: records_{p}(bytes, f, lane, out, positions, tot, flag, refusal + fi * 6u + 5u); break;\n"));
     }
     out.push_str(&format!(
         "// The record pass: thread `t` is file `t / {lanes}`'s lane `t % {lanes}`.\n\
          kernel void serial_records(device const uint4* s0 [[buffer(0)]], device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device uint* positions [[buffer(6)]],\n\
          \x20   constant uint4& q [[buffer(7)]], device const uint* tot [[buffer(8)]], device atomic_uint* flag [[buffer(9)]],\n\
-         \x20   device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20   device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], device atomic_uint* refusal [[buffer(20)]],\n\
+         \x20   uint t [[thread_position_in_grid]]) {{\n\
          \x20 const uint fi = t / {lanes}u, lane = t % {lanes}u;\n\
          \x20 if (fi >= q.x) return;\n\
          \x20 const FileRow f = files[fi];\n\
@@ -1701,6 +1747,7 @@ pub fn run_serial_split(programs: &[&BlockNative], files: &[BatchFile<'_>], segm
             first.run.seconds += second.run.seconds;
             first.segments += second.segments;
             first.reruns += second.reruns;
+            first.dropped += second.dropped;
             first.rounds = first.rounds.max(second.rounds);
             first.first_seconds += second.first_seconds;
             first.rerun_seconds += second.rerun_seconds;
@@ -1901,7 +1948,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
         }
     }
     let (mut seconds, mut launches) = (0.0, 0usize);
-    let (mut reruns, mut rounds, mut first_seconds, mut rerun_seconds, mut sink_seconds) = (0, 0, 0.0, 0.0, 0.0);
+    let (mut reruns, mut dropped, mut rounds, mut first_seconds, mut rerun_seconds, mut sink_seconds) = (0, 0, 0, 0.0, 0.0, 0.0);
     let last = passes.passes.len() - 1;
     for (i, pass) in passes.passes.iter().enumerate() {
         match pass {
@@ -1911,12 +1958,13 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
                 seconds += run.run.seconds;
                 launches += run.run.launches;
                 reruns += run.reruns;
+                dropped += run.dropped;
                 rounds += run.rounds;
                 first_seconds += run.first_seconds;
                 rerun_seconds += run.rerun_seconds;
                 sink_seconds += run.sink_seconds;
                 if i == last {
-                    let run = SerialRun { run: BatchRun { files: run.run.files, launches, seconds }, segments: segs.len(), reruns, rounds, first_seconds, rerun_seconds, sink_seconds };
+                    let run = SerialRun { run: BatchRun { files: run.run.files, launches, seconds }, segments: segs.len(), reruns, dropped, rounds, first_seconds, rerun_seconds, sink_seconds };
                     return Ok((run, if read { None } else { kept.map(|k| k.with(Some(out))) }));
                 }
             }
@@ -2018,7 +2066,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
     let (slabs, slab_of) = crate::slabs::source_slabs(sources).ok_or(Error::BackendCapacity)?;
     if files.is_empty() {
-        return Ok((SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 }, segments: 0, reruns: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 }, None));
+        return Ok((SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 }, segments: 0, reruns: 0, dropped: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 }, None));
     }
     // The file table: `groups` is the file's words an output (its blocks), `group0` its first
     // segment, `halo_base` its segments.
@@ -2082,7 +2130,11 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let gtabs = crate::pool::zeroed::<u32>(total * stride)?;
     let marks = crate::pool::zeroed::<u32>(total)?;
     // Segments run again in all, and the most one thread ran.
-    let hopped = crate::pool::zeroed::<u32>(2)?;
+    let hopped = crate::pool::zeroed::<u32>(3)?;
+    // Each file's refusal while its starts are found (`serial_check`): refused, then each
+    // parity's first listed and first total; and its tokens coded before the first refused, as
+    // `~n` (`records_source`).
+    let refusal = crate::pool::zeroed::<u32>(rows.len() * 6)?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
     let cone = kernel(source_key, source, if lanes_on() { "lanes_cone" } else { "serial_cone" })?;
     let cone_prefix = kernel(source_key, source, "serial_cone_prefix")?;
@@ -2093,9 +2145,9 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         assert!(segments.warm >= 1 && segments.blocks + 2 * segments.warm < GROUP, "a segment and its two warm-ups fit a SIMD group");
     }
     let lanes_run = kernel(source_key, source, "lanes_run").inspect_err(|e| eprintln!("lanes: pipeline: {e:?}"))?;
-    let lanes_again = kernel(source_key, source, "lanes_again")?;
+    let lanes_again = kernel(source_key, source, "lanes_again").inspect_err(|e| eprintln!("lanes: again: {e:?}"))?;
     let run = kernel(source_key, source, "serial_run").inspect_err(|e| eprintln!("serial: pipeline: {e:?}"))?;
-    let check = kernel(source_key, source, "serial_check")?;
+    let check = kernel(source_key, source, "serial_check").inspect_err(|e| eprintln!("serial: check: {e:?}"))?;
     let count = kernel(source_key, source, "serial_count")?;
     let prefix = kernel(source_key, source, "serial_prefix")?;
     let write = kernel(source_key, source, "serial_write")?;
@@ -2122,6 +2174,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
                 "marks" => marks.buffer(),
                 "gtabs" => gtabs.buffer(),
                 "hopped" => hopped.buffer(),
+                "refusal" => refusal.buffer(),
                 _ => positions.buffer(),
             };
             b.push((at, buffer, 0));
@@ -2132,7 +2185,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let args = |a: u32, b: u32| vec![(7u64, bytes_of(&[a, b, fit(segments.warm).unwrap_or(0), 0u32]))];
     let at_round = |a: u32, b: u32, round: usize| vec![(7u64, bytes_of(&[a, b, fit(segments.warm).unwrap_or(0), round as u32]))];
     let run_buffers = with(&[(4, "records"), (5, "list"), (6, "given"), (10, "cins"), (12, "marks"), (13, "hopped"), (14, "cws")]);
-    let check_buffers = with(&[(4, "records"), (5, "list"), (6, "given"), (9, "listed"), (12, "marks")]);
+    let check_buffers = with(&[(4, "records"), (5, "list"), (6, "given"), (9, "listed"), (12, "marks"), (15, "counts"), (20, "refusal")]);
     let mut first = Vec::new();
     for l in 1..=depth {
         let cone_groups = if lanes_on() { groups(total * GROUP) } else { groups(total) };
@@ -2241,7 +2294,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         // The list and the starts it gives are read by the run before the check writes them.
         let again = [
             if lanes {
-                Pass { pipeline: &lanes_again, buffers: [run_buffers.clone(), with(&[(15, "counts")])].concat(), args: at_round(fit(n)?, 1, rounds - 1), groups: groups(n * GROUP), threads: THREADS }
+                Pass { pipeline: &lanes_again, buffers: [run_buffers.clone(), with(&[(15, "counts"), (20, "refusal")])].concat(), args: at_round(fit(n)?, 1, rounds - 1), groups: groups(n * GROUP), threads: THREADS }
             } else {
                 Pass { pipeline: &run, buffers: run_buffers.clone(), args: at_round(fit(n)?, 1, rounds - 1), groups: groups(n), threads: THREADS }
             },
@@ -2262,13 +2315,14 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         sinks.push(Pass { pipeline: &write, buffers: with(&[(5, "bases"), (6, "positions")]), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS });
     }
     if forms.iter().any(|n| n.records.is_some()) {
-        sinks.push(Pass { pipeline: &records_pass, buffers: with(&[(6, "positions"), (8, "tot"), (9, "tot")]), args: args(fit(files.len())?, 0), groups: groups(files.len() * RECORD_LANES), threads: THREADS });
+        sinks.push(Pass { pipeline: &records_pass, buffers: with(&[(6, "positions"), (8, "tot"), (9, "tot"), (20, "refusal")]), args: args(fit(files.len())?, 0), groups: groups(files.len() * RECORD_LANES), threads: THREADS });
     }
     let sink_seconds = encode_passes(&sinks)?;
     launches += 1;
     let mut results = Vec::with_capacity(files.len());
     let times = (first_seconds, rerun_seconds, sink_seconds);
-    let serial = |files: Vec<BlockRun>| SerialRun { run: BatchRun { files, launches, seconds: times.0 + times.1 + times.2 }, segments: total, reruns, rounds, first_seconds, rerun_seconds, sink_seconds };
+    let dropped = hopped.read::<u32>(3)[2] as usize;
+    let serial = |files: Vec<BlockRun>| SerialRun { run: BatchRun { files, launches, seconds: times.0 + times.1 + times.2 }, segments: total, reruns, dropped, rounds, first_seconds, rerun_seconds, sink_seconds };
     if !read {
         let placed = rows
             .iter()
@@ -2279,7 +2333,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let words = out.read::<u64>(out_base.max(1));
     let tot = tot.read::<u32>(tot_base.max(1));
     let positions = positions.read::<u32>(pos_base.max(1));
-    for row in &rows {
+    let refused = refusal.read::<u32>(rows.len() * 6);
+    for (i, row) in rows.iter().enumerate() {
         let n = &forms[row.program as usize];
         let len = row.len as usize;
         let blocks = row.groups as usize;
@@ -2301,7 +2356,9 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         let codes = match &n.records {
             Some(r) => {
                 let from = row.pos_base as usize + n.extracts.len() * capacity;
-                let k = count(usize::from(r.starts)).min(count(usize::from(r.lasts))) as usize;
+                // A refused file's codes to its first token refused (the record pass stops there).
+                let stop = refused[i * 6 + 5];
+                let k = count(usize::from(r.starts)).min(count(usize::from(r.lasts))).min(if stop == 0 { u32::MAX } else { !stop }) as usize;
                 positions[from..from + k.min(capacity)].to_vec()
             }
             None => Vec::new(),

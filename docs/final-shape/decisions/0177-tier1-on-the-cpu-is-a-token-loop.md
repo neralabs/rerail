@@ -2945,3 +2945,55 @@ then unpacked a (last, tag, hits) word to learn what had been read.
 
 Test: `a_readers_short_form_is_the_loops_arm` (`PassShape::arms`).
 Functions 21 to 19.
+
+## A refusal leaves the loop
+
+**Intro.** A refused file goes to the fallback parser. Tier 2 never
+reads its records; the only thing anyone acts on is its refusal flag.
+The lean lexer, on a refusal, writes its `BAD` token and leaves its
+loop (`break 'read`). Ours set the file's flag and read on to the end.
+
+**The contract (the user's, 2026-11-16).** A refused file's flag is
+set. Its records are the same on every backend up to its first
+refusal; past it they are unspecified.
+
+**The CPU.** A refusal jumps out of the loop to its end (`finish`)
+with the refusal set, which sets the file's flag (`record_end`):
+
+```rust
+// in outline, the refusal (a cold block), after:
+if wrong < 0 { cold_path(); break 'loop /* to finish, refused */ }
+// before: if wrong < 0 { counts[x] |= 1 } /* and on to the next token */
+```
+
+**Metal** cannot leave a loop mid-file, but it stops what it can,
+with no wait and nothing done on the host:
+
+- **The record pass** (one file over 64 lanes) stops at the first
+  token refused. The lane that finds it publishes `~n` (the tokens
+  coded) with an atomic max, and each lane reads that word before
+  each token and stops past it. A file already refused by a mask
+  total (`serial_prefix`'s flag) codes no token. The codes read back
+  end there.
+- **The runs again.** Each check (`serial_check`) also records, per
+  file, its first segment listed and its first segment agreeing
+  with a total set, by the check's parity. A total before the first
+  listed is in a final segment, so the runs again (`lanes_again`)
+  find the file refused and run none of its segments. Later checks
+  list none of them. `SerialRun::dropped` counts them. With the
+  scans' carries exact (the default), Metal's first pass is already
+  right on this grammar and lists nothing; with them speculated
+  (`RERAIL_SERIAL_CONE=0`) the drop holds.
+
+**Tests.**
+
+- `the_cpus_records_are_the_interpreters`: on a refused file, the
+  flags agree and the CPU's records are a prefix of the
+  interpreter's.
+- `tier1_on_metal_equals_cranelift`: the same between Metal and the
+  CPU, before the first total's bit.
+- `a_refused_files_records_stop_on_metal`: refused by a mask total
+  (no code), by a token (codes to it, the CPU's), and strings over
+  many segments refused in the first (dropped, with the carries
+  speculated).
+

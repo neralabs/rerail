@@ -4790,6 +4790,10 @@ records equal to the interpreter's and to Metal's, and Metal's blocks cannot sto
 to the fallback, unread). If not, the tests compare only the flag on refused files, and the CPU
 leaves its loop.
 
+**Closed 2026-11-16.** The user: a refused file's records are a prefix up to its refusal. The CPU
+leaves its loop; Metal's record pass stops at the first token refused and its runs again drop a
+refused file's segments (decision 0177, "A refusal leaves the loop").
+
 ## O-escape-carry-at-opener. A string's first window tests the byte before its quote
 
 Opened 2026-11-16 (decision 0177, shape list item 3). The string arm starts by testing whether
