@@ -8,9 +8,10 @@ import { removeFolder, runningIn } from "../../../support/platform/remove-folder
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buffers.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
-import { WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
+import { lookMoved, WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
 import { RepositoryWorktreeWalks, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { GitReads } from "../../../../src/engine/git.js";
 import type * as Git from "../../../../src/engine/git.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 
@@ -742,6 +743,22 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
     stats.length = 0;
     await turn(watching);
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([3, 3, 3]);
+  });
+
+  it("asks Git for the ignore files again after it could not name them, so a later change to one counts", async () => {
+    const { main } = await repository();
+    const looks = new WorktreeLooks();
+    // A stopped `GitReads` starts no Git: each read answers as one past its time limit.
+    const stopped = new GitReads();
+    await stopped.stop();
+    const failed = await looks.look(stopped, looks.begin(), main, []);
+    const git = new GitReads();
+    const named = await looks.look(git, looks.begin(), main, []);
+    expect(failed.ignores).toBeUndefined();
+    expect(lookMoved(failed, named)).toBe(true);
+    expect(lookMoved(named, await looks.look(git, looks.begin(), main, []))).toBe(false);
+    await writeFile(join(main, ".git", "info", "exclude"), "gen.py\n");
+    expect(lookMoved(named, await looks.look(git, looks.begin(), main, []))).toBe(true);
   });
 
   // Only Linux has a mount table: the look reads one there alone, and its mount points are POSIX paths.

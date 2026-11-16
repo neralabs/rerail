@@ -8,7 +8,7 @@
  *
  * Every file is read whole and closed at once (`readFileSync`): Git for Windows renames its lock files over these,
  * which a handle held across turns of the event loop makes fail. Git names the ignore files once per worktree, and
- * again only when their text changed.
+ * again only when their text changed, or when it did not name them the last time.
  */
 import { lstatSync, readFileSync } from "node:fs";
 import { gitConfigFiles, gitExcludeFiles, type GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
@@ -21,15 +21,15 @@ export interface WorktreeLook {
   readonly nested: ReadonlyMap<string, ReadonlyMap<string, string> | undefined>;
   /** By each checkout nested in the worktree, the files its index tracks though Git ignores them (`gitTrackedIgnoredReader`). */
   readonly forced: ReadonlyMap<string, string | undefined>;
-  /** The ignore files' text, each after its path. */
-  readonly ignores: string;
+  /** The ignore files' text, each after its path; undefined when Git did not name them, which counts as moved. */
+  readonly ignores: string | undefined;
   /** The mount table's lines for filesystems mounted at or in the worktree (Linux); `""` elsewhere. */
   readonly mounts: string;
 }
 
-/** Whether anything `before` saw of a worktree moved by `now`. */
+/** Whether anything `before` saw of a worktree moved by `now`; ignore files Git did not name now count as moved. */
 export function lookMoved(before: WorktreeLook, now: WorktreeLook): boolean {
-  if (before.folder !== now.folder || before.ignores !== now.ignores || before.mounts !== now.mounts) return true;
+  if (before.folder !== now.folder || before.ignores !== now.ignores || now.ignores === undefined || before.mounts !== now.mounts) return true;
   return mapMoved(before.nested, now.nested) || mapMoved(before.forced, now.forced);
 }
 
@@ -78,7 +78,7 @@ function folderIdentity(root: string): string {
 }
 
 /** What a walk reads once for every worktree it looks at: each ignore file's text and the mount table. */
-interface WalkFiles {
+export interface WalkFiles {
   readonly texts: Map<string, string>;
   readonly mounts: ReadonlyArray<readonly [string, string]>;
 }
@@ -123,18 +123,17 @@ export class WorktreeLooks {
 
   /**
    * The ignore files' text. Git names them the first time, and again when their text changed since: a configuration
-   * file's change may name another excludes file, which the next look reads.
+   * file's change may name another excludes file, which the next look reads. Undefined when Git does not name them now
+   * (it failed, ran past its time limit or was stopped): nothing is kept, so the next look asks Git again.
    */
-  async #ignores(git: GitReads, files: WalkFiles, root: string): Promise<string> {
+  async #ignores(git: GitReads, files: WalkFiles, root: string): Promise<string | undefined> {
     const named = this.#ignoreFiles.get(root);
     if (named !== undefined) {
       const text = textOf(files, named.paths);
       if (text === named.text) return text;
     }
-    const paths = [
-      ...await git.run(signal => gitExcludeFiles(root, { signal })),
-      ...await git.run(signal => gitConfigFiles(root, { signal })),
-    ];
+    const paths = await ignoreFilesNamed(git, root);
+    if (paths === undefined) return undefined;
     const text = textOf(files, paths);
     this.#ignoreFiles.set(root, { paths, text });
     return text;
@@ -144,6 +143,14 @@ export class WorktreeLooks {
     const inside = `${root}/`;
     return files.mounts.filter(([point]) => point === root || point.startsWith(inside)).map(([, line]) => line).join("\n");
   }
+}
+
+/** The ignore files Git names for `root` (`gitExcludeFiles`, then `gitConfigFiles`); undefined when it does not name both. */
+async function ignoreFilesNamed(git: GitReads, root: string): Promise<string[] | undefined> {
+  const excludes = await git.run(signal => gitExcludeFiles(root, { signal }));
+  if (excludes === undefined) return undefined;
+  const configs = await git.run(signal => gitConfigFiles(root, { signal }));
+  return configs === undefined ? undefined : [...excludes, ...configs];
 }
 
 /** The text of each of `paths`, after its path, read once per walk. */

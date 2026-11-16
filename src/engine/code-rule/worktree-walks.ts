@@ -16,7 +16,7 @@ import { sep } from "node:path";
 import { gitHead, gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 import type { TreeWatch } from "./tree-watch.js";
-import { lookMoved, type WorktreeLook, WorktreeLooks } from "./worktree-look.js";
+import { lookMoved, type WalkFiles, type WorktreeLook, WorktreeLooks } from "./worktree-look.js";
 import { SharedTreeWatch, WorktreeNotices, type WorktreeRead } from "./worktree-notices.js";
 
 /**
@@ -190,6 +190,16 @@ type WorktreeState = CheckoutState & {
   readonly skipped: string;
   readonly look: WorktreeLook | undefined;
 };
+
+/** What a walk read once, before it decides on any worktree (`#read`), with the sessions it is for. */
+interface WalkBegun {
+  readonly checkouts: ReadonlyMap<string, CheckoutState>;
+  readonly observedAt: number;
+  /** The other worktrees and sessions' checkouts each read leaves out (`leftOut`). */
+  readonly skip: ReadonlySet<string>;
+  readonly files: WalkFiles;
+  readonly walking: ReadonlyMap<Watching, WatcherWalk>;
+}
 
 /**
  * Whether what no notice tells of moved since `kept` was read: the worktrees and sessions' checkouts inside it, what Git
@@ -614,26 +624,38 @@ export class WorktreeWalks {
       const skip = leftOut(roots, walking.values());
       // Every notice the system queued before the walk began counts in it.
       this.#notices.collect();
-      const files = this.#looks.begin();
+      const begun: WalkBegun = { checkouts, observedAt, skip, files: this.#looks.begin(), walking };
       const found = new Map<string, WorktreeFindings>();
       for (const root of roots) {
         // Every session watching it closed meanwhile: watching it now would hold it for nobody.
         if (!this.#watched(root)) continue;
-        const kept = this.#kept.get(root);
-        // Asked first, of every worktree: it starts the watch before a first read.
-        const noticed = this.#notices.changed(root);
-        // A worktree no notice can tell of is read on every walk: nothing it would look at decides that.
-        const look = this.#notices.watching(root) ? await this.#looks.look(this.#git, files, root, kept?.findings.checkouts ?? []) : undefined;
-        const state: WorktreeState = { ...checkouts.get(root)!, observedAt, skipped: skippedIn(root, skip), look };
-        const findings = kept !== undefined && !noticed && !this.#mustRead(root, kept, state)
-          ? await this.#keptFindings(root, kept, walking)
-          : await this.#readAndKeep(root, skip, walking, state);
+        const findings = await this.#find(root, begun);
         if (findings !== undefined) found.set(root, findings);
       }
       return { found, observedAt };
     } catch (error) {
       return { error: errorMessage(error) };
     }
+  }
+
+  /**
+   * What the walk finds of `root`: what was kept of it while no notice and nothing a notice cannot tell of says it may
+   * have changed (`#mustRead`), else what a read of it finds now.
+   */
+  async #find(root: string, begun: WalkBegun): Promise<WorktreeFindings | undefined> {
+    const kept = this.#kept.get(root);
+    // Asked first, of every worktree: it starts the watch before a first read.
+    const noticed = this.#notices.changed(root);
+    const look = await this.#lookAt(root, begun.files, kept);
+    const state: WorktreeState = { ...begun.checkouts.get(root)!, observedAt: begun.observedAt, skipped: skippedIn(root, begun.skip), look };
+    return kept !== undefined && !noticed && !this.#mustRead(root, kept, state)
+      ? await this.#keptFindings(root, kept, begun.walking)
+      : await this.#readAndKeep(root, begun.skip, begun.walking, state);
+  }
+
+  /** The look at a watched `root`; a worktree no notice can tell of is read on every walk: nothing it would look at decides that. */
+  async #lookAt(root: string, files: WalkFiles, kept: Kept | undefined): Promise<WorktreeLook | undefined> {
+    return this.#notices.watching(root) ? await this.#looks.look(this.#git, files, root, kept?.findings.checkouts ?? []) : undefined;
   }
 
   /**
