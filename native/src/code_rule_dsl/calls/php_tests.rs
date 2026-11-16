@@ -5,6 +5,7 @@ use super::summary::{Callee, Summary};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::scope::php_names::PhpNames;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
+use crate::code_rule_dsl::test_support::php_files;
 use ast_grep_language::LanguageExt;
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -554,19 +555,6 @@ final class H
     let mut expected = vec![bound.clone(), bound];
     expected.resize(8, Answer::Unknown);
     assert_eq!(answers_at(source, "$this->hi()"), expected);
-}
-
-fn php_files(root: &Path, out: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(root).expect("corpus directory") {
-        let path = entry.expect("entry").path();
-        if path.is_dir() {
-            php_files(&path, out);
-        } else if path.extension().is_some_and(|extension| extension == "php")
-            && !path.to_string_lossy().ends_with(".blade.php")
-        {
-            out.push(path);
-        }
-    }
 }
 
 /// PHPStan's call targets over sampled corpora (`RERAIL_PHP_CALLS`, written by

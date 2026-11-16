@@ -57,17 +57,13 @@ impl Error {
 
 /// Parses `text` as `php_formatted_print` reads it with every value present.
 pub(crate) fn parse(text: &str) -> PNode {
-    let mut root = PNode::new(G, "format", 0, text.len());
-    match parts(text) {
-        Ok(parts) => root.children = parts,
-        Err(error) => {
-            let mut node = PNode::new(G, "error", floor(text, error.start), ceil(text, error.end));
-            node.error = true;
-            node.value = Some(Value::PhpStr(error.message));
-            root.children = vec![node];
-        }
-    }
-    root
+    let parts = parts(text).map_err(|error| {
+        (
+            error.message,
+            floor(text, error.start)..ceil(text, error.end),
+        )
+    });
+    super::php_format(G, text, parts)
 }
 
 /// The char boundary at or before `at` (PHP reads bytes; the tree's ranges are characters).

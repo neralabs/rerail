@@ -668,8 +668,9 @@ fn extract_value<D: Doc>(
     extract(table, &current, exports, steps)
 }
 
-/// The expression inside any parentheses around `node` (Ruff's AST has none).
-fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
+/// The expression inside any parentheses around a Python `node` (Ruff's AST has none); Python
+/// call summaries (`calls::summary`) read decorators, class bases and callees through it too.
+pub(crate) fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
         let mut inner = node

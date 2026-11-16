@@ -21,6 +21,7 @@ use crate::code_rule_dsl::identifier::{python_identifier, python_name};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, PythonOptions};
+use crate::code_rule_dsl::scope::usage::unparenthesized;
 use crate::code_rule_dsl::scope::{Binding, Form, Import, ScopeKind, ScopeTable};
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
@@ -1235,21 +1236,6 @@ fn qualify(base: &str, tail: &[String]) -> String {
         name.push_str(part);
     }
     name
-}
-
-fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
-    let mut node = node.clone();
-    while node.kind() == "parenthesized_expression" {
-        let mut inner = node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment");
-        let (Some(expression), None) = (inner.next(), inner.next()) else {
-            break;
-        };
-        drop(inner);
-        node = expression;
-    }
-    node
 }
 
 fn is_async<D: Doc>(function: &Node<'_, D>) -> bool {

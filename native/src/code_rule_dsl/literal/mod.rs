@@ -243,6 +243,27 @@ impl Grammar {
     }
 }
 
+/// A PHP format's tree (`printfFormat`, `scanfFormat`): a `format` root holding `parts` in order
+/// or, where PHP refuses the format with a `ValueError`, one `error` node valued by PHP's message
+/// over the characters the error is about.
+fn php_format(
+    grammar: Grammar,
+    text: &str,
+    parts: Result<Vec<PNode>, (Vec<u8>, Range<usize>)>,
+) -> PNode {
+    let mut root = PNode::new(grammar, "format", 0, text.len());
+    match parts {
+        Ok(parts) => root.children = parts,
+        Err((message, span)) => {
+            let mut node = PNode::new(grammar, "error", span.start, span.end);
+            node.error = true;
+            node.value = Some(Value::PhpStr(message));
+            root.children = vec![node];
+        }
+    }
+    root
+}
+
 /// A node as a grammar's parser builds it; `SubTree::new` flattens it.
 #[derive(Clone, Debug)]
 pub(crate) struct PNode {

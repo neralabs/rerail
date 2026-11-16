@@ -27,7 +27,7 @@ pub(crate) fn structure<D: Doc>(
     equality: Equality,
     context: &mut Context<'_>,
 ) -> Option<Vec<Tok>> {
-    let node = unparenthesized(node);
+    let node = php::unparenthesized(node);
     let mut out = Vec::new();
     match equality {
         Equality::Plain => walk(&node, context, &mut out)?,
@@ -66,19 +66,6 @@ fn trivia<D: Doc>(node: &Node<'_, D>) -> bool {
 fn named_children<'r, D: Doc>(node: &Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> {
     node.children()
         .filter(|child| child.is_named() && !trivia(child))
-}
-
-/// The expression inside any number of parentheses.
-fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
-    let mut node = node.clone();
-    while node.kind() == "parenthesized_expression" {
-        let children: Vec<_> = named_children(&node).collect();
-        match children.as_slice() {
-            [inner] => node = inner.clone(),
-            _ => break,
-        }
-    }
-    node
 }
 
 /// Nodes whose anonymous tokens are their operator: kept, every other anonymous token is
@@ -166,7 +153,7 @@ fn walk_node<D: Doc>(
     let kind = node.kind();
     match kind.as_ref() {
         "parenthesized_expression" => {
-            let inner = unparenthesized(node);
+            let inner = php::unparenthesized(node);
             if inner.kind() != "parenthesized_expression" {
                 return walk(&inner, context, out);
             }

@@ -8,7 +8,7 @@ use crate::code_rule_dsl::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const ORACLE: &str = oracle!("php/compile/format-args/phpstan.expected.json");
 const FIXTURES: &[(&str, &str)] = &[
@@ -362,20 +362,6 @@ fn printf_arguments_match_phpstan() {
 /// Where PHPStan's `argument.*printf`/`argument.*scanf` and Rerail's verdict differ on the corpora
 /// and Rerail is not wrong: corpus, path under the corpus root, line, and the evidence.
 const PHPSTAN_DIVERGENCES: &[(&str, &str, u64, &str)] = &[];
-
-/// The PHP files under `root`, Blade templates aside.
-fn php_files(root: &Path, out: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(root).expect("corpus directory") {
-        let path = entry.expect("entry").path();
-        if path.is_dir() {
-            php_files(&path, out);
-        } else if path.extension().is_some_and(|extension| extension == "php")
-            && !path.to_string_lossy().ends_with(".blade.php")
-        {
-            out.push(path);
-        }
-    }
-}
 
 /// The function a call at `start` names, lowercased, without a leading backslash.
 fn callee(source: &str, start: usize) -> String {

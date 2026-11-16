@@ -419,19 +419,6 @@ pub(crate) fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     utf16(&bytes)
 }
 
-/// The expression inside any parentheses.
-fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
-    let mut node = node.clone();
-    while node.kind() == "parenthesized_expression" {
-        let children: Vec<_> = named_children(&node).collect();
-        match children.as_slice() {
-            [inner] => node = inner.clone(),
-            _ => break,
-        }
-    }
-    node
-}
-
 /// What a reference is.
 #[derive(PartialEq)]
 enum Shape {
@@ -491,7 +478,7 @@ fn static_key<D: Doc>(keyed: &Keyed<'_, D>) -> Option<Vec<u8>> {
     match keyed {
         Keyed::Written(bytes) => Some(bytes.clone()),
         Keyed::Computed(expression, role) => {
-            let expression = unparenthesized(expression);
+            let expression = php::unparenthesized(expression);
             if shape(&expression) != Shape::Literal {
                 return None;
             }
@@ -556,7 +543,7 @@ pub(crate) fn same_reference<D: Doc>(
     right: &Node<'_, D>,
     static_keys: bool,
 ) -> Option<bool> {
-    let (left, right) = (unparenthesized(left), unparenthesized(right));
+    let (left, right) = (php::unparenthesized(left), php::unparenthesized(right));
     let kind = shape(&left);
     if kind != shape(&right) {
         return Some(false);

@@ -208,6 +208,20 @@ fn only_child<'a, D: Doc>(node: &Node<'a, D>) -> Option<Node<'a, D>> {
     children.next().is_none().then_some(child)
 }
 
+/// The expression inside any number of parentheses, comments aside: what references
+/// (`php_compare`) and structures (`php_structure`) compare.
+pub(super) fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
+    let mut node = node.clone();
+    while node.kind() == "parenthesized_expression" {
+        let children: Vec<_> = named(&node).collect();
+        match children.as_slice() {
+            [inner] => node = inner.clone(),
+            _ => break,
+        }
+    }
+    node
+}
+
 // ---------------------------------------------------------------------------------------------
 // Literals
 // ---------------------------------------------------------------------------------------------

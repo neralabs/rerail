@@ -19,15 +19,9 @@ pub(crate) use destructure::destructured;
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
 pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
-    if !context.enter() {
-        return Value::Unknown;
-    }
-    let value = decode_node(node, context);
-    context.leave();
-    if context.exhausted() {
-        return Value::Unknown;
-    }
-    value
+    context
+        .nested(|context| decode_node(node, context))
+        .unwrap_or(Value::Unknown)
 }
 
 fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {

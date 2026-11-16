@@ -26,6 +26,20 @@ pub(super) fn pack_test_data(relative: &str) -> PathBuf {
     path
 }
 
+/// The PHP files under `root`, Blade templates aside.
+pub(super) fn php_files(root: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(root).expect("corpus directory") {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            php_files(&path, out);
+        } else if path.extension().is_some_and(|extension| extension == "php")
+            && !path.to_string_lossy().ends_with(".blade.php")
+        {
+            out.push(path);
+        }
+    }
+}
+
 pub(super) const JSX_SOURCE: &str =
     "export const View = () => <button type=\"button\">Go</button>;\n";
 

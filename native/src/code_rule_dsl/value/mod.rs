@@ -346,6 +346,17 @@ impl<'a> Context<'a> {
     fn leave(&mut self) {
         self.depth -= 1;
     }
+
+    /// Reads a node one level deeper with `read`: `None` past `MAX_DEPTH`, or where the budget
+    /// ran out before or during the read.
+    fn nested<T>(&mut self, read: impl FnOnce(&mut Self) -> T) -> Option<T> {
+        if !self.enter() {
+            return None;
+        }
+        let value = read(self);
+        self.leave();
+        (!self.exhausted).then_some(value)
+    }
 }
 
 /// The names of the types `Value::type_name_as` names differently per family: Python's

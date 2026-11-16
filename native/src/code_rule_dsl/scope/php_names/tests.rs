@@ -553,19 +553,6 @@ fn benchmark_php_names_corpus() {
     );
 }
 
-fn php_files(root: &Path, out: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(root).expect("corpus directory") {
-        let path = entry.expect("entry").path();
-        if path.is_dir() {
-            php_files(&path, out);
-        } else if path.extension().is_some_and(|extension| extension == "php")
-            && !path.to_string_lossy().ends_with(".blade.php")
-        {
-            out.push(path);
-        }
-    }
-}
-
 #[test]
 fn a_build_stops_at_its_node_budget() {
     let source = "<?php\nnamespace A;\nexec();\n";
