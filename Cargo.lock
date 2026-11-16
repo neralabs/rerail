@@ -3498,6 +3498,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-kotlin-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-lang"
 version = "0.1.0"
 dependencies = [

@@ -387,6 +387,12 @@ pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
         GrammarDialect::CSharp => grammar!("token-grammars/csharp"),
         GrammarDialect::Html => grammar!("token-grammars/html"),
         GrammarDialect::Css => grammar!("token-grammars/css"),
+        #[cfg(any(test, feature = "test-hooks"))]
+        GrammarDialect::Kotlin => grammar!("token-grammars/kotlin"),
+        #[cfg(any(test, feature = "test-hooks"))]
+        GrammarDialect::Swift => grammar!("token-grammars/swift"),
+        #[cfg(any(test, feature = "test-hooks"))]
+        GrammarDialect::Scala => grammar!("token-grammars/scala"),
         _ => return None,
     })
 }
