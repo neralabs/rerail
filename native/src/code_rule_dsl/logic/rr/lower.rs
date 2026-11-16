@@ -2220,9 +2220,6 @@ impl Lowerer {
         Ok(())
     }
 
-    /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (an aggregate's
-    /// inside it too: `shared_vars`), bound inside it by a context relation where the conjunction only tests them,
-    /// negated. A variable only the conjunction has is its own (Soufflé's scoping).
     /// A literal's alternatives with those that ground the variables they share with `used` (the rest of the rule)
     /// as one helper relation `rr_or<k>(shared)`, a rule each, and one atom in their place (as `!(…)` is
     /// `rr_not<k>`). An alternative that leaves one unbound (it does not name it) stays as it is.
@@ -2250,10 +2247,17 @@ impl Lowerer {
         keep.into_iter().chain([vec![Literal::Atom(head)]]).collect()
     }
 
+    /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (an aggregate's
+    /// inside it too: `shared_vars`), bound inside it by a context relation where the conjunction only tests them,
+    /// negated. A variable only the conjunction has is its own (Soufflé's scoping).
+    /// A conjunction that binds the shared variables in parts nothing ties (`!(yoda_str(lo, _), yoda_str(hi, _))`)
+    /// would hold every combination of the parts' rows, 13,369 strings giving 178 M pairs: its helper is bound by the
+    /// context over all of them, the rows the rule asks about (`cross_product`).
     fn negated_conjunction(&mut self, lits: &[Lit], outer: &BTreeSet<String>) -> Result<Literal, Error> {
         let shared: Vec<String> = shared_vars(lits).into_iter().filter(|v| outer.contains(v)).collect();
         let bound: BTreeSet<String> = body_vars(&lits.iter().filter(|l| binds_columns(l)).cloned().collect::<Vec<_>>());
-        let needed: Vec<String> = shared.iter().filter(|v| !bound.contains(*v)).cloned().collect();
+        let needed: Vec<String> =
+            if cross_product(lits, &shared, &bound) { shared.clone() } else { shared.iter().filter(|v| !bound.contains(*v)).cloned().collect() };
         let siblings = self.siblings.clone();
         let mut bodies = self.conjunction(lits, &shared.iter().cloned().collect())?;
         self.siblings = siblings.clone();
@@ -5174,6 +5178,37 @@ fn grounds(body: &[Literal], vars: &[String]) -> bool {
         }
     }
     vars.iter().all(|v| bound.contains(v))
+}
+
+/// Whether `lits` bind the variables of `shared` they bind (`bound`) in two or more parts that no literal ties: a
+/// binding atom or an equality ties its variables, a group all of its alternatives' variables. A comparison other than
+/// `=` ties nothing, since it only filters the combinations it is given.
+fn cross_product(lits: &[Lit], shared: &[String], bound: &BTreeSet<String>) -> bool {
+    let mut part: BTreeMap<String, usize> = BTreeMap::new();
+    let mut parts: Vec<BTreeSet<String>> = Vec::new();
+    for l in lits {
+        let vars: BTreeSet<String> = match l {
+            l @ Lit::Atom { .. } if binds_columns(l) => body_vars(std::slice::from_ref(l)),
+            l @ (Lit::Group { .. } | Lit::Cmp { op: "=", .. }) => shared_vars(std::slice::from_ref(l)),
+            _ => continue,
+        };
+        // Join every part these variables are in, and the variables themselves, into one.
+        let mut joined: BTreeSet<String> = vars.clone();
+        let mut found: BTreeSet<usize> = vars.iter().filter_map(|v| part.get(v).copied()).collect();
+        for k in &found {
+            joined.extend(std::mem::take(&mut parts[*k]));
+        }
+        let k = found.pop_first().unwrap_or(parts.len());
+        if k == parts.len() {
+            parts.push(BTreeSet::new());
+        }
+        for v in &joined {
+            part.insert(v.clone(), k);
+        }
+        parts[k] = joined;
+    }
+    let tied: BTreeSet<usize> = shared.iter().filter(|v| bound.contains(*v)).filter_map(|v| part.get(v).copied()).collect();
+    tied.len() > 1
 }
 
 /// Whether a literal binds every variable of its columns: a positive atom of a relation, not a text test nor a

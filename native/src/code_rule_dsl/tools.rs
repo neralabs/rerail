@@ -577,6 +577,13 @@ pub fn flatten(path: &std::path::Path) -> Result<String, String> {
     program_text(path)
 }
 
+/// The program `run-rr` runs for a rule file: read, its includes resolved and lowered (`rr::read_file`), printed as
+/// `.rr`. Its size is the lowering's (rules, helper relations), before the run adds its libraries and plans it.
+pub fn flatten_lowered(path: &std::path::Path) -> Result<String, String> {
+    let (program, _) = super::logic::rr::read_file(path).map_err(|e| e.to_string())?;
+    super::logic::rr::print(&program).map_err(|e| e.to_string())
+}
+
 /// `programs` (`.rr` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
 /// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
@@ -749,14 +756,14 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
 //   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>] [--full]
 //   rerail-engine gc <store.sqlite> [--history-mb <n>]
 //   rerail-engine sql <store.sqlite> <request.json>
-//   rerail-engine flatten <program.rr>
+//   rerail-engine flatten [--lowered] <program.rr>
 //   rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]
 //   rerail-engine run-policies <corpus root> <out dir> <policy.rr>...
 //   rerail-engine check-rr <rule>... | convert-rr <rule>...
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -855,9 +862,11 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
             }
             serde_json::to_string_pretty(&crate::tools::convert_rr_with(&rules)).map_err(|e| e.to_string())
         }
-        // The program `logic` runs for a file: `core.rr` and its includes resolved, lowered and printed as `.rr`.
+        // The program `logic` runs for a file: `core.rr` and its includes resolved, as `.rr` text; with `--lowered`,
+        // the program `run-rr` runs, lowered and printed as `.rr`.
         Some("flatten") => match &args[1..] {
             [file] => crate::tools::flatten(Path::new(file.as_str())),
+            [flag, file] if flag == "--lowered" => crate::tools::flatten_lowered(Path::new(file.as_str())),
             _ => Err(USAGE.into()),
         },
         // The rule images shipped with the engine (decision 0264): packed from those a run exported
