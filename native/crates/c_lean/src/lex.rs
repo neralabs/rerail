@@ -574,7 +574,7 @@ impl<'s> Lexer<'s> {
         }
         // A name's byte right after a number is no token tree-sitter reads apart (in C++, a
         // user-defined literal's suffix, which the parser does not read yet).
-        if block::is_word(self.at(i)) || self.at(i) >= 0x80 {
+        if !self.cpp && (block::is_word(self.at(i)) || self.at(i) >= 0x80) {
             return Err(Refusal::Lex(i as u32));
         }
         Ok((T::Number, i, 0))

@@ -77,7 +77,7 @@ impl<'a> P<'a> {
         let mut left = self.unary(s)?;
         loop {
             let t = self.tok();
-            if let Some((p, op)) = binary(t.kind) {
+            if let Some((p, op)) = self.binary_tok(t) {
                 if p < min {
                     break;
                 }
@@ -103,7 +103,7 @@ impl<'a> P<'a> {
                 left = n;
                 continue;
             }
-            if let Some(op) = assignment(t.kind) {
+            if let Some(op) = assignment(t.kind).or_else(|| self.alt_assignment(t)) {
                 // An assignment binds an assignable operand of a tighter operator too: `a * b = c`
                 // is `a * (b = c)` (tree-sitter's only valid reading).
                 if ASSIGN < min && !Self::assignable(left.kind) {
@@ -115,7 +115,11 @@ impl<'a> P<'a> {
                 // `_assignment_left_expression` is inlined: the left is in no supertype.
                 let n = self.wrap(left, K::AssignmentExpression, s, slot(f::LEFT, Ctx::Bare));
                 self.leaf(op, f::OPERATOR, C_NONE)?;
-                self.expr_prec(slot(f::RIGHT, Ctx::Expr), ASSIGN)?;
+                if self.cpp && self.peek() == T::LBrace {
+                    self.initializer_list(slot(f::RIGHT, Ctx::Bare))?;
+                } else {
+                    self.expr_prec(slot(f::RIGHT, Ctx::Expr), ASSIGN)?;
+                }
                 self.close(n);
                 left = n;
                 continue;
@@ -126,9 +130,46 @@ impl<'a> P<'a> {
         Ok(left)
     }
 
+    /// A binary operator's precedence and kind: C's, C++'s `<=>` and alternative words (`and` …);
+    /// no `>` in a template's arguments.
+    fn binary_tok(&self, t: Tok) -> Option<(u8, K)> {
+        if !self.cpp {
+            return binary(t.kind);
+        }
+        match t.kind {
+            T::Gt | T::GtGt if self.no_gt => None,
+            T::Spaceship => Some((11, K::TSpaceship)),
+            T::Name => Some(match t.word {
+                w::OR => (4, K::Tor),
+                w::AND => (5, K::Tand),
+                w::BITOR => (6, K::Tbitor),
+                w::XOR => (7, K::Txor),
+                w::BITAND => (8, K::Tbitand),
+                w::NOT_EQ => (9, K::Tnot_eq),
+                _ => return None,
+            }),
+            k => binary(k),
+        }
+    }
+
+    fn alt_assignment(&self, t: Tok) -> Option<K> {
+        if !self.cpp || t.kind != T::Name {
+            return None;
+        }
+        Some(match t.word {
+            w::AND_EQ => K::Tand_eq,
+            w::OR_EQ => K::Tor_eq,
+            w::XOR_EQ => K::Txor_eq,
+            _ => return None,
+        })
+    }
+
     /// Whether an expression of `kind` can be assigned to (`_assignment_left_expression`).
     fn assignable(kind: K) -> bool {
-        matches!(kind, K::Identifier | K::CallExpression | K::FieldExpression | K::PointerExpression | K::SubscriptExpression | K::ParenthesizedExpression)
+        matches!(
+            kind,
+            K::Identifier | K::CallExpression | K::FieldExpression | K::PointerExpression | K::SubscriptExpression | K::ParenthesizedExpression | K::QualifiedIdentifier | K::UserDefinedLiteral
+        )
     }
 
     /// `-1`, `+1`: one `number_literal` where the sign touches the number.
@@ -141,7 +182,7 @@ impl<'a> P<'a> {
     }
 
     /// A unary expression: prefix operators, casts, `sizeof`, or a postfix chain.
-    fn unary(&mut self, s: Slot) -> R<N> {
+    pub(super) fn unary(&mut self, s: Slot) -> R<N> {
         self.deeper()?;
         let r = self.unary_inner(s);
         self.depth -= 1;
@@ -150,6 +191,36 @@ impl<'a> P<'a> {
 
     fn unary_inner(&mut self, s: Slot) -> R<N> {
         let t = self.tok();
+        if self.cpp && t.kind == T::Name {
+            match t.word {
+                w::NOT | w::COMPL => {
+                    let n = self.open_in(K::UnaryExpression, s);
+                    let k = if t.word == w::NOT { K::Tnot } else { K::Tcompl };
+                    self.leaf(k, f::OPERATOR, C_NONE)?;
+                    self.unary(slot(f::ARGUMENT, Ctx::Expr))?;
+                    self.close(n);
+                    return Ok(n);
+                }
+                w::CO_AWAIT => {
+                    let n = self.open_in(K::CoAwaitExpression, s);
+                    self.leaf(K::Tco_await, f::OPERATOR, C_NONE)?;
+                    self.unary(slot(f::ARGUMENT, Ctx::Expr))?;
+                    self.close(n);
+                    return Ok(n);
+                }
+                w::SIZEOF if self.kind_at(1) == T::DotDotDot => {
+                    let n = self.open_in(K::SizeofExpression, s);
+                    self.kw(K::SizeofExpression, w::SIZEOF)?;
+                    self.tk(K::SizeofExpression, K::TDotDotDot)?;
+                    self.punct_tk(K::SizeofExpression, T::LParen, false)?;
+                    self.leaf(K::Identifier, f::VALUE, C_NONE)?;
+                    self.punct_tk(K::SizeofExpression, T::RParen, false)?;
+                    self.close(n);
+                    return Ok(n);
+                }
+                _ => {}
+            }
+        }
         match t.kind {
             T::Bang | T::Tilde | T::Minus | T::Plus => {
                 if matches!(t.kind, T::Minus | T::Plus) && self.kind_at(1) == T::Number && self.peek_at(1).start == t.end {
@@ -195,7 +266,12 @@ impl<'a> P<'a> {
             T::Name if matches!(t.word, w::U_ALIGNOF_U | w::U_ALIGNOF | w::ALIGNOF_ | w::ALIGNOF | w::ALIGNOF_C) && self.kind_at(1) == T::LParen => {
                 let n = self.open_in(K::AlignofExpression, s);
                 self.kw_any(K::AlignofExpression)?;
-                self.tk(K::AlignofExpression, K::TLParen)?;
+                // C++'s tapes store the `(` (its table says implied).
+                if self.cpp {
+                    self.leaf(K::TLParen, f::NONE, C_NONE)?;
+                } else {
+                    self.tk(K::AlignofExpression, K::TLParen)?;
+                }
                 self.type_descriptor(slot(f::TYPE, Ctx::Bare))?;
                 self.punct_tk(K::AlignofExpression, T::RParen, false)?;
                 self.close(n);
@@ -275,8 +351,23 @@ impl<'a> P<'a> {
                 }
             }
         }
-        // `(T)`: a name alone.
+        // `(T)`: a name alone (C++: or a qualified or template one; `sizeof`'s a type).
         let t = self.peek_at(k + 1);
+        if self.cpp && (t.kind == T::ColonColon || t.kind == T::Name && !self.reserved(t.word) && matches!(self.kind_at(k + 2), T::ColonColon | T::Lt)) {
+            let Some(e) = self.class_name_end(k + 1) else { return false };
+            if self.kind_at(e) != T::RParen {
+                return false;
+            }
+            if !expr {
+                return true;
+            }
+            let u = self.peek_at(e + 1);
+            return match u.kind {
+                T::Name => !matches!(u.word, w::U_ATTRIBUTE_U),
+                T::Number | T::Char | T::Str | T::RawStr | T::Bang | T::Tilde | T::LBrace | T::PlusPlus | T::MinusMinus => true,
+                _ => false,
+            };
+        }
         if t.kind != T::Name || self.reserved(t.word) || self.kind_at(k + 2) != T::RParen {
             return false;
         }
@@ -285,6 +376,8 @@ impl<'a> P<'a> {
         }
         let u = self.peek_at(k + 3);
         match u.kind {
+            // C++: `(T)(U)x`: the group after is itself a cast.
+            T::LParen if self.cpp => self.cast_ahead(k + 3, true),
             T::Name => !matches!(u.word, w::U_ATTRIBUTE_U),
             // `(T)(x)` is a call of a parenthesized name.
             T::Number | T::Char | T::Str | T::RawStr | T::Bang | T::Tilde | T::LBrace => true,
@@ -304,11 +397,38 @@ impl<'a> P<'a> {
                     self.close(c);
                     n = c;
                 }
+                T::LBracket if self.cpp => {
+                    if self.kind_at(1) == T::LBracket {
+                        return Ok(n);
+                    }
+                    let c = self.wrap(n, K::SubscriptExpression, s, slot(f::ARGUMENT, Ctx::Expr));
+                    let l = self.open(K::SubscriptArgumentList, f::INDICES, C_NONE);
+                    let no_gt = std::mem::replace(&mut self.no_gt, false);
+                    self.list(K::SubscriptArgumentList, T::RBracket, true, false, |p| {
+                        if p.peek() == T::LBrace {
+                            p.initializer_list(BARE)?;
+                        } else {
+                            p.expr(EXPR)?;
+                        }
+                        Ok(())
+                    })?;
+                    self.no_gt = no_gt;
+                    self.close(l);
+                    self.close(c);
+                    n = c;
+                }
                 T::LBracket => {
                     let c = self.wrap(n, K::SubscriptExpression, s, slot(f::ARGUMENT, Ctx::Expr));
                     self.tk(K::SubscriptExpression, K::TLBracket)?;
                     self.comma_or_expr(slot(f::INDEX, Ctx::Expr))?;
                     self.punct_tk(K::SubscriptExpression, T::RBracket, false)?;
+                    self.close(c);
+                    n = c;
+                }
+                T::Dot | T::Arrow | T::DotStar if self.cpp => {
+                    let c = self.wrap(n, K::FieldExpression, s, slot(f::ARGUMENT, Ctx::Expr));
+                    self.leaf(punct(t.kind).expect("an operator"), f::OPERATOR, C_NONE)?;
+                    self.field_name(slot(f::FIELD, Ctx::Bare))?;
                     self.close(c);
                     n = c;
                 }
@@ -339,11 +459,16 @@ impl<'a> P<'a> {
 
     /// A primary expression.
     fn primary(&mut self, s: Slot) -> R<N> {
+        if self.cpp {
+            if let Some(n) = self.cpp_primary(s)? {
+                return Ok(n);
+            }
+        }
         let t = self.tok();
         match t.kind {
             T::Number => self.leaf_in(K::NumberLiteral, s),
             T::Char => self.char_literal(s),
-            T::Str => self.strings(s),
+            T::Str | T::RawStr => self.strings(s),
             T::LParen => self.paren_expr(s),
             T::Name => match t.word {
                 w::TRUE | w::TRUE_C => self.leaf_in(K::True, s),
@@ -387,11 +512,19 @@ impl<'a> P<'a> {
         }
         let n = self.open_in(K::ParenthesizedExpression, s);
         self.tk(K::ParenthesizedExpression, K::TLParen)?;
+        let no_gt = std::mem::replace(&mut self.no_gt, false);
         if self.peek() == T::LBrace {
             self.compound(BARE)?;
         } else {
-            self.comma_expr(EXPR)?;
+            let e = self.comma_expr(EXPR)?;
+            // C++: an assignment alone in parentheses is `_assignment_expression_lhs` (no
+            // supertype; its left any expression).
+            if self.cpp && e.kind == K::AssignmentExpression && self.peek() == T::RParen {
+                self.rekey(e.at, BARE);
+                self.rekey(e.at + 1, slot(f::LEFT, Ctx::Expr));
+            }
         }
+        self.no_gt = no_gt;
         self.punct_tk(K::ParenthesizedExpression, T::RParen, false)?;
         self.close(n);
         Ok(n)
@@ -399,6 +532,13 @@ impl<'a> P<'a> {
 
     /// An `argument_list`: `(` expressions (or blocks, initializer lists) `)`.
     pub(super) fn arguments(&mut self, s: Slot) -> R<N> {
+        let no_gt = std::mem::replace(&mut self.no_gt, false);
+        let r = self.arguments_inner(s);
+        self.no_gt = no_gt;
+        r
+    }
+
+    fn arguments_inner(&mut self, s: Slot) -> R<N> {
         let n = self.open_in(K::ArgumentList, s);
         self.list(K::ArgumentList, T::RParen, true, false, |p| {
             match p.peek() {
@@ -409,7 +549,12 @@ impl<'a> P<'a> {
                     p.compound(BARE)?;
                 }
                 _ => {
-                    p.expr(EXPR)?;
+                    let e = p.expr(EXPR)?;
+                    if p.cpp && p.peek() == T::DotDotDot {
+                        let x = p.wrap(e, K::ParameterPackExpansion, EXPR, slot(f::PATTERN, Ctx::Expr));
+                        p.tk(K::ParameterPackExpansion, K::TDotDotDot)?;
+                        p.close(x);
+                    }
                 }
             }
             Ok(())
@@ -430,7 +575,8 @@ impl<'a> P<'a> {
         let t = self.tok();
         let designated = match t.kind {
             T::Dot => true,
-            T::LBracket => true,
+            // C++: `[` opens a lambda unless `]` and `=`, `.` or `[` follow (a designator's).
+            T::LBracket => !self.cpp || self.paren_end(0).is_some_and(|e| matches!(self.kind_at(e + 1), T::Eq | T::Dot | T::LBracket)),
             T::Name if self.kind_at(1) == T::Colon => true,
             _ => false,
         };
@@ -494,23 +640,31 @@ impl<'a> P<'a> {
 
     /// Strings and names side by side: a `concatenated_string`, or one string.
     pub(super) fn strings(&mut self, s: Slot) -> R<N> {
-        let piece = |p: &mut Self, k: usize| matches!(p.kind_at(k), T::Str | T::RawStr) || p.kind_at(k) == T::Name && !{ let c = p.peek_at(k).word; p.reserved(c) };
+        // A name right after a string (no space) is C++'s literal suffix, no piece.
+        let piece = |p: &mut Self, k: usize| {
+            matches!(p.kind_at(k), T::Str | T::RawStr)
+                || p.kind_at(k) == T::Name && !{ let c = p.peek_at(k).word; p.reserved(c) } && !(p.cpp && k > 0 && matches!(p.kind_at(k - 1), T::Str | T::RawStr) && p.peek_at(k - 1).end == p.peek_at(k).start)
+        };
         let mut k = 0;
         while piece(self, k) {
             k += 1;
         }
         let strings = (0..k).filter(|&j| matches!(self.kind_at(j), T::Str | T::RawStr)).count();
         if k < 2 || strings == 0 {
-            if self.peek() != T::Str {
-                return self.refuse();
-            }
-            return self.string(s);
+            return match self.peek() {
+                T::Str => self.string(s),
+                T::RawStr => self.raw_string(s),
+                _ => self.refuse(),
+            };
         }
         let n = self.open_in(K::ConcatenatedString, s);
         for _ in 0..k {
             match self.peek() {
                 T::Str => {
                     self.string(BARE)?;
+                }
+                T::RawStr => {
+                    self.raw_string(BARE)?;
                 }
                 T::Name => {
                     self.leaf(K::Identifier, f::NONE, C_NONE)?;

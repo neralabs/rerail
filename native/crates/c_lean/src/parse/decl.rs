@@ -68,6 +68,10 @@ pub(super) fn is_qualifier(code: u8) -> bool {
     )
 }
 
+pub(super) fn is_sized_word(code: u8) -> bool {
+    is_sized(code)
+}
+
 fn is_sized(code: u8) -> bool {
     matches!(code, w::SIGNED | w::UNSIGNED | w::LONG | w::SHORT)
 }
@@ -94,6 +98,7 @@ impl<'a> P<'a> {
             || is_primitive(code)
             || matches!(code, w::STRUCT | w::UNION | w::ENUM | w::U_ATTRIBUTE_U | w::U_ATTRIBUTE | w::U_DECLSPEC | w::TYPEDEF | w::ALIGNAS | w::ALIGNAS_)
             || is_ms_call(code)
+            || self.cpp && matches!(code, w::CLASS | w::VIRTUAL | w::TYPENAME | w::DECLTYPE | w::EXPLICIT)
     }
 
     /// Whether the item ahead is a declaration (or a definition) rather than a statement: its first
@@ -104,6 +109,21 @@ impl<'a> P<'a> {
     pub(super) fn declaration_ahead(&mut self) -> bool {
         let top = self.top;
         let t = self.tok();
+        if self.cpp && t.kind == T::ColonColon {
+            return self.cpp_type_declaration_ahead();
+        }
+        if self.cpp && t.kind == T::LBracket && self.kind_at(1) == T::LBracket {
+            // Attributes, then a declaration's first word (`[[fallthrough]];` is a statement).
+            let mut e = 0;
+            while self.kind_at(e) == T::LBracket && self.kind_at(e + 1) == T::LBracket {
+                match self.paren_end(e) {
+                    Some(b) => e = b + 1,
+                    None => return false,
+                }
+            }
+            let u = self.peek_at(e);
+            return u.kind == T::Name && (self.specifier_word(u.word) || !self.reserved(u.word) && matches!(self.kind_at(e + 1), T::Name | T::ColonColon | T::Lt | T::Star | T::Amp | T::AmpAmp));
+        }
         if t.kind != T::Name {
             return false;
         }
@@ -111,8 +131,16 @@ impl<'a> P<'a> {
             // `__extension__` before a declaration, or before an expression.
             return self.kind_at(1) == T::Name && ({ let c = self.peek_at(1).word; self.specifier_word(c) } || self.is_ident_at(1) && self.kind_at(2) == T::Name);
         }
+        if self.cpp && t.word == w::DECLTYPE {
+            // `decltype(x) y;`; `decltype(x)::f();` reads on.
+            let Some(e) = self.paren_end(1) else { return false };
+            return self.kind_at(e + 1) == T::Name || self.kind_at(e + 1) == T::ColonColon && self.cpp_type_declaration_ahead();
+        }
         if t.word == w::EXTERN || self.specifier_word(t.word) {
             return true;
+        }
+        if self.cpp && (self.kind_at(1) == T::ColonColon || self.kind_at(1) == T::Lt) {
+            return self.cpp_type_declaration_ahead();
         }
         if self.reserved(t.word) || matches!(t.word, w::TRUE | w::FALSE | w::TRUE_C | w::FALSE_C | w::NULL) {
             return false;
@@ -120,22 +148,129 @@ impl<'a> P<'a> {
         // A name: a type when a declarator follows it.
         let u = self.peek_at(1);
         match u.kind {
-            T::Name => true,
+            T::Name => !self.cpp || !matches!(u.word, w::AND | w::OR | w::BITAND | w::BITOR | w::XOR | w::NOT_EQ | w::AND_EQ | w::OR_EQ | w::XOR_EQ),
             T::Star => self.pointer_declarator_ahead(1),
+            T::Amp | T::AmpAmp if self.cpp => self.reference_declarator_ahead(1),
             T::LParen => self.macro_type_ahead(top) || self.paren_declarator_ahead(1, top),
             _ => false,
         }
     }
 
-    /// Whether `*`s from token `k` lead to a declarator: `T *x;`, `T **x = …`, `T *x[…]`, `T *f(…)`.
+    /// Whether `*`s from token `k` lead to a declarator: `T *x;`, `T **x = …`, `T *x[…]`, `T *f(…)`
+    /// (C++: `&`, `&&`, and a qualified name: `T &A::f(…)`).
     fn pointer_declarator_ahead(&mut self, mut k: usize) -> bool {
-        while self.kind_at(k) == T::Star || self.peek_at(k).kind == T::Name && { let c = self.peek_at(k).word; self.is_qualifier_word(c) } {
+        while matches!(self.kind_at(k), T::Star) || self.cpp && matches!(self.kind_at(k), T::Amp | T::AmpAmp) || self.peek_at(k).kind == T::Name && { let c = self.peek_at(k).word; self.is_qualifier_word(c) } {
             k += 1;
+        }
+        if self.cpp {
+            if self.is_word_at(k, w::OPERATOR) {
+                return true;
+            }
+            if self.kind_at(k) == T::LBracket && self.is_ident_at(k + 1) {
+                // `auto &[a, b] = …`.
+                return true;
+            }
+            if self.kind_at(k) == T::DotDotDot {
+                return true;
+            }
+            if self.is_ident_at(k) && matches!(self.kind_at(k + 1), T::ColonColon) {
+                let Some(e) = self.decl_name_end(k) else { return false };
+                return matches!(self.kind_at(e), T::Semi | T::Comma | T::Eq | T::LBracket | T::LParen | T::RParen | T::LBrace | T::Colon);
+            }
         }
         if !self.is_ident_at(k) {
             return self.kind_at(k) == T::LParen && self.kind_at(k + 1) == T::Star;
         }
-        matches!(self.kind_at(k + 1), T::Semi | T::Comma | T::Eq | T::LBracket | T::LParen | T::RParen)
+        matches!(self.kind_at(k + 1), T::Semi | T::Comma | T::Eq | T::LBracket | T::LParen | T::RParen) || self.cpp && matches!(self.kind_at(k + 1), T::LBrace | T::Colon)
+    }
+
+    /// Whether `&`/`&&` from token `k` lead to a declarator a statement can hold: one with an
+    /// initializer, a range `for`'s, or a function's (`a & b;` and `a & b)` are expressions).
+    fn reference_declarator_ahead(&mut self, k: usize) -> bool {
+        let mut j = k;
+        while matches!(self.kind_at(j), T::Amp | T::AmpAmp | T::Star) || self.peek_at(j).kind == T::Name && { let c = self.peek_at(j).word; self.is_qualifier_word(c) } {
+            j += 1;
+        }
+        if self.kind_at(j) == T::LBracket {
+            return self.is_ident_at(j + 1);
+        }
+        if self.is_word_at(j, w::OPERATOR) {
+            return true;
+        }
+        let e = if self.is_ident_at(j) && self.kind_at(j + 1) == T::ColonColon {
+            match self.decl_name_end(j) {
+                Some(e) => e,
+                None => return false,
+            }
+        } else if self.is_ident_at(j) {
+            j + 1
+        } else {
+            return false;
+        };
+        match self.kind_at(e) {
+            T::Eq | T::LBrace | T::Colon => true,
+            T::LParen => self.paren_end(e).is_some_and(|p| matches!(self.kind_at(p + 1), T::LBrace | T::Semi | T::Name | T::Arrow)),
+            _ => false,
+        }
+    }
+
+    /// The token index after a declarator's (qualified) name at `k`: `A::b`, `A<T>::B::c`,
+    /// `A::~A`, `A::operator==`, `A::operator T`.
+    pub(super) fn decl_name_end(&mut self, k: usize) -> Option<usize> {
+        let mut j = k;
+        loop {
+            if self.kind_at(j) == T::Tilde {
+                return self.is_ident_at(j + 1).then_some(j + 2);
+            }
+            if self.is_word_at(j, w::OPERATOR) {
+                // To the parameters' `(` (`operator()(` past its own).
+                let mut e = j + 1;
+                if self.kind_at(e) == T::LParen && self.kind_at(e + 1) == T::RParen {
+                    e += 2;
+                }
+                while !matches!(self.kind_at(e), T::LParen | T::Semi | T::LBrace | T::Eof) {
+                    e += 1;
+                }
+                return Some(e);
+            }
+            if !self.is_ident_at(j) {
+                return None;
+            }
+            j += 1;
+            if self.kind_at(j) == T::Lt {
+                j = self.angle_end(j)? + 1;
+            }
+            if self.kind_at(j) != T::ColonColon {
+                return Some(j);
+            }
+            j += 1;
+        }
+    }
+
+    /// Whether a C++ type's name ahead (`A::B`, `T<U>`, `::T`) is followed by a declarator.
+    fn cpp_type_declaration_ahead(&mut self) -> bool {
+        let e = if self.is_word(w::DECLTYPE) {
+            let Some(p) = self.paren_end(1) else { return false };
+            match self.class_name_end(p + 2) {
+                Some(e) => e,
+                None => return false,
+            }
+        } else {
+            match self.class_name_end(0) {
+                Some(e) => e,
+                None => return false,
+            }
+        };
+        match self.kind_at(e) {
+            T::Name => {
+                let c = self.peek_at(e).word;
+                (!self.reserved(c) || self.is_qualifier_word(c) || c == w::OPERATOR) && !matches!(c, w::AND | w::OR | w::BITAND | w::BITOR | w::XOR | w::NOT_EQ)
+            }
+            T::Star => self.pointer_declarator_ahead(e),
+            T::Amp | T::AmpAmp => self.reference_declarator_ahead(e),
+            T::DotDotDot => true,
+            _ => false,
+        }
     }
 
     /// Whether `(` at token `k` holds a declarator after a type: `T (*f)(…)`, `T (x);` is a call.
@@ -237,12 +372,14 @@ impl<'a> P<'a> {
     fn declarators(&mut self, n: N, body: bool) -> R<()> {
         let mut first = true;
         loop {
-            let d = self.declarator(Fam::Decl, slot(f::DECLARATOR, Ctx::Bare))?;
+            // A declaration's direct declarator is in `_declarator` in C++, in none in C.
+            let ctx = if self.cpp { Ctx::Decl } else { Ctx::Bare };
+            let d = self.declarator(Fam::Decl, slot(f::DECLARATOR, ctx))?;
             // A function's definition: its declarator (a function declarator, or one around it:
             // `char *f(…)`) and a body.
             if first && body && d.kind == K::FunctionDeclarator && self.peek() == T::Name && !self.is_attribute() && !self.is_asm() {
                 // An old-style definition: its parameters' declarations, then the body.
-                self.rekind(n.at, K::FunctionDefinition, BARE);
+                self.rekind_keep(n.at, K::FunctionDefinition);
                 self.rekey(d.at, slot(f::DECLARATOR, Ctx::Bare));
                 while self.peek() != T::LBrace {
                     if !self.declaration_ahead() {
@@ -252,8 +389,13 @@ impl<'a> P<'a> {
                 }
                 return self.function_body();
             }
-            if first && body && self.function_body_ahead() {
-                self.rekind(n.at, K::FunctionDefinition, BARE);
+            if first && body && self.cpp && self.holds_function(d.at) && self.method_body_ahead() {
+                self.rekind_keep(n.at, K::FunctionDefinition);
+                self.rekey(d.at, slot(f::DECLARATOR, Ctx::Decl));
+                return self.method_body(K::FunctionDefinition, false);
+            }
+            if first && body && !self.cpp && self.function_body_ahead() {
+                self.rekind_keep(n.at, K::FunctionDefinition);
                 self.rekey(d.at, slot(f::DECLARATOR, Ctx::Decl));
                 return self.function_body();
             }
@@ -271,6 +413,17 @@ impl<'a> P<'a> {
                     } else {
                         self.expr(slot(f::VALUE, Ctx::Expr))?;
                     }
+                    self.close(i);
+                }
+                // `T x(args)` (where the parentheses are no parameters), `T x{…}`.
+                T::LParen if self.cpp => {
+                    let i = self.wrap(d, K::InitDeclarator, slot(f::DECLARATOR, Ctx::Bare), slot(f::DECLARATOR, Ctx::Decl));
+                    self.arguments(slot(f::VALUE, Ctx::Bare))?;
+                    self.close(i);
+                }
+                T::LBrace if self.cpp => {
+                    let i = self.wrap(d, K::InitDeclarator, slot(f::DECLARATOR, Ctx::Bare), slot(f::DECLARATOR, Ctx::Decl));
+                    self.initializer_list(slot(f::VALUE, Ctx::Bare))?;
                     self.close(i);
                 }
                 _ => {}
@@ -297,7 +450,7 @@ impl<'a> P<'a> {
     }
 
     /// `typedef` a type and its declarators.
-    fn type_definition(&mut self) -> R<()> {
+    pub(super) fn type_definition(&mut self) -> R<()> {
         let n = self.open(K::TypeDefinition, f::NONE, C_NONE);
         if self.is_word(w::U_EXTENSION_U) {
             self.leaf(K::T__extension__, f::NONE, C_NONE)?;
@@ -373,10 +526,30 @@ impl<'a> P<'a> {
                     self.attribute_declaration()?;
                     continue;
                 }
+                T::ColonColon if self.cpp && ty.is_none() => {
+                    let at = self.w.len();
+                    if !self.type_specifier(slot(f::TYPE, Ctx::Type))? {
+                        return self.refuse();
+                    }
+                    ty = Some(at);
+                    continue;
+                }
                 _ => return Ok(ty),
             }
             let c = t.word;
-            if is_storage(c) {
+            if self.cpp && c == w::VIRTUAL {
+                self.leaf(K::Tvirtual, f::NONE, C_NONE)?;
+            } else if self.cpp && c == w::EXPLICIT {
+                let n = self.open(K::ExplicitFunctionSpecifier, f::NONE, C_NONE);
+                self.kw(K::ExplicitFunctionSpecifier, w::EXPLICIT)?;
+                self.close(n);
+            } else if self.cpp && ty.is_none() && matches!(c, w::AUTO | w::DECLTYPE | w::TYPENAME | w::CLASS) {
+                let at = self.w.len();
+                if !self.type_specifier(slot(f::TYPE, Ctx::Type))? {
+                    return self.refuse();
+                }
+                ty = Some(at);
+            } else if is_storage(c) && !(self.cpp && c == w::AUTO) {
                 let n = self.open(K::StorageClassSpecifier, f::NONE, C_NONE);
                 self.kw_any(K::StorageClassSpecifier)?;
                 self.close(n);
@@ -428,12 +601,16 @@ impl<'a> P<'a> {
     /// A `type_specifier` in slot `s`: a struct, union or enum; a sized type; a primitive type; a
     /// type's name (or a macro's, `M(type)`). Whether one was read.
     pub(super) fn type_specifier(&mut self, s: Slot) -> R<bool> {
+        if self.cpp && self.cpp_type(s)? {
+            return Ok(true);
+        }
         let t = self.tok();
         if t.kind != T::Name {
             return Ok(false);
         }
         match t.word {
             w::STRUCT | w::UNION => self.struct_specifier(s)?,
+            w::CLASS if self.cpp => self.struct_specifier(s)?,
             w::ENUM => self.enum_specifier(s)?,
             c if is_sized(c) => self.sized(s)?,
             c if is_primitive(c) => {
@@ -512,18 +689,48 @@ impl<'a> P<'a> {
 
     /// `struct` or `union`: attributes, a name, a body.
     fn struct_specifier(&mut self, s: Slot) -> R<()> {
-        let kind = if self.is_word(w::STRUCT) { K::StructSpecifier } else { K::UnionSpecifier };
+        let kind = match self.tok().word {
+            w::STRUCT => K::StructSpecifier,
+            w::CLASS => K::ClassSpecifier,
+            _ => K::UnionSpecifier,
+        };
         let n = self.open_in(kind, s);
         self.kw_any(kind)?;
-        while self.is_attribute() || self.is_word(w::U_DECLSPEC) {
+        loop {
             if self.is_word(w::U_DECLSPEC) {
                 self.declspec()?;
-            } else {
+            } else if self.is_attribute() {
                 self.attribute_specifier()?;
+            } else if self.cpp && (self.is_word(w::ALIGNAS) || self.is_word(w::ALIGNAS_)) {
+                self.qualifier()?;
+            } else if self.cpp && self.peek() == T::LBracket && self.kind_at(1) == T::LBracket {
+                self.attribute_declaration()?;
+            } else {
+                break;
             }
         }
         let mut named = false;
-        if self.is_ident() {
+        if self.cpp {
+            // `_class_name`: `X`, `A::X`, `X<T>`; then `final`, bases.
+            if (self.is_ident() || self.peek() == T::ColonColon) && !self.is_word(w::FINAL) {
+                self.class_name(slot(f::NAME, Ctx::Bare))?;
+                named = true;
+            } else if self.is_word(w::FINAL) && self.is_ident_at(1) {
+                self.class_name(slot(f::NAME, Ctx::Bare))?;
+                named = true;
+            }
+            if self.is_word(w::FINAL) || self.is_word(w::OVERRIDE) {
+                let v = self.open(K::VirtualSpecifier, f::NONE, C_NONE);
+                self.kw_any(K::VirtualSpecifier)?;
+                self.close(v);
+            }
+            if self.peek() == T::Colon && (self.kind_at(1) == T::Name || self.kind_at(1) == T::ColonColon || self.kind_at(1) == T::LBracket) {
+                self.base_classes()?;
+                if self.peek() != T::LBrace {
+                    return self.refuse();
+                }
+            }
+        } else if self.is_ident() {
             self.leaf(K::TypeIdentifier, f::NAME, C_NONE)?;
             named = true;
         }
@@ -561,16 +768,34 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         if self.peek() != T::Semi && !self.is_attribute() {
+            let mut first = true;
             loop {
                 if self.peek() == T::Colon {
                     // An unnamed bit field.
                     self.bitfield()?;
                 } else {
-                    self.declarator(Fam::Field, slot(f::DECLARATOR, Ctx::FDecl))?;
+                    let d = self.declarator(Fam::Field, slot(f::DECLARATOR, Ctx::FDecl))?;
+                    if self.cpp && first && self.holds_function(d.at) && self.method_body_ahead() {
+                        // An inline method's definition.
+                        self.rekind_keep(n.at, K::FunctionDefinition);
+                        self.method_body(K::FunctionDefinition, false)?;
+                        self.close(n);
+                        return Ok(());
+                    }
                     if self.peek() == T::Colon {
                         self.bitfield()?;
+                    } else if self.cpp && self.peek() == T::Eq {
+                        self.tk(K::FieldDeclaration, K::TEq)?;
+                        if self.peek() == T::LBrace {
+                            self.initializer_list(slot(f::DEFAULT_VALUE, Ctx::Bare))?;
+                        } else {
+                            self.expr(slot(f::DEFAULT_VALUE, Ctx::Expr))?;
+                        }
+                    } else if self.cpp && self.peek() == T::LBrace {
+                        self.initializer_list(slot(f::DEFAULT_VALUE, Ctx::Bare))?;
                     }
                 }
+                first = false;
                 match self.peek() {
                     T::Comma => self.tk(K::FieldDeclaration, K::TComma)?,
                     _ => break,
@@ -583,6 +808,29 @@ impl<'a> P<'a> {
         self.punct_tk(K::FieldDeclaration, T::Semi, false)?;
         self.close(n);
         Ok(())
+    }
+
+    /// Whether the declarator written from node `at` holds a function declarator.
+    pub(super) fn holds_function(&self, at: usize) -> bool {
+        (at..self.w.len()).any(|i| {
+            let k = unkey(self.w.key(i)).0;
+            k == K::FunctionDeclarator as u16
+        })
+    }
+
+    /// Whether a method's body follows its declarator: `{`, `try`, `= default`, `= delete`, `= 0`.
+    pub(super) fn method_body_ahead(&mut self) -> bool {
+        match self.peek() {
+            // `f() { };`: an empty initializer list and the field's `;` (tree-sitter's choice).
+            T::LBrace => !(self.kind_at(1) == T::RBrace && self.kind_at(2) == T::Semi),
+            T::Name => self.is_word(w::TRY),
+            T::Eq => {
+                let t = self.peek_at(1);
+                // `= 0;` is a default value (a pure virtual clause only where no type is).
+                t.kind == T::Name && matches!(t.word, w::DEFAULT | w::DELETE)
+            }
+            _ => false,
+        }
     }
 
     fn bitfield(&mut self) -> R<()> {
@@ -598,7 +846,26 @@ impl<'a> P<'a> {
         let n = self.open_in(K::EnumSpecifier, s);
         self.kw(K::EnumSpecifier, w::ENUM)?;
         let mut named = false;
-        if self.is_ident() {
+        if self.cpp {
+            if self.is_word(w::CLASS) || self.is_word(w::STRUCT) {
+                self.kw_any(K::EnumSpecifier)?;
+            }
+            if self.is_ident() || self.peek() == T::ColonColon {
+                self.class_name(slot(f::NAME, Ctx::Bare))?;
+                named = true;
+                if self.peek() == T::Colon {
+                    self.tk(K::EnumSpecifier, K::TColon)?;
+                    let t = self.tok();
+                    if t.kind == T::Name && is_sized(t.word) {
+                        self.sized(slot(f::BASE, Ctx::Bare))?;
+                    } else if t.kind == T::Name && is_primitive(t.word) {
+                        self.leaf(K::PrimitiveType, f::BASE, C_NONE)?;
+                    } else {
+                        self.class_name(slot(f::BASE, Ctx::Bare))?;
+                    }
+                }
+            }
+        } else if self.is_ident() {
             self.leaf(K::TypeIdentifier, f::NAME, C_NONE)?;
             named = true;
             if self.peek() == T::Colon {
@@ -724,11 +991,12 @@ impl<'a> P<'a> {
             if !self.is_ident() {
                 return self.refuse();
             }
-            if self.cpp && self.kind_at(1) == T::ColonColon {
+            // C++: any word names an attribute (`noreturn`, `fallthrough`).
+            if self.cpp && self.peek() == T::Name && self.kind_at(1) == T::ColonColon {
                 self.leaf(K::Identifier, f::PREFIX, C_NONE)?;
                 self.tk(K::Attribute, K::TColonColon)?;
             }
-            if !self.is_ident() {
+            if !self.is_ident() && !(self.cpp && self.peek() == T::Name) {
                 return self.refuse();
             }
             self.leaf(K::Identifier, f::NAME, C_NONE)?;
@@ -767,6 +1035,49 @@ impl<'a> P<'a> {
         let inner = slot(f::DECLARATOR, fam.ctx());
         let t = self.tok();
         let mut d = match t.kind {
+            T::Amp | T::AmpAmp if self.cpp => {
+                let (kind, rule) = match fam {
+                    Fam::Decl => (K::ReferenceDeclarator, K::ReferenceDeclarator),
+                    Fam::Field => (K::ReferenceDeclarator, K::ReferenceFieldDeclarator),
+                    Fam::Type => (K::ReferenceDeclarator, K::ReferenceTypeDeclarator),
+                    Fam::Abstract => (K::AbstractReferenceDeclarator, K::AbstractReferenceDeclarator),
+                };
+                // `T &... args`: a variadic reference, in no supertype.
+                let variadic = fam == Fam::Decl && self.kind_at(1) == T::DotDotDot;
+                let n = if variadic { self.open(kind, s.field, C_NONE) } else { self.open_in(kind, s) };
+                let k = punct(t.kind).expect("a reference");
+                self.tk(if variadic { K::VariadicReferenceDeclarator } else { rule }, k)?;
+                if variadic {
+                    self.variadic_declarator()?;
+                } else if fam != Fam::Abstract || self.abstract_continues() {
+                    self.declarator(fam, slot(f::NONE, fam.ctx()))?;
+                }
+                self.close(n);
+                return Ok(n);
+            }
+            T::DotDotDot if self.cpp && fam == Fam::Decl => {
+                let n = self.variadic_declarator_in(s.field)?;
+                return Ok(n);
+            }
+            T::LBracket if self.cpp && fam == Fam::Decl && self.kind_at(1) != T::LBracket => {
+                let n = self.open_in(K::StructuredBindingDeclarator, s);
+                self.list(K::StructuredBindingDeclarator, T::RBracket, true, false, |p| {
+                    if !p.is_ident() {
+                        return p.refuse();
+                    }
+                    p.leaf(K::Identifier, f::NONE, C_NONE)?;
+                    Ok(())
+                })?;
+                self.close(n);
+                n
+            }
+            T::Tilde | T::ColonColon if self.cpp && fam == Fam::Decl => self.qname(cpp::Role::Decl, s)?,
+            T::Name if self.cpp && fam == Fam::Decl && (t.word == w::OPERATOR || !self.reserved(t.word) && (self.kind_at(1) == T::ColonColon || self.kind_at(1) == T::Lt && self.angle_end(1).is_some())) => {
+                self.qname(cpp::Role::Decl, s)?
+            }
+            T::Name if self.cpp && fam == Fam::Field && (t.word == w::OPERATOR || !self.reserved(t.word) && self.kind_at(1) == T::Lt && self.angle_end(1).is_some()) => {
+                self.qname(cpp::Role::Field, s)?
+            }
             T::Star => {
                 let kind = fam.kind(K::PointerDeclarator);
                 let rule = fam.rule(K::PointerDeclarator);
@@ -814,6 +1125,9 @@ impl<'a> P<'a> {
                     // Parameters alone: a function declarator with no declarator.
                     let n = self.open_in(K::AbstractFunctionDeclarator, s);
                     self.parameter_list()?;
+                    if self.cpp {
+                        self.function_tail(K::AbstractFunctionDeclarator)?;
+                    }
                     self.close(n);
                     n
                 }
@@ -853,6 +1167,18 @@ impl<'a> P<'a> {
         // Suffixes: parameters, array sizes, attributes.
         loop {
             match self.peek() {
+                T::LParen if self.cpp => {
+                    // `T x(a + 1)`: an initializer's arguments, no parameters.
+                    if fam == Fam::Decl && !self.params_ahead() {
+                        return Ok(d);
+                    }
+                    let kind = fam.kind(K::FunctionDeclarator);
+                    let n = self.wrap(d, kind, s, inner);
+                    self.parameter_list()?;
+                    self.function_tail(kind)?;
+                    self.close(n);
+                    d = n;
+                }
                 T::LParen => {
                     let kind = fam.kind(K::FunctionDeclarator);
                     let n = self.wrap(d, kind, s, inner);
@@ -907,6 +1233,131 @@ impl<'a> P<'a> {
         }
     }
 
+    /// `...` and a name: a variadic declarator (in no supertype).
+    fn variadic_declarator(&mut self) -> R<N> {
+        self.variadic_declarator_in(f::NONE)
+    }
+
+    fn variadic_declarator_in(&mut self, field: u8) -> R<N> {
+        let n = self.open(K::VariadicDeclarator, field, C_NONE);
+        self.tk(K::VariadicDeclarator, K::TDotDotDot)?;
+        if self.is_ident() {
+            self.leaf(K::Identifier, f::NONE, C_NONE)?;
+        }
+        self.close(n);
+        Ok(n)
+    }
+
+    /// Whether the parentheses ahead hold parameters (a function declarator's), not an
+    /// initializer's arguments: each item starts as a type does and holds no operator or literal
+    /// outside brackets (before a default's `=`).
+    fn params_ahead(&mut self) -> bool {
+        self.params_at(0)
+    }
+
+    /// `params_ahead` for the parentheses at token `k`.
+    pub(super) fn params_at(&mut self, k: usize) -> bool {
+        let Some(e) = self.paren_end(k) else { return false };
+        if e == k + 1 {
+            return true;
+        }
+        let mut j = k + 1;
+        let mut item_start = true;
+        let mut depth = 0usize;
+        let mut default = false;
+        // The item's names (a qualified name's parts as one): a `*` or `&` after two is an
+        // operator's (`a * b`).
+        let mut names = 0usize;
+        while j < e {
+            let t = self.peek_at(j);
+            if item_start {
+                item_start = false;
+                let ok = match t.kind {
+                    // `true`/`false` first: an initializer's (tree-sitter's lexing); later, a type's
+                    // name where the other items are parameters.
+                    T::Name if matches!(t.word, w::TRUE | w::FALSE) => j > k + 1,
+                    T::Name => {
+                        let c = t.word;
+                        !self.reserved(c) || self.specifier_word(c) || is_primitive(c) || is_sized(c) || matches!(c, w::AUTO | w::DECLTYPE | w::TYPENAME | w::CONST | w::VOLATILE)
+                    }
+                    T::ColonColon | T::DotDotDot => true,
+                    T::LBracket => self.kind_at(j + 1) == T::LBracket,
+                    _ => false,
+                };
+                if !ok {
+                    return false;
+                }
+            }
+            // A parenthesized group after a type's name at the parameters' depth: a function
+            // type's parameters (`T(U, V)`), themselves parameters; `(*f)` is a declarator.
+            if depth == 0 && t.kind == T::LParen && j > k + 1 && matches!(self.kind_at(j - 1), T::Name | T::Gt) && !self.paren_declarator_group(j) {
+                if !self.params_at(j) {
+                    return false;
+                }
+                j = self.paren_end(j).expect("balanced") + 1;
+                continue;
+            }
+            match t.kind {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace => depth = depth.saturating_sub(1),
+                T::Lt if depth == 0 && !default => {
+                    // Template arguments.
+                    match self.angle_end(j) {
+                        Some(g) => {
+                            j = g + 1;
+                            continue;
+                        }
+                        None => return false,
+                    }
+                }
+                T::Comma if depth == 0 => {
+                    item_start = true;
+                    default = false;
+                    names = 0;
+                }
+                T::Name if depth == 0 && !default && !self.reserved(t.word) => names += 1,
+                T::ColonColon if depth == 0 && !default => names = names.saturating_sub(1),
+                T::Star | T::Amp | T::AmpAmp if depth == 0 && !default && names >= 2 => return false,
+                T::Eq if depth == 0 => default = true,
+                _ if depth == 0 && !default => {
+                    let bad = matches!(
+                        t.kind,
+                        T::Number | T::Str | T::Char | T::RawStr | T::Dot | T::Arrow | T::Plus | T::Minus | T::Slash | T::Percent | T::Bang | T::Question | T::Pipe | T::PipePipe | T::Caret | T::EqEq | T::Ne | T::Gt | T::Ge | T::Le | T::LtLt | T::GtGt | T::PlusPlus | T::MinusMinus | T::Tilde
+                    ) || t.kind == T::Name && matches!(t.word, w::NULLPTR | w::THIS | w::NEW | w::SIZEOF);
+                    if bad {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        true
+    }
+
+    /// Whether the parentheses at token `k` hold a declarator alone: `(*f)`, `(&a)[3]`'s `(&a)`,
+    /// `(**p)`, `(*)`.
+    fn paren_declarator_group(&mut self, k: usize) -> bool {
+        if !matches!(self.kind_at(k + 1), T::Star | T::Amp | T::AmpAmp | T::Caret) {
+            return false;
+        }
+        let Some(e) = self.paren_end(k) else { return false };
+        let mut j = k + 1;
+        while matches!(self.kind_at(j), T::Star | T::Amp | T::AmpAmp | T::Caret) || self.peek_at(j).kind == T::Name && { let c = self.peek_at(j).word; self.is_qualifier_word(c) } {
+            j += 1;
+        }
+        if self.is_ident_at(j) {
+            j += 1;
+        }
+        while self.kind_at(j) == T::LBracket {
+            match self.paren_end(j) {
+                Some(b) => j = b + 1,
+                None => return false,
+            }
+        }
+        j == e
+    }
+
     /// `[` qualifiers and `static`, a size or `*`, `]`.
     fn array_suffix(&mut self, rule: K) -> R<()> {
         self.tk(rule, K::TLBracket)?;
@@ -956,6 +1407,43 @@ impl<'a> P<'a> {
             self.close(n);
             return Ok(true);
         }
+        if self.cpp {
+            // C++'s `...` is a bare token: a delimiter beside it is stored.
+            let dots = |p: &mut Self, k: usize| p.kind_at(k) == T::DotDotDot;
+            if dots(self, 1) {
+                self.leaf(K::TLParen, f::NONE, C_NONE)?;
+            } else {
+                self.punct_tk(K::ParameterList, T::LParen, false)?;
+            }
+            let mut last_dots = false;
+            while self.peek() != T::RParen {
+                if self.peek() == T::DotDotDot {
+                    self.leaf(K::TDotDotDot, f::NONE, C_NONE)?;
+                    last_dots = true;
+                } else {
+                    self.parameter_declaration()?;
+                    last_dots = false;
+                }
+                if self.peek() != T::Comma {
+                    break;
+                }
+                if dots(self, 1) {
+                    self.leaf(K::TComma, f::NONE, C_NONE)?;
+                } else {
+                    self.tk(K::ParameterList, K::TComma)?;
+                }
+            }
+            if self.peek() != T::RParen {
+                return self.refuse();
+            }
+            if last_dots {
+                self.leaf(K::TRParen, f::NONE, C_NONE)?;
+            } else {
+                self.tk(K::ParameterList, K::TRParen)?;
+            }
+            self.close(n);
+            return Ok(false);
+        }
         self.list(K::ParameterList, T::RParen, true, false, |p| {
             if p.peek() == T::DotDotDot {
                 let v = p.open(K::VariadicParameter, f::NONE, C_NONE);
@@ -969,16 +1457,30 @@ impl<'a> P<'a> {
         Ok(false)
     }
 
-    fn parameter_declaration(&mut self) -> R<()> {
+    pub(super) fn parameter_declaration(&mut self) -> R<()> {
         let n = self.open(K::ParameterDeclaration, f::NONE, C_NONE);
         if self.specifiers(K::ParameterDeclaration)?.is_none() {
             return self.refuse();
         }
-        if !matches!(self.peek(), T::Comma | T::RParen) && !self.is_attribute() {
-            if self.names_ahead() {
+        let closers = |p: &mut Self| matches!(p.peek(), T::Comma | T::RParen) || p.cpp && matches!(p.peek(), T::Eq | T::Gt | T::GtGt);
+        if !closers(self) && !self.is_attribute() {
+            if self.cpp && (self.peek() == T::DotDotDot || matches!(self.peek(), T::Amp | T::AmpAmp) && self.kind_at(1) == T::DotDotDot) {
+                // `T... args`, `T&&... args`.
+                self.rekind(n.at, K::VariadicParameterDeclaration, BARE);
+                self.declarator(Fam::Decl, slot(f::DECLARATOR, Ctx::Bare))?;
+            } else if self.names_ahead() {
                 self.declarator(Fam::Decl, slot(f::DECLARATOR, Ctx::Decl))?;
             } else {
                 self.declarator(Fam::Abstract, slot(f::DECLARATOR, Ctx::ADecl))?;
+            }
+        }
+        if self.cpp && self.peek() == T::Eq {
+            self.rekind(n.at, K::OptionalParameterDeclaration, BARE);
+            self.tk(K::OptionalParameterDeclaration, K::TEq)?;
+            if self.peek() == T::LBrace {
+                self.initializer_list(slot(f::DEFAULT_VALUE, Ctx::Bare))?;
+            } else {
+                self.expr(slot(f::DEFAULT_VALUE, Ctx::Expr))?;
             }
         }
         while self.is_attribute() {
@@ -1017,6 +1519,11 @@ impl<'a> P<'a> {
             match t.kind {
                 // `(name)`: a parameter list holding a type (tree-sitter's choice).
                 T::LParen if self.is_ident_at(k + 1) && self.kind_at(k + 2) == T::RParen => return false,
+                // C++: `(a, b)`, `(A::b …`, `(T<U> …`: parameters.
+                T::LParen if self.cpp && self.is_ident_at(k + 1) && matches!(self.kind_at(k + 2), T::Comma | T::ColonColon | T::Lt | T::Name | T::Amp | T::AmpAmp) => return false,
+                T::Amp | T::AmpAmp if self.cpp => k += 1,
+                T::Name if self.cpp && t.word == w::OPERATOR => return true,
+                T::ColonColon if self.cpp => return true,
                 T::Star | T::LParen => k += 1,
                 T::Name if self.is_qualifier_word(t.word) || is_ms_pointer(t.word) || is_ms_call(t.word) => k += 1,
                 T::Name => return !self.reserved(t.word),
@@ -1040,7 +1547,7 @@ impl<'a> P<'a> {
         while self.tok().kind == T::Name && { let c = self.tok().word; self.is_qualifier_word(c) } {
             self.qualifier()?;
         }
-        if matches!(self.peek(), T::Star | T::LBracket | T::LParen) {
+        if matches!(self.peek(), T::Star | T::LBracket | T::LParen) || self.cpp && matches!(self.peek(), T::Amp | T::AmpAmp) {
             self.declarator(Fam::Abstract, slot(f::DECLARATOR, Ctx::ADecl))?;
         }
         self.close(n);
@@ -1051,14 +1558,32 @@ impl<'a> P<'a> {
     /// or qualifier first, or a name then `*`s and `)`, or a name and `)` where `cast` allows.
     pub(super) fn type_in_parens_ahead(&mut self, k: usize) -> bool {
         let t = self.peek_at(k + 1);
+        if self.cpp && (t.kind == T::ColonColon || t.kind == T::Name && !self.reserved(t.word) && matches!(self.kind_at(k + 2), T::ColonColon | T::Lt)) {
+            // A qualified or template type's name, its declarator's `*`/`&` and qualifiers.
+            let Some(e) = self.class_name_end(k + 1) else { return false };
+            let mut j = e;
+            while matches!(self.kind_at(j), T::Star | T::Amp | T::AmpAmp) || self.peek_at(j).kind == T::Name && { let c = self.peek_at(j).word; self.is_qualifier_word(c) } {
+                j += 1;
+            }
+            // `(A::b)` alone: the caller decides by what follows.
+            return j > e && self.kind_at(j) == T::RParen;
+        }
         if t.kind != T::Name {
             return false;
         }
         if self.specifier_word(t.word) && !is_storage(t.word) && t.word != w::TYPEDEF && !is_ms_call(t.word) {
+            // C++: `(int(x) …`, `(T{…} …` are functional casts.
+            if self.cpp && is_primitive(t.word) && (self.kind_at(k + 2) == T::LBrace || self.kind_at(k + 2) == T::LParen && !matches!(self.kind_at(k + 3), T::Star | T::Amp | T::AmpAmp | T::Caret | T::RParen)) {
+                return false;
+            }
             return true;
         }
         if self.reserved(t.word) || matches!(t.word, w::TRUE | w::FALSE | w::TRUE_C | w::FALSE_C | w::NULL) {
             return false;
+        }
+        // `(T (*)(…))`: a function pointer's type.
+        if self.kind_at(k + 2) == T::LParen && matches!(self.kind_at(k + 3), T::Star | T::Caret) && self.kind_at(k + 4) == T::RParen {
+            return true;
         }
         let mut j = k + 2;
         while self.kind_at(j) == T::Star || self.peek_at(j).kind == T::Name && { let c = self.peek_at(j).word; self.is_qualifier_word(c) } {

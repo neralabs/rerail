@@ -19,8 +19,9 @@
 use crate::kinds::{K, f};
 use crate::lex::{Extra, Lexer, NO_NL, R, Refusal, T, Tok, w};
 use crate::{Dialect, Tape, key, unkey};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Checkpoint, Redo, Widths, Writer};
 
+mod cpp;
 mod decl;
 mod expr;
 mod pre;
@@ -159,6 +160,29 @@ struct P<'a> {
     /// Whether an ambiguous item ahead reads as a declaration (outside function bodies, and a
     /// block's first item), not an expression.
     top: bool,
+    /// In a template's argument list outside brackets: a `>` closes it, no operator.
+    no_gt: bool,
+    /// The `>>` tokens split into two `>` (a template's closer): their tokens before, for a
+    /// rewind.
+    splits: Vec<(usize, Tok)>,
+    /// How many times the tokens ahead were lexed again (a directive's argument).
+    relexes: u32,
+}
+
+/// Where a parse that may not hold started (`P::mark`, `P::reset`).
+#[derive(Clone, Copy)]
+struct Mark {
+    i: usize,
+    n: Checkpoint,
+    /// The writer's node count: the next node's index.
+    n_len: usize,
+    e: usize,
+    last_end: u32,
+    depth: u32,
+    splits: usize,
+    relexes: u32,
+    no_gt: bool,
+    top: bool,
 }
 
 /// `src` parsed.
@@ -185,6 +209,9 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             depth: 0,
             far: 0,
             top: true,
+            no_gt: false,
+            splits: Vec::new(),
+            relexes: 0,
         };
         if let Err(r) = p.program() {
             return Err(match r {
@@ -641,9 +668,75 @@ impl<'a> P<'a> {
         self.w.set_key(at, key(k, s.field, class(k, s.ctx), extra));
     }
 
+    /// The node at `at` as kind `kind`, its field kept (a declaration found to be a definition).
+    fn rekind_keep(&mut self, at: usize, kind: K) {
+        let (_, field, _, _) = unkey(self.w.key(at));
+        self.w.set_key(at, key(kind, field as u8, class(kind, Ctx::Bare), false));
+    }
+
     /// The node at `at` as kind `kind` in slot `s` (a name found to be a type's).
     fn rekind(&mut self, at: usize, kind: K, s: Slot) {
         self.w.set_key(at, key(kind, s.field, class(kind, s.ctx), false));
+    }
+
+    /// Where the parse is: what `reset` goes back to.
+    fn mark(&mut self) -> Mark {
+        self.fill(0);
+        Mark {
+            i: self.i,
+            n: self.w.checkpoint(),
+            n_len: self.w.len(),
+            e: self.e,
+            last_end: self.last_end,
+            depth: self.depth,
+            splits: self.splits.len(),
+            relexes: self.relexes,
+            no_gt: self.no_gt,
+            top: self.top,
+        }
+    }
+
+    /// Back to `m` (a reading that did not hold). Lexing has no state, so the tokens lexed since
+    /// are kept, unless a directive's argument was lexed again since: then those after the mark's
+    /// token are lexed again.
+    fn reset(&mut self, m: Mark) {
+        while self.splits.len() > m.splits {
+            let (at, t) = self.splits.pop().expect("a split");
+            self.toks[at] = t;
+            if at + 1 < self.toks.len() {
+                self.toks.remove(at + 1);
+            }
+        }
+        self.i = m.i;
+        if self.relexes != m.relexes {
+            let t = self.toks[m.i];
+            self.toks.truncate(m.i + 1);
+            self.next = t.end as usize;
+            let keep = self.extras.partition_point(|x| x.start < t.end);
+            self.extras.truncate(keep.max(m.e));
+            self.relexes = m.relexes;
+        }
+        self.e = m.e;
+        self.w.rewind(m.n);
+        self.last_end = m.last_end;
+        self.depth = m.depth;
+        self.no_gt = m.no_gt;
+        self.top = m.top;
+    }
+
+    /// The next token, a `>>`, read as two `>`: the first left as the next token.
+    fn split_gt(&mut self) {
+        let t = self.tok();
+        debug_assert!(matches!(t.kind, T::GtGt | T::Ge | T::GtGtEq));
+        self.splits.push((self.i, t));
+        let rest = match t.kind {
+            T::GtGt => T::Gt,
+            T::GtGtEq => T::Ge,
+            _ => T::Eq,
+        };
+        // The second half stays in the buffer as the next token after the first.
+        self.toks[self.i] = Tok { kind: T::Gt, word: 0, start: t.start, end: t.start + 1, nl: t.nl };
+        self.toks.insert(self.i + 1, Tok { kind: rest, word: 0, start: t.start + 1, end: t.end, nl: NO_NL });
     }
 
     fn deeper(&mut self) -> R<()> {

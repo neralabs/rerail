@@ -55,6 +55,7 @@ impl<'a> P<'a> {
     /// The tokens from `pos` lexed again, the comments lexed from `from` on dropped (a piece over
     /// `from..pos` holds them).
     fn relex_over(&mut self, from: usize, pos: usize) {
+        self.relexes += 1;
         self.toks.truncate(self.i);
         self.next = pos;
         let keep = self.extras[self.e..].iter().position(|x| x.start as usize >= from).map_or(self.extras.len(), |k| self.e + k);
@@ -238,13 +239,24 @@ impl<'a> P<'a> {
         }
         if matches!(word, w::IF | w::ELIF) {
             self.pre_expr(slot(f::CONDITION, Ctx::Bare))?;
-            // The `\n` after the condition: a token of the rule's, here no node.
+            // The `\n` after the condition: a token of the rule's; stored where the dialect's
+            // tapes keep it (C++'s, over the blank lines after it).
             let t = self.tok();
             if t.nl == NO_NL {
                 return self.refuse();
             }
             self.flush(t.nl);
-            self.last_end = t.nl + 1;
+            if self.stores(rule, K::TNewline, f::NONE) {
+                let mut e = t.nl as usize + 1;
+                while e < self.src.len() && matches!(self.src[e], b'\n' | b'\r') {
+                    e += 1;
+                }
+                let n = self.w.push(key(K::TNewline, f::NONE, C_NONE, false), t.nl);
+                self.w.close(n, e as u32);
+                self.last_end = e as u32;
+            } else {
+                self.last_end = t.nl + 1;
+            }
         } else {
             if self.peek() != T::Name {
                 return self.refuse();

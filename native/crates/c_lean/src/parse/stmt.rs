@@ -18,6 +18,9 @@ impl<'a> P<'a> {
         if t.kind == T::Directive {
             return self.directive(level);
         }
+        if self.cpp && level != Level::Enum && self.cpp_item(level, parent)? {
+            return Ok(());
+        }
         match level {
             Level::Field => return self.field_item(parent),
             Level::Enum => return self.refuse(),
@@ -69,6 +72,11 @@ impl<'a> P<'a> {
             T::Name => {}
             _ => return self.expression_statement(s, top),
         }
+        if self.cpp {
+            if let Some(n) = self.cpp_statement(s)? {
+                return Ok(n);
+            }
+        }
         match t.word {
             w::IF => self.if_statement(s),
             w::SWITCH => {
@@ -92,7 +100,7 @@ impl<'a> P<'a> {
                 self.kw(K::DoStatement, w::DO)?;
                 self.statement(slot(f::BODY, Ctx::Stmt), false)?;
                 self.kw(K::DoStatement, w::WHILE)?;
-                self.paren_condition()?;
+                self.paren_expr(slot(f::CONDITION, Ctx::Bare))?;
                 self.punct_tk(K::DoStatement, T::Semi, false)?;
                 self.close(n);
                 Ok(n)
@@ -101,7 +109,9 @@ impl<'a> P<'a> {
             w::RETURN => {
                 let n = self.open_in(K::ReturnStatement, s);
                 self.kw(K::ReturnStatement, w::RETURN)?;
-                if self.peek() != T::Semi {
+                if self.cpp && self.peek() == T::LBrace {
+                    self.initializer_list(BARE)?;
+                } else if self.peek() != T::Semi {
                     self.comma_expr(EXPR)?;
                 }
                 self.punct_tk(K::ReturnStatement, T::Semi, false)?;
@@ -201,7 +211,8 @@ impl<'a> P<'a> {
         // A block's first item reads as a declaration where tree-sitter's GLR ties; later items
         // read as expressions (its tie-break compares the block's repeat nodes, whose shape
         // differs after the first item).
-        let top = std::mem::replace(&mut self.top, true);
+        // C++'s tapes show no such tie: every item reads as an expression.
+        let top = std::mem::replace(&mut self.top, !self.cpp);
         while self.peek() != T::RBrace {
             if self.peek() == T::Eof {
                 return self.refuse();
@@ -215,14 +226,20 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
-    /// A `condition:` `parenthesized_expression`.
+    /// A `condition:` `parenthesized_expression` (C++: a `condition_clause`).
     fn paren_condition(&mut self) -> R<N> {
+        if self.cpp {
+            return self.condition_clause();
+        }
         self.paren_expr(slot(f::CONDITION, Ctx::Bare))
     }
 
     fn if_statement(&mut self, s: Slot) -> R<N> {
         let n = self.open_in(K::IfStatement, s);
         self.kw(K::IfStatement, w::IF)?;
+        if self.cpp && self.is_word(w::CONSTEXPR) {
+            self.kw(K::IfStatement, w::CONSTEXPR)?;
+        }
         self.paren_condition()?;
         self.statement(slot(f::CONSEQUENCE, Ctx::Stmt), false)?;
         if self.is_word(w::ELSE) {
@@ -236,6 +253,9 @@ impl<'a> P<'a> {
     }
 
     fn for_statement(&mut self, s: Slot) -> R<N> {
+        if self.cpp && self.range_for_ahead() {
+            return self.range_for(s);
+        }
         let n = self.open_in(K::ForStatement, s);
         self.kw(K::ForStatement, w::FOR)?;
         self.punct_tk(K::ForStatement, T::LParen, false)?;
