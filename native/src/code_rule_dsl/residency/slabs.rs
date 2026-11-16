@@ -109,14 +109,15 @@ pub fn admit(
 
 /// The documents of in-memory tapes, resident, in order: hits from the residency, misses copied
 /// from each document's image and source (a batch whose tapes were restored before it ran).
-pub(in crate::code_rule_dsl) fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
-    let digests = docs.iter().map(|doc| doc.tape_digest().map_err(invalid)).collect::<Result<Vec<_>, _>>()?;
+pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
+    // A digest not known yet serializes the image: a miss's admission copies those bytes.
+    let (digests, mut images): (Vec<_>, Vec<_>) = docs.iter().map(|doc| doc.tape_digest_and_image().map_err(invalid)).collect::<Result<Vec<_>, _>>()?.into_iter().unzip();
     let missing = misses(&digests)?;
     if !missing.is_empty() {
         let mut owned = Vec::with_capacity(missing.len());
         for digest in &missing {
-            let doc = &docs[digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests")];
-            let (image, source, grammar) = doc.resident_parts().map_err(invalid)?;
+            let at = digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests");
+            let (image, source, grammar) = docs[at].resident_parts(images[at].take()).map_err(invalid)?;
             if image.len() < resident::HEADER_LEN {
                 return Err(invalid("a tape image shorter than its header"));
             }
@@ -125,6 +126,8 @@ pub(in crate::code_rule_dsl) fn admit_docs(docs: &[crate::code_rule_dsl::tape::T
             let plan = Plan { tape: image.len(), source: source.len(), nodes, codes, lines };
             owned.push((*digest, plan, Arc::clone(grammar), image, source));
         }
+        // The hits' images, serialized for their digests, are not copied.
+        drop(images);
         insert_parts(&digests, owned.iter().map(|(digest, plan, grammar, image, source)| (*digest, plan, &**grammar, Parts::Bytes(image, source.as_bytes()))).collect())?;
     }
     resident(&digests)
@@ -172,31 +175,30 @@ fn place(
     let by_code_at = code_start_at + aligned(4 * (plan.codes + 1));
     let tape = region(tape_at, plan.tape);
     let source = region(source_at, plan.source);
-    let source_sha256: [u8; 32] = Sha256::digest(match parts {
-        // Decompressed straight into the slab, to the frames' raw lengths exactly.
+    match parts {
+        // Decompressed straight into the slab, to the frames' raw lengths exactly, then checked: the
+        // store's bytes are the tape's and the source's whose digests the store holds.
         Parts::Frames(frames) => {
             crate::content_store::decompress_into(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
             crate::content_store::decompress_into(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))?;
-            &*source
+            let source_sha256: [u8; 32] = Sha256::digest(&*source).into();
+            if source_sha256 != frames.source_sha256 {
+                return Err(invalid("a resident source's digest"));
+            }
+            // The key is the tape's identity: its bytes and its source's (`HashKey::tape_identity`).
+            if crate::code_rule_dsl::tape::tape_identity(&source_sha256, tape) != *digest {
+                return Err(invalid("a resident tape's digest"));
+            }
         }
+        // A document in memory: its digest was made from these same bytes (`TapeDoc::tape_digest`), so
+        // there is nothing read to check them against.
         Parts::Bytes(image, text) => {
             tape.copy_from_slice(image);
             source.copy_from_slice(text);
-            &*source
         }
-    })
-    .into();
-    if let Parts::Frames(frames) = parts
-        && source_sha256 != frames.source_sha256
-    {
-        return Err(invalid("a resident source's digest"));
     }
     let tape = &*tape;
     let source = &*source;
-    // The key is the tape's identity: its bytes and its source's (`HashKey::tape_identity`).
-    if crate::code_rule_dsl::tape::tape_identity(&source_sha256, tape) != *digest {
-        return Err(invalid("a resident tape's digest"));
-    }
     let layout = resident::layout(tape).map_err(invalid)?;
     if layout.source_len != source.len()
         || layout.nodes as usize != plan.nodes
@@ -265,9 +267,11 @@ fn place(
         fill[usize::from(code)] += 1;
     }
     let widths = u32::from(layout.widths[0]) | u32::from(layout.widths[1]) << 4 | u32::from(layout.widths[2]) << 8 | u32::from(layout.from_start) << 12;
-    let at = |offset: usize| u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"));
-    let view = DocView {
-        slab: 0,
+    let count = |n: usize| u32::try_from(n).map_err(|_| invalid("a count past u32"));
+    // Parts as offsets from the document's start (`ChunkTape`, decision 0289 §4).
+    let at = |part: usize| u32::try_from(part - offset).map_err(|_| invalid("a part past 4 GiB of its document"));
+    let view = ChunkTape {
+        at: u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"))?,
         nodes: layout.nodes,
         node_base: 0,
         widths,
@@ -279,13 +283,13 @@ fn place(
         parent: at(parent_at)?,
         codes: at(codes_at)?,
         source: at(source_at)?,
-        source_len: at(plan.source)?,
+        source_len: count(plan.source)?,
         lines: at(lines_at)?,
-        line_count: at(plan.lines)?,
-        code_count: at(plan.codes)?,
+        line_count: count(plan.lines)?,
+        code_count: count(plan.codes)?,
         kid_start: at(kid_start_at)?,
         kids: at(kids_at)?,
-        kid_count: at(kid_count)?,
+        kid_count: count(kid_count)?,
         child_base: 0,
         source_base: 0,
         line_base: 0,
@@ -297,6 +301,8 @@ fn place(
         digest: *digest,
         slab: Arc::clone(slab),
         view,
+        at: offset,
+        len: plan.bytes(),
         bytes: [aligned(plan.tape), aligned(plan.source), plan.derived()],
         tape_length: plan.tape,
     })

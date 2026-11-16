@@ -347,7 +347,7 @@ type Reads = std::cell::Cell<(usize, Option<&'static std::panic::Location<'stati
 
 thread_local! {
     /// The trees this thread decoded from their versions, the shared trees it copied to edit them, and its reads of
-    /// a version's tree (`Tree`): a count and the last place each, beside the profile's
+    /// a version's tree, decoded or held beside it (`Tree`): a count and the last place each, beside the profile's
     /// decision naming every place.
     static TREE_READS: [Reads; 3] = const { [std::cell::Cell::new((0, None)), std::cell::Cell::new((0, None)), std::cell::Cell::new((0, None))] };
 }
@@ -363,7 +363,7 @@ pub fn trees_copied() -> (usize, Option<String>) {
     tree_reads(1)
 }
 
-/// How many times this thread read a version's tree so far, and where the
+/// How many times this thread read a version's tree (decoded, or held beside the version) so far, and where the
 /// last was (`trees_decoded`): a run that reads its versions alone reads none.
 pub fn version_trees_read() -> (usize, Option<String>) {
     tree_reads(2)
@@ -391,6 +391,14 @@ impl Tree {
         let _ = tree.set(program);
         Tree { tree: std::sync::Arc::new(tree), of: None }
     }
+    /// The tree of version `v`, held as `program` where the caller made it and imaged it (the prepared program, its
+    /// passes' own tree, 0281 step 4): moved in, not copied; decoded by no reader, and each reader named as one of a
+    /// version's tree.
+    pub fn beside(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, program: Program) -> Self {
+        let tree = std::sync::OnceLock::new();
+        let _ = tree.set(program);
+        Tree { tree: std::sync::Arc::new(tree), of: Some((v, None)) }
+    }
     /// The tree of version `v`, decoded only where a reader asks.
     pub fn of(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Self {
         Tree { tree: Default::default(), of: Some((v, None)) }
@@ -404,7 +412,8 @@ impl Tree {
     pub fn placed(&self) -> super::Result<super::body::Placed> {
         match &self.of {
             Some((v, m)) => {
-                // A tree decoded from its version is of the version's rules and fields; maintained parts are in `m`.
+                // A tree decoded from or held beside its version is of the version's rules and fields; maintained parts
+                // are in `m`.
                 debug_assert!(self.tree.get().is_none_or(|p| m.is_some() || (p.again.is_empty() && p.together.is_empty())), "a version's tree has maintained parts the version does not state");
                 Ok(match m {
                     Some(_) => super::body::Placed::derived(v.clone(), m.clone()),
@@ -412,6 +421,14 @@ impl Tree {
                 })
             }
             None => super::body::Placed::of_program(self.get()),
+        }
+    }
+    /// The version it is held beside or decoded from, where it has no maintained parts: what a reader reads in place
+    /// of the tree.
+    pub fn version(&self) -> Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+        match &self.of {
+            Some((v, None)) => Some(v),
+            _ => None,
         }
     }
     /// The tree, where it was given rather than decoded from a version: what a check against the version reads.
@@ -513,7 +530,8 @@ impl Lowered {
         let placed = match &self.version {
             Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()),
             Some(v) if !self.tree_maintained() => super::body::Placed::whole(v.clone()),
-            _ => return super::body::Placed::of_program(&self.program),
+            // The tree's version where it is held beside one (the prepared program's), else an image made of it.
+            _ => return self.program.placed(),
         };
         // A version made from another's is stated beside the tree until the run reads no tree (t36 item 7): in a debug
         // build (every test's), it is checked to be the tree's program, so the two statements cannot drift apart unseen.
@@ -559,7 +577,7 @@ impl Lowered {
         Ok(match &self.version {
             Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()).digest(),
             Some(v) if !self.tree_maintained() => super::body::Placed::whole(v.clone()).digest(),
-            _ => super::body::Placed::of_program(&self.program)?.digest(),
+            _ => self.program.placed()?.digest(),
         })
     }
 

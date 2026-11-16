@@ -180,10 +180,10 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> F
         typedefs: Default::default(),
         bindings: Default::default(),
     };
-    for id in 0..n as u32 {
+    for (id, parent) in (0..n as u32).zip(doc.transducer_parents()) {
         let node = doc.node(id);
         f.kind.push(kind_sym(&node.kind()));
-        f.parent.push(doc.transducer_parent(id).unwrap_or(NONE));
+        f.parent.push(parent.unwrap_or(NONE));
         let span = doc.transducer_span(id);
         f.start.push(span.start as u32);
         f.end.push(span.end as u32);

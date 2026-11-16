@@ -2,7 +2,7 @@ use super::*;
 use crate::content_store::tests::store;
 
 fn manifest(id: i64, root: i64, last_time: i64, sources: &[i64]) -> Manifest {
-    Manifest { id, root, last_time, grammar_version: 1, tape_format: 1, plan: vec![id as u8; 32], lane: None, sources: sources.to_vec() }
+    Manifest { id, root, last_time, grammar_version: 1, tape_format: 1, plan: vec![id as u8; 32], lane: None, policy: None, sources: sources.to_vec() }
 }
 
 fn sizes(n: i64, bytes: u64) -> Sizes {
@@ -387,6 +387,43 @@ fn each_lane_keeps_its_last_runs_plans() {
         run([lane + 100; 32], lane);
     }
     assert_eq!(plans[1..].iter().map(|p| live(*p)).collect::<Vec<_>>(), vec![Some(0), Some(0), Some(1), Some(1)]);
+}
+
+/// A lane names its policy set (where its programs come from, and the run's options): an edit of the set's programs
+/// is a new lane of the same set, and supersedes the older, which keeps no protection (its plan dies, and the frames
+/// it alone held go with the next sweep, decision 0227). Another set's lane over the root keeps its own, and a lane
+/// naming no set is protected as before. A run back on the older programs (an edit undone) supersedes the newer.
+/// Q19: each edit had left its predecessor protected, up to `protected_lanes` of them, and the cross part's space,
+/// one per root, grew with every edit.
+#[test]
+fn a_policy_sets_newer_lane_supersedes_its_older() {
+    let (_path, store) = store("corpus-policy-sets");
+    // Decisions only when one is worth it (`corpus_decision_worth`): an edit must make one.
+    let policy = CorpusPolicy { protected_runs: 1, protected_lanes: 6, high_water: 0, low_water: 0, backstop_secs: 86_400, decide_every_runs: 1_000, decide_every_secs: 86_400, ..CorpusPolicy::default() };
+    // A dead plan's row goes in the same pass (its memo rows first): not live either way.
+    let live = |plan: [u8; 32]| -> bool {
+        store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get::<_, i64>(0)).optional().unwrap() == Some(1)
+    };
+    let source = store.put_source(&noise(71, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(571, 256)).unwrap();
+    let mut now = 1_000;
+    let mut run = |plan: [u8; 32], lane: u8, set: Option<u8>| {
+        now += 1;
+        store.record_corpus_run_policy("/repo", &[source], 7, 9, plan, &[], Some([lane; 32]), set.map(|s| [s; 32]), now).unwrap();
+        store.collect_corpus_pass(&policy, now).unwrap();
+    };
+    let (a, b, none) = ([101u8; 32], [102u8; 32], [103u8; 32]);
+    run(a, 1, Some(1));
+    run(b, 2, Some(2));
+    run(none, 3, None);
+    assert_eq!([a, b, none].map(live), [true; 3], "three lanes, each protected");
+    // Set 1's programs edited: lane 4.
+    let edited = [104u8; 32];
+    run(edited, 4, Some(1));
+    assert_eq!([a, edited, b, none].map(live), [false, true, true, true], "the edited set's older lane superseded, the others kept");
+    // The edit undone: lane 1 again, and lane 4 superseded.
+    run(a, 1, Some(1));
+    assert_eq!([a, edited, b, none].map(live), [true, false, true, true], "the undone edit's lane superseded");
 }
 
 #[test]

@@ -13,7 +13,8 @@ mod tier1_aot {
     include!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
 }
 #[cfg(feature = "generated")]
-#[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_imports, clippy::all)]
+// The lints `rust_stream` allows in what it writes (its own `#![allow]`, which the build script drops).
+#[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, non_snake_case, dead_code, clippy::all)]
 mod tier2_aot {
     include!(concat!(env!("OUT_DIR"), "/tier2_aot.rs"));
 }
@@ -40,7 +41,12 @@ pub struct Tiers {
 #[cfg(feature = "generated")]
 pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
-    let mut c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules)?;
+    // Compiled for Rust's NEON as the source was (`rr_aot_gen`): its bit tests (`BIT_TEST`).
+    // The same meaning either way; the flag back as it was for the JIT's compiles after.
+    let bit_test = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
+    let c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules);
+    rerail_compiler::native_cpu_lanes::BIT_TEST.store(bit_test, std::sync::atomic::Ordering::Relaxed);
+    let mut c = c?;
     let one = clif_rust::rust_source(&c.parser)?;
     let (widths, tag) = c.parser.tier2.widths_tag();
     let two = rust_stream::rust_source_at(&native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?, widths, tag)?;

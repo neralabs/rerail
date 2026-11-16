@@ -4625,9 +4625,15 @@ pub fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Pr
             }
         }
         decision(&topic, || match explained.len() {
-            0 => "yes: no rule reads it, so no node's is made".to_owned(),
+            0 => "no rule reads it: it stays an input, which a run that reads nothing of it binds for no node".to_owned(),
             n => format!("{}: {n} readers ask, by {} request rules", if applied { "yes" } else { "possible (RERAIL_NODE_SOURCES=eager)" }, requests.len()),
         });
+        // Read by no rule, an attribute has nothing to answer: answered anyway, its answer and eager rules made it a
+        // derived relation of the program, which a caller binding the base relations by name (the SQL executor's
+        // snapshot, whose `value` is an input) refused as an output that already exists.
+        if requests.is_empty() {
+            continue;
+        }
         for e in explained {
             decision(&format!("{rel} on request: readers"), || e);
         }

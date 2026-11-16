@@ -3407,6 +3407,7 @@ pub mod retained_grid_frontier_runtime {
     }
     #[test]
     fn inputs_absent_field_uses_shared_facts_for_wide_and_file_local_inputs() {
+        crate::test_languages();
         let wide = (0..130)
             .map(|i| format!("item_{i} = value\n"))
             .collect::<String>();

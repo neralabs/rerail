@@ -27,19 +27,35 @@ fn unquote_reads_back_an_identifier() {
     }
 }
 
-/// An export named like a base relation is held with positional columns (`c0`, `c1`) and read by the base names
-/// (`value(n, v)`), as its virtual table names them (`core::input_column_name`). Since 0174 answers `value` on
-/// request, it reaches the cross-file part as an export, and `view` looked for `n` among `c0, c1`: the cross part read
-/// it with `SELECT n, v FROM main.value`, which strict mode refuses inside the waves (0104), so a cold run aborted
-/// and the next run had nothing kept to be warm over.
+/// A relation the file-local part derives and hands on under a base input's name is bound as an export, its columns
+/// positional (`c0`, `c1`), while statements name its columns as the input's (`plan::sql_col`): `value` (decision
+/// 0292 §3: `@rr_node_value` read in the chunk) was read as `SELECT n, v FROM main.value`, and `view` found no column
+/// `n` in the bound export and read it through SQL, which strict mode refuses inside the waves (0104).
 #[test]
-fn an_export_named_like_a_base_relation_is_read_in_place_by_the_base_names() {
+fn an_export_named_like_an_input_is_read_in_place_by_the_inputs_column_names() {
     let db = Connection::open_in_memory().unwrap();
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
-    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![3, 9]), Some(vec![11, 12])]);
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![4, 7]), Some(vec![40, 70])]);
     modules.bind(&db, "value", source).unwrap();
-    let all = view(&db, "main.value", "n, v").expect("read in place");
-    assert_eq!((all.src.len(), all.cols.as_slice()), (2, &[0usize, 1][..]));
-    let some = view(&db, "main.value WHERE n = 9", "v").expect("read in place, filtered");
-    assert_eq!(some.ids.as_deref(), Some(&[1u32][..]));
+    let (n, v) = (crate::code_rule_dsl::logic::plan::sql_col("value", 0), crate::code_rule_dsl::logic::plan::sql_col("value", 1));
+    assert_eq!((n.as_str(), v.as_str()), ("n", "v"), "the statement names `value`'s columns as the input's");
+    let all = view(&db, "main.value", &format!("{n}, {v}")).expect("read in place");
+    assert_eq!(all.cols, [0, 1]);
+    let some = view(&db, &format!("main.value WHERE {n} = 7"), &v).expect("read in place, filtered");
+    assert_eq!((some.cols.as_slice(), some.ids.as_deref()), (&[1usize][..], Some(&[1u32][..])));
+}
+
+/// Its table is named by the base names when first bound (`vtab::named`), so a later binding of the same shape is
+/// compared by them too: the kept inputs' `value` (`c0`, `c1`) bound again over the chunks' failed "native binding
+/// schema changed" on an edit. A source of another shape is still refused.
+#[test]
+fn an_export_named_like_an_input_is_bound_again_with_the_same_columns() {
+    let db = Connection::open_in_memory().unwrap();
+    let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
+    let source = |rows: Vec<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rows.clone()), Some(rows)]);
+    modules.bind(&db, "value", source(vec![4])).unwrap();
+    modules.bind(&db, "value", source(vec![4, 7])).expect("bound again, the same columns");
+    assert_eq!(crate::code_rule_dsl::facts::vtab::bound_source(&db, "value").unwrap().len(), 2);
+    let other = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(vec![1])]);
+    assert!(modules.bind(&db, "value", other).is_err(), "another shape is refused");
 }

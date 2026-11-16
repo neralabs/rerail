@@ -128,6 +128,12 @@ pub enum Boundary {
     Chunk,
     /// A round of the cone (decision 0145).
     ConeRound,
+    /// The file-local part done, before the cross part: what it left queued (the files' stats) is written while the
+    /// cross part runs (decision 0296).
+    Local,
+    /// The cross part's rows derived: its new atoms (names it made) are written while its kept part is framed
+    /// (decision 0296).
+    CrossDerived,
     /// The cross part done: its kept strata's frames, retained rows, rounds, statistics.
     Cross,
     /// The run's end: the cross memo, the manifest, the atoms, the kept plans.

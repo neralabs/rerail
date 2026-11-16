@@ -106,3 +106,12 @@ every run (29,747, the same set).
   long-text read goes with the file-local join that binds its node (which also fixed two tests that failed on many
   threads). Phase 1 3.80/3.77 s → 3.60/3.53 s; the stratum's joins 0.70 s → 0.30 s on its thread (1.1 s CPU in
   650 morsels). "Answer load" was waiting for documents built on the pool, not serial work.
+- **Then (decision 0294), the cross-file part:** its strata are a chain (each reads the one before), and a level's
+  strata already overlap; the big walks were in morsels, but the work around them was not. On the M5 Max under load
+  (the M3 unreachable): spans per step showed `sym_of__sup0`'s scan order sorted on one thread (0.19 s), its morsels'
+  runs merged on one thread (0.13 s), and a false slow-join flag (a cut walk in morsels counted more work than its
+  counts, stopped short of its check, and was judged by a second walk's 19 rows) taking exact statistics (0.1 s).
+  Then each walk going on from a cut sorted all 2.2 M rows again. Sorts, merges, key reads and statistics now run
+  on the pool, a cut walk counts as one, and its rows left are read in their order: the cross part's strata 1.74 s →
+  1.07 s, `sym_of__sup0` 0.5–0.6 s → 0.18 s, the same findings. A whole plan's exact statistics read the wrong join
+  and panicked about one run in six (fixed, afe32582a).

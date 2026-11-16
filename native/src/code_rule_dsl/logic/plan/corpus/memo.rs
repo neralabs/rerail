@@ -33,6 +33,13 @@ pub(super) fn base_key(rel: &str) -> String {
 /// takes more of them kept over it (`identities_of`, decision 0280).
 pub(super) const COVERED: &str = "own:covered";
 
+/// What a hit read for its outputs alone decodes besides its outputs (decision 0117 step 1): its `own:` rows (its tree
+/// counts and `COVERED`), not its export or base rows, which the kept inputs hold. An entry is one image (decision
+/// 0240 §4), so it is held whole and only these are decoded; `Found::whole` decodes the rest if the kept inputs fail.
+pub(super) fn outputs_alone(rel: &str) -> bool {
+    rel.starts_with("own:")
+}
+
 /// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
 /// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
 /// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
@@ -435,6 +442,31 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
                 None if store => Some(s.put_source_hashed(text.as_bytes(), hash, &[])?),
                 None => None,
             };
+            late.lock().expect("the late sources").extend(found);
+            Ok(())
+        }),
+    );
+}
+
+/// The sources of contents the run named by their digests (`Content::Unstored`: read in the waves, where the store is
+/// not asked, by files the stat index does not trust yet), for the run's manifest (`late`): looked up together on the
+/// store's writer, behind the writes queued before (a new content's tape stores its source), and pinned as
+/// `stored_source` pins. A second run in one process finds those files' tapes held and writes none, so only this
+/// names them (Q24).
+pub(super) fn named_digests(cache: &ContentStore, digests: Vec<[u8; 32]>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    if digests.is_empty() {
+        return;
+    }
+    let late = std::sync::Arc::clone(late);
+    cache.write_back_syms(
+        crate::content_store::write_back::Syms::None,
+        "the sources the manifest names by digest",
+        digests.len() * 32,
+        Vec::new(),
+        Box::new(move |s| {
+            let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+            let found: Vec<SourceId> = s.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
+            s.pin_held_sources(&found)?;
             late.lock().expect("the late sources").extend(found);
             Ok(())
         }),

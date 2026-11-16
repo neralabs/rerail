@@ -502,6 +502,12 @@ pub use rerail_tape_format::Columns as Tape;
 /// The tape of `src`, a Python file: tree-sitter-python's, as the engine encodes it. `Err` where the
 /// parser leaves the file to tree-sitter (a syntax error, a construct it does not read).
 pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
+    tape_into(src, &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns)
+}
+
+/// [`tape`], the parser's writer finished by `finish`: format 15's columns (`tape`), or format 16 written in one pass
+/// over it (`Writer::finish_16`, decision 0293).
+pub fn tape_into<T>(src: &[u8], finish: &mut dyn FnMut(rerail_tape_format::Writer) -> Result<T, rerail_tape_format::Redo>) -> Result<T, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
@@ -510,7 +516,7 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
     let mut joins: Vec<u32> = Vec::new();
     loop {
         let lexed = lex::lex_joined(src, &joins)?;
-        match parse::parse(src, &lexed, &joins) {
+        match parse::parse(src, &lexed, &joins, finish) {
             Ok(t) => return Ok(t),
             Err(Ok(parse::Relex::Join(at))) => joins.insert(joins.partition_point(|&j| j < at), at),
             Err(Err(r)) => return Err(r),

@@ -36,29 +36,29 @@ struct GlobalArenas { SharedArena arenas[14]; atomic_uint taskCursor; uint reser
 struct Task { uint evaluation,ordinal,file,program,root,workLimit; };
 
 // The tapes a batch reads (decision 0032). Resident (`RERAIL_RESIDENT`, the label passes): each
-// task's file is a document in the slabs, and `nodes`, `children`, `lineStarts` and `files` are
+// task's file is a document in the chunk, and `nodes`, `children`, `lineStarts` and `files` are
 // tables over it that answer in the batch's numbering, as the packed batch's buffers did: a node
 // record is made from the tape when read, children from the document's child lists, line starts
 // and spans offset by the document's place in the batch's source. `source` is the document's
 // bytes, addressed by the batch's offsets. Packed: the packed batch's buffers.
 #ifdef RERAIL_RESIDENT
-struct NodeTable { Slabs s; DocView d;
+struct NodeTable { device const uchar* s; ChunkTape d;
   Node operator[](uint g) const {
-    uint i=g-d.nodeBase;device const uint* kidStart=(device const uint*)(tape_slab(s,d.slab)+d.kidStart);
+    uint i=g-d.node_base;device const uint* kidStart=(device const uint*)(tape_doc(s,d)+d.kid_start);
     Node n;uint p=tape_parent(s,d,i),a=tape_next(s,d,i),b=tape_next_named(s,d,i);
-    n.parent=p==TAPE_NONE?NONE:p+d.nodeBase;n.nextAny=a==TAPE_NONE?NONE:a+d.nodeBase;n.nextNamed=b==TAPE_NONE?NONE:b+d.nodeBase;
-    n.childStart=d.childBase+kidStart[i];n.childCount=kidStart[i+1u]-kidStart[i];n.descendantEnd=g+tape_size(s,d,i);
-    n.sourceStart=d.sourceBase+tape_start(s,d,i);n.sourceEnd=d.sourceBase+tape_end(s,d,i);
+    n.parent=p==TAPE_NONE?NONE:p+d.node_base;n.nextAny=a==TAPE_NONE?NONE:a+d.node_base;n.nextNamed=b==TAPE_NONE?NONE:b+d.node_base;
+    n.childStart=d.child_base+kidStart[i];n.childCount=kidStart[i+1u]-kidStart[i];n.descendantEnd=g+tape_size(s,d,i);
+    n.sourceStart=d.source_base+tape_start(s,d,i);n.sourceEnd=d.source_base+tape_end(s,d,i);
     device const DeviceCode& c=tape_code(s,d,i);n.kind=c.kind;n.field=c.field;n.flags=c.flags;return n;
   }
-  bool has_class(uint g,uint kind) const {return tape_has_class(s,d,g-d.nodeBase,kind);}
+  bool has_class(uint g,uint kind) const {return tape_has_class(s,d,g-d.node_base,kind);}
 };
 struct ChildTable { device const uint* kids; uint childBase,nodeBase; uint operator[](uint at) const {return kids[at-childBase]+nodeBase;} };
 struct LineTable { device const uint* lines; uint lineBase,sourceBase; uint operator[](uint at) const {return lines[at-lineBase]+sourceBase;} };
-struct FileTable { device const DocView* docs;
-  File operator[](uint i) const {DocView d=docs[i];File f;f.nodeStart=d.nodeBase;f.nodeCount=d.nodes;f.sourceStart=d.sourceBase;f.sourceLength=d.sourceLen;f.lineStart=d.lineBase;f.lineCount=d.lineCount;f.superStart=0u;f.superCount=0u;return f;}
+struct FileTable { device const ChunkTape* docs;
+  File operator[](uint i) const {ChunkTape d=docs[i];File f;f.nodeStart=d.node_base;f.nodeCount=d.nodes;f.sourceStart=d.source_base;f.sourceLength=d.source_len;f.lineStart=d.line_base;f.lineCount=d.line_count;f.superStart=0u;f.superCount=0u;return f;}
 };
-#define K_FILES device const DocView*
+#define K_FILES device const ChunkTape*
 #define K_NODES device const uchar*
 #define K_CHILDREN device const uchar*
 #define K_SOURCE device const uchar*
@@ -192,19 +192,19 @@ void run_task_in(Task task,constant BatchHeader& header,FILE_TABLE files,NODE_TA
 // A resident task's work limit, as `PackedBatch` computes a task's (`MAX_WORK_PER_TASK`): the
 // root's subtree (its file, where the program repeats) times the evaluation's work per node (its
 // program's words times 4096; bit 31: the program repeats), within [4096, 2^26].
-inline uint resident_work(thread const Slabs& slabs,DocView doc,uint perNode,uint local){
- ulong nodes=(perNode&0x80000000u)!=0u?doc.nodes:tape_size(slabs,doc,local);
+inline uint resident_work(device const uchar* chunk,ChunkTape doc,uint perNode,uint local){
+ ulong nodes=(perNode&0x80000000u)!=0u?doc.nodes:tape_size(chunk,doc,local);
  return uint(clamp(nodes*ulong(perNode&0x7fffffffu),ulong(4096u),ulong(1u<<26u)));
 }
 // A resident label batch's task `index` (decision 0033): no task records. Its evaluation names
 // its program, its document and its roots' segments in `segs` (the run's, bound in place of the
 // tasks); the root is its evaluation's next, read in place.
-inline Task resident_task(device const uint4* segs,K_FILES files,thread const Slabs& slabs,device const Evaluation& evaluation,uint evaluationIndex,uint index){
- DocView doc=files[evaluation.file];
+inline Task resident_task(device const uint4* segs,K_FILES files,device const uchar* chunk,device const Evaluation& evaluation,uint evaluationIndex,uint index){
+ ChunkTape doc=files[evaluation.file];
  uint i=evaluation.rootBase+(index-evaluation.taskStart);
  uint4 seg=segs[root_segment(segs,evaluation.rootSegment,i)];
- uint local=root_local(slabs,doc,segs,seg,i-seg.w);
- return Task{evaluationIndex,index,evaluation.file,evaluation.program,doc.nodeBase+local,resident_work(slabs,doc,evaluation.workLimit,local)};
+ uint local=root_local(chunk,doc,segs,seg,i-seg.w);
+ return Task{evaluationIndex,index,evaluation.file,evaluation.program,doc.node_base+local,resident_work(chunk,doc,evaluation.workLimit,local)};
 }
 // The evaluation holding task `index`: tasks are numbered through the evaluations in order.
 inline uint resident_evaluation(device const Evaluation* evaluations,uint count,uint index){uint low=0u,high=count;while(high-low>1u){uint middle=(low+high)/2u;if(evaluations[middle].taskStart<=index)low=middle;else high=middle;}return low;}
@@ -212,9 +212,9 @@ inline uint resident_evaluation(device const Evaluation* evaluations,uint count,
 
 void run_task(Task task,constant BatchHeader& header,K_FILES files,K_NODES nodes,device const Program* programs,device const uint* words,device const ulong* longs,K_CHILDREN children,device const Supertype* supertypes,device Pending* pending,device Link* captures,device Link* cursors,device RepeatLink* repeats,device uchar* schedulerStorage,device Result* results,device Status& status,device const ValueRecord* values,device const StringRecord* strings,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device const Assertion* assertions,device const uint* assertionData,device const uchar* stringBytes,K_SOURCE source,device uint* valueWork,K_LINES lineStarts,device FinalCapture* finalCaptures,device uchar* outputStorage,device Evaluation& evaluation,device Evaluation& sharedEvaluation){
 #ifdef RERAIL_RESIDENT
- DocView doc=files[task.file];Slabs slabs={nodes,children,source,lineStarts};device const uchar* slab=tape_slab(slabs,doc.slab);
- NodeTable nodeTable={slabs,doc};ChildTable childTable={(device const uint*)(slab+doc.kids),doc.childBase,doc.nodeBase};LineTable lineTable={(device const uint*)(slab+doc.lines),doc.lineBase,doc.sourceBase};FileTable fileTable={files};
- run_task_in(task,header,fileTable,nodeTable,programs,words,longs,childTable,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,tape_slab(slabs,doc.slab)+doc.source-doc.sourceBase,valueWork,lineTable,finalCaptures,outputStorage,evaluation,sharedEvaluation);
+ ChunkTape doc=files[task.file];device const uchar* chunk=nodes;device const uchar* slab=tape_doc(chunk,doc);
+ NodeTable nodeTable={chunk,doc};ChildTable childTable={(device const uint*)(slab+doc.kids),doc.child_base,doc.node_base};LineTable lineTable={(device const uint*)(slab+doc.lines),doc.line_base,doc.source_base};FileTable fileTable={files};
+ run_task_in(task,header,fileTable,nodeTable,programs,words,longs,childTable,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,tape_doc(chunk,doc)+doc.source-doc.source_base,valueWork,lineTable,finalCaptures,outputStorage,evaluation,sharedEvaluation);
 #else
  run_task_in(task,header,files,nodes,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,source,valueWork,lineStarts,finalCaptures,outputStorage,evaluation,sharedEvaluation);
 #endif
@@ -247,7 +247,7 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
  }
 #ifdef RERAIL_RESIDENT
  // A lane's status is its own, reused by its tasks; it keeps their first error (`label_sink`).
- Slabs slabs={nodes,children,source,lineStarts};
+ device const uchar* chunk=nodes;
  uint firstError=0u;
 #endif
  while(true){
@@ -256,7 +256,7 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
 #ifdef RERAIL_RESIDENT
   uint evaluationIndex=resident_evaluation(evaluations,header.evaluationCount,task);
   device Evaluation& evaluation=evaluations[evaluationIndex];
-  Task own=resident_task((device const uint4*)tasks,files,slabs,evaluation,evaluationIndex,task);
+  Task own=resident_task((device const uint4*)tasks,files,chunk,evaluation,evaluationIndex,task);
   device Status& status=statuses[tid];
 #else
   device Evaluation& evaluation=evaluations[tasks[task].evaluation];

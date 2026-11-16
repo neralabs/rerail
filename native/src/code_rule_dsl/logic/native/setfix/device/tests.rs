@@ -586,19 +586,15 @@
         if !mj::available() {
             return;
         }
-        {
-            use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
-            use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
-            register(Family::Python, &Pack::<Python>::NEW);
-            language::register_base(Family::Python, &Pack::<Python>::NEW);
-        }
+        crate::test_languages();
         let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "def f(a, b:\n    return [a for\n", "", "@d\ndef g():\n    try:\n        pass\n    except E as e:\n        raise\n"];
-        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+        let make = || -> Vec<Document> { texts.iter().enumerate().map(|(at, source)| {
             let path = format!("d{at}.py");
             let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
             let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
             Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
-        }).collect();
+        }).collect() };
+        let docs = make();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let store_path = std::env::temp_dir().join(format!("rerail-chunk-views-{}-{nonce}.sqlite", std::process::id()));
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
@@ -625,6 +621,28 @@
             }
         }
         assert_eq!(seen, 8);
+        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        {
+            use crate::code_rule_dsl::facts::vtab::syntax::{Projection, shaped};
+            let core_views = shaped(&store, make(), &Projection::core()).unwrap();
+            for name in ["line", "end_line", "col", "docof"] {
+                let src = &core_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+                let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
+                let n = src.len();
+                assert_eq!(d.rows, n, "{name}");
+                assert!(n > 0, "{name}: rows");
+                for cols in [vec![0, 1], vec![1]] {
+                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                    let mut batch = mj::Batch::new().expect("the device");
+                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
+                    batch.finish().unwrap();
+                    for (j, &c) in cols.iter().enumerate() {
+                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                        assert_eq!(out.column(j), &host[..], "{name}: column {c}");
+                    }
+                }
+            }
+        }
         // The kind-set axes and containment, read whole: the batch's solve, its pairs made ids on the device.
         use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
         use crate::code_rule_dsl::facts::nearest::Binding;
@@ -680,6 +698,18 @@
             batch.finish().unwrap();
             assert_eq!(out.column(1), &(0..n).map(|r| host.value(r, 1)).collect::<Vec<_>>()[..]);
         }
+        // Containment over every kind, in one submission (space sized before the count) and past a bound of no rows
+        // (written again once the total is read): the same pairs, as many as the host's containment.
+        let chunk = batch.chunk();
+        let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<u64> {
+            // SAFETY: the solve completed; `len` pairs at `pairs`.
+            unsafe { std::slice::from_raw_parts(chunk.block.ptr::<u64>(c.pairs), c.len) }.to_vec()
+        };
+        let once = mj::axis_in_chunk_bounded(chunk, None, true, 8).unwrap();
+        let again = mj::axis_in_chunk_bounded(chunk, None, true, 0).unwrap();
+        assert!(once.len > 0);
+        assert_eq!(once.len, Within::new(Arc::clone(&batch), Mode::Tree).len());
+        assert_eq!(read(&again), read(&once));
         // `has` is made per looked-up node, not by the batch's solve: uploaded as before.
         assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).device_view().is_none());
         let _ = std::fs::remove_file(&store_path);

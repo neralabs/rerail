@@ -207,7 +207,7 @@ worktree has its own, `<worktree>/target/relax`.
 | Build-script outputs | `<root>/build` | By reachability, the same way. |
 | Installed versions | `~/.local/share/rerail-relax/v/` | The build script keeps the installed version and the one before it (about 110 MB each), and any a process runs from. Not `v/old-src`, an earlier script's checkout that can hold edits. |
 | Relax's own build | `~/Library/Caches/rerail-relax/target` | `clean-target` after each build of Relax. |
-| Run dirs no run uses | `<worktree>/target/relax`, other `~/.relax/target/<key>` | `clean-target` (the farm runs it hourly per target directory) removes one idle for 6 hours (`--relax-keep-hours`), whole. Kept: the most recently used shared run dir, whatever its age, and any a Relax process runs in (each holds a lock in `cache/live`). It renames the dir aside under those locks before deleting it, so a Relax that starts meanwhile makes a fresh one. |
+| Run dirs no run uses | `<worktree>/target/relax`, other `~/.relax/target/<key>` | `clean-target` (the farm runs it every 15 minutes per target directory) removes one idle for 6 hours (`--relax-keep-hours`), whole. Kept: the most recently used shared run dir, whatever its age, and any a Relax process runs in (each holds a lock in `cache/live`). It renames the dir aside under those locks before deleting it, so a Relax that starts meanwhile makes a fresh one. |
 
 Measured on 2026-11-15: `~/.relax` 9.6 GB (stores 8.4 GB, native builds 1.0 GB, shared code
 110 MB). Per-worktree roots from before sharing: 9.0 GB and 3.9 GB. `relax clean` removes a

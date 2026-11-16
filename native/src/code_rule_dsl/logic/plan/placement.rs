@@ -157,10 +157,13 @@ const DEVICE_SORT: f64 = 45e-6;
 /// inserted, over the strata whose every run was on the GPU). At the 40 ns measured before (the read alone), a pure
 /// copy (`kind(n, k) :- node(_, n, k, _, _)`) priced as cheaper on the GPU and cost the same there.
 const DEVICE_ROW_BACK: f64 = 75e-9;
-/// A value of a relation the device reads, copied into its upload (the host reads the source's row and writes the
-/// device's column), per column an atom reads (decision 0277): 7 ns, measured on the same run (98.7 ms for 13.7 M
-/// values). Priced for every stratum, though a relation an earlier stratum of the chunk uploaded is found resident.
-const DEVICE_UPLOAD_PER_VALUE: f64 = 7e-9;
+/// A value of a relation the device reads, per column an atom reads (decision 0277), in the host's CPU: 2.2 ns,
+/// measured on PostHog's `posthog/hogql` (2026-11-16, the profile's split of the uploads: 13.9 ms for 6.3 M values).
+/// A flat relation's value is a copy (1.7 ns), a view's made on the host a row read (2.5 ns), and a view's made on
+/// the device (decision 0289) its share of the chunk block's build, of the axes' solve and of the kernel (2.7 ns).
+/// It was 7 ns while every view's rows were made on the host (98.7 ms for 13.7 M values, 2026-11-14). Priced for
+/// every stratum, though a relation an earlier stratum of the chunk uploaded is found resident.
+const DEVICE_UPLOAD_PER_VALUE: f64 = 2.2e-9;
 
 /// CPU: seconds per unit of planned work, and per stratum (measured; see the module's comment).
 const CPU_PER_WORK: f64 = 100e-9;

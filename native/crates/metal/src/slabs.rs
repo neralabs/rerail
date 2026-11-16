@@ -3,12 +3,16 @@
 //! retirement and the drop) and the sources; the engine places tapes in it (its
 //! `residency::slabs`: reading frames, the reader's derived parts, the checks).
 //!
-//! - **Slabs** are leases of `SLAB_BYTES` (an object larger gets its own class) from the one GPU
-//!   buffer pool (`rerail_accel::gpu::shared`, 0266 §16), so a retired slab's buffer is recycled
-//!   whole by the next lease of its class, the residency's or any other user's. Objects are
-//!   bump-allocated at 16 bytes; a slab is append-only until it is retired whole: no compaction.
-//!   A recycled slab holds its last lease's bytes, so each room in it is zeroed as it is handed
-//!   out; a new one reads zero.
+//! - **Slabs** are chunk blocks (`rerail_blocks`, decision 0289 §4): each a block over a lease of
+//!   `SLAB_BYTES` (an object larger gets its own class) from the one GPU buffer pool
+//!   (`rerail_accel::gpu::shared::lease_block_within`, 0266 §16), so a retired slab's buffer is
+//!   recycled whole by the next lease of its class, the residency's or any other user's. Objects are
+//!   the block's allocations, at 16 bytes; a slab is append-only until it is retired whole: no
+//!   compaction. A recycled slab holds its last lease's bytes, so the block zeroes each room as it
+//!   hands it out; a new one reads zero.
+//! - **A batch reads one block** (`gather`): a batch whose documents are in several slabs has them
+//!   copied into one, each a contiguous range, and the residency then finds them there, so the next
+//!   batch over them copies nothing. Kernels bind that one block.
 //! - **A resident document** is keyed by its tape's SHA-256 (the store's canonical hash, which
 //!   covers the format version). It holds, in one slab: the v9np image byte-identical to its
 //!   frame's content (columns at 16-byte offsets, format 11), the source's UTF-8 bytes, and what a
@@ -35,7 +39,6 @@
 //!   slab and compiled pipeline is released (architecture §5, F4).
 
 use crate::Error;
-use rerail_accel::gpu::shared::Pooled;
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, LazyLock, Mutex};
@@ -53,14 +56,16 @@ pub fn aligned(length: usize) -> usize {
     length.div_ceil(ALIGN) * ALIGN
 }
 
-/// A document as the device reads it: byte offsets into its slab, as `DocView` in
-/// `metal_tape.metal`. `node_base` is the document's first node in a batch's numbering, set by
-/// the batch's document table (`DocTable`).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct DocView {
-    /// The batch's slab binding the document is in (`DocTable::slabs`).
-    pub slab: u32,
+rerail_blocks::structure! {
+    /// A document as the device reads it (decision 0289 §4): its first byte in the batch's chunk
+    /// block, and its parts as byte offsets from there, so a copy into another block changes `at`
+    /// alone. `node_base` is the document's first node in a batch's numbering, set by the batch's
+    /// document table (`DocTable`). Its MSL is generated (`msl`), with layout assertions. It is
+    /// `Copy`, unlike a block's own structures: it holds no span, so a copy reads the same.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub struct ChunkTape {
+    /// The document's first byte in its block: every part below is an offset from it.
+    pub at: u32,
     pub nodes: u32,
     pub node_base: u32,
     /// `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails measured
@@ -99,27 +104,49 @@ pub struct DocView {
     pub code_start: u32,
     pub by_code: u32,
 }
-const _: () = assert!(std::mem::size_of::<DocView>() == 96);
+}
+const _: () = assert!(std::mem::size_of::<ChunkTape>() == 96);
 
-/// A slab: its lease of the pool and its identity. Its bump position is the residency's (`State`).
+/// The MSL of `ChunkTape`, for the kernels that read documents in place (`metal_tape.metal`).
+pub fn msl() -> String {
+    rerail_blocks::msl_of::<ChunkTape>()
+}
+
+/// A slab: a chunk block over a lease of the pool, and its identity. Its rooms are the block's
+/// allocations.
 pub struct Slab {
     pub id: u64,
-    lease: Pooled,
+    block: rerail_blocks::Block,
+    /// The lease's buffer, as kernels bind it (the block's backing's own).
+    buffer: metal::Buffer,
 }
 
 impl Slab {
+    /// A slab of at least `bytes`, within the Metal budget.
+    fn lease(id: u64, bytes: usize) -> Result<Slab, Error> {
+        let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::CHUNK, bytes).map_err(|_| Error::BackendCapacity)?;
+        let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        let buffer = block.gpu_buffer(device);
+        Ok(Slab { id, block, buffer })
+    }
+
     /// Its buffer, as kernels bind it.
     pub fn buffer(&self) -> &metal::Buffer {
-        self.lease.buffer()
+        &self.buffer
     }
 
     /// Its bytes as the host writes them.
     pub fn host(&self) -> *mut u8 {
-        self.lease.host()
+        self.block.base_ptr()
     }
 
     pub fn byte_length(&self) -> usize {
-        self.lease.length() as usize
+        self.block.reserved()
+    }
+
+    /// A room of `bytes` at 16 bytes, zero, or `None` when the slab cannot hold it.
+    fn room(&self, bytes: usize) -> Option<usize> {
+        self.block.try_alloc(bytes, ALIGN)
     }
 }
 
@@ -127,8 +154,11 @@ impl Slab {
 pub struct Resident {
     pub digest: [u8; 32],
     pub slab: Arc<Slab>,
-    /// Its view with `slab` and `node_base` 0.
-    pub view: DocView,
+    /// Its view, `at` its range's start in `slab`, `node_base` 0.
+    pub view: ChunkTape,
+    /// Its range in the slab, every part inside it: what `gather` copies.
+    pub at: usize,
+    pub len: usize,
     /// Bytes per pool: `tape.resident`, `source.resident`, `tape.derived`.
     pub bytes: [usize; 3],
     /// The tape image's length, as stored.
@@ -136,13 +166,24 @@ pub struct Resident {
 }
 
 impl Resident {
-    /// The bytes at `offset..offset + length` of its slab.
+    /// This document copied into `slab` at `to` (its `len` bytes of room there, 16-byte aligned):
+    /// its view's `at` moved with it, its parts being offsets from there.
+    fn copied(&self, slab: &Arc<Slab>, to: usize) -> Resident {
+        // SAFETY: `to..to + len` is a room of `slab` given to this copy alone; the source range is
+        // this document's, written at admission and never again.
+        unsafe { std::ptr::copy_nonoverlapping(self.slab.host().add(self.at), slab.host().add(to), self.len) };
+        let view = ChunkTape { at: to as u32, ..self.view };
+        Resident { digest: self.digest, slab: Arc::clone(slab), view, at: to, len: self.len, bytes: self.bytes, tape_length: self.tape_length }
+    }
+
+    /// The bytes at `offset..offset + length` of the document (an offset of its view).
     pub fn bytes_at(&self, offset: u32, length: usize) -> &[u8] {
         let slab = &self.slab;
-        assert!(offset as usize + length <= slab.byte_length(), "a resident part inside its slab");
+        let offset = self.at + offset as usize;
+        assert!(offset + length <= self.at + self.len && offset + length <= slab.byte_length(), "a resident part inside its range");
         // SAFETY: admission wrote these bytes before publishing the document, and nothing writes
         // them again: a slab is append-only and the document's range is its own.
-        unsafe { std::slice::from_raw_parts(slab.host().add(offset as usize), length) }
+        unsafe { std::slice::from_raw_parts(slab.host().add(offset), length) }
     }
 
     /// Each code's first entry in the nodes by code, `code_count + 1` of them.
@@ -194,38 +235,37 @@ pub fn source_slabs(sources: &[Arc<ResidentSource>]) -> Option<(Vec<Arc<Slab>>, 
     Some((slabs, at))
 }
 
-/// A batch's document table (`batch.doctable`): each document's view with its slab binding and
-/// first node in the batch's numbering, and the slabs bound, at most `MAX_SLABS`.
+/// A batch's document table (`batch.doctable`): each document's view with its first node in the
+/// batch's numbering, and the one block they are in (decision 0289 §4), `None` for no documents.
 pub struct DocTable {
-    pub views: Vec<DocView>,
-    pub slabs: Vec<Arc<Slab>>,
+    pub views: Vec<ChunkTape>,
+    pub block: Option<Arc<Slab>>,
     pub nodes: usize,
     /// The documents, held for the batch's life.
     pub documents: Vec<Arc<Resident>>,
 }
 
-/// The slabs a batch binds (PIAT §20.4.5, Q-R3): kernels take this many slab buffers; a batch
-/// over more is split by the wave.
+/// The slabs a batch of sources binds (PIAT §20.4.5, Q-R3): block programs take this many slab
+/// buffers; a batch over more is split by the wave. A batch of documents binds one (`DocTable`).
 pub const MAX_SLABS: usize = 4;
 
 impl DocTable {
-    /// The table of `documents`, in order, or `None` when they span more than `MAX_SLABS` slabs.
+    /// The table of `documents`, in order, in one slab (`gather`): `None` when they cannot be.
+    pub fn one_block(documents: Vec<Arc<Resident>>) -> Option<Self> {
+        Self::new(gather(documents).ok()?)
+    }
+
+    /// The table of `documents`, in order, or `None` when they are not all in one slab.
     pub fn new(documents: Vec<Arc<Resident>>) -> Option<Self> {
-        let mut slabs: Vec<Arc<Slab>> = Vec::new();
+        let block = documents.first().map(|document| Arc::clone(&document.slab));
+        if documents.iter().any(|document| Some(document.slab.id) != block.as_ref().map(|block| block.id)) {
+            return None;
+        }
         let mut views = Vec::with_capacity(documents.len());
         let mut nodes = 0usize;
         let (mut children, mut source, mut lines) = (0usize, 0usize, 0usize);
         for document in &documents {
-            let slab = match slabs.iter().position(|slab| slab.id == document.slab.id) {
-                Some(at) => at,
-                None if slabs.len() < MAX_SLABS => {
-                    slabs.push(Arc::clone(&document.slab));
-                    slabs.len() - 1
-                }
-                None => return None,
-            };
-            views.push(DocView {
-                slab: slab as u32,
+            views.push(ChunkTape {
                 node_base: u32::try_from(nodes).ok()?,
                 child_base: u32::try_from(children).ok()?,
                 source_base: u32::try_from(source).ok()?,
@@ -239,15 +279,12 @@ impl DocTable {
         }
         u32::try_from(nodes).ok()?;
         u32::try_from(source).ok()?;
-        Some(Self { views, slabs, nodes, documents })
+        Some(Self { views, block, nodes, documents })
     }
 }
 
 struct SlabEntry {
     slab: Arc<Slab>,
-    used: usize,
-    /// It holds an earlier lease's bytes: each room is zeroed as it is handed out.
-    recycled: bool,
     /// The admission clock when a document of it was last asked for.
     last_use: u64,
 }
@@ -293,35 +330,23 @@ impl State {
     /// A slab with `bytes` free, as (index, offset), zero: the newest slab's room, else a new
     /// slab (retiring the least recently used ones not in `keep` while the budget is short).
     fn room(&mut self, bytes: usize, keep: &[u64]) -> Result<(usize, usize), Error> {
-        let (at, offset) = self.room_dirty(bytes, keep)?;
-        let entry = &self.slabs[at];
-        if entry.recycled {
-            // SAFETY: `offset..offset + bytes` is inside the slab and no one's yet: nothing reads it.
-            unsafe { std::ptr::write_bytes(entry.slab.host().add(offset), 0, bytes) };
+        if let Some(offset) = self.slabs.last().and_then(|last| last.slab.room(bytes)) {
+            return Ok((self.slabs.len() - 1, offset));
         }
-        Ok((at, offset))
-    }
-
-    fn room_dirty(&mut self, bytes: usize, keep: &[u64]) -> Result<(usize, usize), Error> {
-        if let Some(last) = self.slabs.last()
-            && last.slab.byte_length() - last.used >= bytes
-        {
-            return Ok((self.slabs.len() - 1, last.used));
-        }
-        let length = bytes.max(SLAB_BYTES);
+        // The block's header and alignment take a little of a slab.
+        let length = (bytes + 4096).max(SLAB_BYTES);
         loop {
             let held = self.slabs.iter().map(|entry| entry.slab.byte_length()).sum::<usize>();
             if held + length <= limit() {
                 // The pool's evictor is this residency, whose lock is held here: it skips, and the
                 // retiring is this loop's.
-                match rerail_accel::gpu::shared::lease_within(length) {
-                    Ok(lease) => {
+                match Slab::lease(self.next_slab + 1, length) {
+                    Ok(slab) => {
                         self.next_slab += 1;
-                        let recycled = !lease.fresh();
-                        let slab = Arc::new(Slab { id: self.next_slab, lease });
-                        self.slabs.push(SlabEntry { slab, used: 0, recycled, last_use: self.clock });
+                        let offset = slab.room(bytes).ok_or(Error::BackendCapacity)?;
+                        self.slabs.push(SlabEntry { slab: Arc::new(slab), last_use: self.clock });
                         rerail_prof::count("residency.slabs", 1);
-                        return Ok((self.slabs.len() - 1, 0));
+                        return Ok((self.slabs.len() - 1, offset));
                     }
                     Err(_) => rerail_prof::count("capacity.residency_slab", 1),
                 }
@@ -376,9 +401,10 @@ fn source_room(len: usize) -> usize {
     aligned(len.max(1) + SOURCE_MARGIN)
 }
 
-/// Readable bytes past each source in its slab: tier 2 reads its words in place, a token's text
-/// in 8-byte loads up to 64 bytes past the file's end (masked by its length).
-pub const SOURCE_MARGIN: usize = 64;
+/// Zero bytes past each source in its slab (a slab is mapped zeroed, and nothing else is written
+/// there): tier 2 reads its words in place, a window past the file's end reading zeros, as the
+/// batch's layout (`native_cpu_block::BACK`).
+pub const SOURCE_MARGIN: usize = rerail_compiler::native_cpu_block::BACK;
 
 /// Files' bytes resident as sources, in order: hits by SHA-256 from the residency, misses copied
 /// into slabs once (the one copy a file's bytes take on their way to the device). The slabs of
@@ -415,7 +441,6 @@ pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<V
         let entry = &mut state.slabs[at];
         // SAFETY: `room` gave this range to this source alone, inside the slab's mapping.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), entry.slab.host().add(offset), bytes.len()) };
-        entry.used = offset + room;
         entry.last_use = clock;
         let slab = Arc::clone(&entry.slab);
         keep.push(slab.id);
@@ -469,7 +494,6 @@ pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Err
         let document = place(&state.slabs[at].slab, offset)?;
         let clock = state.clock;
         let entry = &mut state.slabs[at];
-        entry.used = offset + bytes;
         entry.last_use = clock;
         keep.push(entry.slab.id);
         for (pool, bytes) in state.pools.iter_mut().zip(document.bytes) {
@@ -478,6 +502,53 @@ pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Err
         state.documents.insert(digest, Arc::new(document));
     }
     Ok(())
+}
+
+/// `documents` in one slab, in order: those not in it already are copied there (a contiguous range
+/// each), and the residency finds them there from now on, so a later batch over them copies
+/// nothing. The newest slab when the copies fit in it, else a new one holding them all.
+pub fn gather(documents: Vec<Arc<Resident>>) -> Result<Vec<Arc<Resident>>, Error> {
+    let Some(first) = documents.first() else { return Ok(documents) };
+    if documents.iter().all(|document| document.slab.id == first.slab.id) {
+        return Ok(documents);
+    }
+    let _gather = rerail_prof::Stage::start("residency.gather");
+    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let keep: Vec<u64> = documents.iter().map(|document| document.slab.id).collect();
+    let room = |documents: &mut dyn Iterator<Item = &Arc<Resident>>| documents.map(|document| aligned(document.len)).sum::<usize>();
+    let newest = state.slabs.last().map(|entry| entry.slab.id);
+    let outside = room(&mut documents.iter().filter(|document| Some(document.slab.id) != newest));
+    let target = match state.slabs.last().and_then(|last| last.slab.room(outside).map(|offset| (Arc::clone(&last.slab), offset))) {
+        Some(found) => found,
+        None => {
+            // A new slab for every document: none of them is in it yet.
+            let (at, offset) = state.room(room(&mut documents.iter()), &keep)?;
+            (Arc::clone(&state.slabs[at].slab), offset)
+        }
+    };
+    let (slab, mut to) = target;
+    let mut gathered = Vec::with_capacity(documents.len());
+    let mut copied = 0usize;
+    for document in documents {
+        if document.slab.id == slab.id {
+            gathered.push(document);
+            continue;
+        }
+        let moved = Arc::new(document.copied(&slab, to));
+        to += aligned(document.len);
+        copied += document.len;
+        // The residency finds it here now; the slab it was in may be retired once no batch reads it.
+        if state.documents.get(&document.digest).is_some_and(|held| Arc::ptr_eq(held, &document)) {
+            state.documents.insert(document.digest, Arc::clone(&moved));
+        }
+        gathered.push(moved);
+    }
+    let clock = state.clock;
+    if let Some(entry) = state.slabs.iter_mut().find(|entry| entry.slab.id == slab.id) {
+        entry.last_use = clock;
+    }
+    rerail_prof::count("residency.gathered_kb", copied >> 10);
+    Ok(gathered)
 }
 
 /// The pool's evictor (`rerail_accel::gpu::shared::set_evictor`): retires the least recently used

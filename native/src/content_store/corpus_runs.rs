@@ -169,20 +169,32 @@ struct Manifest {
     plan: Vec<u8>,
     /// What the run was of (`record_corpus_run_lane`); `None`, the root's one lane.
     lane: Option<Vec<u8>>,
+    /// The lane's policy set (`record_corpus_run_policy`); `None`, a lane of no set.
+    policy: Option<Vec<u8>>,
     sources: Vec<i64>,
 }
 
 /// Which manifests, met newest first, are among their lane's last `protected_runs` and their lane among the root's
 /// newest `protected_lanes`.
+///
+/// A lane of a policy set (decision 0301) is protected only while it is its set's newest: an older one (the set's
+/// programs before an edit) holds no protection and takes no place among the root's lanes.
 #[derive(Default)]
 struct Protection<'m> {
     runs: HashMap<(i64, Option<&'m [u8]>), usize>,
     lanes: HashMap<i64, Vec<Option<&'m [u8]>>>,
+    /// Each root's policy sets' newest lanes.
+    newest: HashMap<(i64, &'m [u8]), Option<&'m [u8]>>,
 }
 
 impl<'m> Protection<'m> {
     fn protects(&mut self, m: &'m Manifest, runs: usize, lanes: usize) -> bool {
         let lane = m.lane.as_deref();
+        if let Some(policy) = m.policy.as_deref()
+            && *self.newest.entry((m.root, policy)).or_insert(lane) != lane
+        {
+            return false;
+        }
         let seen = self.lanes.entry(m.root).or_default();
         let at = seen.iter().position(|l| *l == lane).unwrap_or_else(|| {
             seen.push(lane);
@@ -394,6 +406,13 @@ impl ContentStore {
     /// next time. A replaced build's plan is the same lane's, and dies as before. `None`: the root's one lane.
     #[allow(clippy::too_many_arguments)]
     pub fn record_corpus_run_lane(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, now: i64) -> StoreResult<bool> {
+        self.record_corpus_run_policy(root, sources, grammar_version, tape_format, plan, also, lane, None, now)
+    }
+
+    /// `record_corpus_run_lane`, the lane of policy set `policy` (decision 0301): a newer lane of the set supersedes
+    /// its older ones, which keep no protection (`Protection`). `None`: a lane of no set, protected as before.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_corpus_run_policy(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, policy: Option<[u8; 32]>, now: i64) -> StoreResult<bool> {
         let mut also: Vec<[u8; 32]> = also.iter().copied().filter(|p| *p != plan).collect();
         also.sort_unstable();
         also.dedup();
@@ -422,6 +441,9 @@ impl ContentStore {
             let set_lane = |manifest: i64| -> rusqlite::Result<()> {
                 if let Some(lane) = &lane {
                     tx.prepare_cached("UPDATE corpus_manifests SET lane = ?2 WHERE manifest_id = ?1")?.execute(params![manifest, &lane[..]])?;
+                }
+                if let Some(policy) = &policy {
+                    tx.prepare_cached("UPDATE corpus_manifests SET policy = ?2 WHERE manifest_id = ?1")?.execute(params![manifest, &policy[..]])?;
                 }
                 Ok(())
             };
@@ -551,7 +573,19 @@ impl ContentStore {
                 |r| r.get(0),
             )
             .optional()?;
-        Ok(displaced.is_some())
+        if displaced.is_some() {
+            return Ok(true);
+        }
+        // A policy set's newer lane (decision 0301): its older lanes lose their protection.
+        let superseded: Option<i64> = connection
+            .query_row_cached(
+                "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 AND m.policy IS NOT NULL \
+                 AND EXISTS (SELECT 1 FROM corpus_manifests o WHERE o.root_id=m.root_id AND o.policy=m.policy AND o.lane IS NOT m.lane) LIMIT 1",
+                [decided_run],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(superseded.is_some())
     }
 
     /// Whether a plan hold has lapsed (`object_pins` of `OBJECT_PLAN` past their lease).
@@ -586,14 +620,14 @@ impl ContentStore {
         self.immediate_transaction(|tx| {
             let manifests = tx
                 .prepare(
-                    "SELECT manifest_id, root_id, last_time, grammar_version, tape_format, plan_digest, sources, lane FROM corpus_manifests \
+                    "SELECT manifest_id, root_id, last_time, grammar_version, tape_format, plan_digest, sources, lane, policy FROM corpus_manifests \
                      ORDER BY last_run DESC",
                 )?
-                .query_map([], |r| Ok(((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get::<_, Vec<u8>>(5)?, r.get::<_, Vec<u8>>(6)?), r.get::<_, Option<Vec<u8>>>(7)?)))?
-                .collect::<Result<Vec<((i64, i64, i64, i64, i64, Vec<u8>, Vec<u8>), Option<Vec<u8>>)>, _>>()?
+                .query_map([], |r| Ok(((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get::<_, Vec<u8>>(5)?, r.get::<_, Vec<u8>>(6)?), (r.get::<_, Option<Vec<u8>>>(7)?, r.get::<_, Option<Vec<u8>>>(8)?))))?
+                .collect::<Result<Vec<((i64, i64, i64, i64, i64, Vec<u8>, Vec<u8>), (Option<Vec<u8>>, Option<Vec<u8>>))>, _>>()?
                 .into_iter()
-                .map(|((id, root, last_time, grammar_version, tape_format, plan, blob), lane)| {
-                    Ok(Manifest { id, root, last_time, grammar_version, tape_format, plan, lane, sources: decode_ids(&blob)? })
+                .map(|((id, root, last_time, grammar_version, tape_format, plan, blob), (lane, policy))| {
+                    Ok(Manifest { id, root, last_time, grammar_version, tape_format, plan, lane, policy, sources: decode_ids(&blob)? })
                 })
                 .collect::<StoreResult<Vec<_>>>()?;
             // Bytes of each live source, and of its tape of the live grammar version and format.
@@ -826,6 +860,8 @@ impl ContentStore {
         pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
         // The memo's pack, once the entries collected left most of it unnamed (decision 0240 §4).
         pass.plan_rows += usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR)? > 0);
+        // The frames' segments, once frames written again or collected left most of them unnamed (decision 0295 §4).
+        pass.plan_rows += usize::from(self.compact_frame_segments(MEMO_PACK_FLOOR)? > 0);
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }
