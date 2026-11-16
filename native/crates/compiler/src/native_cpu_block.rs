@@ -2828,8 +2828,14 @@ impl Reads<'_> {
 
     /// Output `o` at byte `s`, 0 or 1.
     fn bit(&self, f: &mut FunctionBuilder<'_>, c: &FileCols, s: Value, o: u16, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        self.bit_first(f, c, s, o, None, heads)
+    }
+
+    /// `bit` at a token's first byte `s`, known to be in `first` (`first_bytes`): from the
+    /// bytes, its tests of that byte constants (`Bytewise::bit_first`).
+    fn bit_first(&self, f: &mut FunctionBuilder<'_>, c: &FileCols, s: Value, o: u16, first: Option<[u64; 4]>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         match self.bytes.filter(|(b, _)| b.can(o)) {
-            Some((b, file)) => b.bit(f, &file, o, s, heads),
+            Some((b, file)) => b.bit_first(f, &file, o, s, first, heads),
             None => {
                 let q = f.ins().ushr_imm(s, 6);
                 let x = self.word(f, c, q, o, heads);
@@ -3245,10 +3251,14 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     Some((kind, marks)) => f.ins().iconst(types::I64, i64::from(kind) | i64::from(marks) << crate::records::MARK_SHIFT),
                     None => untag,
                 };
+                // The token's first byte is one the dispatch sends here (`first_bytes`): the
+                // openers' tests of it are known, as the lean lexer's `b'/'` arm tests only the
+                // byte after.
+                let firsts = first_bytes(r, k);
                 for (j, a) in reader.arms.iter().enumerate() {
                     let limit = rd.limit(a.closer, limit);
                     let (arm, not) = (f.create_block(), f.create_block());
-                    let bit = rd.bit(f, c, s, a.opener, heads);
+                    let bit = rd.bit_first(f, c, s, a.opener, Some(firsts), heads);
                     f.ins().brif(bit, arm, &[], not, &[]);
                     f.switch_to_block(arm);
                     // No closer after the opener: what its region says.
@@ -4040,6 +4050,29 @@ fn needs_chunks(f: &mut FunctionBuilder<'_>, ns: &[crate::native_cpu_bytes::Need
     f.ins().jump(join, &[a.into()]);
     f.switch_to_block(join);
     f.block_params(join)[0]
+}
+
+/// The bytes a token of rule `k` can start with: those whose end rule is `k` (`Records::ends`,
+/// the dispatch's, by the first byte alone), and those of a reader whose `other` it is, which
+/// goes on to it with the same first byte.
+fn first_bytes(r: &crate::records::Records, k: usize) -> [u64; 4] {
+    let mut set = [0u64; 4];
+    for b in 0..256usize {
+        let mut at = r.ends.get(b).map(|&e| usize::from(e));
+        let mut seen = 0;
+        while let Some(j) = at.filter(|&j| j < r.rules.len()) {
+            if j == k {
+                set[b / 64] |= 1 << (b % 64);
+                break;
+            }
+            seen += 1;
+            at = match r.rules[j] {
+                crate::records::EndRule::Read(i) if seen <= r.rules.len() => Some(usize::from(r.readers[usize::from(i)].other)),
+                _ => None,
+            };
+        }
+    }
+    set
 }
 
 /// A run rule `k`'s count tests whose bits its window from the token's second byte gives

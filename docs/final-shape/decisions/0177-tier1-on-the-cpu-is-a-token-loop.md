@@ -2265,3 +2265,47 @@ cannot be seen in this grammar: a number's `.` is never its first or
 last byte.
 
 Counts, reported: numbers 153.0, the others unchanged.
+
+## A reader knows its first byte
+
+The lean lexer's arms are a `match` on the token's first byte, so an
+arm asks only about the bytes after it: `b'/' if d == b'*'`.
+
+Ours chose the rule by the first byte as well (`Records::ends`, the
+entry's rule and the rare table both), and the rule's function then
+tested that byte again. The string reader checked `s == '"'`. Each
+comment arm checked `s == '/'` before its second byte.
+
+**The change.**
+
+- **A rule's first bytes (`first_bytes`).** These are the bytes whose
+  end rule is `k`, plus those of a reader whose `other` leads to `k`,
+  since a reader goes on to its `other` with the same first byte.
+- **Tests of that byte fold (`Bytewise::fold`).** The scalar reader of
+  an opener (`bit_first`) is given that set. A byte test of the first
+  byte is true where the set is inside the test's, and false where
+  the two are apart. A union of byte tests at that byte is decided by
+  its whole set. A `prev` folds where the zeros before the file give
+  its bound.
+- **No operation with a known side.** An `and` with one side known
+  true is the other side, and an `or` with one side known false is
+  the other side. A `prev` whose bound the zeros give is its operand.
+  The opener's `and` starts from its first undecided conjunct, not
+  from a constant 1.
+
+```rust
+// generated (tier1_aot.rs), the comment reader (f36), its `//` arm:
+v55 = *(bytes + s + 1);                  // the byte after the `/`
+if v55 == b'/' { /* the line's end */ }
+// the string reader (f31): no `"` test, the escape before it alone
+v79 = *(bytes + s - 1);
+if v79 == b'\\' { return f30(…) }
+```
+
+Tests: `a_first_byte_decides_its_tests` checks the fold: decided,
+undecided, another byte, and a `prev`'s bound. In rr, every reader's
+arms start with the same byte, so the rr tests cannot tell a fold
+that is too wide.
+
+Counts, reported: strings 301.1, comments 228.3, the others
+unchanged.

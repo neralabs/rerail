@@ -304,11 +304,18 @@ impl<'a> Bytewise<'a> {
 
     /// Output `o` at the file's byte `p`, 0 or 1 (0 past its end).
     pub fn bit(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        self.bit_first(f, at, o, p, None, heads)
+    }
+
+    /// `bit`, where the byte at `p` is known to be in `first` (a token's first byte, by the
+    /// rule its dispatch chose): its tests there constants, as the lean lexer's `b'/'` arm asks
+    /// only of the byte after.
+    pub fn bit_first(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, p: Value, first: Option<[u64; 4]>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         let x = usize::from(self.native.outputs[usize::from(o)]);
         let d = self.native.output_delays[usize::from(o)];
         let pos = f.ins().iadd_imm(p, i64::from(d));
         let mut memo = HashMap::new();
-        let b = self.scalar(f, at, x, pos, 0, Some(i64::from(d)), &mut memo, heads);
+        let b = self.scalar(f, at, x, pos, 0, Some(i64::from(d)), first.map(|set| (i64::from(d), set)), &mut memo, heads);
         // Past the file's end, none: the output already says so where it is false on the zero
         // byte at `p` (`zero_kills`), the bytes after the file being zeros.
         if crate::native_cpu_lanes::zero_kills(self.native, x, u32::from(d)) {
@@ -422,7 +429,7 @@ impl<'a> Bytewise<'a> {
         f.append_block_param(join, types::I64);
         let before = f.ins().iadd_imm(pos, -1);
         let mut memo = HashMap::new();
-        let first = self.scalar(f, at, a, before, 0, None, &mut memo, heads);
+        let first = self.scalar(f, at, a, before, 0, None, None, &mut memo, heads);
         let zero = f.ins().iconst(types::I64, 0);
         f.ins().brif(first, slow, &[], join, &[zero.into()]);
         f.switch_to_block(slow);
@@ -500,10 +507,17 @@ impl<'a> Bytewise<'a> {
     /// leaves out what those zeros already say: a `prev`'s bound where its operand is false on
     /// a zero byte, a `within` another conjunct is false on (`native_cpu_lanes::unguarded`).
     #[allow(clippy::too_many_arguments)]
-    fn scalar(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, pos: Value, back: i64, anchor: Option<i64>, memo: &mut HashMap<(usize, i64), Value>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    fn scalar(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, pos: Value, back: i64, anchor: Option<i64>, first: Option<(i64, [u64; 4])>, memo: &mut HashMap<(usize, i64), Value>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         if let Some(&v) = memo.get(&(x, back)) {
             return v;
         }
+        // Known by the token's first byte (`first`): a constant, no byte read.
+        if let Some(k) = first.and_then(|fi| self.fold(x, back, anchor, fi)) {
+            let v = f.ins().iconst(types::I64, i64::from(k));
+            memo.insert((x, back), v);
+            return v;
+        }
+        let known = |y: u16, b: i64| first.and_then(|fi| self.fold(usize::from(y), b, anchor, fi));
         let i = if back == 0 { pos } else { f.ins().iadd_imm(pos, -back) };
         let tables = &self.native.tables;
         let set_of = |table: u16, bits: u8| -> [u64; 4] {
@@ -570,21 +584,39 @@ impl<'a> Bytewise<'a> {
                 f.ins().uextend(types::I64, both)
             }
             BlockInst::Not(a) => {
-                let a = self.scalar(f, at, usize::from(a), pos, back, anchor, memo, heads);
+                let a = self.scalar(f, at, usize::from(a), pos, back, anchor, first, memo, heads);
                 f.ins().bxor_imm(a, 1)
             }
             // At or after `p`, the conjuncts but the `within`s the zeros make (`unguarded`).
             BlockInst::And(..) if let Some(kept) = anchor.filter(|&d| back <= d).and_then(|_| crate::native_cpu_lanes::unguarded(self.native, x)) => {
-                let mut v = f.ins().iconst(types::I64, 1);
-                for y in kept {
-                    let b = self.scalar(f, at, y, pos, back, anchor, memo, heads);
-                    v = f.ins().band(v, b);
+                // The conjuncts the first byte does not decide, from the first of them.
+                let mut v: Option<Value> = None;
+                for y in kept.into_iter().filter(|&y| first.and_then(|fi| self.fold(y, back, anchor, fi)) != Some(true)) {
+                    let b = self.scalar(f, at, y, pos, back, anchor, first, memo, heads);
+                    v = Some(match v {
+                        Some(v) => f.ins().band(v, b),
+                        None => b,
+                    });
                 }
-                v
+                v.unwrap_or_else(|| f.ins().iconst(types::I64, 1))
+            }
+            // One side known by the first byte: the other alone, no operation.
+            BlockInst::And(a, b) if known(a, back) == Some(true) || known(b, back) == Some(true) => {
+                let y = if known(a, back) == Some(true) { b } else { a };
+                self.scalar(f, at, usize::from(y), pos, back, anchor, first, memo, heads)
+            }
+            BlockInst::Or(a, b) if known(a, back) == Some(false) || known(b, back) == Some(false) => {
+                let y = if known(a, back) == Some(false) { b } else { a };
+                self.scalar(f, at, usize::from(y), pos, back, anchor, first, memo, heads)
+            }
+            BlockInst::AndNot(a, b) if known(b, back) == Some(false) => self.scalar(f, at, usize::from(a), pos, back, anchor, first, memo, heads),
+            BlockInst::AndNot(a, b) if known(a, back) == Some(true) => {
+                let q = self.scalar(f, at, usize::from(b), pos, back, anchor, first, memo, heads);
+                f.ins().bxor_imm(q, 1)
             }
             BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => {
-                let p = self.scalar(f, at, usize::from(a), pos, back, anchor, memo, heads);
-                let q = self.scalar(f, at, usize::from(b), pos, back, anchor, memo, heads);
+                let p = self.scalar(f, at, usize::from(a), pos, back, anchor, first, memo, heads);
+                let q = self.scalar(f, at, usize::from(b), pos, back, anchor, first, memo, heads);
                 match self.native.insts[x] {
                     BlockInst::And(..) => f.ins().band(p, q),
                     BlockInst::Or(..) => f.ins().bor(p, q),
@@ -596,7 +628,7 @@ impl<'a> Bytewise<'a> {
                 }
             }
             BlockInst::Prev(a, k) => {
-                let v = self.scalar(f, at, usize::from(a), pos, back + i64::from(k), anchor, memo, heads);
+                let v = self.scalar(f, at, usize::from(a), pos, back + i64::from(k), anchor, first, memo, heads);
                 // Its operand read at most `FRONT` bytes before `p`, false on a zero byte: the
                 // zeros before the file say its bound.
                 if anchor.is_some_and(|d| zeros_bound(self.native, usize::from(a), back + i64::from(k) - d)) {
@@ -612,6 +644,83 @@ impl<'a> Bytewise<'a> {
         };
         memo.insert((x, back), v);
         v
+    }
+}
+
+impl Bytewise<'_> {
+    /// Instruction `x`'s value at `pos - back` where the byte at `pos - fi.0` is in set `fi.1`
+    /// (`scalar`'s `first`): known where the set decides it, else none.
+    fn fold(&self, x: usize, back: i64, anchor: Option<i64>, fi: (i64, [u64; 4])) -> Option<bool> {
+        let (at, set) = fi;
+        let decide = |s: [u64; 4]| -> Option<bool> {
+            let inside = (0..4).all(|k| set[k] & !s[k] == 0);
+            let outside = (0..4).all(|k| set[k] & s[k] == 0);
+            if inside { Some(true) } else if outside { Some(false) } else { None }
+        };
+        let tables = &self.native.tables;
+        let class = |table: u16, bits: u8| -> [u64; 4] {
+            let t = &tables[usize::from(table)];
+            let mut s = [0u64; 4];
+            for b in 0..256usize {
+                if t.member(b as u8, bits) {
+                    s[b / 64] |= 1 << (b % 64);
+                }
+            }
+            s
+        };
+        let plane = |k: u8| -> [u64; 4] {
+            let mut s = [0u64; 4];
+            for b in 0..256usize {
+                if b >> k & 1 == 1 {
+                    s[b / 64] |= 1 << (b % 64);
+                }
+            }
+            s
+        };
+        // A union of byte tests at one byte (`exact_at`), that byte the first: by its set whole.
+        if let Some(n) = exact_at(self.native, x).filter(|n| n.lo == n.hi && back - i64::from(n.lo) == at) {
+            if let Some(v) = decide(n.set) {
+                return Some(v);
+            }
+        }
+        match self.native.insts[x] {
+            BlockInst::EqByte(c) if back == at => {
+                let mut s = [0u64; 4];
+                s[usize::from(c) / 64] |= 1 << (c % 64);
+                decide(s)
+            }
+            BlockInst::Class { table, bits } if back == at => decide(class(table, bits)),
+            BlockInst::Plane(k) if back == at => decide(plane(k)),
+            BlockInst::PlaneBefore(k) if back + 1 == at => decide(plane(k)),
+            BlockInst::Not(a) => self.fold(usize::from(a), back, anchor, fi).map(|v| !v),
+            BlockInst::And(a, b) => match (self.fold(usize::from(a), back, anchor, fi), self.fold(usize::from(b), back, anchor, fi)) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            },
+            BlockInst::Or(a, b) => match (self.fold(usize::from(a), back, anchor, fi), self.fold(usize::from(b), back, anchor, fi)) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            },
+            BlockInst::Xor(a, b) => match (self.fold(usize::from(a), back, anchor, fi), self.fold(usize::from(b), back, anchor, fi)) {
+                (Some(p), Some(q)) => Some(p != q),
+                _ => None,
+            },
+            BlockInst::AndNot(a, b) => match (self.fold(usize::from(a), back, anchor, fi), self.fold(usize::from(b), back, anchor, fi)) {
+                (Some(false), _) | (_, Some(true)) => Some(false),
+                (Some(true), Some(false)) => Some(true),
+                _ => None,
+            },
+            // A `prev`'s bound may make it false: only its false is known, but where the zeros
+            // before the file say the bound (`scalar`'s, `zeros_bound`).
+            BlockInst::Prev(a, k) => {
+                let reach = back + i64::from(k);
+                let bounded = anchor.is_some_and(|d| zeros_bound(self.native, usize::from(a), reach - d));
+                self.fold(usize::from(a), reach, anchor, fi).filter(|&v| !v || bounded)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -988,4 +1097,49 @@ fn by_offset(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Of
     };
     memo.insert(x, n.clone());
     n
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set(bytes: &[u8]) -> [u64; 4] {
+        let mut s = [0u64; 4];
+        for &b in bytes {
+            s[usize::from(b) / 64] |= 1 << (b % 64);
+        }
+        s
+    }
+
+    /// A token's first byte known to be in a set (`scalar`'s `first`) decides the tests of that
+    /// byte where the set is inside or outside theirs, and no other byte's.
+    #[test]
+    fn a_first_byte_decides_its_tests() {
+        let native = BlockNative {
+            tables: Vec::new(),
+            // 0 `"`, 1 `'`, 2 either, 3 `"` one back, 4 `"` then `"` (`"` at p - 1 and p).
+            insts: vec![BlockInst::EqByte(b'"'), BlockInst::EqByte(b'\''), BlockInst::Or(0, 1), BlockInst::Prev(0, 1), BlockInst::And(3, 0), BlockInst::Not(1), BlockInst::AndNot(0, 1)],
+            outputs: vec![2],
+            extracts: Vec::new(),
+            totals: Vec::new(),
+            masks: Vec::new(),
+            delay: 0,
+            output_delays: vec![0],
+            groups: Vec::new(),
+            records: None,
+            walks: Vec::new(),
+        };
+        let b = Bytewise::of(&native);
+        let (quote, both) = ((0, set(b"\"")), (0, set(b"\"'")));
+        assert_eq!(b.fold(0, 0, None, quote), Some(true), "`\"` at a `\"`");
+        assert_eq!(b.fold(1, 0, None, quote), Some(false), "`'` at a `\"`");
+        assert_eq!(b.fold(5, 0, None, quote), Some(true), "not `'` at a `\"`");
+        assert_eq!(b.fold(6, 0, None, quote), Some(true), "`\"` and not `'` at a `\"`");
+        assert_eq!(b.fold(0, 0, None, both), None, "`\"` at either: not decided");
+        assert_eq!(b.fold(2, 0, None, both), Some(true), "either at either");
+        assert_eq!(b.fold(0, 1, None, quote), None, "another byte: not decided");
+        assert_eq!(b.fold(3, -1, None, quote), None, "`\"` one back at a `\"`: true but for the bound");
+        assert_eq!(b.fold(3, 0, None, (1, set(b"'"))), Some(false), "`\"` one back at a `'`: false");
+        assert_eq!(b.fold(4, 0, None, (1, set(b"\""))), None, "the byte at p not known");
+    }
 }
