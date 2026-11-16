@@ -240,31 +240,6 @@ fn a_held_plan_stays_live_until_its_run_releases_it() {
     assert_eq!(live(old), Some(0), "released, it is dead again");
 }
 
-/// O95: a handle holding its sources pins each one it stores or finds, in the same transaction; a collector cannot
-/// take them, or the tapes it stores of them, until the holder releases them.
-#[test]
-fn a_held_source_survives_collection_until_released() {
-    let (path, store) = store("corpus-held-source");
-    let collector = ContentStore::open(&path).unwrap();
-    let passes = || {
-        for _ in 0..3 {
-            collector.collect(1_000, MAX_COLLECTION_BATCH).unwrap();
-        }
-    };
-    let found = noise(7, 256);
-    let old = store.put_source(&found, &[]).unwrap();
-    store.hold_sources("corpus-run:held", 2_000).unwrap();
-    let stored = noise(8, 256);
-    let (new, tape) = store.put_source_and_tape(&stored, crate::content_store::HashKey::sha256(&stored), 1, 7, 9, &noise(9, 256)).unwrap();
-    assert_eq!(store.held_source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), Some(old));
-    passes();
-    assert_eq!(store.tape_by_source(new, 1, 7, 9).unwrap(), Some(tape), "the stored source and its tape are held");
-    assert_eq!(store.source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), Some(old), "the found source is held");
-    store.release_pins("corpus-run:held").unwrap();
-    passes();
-    assert_eq!(store.source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), None, "released, it is collected");
-}
-
 /// Decision 0306 step 4: a running run's collection lease alone keeps what it reads and writes from every collector
 /// (another handle's, as another process's): no hold, no pin. Once its manifest names its sources and plan and the
 /// lease goes, collection keeps what the manifest names and takes the rest.

@@ -386,8 +386,8 @@ pub fn store_packed<'b>(store: &ContentStore, packed: &Packed, bytes: &'b [u8]) 
     Ok((sources, &bytes[at..]))
 }
 
-/// Keeps a program `encode` made in `store`, a source by its bytes' sha256 (an image by `image_key` too), held so the
-/// run keeps it (O95): the sources written, which the caller names so collection keeps them.
+/// Keeps a program `encode` made in `store`, a source by its bytes' sha256 (an image by `image_key` too): the sources
+/// written, which the caller names so collection keeps them.
 pub fn store_encoded(store: &ContentStore, digest: &[u8; 32], image: bool, bytes: &[u8]) -> StoreResult<Vec<SourceId>> {
     if image {
         let key = image_key(digest);
@@ -395,11 +395,10 @@ pub fn store_encoded(store: &ContentStore, digest: &[u8; 32], image: bool, bytes
             Some(id) => id,
             None => store.put_source(bytes, &[key])?,
         };
-        store.pin_held_sources(&[id])?;
         return Ok(vec![id]);
     }
     let hash = HashKey::sha256(bytes);
-    let source = match store.held_source_by_hash(hash)? {
+    let source = match store.source_by_hash(hash)? {
         Some(id) => id,
         None => store.put_source_hashed(bytes, hash, &[])?,
     };
@@ -412,14 +411,13 @@ pub fn store_encoded(store: &ContentStore, digest: &[u8; 32], image: bool, bytes
 pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (Stored, Vec<SourceId>)>> {
     let mode = images();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
-    let text_ids = store.held_sources_by_hash(&hashes)?;
+    let text_ids = store.sources_by_hashes(&hashes)?;
     let mut out = std::collections::HashMap::new();
     let mut want_text = Vec::new();
     for (k, d) in digests.iter().enumerate() {
         let image = if mode == "off" { None } else { store.source_by_alias(image_key(d))? };
         match image {
             Some(id) => {
-                store.pin_held_sources(&[id])?;
                 let bytes = store.get_source(id)?;
                 // The image's digest is its bytes' (`store`), so it is its own text's source too: named once.
                 out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().filter(|t| *t != id).chain([id]).collect()));
@@ -450,11 +448,10 @@ pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::col
 pub fn sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<SourceId>> {
     let mode = images();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
-    let mut out: Vec<SourceId> = store.held_sources_by_hash(&hashes)?.into_iter().flatten().collect();
+    let mut out: Vec<SourceId> = store.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
     if mode != "off" {
         for d in digests {
             if let Some(id) = store.source_by_alias(image_key(d))? {
-                store.pin_held_sources(&[id])?;
                 out.push(id);
             }
         }

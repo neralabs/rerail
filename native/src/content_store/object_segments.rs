@@ -161,7 +161,6 @@ pub(super) struct Item {
 /// A run's parsed files gathered for the store: placed in one segment when closed.
 pub(super) struct ObjectGather {
     dir: PathBuf,
-    holder: Option<(String, i64)>,
     items: Vec<Item>,
     at: HashMap<Key, usize>,
     bytes: usize,
@@ -230,7 +229,7 @@ impl Gather for ObjectGather {
             drop(segments);
             let keys = self.items.iter().map(|i| (i.key, Some(Self::held(i)))).collect();
             let bytes = self.bytes;
-            return Some(Closed { what, bytes, keys, syms: Syms::None, holder: self.holder, job: ObjectsWrite::Each(self.items).work() });
+            return Some(Closed { what, bytes, keys, syms: Syms::None, job: ObjectsWrite::Each(self.items).work() });
         }
         let keys = self.items.iter().enumerate().map(|(i, item)| (item.key, Some(Arc::new(QueuedTape(ObjectBytes::Mapped(segments.entry(2 * i + 1)))) as Held))).collect();
         let rows: Vec<Row> = self
@@ -249,7 +248,7 @@ impl Gather for ObjectGather {
             .collect();
         // The queue holds the rows; the bytes are the OS's pages.
         let bytes = rows.len() * 96;
-        Some(Closed { what, bytes, keys, syms: Syms::None, holder: self.holder, job: ObjectsWrite::Placed { rows, segments }.work() })
+        Some(Closed { what, bytes, keys, syms: Syms::None, job: ObjectsWrite::Placed { rows, segments }.work() })
     }
 }
 
@@ -304,8 +303,7 @@ impl ContentStore {
         let tape_identity = HashKey::tape_identity(canonical, &tape);
         let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named });
         let dir = object_dir(&self.database_path);
-        let holder = self.holder.lock().clone();
-        let make = || ObjectGather { dir, holder, items: Vec::new(), at: HashMap::new(), bytes: 0 };
+        let make = || ObjectGather { dir, items: Vec::new(), at: HashMap::new(), bytes: 0 };
         if self.gather("tapes and their sources", make, |g| g.add(item.take().expect("the file"))) {
             return Ok(());
         }
@@ -348,9 +346,7 @@ impl ContentStore {
             for (i, row) in rows.iter().enumerate() {
                 let source = put_source_placed_tx(t, row.canonical, row.source_len, place(2 * i), created)?;
                 let tape = TapePayload { grammar_id: row.grammar_id, grammar_version: row.grammar_version, tape_format_version: row.tape_format_version, bytes: &[], documents: &[] };
-                let tape = put_tape_placed_tx(t, source, tape, row.tape_len, row.tape_identity, place(2 * i + 1), created)?;
-                self.pin_held(t, source)?;
-                self.pin_held_tape(t, tape)?;
+                put_tape_placed_tx(t, source, tape, row.tape_len, row.tape_identity, place(2 * i + 1), created)?;
                 ids.push(source);
             }
             Ok((ids, numbers))

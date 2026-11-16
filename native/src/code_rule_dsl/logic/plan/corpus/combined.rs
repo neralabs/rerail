@@ -100,7 +100,7 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
 /// first key that settles it.
 pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<LibraryFile>)>> {
     // The store's entry, or, where the store has none, the one the engine ships (decision 0264).
-    let entry = match store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
+    let entry = match store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
         Some(source) => {
             let set = plan();
             let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
@@ -188,7 +188,7 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
     let (text_source, entry) = program_text::store_packed(store, &packed, cx.bytes)?;
     let text = source_text(&key);
     let hash = HashKey::sha256(text.as_bytes());
-    let source = match store.held_source_by_hash(hash)? {
+    let source = match store.source_by_hash(hash)? {
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };
@@ -240,7 +240,7 @@ impl Drop for Pins<'_> {
 pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
     // Stored already (decision 0228): named now, kept meanwhile by the run's collection lease (decision 0306 step 4).
     // The writer finds what a write queued before it stores.
-    if let Some(found) = program_source(cache, key, false).ok().flatten() {
+    if let Some(found) = program_source(cache, key).ok().flatten() {
         late.lock().expect("the late sources").push(found);
         late.lock().expect("the late sources").extend(image_sources(cache, key).ok().unwrap_or_default());
         return;
@@ -252,24 +252,22 @@ pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::syn
     // In the run's record (decision 0306), after the entry's write.
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
         let key: [u8; 32] = crate::content_store::record::codec::from_body("the combined program's text, named", body)?;
-        cx.name(program_source(cx.store, &key, true)?);
+        cx.name(program_source(cx.store, &key)?);
         cx.name(image_sources(cx.store, &key)?);
         Ok(())
     }
     cache.record("the combined program's text, named", Vec::new(), key, None, apply);
 }
 
-/// The source of the program text of texts `key`'s entry, when the store keeps the entry and the text; `held`: the
-/// sources pinned as they are found (on the store's writer).
-fn program_source(store: &ContentStore, key: &[u8; 32], held: bool) -> StoreResult<Option<crate::content_store::SourceId>> {
-    let by_hash = |hash| if held { store.held_source_by_hash(hash) } else { store.source_by_hash(hash) };
-    let Some(source) = by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
+/// The source of the program text of texts `key`'s entry, when the store keeps the entry and the text.
+fn program_source(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<crate::content_store::SourceId>> {
+    let Some(source) = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
     let Some(result) = memo.results.get(&plan().plans[0]) else { return Ok(None) };
     let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
     let Some(digest) = unhex(digest) else { return Ok(None) };
-    by_hash(HashKey::from_sha256_digest(digest))
+    store.source_by_hash(HashKey::from_sha256_digest(digest))
 }
 
 /// The images texts `key`'s entry names (`IMAGE`) that the store still keeps.

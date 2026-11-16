@@ -660,8 +660,6 @@ pub struct ContentStore {
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
     working_set: working_set::WorkingSet,
-    /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
-    holder: parking_lot::Mutex<Option<(String, i64)>>,
     /// On the writer's handle, the run whose wave it applies (`write_back::Wave`; 0: none): decision 0306's named sources.
     applying: parking_lot::Mutex<(u64, Option<std::sync::Arc<write_back::Writer>>)>,
     /// The store's writer, shared by its handles in this process (`write_back`, decision 0102); `None` for the
@@ -726,7 +724,6 @@ impl ContentStore {
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: std::sync::Arc::clone(&self.atoms),
             working_set: working_set::WorkingSet::default(),
-            holder: parking_lot::Mutex::new(None),
             applying: parking_lot::Mutex::new((0, None)),
             write_back: None,
             #[cfg(not(target_family = "wasm"))]
@@ -787,7 +784,6 @@ impl ContentStore {
             // A store created again at its path, by this process or another, has atoms of its own.
             atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
-            holder: parking_lot::Mutex::new(None),
             applying: parking_lot::Mutex::new((0, None)),
             // A store created again at its path has a writer of its own too.
             write_back: Some(write_back::register_store(path, identity)),

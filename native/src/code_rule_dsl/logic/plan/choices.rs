@@ -343,7 +343,7 @@ fn apply_plans(cx: &crate::content_store::record::Apply<'_>, body: crate::conten
     let store = cx.store;
     let text = source_text(&prepared);
     let hash = HashKey::sha256(text.as_bytes());
-    let source = match store.held_source_by_hash(hash)? {
+    let source = match store.source_by_hash(hash)? {
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };
@@ -434,7 +434,7 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
     cx.name(sources);
     let text = source_text(&prepared);
     let hash = HashKey::sha256(text.as_bytes());
-    let source = match store.held_source_by_hash(hash)? {
+    let source = match store.source_by_hash(hash)? {
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };

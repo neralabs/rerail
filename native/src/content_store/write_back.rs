@@ -171,14 +171,12 @@ pub trait Gather: Any + Send {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-/// A gather closed: the job its writes are, the bytes it holds until written, its keys' values for reads now, and the
-/// holder it pins its sources under.
+/// A gather closed: the job its writes are, the bytes it holds until written, and its keys' values for reads now.
 pub struct Closed {
     pub what: &'static str,
     pub bytes: usize,
     pub keys: Vec<(Key, Option<Held>)>,
     pub syms: Syms,
-    pub holder: Option<(String, i64)>,
     pub job: Work,
 }
 
@@ -365,8 +363,8 @@ struct Shared {
     changed: Condvar,
 }
 
-/// A queued job, the bytes it holds, the keys it writes, the holder it pins its sources under, and how it runs.
-type Queued = (Job, usize, Vec<Key>, Option<(String, i64)>, Run, &'static str);
+/// A queued job, the bytes it holds, the keys it writes, and how it runs.
+type Queued = (Job, usize, Vec<Key>, Run, &'static str);
 
 /// How the writer runs a job.
 #[derive(Clone, Copy, PartialEq)]
@@ -475,7 +473,7 @@ impl Writer {
                             slot.1 = held;
                         }
                     }
-                    s.open.entry(run).or_default().push((job, c.bytes, keys, c.holder, Run::InWave, c.what));
+                    s.open.entry(run).or_default().push((job, c.bytes, keys, Run::InWave, c.what));
                 }
                 None => {
                     let mut s = self.shared.state.lock().expect("the writer's state");
@@ -496,7 +494,7 @@ impl Writer {
     /// A wave the writer cannot take (its thread is gone, though it catches each job's panic): failed, each job, as
     /// a write that never happened (the store lacks it, and the next run makes it again).
     fn failed(&self, wave: Wave) {
-        for (_, bytes, keys, _, _, _) in wave.jobs {
+        for (_, bytes, keys, _, _) in wave.jobs {
             finish(&self.shared, bytes, &keys, Err(StoreError::Invalid("the store's writer is gone".into())), 0.0, true);
         }
         self.shared.state.lock().expect("the writer's state").applied += 1;
@@ -730,7 +728,6 @@ impl ContentStore {
             }
         }
         let keys: Vec<Key> = keys.into_iter().map(|(k, _)| k).collect();
-        let holder = self.holder.lock().clone();
         // No threads in the browser build: written now, in order.
         if cfg!(target_family = "wasm") {
             let _scope = super::hazards::warm_scope();
@@ -739,7 +736,7 @@ impl ContentStore {
             finish(&w.shared, bytes, &keys, outcome, 0.0, true);
             return true;
         }
-        let queued: Queued = (job, bytes, keys, holder, run, what);
+        let queued: Queued = (job, bytes, keys, run, what);
         let mut lane = w.lane.lock().expect("the writer");
         let lane = lane.get_or_insert_with(|| self.start_writer(w));
         // In a run, a job joins the run's wave still being written; a job run alone follows it, a wave of its own.
@@ -768,7 +765,7 @@ impl ContentStore {
             if let Err(mpsc::SendError(wave)) = lane.tx.send(wave) {
                 // The writer is gone (it panicked): written here, in order, as the writer would have.
                 let _scope = super::hazards::warm_scope();
-                for (mut job, bytes, keys, _, _, _) in wave.jobs {
+                for (mut job, bytes, keys, _, _) in wave.jobs {
                     let outcome = job(self);
                     finish(&w.shared, bytes, &keys, outcome, 0.0, true);
                 }
@@ -826,11 +823,10 @@ impl ContentStore {
                         continue;
                     }
                     if alone {
-                        for (job, bytes, keys, holder, _, what) in batch {
+                        for (job, bytes, keys, _, what) in batch {
                             // Each job's own CPU and frames: a wave of several jobs alone counts each once.
                             let (before, encoded) = (thread_cpu(), super::compression::encoded_here());
                             let mut job = job;
-                            *store.holder.lock() = holder;
                             let _span = super::hazards::span(what);
                             let _scope = super::hazards::warm_scope();
                             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
@@ -850,8 +846,7 @@ impl ContentStore {
                     // The wave's jobs, in their order, in one transaction: the store holds all of the wave or none.
                     let run = |batch: &mut Vec<Queued>| -> Vec<StoreResult<()>> {
                         let mut outcomes = Vec::with_capacity(batch.len());
-                        for (job, _, _, holder, _, what) in batch.iter_mut() {
-                            *store.holder.lock() = holder.clone();
+                        for (job, _, _, _, what) in batch.iter_mut() {
                             let (c0, e0) = (thread_cpu(), super::compression::encoded_here());
                             let _span = super::hazards::span(*what);
                             outcomes.push(
@@ -895,7 +890,7 @@ impl ContentStore {
                     let _ = told.send(());
                     let cpu = (thread_cpu() - before) / batch.len().max(1) as f64;
                     w.shared.state.lock().expect("the writer's state").batches += 1;
-                    for ((_, bytes, keys, _, _, _), outcome) in batch.into_iter().zip(outcomes) {
+                    for ((_, bytes, keys, _, _), outcome) in batch.into_iter().zip(outcomes) {
                         finish(&w.shared, bytes, &keys, outcome, cpu, true);
                     }
                     let mut s = w.shared.state.lock().expect("the writer's state");

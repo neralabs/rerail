@@ -157,7 +157,7 @@ impl Gather for Record {
             return None;
         }
         let bytes = self.weight();
-        Some(Closed { what: WHAT, bytes, keys: Vec::new(), syms: Syms::None, holder: None, job: Work::record(codec::encode(&self.items), self.bytes) })
+        Some(Closed { what: WHAT, bytes, keys: Vec::new(), syms: Syms::None, job: Work::record(codec::encode(&self.items), self.bytes) })
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self

@@ -390,7 +390,7 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
     off();
     let hash = HashKey::sha256(text.as_bytes());
     // Held (O95): a source the run finds is pinned with it, as one it stores is.
-    match store.held_source_by_hash(hash)? {
+    match store.source_by_hash(hash)? {
         Some(id) => Ok(id),
         None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }
@@ -422,7 +422,7 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
         let (text, store): (String, bool) = crate::content_store::record::codec::from_body("a source the manifest names", body)?;
         let hash = HashKey::sha256(text.as_bytes());
-        let found = match cx.store.held_source_by_hash(hash)? {
+        let found = match cx.store.source_by_hash(hash)? {
             Some(id) => Some(id),
             None if store => Some(cx.store.put_source_hashed(text.as_bytes(), hash, &[])?),
             None => None,
@@ -722,7 +722,7 @@ fn queued_content(content: Content, path: &str, program: &[u8; 32]) -> Option<cr
 pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<SourceId>> {
     off();
     let hashes: Vec<HashKey> = texts.iter().map(|t| HashKey::sha256(t.as_bytes())).collect();
-    let found = store.held_sources_by_hash(&hashes)?;
+    let found = store.sources_by_hashes(&hashes)?;
     texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
 }
 
