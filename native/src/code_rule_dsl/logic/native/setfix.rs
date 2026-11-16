@@ -775,13 +775,25 @@ impl Rel {
     }
     /// Rows `indexed..n` counted in the sketches; `pending` emptied (they are in the orders now).
     fn indexed_to_n(&mut self) {
-        for id in self.indexed..self.n {
+        let _s = (self.n - self.indexed >= SPANNED_ROWS).then(|| crate::code_rule_dsl::logic::profile::span(|| "rows sketched and counted (indexed_to_n)".into()));
+        let (data, k, lo, hi) = (&self.data, self.k, self.indexed, self.n);
+        let sketch = |c: usize, sk: &mut Sketch| for id in lo..hi { sk.add(data.row(id as u32, k)[c]); };
+        let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(data.range(lo, hi, k), &[], k); };
+        // Many rows: each column's sketch, and the statistics, a job of its own (decision 0294). A sketch takes its
+        // column's values in the rows' order, as one thread gives them (its exact counts give way in that order).
+        if hi - lo >= SPANNED_ROWS && crate::threads::max() > 1 {
+            let (sketches, stats) = (&mut self.sketches, &mut self.stats);
+            crate::threads::scope(|jobs| {
+                for (c, sk) in sketches.iter_mut().enumerate() {
+                    jobs.spawn("a column sketched", move |_| sketch(c, sk));
+                }
+                jobs.spawn("rows counted", move |_| count(stats));
+            });
+        } else {
             for (c, sk) in self.sketches.iter_mut().enumerate() {
-                sk.add(self.data.row(id as u32, self.k)[c]);
+                sketch(c, sk);
             }
-        }
-        if let Some(stats) = &mut self.stats {
-            stats.0.delta(self.data.range(self.indexed, self.n, self.k), &[], self.k);
+            count(&mut self.stats);
         }
         self.indexed = self.n;
         self.pending = HashTable::new();
@@ -1035,6 +1047,9 @@ impl Fresh {
     }
 }
 
+/// A wave of at least this many rows has its settling, indexing and sketching profiled apart (spans cost a clock read).
+const SPANNED_ROWS: usize = 1 << 16;
+
 struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, pat: Vec<Pat>, out: Vec<Term>,
                   edges: HashMap<Vec<i64>, Vec<Vec<i64>>>, has_edge: bool, nslots: usize }
 /// A probe's body: SQL over the `set_rel` vtabs, or a native join pipeline (`join.rs` spec).
@@ -1115,8 +1130,14 @@ fn restricted(j: &JoinRule, of: RowsOf, named: Option<usize>) -> Option<usize> {
 
 /// An atom's rows still to read: a bitset over `lo..`.
 #[derive(Clone)]
-struct Rows0 { of: RowsOf, lo: u32, bits: Vec<u64>, n: u64 }
+/// `order`: the rows in the order a cut walk was to read them (`Rows0::left`), which a walk going on from the cut
+/// reads them in where its scan's key orders them so (`scan_order`).
+struct Rows0 { of: RowsOf, lo: u32, bits: Vec<u64>, n: u64, order: Option<Vec<u32>> }
 impl Rows0 {
+    /// A cut walk's rows left, in the order it was to read them.
+    fn left(of: RowsOf, ids: &[u32]) -> Rows0 {
+        Rows0 { order: Some(ids.to_vec()), ..Rows0::of(of, ids) }
+    }
     #[inline]
     fn has(&self, id: u32) -> bool {
         let at = id.wrapping_sub(self.lo) as usize;
@@ -1132,7 +1153,7 @@ impl Rows0 {
             if bits[at / 64] >> (at % 64) & 1 == 0 { n += 1; }
             bits[at / 64] |= 1 << (at % 64);
         }
-        Rows0 { of, lo, bits, n }
+        Rows0 { of, lo, bits, n, order: None }
     }
 }
 
@@ -2091,7 +2112,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let rel = &mut store.rels[r];
             let lo = rel.n;
             let emitted = f.emitted;
-            any |= rel.push_fresh(f, gates_done.contains(&r));
+            let big = f.n >= SPANNED_ROWS;
+            any |= { let _s = big.then(|| crate::code_rule_dsl::logic::profile::span(|| "a wave's rows settled (Fresh::settle)".into())); rel.push_fresh(f, gates_done.contains(&r)) };
             if counting && emitted > 0 {
                 let mut all = DERIVATIONS.lock().unwrap();
                 let e = all.entry(rel.table.clone()).or_default();
@@ -2099,7 +2121,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 e.1 += (rel.n - lo) as u64;
             }
             lo_of[r] = lo;
-            if !gates_done.contains(&r) { let hi = rel.n; rel.set_delta(lo, hi); }
+            if !gates_done.contains(&r) { let hi = rel.n; let _s = (big && hi > lo).then(|| crate::code_rule_dsl::logic::profile::span(|| "a wave's rows indexed (set_delta)".into())); rel.set_delta(lo, hi); }
         }
         // A request relation that gained rows pauses the run before any gate opens: the caller answers them
         // (`pending`, `add`) and runs again. A gate opens only once no request is unanswered.
@@ -2428,12 +2450,18 @@ pub type Histogram = (u64, rustc_hash::FxHashMap<Vec<i64>, u64>);
 /// Decision 0203 §3: per wanted (step, key columns) of probe `line`'s join, the rows of the step's relation (every
 /// live row, not its delta alone) that pass the step's constants, counted by the values of those columns. A relation
 /// of more than `cap` rows is read at a stride, its counts scaled. `None` for a step that is not a positive atom.
-pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, wanted: &[(usize, Vec<usize>)], cap: usize) -> Result<Vec<Option<Histogram>>> {
+/// `whole`: the steps are of the line's whole plan (O168), whose order is not its delta join's.
+pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, wanted: &[(usize, Vec<usize>)], cap: usize) -> Result<Vec<Option<Histogram>>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
-    let Some(Body::Join(j)) = comp.probes.get(line).map(|p| &p.body) else { return Ok(vec![None; wanted.len()]) };
+    let j = comp.probes.get(line).and_then(|p| match (whole, &p.body) {
+        (true, _) => p.whole.as_ref(),
+        (false, Body::Join(j)) => Some(j),
+        (false, _) => None,
+    });
+    let Some(j) = j else { return Ok(vec![None; wanted.len()]) };
     Ok(wanted.iter().map(|(at, cols)| {
         let Some(Step::Atom { src, neg: false, keys, .. }) = j.steps.get(*at) else { return None };
         let consts: Vec<(usize, i64)> = keys.iter().filter_map(|&(c, k)| match k { Key::Const(v) => Some((c, v)), Key::Slot(_) => None }).collect();
@@ -5325,6 +5353,15 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     c.copy(&["WALKS_WHOLE"], &WALKS_WHOLE);
 }
 
+/// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).
+static LEFT_IN_ORDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Tests: the rows a cut left that walks going on from it read in their order (`LEFT_IN_ORDER`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn left_read_in_order() -> u64 {
+    LEFT_IN_ORDER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Tests: the walks this thread has run in morsels.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn morsels_walked() -> u64 {
@@ -5787,10 +5824,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     /// The rows of step `i`'s scan (`cands`, a range of at least `SCAN_SORTED` rows) in the order of the key step
     /// `i + 1` probes with, when the scan binds all of that key: the next step's probes then come as one sorted batch,
     /// each starting where the last ended in each run (`Index::find_at`), and read each run once, in order.
-    fn scan_order(j: &JoinRule, store: &Store, i: usize, rows: Rows<'_>, cands: &Cands<'_>, binds: &[(usize, usize)]) -> Option<Vec<u32>> {
+    /// `left`: the rows to read are these (a cut's rows left, in the order its walk read them, `Rows0::order`) of
+    /// the range: in the key's order when they are already (`None`), else sorted. A walk going on from a cut sorted
+    /// all of the range again, then filtered it (decision 0294: a seed cut at each check, 7 sorts of 2.2 M rows).
+    fn scan_order(j: &JoinRule, store: &Store, i: usize, rows: Rows<'_>, cands: &Cands<'_>, binds: &[(usize, usize)], left: Option<&[u32]>) -> Option<Vec<u32>> {
         const SCAN_SORTED: u32 = 256;
         let &Cands::Range(lo, hi) = cands else { return None };
-        if hi - lo < SCAN_SORTED || j.fused.get(i).is_some_and(Option::is_some) {
+        let n = left.map_or((hi - lo) as usize, <[u32]>::len);
+        if n < SCAN_SORTED as usize || j.fused.get(i).is_some_and(Option::is_some) {
             return None;
         }
         let Some(Step::Atom { src, keys, .. }) = j.steps.get(i + 1) else { return None };
@@ -5816,7 +5857,6 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 Key::Slot(s) => From::Col(binds.iter().find(|&&(_, b)| b == s)?.0),
             });
         }
-        let n = (hi - lo) as usize;
         let tagged = index.is_tagged(k);
         // The scan's rows known sorted by the probes' key (decision 0187): its columns in turn (constants hold no
         // order), tagged by the first when the next order is.
@@ -5827,7 +5867,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             }
         }
         let tag = if tagged && let From::Col(c) = from[0] { Some(c) } else { None };
-        let known: Vec<(usize, usize)> = if !runs::known_beyond_runs() { Vec::new() } else { match rows {
+        let known: Vec<(usize, usize)> = if left.is_some() || !runs::known_beyond_runs() { Vec::new() } else { match rows {
             Rows::In(r) => r.sorted.within_key(r.k, tag, &by, lo, hi),
             Rows::Comp(r) => r.sorted.within_key(r.k, tag, &by, lo, hi),
             Rows::Source(_) => Vec::new(),
@@ -5837,20 +5877,41 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             runs::presorted::site_known(runs::presorted::SCAN, n as u64);
             return None;
         }
-        let mut vals = Vec::with_capacity(n * m);
-        for id in lo..hi {
-            let row = rows.row(id);
-            vals.extend(from.iter().map(|f| match *f { From::Col(c) => row.at(c), From::Const(v) => v }));
+        // The row at each place, and each place's key values; many rows are read in parts at once (decision 0294), as
+        // the morsels read them.
+        let id_at = |p: usize| left.map_or(lo + p as u32, |l| l[p]);
+        let mut vals = vec![0i64; n * m];
+        let read = |part: &mut [i64], first: usize| for (r, out) in part.chunks_exact_mut(m).enumerate() {
+            let row = rows.row(id_at(first + r));
+            for (o, f) in out.iter_mut().zip(&from) { *o = match *f { From::Col(c) => row.at(c), From::Const(v) => v }; }
+        };
+        if n >= runs::PAR_ROWS && crate::threads::max() > 1 {
+            let size = n.div_ceil(crate::threads::max() * 4);
+            crate::threads::scope(|jobs| for (p, part) in vals.chunks_mut(size * m).enumerate() {
+                jobs.spawn("a scan's keys read", move |_| read(part, p * size));
+            });
+        } else {
+            read(&mut vals, 0);
         }
-        let mut order: Vec<u32> = (0..n as u32).collect();
         let cmp = |a: u32, b: u32| vals[a as usize * m..][..m].cmp(&vals[b as usize * m..][..m]);
         let key_cmp = |a: u32, b: u32| (if tagged { runs::tag(vals[a as usize * m]).cmp(&runs::tag(vals[b as usize * m])) } else { std::cmp::Ordering::Equal }).then_with(|| cmp(a, b));
+        // Rows a cut left come in the order their walk read them: in this key's order where the walk's order was
+        // the same (one pass tells), and then they are read as they are.
+        let known: Vec<(usize, usize)> = match left {
+            Some(_) if (1..n).all(|p| key_cmp(p as u32 - 1, p as u32).is_le()) => {
+                runs::presorted::site_known(runs::presorted::SCAN, n as u64);
+                LEFT_IN_ORDER.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+                return None;
+            }
+            _ => known,
+        };
+        let mut order: Vec<u32> = (0..n as u32).collect();
         runs::presorted::site(runs::presorted::SCAN, n, |i| key_cmp(i as u32 - 1, i as u32).is_gt());
         // The stretches not known sorted are sorted, then every piece merged (several in-order ranges are merged,
         // not sorted again).
         let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, tagged, m, |q, i| vals[q as usize * m + i], cmp); }, |a, b| key_cmp(a, b).is_le());
         runs::presorted::site_known(runs::presorted::SCAN, taken as u64);
-        Some(order.into_iter().map(|q| lo + q).collect())
+        Some(order.into_iter().map(|q| id_at(q as usize)).collect())
     }
     /// The text a scratch value names (`TEXT_OUT`), if `v` is one.
     fn scratch<'s>(cx: &'s Ctx<'_, '_>, v: i64) -> Option<&'s str> {
@@ -5959,14 +6020,21 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let (rows, mut cands) = given.unwrap_or_else(|| candidates(src, store, &cx.key, keys, &mut cx.hints[i]));
                 // A scan's rows in the next step's key order: its probes are then one sorted batch (decision 0112).
                 // A morsel's rows are in that order already (`morsels`).
-                if keys.is_empty() && !handed && let Some(order) = scan_order(j, store, i, rows, &cands, binds) {
-                    cands = Cands::Owned(order);
-                }
                 // Decision 0206: the rows still to read, at the step restricted to them (rows of another place, an
                 // order that reads the atom elsewhere, are not restricted: read again, they make the same rows); and a
-                // first step's candidates as read, so that a cut knows the rows it left.
+                // first step's candidates as read, so that a cut knows the rows it left. A scan going on from a cut
+                // reads the rows it left, in their order where that is the key's (`scan_order`).
                 let reads_delta = i == cx.only_step;
                 let only = if reads_delta { cx.only.take().filter(|o| o.of == RowsOf::of(src)) } else { None };
+                if keys.is_empty() && !handed {
+                    let left = only.as_ref().and_then(|o| o.order.as_deref()).zip(match cands { Cands::Range(lo, hi) => Some((lo, hi)), _ => None });
+                    if let Some((ids, (lo, hi))) = left {
+                        let ids: Vec<u32> = ids.iter().copied().filter(|id| (lo..hi).contains(id)).collect();
+                        cands = Cands::Owned(scan_order(j, store, i, rows, &cands, binds, Some(&ids)).unwrap_or(ids));
+                    } else if let Some(order) = scan_order(j, store, i, rows, &cands, binds, None) {
+                        cands = Cands::Owned(order);
+                    }
+                }
                 if i == 0 && cx.budget != u64::MAX {
                     let mut list = Vec::new();
                     cands.any(|id| { if only.as_ref().is_none_or(|o| o.has(id)) { list.push(id) } false });
@@ -6318,25 +6386,32 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             return false;
         }
         // The rows in the order one walk reads them, less those a cut's rerun does not read again (decision 0206).
-        let order = scan_order(j, store, 0, rows, &Cands::Range(lo, hi), binds);
         let only = cx.only.take().filter(|o| o.of == RowsOf::of(src));
         let limited = cx.budget != u64::MAX;
-        let list: Option<Vec<u32>> = match (order, &only) {
-            (o, Some(only)) => Some(o.map_or_else(|| (lo..hi).filter(|&id| only.has(id)).collect(), |o| o.into_iter().filter(|&id| only.has(id)).collect())),
-            (Some(o), None) => Some(o),
-            (None, None) if limited => Some((lo..hi).collect()),
-            (None, None) => None,
+        // The rows a cut left, in their order where that is the key's; else the range's in the key's order (then
+        // restricted to the rows left).
+        let left: Option<Vec<u32>> = only.as_ref().and_then(|o| o.order.as_ref()).map(|ids| ids.iter().copied().filter(|id| (lo..hi).contains(id)).collect());
+        let order = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the morsels' scan order (scan_order)".into()); scan_order(j, store, 0, rows, &Cands::Range(lo, hi), binds, left.as_deref()) };
+        let list: Option<Vec<u32>> = match (order, &only, left) {
+            (o, _, Some(left)) => Some(o.unwrap_or(left)),
+            (o, Some(only), None) => Some(o.map_or_else(|| (lo..hi).filter(|&id| only.has(id)).collect(), |o| o.into_iter().filter(|&id| only.has(id)).collect())),
+            (Some(o), None, None) => Some(o),
+            (None, None, None) if limited => Some((lo..hi).collect()),
+            (None, None, None) => None,
         };
         let n = list.as_ref().map_or((hi - lo) as usize, Vec::len);
-        // A limited walk's budget is shared out evenly: each morsel stops at its share, so the walk's work stays
-        // within the budget and where it stops does not depend on the threads' timing.
+        // A limited walk's budget is shared out evenly, rounded up: each morsel stops past its share, so a cut walk's
+        // work reaches its budget, as one walk's does (the planner checks the line there: short of it by a share's
+        // rounding, the line went on with a budget of a few rows, cut again), and where it stops does not depend on
+        // the threads' timing.
         let left = cx.budget.saturating_sub(cx.work);
         let parts = (threads * MORSELS_PER_THREAD).min(n / MORSEL_ROWS).min(if limited { (left / MORSEL_ROWS as u64) as usize } else { usize::MAX });
         if parts < 2 {
             if let Some(o) = only { cx.only = Some(o); }
             return false;
         }
-        let share = if limited { left / parts as u64 } else { u64::MAX };
+        // Each morsel's counts hold its own entry into the first step, the walk's one: a share more each.
+        let share = if limited { (left + parts as u64).div_ceil(parts as u64) } else { u64::MAX };
         let cut = |p: usize| p * n / parts;
         let firsts: Vec<Cands<'_>> = (0..parts).map(|p| match &list {
             Some(o) => Cands::Slice(&o[cut(p)..cut(p + 1)]),
@@ -6387,14 +6462,17 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         if outs.iter().flatten().any(|o| !o.texts.is_empty()) {
             settle_deferred(cx, &mut outs.iter_mut().flatten().map(|o| (&mut o.texts, &mut o.fresh, &mut o.rows)).collect::<Vec<_>>());
         }
+        let _taken = crate::code_rule_dsl::logic::profile::span(|| "the morsels' rows taken (absorb)".into());
         for out in outs.into_iter().flatten() {
+            // Each morsel entered the first step once, the walk once (as its counts, below); one that stopped also
+            // counted the step it was refused, a walk that stops once.
+            cx.work += out.work.saturating_sub(1 + u64::from(out.left.is_some()));
             if let Some(l) = out.left {
                 cx.stop = true;
                 cx.left0.get_or_insert_with(Vec::new).extend(l);
             }
             cx.n += out.n;
             cx.skipped += out.skipped;
-            cx.work += out.work;
             for (c, [a, b]) in cx.counts.iter().zip(out.counts) { c[0].set(c[0].get() + a); c[1].set(c[1].get() + b); }
             // Each morsel entered the first step once; the walk did, once.
             let c = &cx.counts[0][0];
@@ -6407,6 +6485,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             }
         }
         cx.counts[0][0].set(cx.counts[0][0].get() + 1);
+        cx.work += 1 + u64::from(cx.stop);
         IN_MORSELS.with(|m| m.set(m.get() + 1));
         true
     }
@@ -6570,9 +6649,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let total = cx.list0.as_ref().map_or(0, |l| l.1.len() as u64);
         // Cut: the first step's rows from the one it stopped at; with no rows known, all (`None`).
         let left = cx.stop.then(|| cx.list0.as_ref().map(|(of, list)| {
-            if let Some(l) = &cx.left0 { return Rows0::of(*of, l); }
+            if let Some(l) = &cx.left0 { return Rows0::left(*of, l); }
             let at = if cx.seen0 { list.iter().rposition(|&x| x == cx.at0).unwrap_or(0) } else { 0 };
-            Rows0::of(*of, &list[at..])
+            Rows0::left(*of, &list[at..])
         }));
         let done = match &left { Some(Some(l)) => total - l.n.min(total), Some(None) => 0, None => total };
         if let Some(l) = limited {
