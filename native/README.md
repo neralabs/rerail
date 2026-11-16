@@ -10,8 +10,10 @@ TypeScript side (`src/engine/`) calls it through `src/engine/native/`.
   (`content_store/`), the Git workspace index, the process and main-instance helpers, and `build_languages.rs`.
 - `src/tree_watch/` is the file-system event bus (`TreeWatcher`): one adapter per OS (FSEvents, inotify per folder,
   ReadDirectoryChangesW with a read-handle oplock) keeps what changed under each watched root until the host takes it.
-  Its Windows tests run in CI's `unit-windows` job (the `tree_watch::` filter), its Linux tests in the rust job; macOS
-  has no Rust CI job, so run `cargo test --manifest-path native/Cargo.toml --lib tree_watch::` on a Mac after changing it.
+  Its tests run on each OS in CI: Linux's in the rust job, macOS's in the rust-macos job, Windows' in the
+  `unit-windows` job (the `tree_watch::` filter, when the engine's inputs changed). Off Windows, `cargo xwin clippy
+  --manifest-path native/Cargo.toml --target x86_64-pc-windows-msvc --lib --tests -- -D warnings` checks the Windows
+  adapter compiles clean.
 - `build.rs` validates `languages/` and generates the language tables. It also locates `fixtures/` for the engine's
   tests: the one Rust fixtures-root resolver.
 - `test-languages/` holds the planned languages only tests see (`exemplar.json`, [docs/language-packs.md](../docs/language-packs.md)):
