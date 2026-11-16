@@ -84,6 +84,18 @@ unprofiled, the M3 Max, the same findings in each:
 | before §4 | 30.7 s | 2.83 s | every corpus answer recorded again |
 | after §4 | 31.0 s, 30.8 s | 1.21 s, 1.44 s | 38,956 answers read, none recorded |
 
+After the hub's merge (4b0758b56, 2026-11-16; the M3 shared with other builds, load 5-13), the same findings in
+every run:
+
+| | cold, profiled (`reuse: false`) | cold, unprofiled | warm, unprofiled |
+|---|---|---|---|
+| wall | 33.9 s, 33.2 s | 33.6 s, 31.2 s | 1.08 s, 1.09 s (no warm write) |
+| `retain` on the main thread | 0.11 s | | |
+| the cross part's evaluation done to the manifest written | 0.84 s | | |
+
+The writer's order in the tail is unchanged: the cross part's atoms (0.39 s, beside `retain`), the frames (0.37 s),
+the commit, the manifest, then collection.
+
 ## Open
 
 - The writer is the tail's critical path now: the cross part's 388 k atoms (0.55 s, mostly their keys, `atom_key`,
@@ -93,8 +105,7 @@ unprofiled, the M3 Max, the same findings in each:
   store's format and of maintenance.
 - The store's collection runs after the manifest and the run waits for it (0.34 s on a cold store, whose first run
   always decides).
-- A warm run still writes the observer's store once: phase 0's outputs are a directory of each process's
-  (`rerail-phase-0-<pid>-1`) under the temporary directory, a root the observer watches, so each warm run's journal
-  names the last process's as changed (4 paths) and the observer forgets them.
+- (Closed by the hub's 0284, rerail's own files outside the observer: the warm run writes nothing.) A warm run
+  wrote the observer's store once: phase 0's outputs, a directory of each process's under the temporary directory.
 - A profiled run's report (`profile::report::write`, the roofline's file digests) takes about 0.4 s of the end;
   an unprofiled run has none.
