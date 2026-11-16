@@ -163,17 +163,7 @@ impl<'a> Bytewise<'a> {
         let d = self.native.output_delays[usize::from(o)];
         let start = f.ins().iadd_imm(p, i64::from(d));
         let m = self.mask(f, at, x, start, heads);
-        // The bits of the file's bytes: `len - p` of them, at most 64.
-        let rem = f.ins().isub(at.len, p);
-        let zero = f.ins().iconst(types::I64, 0);
-        let sixty_four = f.ins().iconst(types::I64, 64);
-        let rem = f.ins().smax(rem, zero);
-        let full = f.ins().icmp(IntCC::SignedGreaterThanOrEqual, rem, sixty_four);
-        let one = f.ins().iconst(types::I64, 1);
-        let low = f.ins().ishl(one, rem);
-        let low = f.ins().iadd_imm(low, -1);
-        let ones = f.ins().iconst(types::I64, -1);
-        let cut = f.ins().select(full, ones, low);
+        let cut = self.cut64(f, at, p);
         f.ins().band(m, cut)
     }
 
@@ -213,18 +203,28 @@ impl<'a> Bytewise<'a> {
         (words, more)
     }
 
-    /// The file's bytes' bits from `p`: `len - p` of them, at most 64.
+    /// The file's bytes' bits from `p`: `len - p` of them, at most 64. As the lean lexer's
+    /// `block`, which pads only where 64 bytes are not left: a full window's are all its bits,
+    /// one compare on its way; the tail's cut is made in a cold block of its own.
     fn cut64(&self, f: &mut FunctionBuilder<'_>, at: &File, p: Value) -> Value {
+        let end = f.ins().iadd_imm(p, 64);
+        let full = f.ins().icmp(IntCC::SignedLessThanOrEqual, end, at.len);
+        let (tail, join) = (f.create_block(), f.create_block());
+        f.append_block_param(join, types::I64);
+        let ones = f.ins().iconst(types::I64, -1);
+        f.ins().brif(full, join, &[ones.into()], tail, &[]);
+        f.switch_to_block(tail);
+        f.set_cold_block(tail);
+        // Fewer than 64 left: `len - p` of them, none where `p` is past the end.
         let rem = f.ins().isub(at.len, p);
         let zero = f.ins().iconst(types::I64, 0);
-        let sixty_four = f.ins().iconst(types::I64, 64);
         let rem = f.ins().smax(rem, zero);
-        let full = f.ins().icmp(IntCC::SignedGreaterThanOrEqual, rem, sixty_four);
         let one = f.ins().iconst(types::I64, 1);
         let low = f.ins().ishl(one, rem);
         let low = f.ins().iadd_imm(low, -1);
-        let ones = f.ins().iconst(types::I64, -1);
-        f.ins().select(full, ones, low)
+        f.ins().jump(join, &[low.into()]);
+        f.switch_to_block(join);
+        f.block_params(join)[0]
     }
 
     /// `words`, with `escaped(a)`'s carry in at `p` given for each `(a, carry)` of `cins`
@@ -1741,6 +1741,71 @@ mod tests {
                 }
                 assert_eq!(set, u64::from((!w).trailing_zeros().min(16)), "round {round}, output {o}: the lanes set");
                 assert_eq!((0..16).filter(|&j| lane(below, j) == 1).count(), (0..5).filter(|&j| w >> j & 1 == 1).count(), "the first five lanes");
+            }
+        }
+    }
+
+    /// A window's cut to the file's end (`cut64`) is its tail's alone, as the lean lexer's
+    /// `block` pads only where 64 bytes are not left: a full window's word is its mask, one
+    /// compare on its way; the tail's cut in a cold block, no select. Its bits are the file's
+    /// bytes' alone, whatever lies past its end.
+    #[test]
+    fn a_full_windows_word_is_not_cut() {
+        use cranelift_module::{Linkage, Module};
+        let native = gated_program();
+        let b = Bytewise::of(&native);
+        // A class's word: no `prev`'s cut of its own.
+        let func = b.window_function(1, 0);
+        let dfg = &func.dfg;
+        let mut shifts = 0;
+        for block in func.layout.blocks() {
+            for inst in func.layout.block_insts(block) {
+                let op = dfg.insts[inst].opcode();
+                assert_ne!(op, cranelift_codegen::ir::Opcode::Select, "no select: {}", func.display());
+                if op == cranelift_codegen::ir::Opcode::Ishl {
+                    shifts += 1;
+                    assert!(func.layout.is_cold(block), "the cut's shift is the tail's: {}", func.display());
+                }
+            }
+        }
+        assert_eq!(shifts, 1, "one cut: {}", func.display());
+        // Every output's word, whatever the bytes past the end.
+        let mut module = cranelift_jit::JITModule::new(crate::native_cpu_codegen::tier1_builder().expect("a JIT"));
+        let mut runs = Vec::new();
+        for o in 0..4u16 {
+            let mut ctx = module.make_context();
+            let mut func = b.window_function(o, 0);
+            let id = module.declare_function(&format!("w{o}"), Linkage::Local, &func.signature).expect("declared");
+            func.name = cranelift_codegen::ir::UserFuncName::user(0, id.as_u32());
+            ctx.func = func;
+            module.define_function(id, &mut ctx).expect("defined");
+            runs.push(id);
+        }
+        module.finalize_definitions().expect("finalized");
+        let runs: Vec<extern "C" fn(*const u8, i64, i64) -> u64> = runs.iter().map(|&id| unsafe { std::mem::transmute(module.get_finalized_function(id)) }).collect();
+        let alphabet = b"ab|^5@~#|9";
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for round in 0..300 {
+            let n = 1 + (round % 150);
+            let (mut zeros, mut text) = (vec![0u8; 16 + n + 160], vec![0u8; 16 + n + 160]);
+            for i in 16..zeros.len() {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                let c = alphabet[(x >> 8) as usize % alphabet.len()];
+                text[i] = c;
+                if i < 16 + n {
+                    zeros[i] = c;
+                }
+            }
+            let p = (x % (n as u64 + 8)) as i64;
+            for (o, run) in runs.iter().enumerate() {
+                let (z, t) = (run(zeros[16..].as_ptr(), n as i64, p), run(text[16..].as_ptr(), n as i64, p));
+                assert_eq!(t, z, "round {round}, output {o}, at {p} of {n}");
+                if o == 1 {
+                    let want = (0..64).filter(|&j| p + j < n as i64 && zeros[16 + (p + j) as usize].is_ascii_digit()).fold(0u64, |w, j| w | 1 << j);
+                    assert_eq!(z, want, "round {round}, the digits at {p} of {n}");
+                }
             }
         }
     }

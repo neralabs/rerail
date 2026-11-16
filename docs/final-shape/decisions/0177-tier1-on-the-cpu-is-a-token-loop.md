@@ -2780,3 +2780,28 @@ Tests: `a_sum_less_its_operand_is_the_other` and
 `a_range_decides_an_unsigned_compare`.
 
 Counts, reported: unchanged (rustc had folded them in its own pass).
+
+## A full window is not cut
+
+**Intro.** A window reads 64 bytes. Near the file's end some of them
+are past it, so its bits there are cut off. Lean's `block` pays for
+this only on the last block: it tests `i + 64 <= len` and pads the
+tail alone. Ours cut every window, with a shift and a select.
+
+**The change.** `cut64` (and `word`, which now uses it) tests
+`p + 64 <= len`. A full window keeps all its bits. The tail's mask is
+made in a cold block, joined after.
+
+```rust
+// generated (tier1_aot.rs), the line comment's first block, after:
+if p + 65 <= len { cut = !0 } else { cold_path(); cut = (1 << max(len - p, 0)) - 1 }
+// before, on every window:
+// rem = max(len - p, 0); cut = if rem >= 64 { !0 } else { (1 << rem) - 1 };
+```
+
+This is the fallback. Where a file's zero padding makes the cut
+nothing, it goes away (the next section).
+
+Test: `a_full_windows_word_is_not_cut`.
+
+Counts, reported: comments 234.0, strings 266.0.
