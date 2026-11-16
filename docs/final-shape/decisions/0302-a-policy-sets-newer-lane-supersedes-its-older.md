@@ -29,18 +29,21 @@ newest lane is another is superseded: it is not protected, and takes no place am
 unless a protected manifest names them too, and the frames only they held go with the next sweep. A newer lane of a
 set also makes a decision worth taking (`corpus_decision_worth`).
 
-A lane of no set (`policy` NULL: tests, sessions, a policy batch, any older binary's manifests) is protected as
-before.
+Every lane this binary records names a set (§2); one recorded with none is an older binary's (§4).
 
 Undoing an edit is a new run of the older texts: its lane is the set's newest again, and the edit's lane is
 superseded. Its plans were dead, so that run is colder.
 
 ### 2. What names the set
 
-The command line's `logic` names it: the rules' path, canonical (`policy_set` among the run's options). The run hashes
-it with all of the run's options (`rerail.corpus-policy/v1`): another dialect, other settings, or a phase's or the
-constants' marks give another set. So a set's lanes differ only by their programs' texts. A run inside another
-(`record_run`'s `outer` false) names no set, so it never supersedes the outer run's lane.
+The programs' policies name it: every `.policy "<name>"` line of the run's programs, as a sorted set, hashed with all
+of the run's options (`rerail.corpus-policy/v2`). An edit of a rule's body keeps its policy's name, so the edit's lane
+is the same set's; another dialect, other settings, or a phase's or the constants' marks give another set. A run whose
+programs name no policy (tests, a session's programs), or a run inside another (`record_run`'s `outer` false), is its
+lane's own set: it never supersedes another lane.
+
+(A first build named the set by the command line's rules path, carried among the run's options. The path then keyed
+the constants' cached rows too, and a batch or session, which has no path, named none: both dropped.)
 
 ### 3. The program that reuses frames holds them
 
@@ -53,10 +56,18 @@ its holding behind the run (a `frame_program_used` row, no frames). Which progra
 snapshot, before the first wave (0104); a lookup in a wave is refused under `RERAIL_SQL_STRICT`. A program that holds
 queues nothing (0197). Writes this process queues with a program keep the snapshot's holdings current.
 
+### 4. A lane of no set is an older binary's, retired where sets are named
+
+This binary names every lane's set (§2). A manifest with a lane and no set was recorded before it, and protected
+under 0053 alone. Over a root where some manifest names a set, such a manifest keeps no protection
+(`Protection::over`): the root's lanes are this binary's from then on, and the older lanes' plans and frames go with
+the next decision and sweep. A root no named manifest has run keeps its older lanes as before.
+
 ## Consequences
 
 - Tests: `corpus_runs::tests::a_policy_sets_newer_lane_supersedes_its_older`,
-  `frames::tests::a_program_that_reuses_frames_holds_them`. Both fail without the change.
+  `corpus_runs::tests::an_older_binarys_lane_keeps_no_protection_where_sets_are_named`,
+  `frames::tests::a_program_that_reuses_frames_holds_them`. Each fails without its change.
 - ep2, B101 body edits, same build, outputs identical as sets (1,334 rows):
 
   | | Cross space after | Identities left out | Edit |
@@ -65,8 +76,8 @@ queues nothing (0197). Writes this process queues with a program keep the snapsh
   | After, sweep stalled (h2–h3) | 196,767 | 55,162 | 64.4–67.9 G |
   | After the backlog's sweep (h4–h5) | 131,371 | 36,777 | 52.8–54.9 G |
 
-- The frames sweep had not completed on ep2 since run 289: run alone and uninterrupted, it took 10.5 s and collected
-  66,155 frames. After it, each process sweeps the previous decision (one behind: the decision is the writer's,
-  behind the run, after `finish_soon`). Why the backlog's sweep never finished in a run's process is open.
-- Lanes of no set stay protected: ep2's older lanes (36,777 identities) leave only when 64 newer lanes of other sets
-  push them out, or by the backstop.
+- The frames sweep had not completed on ep2 since run 289: the process's end did not wait for a sweep the upkeep
+  thread was in, and exited under it (decision 0303). Once it ran (10.5 s, then 33.7 s once the older lanes were
+  retired: 105,291 frames), the cross space fell to 41,045 frames over 9,161 identities, 3 programs holding it.
+- Older lanes (§4): ep2's 36,777 identities left out by older lanes went with them; 5,444 are left out now.
+- PYI062 repro (pyi p4): every manifest names a set; consecutive edits stay warm (230 frames read).

@@ -185,11 +185,22 @@ struct Protection<'m> {
     lanes: HashMap<i64, Vec<Option<&'m [u8]>>>,
     /// Each root's policy sets' newest lanes.
     newest: HashMap<(i64, &'m [u8]), Option<&'m [u8]>>,
+    /// The roots with a manifest that names its set: there, a lane with none is an older binary's (§4).
+    named: HashSet<i64>,
 }
 
 impl<'m> Protection<'m> {
+    fn over(manifests: &[Manifest]) -> Self {
+        Protection { named: manifests.iter().filter(|m| m.policy.is_some()).map(|m| m.root).collect(), ..Protection::default() }
+    }
+
     fn protects(&mut self, m: &'m Manifest, runs: usize, lanes: usize) -> bool {
         let lane = m.lane.as_deref();
+        // Decision 0302 §4: this binary names every lane's set (a lane of no set is its own), so a lane with none
+        // over a root it ran is an older binary's, which no newer lane of its set can supersede.
+        if lane.is_some() && m.policy.is_none() && self.named.contains(&m.root) {
+            return false;
+        }
         if let Some(policy) = m.policy.as_deref()
             && *self.newest.entry((m.root, policy)).or_insert(lane) != lane
         {
@@ -682,7 +693,7 @@ impl ContentStore {
             // build and the program, and its memo (decision 0146: a space of frames, the size of every file's
             // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
             // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
-            let mut protection = Protection::default();
+            let mut protection = Protection::over(&manifests);
             let protected_ids: HashSet<i64> = manifests
                 .iter()
                 .filter(|m| kept_ids.contains(&m.id))
@@ -896,7 +907,7 @@ struct Decided {
 /// The manifests to keep, `manifests` newest first (the module's rules).
 fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64) -> Decided {
     let walk = |cap: Option<u64>| -> Decided {
-        let mut protection = Protection::default();
+        let mut protection = Protection::over(manifests);
         let (mut seen_sources, mut seen_tapes) = (HashSet::new(), HashSet::new());
         let mut out = Decided { kept: Vec::new(), protected: 0, history: 0 };
         for m in manifests {

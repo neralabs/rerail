@@ -2084,8 +2084,10 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
     let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer && first_of_batch;
-    // A run inside another is no set's lane: it would supersede the outer run's (decision 0302).
-    let set = set.filter(|_| outer);
+    // Every lane names a set (decision 0302 §4: a lane with none is an older binary's). A run inside another, or one
+    // whose programs name none, is its lane's own set: never superseded, protected as before. A run inside another
+    // would otherwise supersede the outer run's lane.
+    let set = set.filter(|_| outer).or(lane);
     // The frames a keep decision leaves unreachable are a utility upkeep job's (decision 0227): one a process for the
     // store, finished at the outermost run's end (`upkeep::finish_soon`) if the scheduler has not run it.
     if collect {
@@ -2804,16 +2806,27 @@ fn run_observed(
         added.hash(&mut h);
         h.finalize().into()
     };
-    // The lane's policy set (decision 0302): where the programs come from (`policy_set`, the command line's rules
-    // path) and the run's options (its dialect, settings, phase marks). A run of the set's programs edited, under the
-    // same options, supersedes the set's older lanes over the root. A run naming no set is a lane of no set.
-    let policy: Option<[u8; 32]> = options.get("policy_set").map(|_| {
-        use sha2::Digest as _;
-        let mut h = sha2::Sha256::new();
-        h.update(b"rerail.corpus-policy/v1\0");
-        h.update(options.to_string().as_bytes());
-        h.finalize().into()
-    });
+    // The lane's policy set (decision 0302): the programs' policies by name (`.policy "<name>"`: an edit of a body
+    // keeps them) and the run's options (its dialect, settings, phase marks). A run of the set's programs edited,
+    // under the same options, supersedes the set's older lanes over the root, whoever runs it (the command line, a
+    // session, a batch). Programs that name no policy name no set: the run's lane is its own (`record_run`).
+    let policy: Option<[u8; 32]> = {
+        let names: std::collections::BTreeSet<&str> = programs
+            .iter()
+            .flat_map(|t| t.lines().filter_map(|l| l.trim_start().strip_prefix(".policy")?.trim_start().strip_prefix('"')?.split('"').next()))
+            .collect();
+        (!names.is_empty()).then(|| {
+            use sha2::Digest as _;
+            let mut h = sha2::Sha256::new();
+            h.update(b"rerail.corpus-policy/v2\0");
+            for n in &names {
+                h.update((n.len() as u64).to_le_bytes());
+                h.update(n.as_bytes());
+            }
+            h.update(options.to_string().as_bytes());
+            h.finalize().into()
+        })
+    };
     // The main thread's own CPU (the chunk builder's jobs' is theirs, below; the jobs the main thread runs for the
     // pool while it waits are not its own, `exec::helped`) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u - rerail_accel::exec::helped(), s, usage().2) };
@@ -7573,7 +7586,9 @@ fn run_observed(
                         totals.forget(rel);
                         let src = exports.borrow_mut().source(rel, types.len());
                         totals.add_rows(rel, src.len(), src.as_ref(), &types);
-                        measured_held.push(rel.clone());
+                        // Why: the kept rows (or none kept) against those held.
+                        let why = kept.as_ref().and_then(|m| m.get(rel)).map_or_else(|| "none kept".to_owned(), |r| format!("{} kept", r.rows()));
+                        measured_held.push(format!("{rel} ({why}, {held} held)"));
                     }
                     None => {}
                 }
