@@ -114,11 +114,6 @@ function recorded(home: string, file: string): number[] {
   return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(Number) : [];
 }
 
-/** Every daemon started in `home` under `watchedEnvironment`, running or not. */
-export function startedDaemons(home: string): number[] {
-  return recorded(home, STARTED.daemons.started);
-}
-
 /** Every `rerail daemon start` launched in `home` under `watchedEnvironment`. */
 export function launchers(home: string): number[] {
   return recorded(home, STARTED.launchers.started);
