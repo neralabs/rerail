@@ -1780,6 +1780,54 @@ async function heldByAnotherProcess(): Promise<DatabaseHolder> {
   return await holdingProcess(process.execPath, ["-e", script, process.cwd(), defaultRerailDatabasePath()]);
 }
 
+/** {@link cuedWriter}'s process: it runs the first step at once and one more on each line it reads. */
+const CUED_WRITER = [
+  "const Database = require(require.resolve('better-sqlite3', { paths: [process.argv[1]] }));",
+  "const database = new Database(process.argv[2]);",
+  "database.pragma('wal_autocheckpoint = 0');",
+  "const steps = JSON.parse(process.argv[3]);",
+  "let next = 0;",
+  "const run = () => { database.exec(steps[next]); next += 1; process.stdout.write(`step ${next} ran\\n`); };",
+  "process.stdin.on('data', run);",
+  "run();",
+  "process.stdout.write('held\\n');",
+].join("\n");
+
+/** A {@link DatabaseHolder} that runs the next of its steps on `cue`, settling once it has. */
+interface CuedWriter extends DatabaseHolder {
+  cue(): Promise<void>;
+}
+
+/**
+ * Another process holding the Rerail database as the daemon's writer does, its own checkpoints off, which runs the first
+ * of `steps` (SQL) at once and each later one on a cue: a test changes a file of the database under it between two.
+ */
+async function cuedWriter(steps: readonly string[]): Promise<CuedWriter> {
+  const child = spawn(process.execPath, ["-e", CUED_WRITER, process.cwd(), defaultRerailDatabasePath(), JSON.stringify(steps)], {
+    stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+  });
+  child.stdin.on("error", () => undefined);
+  const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+  const end = async (): Promise<void> => {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await exited;
+  };
+  let ran = 1;
+  const cue = async (): Promise<void> => {
+    ran += 1;
+    const done = printed(child, `step ${ran} ran`);
+    child.stdin.write("\n");
+    await done;
+  };
+  try {
+    await printed(child, "held");
+  } catch (error) {
+    await end();
+    throw error;
+  }
+  return { pid: child.pid, end, cue };
+}
+
 /**
  * The WAL written into the database file and emptied by a writable connection of its own, as the daemon's checkpoints
  * do: a connection held open elsewhere keeps the WAL and its index from being removed when this one closes.
@@ -2969,6 +3017,66 @@ describe("the hook start check", () => {
         await startedFromLateDaemon(host, daemon, app);
       } finally {
         await daemon.close();
+      }
+    } finally {
+      await writer.end();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("waits for a late daemon that last answered stopped where the WAL is moved aside under it and an older copy put at its name, the daemon reading started from the WAL it holds", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const host = await startCheckHost();
+    // The daemon's writer: the stop alone in an emptied WAL; once that WAL is copied, the stop written into the database
+    // file and the start written from the WAL's first frame again, where the copy holds the stop.
+    const writer = await cuedWriter([
+      "UPDATE repositories SET started = 0; PRAGMA wal_checkpoint(TRUNCATE); UPDATE repositories SET started = 0;",
+      "PRAGMA wal_checkpoint(PASSIVE); UPDATE repositories SET started = 1;",
+    ]);
+    try {
+      const wal = `${defaultRerailDatabasePath()}-wal`;
+      const older = join(root, "older-wal");
+      copyFileSync(wal, older);
+      await writer.cue();
+      const daemonProcess = { holdsDatabase: false, pid: writer.pid };
+      await keptStopped(host, app, daemonProcess);
+      renameSync(wal, `${wal}.live`);
+      copyFileSync(older, wal);
+      const daemon = await daemonAnsweringAfterProof(host, "started", daemonProcess);
+      try {
+        await startedFromLateDaemon(host, daemon, app);
+      } finally {
+        await daemon.close();
+      }
+    } finally {
+      await writer.end();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("waits for a late daemon that last answered stopped where the WAL's index is removed under it and made again by another reader that keeps it open, the daemon then writing the start through the index it holds", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const host = await startCheckHost();
+    // The daemon's writer: the stop in the database file; once another reader has made a new index and holds it, the
+    // start written through the index the writer holds, which the new one never learns of. With no reader holding the
+    // new index, each new reader would build it again from the WAL and read the start.
+    const writer = await cuedWriter(["UPDATE repositories SET started = 0; PRAGMA wal_checkpoint(TRUNCATE);", "UPDATE repositories SET started = 1;"]);
+    try {
+      const daemonProcess = { holdsDatabase: false, pid: writer.pid };
+      await keptStopped(host, app, daemonProcess);
+      rmSync(`${defaultRerailDatabasePath()}-shm`);
+      const reader = await heldByAnotherProcess();
+      try {
+        expect(existsSync(`${defaultRerailDatabasePath()}-shm`)).toBe(true);
+        await writer.cue();
+        const daemon = await daemonAnsweringAfterProof(host, "started", daemonProcess);
+        try {
+          await startedFromLateDaemon(host, daemon, app);
+        } finally {
+          await daemon.close();
+        }
+      } finally {
+        await reader.end();
       }
     } finally {
       await writer.end();
