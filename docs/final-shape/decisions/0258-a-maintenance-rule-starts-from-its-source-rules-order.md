@@ -1,6 +1,6 @@
 # 0258: A maintenance rule starts from its source rule's order
 
-Status: built (2026-11-15). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
+Status: built (2026-11-15); re-validated the same day: a net cost in planning (see "Re-validated"). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
 0123 §5 ("carry the cold run's plans into the session"). `plan.rs` (`Model::started`, `source_order`,
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).
@@ -90,7 +90,8 @@ moved by up to 2% between rounds, and step 16's join work by a third.
 | cold (11) | 10.44 | 10.47 | +0.3% |
 
 The join work is at parity: at step 12, 5.46 M rows against 5.44 M. On the optimized build a search costs about
-6.5 µs and a start 3.3 µs (step 13: 1,891 searches in 27.8 ms). A started line saves half a search.
+6.5 µs and a start 3.3 µs (step 13: 1,891 searches in 27.8 ms). A started line saves half a search. (Not so, as
+measured per plan call: see "Re-validated" below. The table above was the first form's, and the saving noise.)
 
 **The first form was a loss.** It led each seed with its change and followed the source's joins in their order.
 The sessions came out 0.3% to 2% over the searches, though join work read lower, for two reasons:
@@ -102,32 +103,51 @@ The sessions came out 0.3% to 2% over the searches, though join work read lower,
 
 Both are fixed above: a seed keeps the source's lead, and the next join is a connected one.
 
-## Re-validated after the hub merge
+## Re-validated: what starts, and what it saves
 
-2026-11-15, at 646d533b9 (the hub, 3f4c6ebf4, merged in), `--profile profiling`, `RERAIL_JOIN_SEED=1`.
+2026-11-15, after the hub merge (646d533b9). `--profile profiling`, `RERAIL_JOIN_SEED=1`. An A/B worktree built
+this decision's two commits with a diagnostic (each start's verdict, price and search cost; each plan call's thread
+CPU in starts and searches), not committed.
 
-- **Sessions 12 to 16 are the full run's** ("same as full: true" at every step, two runs).
-- **Fewer lines start.** One session after a cold run at the step before, as above:
+**Sessions 12 to 16 are the full run's** ("same as full: true" at every step, two runs).
 
-  | session | first-sight lines | started from the source rule | then |
-  |---|---|---|---|
-  | 12 | 2,311 | 707 (31%) | 770 (34%) |
-  | 13 | 3,923 | 1,409 (36%) | 1,560 (40%) |
-  | 14 | 2,745 | 1,271 (46%) | 1,342 (46%) |
+**The table of what starts was the first form's.** It was measured at ce8bc3dd2 and carried into f597b540c, whose
+fix (a seed keeps the source's lead, the next join a connected one) changes the orders priced. Step 12:
 
-  Step 12 gives 707 in three runs, and in the debug build. Decision 0265 does not change it (708 without it). Of
-  step 12's searched lines, only one reason moved: the source's order priced over a search's cost, 498 against 414.
-  The other reasons are as before (1,051 glue lines, 50 with no order kept, 2 not led by the delta). So the gate
-  works as written, and the merged pricing prices more of these orders over a search.
-- **The saving does not reproduce.** The cross parts of sessions 12 to 16, G instructions, two rounds:
+| code | started | priced over a search's cost |
+|---|---|---|
+| ce8bc3dd2, the first form | 783 (34%) | 414 |
+| f597b540c, as built | 704 (31%) | 493 |
+| after the hub merge, with decision 0265 | 707 (31%) | 491 |
 
-  | | off | on |
-  |---|---|---|
-  | the five | 34.32, 34.35 | 34.07, 34.61 |
+Matched by rule text across the last two (1,033 lines), 5 lines change verdict. The merge did not move it, nor did
+0265 (708 without it). Steps 13 and 14 now: 1,409 of 3,923 (36%) and 1,271 of 2,745 (46%).
 
-  Both modes average 34.34 G: parity, within the rounds' spread, where it was −0.9%. Every session is cheaper than
-  when this was measured (37.87 G off then). Starting from the source's order still costs nothing in work, and saves
-  what a search would have cost (decision 0265 measures the plan call's fixed part).
+**It costs planning, not saves it.** Each plan call's thread CPU in `plan_rule_reused`, sessions 12 to 16, mean of
+three rounds:
+
+| | f597b540c off | on | merged off | on |
+|---|---|---|---|---|
+| searches | 69.8 ms (6,649) | 47.0 ms (4,444) | 58.2 ms (6,345) | 38.7 ms (4,093) |
+| starts taken | | 15.9 ms | | 15.3 ms |
+| starts refused | 0.9 ms | 14.2 ms | 0.8 ms | 11.5 ms |
+| planning in all | 70.7 ms | 77.2 ms | 59.0 ms | 65.5 ms |
+
+- A line that starts saves its search (about 20 ms of searches) for about 15 ms of starts: about 30% of a search,
+  not half.
+- A refused start (about 490 a step, priced over a search's cost) prices the source's order, then searches: 12 to
+  14 ms for nothing.
+- So source orders cost about 7 ms more planning over the five sessions, in both builds.
+
+**Why a start saves so little.** A search costs 400 rows and one per candidate order (`search_rows`). Of step 12's
+707 starts, 272 have one candidate order and 218 two: there a search prices what the start prices. And pricing one
+order runs most of a search's set-up (each atom's binding domains, `delta_misses`, every join priced from no binding
+for `SEED`). The gate (a price under a search's cost) keeps a start safe for the plan; it does not pick the lines
+where a start saves planning.
+
+**The −0.9% above was noise.** The sessions' instruction totals move more between rounds than planning can move
+them: f597b540c off read 36.95, 38.08 and 37.03 G (3%), against about 0.03 G of planning. Merged: off 34.19, 33.98,
+34.43; on 33.82, 34.19, 34.19. The join work is unchanged either way.
 
 ## Open
 
@@ -139,8 +159,9 @@ Both are fixed above: a seed keeps the source's lead, and the next join is a con
   formatting), and it is 4 to 5 µs now.
 - **The glue rules** (1,049 lines at step 12) have no source rule. They are a few literals over one relation's
   maintenance relations, the same shape for every relation. Their search is mostly its fixed part.
-- **Orders priced over a search's cost** are priced and then searched (414 at step 12). That is a start's cost
-  spent for nothing.
+- **Orders priced over a search's cost** are priced and then searched (493 at step 12, as built). That is a start's
+  cost spent for nothing: 12 to 14 ms over sessions 12 to 16, more than the starts save.
+- **A start where a search prices one or two orders** saves nothing: most of the lines that start.
 - **Across processes.** The line orders live with a session's plans in memory. A new process takes plans from the
   store by key (decision 0116), and its line orders start empty.
 
