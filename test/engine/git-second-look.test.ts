@@ -4,7 +4,8 @@
  * so its process has not looked for Git yet. It looks, changes what a look would read anew (the repository's `.git`, the
  * folder, `PATH`), removes the Git the first look kept and makes a Git call, which looks again.
  *
- * Every Git here is a stand-in: an empty file Rerail takes for a Git. The tests read only which one the process keeps.
+ * Every Git here is a stand-in: an empty file Rerail takes for a Git. The tests read which one the process keeps, and on
+ * Windows, which cannot run an empty git.exe, what each call answers then.
  */
 import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -140,6 +141,22 @@ describe("the second look for Git", () => {
     expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
     git.searchGitFrom(other);
     expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
+  });
+
+  it("answers a call whose Git found again Windows cannot run as one that failed, and rejects none", async ({ skip }) => {
+    skip(process.platform !== "win32", "Node throws, rather than reports, a start Windows refuses as not a program (EFTYPE)");
+    vi.stubEnv("PATH", outside.join(delimiter));
+    const git = await freshGit();
+    git.searchGitFrom(repository);
+    expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
+    // The look finds outside-2's stand-in, an empty git.exe, as an installer leaves one it is still writing.
+    await rm(git.gitExecutable());
+    await expect(git.gitHead(root)).resolves.toBeUndefined();
+    expect(git.gitExecutable()).toBe(gitIn(outside[1]!));
+    await expect(git.gitModifiedOrUntrackedListing(root)).resolves.toEqual({ ended: "failed" });
+    await expect(git.readGitBlobIds(root, ["HEAD:a.py"])).resolves.toEqual(new Map());
+    await expect(git.runGitAsync(root, ["--version"])).resolves.toMatchObject({ status: null, error: { code: "EFTYPE" } });
+    expect(git.runGit(root, ["--version"])).toMatchObject({ status: null, error: { code: "EFTYPE" } });
   });
 
   it("reads the PATH of its first look, not one the process set since", async () => {

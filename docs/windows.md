@@ -170,7 +170,8 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   `mingw64\bin\git.exe` a daemon started on 2.55 runs; without the second look, every Git call of that daemon failed
   until it restarted. The look reads the `PATH`, folder and repository the first look read (`gitLook`) and checks each
   candidate as the first did, and the call runs once more with the Git it finds. When it finds none, as while an
-  installer is still at work, that call fails and the next one looks again.
+  installer is still at work, that call fails and the next one looks again. A `git.exe` it finds that Windows cannot
+  run yet, as one the installer is still writing, fails each call as a Git that cannot start does until it runs.
 - Anyone can put a `cmd\git.exe` or `bin\git.exe` on `PATH`, so Rerail goes behind one only into a Git for Windows
   install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or the build's `share\git` is there. The `git.exe` it
   then runs must pass the checks every `PATH` entry gets (`trustedFolder`): outside every `node_modules`, and outside

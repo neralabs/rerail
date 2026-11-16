@@ -476,7 +476,7 @@ export async function runGitAsync(cwd: string, args: readonly string[], options:
 /** One start of the Git at `executable` with `args`, as {@link runGitAsync} makes it. */
 async function runGitAsyncWith(executable: string, args: readonly string[], options: RunGitAsyncOptions): Promise<GitResult> {
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = execFile(
+  const child = startGit(() => execFile(
     executable,
     args,
     { encoding: "utf8", maxBuffer: options.maxBuffer ?? 1024 * 1024, timeout: options.timeout ?? DEFAULT_TIMEOUT_MS, env: gitEnvironment() },
@@ -488,7 +488,8 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
       const status = typeof error.code === "number" && error.killed !== true ? error.code : null;
       settle({ status, stdout, stderr, ...(status === null ? { error } : {}) });
     },
-  );
+  ));
+  if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
   child.stdin?.on("error", () => undefined);
   child.stdin?.end(options.input ?? "");
@@ -570,6 +571,26 @@ async function readWithGit<T>(signal: AbortSignal | undefined, read: (executable
 }
 
 /**
+ * Starts a Git with `start` and gives back its process, or the error the start threw. Node tells of a start that failed
+ * with ENOENT, EACCES, EAGAIN, EMFILE or ENFILE through the process's `error` event, and throws any other: on Windows
+ * EFTYPE for a git.exe that is not a program, such as one an installer is still writing, which a look for Git can find.
+ * A call it ends so answers as one whose Git could not start, and only ENOENT looks for Git again.
+ */
+function startGit<T extends ChildProcess>(start: () => T): T | Error {
+  try {
+    return start();
+  } catch (error) {
+    if (startThrew(error)) return error;
+    throw error;
+  }
+}
+
+/** Whether `error` is one Node threw at the start of a program (its `syscall` is `spawn`), not a fault in the call. */
+function startThrew(error: unknown): error is Error {
+  return error instanceof Error && "syscall" in error && error.syscall === "spawn";
+}
+
+/**
  * Whether the start of `child` found no program at its path ({@link programMissing}), as its `error` event tells; asked
  * once the read has settled.
  */
@@ -620,12 +641,13 @@ type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readon
  * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}).
  */
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
-  const read = await readWithGit(signal, async executable => {
+  const read = await readWithGit<GitRead>(signal, async executable => {
     const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
-    const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
+    const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
       env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
       stdio: ["pipe", "pipe", "ignore"],
-    });
+    }));
+    if (child instanceof Error) return { answer: { ended: "failed" }, missing: false };
     const missing = startMissing(child);
     const printed = gitPrinted(child, maxBuffer);
     // This `close` listener comes first and answers with what a Git that exited with status 0 printed. The next answers
@@ -1059,10 +1081,11 @@ interface GitStream extends GitReadOptions {
 async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
   await readWithGit(stream.signal, async executable => {
     const { promise, resolve: settle } = Promise.withResolvers<void>();
-    const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
+    const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
       env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
       stdio: ["pipe", "pipe", "ignore"],
-    });
+    }));
+    if (child instanceof Error) return { answer: undefined, missing: false };
     const missing = startMissing(child);
     child.stdout.on("data", stream.onData);
     settleWhenDone(child, () => settle(), { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
