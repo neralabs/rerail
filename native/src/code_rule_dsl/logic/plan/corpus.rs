@@ -755,77 +755,105 @@ pub(in crate::code_rule_dsl) struct Cone {
 /// or more documents, joined by values), `same-unit` (every atom on one document), `config` (no document at all).
 /// A relation inherits the worst class of the relations its rules read.
 fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file_local::Programs) {
-    // The two parts' rules beside it, a line each, and the exports.
-    let rules = |p: &crate::code_rule_dsl::logic::front::Program| p.rules.iter().map(|r| format!("{r}\n")).collect::<String>();
-    let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.local));
-    let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.cross));
-    let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
-    use front::{Literal, Term};
+    use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit, LitRef, RuleRef, Slot, TermRef, Version};
     use std::io::Write;
+    // The two parts' rules beside it, a line each (printed from their versions, 0276 §6), and the exports.
+    let rules = |v: &Version| v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>();
+    let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.versions.local));
+    let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.versions.cross));
+    let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
-    let cross = &split.cross;
-    let Ok(sccs) = front::components_of(cross) else { return };
+    let cross = &split.versions.cross;
+    let placed = super::body::Placed::whole(Arc::clone(cross));
+    let (Ok(f), Ok(sccs)) = (placed.fields(), placed.components()) else { return };
     let scc_of = |rel: &str| sccs.iter().find(|s| s.contains(rel));
-    let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let head = |r: RuleRef<'_>| cross.rel_name(r.head().rel());
+    let derived: BTreeSet<String> = cross.rules().map(|r| head(r).to_owned()).collect();
     // The columns of a relation that name a document or a node of one (a node id holds its document).
     let carriers = |rel: &str| -> Vec<usize> {
         let mut c: BTreeSet<usize> = split.same_doc.get(rel).or_else(|| split.locations.get(rel)).cloned().unwrap_or_default().into_iter().collect();
-        if let Some(cols) = cross.decls.get(rel) {
-            c.extend(cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i));
-        }
+        c.extend(f.types(rel).iter().enumerate().filter(|(_, t)| **t == "node").map(|(i, _)| i));
         c.into_iter().collect()
+    };
+    // The variables of a term, of a literal.
+    fn term_vars(t: TermRef<'_>, out: &mut BTreeSet<Slot>) {
+        match t {
+            TermRef::Var(s) => {
+                out.insert(s);
+            }
+            TermRef::Call(_, args) => args.for_each(|a| term_vars(a, out)),
+            _ => {}
+        }
+    }
+    let lit_vars = |l: LitRef<'_>| -> BTreeSet<Slot> {
+        let mut out = BTreeSet::new();
+        match l.view() {
+            Lit::Atom(a) => a.args().for_each(|t| term_vars(t, &mut out)),
+            Lit::Cmp { l, r, .. } => {
+                term_vars(l, &mut out);
+                term_vars(r, &mut out);
+            }
+            Lit::Agg { var, over, atom, .. } => {
+                out.insert(var);
+                out.extend(over);
+                atom.args().for_each(|t| term_vars(t, &mut out));
+            }
+            Lit::Nearest { n, a, .. } => out.extend([n, a]),
+            Lit::Ast { document, node, .. } => out.extend([document, node]),
+        }
+        out
     };
     // Whether a relation's carriers are always on one document: known for base and file-local relations (their
     // same-document columns), and for derived ones the greatest fixpoint of their rules keeping them so.
     let one_doc_known = |rel: &str| !derived.contains(rel) && split.same_doc.contains_key(rel);
     // The classes of a rule's carrier variables, joined where an atom on one document holds both; `None` when some
     // literal is on any document (a wildcard or constant in every carrier).
-    let classes = |rule: &front::Rule, unit: &BTreeSet<String>| -> Option<usize> {
-        let mut parent: HashMap<String, String> = HashMap::new();
-        fn find(p: &mut HashMap<String, String>, x: &str) -> String {
-            let up = p.get(x).cloned().unwrap_or_else(|| x.to_owned());
+    let classes = |rule: RuleRef<'_>, unit: &BTreeSet<String>| -> Option<usize> {
+        let mut parent: HashMap<Slot, Slot> = HashMap::new();
+        fn find(p: &mut HashMap<Slot, Slot>, x: Slot) -> Slot {
+            let up = *p.entry(x).or_insert(x);
             if up == x {
-                p.insert(x.to_owned(), up.clone());
                 return up;
             }
-            let r = find(p, &up);
-            p.insert(x.to_owned(), r.clone());
+            let r = find(p, up);
+            p.insert(x, r);
             r
         }
-        let mut seen: BTreeSet<String> = BTreeSet::new();
-        for l in &rule.body {
-            let Some(a) = l.atom() else { continue };
-            let vars: Vec<String> = carriers(&a.rel).into_iter().filter_map(|c| a.args.get(c)).filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).map(String::from).collect();
+        let mut seen: BTreeSet<Slot> = BTreeSet::new();
+        for a in rule.reads() {
+            let rel = cross.rel_name(a.rel());
+            let args: Vec<TermRef<'_>> = a.args().collect();
+            let vars: Vec<Slot> = carriers(rel).into_iter().filter_map(|c| args.get(c).and_then(|t| t.var())).collect();
             if vars.is_empty() {
-                if !carriers(&a.rel).is_empty() {
+                if !carriers(rel).is_empty() {
                     return None;
                 }
                 continue;
             }
-            seen.extend(vars.iter().cloned());
-            if one_doc_known(&a.rel) || unit.contains(a.rel.as_str()) {
-                let r0 = find(&mut parent, &vars[0]);
+            seen.extend(vars.iter().copied());
+            if one_doc_known(rel) || unit.contains(rel) {
+                let r0 = find(&mut parent, vars[0]);
                 for v in &vars[1..] {
-                    let r = find(&mut parent, v);
-                    parent.insert(r, r0.clone());
+                    let r = find(&mut parent, *v);
+                    parent.insert(r, r0);
                 }
             }
         }
         // `$a = $b` names one value twice.
-        for l in &rule.body {
-            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = l {
+        for l in rule.body() {
+            if let Lit::Cmp { l: TermRef::Var(a), op: CmpOp::Eq, r: TermRef::Var(b) } = l.view() {
                 let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
                 parent.insert(ra, rb);
             }
         }
-        let roots: BTreeSet<String> = seen.iter().map(|v| find(&mut parent, v)).collect();
+        let roots: BTreeSet<Slot> = seen.iter().map(|v| find(&mut parent, *v)).collect();
         Some(roots.len())
     };
     let mut unit: BTreeSet<String> = derived.clone();
     loop {
         let before = unit.len();
-        let gone: Vec<String> = cross.rules.iter().filter(|r| unit.contains(r.head.rel.as_str()) && classes(r, &unit).is_none_or(|n| n > 1)).map(|r| r.head.rel.to_string()).collect();
+        let gone: Vec<String> = cross.rules().filter(|r| unit.contains(head(*r)) && classes(*r, &unit).is_none_or(|n| n > 1)).map(|r| head(r).to_owned()).collect();
         for g in gone {
             unit.remove(&g);
         }
@@ -833,39 +861,52 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
             break;
         }
     }
-    let own = |rule: &front::Rule| -> &'static str {
-        let scc = scc_of(&rule.head.rel);
-        let recursive = rule.body.iter().filter_map(|l| l.atom()).any(|a| scc.is_some_and(|s| s.contains(a.rel.as_str())));
+    let own = |rule: RuleRef<'_>| -> &'static str {
+        let scc = scc_of(head(rule));
+        let recursive = rule.reads().any(|a| scc.is_some_and(|s| s.contains(cross.rel_name(a.rel()))));
         let n = classes(rule, &unit);
         let one = n.is_some_and(|n| n <= 1);
-        let others = |k: usize| -> BTreeSet<String> {
-            let mut v = rule.head.vars();
-            for (j, l) in rule.body.iter().enumerate() {
+        let lits: Vec<LitRef<'_>> = rule.body().collect();
+        let others = |k: usize| -> BTreeSet<Slot> {
+            let mut v = BTreeSet::new();
+            rule.head().args().for_each(|t| term_vars(t, &mut v));
+            for (j, l) in lits.iter().enumerate() {
                 if j != k {
-                    v.extend(l.vars());
+                    v.extend(lit_vars(*l));
                 }
             }
             v
         };
         // One positive atom with its documents projected away: a union of each document's rows.
-        let union = matches!(rule.body.as_slice(), [Literal::Atom(a)] if !a.neg && !carriers(&a.rel).is_empty() && carriers(&a.rel).iter().all(|&c| matches!(a.args.get(c), Some(Term::Wild))));
+        let union = match lits.as_slice() {
+            [l] => match l.view() {
+                Lit::Atom(a) => {
+                    let c = carriers(cross.rel_name(a.rel()));
+                    let args: Vec<TermRef<'_>> = a.args().collect();
+                    !a.neg() && !c.is_empty() && c.iter().all(|&c| matches!(args.get(c), Some(TermRef::Wild)))
+                }
+                _ => false,
+            },
+            _ => false,
+        };
         let mut worst = if n == Some(0) { "config" } else if one { "same-unit" } else if union { "union" } else { "lookup" };
         let bump = |c: &'static str, worst: &mut &'static str| {
             if rank(c) > rank(*worst) {
                 *worst = c;
             }
         };
-        for (k, l) in rule.body.iter().enumerate() {
-            match l {
-                Literal::Agg { var, over, atom, .. } if !one => {
-                    let mut g = atom.vars();
-                    g.remove(var);
+        for (k, l) in lits.iter().enumerate() {
+            match l.view() {
+                Lit::Agg { var, over, atom, .. } if !one => {
+                    let mut g = BTreeSet::new();
+                    atom.args().for_each(|t| term_vars(t, &mut g));
+                    g.remove(&var);
                     if let Some(o) = over {
-                        g.remove(o);
+                        g.remove(&o);
                     }
                     bump(if g.is_empty() { "total" } else { "grouped" }, &mut worst);
                 }
-                Literal::Atom(a) if !carriers(&a.rel).is_empty() && a.vars().is_disjoint(&others(k)) => bump("exists", &mut worst),
+                Lit::Atom(a) if !carriers(cross.rel_name(a.rel())).is_empty() && lit_vars(*l).is_disjoint(&others(k)) => bump("exists", &mut worst),
                 _ => {}
             }
         }
@@ -877,20 +918,19 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     };
     // Each relation's own class, then inherited through the relations it reads, in stratum order.
     let mut class: HashMap<String, (&'static str, &'static str)> = HashMap::new();
-    let by_stratum = front::rules_by_stratum(cross, &sccs);
-    for (scc, rules) in sccs.iter().zip(&by_stratum) {
+    for scc in sccs.iter() {
         let mut own_worst = "config";
         let mut inherited = "config";
         let mut looped = false;
-        for rule in rules.iter().copied() {
+        for rule in cross.rules().filter(|r| scc.contains(head(*r))) {
             let o = own(rule);
             looped |= o.starts_with("recursive");
             let o = if o == "recursive-local" { "same-unit" } else { o };
             if rank(o) > rank(own_worst) {
                 own_worst = o;
             }
-            for a in rule.body.iter().filter_map(|l| l.atom()) {
-                if let Some((_, i)) = class.get(a.rel.as_str())
+            for a in rule.reads() {
+                if let Some((_, i)) = class.get(cross.rel_name(a.rel()))
                     && rank(i) > rank(inherited)
                 {
                     inherited = i;
@@ -907,10 +947,10 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
         }
     }
     let mut out = String::new();
-    for rule in &cross.rules {
-        let (o, i) = class.get(rule.head.rel.as_str()).copied().unwrap_or(("config", "config"));
-        let output = cross.outputs.iter().any(|x| x == &rule.head.rel);
-        out.push_str(&format!("{}\t{}\t{}\t{}\t{}\n", rule.head.rel, o, i, if output { "output" } else { "-" }, rule.to_string().replace('\n', " ")));
+    for rule in cross.rules() {
+        let rel = head(rule);
+        let (o, i) = class.get(rel).copied().unwrap_or(("config", "config"));
+        out.push_str(&format!("{rel}\t{o}\t{i}\t{}\t{}\n", if f.is_output(rel) { "output" } else { "-" }, cross.show_rule(rule).replace('\n', " ")));
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = f.write_all(out.as_bytes());
@@ -1758,8 +1798,8 @@ impl Collecting {
 }
 
 /// `local` with only the rules `wanted` are derived from (decision 0225 §2): what a chunk of partial memo hits runs.
-/// On `local`'s version where it has one, a part of it by the cone's relations (decision 0244), found from the
-/// version's rules: no tree is decoded or copied. Else on its tree.
+/// A part of `local`'s version by the cone's relations (decision 0244), found from the version's rules: no tree is
+/// decoded or copied. `local` is a split's file-local part, never maintained, so it always has one.
 fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowered {
     use crate::code_rule_dsl::logic::program_image::{Builder, Lit, PartFields};
     let closure = |reads: &dyn Fn(&BTreeSet<String>) -> BTreeSet<String>| {
@@ -1773,7 +1813,9 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
         }
     };
     let part = |program, version| lower::Lowered { program, version, maint: None, domains: local.domains.clone(), ops: local.ops, dialect: local.dialect };
-    if let (false, Some(v)) = (local.tree_maintained(), local.version.clone()) {
+    {
+        let v = local.version.clone().expect("a split's file-local part has a version");
+        debug_assert!(local.maint.is_none() && !local.tree_maintained(), "a split's file-local part is not maintained");
         let cone = closure(&|cone| {
             v.rules()
                 .filter(|r| cone.contains(v.rel_name(r.head().rel())))
@@ -1795,25 +1837,9 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
             b.set_answers(&kept);
             b.finish_overlay().ok()
         });
-        let made = made_from(true, made, "a partial hit's cone");
-        return match made {
-            Some(m) => part(lower::Tree::of(m.clone()), Some(m)),
-            None => part(lower::Tree::given(Default::default()), None),
-        };
+        let made = made.expect("a part of a version by its relations is made");
+        part(lower::Tree::of(made.clone()), Some(made))
     }
-    let cone = closure(&|cone| {
-        local.program.rules.iter()
-            .filter(|r| cone.contains(r.head.rel.as_str()))
-            .flat_map(|r| r.body.iter().filter_map(front::Literal::atom).map(|a| a.rel.to_string()))
-            .collect()
-    });
-    let mut program: front::Program = (*local.program).clone();
-    program.rules.retain(|r| cone.contains(r.head.rel.as_str()));
-    program.gates.retain(|(rel, _)| cone.contains(rel));
-    program.lattice.retain(|rel, _| cone.contains(rel));
-    program.answers.retain(|rel, _| cone.contains(rel));
-    program.outputs.retain(|o| cone.contains(o));
-    part(lower::Tree::given(program), None)
 }
 
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
@@ -3431,7 +3457,7 @@ fn run_observed(
     });
     crate::code_rule_dsl::logic::profile::decision("cross-file causes", || {
         // Root causes only: a relation cross-file because it reads another is listed under that one.
-        let causes = crate::code_rule_dsl::typing::file_local::cross_causes(&lowered.program);
+        let causes = &split.causes;
         let mut roots: Vec<String> = causes.iter().filter(|(_, why)| !why.starts_with("reads cross-file ")).map(|(rel, why)| format!("{rel}: {why}")).collect();
         let total = roots.len();
         roots.truncate(60);
@@ -3538,68 +3564,45 @@ fn run_observed(
             }
             cone.extend(more);
         }
-        (!once.is_empty()).then(|| {
+        (!once.is_empty()).then(|| -> Result<_> {
             // Each a part of its version, by the same relations (decision 0244): the constants' of the file-local part's,
-            // its rules, gates and lattices those of `cone`; the parts', their rules less those of `once`. The
-            // constants' tree is its version's (`lower::Tree::of`) where the file-local part has one, else a copy of
-            // the part's tree, cut to the cone.
+            // its rules, gates and lattices those of `cone`; the parts', their rules less those of `once`. Each tree is
+            // its version's (`lower::Tree::of`).
             use crate::code_rule_dsl::logic::program_image::PartFields;
             let (in_cone, not_once, all) = (|rel: &str| cone.contains(rel), |rel: &str| !once.contains(rel), |_: &str| true);
             let outputs: Vec<String> = once.iter().cloned().collect();
-            let (p, p_version) = match local.version.as_ref() {
-                Some(v) => {
-                    let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
-                    let made = made_from(true, v.part(&in_cone, &inputs, &outputs, PartFields { natives: &all, lattice: &in_cone, gates: &in_cone }).ok(), "the run's constants");
-                    (made.clone().map(lower::Tree::of), made)
-                }
-                None => (None, None),
-            };
-            let p = p.unwrap_or_else(|| {
-                let mut p = (*local.program).clone();
-                p.rules.retain(|r| cone.contains(r.head.rel.as_str()));
-                p.gates.retain(|(rel, _)| cone.contains(rel));
-                p.lattice.retain(|rel, _| cone.contains(rel));
-                p.outputs = outputs.clone();
-                lower::Tree::given(p)
-            });
+            let v = &local_v;
+            let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
+            let made = v.part(&in_cone, &inputs, &outputs, PartFields { natives: &all, lattice: &in_cone, gates: &in_cone }).map_err(Error::Plan)?;
             for part in [&mut local, &mut cross] {
-                // On the part's version where it has one, its tree then the new version's (`lower::Tree::of`): no
-                // tree copied; else on its tree.
-                if let Some(v) = part.version.clone() {
-                    let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
-                    for rel in &once {
-                        if !inputs.contains(rel) {
-                            inputs.push(rel.clone());
-                        }
-                    }
-                    let outputs: Vec<String> = v.outputs().map(|a| v.text(a).to_owned()).collect();
-                    part.version = made_from(true, v.part(&not_once, &inputs, &outputs, PartFields { natives: &all, lattice: &all, gates: &all }).ok(), "a part less the run's constants");
-                    if let Some(made) = &part.version {
-                        part.program = lower::Tree::of(made.clone());
-                        continue;
-                    }
-                }
-                part.program.rules.retain(|r| not_once(&r.head.rel));
+                let v = part.version.clone().ok_or_else(|| Error::Plan("a split's part has no version".into()))?;
+                let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
                 for rel in &once {
-                    if !part.program.inputs.contains(rel) {
-                        part.program.inputs.push(rel.clone());
+                    if !inputs.contains(rel) {
+                        inputs.push(rel.clone());
                     }
                 }
+                let outputs: Vec<String> = v.outputs().map(|a| v.text(a).to_owned()).collect();
+                let kept = v.part(&not_once, &inputs, &outputs, PartFields { natives: &all, lattice: &all, gates: &all }).map_err(Error::Plan)?;
+                part.program = lower::Tree::of(kept.clone());
+                part.version = Some(kept);
             }
             crate::code_rule_dsl::logic::profile::decision("constants of the phases' exports", || {
                 format!("{} relations derived once, before the chunks, and bound beside the exports: {}", once.len(), once.iter().cloned().collect::<Vec<_>>().join(", "))
             });
-            (part_of(p, p_version), once.into_iter().collect())
-        })
+            Ok((part_of(lower::Tree::of(made.clone()), Some(made)), once.into_iter().collect()))
+        }).transpose()?
     };
     if parts_kept && shared_parts.get().is_none() {
         let _ = shared_parts.set((once_made, (local.clone(), cross.clone(), run_constants.clone())));
     }
     if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note("run.local", &shared_split.local, &local.program);
-    }
-    if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note("run.cross", &shared_split.cross, &cross.program);
+        if let Some(v) = &local.version {
+            crate::code_rule_dsl::logic::version_trace::note_versions("run.local", &shared_split.versions.local, v);
+        }
+        if let Some(v) = &cross.version {
+            crate::code_rule_dsl::logic::version_trace::note_versions("run.cross", &shared_split.versions.cross, v);
+        }
     }
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "guests and the tree's projection".into()));
     let slice = embed_slice(&prepared_placed.v)?.map(|v| part_of(lower::Tree::of(v.clone()), Some(v)));
@@ -3713,11 +3716,8 @@ fn run_observed(
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
     // read back, 0.75 s on Python.)
-    // The run's cross-file part as a version (imaged where it has none): what the run reads of it below.
-    let cross_run = match &cross.version {
-        Some(v) => Arc::clone(v),
-        None => super::body::Placed::of_program(&cross.program)?.v,
-    };
+    // The run's cross-file part as a version: what the run reads of it below.
+    let cross_run = cross.version.clone().ok_or_else(|| Error::Plan("the run's cross-file part has no version".into()))?;
     // The run's cross part as a version: what the run reads of it, not its tree (t36 item 7).
     let run_placed = super::body::Placed::whole(Arc::clone(&cross_run));
     let run_f = run_placed.fields()?;
@@ -4662,7 +4662,8 @@ fn run_observed(
             return Arc::clone(p);
         }
         let program = Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))));
-        let mut reads: BTreeSet<String> = program.program.rules.iter().flat_map(|r| r.body.iter().filter_map(front::Literal::atom).map(|a| a.rel.to_string())).collect();
+        let v = program.version.as_ref().expect("a wanted cone has a version");
+        let mut reads: BTreeSet<String> = v.rules().flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned())).collect();
         reads.extend(stored.iter().map(|(r, _)| r.clone()));
         // The base relations the cross-file part reads (`split.base`): every chunk hands them on whole, or the cross
         // part sees them changed (`col`, `end_line`, `doc` missing for a cut of partials) and runs its strata again.
@@ -5288,7 +5289,7 @@ fn run_observed(
         });
         if let Some(wanted) = &cone {
             crate::code_rule_dsl::logic::profile::decision("partial memo hits (decision 0225 §2)", || {
-                format!("a chunk of {chunk_docs_n} documents derives {} of {} memoised relations ({} rules of {})", wanted.len(), memo_ids.len(), coned.as_ref().map_or(0, |c| c.program.rules.len()), local.program.rules.len())
+                format!("a chunk of {chunk_docs_n} documents derives {} of {} memoised relations ({} rules of {})", wanted.len(), memo_ids.len(), coned.as_ref().and_then(|c| c.version.as_ref()).map_or(0, |v| v.size()), local_v.size())
             });
         }
         let local = coned.as_deref().unwrap_or(&local);

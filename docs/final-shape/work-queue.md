@@ -530,6 +530,19 @@ pass.
 - **Done when**: every edit after the first finds its kept inputs, and taking them costs less than decoding the
   hits whole.
 
+### Q21. Two red tests that predate 0281 step 4
+
+- **Found** (2026-11-16, while testing 0281 step 4's slices; both fail at 38d1272f5, before them):
+  - `corpus::phases::tests::a_phase_hands_on_its_exports_and_its_reader_follows_each_edit`: phase `p1` reads
+    `text(i, x)`, and its run fails with `@rr_node_text without the run's long-text nodes bound`
+    (`native/setfix.rs`, the function step's binding of `LONG_TEXT_NODES`). Some part of a phase's run evaluates a
+    node's text before the run binds its long-text nodes.
+  - `corpus::tests::every_switch_lowering_reads_is_classified`: `RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`,
+    `RERAIL_SHIPPED_IMAGES` (`rr/images.rs`) and `RERAIL_MODULE_IMAGES` (`combine_read`) are read in combining but
+    are in neither list. Each needs classifying: does it change a prepared program (`COMBINING`) or not?
+- **Done when**: both pass, the first by binding the long-text nodes before whichever part reads them (or by the
+  part not reading node text), the second by classifying each switch from what it does.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
