@@ -24,7 +24,7 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
-The farm's wrapper runs `scripts/dev/clean-target` on each target directory hourly: it removes the
+The farm's wrapper runs `scripts/dev/clean-target` on each target directory every 15 minutes: it removes the
 builds no current build was made from, debug objects no binary names, and stale incremental state.
 Never run a full `cargo clean`.
 

@@ -136,7 +136,7 @@ the farm's protocol or to what a host keeps raises `VERSION`.
 Rerail's worktrees together write terabytes of builds a day: each edit of a workspace crate leaves
 the previous build, its debug objects and its incremental state behind, and cargo never removes
 them. So the wrapper starts `scripts/dev/clean-target --wait` (installed beside it) on a build's
-target directory, at most once an hour per directory, detached and at nice 19. It waits for that
+target directory, at most once every 15 minutes per directory, detached and at nice 19. It waits for that
 build to end (cargo's lock on the profile directory), then removes what no build can use any more:
 another rustc's artifacts, builds that none of the current builds was made from (a mark and sweep
 over cargo's own dependency records, an hour's grace), debug objects no binary names, incremental
@@ -155,8 +155,8 @@ findings (another toolchain or cargo configuration than the active worktrees, pr
 differ, scripts that set the variables builds share), each with what to do. A cargo command that
 runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate
 profile) while a test host has 4 cores or more to spare is told the `test-remote` command that runs
-it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). The hourly job writes
-those findings after the cleaner (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
+it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). After a cleaner run, at most hourly per checkout, the job writes
+those findings (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
 its message. On a machine leased for a benchmark (Quiet runs, below), every build is told the
 lease and its end, and a checkout whose processes loaded it during one is told that this was unfair.

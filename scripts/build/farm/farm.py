@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 13
+VERSION = 14
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -287,7 +287,9 @@ def same_in_every_checkout(args, out_dir, crate):
     return out
 
 
-TIDY_SECONDS = 3600
+TIDY_SECONDS = 15 * 60
+# `diagnose --brief` after a clean runs at most this often per checkout: its findings change slowly.
+DIAGNOSE_SECONDS = 3600
 
 
 def target_of(out_dir):
@@ -301,10 +303,10 @@ def target_of(out_dir):
 
 
 def tidy(target, checkout):
-    """Starts `clean-target --wait` on `target`, at most once an hour per target directory:
+    """Starts `clean-target --wait` on `target`, at most once every 15 minutes per target directory:
     Rerail's worktrees together write terabytes of builds a day, and what the next build cannot use
-    goes after the build ends (it waits for cargo's lock). Then `diagnose --brief` on the checkout,
-    whose findings `advise` prints at the next builds. Detached, at nice 19."""
+    goes after the build ends (it waits for cargo's lock). Then, at most hourly, `diagnose --brief` on
+    the checkout, whose findings `advise` prints at the next builds. Detached, at nice 19."""
     if os.environ.get("RERAIL_FARM_NO_TIDY"):
         return
     script = os.path.join(SHARE, "clean-target")
@@ -316,7 +318,7 @@ def tidy(target, checkout):
             return
     except OSError:
         pass
-    # One starter per hour: whoever creates the claim starts it.
+    # One starter per period: whoever creates the claim starts it.
     claim = stamp + f".{int(time.time() // TIDY_SECONDS)}"
     try:
         os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
@@ -333,8 +335,10 @@ def tidy(target, checkout):
     findings = findings_path(checkout)
     with open(stamp + ".log", "a") as out:
         subprocess.Popen(["nice", "-n", "19", "/bin/sh", "-c",
-                          '"$0" --wait "$1"; "$2" --brief "$3" > "$4.tmp" 2>/dev/null && mv "$4.tmp" "$4"',
-                          script, target, os.path.join(SHARE, "diagnose"), checkout, findings],
+                          '"$0" --wait "$1"; [ -n "$(find "$4" -mmin -"$5" 2>/dev/null)" ] || '
+                          '{ "$2" --brief "$3" > "$4.tmp" 2>/dev/null && mv "$4.tmp" "$4"; }',
+                          script, target, os.path.join(SHARE, "diagnose"), checkout, findings,
+                          str(DIAGNOSE_SECONDS // 60)],
                          stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True, close_fds=True)
 
 
@@ -392,8 +396,8 @@ def whole_tier(pid):
 def advise(checkout, rustc):
     """At the first compile of each cargo command (once per cargo process): what this build does
     that it should not, on stderr, where the agent running it reads it. Its own nice value, a rustc
-    other than the checkout pins, and the checkout's latest `diagnose --brief` findings (the hourly
-    job writes them). RERAIL_FARM_QUIET=1 keeps it quiet."""
+    other than the checkout pins, and the checkout's latest `diagnose --brief` findings (the cleaning
+    job writes them, at most hourly). RERAIL_FARM_QUIET=1 keeps it quiet."""
     if os.environ.get("RERAIL_FARM_QUIET"):
         return
     cargo = os.getppid()
@@ -443,7 +447,7 @@ def advise(checkout, rustc):
     lines += interference_advice(checkout)
     try:
         f = findings_path(checkout)
-        if time.time() - os.stat(f).st_mtime < 2 * TIDY_SECONDS:
+        if time.time() - os.stat(f).st_mtime < 2 * DIAGNOSE_SECONDS:
             lines += [l.rstrip() for l in open(f) if l.strip()]
     except OSError:
         pass

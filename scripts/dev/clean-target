@@ -4,7 +4,7 @@ they still use: never a full `cargo clean` (a rebuild of everything takes 15 min
 
     scripts/dev/clean-target [--dry-run] [--wait] [--keep-hours H] [--relax-keep-hours H] [TARGET_DIR]
 
-The farm's wrapper runs it on its own (`--wait`, at most once an hour per target directory, after
+The farm's wrapper runs it on its own (`--wait`, at most once every 15 minutes per target directory, after
 the build that started it ends): scripts/build/farm/README.md, "Old builds"
 
 TARGET_DIR is cargo's target directory for this checkout (`cargo metadata`, so CARGO_TARGET_DIR
