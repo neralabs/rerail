@@ -6,7 +6,7 @@ use super::{
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum ExecutionClass {
+pub enum ExecutionClass {
     Direct,
     DirectWithOutput,
     BoundedStructural,
@@ -16,7 +16,7 @@ pub(super) enum ExecutionClass {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum ExecutionRoute {
+pub enum ExecutionRoute {
     Direct,
     DirectWithOutput,
     RegisterStructural,

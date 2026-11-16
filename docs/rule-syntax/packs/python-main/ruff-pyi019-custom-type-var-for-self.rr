@@ -168,8 +168,7 @@ pyi019_cls_annotation(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string
 
 // implicit_class_method(n): the JSON util `implicit-class-method`, used where the JSON says `matches: "implicit-class-method"`
 .decl pyi019_implicit_class_method(n: node)
-pyi019_implicit_class_method(n) :- field(n, "name", c1),
-    glob("{__new__,__init_subclass__,__class_getitem__}", c1).
+pyi019_implicit_class_method(n) :- pyi019_tok_has_4(n).
 
 // static_fn(n): the JSON util `static-fn`, used where the JSON says `matches: "static-fn"`
 .decl pyi019_static_fn(n: node)
@@ -251,7 +250,7 @@ pyi019_method(n, N) :- kind(n, "function_definition"), within_stop(n, p1, pyi019
 // PYI019(n): findings from clauses `custom-type-var-for-self`, `custom-type-var-for-self-parenthesized-return`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI019(at: loc, r: node, n: loc) "Replace the custom type variable `{n}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{n}` here."
+.violation PYI019(at: loc, r: node, n_mv: loc) "Replace the custom type variable `{n_mv}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{n_mv}` here."
     suppress noqa "PYI019"
 PYI019(R, n, N) :- kind(n, "function_definition"), pyi019_method(n, N),
     match("(?:async[ \\t]+)?def[ \\t]+\\w+(?P<R>(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->(?:[^:\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\])*?|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->[^:]*?)[ \\t]*:(?s:.*)", n),
@@ -291,6 +290,20 @@ pyi019_tok_follows_3(n) :- structural_before(n, g28), match("\\s*", g28), child(
     node(_, n, _, st31, _), o30 = st31 - strlen(g28), token(p29, _, t27, _, o30),
     match("\\[", t27).
 pyi019_tok_follows_3(n) :- structural_before(n, g28), match("(?s)^(?:.*(?:\\[)\\s*)$", g28).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^(?:__new__|__init_subclass__|__class_getitem__)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi019_tok_has_4(n: node)
+.stored pyi019_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi019_tok_has_4(n) :- field(n, "name", c1),
+    glob("{__new__,__init_subclass__,__class_getitem__}", c1).
+pyi019_tok_has_4(n) :- op(n, t2),
+    match("(?:__new__|__init_subclass__|__class_getitem__)", t2).
+pyi019_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*|(?:.*\\W)?(?:__init_subclass__).*|(?:.*\\W)?(?:__class_getitem__).*)$", g3).
+pyi019_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*|(?:.*\\W)?(?:__init_subclass__).*|(?:.*\\W)?(?:__class_getitem__).*)$", g3).
+pyi019_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*|(?:.*\\W)?(?:__init_subclass__).*|(?:.*\\W)?(?:__class_getitem__).*)$", g3).
 
 // demand_typevar_named_n: the rows of typevar_named_n its callers ask for (the metavariable columns they pass in)
 .decl pyi019_demand_typevar_named_n(n: node, n_mv: loc)

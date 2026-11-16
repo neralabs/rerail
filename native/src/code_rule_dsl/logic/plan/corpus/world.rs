@@ -34,7 +34,13 @@ pub(super) const LOADED: &str = "loaded";
 
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
-    prog.rules.iter().any(|r| r.head.rel == LOAD || WORLD.iter().any(|(_, d)| *d == r.head.rel))
+    std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, req))
+}
+
+/// Whether `prog` makes request `req`: by a rule, or as facts (a constant key lowers to one: `dir_entry("sub", …)`
+/// asks with the fact `rr_dir_req("sub")`, `rr::lower`'s `world_demand`).
+fn asks(prog: &front::Program, req: &str) -> bool {
+    prog.rules.iter().any(|r| r.head.rel == req) || prog.facts.get(req).is_some_and(|rows| !rows.is_empty())
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
@@ -44,7 +50,8 @@ pub(super) fn answers(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>)
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
-        .filter(|(req, _)| f.derives(req))
+        // By a rule, or as facts, as `asks` counts them (a constant key lowers to a request fact).
+        .filter(|(req, _)| f.derives(req) || f.has_facts(req))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
         .collect()
 }
@@ -97,7 +104,10 @@ impl World {
         }
         // What the requests may read is watched (decision 0105): a directory listed or a file read that the
         // journal says is unchanged is not statted.
-        super::observe(|o| o.watch(&roots));
+        // Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is watched as it comes.
+        let placeholder = super::phase0::active().then(|| canonical(root)).flatten();
+        let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
+        super::observe(|o| o.watch(&watched));
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 

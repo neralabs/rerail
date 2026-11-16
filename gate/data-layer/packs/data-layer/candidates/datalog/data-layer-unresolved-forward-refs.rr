@@ -50,7 +50,7 @@ inspection_kinds_function("function_definition").
 .decl tape_syntax_error(d: number)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, line, node_text, token
+.input doc, syntax_error, node, field, child, line, token, node_text
 .output violation
 inspection_equality_op("==").
 inspection_equality_op("!=").

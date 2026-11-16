@@ -35,7 +35,25 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// The run's key: everything it is a function of besides what it consults.
 /// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
-const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE"];
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE"];
+
+/// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
+/// the run's key.
+fn switches() -> Vec<u8> {
+    let mut switches: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
+        .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))
+        .collect();
+    switches.sort();
+    let mut out = Vec::new();
+    for (k, v) in switches {
+        out.extend_from_slice(k.as_bytes());
+        out.push(0);
+        out.extend_from_slice(v.as_bytes());
+        out.push(0);
+    }
+    out
+}
 
 fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
@@ -59,19 +77,14 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's
     // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
     // `RERAIL_AST_PARTS=off` answered with the outputs of one with it on. The cache's own path names the store.
-    let mut switches: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
-        .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))
-        .collect();
-    switches.sort();
-    for (k, v) in switches {
-        h.update(k.as_bytes());
-        h.update([0]);
-        h.update(v.as_bytes());
-        h.update([0]);
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    h.update(switches());
+    format!("{CUTOFF}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
+
+/// The prefix of a whole-run cutoff's record (the observer's `run_record`). Its consulted lines name the plans the
+/// run used (`plan`, digest in hex): the observer's store is collected with the content store's, and a record no
+/// live plan of which it names is dropped (`observe::collect`).
+pub const CUTOFF: &str = "cutoff:";
 
 /// The programs with the root's settings (`<root>/rerail.env`, the `env` option), as the run reads them.
 fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) -> Result<Vec<String>> {
@@ -158,10 +171,11 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     let texts = with_settings(programs, root, options)?;
     let key = key(&texts, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
-        miss(&format!("no record under the run's key {} (programs {})", &key[..12], texts.len()));
+        miss(&format!("no record under the run's key {} (programs {})", &key[..CUTOFF.len() + 12], texts.len()));
         return Ok(None);
     };
-    let consulted = decode_consulted(&consulted);
+    // The plans it names are for collection (`CUTOFF`), not reads to check.
+    let consulted: Vec<_> = decode_consulted(&consulted).into_iter().filter(|c| c.0 != "plan").collect();
     let Some(outputs) = decode_outputs(&outputs) else {
         miss("the record's outputs do not decode");
         return Ok(None);
@@ -207,6 +221,11 @@ fn miss(why: &str) {
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
         eprintln!("rerail: whole-run cutoff not applied: {why}");
     }
+    // A warm run asked for the cutoff and evaluates again (`RERAIL_WARM`). One that did not ask (a session's, which
+    // maintains its strata instead) is checked by its deltas.
+    if !why.starts_with("not wanted") {
+        crate::code_rule_dsl::logic::profile::warm_fault("the whole-run cutoff did not apply", || why.to_owned());
+    }
 }
 
 pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
@@ -229,9 +248,10 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     let read_docs: std::collections::BTreeSet<String> = read.iter().filter(|c| c.0 == "doc" && !c.2.is_empty()).map(|c| c.1.clone()).collect();
     read.retain(|c| !(c.0 == "doc" && c.2.is_empty() && read_docs.contains(&c.1)));
     consulted.extend(read);
+    consulted.extend(report.plans.iter().map(|plan| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(plan))));
     let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
-        eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..12], consulted.len());
+        eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..CUTOFF.len() + 12], consulted.len());
     }
     observe(|o| o.put_run_record(&key, &encode_consulted(&consulted), &outputs));
     Ok(())

@@ -22,10 +22,10 @@ mod test_load {
 }
 pub mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
-#[path = "logic/front"]
+#[cfg_attr(any(test, feature = "test-hooks"), path = "logic/front")]
 pub mod front {
     pub use rerail_rr::code_rule_dsl::logic::front::*;
-    #[path = "."]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = ".")]
     pub mod caches {
         pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
         #[cfg(any(test, feature = "test-hooks"))]
@@ -40,7 +40,7 @@ pub mod front {
     pub mod data_layer_tests;
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
-    #[path = "yaml"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "yaml")]
     pub mod yaml {
         pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
         #[cfg(any(test, feature = "test-hooks"))]
@@ -62,7 +62,7 @@ pub mod lanes;
 #[allow(dead_code)]
 pub mod answers;
 pub mod liveness;
-#[path = "logic/magic"]
+#[cfg_attr(any(test, feature = "test-hooks"), path = "logic/magic")]
 pub mod magic {
     pub use rerail_rr::code_rule_dsl::logic::magic::*;
     #[cfg(any(test, feature = "test-hooks"))]
@@ -106,7 +106,7 @@ pub mod sql;
 pub mod simplify;
 /// The reach index's form found in a program (decision 0119).
 pub mod reach_form;
-#[path = "logic/strings"]
+#[cfg_attr(any(test, feature = "test-hooks"), path = "logic/strings")]
 pub mod strings {
     pub use rerail_facts::code_rule_dsl::logic::strings::*;
     #[cfg(any(test, feature = "test-hooks"))]

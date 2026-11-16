@@ -304,8 +304,13 @@ struct P<'a> {
     in_constant: bool,
     /// At the first parameter of a lambda with no modifiers: `ref T` is a `ref_type`.
     bare_lambda: bool,
+    /// The token index of the switch expression arm's `=>` while its pattern is read: a `)` or a
+    /// name before it ends the pattern, no lambda's parameters.
+    arm_arrow: usize,
     /// A conditional access wrapped an operator's chain in this expression (`a || b?.c`).
     wrapped_chain: bool,
+    /// While an operator's right operand is read, the node of its left (`a` in `a && …`).
+    chain_left: Option<usize>,
     /// How the next constant pattern reads (set by `is`).
     cmode: Cmode,
     /// The tokens dropped since the last node written (`tk`): their token index, parent, kind,
@@ -328,6 +333,22 @@ enum Cmode {
     /// After an `is` inside a chain (an operand of an operator of precedence `min`): none; an
     /// operator of `min` or above after it is refused.
     Inner(u8),
+}
+
+/// A constant's chain after it, as `P::chain_scan` reads it.
+struct Chain {
+    /// The index of the token that ends it.
+    end: usize,
+    /// The last `is` in it.
+    last_is: Option<usize>,
+    /// Its `is`s.
+    others: u32,
+    /// Where its last operand starts.
+    last: usize,
+    /// The lowest precedence among its binary operators.
+    low: u8,
+    /// Whether an `as` right after the constant, with no operator after it, ends it.
+    as_ends: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -362,8 +383,10 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             in_statement: false,
             in_constant: false,
             bare_lambda: false,
+            arm_arrow: usize::MAX,
             cmode: Cmode::Plain,
             wrapped_chain: false,
+            chain_left: None,
             dropped: Vec::new(),
             bare_after: None,
             closes: 0,
@@ -815,6 +838,19 @@ impl<'a> P<'a> {
         Ok(())
     }
 
+    /// Whether `n` is a bare `this` or `base`, the last node written: a token to the gap rule.
+    fn is_bare_token(&self, n: N) -> bool {
+        matches!(n.kind, K::TThis | K::TBase) && self.w.len() == n.at + 1
+    }
+
+    /// After a bare `this` or `base` (`bare`) and the stored keyword after it (`this with`,
+    /// `this switch`): the gap's tokens up to the next named child are stored.
+    fn store_gap_after(&mut self, bare: bool) {
+        if bare {
+            self.bare_after = Some((self.w.len(), self.closes));
+        }
+    }
+
     /// The next token under `parent`: stored where `keep` (its gap is not implied), else as `tk`.
     #[inline]
     fn gap_tk(&mut self, parent: K, tok: K, keep: bool) -> R<()> {
@@ -1024,6 +1060,11 @@ impl<'a> P<'a> {
                         return refuse;
                     }
                     let line = &src[a..end];
+                    // `#region #region`: tree-sitter lexes the text's `#region` as a directive's
+                    // word again, an error.
+                    if matches!(x.kind, X::Region | X::Endregion) && (line.starts_with(b"#region") || line.starts_with(b"#endregion")) {
+                        return refuse;
+                    }
                     // A `\` before the line end continues it; not read.
                     let continued = line.ends_with(b"\\") || line.ends_with(b"\\\r");
                     if line.windows(2).any(|p| p == b"/*") || line.last() == Some(&b'/') || continued {
@@ -1037,10 +1078,14 @@ impl<'a> P<'a> {
             }
             X::Pragma | X::Nullable | X::Line => {
                 // Words, names and numbers, between `,`s for a pragma's list.
-                let mut words = 0;
+                let (mut words, mut comma) = (0, false);
                 loop {
                     at = skip(at);
                     if at >= end {
+                        // A `,` ending the list: tree-sitter reads no code after it, an error.
+                        if comma {
+                            return refuse;
+                        }
                         break;
                     }
                     let c = src[at];
@@ -1060,8 +1105,10 @@ impl<'a> P<'a> {
                             self.piece(K::TComma, f::NONE, at, at + 1);
                         }
                         at += 1;
+                        comma = true;
                         continue;
                     }
+                    comma = false;
                     let mut e = at;
                     while e < end && (src[e].is_ascii_alphanumeric() || src[e] == b'_') {
                         e += 1;
@@ -1107,9 +1154,10 @@ impl<'a> P<'a> {
     // ---- The file.
 
     fn compilation_unit(&mut self) -> R<()> {
-        // The root starts at its first token or extra (past the file's leading white space).
+        // The root starts at its first token or extra (past the file's leading white space); with
+        // neither, at the file's end (`[3..3]` for a byte-order mark alone).
         let first = self.tok().start.min(self.extras.first().map_or(u32::MAX, |x| x.start));
-        let first = if self.tok().kind == T::Eof && self.extras.is_empty() { 0 } else { first };
+        let first = if self.tok().kind == T::Eof && self.extras.is_empty() { self.src.len() as u32 } else { first };
         let root = self.w.push(key(K::CompilationUnit, f::NONE, C_NONE, false), first);
         while self.peek() != T::Eof {
             self.toplevel()?;

@@ -13,7 +13,7 @@ use rusqlite::Connection;
 use rusqlite::functions::{Context, FunctionFlags};
 use rusqlite::types::Value;
 
-use crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES;
+use crate::code_rule_dsl::facts::vtab::syntax::{LONG_TEXT_NODES, NODE_READS};
 
 /// An argument or result: a symbol (text) or a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,9 +114,13 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // C's `%0Nd`: an integer's digits zero-padded to `width` columns, the sign first, never truncated (`@printf`'s
     // lowering, `rr::lower::printf_pieces`).
     ("zero_pad", &[Number, Number], Text),
-    // A node's text past `text`'s inline bound (`facts::vtab::syntax::long_node_text`): none for a shorter one, which
+    // A node's text past `text`'s inline bound (`facts::vtab::syntax::LongTexts::long_text`): none for a shorter one, which
     // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`syntax::long_text_twins`).
     ("rr_node_text", &[Number], Text),
+    // A node's exact text at any length (`facts::vtab::syntax::LongTexts::text_any`): `node_text`'s answer (decision 0174).
+    ("rr_node_text_any", &[Number], Text),
+    // A node's value as W reads it (`facts::vtab::syntax::LongTexts::value_any`): `value`'s answer (decision 0174).
+    ("rr_node_value", &[Number], Text),
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -173,24 +177,27 @@ pub fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
 
 /// Registers every function on `db`.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
-    for &(name, args, _) in FUNCTIONS.iter().filter(|(name, _, _)| *name != "rr_node_text") {
+    for &(name, args, _) in FUNCTIONS.iter().filter(|(name, _, _)| !NODE_READS.contains(name)) {
         let arity = i32::try_from(args.len()).expect("few arguments");
         db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
-    // A node's long text, from the batch this connection's run binds (`long_text`).
+    // A node's text or value, from the batch this connection's run binds (`node_read`).
     let at = crate::code_rule_dsl::facts::vtab::Scoped::at(db);
-    db.create_scalar_function("rr_node_text", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
-        let text = ctx.get::<Option<i64>>(0)?.and_then(|n| long_text(crate::code_rule_dsl::facts::vtab::bound_source_at(at, LONG_TEXT_NODES).as_deref(), n));
-        Ok(text.map_or(Value::Null, Value::Text))
-    })?;
+    for name in NODE_READS {
+        db.create_scalar_function(name, 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
+            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_at(at, LONG_TEXT_NODES).as_deref(), n));
+            Ok(text.map_or(Value::Null, Value::Text))
+        })?;
+    }
     db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
     Ok(())
 }
 
-/// `@rr_node_text(n)`: node `n`'s text past `text`'s inline bound, read through `nodes`, the run's binding of the
-/// long-text nodes (`syntax::LongTexts`); none without one. Its value is the run's, so `eval` has none.
-pub fn long_text(nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64) -> Option<String> {
-    crate::code_rule_dsl::facts::vtab::syntax::LongTexts::of(nodes?, n)
+/// A node read (`syntax::NODE_READS`) of node `n`: `@rr_node_text`'s text past `text`'s inline bound,
+/// `@rr_node_text_any`'s text at any length, `@rr_node_value`'s value, read through `nodes`, the run's binding of the
+/// long-text nodes with their batch (`syntax::LongTexts`); none without one. Its value is the run's, so `eval` has none.
+pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64) -> Option<String> {
+    crate::code_rule_dsl::facts::vtab::syntax::LongTexts::of(nodes?, name, n)
 }
 
 /// `product x : {…}` as the SQL aggregate `rr_product(x)`: the product of the integers, saturating at i64's range;
@@ -308,8 +315,8 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rx_replace" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "rr_to_string" => Some(numbers[0].to_string()),
         "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
-        // Read through the run's binding of the long-text nodes (`long_text`), never by value alone.
-        "rr_node_text" => None,
+        // Read through the run's binding of its batch (`node_read`), never by value alone.
+        "rr_node_text" | "rr_node_text_any" | "rr_node_value" => None,
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {

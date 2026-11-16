@@ -153,7 +153,7 @@ php_binder_kind("global_declaration"). php_binder_kind("static_variable_declarat
 php_binder_kind("by_ref").
 
 // php_dynamic(s): s may write any of its variables.
-.decl php_dynamic(s: node)
+.decl php_dynamic(s: node) extensible
 php_dynamic(s) :- kind(d, "dynamic_variable_name"), nearest(d, s, php_scope_kind).
 php_dynamic(s) :- php_call_written(c, x), (x = "extract" ; x = "parse_str" ; x = "eval"), nearest(c, s, php_scope_kind).
 php_dynamic(s) :- (kind(i, "include_expression") ; kind(i, "include_once_expression") ; kind(i, "require_expression") ;

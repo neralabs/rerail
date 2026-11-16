@@ -41,8 +41,8 @@ up012_arg_node(n) :- node(_, n, _, _, _), !up012_alt_1(n).
 // encoding_arg(n): the JSON util `encoding-arg`, used where the JSON says `matches: "encoding-arg"`
 .decl up012_encoding_arg(n: node)
 up012_encoding_arg(n) :- up012_utf8_name(n).
-up012_encoding_arg(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("encoding", c1), field(n, "value", c2), up012_utf8_name(c2).
+up012_encoding_arg(n) :- kind(n, "keyword_argument"), up012_tok_has_1(n), field(n, "value", c9),
+    up012_utf8_name(c9).
 
 // no_args(n): the JSON util `no-args`, used where the JSON says `matches: "no-args"`
 .decl up012_no_args(n: node)
@@ -66,22 +66,21 @@ up012_default_argument_call(n) :- kind(n, "call"), field(n, "function", c1),
 
 // bytes_encode(n): the JSON util `bytes-encode`, used where the JSON says `matches: "bytes-encode"`
 .decl up012_bytes_encode(n: node)
-up012_bytes_encode(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("encode", c1),
-    field(n, "object", c2), up012_plain_text(c2), value(c2, v3), match("[\\x00-\\x7F]*", v3),
-    !up012_string_only_escape(c2).
-up012_bytes_encode(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
-    up012_bytes_encode(c4).
+up012_bytes_encode(n) :- kind(n, "attribute"), up012_tok_has_2(n), field(n, "object", c9),
+    up012_plain_text(c9), value(c9, v10), match("[\\x00-\\x7F]*", v10),
+    !up012_string_only_escape(c9).
+up012_bytes_encode(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    up012_bytes_encode(c11).
 
 // default_encode(n): the JSON util `default-encode`, used where the JSON says `matches: "default-encode"`
 .decl up012_default_encode(n: node)
-up012_default_encode(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("encode", c1), field(n, "object", c2),
-    ( up012_plain_text(c2), value(c2, v1), match(".*[^\\x00-\\x7F].*", v1), !up012_string_only_escape(c2)
-    ; up012_f_text(c2)
+up012_default_encode(n) :- kind(n, "attribute"), up012_tok_has_2(n), field(n, "object", c9),
+    ( up012_plain_text(c9), value(c9, v1), match(".*[^\\x00-\\x7F].*", v1), !up012_string_only_escape(c9)
+    ; up012_f_text(c9)
     ).
 
-up012_default_encode(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
-    up012_default_encode(c4).
+up012_default_encode(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    up012_default_encode(c11).
 
 // UP012(n, detail): findings from clauses `bytes-literal`, `default-encoding-argument`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
@@ -96,6 +95,30 @@ UP012(CALL, n, "Drop the UTF-8 argument and call `.encode()` with no arguments; 
     node(_, n, _, _, _), CALL = n, up012_default_argument_call(n).
 UP012(CALL, n, "Drop the UTF-8 argument and call `.encode()` with no arguments; UTF-8 is already the default encoding") :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up012_default_argument_call(c2), CALL = c2.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^encoding$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up012_tok_has_1(n: node)
+.stored up012_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up012_tok_has_1(n) :- field(n, "name", c1), glob("encoding", c1).
+up012_tok_has_1(n) :- op(n, t2), match("encoding", t2).
+up012_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:encoding)(?:\\W.*)?)$", g3).
+up012_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:encoding)(?:\\W.*)?)$", g3).
+up012_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:encoding)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^encode$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up012_tok_has_2(n: node)
+.stored up012_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up012_tok_has_2(n) :- field(n, "attribute", c1), glob("encode", c1).
+up012_tok_has_2(n) :- op(n, t2), match("encode", t2).
+up012_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:encode)(?:\\W.*)?)$", g3).
+up012_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:encode)(?:\\W.*)?)$", g3).
+up012_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:encode)(?:\\W.*)?)$", g3).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl up012_alt_1(n: node)

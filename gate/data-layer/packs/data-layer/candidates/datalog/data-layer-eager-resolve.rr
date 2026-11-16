@@ -149,7 +149,7 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, op, line, value, source, end_line, node_text
+.input doc, syntax_error, node, field, child, text, op, line, source, end_line, node_text, value
 .output violation
 eager_approved_pattern("*.resolve()").
 eager_approved_pattern("*.resolve_async()").

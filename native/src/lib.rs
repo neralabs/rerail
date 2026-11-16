@@ -4,17 +4,14 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-// The self dev-dependency owns the production allocator. Keep it linked even
-// when split-crate tests no longer reference one of its exported types.
-#[cfg(test)]
-extern crate rerail_engine as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
-/// so `cargo test` checks how the build validates the language registry.
+/// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
+#[allow(dead_code)]
 mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 #[cfg(test)]
@@ -29,6 +26,7 @@ pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
+pub use rerail_store::source_tree;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
@@ -45,10 +43,9 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. A test build links the engine
-// again as its own dev-dependency (`test-hooks`), whose copy declares the allocator (kept linked by the
-// `extern crate rerail_engine as _` above; `rust_allocations_reach_the_profile_allocator` checks it).
-#[cfg(not(any(test, windows, target_family = "wasm", feature = "system-allocator")))]
+// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// (`rust_allocations_reach_the_profile_allocator` checks it).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: Sampled = Sampled;
 
@@ -110,17 +107,22 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 });
 
 /// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
-/// and the prefilter's tapes. Set as the library loads, before any store is opened.
-fn install_store_functions() {
-    code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
-    code_rule_dsl::install_devices();
-    code_rule_dsl::install_languages();
-    content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
-    content_store::set_connection_functions(|db| {
-        code_rule_dsl::text::install(db)?;
-        code_rule_dsl::prefilter::tapes::install(db)
+/// and the prefilter's tapes; with the build's identities, devices and languages. Once a process, before any store is
+/// opened: as the library loads (the allocator's hook; Windows' module init), and where neither runs (the browser's
+/// build) at the first command (`tools::cli_in`).
+pub(crate) fn install_store_functions() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+        code_rule_dsl::install_devices();
+        code_rule_dsl::install_languages();
+        content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
+        content_store::set_connection_functions(|db| {
+            code_rule_dsl::text::install(db)?;
+            code_rule_dsl::prefilter::tapes::install(db)
+        });
+        code_rule_dsl::sql_hazards::strict_on_every_connection();
     });
-    code_rule_dsl::sql_hazards::strict_on_every_connection();
 }
 
 /// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.

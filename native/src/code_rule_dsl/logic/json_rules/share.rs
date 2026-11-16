@@ -646,14 +646,38 @@ fn head_vars(head: &str) -> Vec<String> {
 }
 
 /// A non-recursive helper whose rule leaves one of its metavariable columns unbound is unfolded at each call.
-pub fn inline_unsafe(px: &Patterns, prog: &mut Program, entries: &[usize], helpers: &Set) {
+///
+/// `passed`: the columns each helper's callers pass in. Before the demand pass (`after_demand` false), a passed-in
+/// column of a helper called more than once does not count: the helper's demand binds it, and the helper stays one
+/// relation however many calls it has. A helper called once is unfolded as before. After the pass, only the passed-in columns count, and a demanded helper's first literal binds
+/// them, so only a helper that got no demand is unfolded for them, and so is a column an unfolding in this pass left
+/// unbound.
+pub fn inline_unsafe(px: &Patterns, prog: &mut Program, entries: &[usize], helpers: &Set, passed: &BTreeMap<String, Set>, after_demand: bool) {
     let mut by: IndexMap<String, Vec<usize>> = IndexMap::new();
     for &e in entries {
         by.entry(prog.arena[e].name().to_owned()).or_default().push(e);
     }
-    let unsafe_ = |prog: &Program, e: usize| -> bool {
+    let unbound = |prog: &Program, e: usize| -> Vec<String> {
         let present = bound_on_every_path(px, &prog.arena[e].lits);
-        head_vars(&prog.arena[e].head).iter().any(|v| is_meta(v) && !present.contains(v))
+        head_vars(&prog.arena[e].head).into_iter().filter(|v| is_meta(v) && !present.contains(v)).map(|v| format!("{}/{v}", prog.arena[e].name())).collect()
+    };
+    // After the demand pass: the columns already unbound when it starts and not passed in, which the first pass left.
+    let left: Set = if after_demand { entries.iter().filter(|&&e| !prog.arena[e].drop).flat_map(|&e| unbound(prog, e)).collect() } else { Set::new() };
+    // The calls of h in the other rules: a helper called once costs nothing to unfold.
+    let sites = |prog: &Program, h: &str| -> usize {
+        entries
+            .iter()
+            .filter(|&&e| !prog.arena[e].drop && prog.arena[e].name() != h)
+            .map(|&e| findall(&px.text_called, &masked(px, &prog.arena[e].lits.join(", "))).iter().filter(|g| *g == h).count())
+            .sum()
+    };
+    let unsafe_ = |prog: &Program, e: usize| -> bool {
+        let ins = passed.get(prog.arena[e].name());
+        let shared = !after_demand && sites(prog, prog.arena[e].name()) > 1;
+        unbound(prog, e).iter().any(|k| {
+            let input = ins.is_some_and(|i| i.contains(&k[k.rfind('/').expect("a key") + 1..]));
+            if after_demand { input || !left.contains(k) } else { !input || !shared }
+        })
     };
     let calls_of = |prog: &Program, h: &str| -> Set {
         let mut out = Set::new();
@@ -766,9 +790,31 @@ fn expansion(px: &Patterns, prog: &Program, by: &IndexMap<String, Vec<usize>>, h
             .iter()
             .filter(|p| is_meta(p) && !every.contains(*p) && outputs.contains(*p) && !mapping.iter().find(|(k, _)| k == *p).is_some_and(|(_, v)| known.contains(v)))
             .collect();
-        let text = body + &missing.iter().map(|p| format!(", unset({p})")).collect::<String>();
-        alts.push(rename_vars(px, &text, &mapping));
+        let text = body.clone() + &missing.iter().map(|p| format!(", unset({p})")).collect::<String>();
+        alts.push((rename_vars(px, &body, &mapping), rename_vars(px, &text, &mapping), missing.into_iter().cloned().collect::<Set>()));
     }
-    alts
+    // ast-grep's `any` takes its first alternative that matches: one that leaves a metavariable unset another binds
+    // holds only where no earlier one differing so does. The union of the alternatives, and its negation, is unchanged.
+    // Outside the guard: what the caller binds, and every argument but a metavariable the util outputs.
+    let mut outer = known.clone();
+    outer.insert("n".to_owned());
+    if let Some(&e) = by[h].first() {
+        for (p, a) in head_vars(&prog.arena[e].head).iter().zip(args) {
+            if !(is_meta(p) && outputs.contains(p)) {
+                outer.extend(super::demand::vars_of(px, a));
+            }
+        }
+    }
+    (0..alts.len())
+        .map(|k| {
+            let mut out = alts[k].1.clone();
+            for j in (0..k).filter(|j| alts[*j].2 != alts[k].2) {
+                if let Some(not) = super::translate::not_earlier(px, &alts[j].0, &outer, j) {
+                    out.push_str(&format!(", {not}"));
+                }
+            }
+            out
+        })
+        .collect()
 }
 

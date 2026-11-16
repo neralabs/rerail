@@ -1,7 +1,12 @@
 //! The Datalog engine: plans, the native executor, SQL, typing, the waves core, the solver device interface.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-#![allow(dead_code, unused_imports)]
+// A mounted module re-exports its dependency's by glob, and its sources import the same items
+// under the same names: the glob's name and the private one are one item.
+#![allow(dead_code, unused_imports, hidden_glob_reexports)]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
 pub use rerail_store::git_workspace;
@@ -89,11 +94,9 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
-    #[path = "stats"]
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;
     }
-    #[path = "suppress"]
     pub mod suppress {
         pub use rerail_lang::code_rule_dsl::suppress::kinds;
         #[allow(unused_imports)]
@@ -105,7 +108,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
     pub mod typing;
-    #[path = "value"]
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
         #[allow(unused_imports)]

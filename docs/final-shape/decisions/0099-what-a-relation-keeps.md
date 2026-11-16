@@ -441,3 +441,11 @@ run completes):
 At 20 files the cut removes 1.3 GB of peak memory and 44% of the memo, for 22% more instructions: the supersets'
 and cuts' strata (5,000 more on 10 files). Open: making those cheaper, for example by cutting only the exports the
 memo finds large, and keeping `base:within` out of the cross part's reads.
+
+**Chosen together (2026-11-15).** Each candidate is priced with every other relation stored, so two chosen where
+one reads the other composed into reader copies nobody priced. The cut's `xd_…_rr_diagnostic` read the document key
+`xk_…_rr_diagnostic_3(d)`, and that key read a diagnostic relation that was inlined too. The copy became
+`node(d, x), text(x, …), line(x, …), doc(d, …)` joined on the document alone: 197 M rows on 30 files, and the full
+300-file cold run took 2,201 s of CPU against 57 s before. A relation now stays inlined only where nothing its rules
+read is inlined too, decided bottom up; a forced one (`.decl … inline`) always. The profile names each one stored
+so ("it reads … inlined, and was priced reading it stored"). Test: `a_relation_reading_an_inlined_one_is_stored`.

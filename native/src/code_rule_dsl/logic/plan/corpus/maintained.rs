@@ -42,6 +42,7 @@ pub(in crate::code_rule_dsl) fn run(
     stats: &mut crate::code_rule_dsl::logic::plan::Stats,
     keep: &BTreeSet<String>,
     modes: &str,
+    texts: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 ) -> Result<Ran> {
     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("maintained/{name}"));
     let digests: HashMap<String, u64> = inputs.iter().map(|(rel, _, d, _)| (rel.clone(), *d)).collect();
@@ -60,12 +61,13 @@ pub(in crate::code_rule_dsl) fn run(
     let frames = kept.as_mut().and_then(retain::Retained::take_frames);
     let by_name: HashMap<&str, &Arc<dyn Source>> = inputs.iter().map(|(r, s, ..)| (r.as_str(), s)).collect();
     let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
-    // An input's delta, found from its old rows by document.
+    // An input's delta, found from its old rows by document: hashed by content, as the frames hold its documents'.
+    let atoms = store.map_or_else(|| crate::content_store::atoms::Atoms::for_connection(db), |s| s.atoms_handle());
     let mut given = |rel: &str| -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
         let kept = kept.as_ref()?;
         let new = by_name.get(rel)?;
         let old = kept.input_source(rel)?;
-        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&placed, &no_locations, rel))?;
+        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&placed, &no_locations, rel), &retain::cells_of(&atoms, &placed, &prog.domains, rel, new.columns().len()))?;
         input_docs.insert(rel.to_owned(), docs);
         Some(delta)
     };
@@ -121,7 +123,7 @@ pub(in crate::code_rule_dsl) fn run(
     wanted.extend(derived.iter().filter(|rel| !part_f.is_output(rel)).cloned());
     drop(s);
     let s = span("plan and evaluate");
-    let got = super::super::run_atoms_native_over(part, db, "main", stats.clone(), wanted, modes)?;
+    let got = super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, super::super::Hooks { texts: Some(Arc::clone(texts)), ..Default::default() })?;
     drop(s);
     let s = span("collect");
     let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
@@ -140,7 +142,7 @@ pub(in crate::code_rule_dsl) fn run(
             let held = match held {
                 Some(h) => h,
                 None => {
-                    let types = part_f.types(rel).into_iter().map(|t| if t == "sym" { b's' } else { b'i' }).collect();
+                    let types = retain::types_of(&part_placed, &part.domains, rel);
                     InRel::flat(&held_rows(db, &got, rel, width)?, types)
                 }
             };

@@ -61,6 +61,18 @@ pub mod java_lean;
 pub mod csharp_lean;
 /// PHP's tape from the lean parser (`rerail_php_lean`).
 pub mod php_lean;
+/// HTML's tape from the lean parser (`rerail_html_lean`).
+pub mod html_lean;
+/// CSS's tape from the lean parser (`rerail_css_lean`).
+pub mod css_lean;
+/// Markdown's tape from the lean parser (`rerail_markdown_lean`).
+pub mod markdown_lean;
+/// Markdown's inline texts' tapes from the lean parser (`rerail_markdown_inline_lean`).
+pub mod markdown_inline_lean;
+/// SQL's tape from the lean parser (`rerail_sql_lean`).
+pub mod sql_lean;
+/// Vue's tape from the lean parser (`rerail_vue_lean`).
+pub mod vue_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;
@@ -623,6 +635,29 @@ pub struct StoredDerived<'a> {
 
 impl FileImage {
     /// The documents of a file that derives none.
+    /// The documents of the host tape `primary` of `source`: itself, and the programs its
+    /// embedders build from it, one per `via` its dialect embeds. The tape is read in place
+    /// (`embed::host`), so a lean parser's host embeds what tree-sitter's does.
+    pub fn embedding(primary: TapeImage, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Self, String> {
+        let mut image = FileImage::single(primary);
+        let embeds = grammar.lang.embeds();
+        let mut programs = Vec::new();
+        if let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, grammar).root() {
+            for (index, &(via, _)) in embeds.iter().enumerate() {
+                if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
+                    continue;
+                }
+                if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, budget) {
+                    programs.push((via, program));
+                }
+            }
+        }
+        for (via, program) in programs {
+            image.derived.push(DerivedImage::encode(via, program, 0, grammar, source, &budget)?);
+        }
+        Ok(image)
+    }
+
     pub fn single(primary: TapeImage) -> Self {
         Self {
             primary,
@@ -876,6 +911,20 @@ impl<'a> TapeReader<'a> {
     fn length(&mut self) -> Result<usize, String> {
         usize::try_from(self.u64()?).map_err(|_| "tape image length overflow".into())
     }
+}
+
+thread_local! {
+    /// Every token kept, as formats up to 11 stored them (named-only at rest came with format 12): only for
+    /// `capture-tapes --all-tokens`, the tape lab's format-11 baseline (decision 0156, E10).
+    static ALL_TOKENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with every token kept in the tapes this thread encodes from tree-sitter trees (format 11's nodes).
+pub fn with_all_tokens<T>(f: impl FnOnce() -> T) -> T {
+    ALL_TOKENS.set(true);
+    let out = f();
+    ALL_TOKENS.set(false);
+    out
 }
 
 /// Appends `root`'s tree to `nodes` in preorder, `language` its grammar. An embedded program's
@@ -1219,6 +1268,7 @@ impl TapeImage {
         // A dialect its language parses itself (Blade's Forte), or reads with a parser standing in for
         // tree-sitter's (JSON's Bitlex parser, which may leave the file to tree-sitter-json below).
         if let Some(parser) = tree_parser(grammar.lang)
+            && !(ALL_TOKENS.get() && grammar.kinds.grammar().is_some())
             && let Some(parsed) = parser.parse(grammar, source, &budget)
         {
             return match parsed {
@@ -1262,34 +1312,20 @@ impl TapeImage {
     }
 
     /// The documents of a tree-sitter tree of `source`: its tape, and the programs its embedders
-    /// build from the tree, each one per `via`. (Blade's compiled view is built from its Forte
-    /// tree: `encode_blade`.)
+    /// build from the tape (`FileImage::embedding`). (Blade's compiled view is built from its
+    /// Forte tree: `encode_blade`.)
     pub fn encode(
         root: TsNode<'_>,
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Result<FileImage, String> {
-        let mut image = FileImage::single(Self::encode_tree_image(
-            root, grammar, source, None, budget,
-        )?);
-        let embeds = grammar.lang.embeds();
-        for (index, &(via, _)) in embeds.iter().enumerate() {
-            if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
-                continue;
-            }
-            if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) {
-                image
-                    .derived
-                    .push(DerivedImage::encode(via, program, 0, grammar, source, budget)?);
-            }
-        }
-        Ok(image)
+        FileImage::embedding(Self::encode_tree_image(root, grammar, source, None, budget)?, grammar, source, budget)
     }
 
     /// The tape of a tree-sitter tree of `source` alone, leaving out the placeholders `omitted`
     /// marks (an embedded program's).
-    fn encode_tree_image(
+    pub fn encode_tree_image(
         root: TsNode<'_>,
         grammar: &Grammar,
         source: &str,
@@ -1313,7 +1349,7 @@ impl TapeImage {
         }
         let mut nodes = Vec::<Pending>::new();
         let mut supertypes = Vec::new();
-        let filter = tokens::TokenGrammar::of(grammar.lang, language);
+        let filter = if ALL_TOKENS.get() { None } else { tokens::TokenGrammar::of(grammar.lang, language) };
         encode_tree(&mut nodes, &mut supertypes, root, language, filter.as_deref(), omitted, budget)?;
         Self::finish(nodes, supertypes, grammar, source, budget)
     }
@@ -1672,6 +1708,169 @@ impl TapeImage {
     }
 }
 
+/// E7 (draft decision 0156): how often readers take each part of a node, so format 16 knows which parts a
+/// reader needs decoded and which it may derive or leave compressed. Off unless the `tape-reads` feature is
+/// on; with it, a relaxed add per read and a table on stderr when a `rerail-engine` command ends.
+#[cfg(feature = "tape-reads")]
+pub mod reads {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    pub const PARTS: [&str; 15] = [
+        "kind", "field", "flags", "named", "span", "points", "parent", "children", "prev", "size", "classes",
+        "docs restored", "nodes restored", "facts docs", "facts nodes",
+    ];
+    static COUNTS: [AtomicU64; PARTS.len()] = [const { AtomicU64::new(0) }; PARTS.len()];
+
+    pub fn hit(part: usize, n: u64) {
+        COUNTS[part].fetch_add(n, Relaxed);
+    }
+
+    pub const fn part(name: &str) -> usize {
+        let mut i = 0;
+        while !eq(PARTS[i], name) {
+            i += 1;
+        }
+        i
+    }
+
+    const fn eq(a: &str, b: &str) -> bool {
+        let (a, b) = (a.as_bytes(), b.as_bytes());
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut i = 0;
+        while i < a.len() {
+            if a[i] != b[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// E17 (t39 step 9): how each read of a span, a parent or a subtree end lies against the reader's
+    /// previous read of the same part on this thread: the same node, the next one, near (16 nodes or fewer
+    /// away), or far (a point read). A slice of a column read whole is in order ("bulk", its length).
+    pub const PATTERN_PARTS: [&str; 7] = [
+        "tape span", "tape parent", "tape size", "facts start", "facts end", "facts parent", "facts subtree_end",
+    ];
+    pub const CLASSES: [&str; 5] = ["same", "next", "near", "far", "bulk"];
+    static PATTERNS: [[AtomicU64; CLASSES.len()]; PATTERN_PARTS.len()] =
+        [const { [const { AtomicU64::new(0) }; CLASSES.len()] }; PATTERN_PARTS.len()];
+    thread_local! {
+        static LAST: [std::cell::Cell<u32>; PATTERN_PARTS.len()] = const { [const { std::cell::Cell::new(u32::MAX) }; PATTERN_PARTS.len()] };
+        /// Builders that decode (facts from a tape) are not readers: their reads are not counted.
+        static PAUSED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    pub const fn pattern_part(name: &str) -> usize {
+        let mut i = 0;
+        while !eq(PATTERN_PARTS[i], name) {
+            i += 1;
+        }
+        i
+    }
+
+    /// With `E17_SITES` set, each read is also counted by its caller's source location (slow: a lock a read).
+    static SITES_ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("E17_SITES").is_some());
+    type Site = (usize, &'static std::panic::Location<'static>);
+    static SITES: std::sync::Mutex<Option<std::collections::HashMap<Site, [u64; 4]>>> = std::sync::Mutex::new(None);
+
+    #[inline]
+    #[track_caller]
+    pub fn at(part: usize, node: u32) {
+        if PAUSED.with(|p| p.get()) != 0 {
+            return;
+        }
+        let last = LAST.with(|l| l[part].replace(node));
+        let class = if node == last {
+            0
+        } else if last != u32::MAX && node == last.wrapping_add(1) {
+            1
+        } else if last != u32::MAX && node.abs_diff(last) <= 16 {
+            2
+        } else {
+            3
+        };
+        PATTERNS[part][class].fetch_add(1, Relaxed);
+        if *SITES_ON {
+            let site = std::panic::Location::caller();
+            SITES.lock().expect("the sites").get_or_insert_default().entry((part, site)).or_default()[class] += 1;
+        }
+    }
+
+    #[inline]
+    pub fn bulk(part: usize, n: usize) {
+        if PAUSED.with(|p| p.get()) == 0 {
+            PATTERNS[part][4].fetch_add(n as u64, Relaxed);
+        }
+    }
+
+    pub struct Paused;
+    impl Drop for Paused {
+        fn drop(&mut self) {
+            PAUSED.with(|p| p.set(p.get() - 1));
+        }
+    }
+    /// Reads are not counted until the guard drops (a builder decoding a tape into facts).
+    pub fn pause() -> Paused {
+        PAUSED.with(|p| p.set(p.get() + 1));
+        Paused
+    }
+
+    pub fn report() {
+        let nodes = COUNTS[part("nodes restored")].load(Relaxed).max(1) as f64;
+        eprintln!("tape reads (E7):");
+        for (name, count) in PARTS.iter().zip(&COUNTS) {
+            let count = count.load(Relaxed);
+            eprintln!("  {name:<16} {count:>14} {:>10.3} per restored node", count as f64 / nodes);
+        }
+        let facts = COUNTS[part("facts nodes")].load(Relaxed).max(1) as f64;
+        eprintln!("read patterns (E17), per facts node ({} facts nodes):", facts as u64);
+        eprintln!("  {:<18} {}", "", CLASSES.iter().map(|c| format!("{c:>12}")).collect::<String>());
+        for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
+            eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12.4}", c.load(Relaxed) as f64 / facts)).collect::<String>());
+        }
+        eprintln!("read patterns (E17), counts:");
+        for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
+            eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12}", c.load(Relaxed))).collect::<String>());
+        }
+        if let Some(sites) = SITES.lock().expect("the sites").take() {
+            let mut sites: Vec<_> = sites.into_iter().collect();
+            sites.sort_by_key(|(_, c)| std::cmp::Reverse(c.iter().sum::<u64>()));
+            eprintln!("read patterns (E17), top sites (same, next, near, far):");
+            for ((part, site), c) in sites.iter().take(40) {
+                eprintln!("  {:<18} {:>11} {:>11} {:>11} {:>11}  {site}", PATTERN_PARTS[*part], c[0], c[1], c[2], c[3]);
+            }
+        }
+    }
+}
+
+/// Counts a read of `$part` (`reads::PATTERN_PARTS`) of node `$node`, by where it lies (E17).
+macro_rules! read_at {
+    ($part:literal, $node:expr) => {
+        #[cfg(feature = "tape-reads")]
+        {
+            const PART: usize = reads::pattern_part($part);
+            reads::at(PART, $node as u32);
+        }
+    };
+}
+
+/// Counts a read of `$part` (`reads::PARTS`), `$n` times.
+macro_rules! read {
+    ($part:literal) => {
+        read!($part, 1)
+    };
+    ($part:literal, $n:expr) => {
+        #[cfg(feature = "tape-reads")]
+        {
+            const PART: usize = reads::part($part);
+            reads::hit(PART, $n as u64);
+        }
+    };
+}
+
 #[derive(Clone, Copy)]
 pub struct Rec {
     kind: u16,
@@ -1982,6 +2181,8 @@ impl TapeDoc {
         let mut nodes = Vec::new();
         let mut kind_overrides = Vec::new();
         let mut supertypes = Vec::new();
+        read!("docs restored");
+        read!("nodes restored", count);
         let digest = validated::visit(&source, &grammar, image, budget, |node, classes| {
             if node.id == 0 { nodes.reserve_exact(count); }
             if node.alias != SENTINEL { kind_overrides.push((node.id, node.alias)); }
@@ -2183,6 +2384,7 @@ impl TapeDoc {
     }
 
     pub fn transducer_kind(&self, node: u32) -> u16 {
+        read!("kind");
         self.data[node as usize].kind
     }
 
@@ -2194,6 +2396,7 @@ impl TapeDoc {
     }
 
     fn node_is_named(&self, node: u32) -> bool {
+        read!("named");
         self.kind_alias(node).map_or_else(
             || self.grammar.kind_is_named(self.data[node as usize].kind),
             |alias| alias.1,
@@ -2201,10 +2404,12 @@ impl TapeDoc {
     }
 
     pub fn transducer_field(&self, node: u32) -> u16 {
+        read!("field");
         self.data[node as usize].field
     }
 
     pub fn transducer_flags(&self, node: u32) -> u8 {
+        read!("flags");
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
             | (u8::from(rec.extra()) << 1)
@@ -2213,6 +2418,8 @@ impl TapeDoc {
     }
 
     pub fn transducer_span(&self, node: u32) -> Range<usize> {
+        read!("span");
+        read_at!("tape span", node);
         let rec = &self.data[node as usize];
         rec.start as usize..rec.end as usize
     }
@@ -2230,6 +2437,8 @@ impl TapeDoc {
     }
 
     pub fn transducer_parent(&self, node: u32) -> Option<u32> {
+        read!("parent");
+        read_at!("tape parent", node);
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
     }
@@ -2242,12 +2451,15 @@ impl TapeDoc {
                 return None;
             }
             let current = next;
+            read!("children");
             next = self.data[current as usize].next;
             Some(current)
         })
     }
 
     pub fn transducer_descendants(&self, node: u32) -> Range<u32> {
+        read!("size");
+        read_at!("tape size", node);
         let rec = &self.data[node as usize];
         node + 1..node + rec.size
     }
@@ -2256,6 +2468,7 @@ impl TapeDoc {
     pub fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
         let mut next = self.data[node as usize].next;
         while next != NONE {
+            read!("children");
             if !named || self.node_is_named(next) {
                 return Some(next);
             }
@@ -2311,6 +2524,7 @@ impl TapeDoc {
 
     /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
     pub fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
+        read!("classes", self.supertypes.len());
         self.supertypes.iter().copied()
     }
 
@@ -2329,6 +2543,7 @@ impl TapeDoc {
     // The packed runtime's class test (Phase 4).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub fn transducer_has_supertype(&self, node: u32, kind: u16) -> bool {
+        read!("classes");
         if kind >= DERIVED_CLASS_BASE {
             return self
                 .labels
@@ -2431,9 +2646,11 @@ impl<'a> TapeNode<'a> {
     }
     /// The structurally adjacent sibling, for traversal; `SgNode::next` follows Tree-sitter.
     pub fn next_sibling(&self) -> Option<Self> {
+        read!("children");
         (self.rec().next != NONE).then(|| self.at(self.rec().next))
     }
     fn prev_sibling(&self) -> Option<Self> {
+        read!("prev");
         (self.rec().prev != NONE).then(|| self.at(self.rec().prev))
     }
     /// Where ast-grep's `next_all`/`prev_all` start: a cursor on the parent (the root for the
@@ -2479,6 +2696,7 @@ impl<'a> Iterator for Children<'a> {
             return None;
         }
         let index = self.next;
+        read!("children");
         self.next = self.node.nodes[index as usize].next;
         self.remaining -= 1;
         Some(self.node.at(index))
@@ -2491,6 +2709,8 @@ impl ExactSizeIterator for Children<'_> {}
 
 impl<'a> SgNode<'a> for TapeNode<'a> {
     fn parent(&self) -> Option<Self> {
+        read!("parent");
+        read_at!("tape parent", self.index);
         (self.rec().parent != NONE).then(|| self.at(self.rec().parent))
     }
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
@@ -2510,6 +2730,8 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     }
     fn dfs(&self) -> impl Iterator<Item = Self> {
         let start = self.index;
+        read!("size");
+        read_at!("tape size", self.index);
         let end = start + self.rec().size;
         (start..end).map(move |index| self.at(index))
     }
@@ -2549,6 +2771,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         })
     }
     fn kind(&self) -> Cow<'_, str> {
+        read!("kind");
         Cow::Borrowed(self.kind_alias().map_or_else(
             || {
                 self.grammar
@@ -2559,21 +2782,27 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         ))
     }
     fn kind_id(&self) -> u16 {
+        read!("kind");
         self.rec().kind
     }
     fn node_id(&self) -> usize {
         self.index as usize
     }
     fn range(&self) -> Range<usize> {
+        read!("span");
+        read_at!("tape span", self.index);
         self.rec().start as usize..self.rec().end as usize
     }
     fn start_pos(&self) -> Position {
+        read!("points");
         self.points.point(self.rec().start)
     }
     fn end_pos(&self) -> Position {
+        read!("points");
         self.points.point(self.rec().end)
     }
     fn is_named(&self) -> bool {
+        read!("named");
         self.kind_alias().map_or_else(
             || self.grammar.kind_is_named(self.rec().kind),
             |alias| alias.1,
@@ -2583,12 +2812,15 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.children().all(|child| !child.is_named())
     }
     fn is_extra(&self) -> bool {
+        read!("flags");
         self.rec().extra()
     }
     fn is_error(&self) -> bool {
+        read!("flags");
         self.rec().error()
     }
     fn is_missing(&self) -> bool {
+        read!("flags");
         self.rec().missing()
     }
     fn field(&self, name: &str) -> Option<Self> {
@@ -2597,6 +2829,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     }
     fn field_children(&self, field_id: Option<u16>) -> impl Iterator<Item = Self> {
         self.children().filter(move |child| {
+            read!("field");
             field_id.is_some_and(|field| field != 0 && child.rec().field == field)
         })
     }
@@ -2611,6 +2844,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
                 {
                     examined += 1;
                 }
+                read!("field");
                 child.rec().field == field_id
             });
             #[cfg(feature = "code-rule-profile")]

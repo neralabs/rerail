@@ -75,7 +75,9 @@ const POOL_STACK: usize = 16 << 20;
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
 
-/// The bytes of this thread's stack below this frame, where the platform says where the stack is.
+/// The bytes of this thread's stack below this frame, where the platform says where the stack is. Never inlined:
+/// inlined, its local could sit above its caller's locals in one frame, and a big frame went uncounted.
+#[inline(never)]
 fn stack_left() -> Option<usize> {
     thread_local! {
         /// The lowest address of this thread's stack.
@@ -907,6 +909,8 @@ impl Executor {
     pub fn new() -> Self {
         configure(false);
         let present = lanes::present();
+        // The device lanes are macOS's: elsewhere the two are all.
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
         #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
         if present[Lane::Sme.index()] {
@@ -1582,9 +1586,12 @@ mod stack_tests {
         let left = std::thread::Builder::new().stack_size(size).spawn(super::stack_left).unwrap().join().unwrap().expect("measured");
         assert!(left <= size + (64 << 10) && left > size - (256 << 10), "{left} of {size} (the platform counts its guard page)");
         let deeper = std::thread::Builder::new().stack_size(size).spawn(|| {
-            let pad = std::hint::black_box([0u8; 512 << 10]);
+            // Written through a `&mut`, so it is the frame's (optimized, a zero array never written was a constant,
+            // and the frame held none of it).
+            let mut pad = [0u8; 512 << 10];
+            std::hint::black_box(&mut pad);
             let left = super::stack_left().unwrap();
-            std::hint::black_box(&pad);
+            std::hint::black_box(&mut pad);
             left
         }).unwrap().join().unwrap();
         assert!(deeper + (512 << 10) <= left + (64 << 10), "a frame of 512 KiB is counted: {deeper} after {left}");

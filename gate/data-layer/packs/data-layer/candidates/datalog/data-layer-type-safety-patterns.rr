@@ -28,7 +28,7 @@
 .decl text_str_union_bin(d: number, n: node, a: symbol, b: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, line, syntax_error, child, op, tape_line, node_text, op_at, token
+.input doc, node, field, text, line, syntax_error, child, op, tape_line, op_at, node_text, token
 .output violation
 signature_order_by_offset(0).
 signature_order_by_offset(1).

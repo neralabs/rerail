@@ -32,6 +32,7 @@ static CPU: LazyLock<Executor> = LazyLock::new(|| {
 /// The CPU binding's lanes: the cores, SQL and, where the CPU has one, its matrix unit (`sme::backend` asks the CPU
 /// itself). No device lane is asked for: asking compiles the GPU's kernels and builds the Neural Engine's lane.
 fn cpu_lanes() -> Vec<Arc<dyn Backend>> {
+    #[cfg_attr(not(all(target_os = "macos", target_arch = "aarch64")), allow(unused_mut))]
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     lanes.extend(rerail_accel::sme::backend());

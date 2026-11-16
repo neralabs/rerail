@@ -362,6 +362,21 @@ pub(super) fn release_all_at(database_path: &Path) {
     });
 }
 
+/// What in this process still holds the store at `database_path`: its open handles, and the thread connections to it
+/// that are open (a test checks a closed store's are none).
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn holding(database_path: &Path) -> (usize, usize) {
+    let handles = HANDLES.lock().get(database_path).copied().unwrap_or(0);
+    let open = ALL_CONNECTIONS
+        .lock()
+        .iter()
+        .filter(|(path, _)| path == database_path)
+        .filter_map(|(_, connection)| connection.upgrade())
+        .filter(|connection| connection.try_lock().is_none_or(|c| c.is_some()))
+        .count();
+    (handles, open)
+}
+
 /// A connection's page cache at rest, in KiB.
 pub(super) const CACHE_KIB: i64 = 1_024;
 
@@ -555,18 +570,50 @@ impl ContentStore {
         &self,
         operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
+        self.immediate_transaction_stopping(None, operation)
+    }
+
+    /// `immediate_transaction`, interrupted once `stop` says so (upkeep yielding to a run, decision 0190 §8): a
+    /// progress handler's `SQLITE_INTERRUPT`, the transaction rolled back. The handler is the connection's for
+    /// this transaction only.
+    pub(super) fn immediate_transaction_until<T>(
+        &self,
+        stop: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+        mut operation: impl FnMut(&Connection) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        retry_busy(&mut BusyRetries::default(), || {
+            self.immediate_transaction_stopping(Some(&stop), &mut operation)
+        })
+    }
+
+    fn immediate_transaction_stopping<T>(
+        &self,
+        stop: Option<&std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+        operation: impl FnOnce(&Connection) -> StoreResult<T>,
+    ) -> StoreResult<T> {
         self.yield_writer();
         let mut connection = self
             .connection
             .lock()
             .expect("content store connection unavailable");
+        if let Some(stop) = stop {
+            let stop = std::sync::Arc::clone(stop);
+            // Not stoppable, the transaction would hold the writers for its length: an error, not a quiet wait.
+            connection.progress_handler(1000, Some(move || stop()))?;
+        }
         // One attempt: its caller retries, or runs it again later (`begin` leaves the retry to it).
         let outer = IN_RETRY.replace(true);
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate);
         IN_RETRY.set(outer);
-        let transaction = transaction?;
-        let value = operation(&transaction)?;
-        self.commit(transaction)?;
+        let value = transaction.and_then(|transaction| {
+            let value = operation(&transaction)?;
+            self.commit(transaction)?;
+            Ok(value)
+        });
+        // Left installed, the handler would stop the connection's next statements: its error is the result's.
+        let cleared = if stop.is_some() { connection.progress_handler(0, None::<fn() -> bool>) } else { Ok(()) };
+        let value = value?;
+        cleared?;
         Ok(value)
     }
 

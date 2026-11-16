@@ -8,7 +8,6 @@ use super::*;
 const P_ASSIGN: u8 = 1;
 const P_TERNARY: u8 = 3;
 const P_REL: u8 = 10;
-const P_CAST: u8 = 14;
 const P_UNARY: u8 = 15;
 
 /// A binary operator's precedence and its kind.
@@ -65,6 +64,12 @@ fn starts_operand(t: Tok) -> bool {
         Char | Dec | Hex | Oct | Bin | DecFloat | HexFloat | Quote | TripleQuote | LParen | Bang | Tilde => true,
         _ => false,
     }
+}
+
+/// Whether a token after a statement's `switch (x) { … }` makes it an operand (`- y`, `? a : b`,
+/// `instanceof T`), not a statement before the next.
+pub(super) fn continues_switch(t: Tok) -> bool {
+    binary(t.kind).is_some() || t.kind == T::Question || t.kind == T::Name && t.word == w::INSTANCEOF
 }
 
 /// Whether a token after `yield` continues it as a name (`yield = 1`, `yield.f()`), not a
@@ -137,9 +142,18 @@ impl<'a> P<'a> {
                     if p < min {
                         break;
                     }
+                    // `(a) + b * c`: tree-sitter keeps a cast of `+b` too, and takes it where a
+                    // `*`, `/` or `%` follows the operand (`(a) + b` is a sum); refused.
+                    let lone = matches!(t.kind, T::Plus | T::Minus) && self.last_end == self.lone_paren;
                     left = self.wrap(left, K::BinaryExpression, s, slot(f::LEFT, Ctx::Expr));
                     self.leaf(op, f::OPERATOR, C_NONE)?;
-                    self.expr_prec(slot(f::RIGHT, Ctx::Expr), p + 1)?;
+                    if matches!(t.kind, T::Plus | T::Minus) {
+                        self.additive = self.i;
+                    }
+                    let right = self.expr_prec(slot(f::RIGHT, Ctx::Expr), p + 1)?;
+                    if lone && right.kind == K::BinaryExpression {
+                        return self.refuse();
+                    }
                     self.close(left);
                 }
             }
@@ -168,7 +182,9 @@ impl<'a> P<'a> {
             }
             T::LParen => self.paren(s),
             T::Name if t.word == w::SWITCH => self.switch_expression(s),
-            T::Name if self.kind_at(1) == T::Arrow && !reserved(t.word) && !self.no_lambda => {
+            // In a `case` label, `x ->` ends the label, but `x -> y ->` is a lambda's start (tree-sitter
+            // takes every arrow but the last into the label).
+            T::Name if self.kind_at(1) == T::Arrow && !reserved(t.word) && (!self.no_lambda || self.arrow_ahead(2)) => {
                 let n = self.open_in(K::LambdaExpression, s);
                 self.leaf(K::Identifier, f::PARAMETERS, C_NONE)?;
                 self.lambda_body()?;
@@ -176,6 +192,24 @@ impl<'a> P<'a> {
                 Ok(n)
             }
             _ => self.primary(s),
+        }
+    }
+
+    /// Whether a `->` stands `k` tokens ahead or later, outside brackets, before a `;`, `{` or `}`,
+    /// and not before a block and `;` (`case A -> r -> { … };`: that rule's body is a lambda, the
+    /// label `A` alone).
+    fn arrow_ahead(&mut self, mut k: usize) -> bool {
+        loop {
+            match self.kind_at(k) {
+                T::Arrow if self.kind_at(k + 1) == T::LBrace => return self.skip_brackets(k + 1).is_some_and(|e| self.kind_at(e) != T::Semi),
+                T::Arrow => return true,
+                T::LParen | T::LBracket => match self.skip_brackets(k) {
+                    Some(e) => k = e,
+                    None => return false,
+                },
+                T::Semi | T::LBrace | T::RBrace | T::RParen | T::RBracket | T::Eof => return false,
+                _ => k += 1,
+            }
         }
     }
 
@@ -193,7 +227,7 @@ impl<'a> P<'a> {
     /// come first and an operand follows, else a parenthesized expression.
     fn paren(&mut self, s: Slot) -> R<N> {
         let Some(close) = self.skip_brackets(0) else { return self.refuse() };
-        if self.kind_at(close) == T::Arrow && !self.no_lambda {
+        if self.kind_at(close) == T::Arrow && (!self.no_lambda || self.arrow_ahead(close + 1)) {
             let n = self.open_in(K::LambdaExpression, s);
             if self.inferred_ahead(close) {
                 let p = self.open(K::InferredParameters, f::PARAMETERS, C_NONE);
@@ -215,10 +249,14 @@ impl<'a> P<'a> {
         if let Some(cast) = self.cast_ahead(close) {
             return self.cast(s, cast);
         }
+        let lone = close == 3 && self.is_ident_at(1);
         let n = self.open_in(K::ParenthesizedExpression, s);
         self.tk(K::ParenthesizedExpression, K::TLParen)?;
         self.nested(|p| p.expr(EXPR))?;
         self.punct_tk(K::ParenthesizedExpression, T::RParen, false)?;
+        if lone {
+            self.lone_paren = self.last_end;
+        }
         self.close(n);
         self.postfix(n, s)
     }
@@ -249,10 +287,13 @@ impl<'a> P<'a> {
         let mut k = 1;
         let mut types = 0;
         let mut only_name = true;
+        // Whether the type reads as an expression too: names between `.`s.
+        let mut names = true;
         loop {
             let j = self.scan_annotations(k)?;
             if j != k {
                 only_name = false;
+                names = false;
             }
             let t = self.peek_at(j);
             let end = self.scan_type(j, true)?;
@@ -260,6 +301,7 @@ impl<'a> P<'a> {
             if w::is_primitive(t.word) || end != j + 1 {
                 only_name = false;
             }
+            names &= !w::is_primitive(t.word) && (j..end).all(|i| if (i - j) % 2 == 0 { self.is_ident_at(i) } else { self.kind_at(i) == T::Dot });
             types += 1;
             k = end;
             match self.kind_at(k) {
@@ -279,9 +321,16 @@ impl<'a> P<'a> {
             if !starts_operand(next) && !update {
                 return None;
             }
+        } else if types > 1 {
+            // An intersection's operand is a primary or a lambda (`(A & B) + c` is a sum).
+            if !starts_operand(next) || matches!(next.kind, T::Bang | T::Tilde) {
+                return None;
+            }
         } else {
             let update = matches!(next.kind, T::PlusPlus | T::MinusMinus) && starts_operand(self.peek_at(close + 1));
-            if !(starts_operand(next) || matches!(next.kind, T::Plus | T::Minus) || update) {
+            // `(a.b) + c` is a cast, but a sum's right operand reduces first: `d + (a.b) + c`.
+            let signed = matches!(next.kind, T::Plus | T::Minus) && !(names && self.additive == self.i);
+            if !(starts_operand(next) || signed || update) {
                 return None;
             }
         }
@@ -301,7 +350,15 @@ impl<'a> P<'a> {
             self.tk(K::CastExpression, K::TAmp)?;
         }
         self.punct_tk(K::CastExpression, T::RParen, false)?;
-        let v = self.expr_prec(slot(f::VALUE, Ctx::Expr), P_CAST + 1)?;
+        // A primary operand takes no postfix update (`(T) i++` updates the cast); a prefix form's
+        // does (`(T) -i++`, `(T) (U) i++`: the update is the operand).
+        let mut v = self.expr_prec(slot(f::VALUE, Ctx::Expr), P_UNARY + 1)?;
+        while matches!(v.kind, K::CastExpression | K::UnaryExpression | K::UpdateExpression) && matches!(self.peek(), T::PlusPlus | T::MinusMinus) {
+            let op = punct(self.peek()).expect("an operator");
+            v = self.wrap(v, K::UpdateExpression, slot(f::VALUE, Ctx::Expr), EXPR);
+            self.leaf(op, f::NONE, C_NONE)?;
+            self.close(v);
+        }
         if is_primary(v.kind) {
             self.rekey(v.at, slot(f::VALUE, Ctx::Primary));
         } else if v.kind == K::LambdaExpression {
@@ -665,14 +722,12 @@ impl<'a> P<'a> {
                 b'"' => {
                     // A text block's `"` and what follows it to the next `"` or `\` (`\"` passed).
                     let mut e = at + 1;
-                    while e < close && src[e] != b'"' {
-                        if src[e] == b'\\' {
-                            if src.get(e + 1) != Some(&b'"') {
-                                break;
-                            }
-                            e += 1;
+                    loop {
+                        e = self.lx.blocks.string_stop(e).min(close);
+                        if e == close || src[e] == b'"' || src.get(e + 1) != Some(&b'"') {
+                            break;
                         }
-                        e += 1;
+                        e += 2;
                     }
                     self.piece(K::MultilineStringFragment, at, e);
                     at = e;
@@ -702,9 +757,17 @@ impl<'a> P<'a> {
                     at = e;
                 }
                 _ => {
-                    let mut e = at + 1;
-                    while e < close && src[e] != b'"' && src[e] != b'\\' {
-                        e += 1;
+                    let e = self.lx.blocks.string_stop(at + 1).min(close);
+                    // A text block's fragment start: tree-sitter's lexer reads a comment after white
+                    // space here too, and takes it, from the fragment's start, where it is longer.
+                    if block && let Ok(Some(x)) = self.lx.comment(self.lx.space_end(at)) && x.end as usize > e {
+                        if x.end as usize > close {
+                            // Past the closing `"""`, which the comment would hide.
+                            return self.refuse();
+                        }
+                        self.extra(Extra { start: at as u32, ..x });
+                        at = x.end as usize;
+                        continue;
                     }
                     self.piece(if block { K::MultilineStringFragment } else { K::StringFragment }, at, e);
                     at = e;

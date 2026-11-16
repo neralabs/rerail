@@ -355,8 +355,8 @@ fn same_document_joins(px: &Patterns, text: String) -> String {
 }
 
 /// `anchor start` and `anchor end` (main's `witness.start`, `witness.end`): a finding's key is its path and line, so
-/// a finding at the witness's start is the witness's own. One at its end sits on the witness's last line: the
-/// `at` column becomes a place there (`@place(path, end_line)`), in every rule of the relation.
+/// a finding at the witness's start is the witness's own. One at its end is main's point there (its end line and
+/// column): the `at` column becomes the witness's `end_point`, in every rule of the relation.
 fn witness_anchor(px: &Patterns, mut text: String) -> String {
     text = text.replace("    anchor start\n", "    // anchor start: the witness's start, on its first line, is the witness's key\n");
     let found: Vec<(String, String, String, String)> =
@@ -365,7 +365,7 @@ fn witness_anchor(px: &Patterns, mut text: String) -> String {
         let raw: Vec<&str> = cols.split(',').collect();
         let names: Vec<String> = raw.iter().map(|c| c.split(':').next().unwrap_or("").trim().to_owned()).collect();
         let new_cols = names.iter().zip(&raw).enumerate().map(|(i, (n, c))| if i == 0 { format!("{n}: loc") } else { c.trim().to_owned() }).collect::<Vec<_>>().join(", ");
-        text = text.replacen(&whole, &format!(".violation {rel}({new_cols}){rest}\n    // anchor end: the finding sits on the witness's last line\n"), 1);
+        text = text.replacen(&whole, &format!(".violation {rel}({new_cols}){rest}\n    // anchor end: the finding is the point where the witness ends\n"), 1);
         let (mut out, mut pos) = (String::new(), 0usize);
         let heads = captures(&re(&format!(r"(?m)^{rel}\(")), &text).iter().map(|h| h.get(0).expect("a match").end()).collect::<Vec<_>>();
         for hend in heads {
@@ -380,7 +380,7 @@ fn witness_anchor(px: &Patterns, mut text: String) -> String {
             out.push_str(&args.join(", "));
             out.push(')');
             out.push_str(slice(&text, end, stop));
-            out.push_str(&format!(",\n    docof({at}, rr_d), doc(rr_d, rr_f, _), end_line({at}, rr_l), rr_end = @place(rr_f, rr_l)"));
+            out.push_str(&format!(",\n    end_point({at}, rr_end)"));
             pos = stop;
         }
         out.push_str(slice(&text, pos, text.len()));
@@ -477,10 +477,26 @@ fn unset_unbound(px: &Patterns, text: String) -> R<String> {
                     ok.push(binds(b, x)?);
                 }
                 if ok.iter().any(|k| *k) && !ok.iter().all(|k| *k) {
-                    lits[i] = format!(
-                        " ({})",
-                        branches.iter().zip(&ok).map(|(b, k)| if *k { b.trim().to_owned() } else { format!("{}, unset({x})", b.trim()) }).collect::<Vec<_>>().join(" ; ")
-                    );
+                    // ast-grep's `any` takes its first alternative that matches (`any: [{pattern: $MV}, {regex: "^"}]`
+                    // leaves MV unset only where it cannot bind it): a branch holds only where no earlier one that
+                    // differs in binding x does.
+                    let mut outer: Set = lits.iter().enumerate().filter(|(j, _)| *j != i).flat_map(|(_, l)| super::demand::vars_of(px, l)).collect();
+                    outer.insert("n".to_owned());
+                    outer.remove(x);
+                    let parts: Vec<String> = branches
+                        .iter()
+                        .enumerate()
+                        .map(|(k, b)| {
+                            let mut out = if ok[k] { b.trim().to_owned() } else { format!("{}, unset({x})", b.trim()) };
+                            for j in (0..k).filter(|j| ok[*j] != ok[k]) {
+                                if let Some(not) = super::translate::not_earlier(px, &branches[j], &outer, j) {
+                                    out.push_str(&format!(", {not}"));
+                                }
+                            }
+                            out
+                        })
+                        .collect();
+                    lits[i] = format!(" ({})", parts.join(" ; "));
                     done = true;
                     changed = true;
                     break;

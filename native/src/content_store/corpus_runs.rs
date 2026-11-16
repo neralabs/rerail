@@ -228,6 +228,10 @@ impl StatIndex {
     pub fn source(&self, path: &str, now: FileStat) -> Option<SourceId> {
         self.entries.get(path).filter(|(stat, _)| *stat == now).map(|(_, id)| *id)
     }
+    /// The source last read at `path`, whatever the file's stat is now.
+    pub fn recorded(&self, path: &str) -> Option<SourceId> {
+        self.entries.get(path).map(|(_, id)| *id)
+    }
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -346,6 +350,21 @@ impl ContentStore {
             .query_map([&plan[..]], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Some((plan, decode_ids(&sources)?, relations)))
+    }
+
+    /// The sources the newest run of lane `lane` over `root` read (`record_corpus_run_lane`), whichever build ran it:
+    /// empty if the lane has no run. A run reads before its first wave the tapes of those its waves will load
+    /// (decision 0104), as it reads its own files' before.
+    pub fn lane_sources(&self, root: &str, lane: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let sources: Option<Vec<u8>> = connection
+            .prepare_cached(
+                "SELECT m.sources FROM corpus_manifests m JOIN corpus_roots r USING (root_id) \
+                 WHERE r.path = ?1 AND m.lane = ?2 ORDER BY m.last_run DESC LIMIT 1",
+            )?
+            .query_row(params![root, &lane[..]], |r| r.get(0))
+            .optional()?;
+        Ok(sources.map(|s| decode_ids(&s)).transpose()?.unwrap_or_default().into_iter().map(SourceId).collect())
     }
 
     /// Records a run of the corpus at `root` that read `sources` (tapes of `grammar_version` and `tape_format`) under
@@ -474,6 +493,15 @@ impl ContentStore {
     /// Whether a pass under `policy` at unix second `now` has work: a decision's rows being collected, or a decision
     /// due that can change something (`corpus_decision_worth`). A due decision that cannot is cleared here, so a run
     /// of fresh roots neither decides nor sweeps the store after each run.
+    /// The plans a kept manifest names or a run holds (`corpus_plans`, live): what the observer's store keeps a
+    /// whole-run cutoff's record for (`observe::collect`).
+    pub fn live_plans(&self) -> StoreResult<HashSet<[u8; 32]>> {
+        let connection = self.connection.lock().expect("content store connection unavailable");
+        let mut st = connection.prepare("SELECT plan_digest FROM corpus_plans WHERE live=1")?;
+        let plans = st.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|p| p.ok()?.try_into().ok()).collect();
+        Ok(plans)
+    }
+
     pub fn corpus_pass_wanted(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
         if self.retired_memo_rows_left()? {
             return Ok(true);
@@ -664,6 +692,33 @@ impl ContentStore {
         })
     }
 
+    /// Whether a keep decision was made since the frames it left unreachable were collected (`sweep_frames`).
+    pub fn frames_sweep_wanted(&self) -> StoreResult<bool> {
+        let connection = self.connection.lock().expect("content store connection unavailable");
+        Ok(frames_sweep_wanted(&connection)?)
+    }
+
+    /// Collects the frames the last keep decision left unreachable (decision 0227), and records that decision as
+    /// swept: one write transaction. What it collected, and the seconds it took; `None` when `stop` interrupted it
+    /// (a run began: a progress handler's `SQLITE_INTERRUPT`, the transaction rolled back, the sweep still due).
+    pub fn sweep_frames(&self, stop: impl Fn() -> bool + Send + Sync + 'static) -> StoreResult<Option<(super::frames::Unreachable, f64)>> {
+        let stop: std::sync::Arc<dyn Fn() -> bool + Send + Sync> = std::sync::Arc::new(stop);
+        // Its writes delete rows and set a mark, naming no atom: a forked process sweeps too (decision 0170).
+        super::atoms::mapped(|| {
+            let started = std::time::Instant::now();
+            let out = self.immediate_transaction_until(std::sync::Arc::clone(&stop), |tx| {
+                let out = super::frames::collect_unreachable_frames(tx)?;
+                tx.execute("UPDATE corpus_decided SET swept=run WHERE singleton=1", [])?;
+                Ok(out)
+            });
+            match out {
+                Ok(out) => Ok(Some((out, started.elapsed().as_secs_f64()))),
+                Err(StoreError::Database(e)) if super::upkeep::interrupted(&e) => Ok(None),
+                Err(e) => Err(e),
+            }
+        })
+    }
+
     /// One bounded pass: the keep decision when one is due, up to `PLAN_ROWS_PER_PASS` memo rows of dead plans, and
     /// the store's collection (`collect`).
     /// Active readers defer the pass without clearing the pending collection flag.
@@ -720,6 +775,9 @@ impl ContentStore {
                 return Ok(pass);
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
+            // What the decision left live reaches the frames it keeps; the rest go, by the `frames` upkeep job (a
+            // utility job: soon, behind the run, and finished before the process exits; decision 0227).
+            rerail_accel::upkeep::kick();
         }
         // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is a few
         // frames (one statement), and one plan a pass left a store's dead builds for as many runs.
@@ -890,4 +948,15 @@ fn hex(bytes: &[u8]) -> String {
 /// What a write of plan `plan`'s statistics is queued under (`write_back`).
 fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
     super::write_back::Key::of(&[b"stat_blob", plan])
+}
+
+/// Whether `corpus_decided.run` is past its `swept` on connection `c` (a read: the `frames` job's `due`).
+pub fn frames_sweep_wanted(c: &rusqlite::Connection) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT run > swept FROM corpus_decided WHERE singleton=1",
+        [],
+        |r| r.get(0),
+    )
+    .optional()
+    .map(|v| v.unwrap_or(false))
 }

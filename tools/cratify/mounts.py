@@ -169,6 +169,18 @@ def split_attrs(s):
     return out
 
 
+def path_attr(inner, path, indent):
+    """An inline module's `#[path]`: only when a file module is declared somewhere inside it (rustc's unused
+    attribute otherwise: the directory only places file modules), and under their condition when they all have one."""
+    decls = re.findall(r'(?:#\[cfg\((.*)\)\]\n\s*)?(?:#\[path = "[^"]*"\]\n\s*)?(?:pub(?:\([^)]*\))? )?mod [A-Za-z_0-9]+;',
+                       ''.join(inner))
+    if not decls:
+        return ''
+    if decls[0] and all(c == decls[0] for c in decls):
+        return f'{indent}#[cfg_attr({decls[0]}, path = "{path}")]\n'
+    return f'{indent}#[path = "{path}"]\n'
+
+
 class Facades:
     """What crate `c` writes for modules it does not own: inline modules over the original's directories."""
 
@@ -221,8 +233,10 @@ class Facades:
             # `#[path]` ones, and a path through it fails, so the facade's directory is its nearest existing one
             while not k.inline and not os.path.isdir(kd) and kd != ROOT:
                 kd = os.path.dirname(kd)
-            lines.append(f'{cfg}{indent}#[path = "{rel(kd, attr_dir)}"]\n{indent}{vis}mod {k.name} {{\n')
-            self.body(k, indent + '    ', kd, lines)
+            inner = []
+            self.body(k, indent + '    ', kd, inner)
+            lines.append(f'{cfg}{path_attr(inner, rel(kd, attr_dir), indent)}{indent}{vis}mod {k.name} {{\n')
+            lines += inner
             lines.append(f'{indent}}}\n')
         elif k.owner in ALLOW.get(c, ()):
             # pub: the module's glob in the crates above carries it
@@ -243,8 +257,10 @@ def emit_crate(c, nodes, v):
             continue
         if f.need_inline(k):
             kd = child_dir(k)
-            lines.append(f'{cfg_lines(k, "")}#[path = "{rel(kd, lib_dir)}"]\npub mod {k.name} {{\n')
-            f.body(k, '    ', kd, lines)
+            inner = []
+            f.body(k, '    ', kd, inner)
+            lines.append(f'{cfg_lines(k, "")}{path_attr(inner, rel(kd, lib_dir), "")}pub mod {k.name} {{\n')
+            lines += inner
             lines.append('}\n')
         else:
             f.child(k, '', lib_dir, lines)

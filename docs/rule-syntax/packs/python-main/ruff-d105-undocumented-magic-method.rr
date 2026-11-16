@@ -39,10 +39,10 @@ d105_public_class(n) :- d105_demand_public_class(n), kind(n, "class_definition")
 // NAME: not bound by this rule, so empty (unset) here, as in ast-grep.
 d105_exempt_decorator(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, q1), d105_set_11(q1), unset(NAME).
-d105_exempt_decorator(n, NAME) :- kind(n, "attribute"), field(n, "attribute", c2),
-    glob("{setter,deleter}", c2), field(n, "object", c3), d105_alt_13(c3, NAME).
-d105_exempt_decorator(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c6, _),
-    d105_exempt_decorator(c6, NAME).
+d105_exempt_decorator(n, NAME) :- kind(n, "attribute"), d105_tok_has_2(n),
+    field(n, "object", c10), d105_alt_13(c10, NAME).
+d105_exempt_decorator(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c13, _),
+    d105_exempt_decorator(c13, NAME).
 
 // D105(n): a finding at node n, from clause `undocumented-magic-method`.
 // Each rule below is one way the JSON `rule` can match.
@@ -75,6 +75,18 @@ d105_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
 d105_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
     match("(?s)^(?:.*(?:,).*)$", g8).
 d105_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(?:setter|deleter)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d105_tok_has_2(n: node)
+.stored d105_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d105_tok_has_2(n) :- field(n, "attribute", c2), glob("{setter,deleter}", c2).
+d105_tok_has_2(n) :- op(n, t3), match("(?:setter|deleter)", t3).
+d105_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+d105_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+d105_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
 
 // demand_alt_6: the nodes alt_6 is asked at (its recursion looks at every descendant)
 .decl d105_demand_alt_6(n: node)

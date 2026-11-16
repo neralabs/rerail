@@ -192,7 +192,7 @@ impl SqlViolationRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct SqlFailureRow {
+pub struct SqlFailureRow {
     pub(in crate::code_rule_dsl) rule_id: String,
     pub(in crate::code_rule_dsl) clause_id: String,
     pub(in crate::code_rule_dsl) path: String,

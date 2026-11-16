@@ -26,7 +26,7 @@ g202_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
 g202_logger_object(n) :-
     ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
-    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), g202_name_chain(c2)
+    ; kind(n, "attribute"), g202_tok_has_2(n), field(n, "object", c1), g202_name_chain(c1)
     ),
     !sym_of(n, _).
 
@@ -50,16 +50,68 @@ g202_exc_info_set(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // exc_info_kwarg(n): the JSON util `exc-info-kwarg`, used where the JSON says `matches: "exc-info-kwarg"`
 .decl g202_exc_info_kwarg(n: node)
-g202_exc_info_kwarg(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("exc_info", c1), field(n, "value", c2), g202_exc_info_set(c2).
+g202_exc_info_kwarg(n) :- kind(n, "keyword_argument"), g202_tok_has_3(n), field(n, "value", c9),
+    g202_exc_info_set(c9).
 
 // level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
 .decl g202_level_callee(n: node)
-g202_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("exception", c1), field(n, "object", c2), g202_logger_object(c2).
+g202_level_callee(n) :- kind(n, "attribute"), g202_tok_has_4(n), field(n, "object", c9),
+    g202_logger_object(c9).
 g202_level_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.exception").
-g202_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    g202_level_callee(c3).
+g202_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    g202_level_callee(c10).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g202_tok_has_1(n: node)
+.stored g202_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g202_tok_has_1(n) :- field(n, "attribute", c3),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c3).
+g202_tok_has_1(n) :- op(n, t4),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t4).
+g202_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+g202_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+g202_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g202_tok_has_2(n: node)
+.stored g202_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g202_tok_has_2(n) :- field(n, "attribute", c1),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1).
+g202_tok_has_2(n) :- op(n, t2),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t2).
+g202_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+g202_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+g202_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^exc_info$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g202_tok_has_3(n: node)
+.stored g202_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g202_tok_has_3(n) :- field(n, "name", c1), glob("exc_info", c1).
+g202_tok_has_3(n) :- op(n, t2), match("exc_info", t2).
+g202_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+g202_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+g202_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^exception$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g202_tok_has_4(n: node)
+.stored g202_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g202_tok_has_4(n) :- field(n, "attribute", c1), glob("exception", c1).
+g202_tok_has_4(n) :- op(n, t2), match("exception", t2).
+g202_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:exception)(?:\\W.*)?)$", g3).
+g202_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:exception)(?:\\W.*)?)$", g3).
+g202_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:exception)(?:\\W.*)?)$", g3).
 
 // demand_in_handler: the nodes in_handler is asked at (it looks at every ancestor of every node)
 .decl g202_demand_in_handler(n: node)

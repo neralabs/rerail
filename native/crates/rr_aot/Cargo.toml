@@ -3,12 +3,22 @@ name = "rerail-rr-aot"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Tier 2 for .rr built ahead of time: the JIT's Cranelift IR as Rust (rerail-rr-aot-gen), compiled by rustc, run on the JIT's harness, to compare the two compilers' code."
+description = "Tier 2 for .rr built ahead of time: the JIT's Cranelift IR as Rust, compiled by rustc, run on the JIT's harness, to compare the two compilers' code."
+
+[features]
+# The generated tiers: the build script writes the parser's code as Rust (about 700 KB) and this
+# crate compiles it. Off by default, so a workspace build or test leaves them out:
+# `cargo test -p rerail-rr-aot --features generated --profile profiling`.
+generated = ["dep:rerail-compiler", "dep:rerail-rr-parser"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 rerail-rr-syntax = { path = "../rr_syntax" }
+
+[build-dependencies]
+rerail-compiler = { path = "../compiler", optional = true }
+rerail-rr-parser = { path = "../rr_parser", optional = true }
 
 [dev-dependencies]
 rerail-tape-format = { path = "../tape_format" }

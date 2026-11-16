@@ -167,12 +167,11 @@ ann401_tuple_like(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
 ann401_c_any(n) :- ann401_any_ref(n).
 ann401_c_any(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")), child(n, c1, _),
     ann401_c_any(c1).
-ann401_c_any(n) :- kind(n, "binary_operator"), field(n, "operator", c2), glob("|", c2),
-    ann401_alt_6(n).
+ann401_c_any(n) :- kind(n, "binary_operator"), ann401_tok_has_1(n), ann401_alt_6(n).
 ann401_c_any(n) :- ann401_alt_7(n).
 ann401_c_any(n) :- ann401_alt_10(n).
 ann401_c_any(n) :- ann401_alt_15(n).
-ann401_c_any(n) :- ann401_plain_string(n), parsed(n, "annotation", r98), ann401_alt_19(r98).
+ann401_c_any(n) :- ann401_plain_string(n), parsed(n, "annotation", r105), ann401_alt_19(r105).
 
 // tuple_first_c(n): the JSON util `tuple-first-c`, used where the JSON says `matches: "tuple-first-c"`
 .decl ann401_tuple_first_c(n: node)
@@ -181,7 +180,7 @@ ann401_tuple_first_c(n) :- kind(n, "tuple"), child(n, c1, _), !ann401_alt_21(c1)
 // first_c(n): the JSON util `first-c`, used where the JSON says `matches: "first-c"`
 .decl ann401_first_c(n: node)
 ann401_first_c(n) :- !ann401_tuple_like(n), ann401_c_any(n).
-ann401_first_c(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_5(p1), has(n, c10, "tuple"),
+ann401_first_c(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_6(p1), has(n, c10, "tuple"),
     child(c10, c11, _), !ann401_alt_22(c11), ann401_c_any(c11).
 
 // r_extra(n): the JSON util `r-extra`, used where the JSON says `matches: "r-extra"`
@@ -194,7 +193,7 @@ ann401_r_extra(n) :- ann401_alt_25(n).
 // first_r(n): the JSON util `first-r`, used where the JSON says `matches: "first-r"`
 .decl ann401_first_r(n: node)
 ann401_first_r(n) :- !ann401_tuple_like(n), ann401_r_extra(n).
-ann401_first_r(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_5(p1), has(n, c10, "tuple"),
+ann401_first_r(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_6(p1), has(n, c10, "tuple"),
     child(c10, c11, _), !ann401_alt_22(c11), ann401_r_extra(c11).
 
 // top_any(n): the JSON util `top-any`, used where the JSON says `matches: "top-any"`
@@ -244,14 +243,13 @@ ann401_late_any_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LA = n, do
     ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_34(c5, LA).
-ann401_late_any_ref(n) :- kind(n, "attribute"), field(n, "attribute", c10), glob("Any", c10),
-    field(n, "object", c11), kind(c11, "identifier"), node(_, c11, _, _, _), LA = c11, docof(c11, d13),
-    modnode(d13, m14),
-    ( kind(c11, "identifier"), !bind_only(c11), miss(c11, x12)
-    ; (kind(c11, "string") ; kind(c11, "concatenated_string")), ann401_all_entry(c11, x12), !bound_in(m14, x12)
+ann401_late_any_ref(n) :- kind(n, "attribute"), ann401_tok_has_28(n), field(n, "object", c18),
+    kind(c18, "identifier"), node(_, c18, _, _, _), LA = c18, docof(c18, d20), modnode(d20, m21),
+    ( kind(c18, "identifier"), !bind_only(c18), miss(c18, x19)
+    ; (kind(c18, "string") ; kind(c18, "concatenated_string")), ann401_all_entry(c18, x19), !bound_in(m21, x19)
     ),
-    !builtin(x12), !star(m14), inside(c11, p15, "module"), within(c16, p15),
-    ann401_alt_35(c16, LA).
+    !builtin(x19), !star(m21), inside(c18, p22, "module"), within(c23, p22),
+    ann401_alt_35(c23, LA).
 
 // late_optional_ref(n): the JSON util `late-optional-ref`, used where the JSON says `matches: "late-optional-ref"`
 .decl ann401_late_optional_ref(n: node)
@@ -261,14 +259,13 @@ ann401_late_optional_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LO = 
     ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_36(c5, LO).
-ann401_late_optional_ref(n) :- kind(n, "attribute"), field(n, "attribute", c10),
-    glob("Optional", c10), field(n, "object", c11), kind(c11, "identifier"),
-    node(_, c11, _, _, _), LO = c11, docof(c11, d13), modnode(d13, m14),
-    ( kind(c11, "identifier"), !bind_only(c11), miss(c11, x12)
-    ; (kind(c11, "string") ; kind(c11, "concatenated_string")), ann401_all_entry(c11, x12), !bound_in(m14, x12)
+ann401_late_optional_ref(n) :- kind(n, "attribute"), ann401_tok_has_29(n), field(n, "object", c18),
+    kind(c18, "identifier"), node(_, c18, _, _, _), LO = c18, docof(c18, d20), modnode(d20, m21),
+    ( kind(c18, "identifier"), !bind_only(c18), miss(c18, x19)
+    ; (kind(c18, "string") ; kind(c18, "concatenated_string")), ann401_all_entry(c18, x19), !bound_in(m21, x19)
     ),
-    !builtin(x12), !star(m14), inside(c11, p15, "module"), within(c16, p15),
-    ann401_alt_37(c16, LO).
+    !builtin(x19), !star(m21), inside(c18, p22, "module"), within(c23, p22),
+    ann401_alt_37(c23, LO).
 
 // late_union_ref(n): the JSON util `late-union-ref`, used where the JSON says `matches: "late-union-ref"`
 .decl ann401_late_union_ref(n: node)
@@ -277,14 +274,13 @@ ann401_late_union_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LU = n, 
     ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_38(c5, LU).
-ann401_late_union_ref(n) :- kind(n, "attribute"), field(n, "attribute", c10),
-    glob("Union", c10), field(n, "object", c11), kind(c11, "identifier"), node(_, c11, _, _, _), LU = c11,
-    docof(c11, d13), modnode(d13, m14),
-    ( kind(c11, "identifier"), !bind_only(c11), miss(c11, x12)
-    ; (kind(c11, "string") ; kind(c11, "concatenated_string")), ann401_all_entry(c11, x12), !bound_in(m14, x12)
+ann401_late_union_ref(n) :- kind(n, "attribute"), ann401_tok_has_30(n), field(n, "object", c18),
+    kind(c18, "identifier"), node(_, c18, _, _, _), LU = c18, docof(c18, d20), modnode(d20, m21),
+    ( kind(c18, "identifier"), !bind_only(c18), miss(c18, x19)
+    ; (kind(c18, "string") ; kind(c18, "concatenated_string")), ann401_all_entry(c18, x19), !bound_in(m21, x19)
     ),
-    !builtin(x12), !star(m14), inside(c11, p15, "module"), within(c16, p15),
-    ann401_alt_39(c16, LU).
+    !builtin(x19), !star(m21), inside(c18, p22, "module"), within(c23, p22),
+    ann401_alt_39(c23, LU).
 
 // late_annotated_ref(n): the JSON util `late-annotated-ref`, used where the JSON says `matches: "late-annotated-ref"`
 .decl ann401_late_annotated_ref(n: node)
@@ -294,281 +290,292 @@ ann401_late_annotated_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LT =
     ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_40(c5, LT).
-ann401_late_annotated_ref(n) :- kind(n, "attribute"), field(n, "attribute", c10),
-    glob("Annotated", c10), field(n, "object", c11), kind(c11, "identifier"),
-    node(_, c11, _, _, _), LT = c11, docof(c11, d13), modnode(d13, m14),
-    ( kind(c11, "identifier"), !bind_only(c11), miss(c11, x12)
-    ; (kind(c11, "string") ; kind(c11, "concatenated_string")), ann401_all_entry(c11, x12), !bound_in(m14, x12)
+ann401_late_annotated_ref(n) :- kind(n, "attribute"), ann401_tok_has_31(n), field(n, "object", c18),
+    kind(c18, "identifier"), node(_, c18, _, _, _), LT = c18, docof(c18, d20), modnode(d20, m21),
+    ( kind(c18, "identifier"), !bind_only(c18), miss(c18, x19)
+    ; (kind(c18, "string") ; kind(c18, "concatenated_string")), ann401_all_entry(c18, x19), !bound_in(m21, x19)
     ),
-    !builtin(x12), !star(m14), inside(c11, p15, "module"), within(c16, p15),
-    ann401_alt_41(c16, LT).
+    !builtin(x19), !star(m21), inside(c18, p22, "module"), within(c23, p22),
+    ann401_alt_41(c23, LT).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_has_1(n: node)
 .stored ann401_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
-ann401_tok_has_1(n) :- op(n, t7), match(",", t7).
-ann401_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
-    match("(?s)^(?:.*(?:,).*)$", g8).
-ann401_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
-    match("(?s)^(?:.*(?:,).*)$", g8).
-ann401_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+ann401_tok_has_1(n) :- field(n, "operator", c2), glob("|", c2).
+ann401_tok_has_1(n) :- op(n, t3), match("\\|", t3).
+ann401_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ann401_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ann401_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
 
-// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_follows_2(n: node)
-.stored ann401_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_2(n) :- precedes(s15, n), glob("\\[", s15).
-ann401_tok_follows_2(n) :- child(p18, n, _), node(_, n, _, st20, _),
-    token(p18, _, t16, _, en21), en21 <= st20, match("\\[", t16).
-ann401_tok_follows_2(n) :- structural_before(n, g17), match("(?s)^(?:.*(?:\\[).*)$", g17).
-ann401_tok_follows_2(n) :- precedes(o19, n), structural_before(o19, g17),
-    match("(?s)^(?:.*(?:\\[).*)$", g17).
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_2(n: node)
+.stored ann401_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_2(n) :- child(n, c13, _), glob("\\,", c13).
+ann401_tok_has_2(n) :- op(n, t14), match(",", t14).
+ann401_tok_has_2(n) :- child(n, c20, _), structural_before(c20, g15),
+    match("(?s)^(?:.*(?:,).*)$", g15).
+ann401_tok_has_2(n) :- child(n, c20, _), structural_after(c20, g15),
+    match("(?s)^(?:.*(?:,).*)$", g15).
+ann401_tok_has_2(n) :- node_text(n, g15), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g15).
 
-// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_has_3(n: node)
-.stored ann401_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_has_3(n) :- child(n, c24, _), glob("\\,", c24).
-ann401_tok_has_3(n) :- op(n, t25), match(",", t25).
-ann401_tok_has_3(n) :- child(n, c31, _), structural_before(c31, g26),
-    match("(?s)^(?:.*(?:,).*)$", g26).
-ann401_tok_has_3(n) :- child(n, c31, _), structural_after(c31, g26),
-    match("(?s)^(?:.*(?:,).*)$", g26).
-ann401_tok_has_3(n) :- node_text(n, g26), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g26).
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_3(n: node)
+.stored ann401_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_3(n) :- precedes(s22, n), glob("\\[", s22).
+ann401_tok_follows_3(n) :- child(p25, n, _), node(_, n, _, st27, _),
+    token(p25, _, t23, _, en28), en28 <= st27, match("\\[", t23).
+ann401_tok_follows_3(n) :- structural_before(n, g24), match("(?s)^(?:.*(?:\\[).*)$", g24).
+ann401_tok_follows_3(n) :- precedes(o26, n), structural_before(o26, g24),
+    match("(?s)^(?:.*(?:\\[).*)$", g24).
 
-// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_follows_4(n: node)
-.stored ann401_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_4(n) :- precedes(s33, n), glob("\\[", s33).
-ann401_tok_follows_4(n) :- child(p36, n, _), node(_, n, _, st38, _),
-    token(p36, _, t34, _, en39), en39 <= st38, match("\\[", t34).
-ann401_tok_follows_4(n) :- structural_before(n, g35), match("(?s)^(?:.*(?:\\[).*)$", g35).
-ann401_tok_follows_4(n) :- precedes(o37, n), structural_before(o37, g35),
-    match("(?s)^(?:.*(?:\\[).*)$", g35).
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_4(n: node)
+.stored ann401_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_4(n) :- child(n, c31, _), glob("\\,", c31).
+ann401_tok_has_4(n) :- op(n, t32), match(",", t32).
+ann401_tok_has_4(n) :- child(n, c38, _), structural_before(c38, g33),
+    match("(?s)^(?:.*(?:,).*)$", g33).
+ann401_tok_has_4(n) :- child(n, c38, _), structural_after(c38, g33),
+    match("(?s)^(?:.*(?:,).*)$", g33).
+ann401_tok_has_4(n) :- node_text(n, g33), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g33).
 
-// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_has_5(n: node)
-.stored ann401_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_has_5(n) :- child(n, c2, _), glob("\\,", c2).
-ann401_tok_has_5(n) :- op(n, t3), match(",", t3).
-ann401_tok_has_5(n) :- child(n, c9, _), structural_before(c9, g4),
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_5(n: node)
+.stored ann401_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_5(n) :- precedes(s40, n), glob("\\[", s40).
+ann401_tok_follows_5(n) :- child(p43, n, _), node(_, n, _, st45, _),
+    token(p43, _, t41, _, en46), en46 <= st45, match("\\[", t41).
+ann401_tok_follows_5(n) :- structural_before(n, g42), match("(?s)^(?:.*(?:\\[).*)$", g42).
+ann401_tok_follows_5(n) :- precedes(o44, n), structural_before(o44, g42),
+    match("(?s)^(?:.*(?:\\[).*)$", g42).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_6(n: node)
+.stored ann401_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_6(n) :- child(n, c2, _), glob("\\,", c2).
+ann401_tok_has_6(n) :- op(n, t3), match(",", t3).
+ann401_tok_has_6(n) :- child(n, c9, _), structural_before(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
-ann401_tok_has_5(n) :- child(n, c9, _), structural_after(c9, g4),
+ann401_tok_has_6(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
-ann401_tok_has_5(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+ann401_tok_has_6(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
 
-// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_follows_6(n: node)
-.stored ann401_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_6(n) :- precedes(s11, n), glob("\\[", s11).
-ann401_tok_follows_6(n) :- child(p14, n, _), node(_, n, _, st16, _),
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_7(n: node)
+.stored ann401_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_7(n) :- precedes(s11, n), glob("\\[", s11).
+ann401_tok_follows_7(n) :- child(p14, n, _), node(_, n, _, st16, _),
     token(p14, _, t12, _, en17), en17 <= st16, match("\\[", t12).
-ann401_tok_follows_6(n) :- structural_before(n, g13), match("(?s)^(?:.*(?:\\[).*)$", g13).
-ann401_tok_follows_6(n) :- precedes(o15, n), structural_before(o15, g13),
+ann401_tok_follows_7(n) :- structural_before(n, g13), match("(?s)^(?:.*(?:\\[).*)$", g13).
+ann401_tok_follows_7(n) :- precedes(o15, n), structural_before(o15, g13),
     match("(?s)^(?:.*(?:\\[).*)$", g13).
 
-// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_has_7(n: node)
-.stored ann401_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_has_7(n) :- child(n, c20, _), glob("\\,", c20).
-ann401_tok_has_7(n) :- op(n, t21), match(",", t21).
-ann401_tok_has_7(n) :- child(n, c27, _), structural_before(c27, g22),
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_8(n: node)
+.stored ann401_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_8(n) :- child(n, c20, _), glob("\\,", c20).
+ann401_tok_has_8(n) :- op(n, t21), match(",", t21).
+ann401_tok_has_8(n) :- child(n, c27, _), structural_before(c27, g22),
     match("(?s)^(?:.*(?:,).*)$", g22).
-ann401_tok_has_7(n) :- child(n, c27, _), structural_after(c27, g22),
+ann401_tok_has_8(n) :- child(n, c27, _), structural_after(c27, g22),
     match("(?s)^(?:.*(?:,).*)$", g22).
-ann401_tok_has_7(n) :- node_text(n, g22), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g22).
+ann401_tok_has_8(n) :- node_text(n, g22), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g22).
 
-// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_follows_8(n: node)
-.stored ann401_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_8(n) :- precedes(s29, n), glob("\\[", s29).
-ann401_tok_follows_8(n) :- child(p32, n, _), node(_, n, _, st34, _),
+// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_9(n: node)
+.stored ann401_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_9(n) :- precedes(s29, n), glob("\\[", s29).
+ann401_tok_follows_9(n) :- child(p32, n, _), node(_, n, _, st34, _),
     token(p32, _, t30, _, en35), en35 <= st34, match("\\[", t30).
-ann401_tok_follows_8(n) :- structural_before(n, g31), match("(?s)^(?:.*(?:\\[).*)$", g31).
-ann401_tok_follows_8(n) :- precedes(o33, n), structural_before(o33, g31),
+ann401_tok_follows_9(n) :- structural_before(n, g31), match("(?s)^(?:.*(?:\\[).*)$", g31).
+ann401_tok_follows_9(n) :- precedes(o33, n), structural_before(o33, g31),
     match("(?s)^(?:.*(?:\\[).*)$", g31).
-
-// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_has_9(n: node)
-.stored ann401_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_has_9(n) :- child(n, c43, _), glob("\\,", c43).
-ann401_tok_has_9(n) :- op(n, t44), match(",", t44).
-ann401_tok_has_9(n) :- child(n, c50, _), structural_before(c50, g45),
-    match("(?s)^(?:.*(?:,).*)$", g45).
-ann401_tok_has_9(n) :- child(n, c50, _), structural_after(c50, g45),
-    match("(?s)^(?:.*(?:,).*)$", g45).
-ann401_tok_has_9(n) :- node_text(n, g45), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g45).
 
 // tok_has_10(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_has_10(n: node)
 .stored ann401_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_has_10(n) :- child(n, c56, _), glob("\\,", c56).
-ann401_tok_has_10(n) :- op(n, t57), match(",", t57).
-ann401_tok_has_10(n) :- child(n, c63, _), structural_before(c63, g58),
-    match("(?s)^(?:.*(?:,).*)$", g58).
-ann401_tok_has_10(n) :- child(n, c63, _), structural_after(c63, g58),
-    match("(?s)^(?:.*(?:,).*)$", g58).
-ann401_tok_has_10(n) :- node_text(n, g58), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g58).
+ann401_tok_has_10(n) :- child(n, c50, _), glob("\\,", c50).
+ann401_tok_has_10(n) :- op(n, t51), match(",", t51).
+ann401_tok_has_10(n) :- child(n, c57, _), structural_before(c57, g52),
+    match("(?s)^(?:.*(?:,).*)$", g52).
+ann401_tok_has_10(n) :- child(n, c57, _), structural_after(c57, g52),
+    match("(?s)^(?:.*(?:,).*)$", g52).
+ann401_tok_has_10(n) :- node_text(n, g52), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g52).
 
 // tok_has_11(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_has_11(n: node)
 .stored ann401_tok_has_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_has_11(n) :- child(n, c4, _), glob("\\,", c4).
-ann401_tok_has_11(n) :- op(n, t5), match(",", t5).
-ann401_tok_has_11(n) :- child(n, c11, _), structural_before(c11, g6),
-    match("(?s)^(?:.*(?:,).*)$", g6).
-ann401_tok_has_11(n) :- child(n, c11, _), structural_after(c11, g6),
-    match("(?s)^(?:.*(?:,).*)$", g6).
-ann401_tok_has_11(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
+ann401_tok_has_11(n) :- child(n, c63, _), glob("\\,", c63).
+ann401_tok_has_11(n) :- op(n, t64), match(",", t64).
+ann401_tok_has_11(n) :- child(n, c70, _), structural_before(c70, g65),
+    match("(?s)^(?:.*(?:,).*)$", g65).
+ann401_tok_has_11(n) :- child(n, c70, _), structural_after(c70, g65),
+    match("(?s)^(?:.*(?:,).*)$", g65).
+ann401_tok_has_11(n) :- node_text(n, g65), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g65).
 
 // tok_has_12(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_has_12(n: node)
 .stored ann401_tok_has_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_has_12(n) :- child(n, c17, _), glob("\\,", c17).
-ann401_tok_has_12(n) :- op(n, t18), match(",", t18).
-ann401_tok_has_12(n) :- child(n, c24, _), structural_before(c24, g19),
-    match("(?s)^(?:.*(?:,).*)$", g19).
-ann401_tok_has_12(n) :- child(n, c24, _), structural_after(c24, g19),
-    match("(?s)^(?:.*(?:,).*)$", g19).
-ann401_tok_has_12(n) :- node_text(n, g19), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g19).
+ann401_tok_has_12(n) :- child(n, c4, _), glob("\\,", c4).
+ann401_tok_has_12(n) :- op(n, t5), match(",", t5).
+ann401_tok_has_12(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+ann401_tok_has_12(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+ann401_tok_has_12(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
 
-// tok_follows_13(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ann401_tok_follows_13(n: node)
-.stored ann401_tok_follows_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_13(n) :- precedes(s67, n), glob("\\[", s67).
-ann401_tok_follows_13(n) :- child(p70, n, _), node(_, n, _, st72, _),
-    token(p70, _, t68, _, en73), en73 <= st72, match("\\[", t68).
-ann401_tok_follows_13(n) :- structural_before(n, g69), match("(?s)^(?:.*(?:\\[).*)$", g69).
-ann401_tok_follows_13(n) :- precedes(o71, n), structural_before(o71, g69),
-    match("(?s)^(?:.*(?:\\[).*)$", g69).
+// tok_has_13(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_13(n: node)
+.stored ann401_tok_has_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_13(n) :- child(n, c17, _), glob("\\,", c17).
+ann401_tok_has_13(n) :- op(n, t18), match(",", t18).
+ann401_tok_has_13(n) :- child(n, c24, _), structural_before(c24, g19),
+    match("(?s)^(?:.*(?:,).*)$", g19).
+ann401_tok_has_13(n) :- child(n, c24, _), structural_after(c24, g19),
+    match("(?s)^(?:.*(?:,).*)$", g19).
+ann401_tok_has_13(n) :- node_text(n, g19), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g19).
 
-// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_14(n: node)
 .stored ann401_tok_follows_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_14(n) :- precedes(s74, n), glob("\\,", s74).
+ann401_tok_follows_14(n) :- precedes(s74, n), glob("\\[", s74).
 ann401_tok_follows_14(n) :- child(p77, n, _), node(_, n, _, st79, _),
-    token(p77, _, t75, _, en80), en80 <= st79, match(",", t75).
-ann401_tok_follows_14(n) :- structural_before(n, g76), match("(?s)^(?:.*(?:,).*)$", g76).
+    token(p77, _, t75, _, en80), en80 <= st79, match("\\[", t75).
+ann401_tok_follows_14(n) :- structural_before(n, g76), match("(?s)^(?:.*(?:\\[).*)$", g76).
 ann401_tok_follows_14(n) :- precedes(o78, n), structural_before(o78, g76),
-    match("(?s)^(?:.*(?:,).*)$", g76).
+    match("(?s)^(?:.*(?:\\[).*)$", g76).
 
 // tok_follows_15(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_15(n: node)
 .stored ann401_tok_follows_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_15(n) :- precedes(s1, n), glob("\\,", s1).
-ann401_tok_follows_15(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
-    en7 <= st6, match(",", t2).
-ann401_tok_follows_15(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:,).*)$", g3).
-ann401_tok_follows_15(n) :- precedes(o5, n), structural_before(o5, g3),
-    match("(?s)^(?:.*(?:,).*)$", g3).
+ann401_tok_follows_15(n) :- precedes(s81, n), glob("\\,", s81).
+ann401_tok_follows_15(n) :- child(p84, n, _), node(_, n, _, st86, _),
+    token(p84, _, t82, _, en87), en87 <= st86, match(",", t82).
+ann401_tok_follows_15(n) :- structural_before(n, g83), match("(?s)^(?:.*(?:,).*)$", g83).
+ann401_tok_follows_15(n) :- precedes(o85, n), structural_before(o85, g83),
+    match("(?s)^(?:.*(?:,).*)$", g83).
 
-// tok_follows_16(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_16(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_16(n: node)
 .stored ann401_tok_follows_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_16(n) :- precedes(s84, n), glob("\\[", s84).
-ann401_tok_follows_16(n) :- child(p87, n, _), node(_, n, _, st89, _),
-    token(p87, _, t85, _, en90), en90 <= st89, match("\\[", t85).
-ann401_tok_follows_16(n) :- structural_before(n, g86), match("(?s)^(?:.*(?:\\[).*)$", g86).
-ann401_tok_follows_16(n) :- precedes(o88, n), structural_before(o88, g86),
-    match("(?s)^(?:.*(?:\\[).*)$", g86).
+ann401_tok_follows_16(n) :- precedes(s1, n), glob("\\,", s1).
+ann401_tok_follows_16(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match(",", t2).
+ann401_tok_follows_16(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:,).*)$", g3).
+ann401_tok_follows_16(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
 
-// tok_follows_17(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_17(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_17(n: node)
 .stored ann401_tok_follows_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_17(n) :- precedes(s91, n), glob("\\,", s91).
+ann401_tok_follows_17(n) :- precedes(s91, n), glob("\\[", s91).
 ann401_tok_follows_17(n) :- child(p94, n, _), node(_, n, _, st96, _),
-    token(p94, _, t92, _, en97), en97 <= st96, match(",", t92).
-ann401_tok_follows_17(n) :- structural_before(n, g93), match("(?s)^(?:.*(?:,).*)$", g93).
+    token(p94, _, t92, _, en97), en97 <= st96, match("\\[", t92).
+ann401_tok_follows_17(n) :- structural_before(n, g93), match("(?s)^(?:.*(?:\\[).*)$", g93).
 ann401_tok_follows_17(n) :- precedes(o95, n), structural_before(o95, g93),
-    match("(?s)^(?:.*(?:,).*)$", g93).
+    match("(?s)^(?:.*(?:\\[).*)$", g93).
 
-// tok_follows_18(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_18(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_18(n: node)
 .stored ann401_tok_follows_18 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_18(n) :- precedes(s3, n), glob("\\[", s3).
-ann401_tok_follows_18(n) :- child(p6, n, _), node(_, n, _, st8, _), token(p6, _, t4, _, en9),
-    en9 <= st8, match("\\[", t4).
-ann401_tok_follows_18(n) :- structural_before(n, g5), match("(?s)^(?:.*(?:\\[).*)$", g5).
-ann401_tok_follows_18(n) :- precedes(o7, n), structural_before(o7, g5),
-    match("(?s)^(?:.*(?:\\[).*)$", g5).
+ann401_tok_follows_18(n) :- precedes(s98, n), glob("\\,", s98).
+ann401_tok_follows_18(n) :- child(p101, n, _), node(_, n, _, st103, _),
+    token(p101, _, t99, _, en104), en104 <= st103, match(",", t99).
+ann401_tok_follows_18(n) :- structural_before(n, g100), match("(?s)^(?:.*(?:,).*)$", g100).
+ann401_tok_follows_18(n) :- precedes(o102, n), structural_before(o102, g100),
+    match("(?s)^(?:.*(?:,).*)$", g100).
 
-// tok_follows_19(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_19(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_19(n: node)
 .stored ann401_tok_follows_19 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_19(n) :- precedes(s10, n), glob("\\,", s10).
-ann401_tok_follows_19(n) :- child(p13, n, _), node(_, n, _, st15, _),
-    token(p13, _, t11, _, en16), en16 <= st15, match(",", t11).
-ann401_tok_follows_19(n) :- structural_before(n, g12), match("(?s)^(?:.*(?:,).*)$", g12).
-ann401_tok_follows_19(n) :- precedes(o14, n), structural_before(o14, g12),
-    match("(?s)^(?:.*(?:,).*)$", g12).
+ann401_tok_follows_19(n) :- precedes(s3, n), glob("\\[", s3).
+ann401_tok_follows_19(n) :- child(p6, n, _), node(_, n, _, st8, _), token(p6, _, t4, _, en9),
+    en9 <= st8, match("\\[", t4).
+ann401_tok_follows_19(n) :- structural_before(n, g5), match("(?s)^(?:.*(?:\\[).*)$", g5).
+ann401_tok_follows_19(n) :- precedes(o7, n), structural_before(o7, g5),
+    match("(?s)^(?:.*(?:\\[).*)$", g5).
 
-// tok_follows_20(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_20(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_20(n: node)
 .stored ann401_tok_follows_20 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_20(n) :- precedes(s20, n), glob("\\[", s20).
-ann401_tok_follows_20(n) :- child(p23, n, _), node(_, n, _, st25, _),
-    token(p23, _, t21, _, en26), en26 <= st25, match("\\[", t21).
-ann401_tok_follows_20(n) :- structural_before(n, g22), match("(?s)^(?:.*(?:\\[).*)$", g22).
-ann401_tok_follows_20(n) :- precedes(o24, n), structural_before(o24, g22),
-    match("(?s)^(?:.*(?:\\[).*)$", g22).
+ann401_tok_follows_20(n) :- precedes(s10, n), glob("\\,", s10).
+ann401_tok_follows_20(n) :- child(p13, n, _), node(_, n, _, st15, _),
+    token(p13, _, t11, _, en16), en16 <= st15, match(",", t11).
+ann401_tok_follows_20(n) :- structural_before(n, g12), match("(?s)^(?:.*(?:,).*)$", g12).
+ann401_tok_follows_20(n) :- precedes(o14, n), structural_before(o14, g12),
+    match("(?s)^(?:.*(?:,).*)$", g12).
 
-// tok_follows_21(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_21(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_21(n: node)
 .stored ann401_tok_follows_21 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_21(n) :- precedes(s27, n), glob("\\,", s27).
-ann401_tok_follows_21(n) :- child(p30, n, _), node(_, n, _, st32, _),
-    token(p30, _, t28, _, en33), en33 <= st32, match(",", t28).
-ann401_tok_follows_21(n) :- structural_before(n, g29), match("(?s)^(?:.*(?:,).*)$", g29).
-ann401_tok_follows_21(n) :- precedes(o31, n), structural_before(o31, g29),
-    match("(?s)^(?:.*(?:,).*)$", g29).
+ann401_tok_follows_21(n) :- precedes(s20, n), glob("\\[", s20).
+ann401_tok_follows_21(n) :- child(p23, n, _), node(_, n, _, st25, _),
+    token(p23, _, t21, _, en26), en26 <= st25, match("\\[", t21).
+ann401_tok_follows_21(n) :- structural_before(n, g22), match("(?s)^(?:.*(?:\\[).*)$", g22).
+ann401_tok_follows_21(n) :- precedes(o24, n), structural_before(o24, g22),
+    match("(?s)^(?:.*(?:\\[).*)$", g22).
 
 // tok_follows_22(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_22(n: node)
 .stored ann401_tok_follows_22 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_22(n) :- precedes(s12, n), glob("\\,", s12).
-ann401_tok_follows_22(n) :- child(p15, n, _), node(_, n, _, st17, _),
-    token(p15, _, t13, _, en18), en18 <= st17, match(",", t13).
-ann401_tok_follows_22(n) :- structural_before(n, g14), match("(?s)^(?:.*(?:,).*)$", g14).
-ann401_tok_follows_22(n) :- precedes(o16, n), structural_before(o16, g14),
-    match("(?s)^(?:.*(?:,).*)$", g14).
+ann401_tok_follows_22(n) :- precedes(s27, n), glob("\\,", s27).
+ann401_tok_follows_22(n) :- child(p30, n, _), node(_, n, _, st32, _),
+    token(p30, _, t28, _, en33), en33 <= st32, match(",", t28).
+ann401_tok_follows_22(n) :- structural_before(n, g29), match("(?s)^(?:.*(?:,).*)$", g29).
+ann401_tok_follows_22(n) :- precedes(o31, n), structural_before(o31, g29),
+    match("(?s)^(?:.*(?:,).*)$", g29).
 
-// tok_follows_23(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_23(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_23(n: node)
 .stored ann401_tok_follows_23 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_23(n) :- precedes(s4, n), glob("\\[", s4).
-ann401_tok_follows_23(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
-    en10 <= st9, match("\\[", t5).
-ann401_tok_follows_23(n) :- structural_before(n, g6), match("(?s)^(?:.*(?:\\[).*)$", g6).
-ann401_tok_follows_23(n) :- precedes(o8, n), structural_before(o8, g6),
-    match("(?s)^(?:.*(?:\\[).*)$", g6).
+ann401_tok_follows_23(n) :- precedes(s12, n), glob("\\,", s12).
+ann401_tok_follows_23(n) :- child(p15, n, _), node(_, n, _, st17, _),
+    token(p15, _, t13, _, en18), en18 <= st17, match(",", t13).
+ann401_tok_follows_23(n) :- structural_before(n, g14), match("(?s)^(?:.*(?:,).*)$", g14).
+ann401_tok_follows_23(n) :- precedes(o16, n), structural_before(o16, g14),
+    match("(?s)^(?:.*(?:,).*)$", g14).
 
-// tok_follows_24(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_24(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_24(n: node)
 .stored ann401_tok_follows_24 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_24(n) :- precedes(s11, n), glob("\\,", s11).
-ann401_tok_follows_24(n) :- child(p14, n, _), node(_, n, _, st16, _),
-    token(p14, _, t12, _, en17), en17 <= st16, match(",", t12).
-ann401_tok_follows_24(n) :- structural_before(n, g13), match("(?s)^(?:.*(?:,).*)$", g13).
-ann401_tok_follows_24(n) :- precedes(o15, n), structural_before(o15, g13),
-    match("(?s)^(?:.*(?:,).*)$", g13).
+ann401_tok_follows_24(n) :- precedes(s4, n), glob("\\[", s4).
+ann401_tok_follows_24(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
+    en10 <= st9, match("\\[", t5).
+ann401_tok_follows_24(n) :- structural_before(n, g6), match("(?s)^(?:.*(?:\\[).*)$", g6).
+ann401_tok_follows_24(n) :- precedes(o8, n), structural_before(o8, g6),
+    match("(?s)^(?:.*(?:\\[).*)$", g6).
 
-// tok_follows_25(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_25(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_25(n: node)
 .stored ann401_tok_follows_25 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_25(n) :- precedes(s21, n), glob("\\[", s21).
-ann401_tok_follows_25(n) :- child(p24, n, _), node(_, n, _, st26, _),
-    token(p24, _, t22, _, en27), en27 <= st26, match("\\[", t22).
-ann401_tok_follows_25(n) :- structural_before(n, g23), match("(?s)^(?:.*(?:\\[).*)$", g23).
-ann401_tok_follows_25(n) :- precedes(o25, n), structural_before(o25, g23),
-    match("(?s)^(?:.*(?:\\[).*)$", g23).
+ann401_tok_follows_25(n) :- precedes(s11, n), glob("\\,", s11).
+ann401_tok_follows_25(n) :- child(p14, n, _), node(_, n, _, st16, _),
+    token(p14, _, t12, _, en17), en17 <= st16, match(",", t12).
+ann401_tok_follows_25(n) :- structural_before(n, g13), match("(?s)^(?:.*(?:,).*)$", g13).
+ann401_tok_follows_25(n) :- precedes(o15, n), structural_before(o15, g13),
+    match("(?s)^(?:.*(?:,).*)$", g13).
 
-// tok_follows_26(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_follows_26(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_follows_26(n: node)
 .stored ann401_tok_follows_26 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ann401_tok_follows_26(n) :- precedes(s28, n), glob("\\,", s28).
-ann401_tok_follows_26(n) :- child(p31, n, _), node(_, n, _, st33, _),
+ann401_tok_follows_26(n) :- precedes(s21, n), glob("\\[", s21).
+ann401_tok_follows_26(n) :- child(p24, n, _), node(_, n, _, st26, _),
+    token(p24, _, t22, _, en27), en27 <= st26, match("\\[", t22).
+ann401_tok_follows_26(n) :- structural_before(n, g23), match("(?s)^(?:.*(?:\\[).*)$", g23).
+ann401_tok_follows_26(n) :- precedes(o25, n), structural_before(o25, g23),
+    match("(?s)^(?:.*(?:\\[).*)$", g23).
+
+// tok_follows_27(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_27(n: node)
+.stored ann401_tok_follows_27 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_27(n) :- precedes(s28, n), glob("\\,", s28).
+ann401_tok_follows_27(n) :- child(p31, n, _), node(_, n, _, st33, _),
     token(p31, _, t29, _, en34), en34 <= st33, match(",", t29).
-ann401_tok_follows_26(n) :- structural_before(n, g30), match("(?s)^(?:.*(?:,).*)$", g30).
-ann401_tok_follows_26(n) :- precedes(o32, n), structural_before(o32, g30),
+ann401_tok_follows_27(n) :- structural_before(n, g30), match("(?s)^(?:.*(?:,).*)$", g30).
+ann401_tok_follows_27(n) :- precedes(o32, n), structural_before(o32, g30),
     match("(?s)^(?:.*(?:,).*)$", g30).
 
 // all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
@@ -594,6 +601,54 @@ ann401_all_entry(e, x) :- ann401_all_expr(l), (kind(l, "list") ; kind(l, "tuple"
     (kind(e, "string") ; kind(e, "concatenated_string")),
     count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
 
+// tok_has_28(n): a child of n, a named node or an anonymous token, matches "^Any$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_28(n: node)
+.stored ann401_tok_has_28 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_28(n) :- field(n, "attribute", c10), glob("Any", c10).
+ann401_tok_has_28(n) :- op(n, t11), match("Any", t11).
+ann401_tok_has_28(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Any)(?:\\W.*)?)$", g12).
+ann401_tok_has_28(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Any)(?:\\W.*)?)$", g12).
+ann401_tok_has_28(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:Any)(?:\\W.*)?)$", g12).
+
+// tok_has_29(n): a child of n, a named node or an anonymous token, matches "^Optional$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_29(n: node)
+.stored ann401_tok_has_29 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_29(n) :- field(n, "attribute", c10), glob("Optional", c10).
+ann401_tok_has_29(n) :- op(n, t11), match("Optional", t11).
+ann401_tok_has_29(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Optional)(?:\\W.*)?)$", g12).
+ann401_tok_has_29(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Optional)(?:\\W.*)?)$", g12).
+ann401_tok_has_29(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:Optional)(?:\\W.*)?)$", g12).
+
+// tok_has_30(n): a child of n, a named node or an anonymous token, matches "^Union$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_30(n: node)
+.stored ann401_tok_has_30 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_30(n) :- field(n, "attribute", c10), glob("Union", c10).
+ann401_tok_has_30(n) :- op(n, t11), match("Union", t11).
+ann401_tok_has_30(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Union)(?:\\W.*)?)$", g12).
+ann401_tok_has_30(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Union)(?:\\W.*)?)$", g12).
+ann401_tok_has_30(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:Union)(?:\\W.*)?)$", g12).
+
+// tok_has_31(n): a child of n, a named node or an anonymous token, matches "^Annotated$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_31(n: node)
+.stored ann401_tok_has_31 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_31(n) :- field(n, "attribute", c10), glob("Annotated", c10).
+ann401_tok_has_31(n) :- op(n, t11), match("Annotated", t11).
+ann401_tok_has_31(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Annotated)(?:\\W.*)?)$", g12).
+ann401_tok_has_31(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Annotated)(?:\\W.*)?)$", g12).
+ann401_tok_has_31(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:Annotated)(?:\\W.*)?)$", g12).
+
 // demand_alt_34: the rows of alt_34 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_34(n: node, la: loc)
 ann401_demand_alt_34(c5, LA) :- kind(n, "identifier"), node(_, n, _, _, _), LA = n, docof(n, d2),
@@ -601,9 +656,9 @@ ann401_demand_alt_34(c5, LA) :- kind(n, "identifier"), node(_, n, _, _, _), LA =
 
 // demand_alt_35: the rows of alt_35 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_35(n: node, la: loc)
-ann401_demand_alt_35(c16, LA) :- kind(n, "attribute"), field(n, "attribute", c10),
-    glob("Any", c10), field(n, "object", c11), kind(c11, "identifier"), node(_, c11, _, _, _), LA = c11,
-    docof(c11, d13), modnode(d13, m14), inside(c11, p15, "module"), within(c16, p15).
+ann401_demand_alt_35(c23, LA) :- kind(n, "attribute"), ann401_tok_has_28(n), field(n, "object", c18),
+    kind(c18, "identifier"), node(_, c18, _, _, _), LA = c18, docof(c18, d20), modnode(d20, m21),
+    inside(c18, p22, "module"), within(c23, p22).
 
 // demand_alt_36: the rows of alt_36 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_36(n: node, lo: loc)
@@ -612,10 +667,9 @@ ann401_demand_alt_36(c5, LO) :- kind(n, "identifier"), node(_, n, _, _, _), LO =
 
 // demand_alt_37: the rows of alt_37 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_37(n: node, lo: loc)
-ann401_demand_alt_37(c16, LO) :- kind(n, "attribute"), field(n, "attribute", c10),
-    glob("Optional", c10), field(n, "object", c11), kind(c11, "identifier"),
-    node(_, c11, _, _, _), LO = c11, docof(c11, d13), modnode(d13, m14), inside(c11, p15, "module"),
-    within(c16, p15).
+ann401_demand_alt_37(c23, LO) :- kind(n, "attribute"), ann401_tok_has_29(n), field(n, "object", c18),
+    kind(c18, "identifier"), node(_, c18, _, _, _), LO = c18, docof(c18, d20), modnode(d20, m21),
+    inside(c18, p22, "module"), within(c23, p22).
 
 // demand_alt_38: the rows of alt_38 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_38(n: node, lu: loc)
@@ -624,9 +678,9 @@ ann401_demand_alt_38(c5, LU) :- kind(n, "identifier"), node(_, n, _, _, _), LU =
 
 // demand_alt_39: the rows of alt_39 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_39(n: node, lu: loc)
-ann401_demand_alt_39(c16, LU) :- kind(n, "attribute"), field(n, "attribute", c10),
-    glob("Union", c10), field(n, "object", c11), kind(c11, "identifier"), node(_, c11, _, _, _), LU = c11,
-    docof(c11, d13), modnode(d13, m14), inside(c11, p15, "module"), within(c16, p15).
+ann401_demand_alt_39(c23, LU) :- kind(n, "attribute"), ann401_tok_has_30(n), field(n, "object", c18),
+    kind(c18, "identifier"), node(_, c18, _, _, _), LU = c18, docof(c18, d20), modnode(d20, m21),
+    inside(c18, p22, "module"), within(c23, p22).
 
 // demand_alt_40: the rows of alt_40 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_40(n: node, lt: loc)
@@ -635,10 +689,9 @@ ann401_demand_alt_40(c5, LT) :- kind(n, "identifier"), node(_, n, _, _, _), LT =
 
 // demand_alt_41: the rows of alt_41 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_41(n: node, lt: loc)
-ann401_demand_alt_41(c16, LT) :- kind(n, "attribute"), field(n, "attribute", c10),
-    glob("Annotated", c10), field(n, "object", c11), kind(c11, "identifier"),
-    node(_, c11, _, _, _), LT = c11, docof(c11, d13), modnode(d13, m14), inside(c11, p15, "module"),
-    within(c16, p15).
+ann401_demand_alt_41(c23, LT) :- kind(n, "attribute"), ann401_tok_has_31(n), field(n, "object", c18),
+    kind(c18, "identifier"), node(_, c18, _, _, _), LT = c18, docof(c18, d20), modnode(d20, m21),
+    inside(c18, p22, "module"), within(c23, p22).
 
 // demand_overload_impl: the rows of overload_impl its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_overload_impl(n: node, n_mv: loc)
@@ -682,15 +735,15 @@ ann401_alt_6(n) :- field(n, "right", c2), ann401_c_any(c2).
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_7(n: node)
 ann401_alt_7(n) :- kind(n, "subscript"), field(n, "value", c1), ann401_optional_ref(c1),
-    !ann401_tok_has_5(n), child(n, c10, _), ann401_tok_follows_6(c10), ann401_c_any(c10).
+    !ann401_tok_has_6(n), child(n, c10, _), ann401_tok_follows_7(c10), ann401_c_any(c10).
 ann401_alt_7(n) :- kind(n, "generic_type"), child(n, c18, _), kind(c18, "identifier"),
-    ann401_optional_ref(c18), child(n, c19, _), kind(c19, "type_parameter"), !ann401_tok_has_7(c19),
-    child(c19, c28, _), ann401_tok_follows_8(c28), ann401_c_any(c28).
+    ann401_optional_ref(c18), child(n, c19, _), kind(c19, "type_parameter"), !ann401_tok_has_8(c19),
+    child(c19, c28, _), ann401_tok_follows_9(c28), ann401_c_any(c28).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_11(n: node)
 ann401_alt_11(n) :- ann401_c_any(n).
-ann401_alt_11(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_5(p1), within(c10, n),
+ann401_alt_11(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_6(p1), within(c10, n),
     ann401_tuple_first_c(c10).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
@@ -703,16 +756,16 @@ ann401_alt_10(n) :- kind(n, "generic_type"), child(n, c13, _), kind(c13, "identi
 
 // alt_13(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_13(n: node)
-ann401_alt_13(n) :- ann401_tok_follows_15(n).
+ann401_alt_13(n) :- ann401_tok_follows_16(n).
 ann401_alt_13(n) :- kind(n, "comment").
 
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_15(n: node)
 ann401_alt_15(n) :- kind(n, "subscript"), field(n, "value", c1), ann401_annotated_ref(c1),
-    child(n, c2, _), ann401_tok_follows_18(c2), !ann401_alt_13(c2), ann401_first_c(c2).
+    child(n, c2, _), ann401_tok_follows_19(c2), !ann401_alt_13(c2), ann401_first_c(c2).
 ann401_alt_15(n) :- kind(n, "generic_type"), child(n, c17, _), kind(c17, "identifier"),
     ann401_annotated_ref(c17), child(n, c18, _), kind(c18, "type_parameter"),
-    child(c18, c19, _), ann401_tok_follows_20(c19), !ann401_alt_13(c19), ann401_first_c(c19).
+    child(c18, c19, _), ann401_tok_follows_21(c19), !ann401_alt_13(c19), ann401_first_c(c19).
 
 // alt_18(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_18(n: node)
@@ -733,15 +786,15 @@ ann401_alt_21(n) :- kind(n, "comment").
 .decl ann401_alt_22(n: node)
 ann401_alt_22(n) :- node(_, n, _, _, _), glob("[(),]", n).
 ann401_alt_22(n) :- kind(n, "comment").
-ann401_alt_22(n) :- ann401_tok_follows_15(n).
+ann401_alt_22(n) :- ann401_tok_follows_16(n).
 
 // alt_25(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_25(n: node)
 ann401_alt_25(n) :- kind(n, "subscript"), field(n, "value", c1), ann401_annotated_ref(c1),
-    child(n, c2, _), ann401_tok_follows_18(c2), !ann401_alt_13(c2), ann401_first_r(c2).
+    child(n, c2, _), ann401_tok_follows_19(c2), !ann401_alt_13(c2), ann401_first_r(c2).
 ann401_alt_25(n) :- kind(n, "generic_type"), child(n, c17, _), kind(c17, "identifier"),
     ann401_annotated_ref(c17), child(n, c18, _), kind(c18, "type_parameter"),
-    child(c18, c19, _), ann401_tok_follows_20(c19), !ann401_alt_13(c19), ann401_first_r(c19).
+    child(c18, c19, _), ann401_tok_follows_21(c19), !ann401_alt_13(c19), ann401_first_r(c19).
 
 // alt_29(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_29(n: node)

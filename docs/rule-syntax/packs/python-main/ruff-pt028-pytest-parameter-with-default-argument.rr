@@ -29,15 +29,87 @@ pt028_default_value(n) :- field(p1, "value", n),
 pt028_default_value(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"),
     pt028_default_value(p4).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^__init__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt028_tok_has_1(n: node)
+.stored pt028_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt028_tok_has_1(n) :- field(n, "name", c7), glob("__init__", c7).
+pt028_tok_has_1(n) :- op(n, t8), match("__init__", t8).
+pt028_tok_has_1(n) :- child(n, c14, _), structural_before(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g9).
+pt028_tok_has_1(n) :- child(n, c14, _), structural_after(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g9).
+pt028_tok_has_1(n) :- node_text(n, g9), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g9).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^__init__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt028_tok_has_2(n: node)
+.stored pt028_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt028_tok_has_2(n) :- field(n, "name", c16), glob("__init__", c16).
+pt028_tok_has_2(n) :- op(n, t17), match("__init__", t17).
+pt028_tok_has_2(n) :- child(n, c23, _), structural_before(c23, g18),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g18).
+pt028_tok_has_2(n) :- child(n, c23, _), structural_after(c23, g18),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g18).
+pt028_tok_has_2(n) :- node_text(n, g18), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g18).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^__init__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt028_tok_has_3(n: node)
+.stored pt028_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt028_tok_has_3(n) :- field(n, "name", c1), glob("__init__", c1).
+pt028_tok_has_3(n) :- op(n, t2), match("__init__", t2).
+pt028_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g3).
+pt028_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g3).
+pt028_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^__init__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt028_tok_has_4(n: node)
+.stored pt028_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt028_tok_has_4(n) :- field(n, "name", c10), glob("__init__", c10).
+pt028_tok_has_4(n) :- op(n, t11), match("__init__", t11).
+pt028_tok_has_4(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g12).
+pt028_tok_has_4(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g12).
+pt028_tok_has_4(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g12).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^__init__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt028_tok_has_5(n: node)
+.stored pt028_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt028_tok_has_5(n) :- field(n, "name", c6), glob("__init__", c6).
+pt028_tok_has_5(n) :- op(n, t7), match("__init__", t7).
+pt028_tok_has_5(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g8).
+pt028_tok_has_5(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g8).
+pt028_tok_has_5(n) :- node_text(n, g8), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g8).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^__init__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt028_tok_has_6(n: node)
+.stored pt028_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt028_tok_has_6(n) :- field(n, "name", c15), glob("__init__", c15).
+pt028_tok_has_6(n) :- op(n, t16), match("__init__", t16).
+pt028_tok_has_6(n) :- child(n, c22, _), structural_before(c22, g17),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g17).
+pt028_tok_has_6(n) :- child(n, c22, _), structural_after(c22, g17),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g17).
+pt028_tok_has_6(n) :- node_text(n, g17), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__init__).*)$", g17).
+
 // stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl pt028_stop_1(kind: symbol)
 pt028_stop_1("class_definition"). pt028_stop_1("function_definition").
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl pt028_alt_2(n: node)
-pt028_alt_2(n) :- kind(n, "function_definition"), field(n, "name", c1), glob("__init__", c1).
-pt028_alt_2(n) :- kind(n, "decorated_definition"), field(n, "definition", c2),
-    kind(c2, "function_definition"), field(c2, "name", c3), glob("__init__", c3).
+pt028_alt_2(n) :- kind(n, "function_definition"), pt028_tok_has_3(n).
+pt028_alt_2(n) :- kind(n, "decorated_definition"), field(n, "definition", c9),
+    kind(c9, "function_definition"), pt028_tok_has_4(c9).
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 .decl pt028_alt_6(n: node)

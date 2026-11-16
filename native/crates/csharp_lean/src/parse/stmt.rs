@@ -184,6 +184,9 @@ impl<'a> P<'a> {
                     self.close(n);
                     n
                 }
+                // A statement may start with a local function's modifiers: tree-sitter lexes these as
+                // the modifier keywords there, and what follows is no declaration (`partial.M()`).
+                w::PARTIAL | w::REQUIRED => return self.refuse(),
                 _ => self.declaration_or_expression(s)?,
             },
             _ => self.declaration_or_expression(s)?,
@@ -326,6 +329,10 @@ impl<'a> P<'a> {
         if self.peek() == T::LParen {
             self.tuple_pattern(f::NONE)?;
         } else {
+            // `T with = …`: tree-sitter's lexer takes `with` after a type as its keyword, an error.
+            if self.is_word(w::WITH) {
+                return self.refuse();
+            }
             self.ident(slot(f::NAME, Ctx::Bare))?;
         }
         if self.peek() == T::LBracket {
@@ -410,6 +417,10 @@ impl<'a> P<'a> {
             && self.kind_at(3) == T::Gt
             && self.is_ident_at(4)
             && self.is_word_at(5, w::IN);
+        // `A<B<C>> x in`: comparisons too (`A < B<C> > x`); not read.
+        if self.is_ident_at(0) && self.kind_at(1) == T::Lt && self.scan_type(0).is_some_and(|e| self.kind_at(e - 1) == T::GtGt && self.is_ident_at(e) && self.is_word_at(e + 1, w::IN)) {
+            return self.refuse();
+        }
         if compared {
             let left = slot(f::LEFT, Ctx::Expr);
             let outer = self.open_in(K::BinaryExpression, left)?;
@@ -446,7 +457,8 @@ impl<'a> P<'a> {
         }
         self.leaf(K::TUsing, f::NONE, C_NONE)?;
         self.punct_tk(K::UsingStatement, T::LParen, awaited)?;
-        let declaration = self.scan_type(0).is_some_and(|e| self.is_ident_at(e) && matches!(self.kind_at(e + 1), T::Eq | T::Comma | T::RParen));
+        // `using (await t)`: an await expression, not a type `await`'s declaration.
+        let declaration = !self.is_word(w::AWAIT) && self.scan_type(0).is_some_and(|e| self.is_ident_at(e) && matches!(self.kind_at(e + 1), T::Eq | T::Comma | T::RParen));
         if declaration {
             self.variable_declaration(f::NONE)?;
         } else {
@@ -468,7 +480,10 @@ impl<'a> P<'a> {
         if self.top_comma_pub(1, close) {
             self.expr(slot(f::VALUE, Ctx::Bare))?;
         } else {
-            self.punct_tk(K::SwitchStatement, T::LParen, false)?;
+            // `switch ((a, b))`: before a tuple the `(` is no implied word (the tuple alone may
+            // follow `switch`), so it is stored.
+            let tuple = self.kind_at(1) == T::LParen && self.matching(1) == Some(close - 1) && self.top_comma_pub(2, close - 1);
+            self.punct_tk(K::SwitchStatement, T::LParen, tuple)?;
             self.expr(slot(f::VALUE, Ctx::Expr))?;
             self.punct_tk(K::SwitchStatement, T::RParen, false)?;
         }

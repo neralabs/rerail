@@ -62,16 +62,17 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
     for rule in p.rules() {
         let h = v.rel_name(rule.head().rel());
         let eligible = !recursive.contains(h) && !f.gate(h) && f.native(h).is_none() && !f.lattice(h) && !f.nullary(h);
-        match eligible.then(|| support(&f, v, rule)).flatten() {
+        match eligible.then(|| support(&f, v, rule, &cross.domains)).flatten() {
             Some(s) => {
                 let i = n.entry(h).or_default();
                 let name = format!("{h}__sup{i}");
                 *i += 1;
                 let cols: Vec<(&str, &str)> = s.decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
                 b.declare(&name, &cols);
-                if let Some(d) = cross.domains.get(h).cloned() {
-                    out.domains.entry(name.clone()).or_insert(d);
-                }
+                // Every column's domain: the head's, then each bound variable's in the rule (a kind's is no atom,
+                // decision 0170).
+                let d = s.domains(cross.domains.get(h).map_or(&[][..], Vec::as_slice));
+                out.domains.entry(name.clone()).or_insert(d);
                 failed |= s.write(&mut b, v, rule, &name).is_err();
                 through += 1;
             }
@@ -96,6 +97,22 @@ struct Support {
     decl: Vec<(String, String)>,
     wild: BTreeMap<(usize, usize), String>,
     extra: Vec<String>,
+    /// Each column's variable (`None` for a constant of the head), and each variable's domain from the first
+    /// positive atom column with one that binds it.
+    vars: Vec<Option<String>>,
+    domain_of: BTreeMap<String, lower::Domain>,
+}
+
+impl Support {
+    /// The domains of the relation's columns past `known` (its head's), by `lower::column_domain` (decision 0170:
+    /// given the head's domains alone, every symbol column after them was taken for an atom, a kind's too).
+    fn domains(&self, known: &[lower::Domain]) -> Vec<lower::Domain> {
+        self.decl
+            .iter()
+            .enumerate()
+            .map(|(c, (_, t))| lower::column_domain(c, t, known, self.vars.get(c).and_then(Option::as_ref).and_then(|x| self.domain_of.get(x).copied())))
+            .collect()
+    }
 }
 
 /// A term's variables (a call's arguments' too), by name.
@@ -109,7 +126,7 @@ fn term_vars(v: &Version, r: RuleRef<'_>, t: TermRef<'_>, out: &mut Vec<String>)
 
 /// `rule` (of `v`, whose fields are `f`) as a support relation: `None` where it keeps its form (a head that is not
 /// of variables and constants, an aggregate, `nearest`, a matcher, or a variable no positive atom binds).
-fn support(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>) -> Option<Support> {
+fn support(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>, domains: &lower::Domains) -> Option<Support> {
     let head = rule.head();
     let hdecl = f.columns(v.rel_name(head.rel()))?;
     if !head.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))) {
@@ -119,12 +136,14 @@ fn support(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>) -> Option<Support> {
     let mut types: BTreeMap<String, String> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     let mut wild = BTreeMap::new();
+    let mut domain_of: BTreeMap<String, lower::Domain> = BTreeMap::new();
     let mut fresh = 0;
     let mut used = Vec::new();
     for (i, l) in rule.body().enumerate() {
         match l.view() {
             Lit::Atom(a) if !a.neg() => {
                 let decl = f.columns(v.rel_name(a.rel()))?;
+                let doms = domains.get(v.rel_name(a.rel()));
                 for (c, t) in a.args().enumerate() {
                     let name = match t {
                         TermRef::Wild => {
@@ -139,6 +158,9 @@ fn support(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>) -> Option<Support> {
                             continue;
                         }
                     };
+                    if let Some(&d) = doms.and_then(|ds| ds.get(c)) {
+                        domain_of.entry(name.clone()).or_insert(d);
+                    }
                     if !types.contains_key(&name) {
                         types.insert(name.clone(), decl.get(c)?.1.to_owned());
                         order.push(name);
@@ -162,7 +184,8 @@ fn support(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>) -> Option<Support> {
     let extra: Vec<String> = order.into_iter().filter(|x| !head_vars.contains(x)).collect();
     let mut decl: Vec<(String, String)> = hdecl.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect();
     decl.extend(extra.iter().map(|x| (x.clone(), types[x].clone())));
-    Some(Support { decl, wild, extra })
+    let vars = head.args().map(|t| match t { TermRef::Var(s) => Some(v.text(rule.var(s)).to_owned()), _ => None }).chain(extra.iter().cloned().map(Some)).collect();
+    Some(Support { decl, wild, extra, vars, domain_of })
 }
 
 /// A term of `v`'s rule `r`, to write into a builder under `v`'s ids.
@@ -238,5 +261,41 @@ mod tests {
         );
         let cols = |rel: &str| tree.decls[rel].iter().map(|(c, t)| format!("{c}:{t}")).collect::<Vec<_>>().join(" ");
         assert_eq!((cols("h__sup0"), cols("g__sup0")), ("x:int y:int rr_w1:int".to_owned(), "x:int rr_w1:int".to_owned()));
+    }
+
+    /// A support relation's columns past its head's take their domains from its rule: a kind bound in the body is
+    /// a kind id, not an atom (`lower::atom_columns`, decision 0170). Given the head's domains alone, every symbol
+    /// column after them was taken for an atom; its frame named kind ids as atoms, and the next run on the store read
+    /// SQL inside its waves to place them (no such atom), or a forked process mapped them.
+    #[test]
+    fn a_support_relation_keeps_its_kind_columns_out_of_its_atoms() {
+        let prog = crate::code_rule_dsl::logic::front::parse(
+            r#"
+            .decl node(d: int, n: node, kind: sym, start: int, end: int)
+            .decl text(n: node, s: sym)
+            .decl child(p: node, n: node)
+            .input node
+            .input text
+            .input child
+            .decl h(n: node)
+            .output h
+            h($n) :- child($p, $n), node(_, $p, $k, _, _), text($p, $s).
+            "#,
+        )
+        .unwrap();
+        let domains = lower::domains(&prog).unwrap();
+        let cross = lower::Lowered { program: lower::Tree::given(prog), version: None, maint: None, domains, ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
+        let (out, through, _) = supports(&cross);
+        assert_eq!(through, 1);
+        let v = out.version.clone().expect("a version made");
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
+        let tree = crate::code_rule_dsl::logic::plan::body::Placed::whole(v).program(&lists).unwrap();
+        let sup = tree.decls.keys().find(|r| is_support(r)).expect("a support relation").to_string();
+        let decl = &tree.decls[sup.as_str()];
+        let types: Vec<&str> = decl.iter().map(|(_, t)| t.as_str()).collect();
+        let atoms = lower::atom_columns(&types, &out.domains, &sup);
+        let col = |name: &str| decl.iter().position(|(c, _)| c.as_str().trim_start_matches('$') == name).unwrap_or_else(|| panic!("{name} in {decl:?}"));
+        assert!(!atoms[col("k")], "a kind is no atom: {decl:?} {atoms:?}");
+        assert!(atoms[col("s")], "a text is: {decl:?} {atoms:?}");
     }
 }

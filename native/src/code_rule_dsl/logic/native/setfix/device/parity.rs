@@ -654,9 +654,9 @@ fn random_texts(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                         texts.push(next);
                         next += 1;
                         if g.chance(50) {
-                            format!("func replace_all v{} v{t} {} {}", next - 1, sym(*g.pick(&rxs)), sym(*g.pick(&["", "#", "<>"])))
+                            format!("func replace_all v{} v{t} {} {}", next - 1, sym(*g.pick(&rxs)), sym(g.pick::<&str>(&["", "#", "<>"])))
                         } else {
-                            format!("func sql_replace v{} v{t} {} {}", next - 1, sym(p), sym(*g.pick(&["", "#", "<>"])))
+                            format!("func sql_replace v{} v{t} {} {}", next - 1, sym(p), sym(g.pick::<&str>(&["", "#", "<>"])))
                         }
                     }
                     5 => {

@@ -247,122 +247,122 @@ air302_moved_in_2(n, N, ORIG) :- air302_moved_bare(n, N, ORIG), !air302_alt_8(n,
 // moved_to_empty_operator(n): the JSON util `moved-to-EmptyOperator`, used where the JSON says `matches: "moved-to-EmptyOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_empty_operator(n: node, n_mv: loc)
-air302_moved_to_empty_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "9").
+air302_moved_to_empty_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_9(n).
 
 // moved_to_external_dag_link(n): the JSON util `moved-to-ExternalDagLink`, used where the JSON says `matches: "moved-to-ExternalDagLink"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_external_dag_link(n: node, n_mv: loc)
-air302_moved_to_external_dag_link(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "10").
+air302_moved_to_external_dag_link(n, N) :- air302_moved_bare(n, N, _), !air302_alt_10(n).
 
 // moved_to_google_api_to_s3_operator(n): the JSON util `moved-to-GoogleApiToS3Operator`, used where the JSON says `matches: "moved-to-GoogleApiToS3Operator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_google_api_to_s3_operator(n: node, n_mv: loc)
-air302_moved_to_google_api_to_s3_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "11").
+air302_moved_to_google_api_to_s3_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_11(n).
 
 // moved_to_hive_to_druid_operator(n): the JSON util `moved-to-HiveToDruidOperator`, used where the JSON says `matches: "moved-to-HiveToDruidOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_hive_to_druid_operator(n: node, n_mv: loc)
-air302_moved_to_hive_to_druid_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "12").
+air302_moved_to_hive_to_druid_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_12(n).
 
 // moved_to_hive_to_my_sql_operator(n): the JSON util `moved-to-HiveToMySqlOperator`, used where the JSON says `matches: "moved-to-HiveToMySqlOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_hive_to_my_sql_operator(n: node, n_mv: loc)
-air302_moved_to_hive_to_my_sql_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "13").
+air302_moved_to_hive_to_my_sql_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_13(n).
 
 // moved_to_http_operator(n): the JSON util `moved-to-HttpOperator`, used where the JSON says `matches: "moved-to-HttpOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_http_operator(n: node, n_mv: loc)
-air302_moved_to_http_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "14").
+air302_moved_to_http_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_14(n).
 
 // moved_to_ms_sql_to_hive_operator(n): the JSON util `moved-to-MsSqlToHiveOperator`, used where the JSON says `matches: "moved-to-MsSqlToHiveOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_ms_sql_to_hive_operator(n: node, n_mv: loc)
-air302_moved_to_ms_sql_to_hive_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "15").
+air302_moved_to_ms_sql_to_hive_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_15(n).
 
 // moved_to_my_sql_to_hive_operator(n): the JSON util `moved-to-MySqlToHiveOperator`, used where the JSON says `matches: "moved-to-MySqlToHiveOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_my_sql_to_hive_operator(n: node, n_mv: loc)
-air302_moved_to_my_sql_to_hive_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "16").
+air302_moved_to_my_sql_to_hive_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_16(n).
 
 // moved_to_pod_generator(n): the JSON util `moved-to-PodGenerator`, used where the JSON says `matches: "moved-to-PodGenerator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_pod_generator(n: node, n_mv: loc)
-air302_moved_to_pod_generator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "17").
+air302_moved_to_pod_generator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_17(n).
 
 // moved_to_pod_manager(n): the JSON util `moved-to-PodManager`, used where the JSON says `matches: "moved-to-PodManager"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_pod_manager(n: node, n_mv: loc)
-air302_moved_to_pod_manager(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "18").
+air302_moved_to_pod_manager(n, N) :- air302_moved_bare(n, N, _), !air302_alt_18(n).
 
 // moved_to_presto_to_my_sql_operator(n): the JSON util `moved-to-PrestoToMySqlOperator`, used where the JSON says `matches: "moved-to-PrestoToMySqlOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_presto_to_my_sql_operator(n: node, n_mv: loc)
-air302_moved_to_presto_to_my_sql_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "19").
+air302_moved_to_presto_to_my_sql_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_19(n).
 
 // moved_to_redshift_to_s3_operator(n): the JSON util `moved-to-RedshiftToS3Operator`, used where the JSON says `matches: "moved-to-RedshiftToS3Operator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_redshift_to_s3_operator(n: node, n_mv: loc)
-air302_moved_to_redshift_to_s3_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "20").
+air302_moved_to_redshift_to_s3_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_20(n).
 
 // moved_to_s3_to_hive_operator(n): the JSON util `moved-to-S3ToHiveOperator`, used where the JSON says `matches: "moved-to-S3ToHiveOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_s3_to_hive_operator(n: node, n_mv: loc)
-air302_moved_to_s3_to_hive_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "21").
+air302_moved_to_s3_to_hive_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_21(n).
 
 // moved_to_s3_to_redshift_operator(n): the JSON util `moved-to-S3ToRedshiftOperator`, used where the JSON says `matches: "moved-to-S3ToRedshiftOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_s3_to_redshift_operator(n: node, n_mv: loc)
-air302_moved_to_s3_to_redshift_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "22").
+air302_moved_to_s3_to_redshift_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_22(n).
 
 // moved_to_sqlcheck_operator(n): the JSON util `moved-to-SQLCheckOperator`, used where the JSON says `matches: "moved-to-SQLCheckOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_sqlcheck_operator(n: node, n_mv: loc)
-air302_moved_to_sqlcheck_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "23").
+air302_moved_to_sqlcheck_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_23(n).
 
 // moved_to_sqlexecute_query_operator(n): the JSON util `moved-to-SQLExecuteQueryOperator`, used where the JSON says `matches: "moved-to-SQLExecuteQueryOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_sqlexecute_query_operator(n: node, n_mv: loc)
-air302_moved_to_sqlexecute_query_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "24").
+air302_moved_to_sqlexecute_query_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_24(n).
 
 // moved_to_sqlinterval_check_operator(n): the JSON util `moved-to-SQLIntervalCheckOperator`, used where the JSON says `matches: "moved-to-SQLIntervalCheckOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_sqlinterval_check_operator(n: node, n_mv: loc)
-air302_moved_to_sqlinterval_check_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "25").
+air302_moved_to_sqlinterval_check_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_25(n).
 
 // moved_to_sqlthreshold_check_operator(n): the JSON util `moved-to-SQLThresholdCheckOperator`, used where the JSON says `matches: "moved-to-SQLThresholdCheckOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_sqlthreshold_check_operator(n: node, n_mv: loc)
-air302_moved_to_sqlthreshold_check_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "26").
+air302_moved_to_sqlthreshold_check_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_26(n).
 
 // moved_to_sqlvalue_check_operator(n): the JSON util `moved-to-SQLValueCheckOperator`, used where the JSON says `matches: "moved-to-SQLValueCheckOperator"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_sqlvalue_check_operator(n: node, n_mv: loc)
-air302_moved_to_sqlvalue_check_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "27").
+air302_moved_to_sqlvalue_check_operator(n, N) :- air302_moved_bare(n, N, _), !air302_alt_27(n).
 
 // moved_to_v1_container_port(n): the JSON util `moved-to-V1ContainerPort`, used where the JSON says `matches: "moved-to-V1ContainerPort"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_v1_container_port(n: node, n_mv: loc)
-air302_moved_to_v1_container_port(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "28").
+air302_moved_to_v1_container_port(n, N) :- air302_moved_bare(n, N, _), !air302_alt_28(n).
 
 // moved_to_v1_env_var(n): the JSON util `moved-to-V1EnvVar`, used where the JSON says `matches: "moved-to-V1EnvVar"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_v1_env_var(n: node, n_mv: loc)
-air302_moved_to_v1_env_var(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "29").
+air302_moved_to_v1_env_var(n, N) :- air302_moved_bare(n, N, _), !air302_alt_29(n).
 
 // moved_to_v1_resource_requirements(n): the JSON util `moved-to-V1ResourceRequirements`, used where the JSON says `matches: "moved-to-V1ResourceRequirements"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_v1_resource_requirements(n: node, n_mv: loc)
-air302_moved_to_v1_resource_requirements(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "30").
+air302_moved_to_v1_resource_requirements(n, N) :- air302_moved_bare(n, N, _), !air302_alt_30(n).
 
 // moved_to_v1_volume(n): the JSON util `moved-to-V1Volume`, used where the JSON says `matches: "moved-to-V1Volume"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_v1_volume(n: node, n_mv: loc)
-air302_moved_to_v1_volume(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "31").
+air302_moved_to_v1_volume(n, N) :- air302_moved_bare(n, N, _), !air302_alt_31(n).
 
 // moved_to_v1_volume_mount(n): the JSON util `moved-to-V1VolumeMount`, used where the JSON says `matches: "moved-to-V1VolumeMount"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_v1_volume_mount(n: node, n_mv: loc)
-air302_moved_to_v1_volume_mount(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "32").
+air302_moved_to_v1_volume_mount(n, N) :- air302_moved_bare(n, N, _), !air302_alt_32(n).
 
 // replacement_of(n, key): 26 copies of one rule set (`replacement-add_unique_suffix`, `replacement-create_unique_id`, `replacement-EmptyOperator` and 23 more), folded into one: row `key` of
 // replacement_of_case gives the strings each copy had.
@@ -372,17 +372,17 @@ air302_replacement_of(n, q2) :- air302_replacement_of_case(q2, s1), air302_state
 // moved_to_add_unique_suffix(n): the JSON util `moved-to-add_unique_suffix`, used where the JSON says `matches: "moved-to-add_unique_suffix"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_add_unique_suffix(n: node, n_mv: loc)
-air302_moved_to_add_unique_suffix(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "33").
+air302_moved_to_add_unique_suffix(n, N) :- air302_moved_bare(n, N, _), !air302_alt_33(n).
 
 // moved_to_create_unique_id(n): the JSON util `moved-to-create_unique_id`, used where the JSON says `matches: "moved-to-create_unique_id"`
 //   N: metavariable this relation binds for the calling rule
 .decl air302_moved_to_create_unique_id(n: node, n_mv: loc)
-air302_moved_to_create_unique_id(n, N) :- air302_moved_bare(n, N, _), !air302_alt(n, "34").
+air302_moved_to_create_unique_id(n, N) :- air302_moved_bare(n, N, _), !air302_alt_34(n).
 
 // AIR302(n): a finding at node n, from clause `amazon-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302(at: loc, n: node, orig: loc) "Install `apache-airflow-providers-amazon>=1.0.0` and import `{orig}` from `airflow.providers.amazon.aws.hooks.s3` instead."
+.violation AIR302(at: loc, n_mv: node, orig: loc) "Install `apache-airflow-providers-amazon>=1.0.0` and import `{orig}` from `airflow.providers.amazon.aws.hooks.s3` instead."
     suppress noqa "AIR302"
 AIR302(N, n, ORIG) :- (air302_old_of(n, "old"), air302_moved(n, N, ORIG) ; air302_quoted(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -401,7 +401,7 @@ air302_quoted(n, N, ORIG) :- air302_demand_quoted(n), air302_string_literal(n), 
 // AIR302_fab_3(n, detail): findings from clauses `amazon-2`, `amazon-3`, `amazon-4`, `amazon-5` and 64 more. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_fab_3(at: loc, n: node, detail: symbol) code "AIR302" "Install {detail} instead."
+.violation AIR302_fab_3(at: loc, n_mv: node, detail: symbol) code "AIR302" "Install {detail} instead."
     suppress noqa "AIR302"
 AIR302_fab_3(N, n, "`apache-airflow-providers-amazon>=1.0.0` and import `GCSToS3Operator` from `airflow.providers.amazon.aws.transfers.gcs_to_s3`") :- (air302_old_of_of(n, "amazon_2"), air302_moved(n, N, ORIG) ; air302_quoted_amazon_2(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -722,7 +722,7 @@ air302_quoted_celery_4(n, N, ORIG) :- air302_demand_quoted_celery_4(n), air302_s
 // AIR302_common_sql_1(n): a finding at node n, from clause `common-sql-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_common_sql_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.0.0` and import `{orig}` from `airflow.providers.common.sql.hooks.sql` instead."
+.violation AIR302_common_sql_1(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.0.0` and import `{orig}` from `airflow.providers.common.sql.hooks.sql` instead."
     suppress noqa "AIR302"
 AIR302_common_sql_1(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "common_sql_1"), air302_moved(n, N, ORIG)
@@ -739,7 +739,7 @@ air302_quoted_common_sql_1(n, N, ORIG) :- air302_demand_quoted_common_sql_1(n), 
 // AIR302_common_sql_2(n): a finding at node n, from clause `common-sql-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_common_sql_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.1.0` and import `{orig}` from `airflow.providers.common.sql.operators.sql` instead."
+.violation AIR302_common_sql_2(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.1.0` and import `{orig}` from `airflow.providers.common.sql.operators.sql` instead."
     suppress noqa "AIR302"
 AIR302_common_sql_2(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "common_sql_2"), air302_moved(n, N, ORIG)
@@ -792,7 +792,7 @@ air302_quoted_common_sql_6(n, N) :- air302_demand_quoted_common_sql_6(n), air302
 // AIR302_common_sql_7(n): a finding at node n, from clause `common-sql-7`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_common_sql_7(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.0.0` and import `{orig}` from `airflow.providers.common.sql.operators.sql` instead."
+.violation AIR302_common_sql_7(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.0.0` and import `{orig}` from `airflow.providers.common.sql.operators.sql` instead."
     suppress noqa "AIR302"
 AIR302_common_sql_7(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "common_sql_7"), air302_moved(n, N, ORIG)
@@ -844,7 +844,7 @@ air302_quoted_docker_2(n, N, ORIG) :- air302_demand_quoted_docker_2(n), air302_s
 // AIR302_apache_druid_1(n): a finding at node n, from clause `apache-druid-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_apache_druid_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-druid>=1.0.0` and import `{orig}` from `airflow.providers.apache.druid.hooks.druid` instead."
+.violation AIR302_apache_druid_1(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-druid>=1.0.0` and import `{orig}` from `airflow.providers.apache.druid.hooks.druid` instead."
     suppress noqa "AIR302"
 AIR302_apache_druid_1(N, n, ORIG) :-
     ( air302_old_of(n, "old_apache_druid_1"), air302_moved(n, N, ORIG)
@@ -868,7 +868,7 @@ air302_quoted_apache_druid_2(n, N) :- air302_demand_quoted_apache_druid_2(n), ai
 // AIR302_fab_1(n): a finding at node n, from clause `fab-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_fab_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.api.auth.backend.basic_auth` instead."
+.violation AIR302_fab_1(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.api.auth.backend.basic_auth` instead."
     suppress noqa "AIR302"
 AIR302_fab_1(N, n, ORIG) :- (air302_old_of_of_of(n, "fab_1"), air302_moved_in_1(n, N, ORIG) ; air302_quoted_fab_1(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -882,7 +882,7 @@ air302_quoted_fab_1(n, N, ORIG) :- air302_demand_quoted_fab_1(n), air302_string_
 // AIR302_fab_2(n): a finding at node n, from clause `fab-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_fab_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.api.auth.backend.kerberos_auth` instead."
+.violation AIR302_fab_2(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.api.auth.backend.kerberos_auth` instead."
     suppress noqa "AIR302"
 AIR302_fab_2(N, n, ORIG) :- (air302_old_fab_2(n), air302_moved_in_2(n, N, ORIG) ; air302_quoted_fab_2(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -906,7 +906,7 @@ air302_quoted_fab_3(n, N, ORIG) :- air302_demand_quoted_fab_3(n), air302_string_
 // AIR302_fab_4(n): a finding at node n, from clause `fab-4`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_fab_4(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.security_manager.override` instead."
+.violation AIR302_fab_4(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.security_manager.override` instead."
     suppress noqa "AIR302"
 AIR302_fab_4(N, n, ORIG) :- (air302_old_of_of_of_of(n, "fab_4"), air302_moved(n, N, ORIG) ; air302_quoted_fab_4(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -932,7 +932,7 @@ air302_quoted_apache_hdfs_2(n, N, ORIG) :- air302_demand_quoted_apache_hdfs_2(n)
 // AIR302_apache_hive_1(n): a finding at node n, from clause `apache-hive-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_apache_hive_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `{orig}` from `airflow.providers.apache.hive.hooks.hive` instead."
+.violation AIR302_apache_hive_1(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `{orig}` from `airflow.providers.apache.hive.hooks.hive` instead."
     suppress noqa "AIR302"
 AIR302_apache_hive_1(N, n, ORIG) :-
     ( air302_old_of_of_of(n, "apache_hive_1"), air302_moved(n, N, ORIG)
@@ -955,7 +955,7 @@ air302_quoted_apache_hive_1(n, N, ORIG) :- air302_demand_quoted_apache_hive_1(n)
 // AIR302_apache_hive_2(n): a finding at node n, from clause `apache-hive-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_apache_hive_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-hive>=5.1.0` and import `{orig}` from `airflow.providers.apache.hive.macros.hive` instead."
+.violation AIR302_apache_hive_2(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-hive>=5.1.0` and import `{orig}` from `airflow.providers.apache.hive.macros.hive` instead."
     suppress noqa "AIR302"
 AIR302_apache_hive_2(N, n, ORIG) :-
     ( air302_old_of(n, "old_apache_hive_2"), air302_moved(n, N, ORIG)
@@ -1053,7 +1053,7 @@ air302_quoted_http_3(n, N, ORIG) :- air302_demand_quoted_http_3(n), air302_strin
 // AIR302_jdbc_1(n): a finding at node n, from clause `jdbc-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_jdbc_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-jdbc>=1.0.0` and import `{orig}` from `airflow.providers.jdbc.hooks.jdbc` instead."
+.violation AIR302_jdbc_1(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-jdbc>=1.0.0` and import `{orig}` from `airflow.providers.jdbc.hooks.jdbc` instead."
     suppress noqa "AIR302"
 AIR302_jdbc_1(N, n, ORIG) :- (air302_old_of(n, "old_jdbc_1"), air302_moved(n, N, ORIG) ; air302_quoted_jdbc_1(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1067,7 +1067,7 @@ air302_quoted_jdbc_1(n, N, ORIG) :- air302_demand_quoted_jdbc_1(n), air302_strin
 // AIR302_cncf_kubernetes_1(n): a finding at node n, from clause `cncf-kubernetes-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types` instead."
+.violation AIR302_cncf_kubernetes_1(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_1(N, n, ORIG) :-
     ( air302_old_of(n, "old_cncf_kubernetes_1"), air302_moved(n, N, ORIG)
@@ -1085,7 +1085,7 @@ air302_quoted_cncf_kubernetes_1(n, N, ORIG) :- air302_demand_quoted_cncf_kuberne
 // AIR302_cncf_kubernetes_2(n): a finding at node n, from clause `cncf-kubernetes-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.k8s_model` instead."
+.violation AIR302_cncf_kubernetes_2(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.k8s_model` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_2(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "cncf_kubernetes_2"), air302_moved(n, N, ORIG)
@@ -1103,7 +1103,7 @@ air302_quoted_cncf_kubernetes_2(n, N, ORIG) :- air302_demand_quoted_cncf_kuberne
 // AIR302_cncf_kubernetes_3(n): a finding at node n, from clause `cncf-kubernetes-3`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_3(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.kube_client` instead."
+.violation AIR302_cncf_kubernetes_3(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.kube_client` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_3(N, n, ORIG) :-
     ( air302_old_of_of_of(n, "cncf_kubernetes_3"), air302_moved(n, N, ORIG)
@@ -1133,7 +1133,7 @@ air302_quoted_cncf_kubernetes_5(n, N) :- air302_demand_quoted_cncf_kubernetes_5(
 // AIR302_cncf_kubernetes_6(n): a finding at node n, from clause `cncf-kubernetes-6`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_6(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.kubernetes_helper_functions` instead."
+.violation AIR302_cncf_kubernetes_6(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.kubernetes_helper_functions` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_6(N, n, ORIG) :-
     ( air302_old_cncf_kubernetes_6(n), air302_moved(n, N, ORIG)
@@ -1185,7 +1185,7 @@ air302_quoted_cncf_kubernetes_11(n, N) :- air302_demand_quoted_cncf_kubernetes_1
 // AIR302_cncf_kubernetes_12(n): a finding at node n, from clause `cncf-kubernetes-12`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_12(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.pod_generator` instead."
+.violation AIR302_cncf_kubernetes_12(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.pod_generator` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_12(N, n, ORIG) :-
     ( air302_old_cncf_kubernetes_12(n), air302_moved(n, N, ORIG)
@@ -1313,7 +1313,7 @@ air302_quoted_slack_1(n, N, ORIG) :- air302_demand_quoted_slack_1(n), air302_str
 // AIR302_slack_2(n): a finding at node n, from clause `slack-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_slack_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-slack>=1.0.0` and import `{orig}` from `airflow.providers.slack.operators.slack` instead."
+.violation AIR302_slack_2(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-slack>=1.0.0` and import `{orig}` from `airflow.providers.slack.operators.slack` instead."
     suppress noqa "AIR302"
 AIR302_slack_2(N, n, ORIG) :- (air302_old_of(n, "old_slack_2"), air302_moved(n, N, ORIG) ; air302_quoted_slack_2(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1345,7 +1345,7 @@ air302_quoted_zendesk_1(n, N, ORIG) :- air302_demand_quoted_zendesk_1(n), air302
 // AIR302_standard_1(n): a finding at node n, from clause `standard-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_standard_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.3` and import `{orig}` from `airflow.providers.standard.hooks.subprocess` instead."
+.violation AIR302_standard_1(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.3` and import `{orig}` from `airflow.providers.standard.hooks.subprocess` instead."
     suppress noqa "AIR302"
 AIR302_standard_1(N, n, ORIG) :- (air302_old_of(n, "old_standard_1"), air302_moved(n, N, ORIG) ; air302_quoted_standard_1(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1365,7 +1365,7 @@ air302_quoted_standard_2(n, N, ORIG) :- air302_demand_quoted_standard_2(n), air3
 // AIR302_standard_3(n): a finding at node n, from clause `standard-3`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_standard_3(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.2` and import `{orig}` from `airflow.providers.standard.operators.trigger_dagrun` instead."
+.violation AIR302_standard_3(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.2` and import `{orig}` from `airflow.providers.standard.operators.trigger_dagrun` instead."
     suppress noqa "AIR302"
 AIR302_standard_3(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "standard_3"), air302_moved(n, N, ORIG)
@@ -1400,7 +1400,7 @@ air302_quoted_standard_6(n, N, ORIG) :- air302_demand_quoted_standard_6(n), air3
 // AIR302_standard_7(n): a finding at node n, from clause `standard-7`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_standard_7(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.1` and import `{orig}` from `airflow.providers.standard.operators.python` instead."
+.violation AIR302_standard_7(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.1` and import `{orig}` from `airflow.providers.standard.operators.python` instead."
     suppress noqa "AIR302"
 AIR302_standard_7(N, n, ORIG) :- (air302_old_of_of_of(n, "standard_7"), air302_moved(n, N, ORIG) ; air302_quoted_standard_7(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1420,7 +1420,7 @@ air302_quoted_standard_8(n, N) :- air302_demand_quoted_standard_8(n), air302_str
 // AIR302_standard_9(n): a finding at node n, from clause `standard-9`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_standard_9(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.3` and import `{orig}` from `airflow.providers.standard.sensors.external_task` instead."
+.violation AIR302_standard_9(at: loc, n_mv: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.3` and import `{orig}` from `airflow.providers.standard.sensors.external_task` instead."
     suppress noqa "AIR302"
 AIR302_standard_9(N, n, ORIG) :- (air302_old_of(n, "old_standard_9"), air302_moved(n, N, ORIG) ; air302_quoted_standard_9(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1486,6 +1486,318 @@ air302_statement_name(n, m) :- kind(n, "dotted_name"), field(s, "module_name", n
 air302_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
     (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
     !field(s, "module_name", n), air302_from_module(s, m), name(n, x), q = @dot(m, x).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^EmptyOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_3(n: node)
+.stored air302_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_3(n) :- field(n, "attribute", c10), glob("EmptyOperator", c10).
+air302_tok_has_3(n) :- op(n, t11), match("EmptyOperator", t11).
+air302_tok_has_3(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:EmptyOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_3(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:EmptyOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_3(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:EmptyOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^ExternalDagLink$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_4(n: node)
+.stored air302_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_4(n) :- field(n, "attribute", c10), glob("ExternalDagLink", c10).
+air302_tok_has_4(n) :- op(n, t11), match("ExternalDagLink", t11).
+air302_tok_has_4(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:ExternalDagLink)(?:\\W.*)?)$", g12).
+air302_tok_has_4(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:ExternalDagLink)(?:\\W.*)?)$", g12).
+air302_tok_has_4(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:ExternalDagLink)(?:\\W.*)?)$", g12).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^GoogleApiToS3Operator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_5(n: node)
+.stored air302_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_5(n) :- field(n, "attribute", c10), glob("GoogleApiToS3Operator", c10).
+air302_tok_has_5(n) :- op(n, t11), match("GoogleApiToS3Operator", t11).
+air302_tok_has_5(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:GoogleApiToS3Operator)(?:\\W.*)?)$", g12).
+air302_tok_has_5(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:GoogleApiToS3Operator)(?:\\W.*)?)$", g12).
+air302_tok_has_5(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:GoogleApiToS3Operator)(?:\\W.*)?)$", g12).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^HiveToDruidOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_6(n: node)
+.stored air302_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_6(n) :- field(n, "attribute", c10), glob("HiveToDruidOperator", c10).
+air302_tok_has_6(n) :- op(n, t11), match("HiveToDruidOperator", t11).
+air302_tok_has_6(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:HiveToDruidOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_6(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:HiveToDruidOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_6(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:HiveToDruidOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^HiveToMySqlOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_7(n: node)
+.stored air302_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_7(n) :- field(n, "attribute", c10), glob("HiveToMySqlOperator", c10).
+air302_tok_has_7(n) :- op(n, t11), match("HiveToMySqlOperator", t11).
+air302_tok_has_7(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:HiveToMySqlOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_7(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:HiveToMySqlOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_7(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:HiveToMySqlOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^HttpOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_8(n: node)
+.stored air302_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_8(n) :- field(n, "attribute", c10), glob("HttpOperator", c10).
+air302_tok_has_8(n) :- op(n, t11), match("HttpOperator", t11).
+air302_tok_has_8(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:HttpOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_8(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:HttpOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_8(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:HttpOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^MsSqlToHiveOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_9(n: node)
+.stored air302_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_9(n) :- field(n, "attribute", c10), glob("MsSqlToHiveOperator", c10).
+air302_tok_has_9(n) :- op(n, t11), match("MsSqlToHiveOperator", t11).
+air302_tok_has_9(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:MsSqlToHiveOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_9(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:MsSqlToHiveOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_9(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:MsSqlToHiveOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^MySqlToHiveOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_10(n: node)
+.stored air302_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_10(n) :- field(n, "attribute", c10), glob("MySqlToHiveOperator", c10).
+air302_tok_has_10(n) :- op(n, t11), match("MySqlToHiveOperator", t11).
+air302_tok_has_10(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:MySqlToHiveOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_10(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:MySqlToHiveOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_10(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:MySqlToHiveOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_11(n): a child of n, a named node or an anonymous token, matches "^PodGenerator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_11(n: node)
+.stored air302_tok_has_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_11(n) :- field(n, "attribute", c10), glob("PodGenerator", c10).
+air302_tok_has_11(n) :- op(n, t11), match("PodGenerator", t11).
+air302_tok_has_11(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:PodGenerator)(?:\\W.*)?)$", g12).
+air302_tok_has_11(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:PodGenerator)(?:\\W.*)?)$", g12).
+air302_tok_has_11(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:PodGenerator)(?:\\W.*)?)$", g12).
+
+// tok_has_12(n): a child of n, a named node or an anonymous token, matches "^PodManager$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_12(n: node)
+.stored air302_tok_has_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_12(n) :- field(n, "attribute", c10), glob("PodManager", c10).
+air302_tok_has_12(n) :- op(n, t11), match("PodManager", t11).
+air302_tok_has_12(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:PodManager)(?:\\W.*)?)$", g12).
+air302_tok_has_12(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:PodManager)(?:\\W.*)?)$", g12).
+air302_tok_has_12(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:PodManager)(?:\\W.*)?)$", g12).
+
+// tok_has_13(n): a child of n, a named node or an anonymous token, matches "^PrestoToMySqlOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_13(n: node)
+.stored air302_tok_has_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_13(n) :- field(n, "attribute", c10), glob("PrestoToMySqlOperator", c10).
+air302_tok_has_13(n) :- op(n, t11), match("PrestoToMySqlOperator", t11).
+air302_tok_has_13(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:PrestoToMySqlOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_13(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:PrestoToMySqlOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_13(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:PrestoToMySqlOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_14(n): a child of n, a named node or an anonymous token, matches "^RedshiftToS3Operator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_14(n: node)
+.stored air302_tok_has_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_14(n) :- field(n, "attribute", c10), glob("RedshiftToS3Operator", c10).
+air302_tok_has_14(n) :- op(n, t11), match("RedshiftToS3Operator", t11).
+air302_tok_has_14(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:RedshiftToS3Operator)(?:\\W.*)?)$", g12).
+air302_tok_has_14(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:RedshiftToS3Operator)(?:\\W.*)?)$", g12).
+air302_tok_has_14(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:RedshiftToS3Operator)(?:\\W.*)?)$", g12).
+
+// tok_has_15(n): a child of n, a named node or an anonymous token, matches "^S3ToHiveOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_15(n: node)
+.stored air302_tok_has_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_15(n) :- field(n, "attribute", c10), glob("S3ToHiveOperator", c10).
+air302_tok_has_15(n) :- op(n, t11), match("S3ToHiveOperator", t11).
+air302_tok_has_15(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:S3ToHiveOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_15(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:S3ToHiveOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_15(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:S3ToHiveOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_16(n): a child of n, a named node or an anonymous token, matches "^S3ToRedshiftOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_16(n: node)
+.stored air302_tok_has_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_16(n) :- field(n, "attribute", c10), glob("S3ToRedshiftOperator", c10).
+air302_tok_has_16(n) :- op(n, t11), match("S3ToRedshiftOperator", t11).
+air302_tok_has_16(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:S3ToRedshiftOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_16(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:S3ToRedshiftOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_16(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:S3ToRedshiftOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_17(n): a child of n, a named node or an anonymous token, matches "^SQLCheckOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_17(n: node)
+.stored air302_tok_has_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_17(n) :- field(n, "attribute", c10), glob("SQLCheckOperator", c10).
+air302_tok_has_17(n) :- op(n, t11), match("SQLCheckOperator", t11).
+air302_tok_has_17(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLCheckOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_17(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLCheckOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_17(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLCheckOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_18(n): a child of n, a named node or an anonymous token, matches "^SQLExecuteQueryOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_18(n: node)
+.stored air302_tok_has_18 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_18(n) :- field(n, "attribute", c10), glob("SQLExecuteQueryOperator", c10).
+air302_tok_has_18(n) :- op(n, t11), match("SQLExecuteQueryOperator", t11).
+air302_tok_has_18(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLExecuteQueryOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_18(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLExecuteQueryOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_18(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLExecuteQueryOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_19(n): a child of n, a named node or an anonymous token, matches "^SQLIntervalCheckOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_19(n: node)
+.stored air302_tok_has_19 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_19(n) :- field(n, "attribute", c10), glob("SQLIntervalCheckOperator", c10).
+air302_tok_has_19(n) :- op(n, t11), match("SQLIntervalCheckOperator", t11).
+air302_tok_has_19(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLIntervalCheckOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_19(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLIntervalCheckOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_19(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLIntervalCheckOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_20(n): a child of n, a named node or an anonymous token, matches "^SQLThresholdCheckOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_20(n: node)
+.stored air302_tok_has_20 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_20(n) :- field(n, "attribute", c10), glob("SQLThresholdCheckOperator", c10).
+air302_tok_has_20(n) :- op(n, t11), match("SQLThresholdCheckOperator", t11).
+air302_tok_has_20(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLThresholdCheckOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_20(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLThresholdCheckOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_20(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLThresholdCheckOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_21(n): a child of n, a named node or an anonymous token, matches "^SQLValueCheckOperator$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_21(n: node)
+.stored air302_tok_has_21 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_21(n) :- field(n, "attribute", c10), glob("SQLValueCheckOperator", c10).
+air302_tok_has_21(n) :- op(n, t11), match("SQLValueCheckOperator", t11).
+air302_tok_has_21(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLValueCheckOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_21(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLValueCheckOperator)(?:\\W.*)?)$", g12).
+air302_tok_has_21(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:SQLValueCheckOperator)(?:\\W.*)?)$", g12).
+
+// tok_has_22(n): a child of n, a named node or an anonymous token, matches "^V1ContainerPort$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_22(n: node)
+.stored air302_tok_has_22 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_22(n) :- field(n, "attribute", c10), glob("V1ContainerPort", c10).
+air302_tok_has_22(n) :- op(n, t11), match("V1ContainerPort", t11).
+air302_tok_has_22(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1ContainerPort)(?:\\W.*)?)$", g12).
+air302_tok_has_22(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1ContainerPort)(?:\\W.*)?)$", g12).
+air302_tok_has_22(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:V1ContainerPort)(?:\\W.*)?)$", g12).
+
+// tok_has_23(n): a child of n, a named node or an anonymous token, matches "^V1EnvVar$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_23(n: node)
+.stored air302_tok_has_23 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_23(n) :- field(n, "attribute", c10), glob("V1EnvVar", c10).
+air302_tok_has_23(n) :- op(n, t11), match("V1EnvVar", t11).
+air302_tok_has_23(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1EnvVar)(?:\\W.*)?)$", g12).
+air302_tok_has_23(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1EnvVar)(?:\\W.*)?)$", g12).
+air302_tok_has_23(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:V1EnvVar)(?:\\W.*)?)$", g12).
+
+// tok_has_24(n): a child of n, a named node or an anonymous token, matches "^V1ResourceRequirements$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_24(n: node)
+.stored air302_tok_has_24 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_24(n) :- field(n, "attribute", c10), glob("V1ResourceRequirements", c10).
+air302_tok_has_24(n) :- op(n, t11), match("V1ResourceRequirements", t11).
+air302_tok_has_24(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1ResourceRequirements)(?:\\W.*)?)$", g12).
+air302_tok_has_24(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1ResourceRequirements)(?:\\W.*)?)$", g12).
+air302_tok_has_24(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:V1ResourceRequirements)(?:\\W.*)?)$", g12).
+
+// tok_has_25(n): a child of n, a named node or an anonymous token, matches "^V1Volume$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_25(n: node)
+.stored air302_tok_has_25 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_25(n) :- field(n, "attribute", c10), glob("V1Volume", c10).
+air302_tok_has_25(n) :- op(n, t11), match("V1Volume", t11).
+air302_tok_has_25(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1Volume)(?:\\W.*)?)$", g12).
+air302_tok_has_25(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1Volume)(?:\\W.*)?)$", g12).
+air302_tok_has_25(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:V1Volume)(?:\\W.*)?)$", g12).
+
+// tok_has_26(n): a child of n, a named node or an anonymous token, matches "^V1VolumeMount$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_26(n: node)
+.stored air302_tok_has_26 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_26(n) :- field(n, "attribute", c10), glob("V1VolumeMount", c10).
+air302_tok_has_26(n) :- op(n, t11), match("V1VolumeMount", t11).
+air302_tok_has_26(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1VolumeMount)(?:\\W.*)?)$", g12).
+air302_tok_has_26(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:V1VolumeMount)(?:\\W.*)?)$", g12).
+air302_tok_has_26(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:V1VolumeMount)(?:\\W.*)?)$", g12).
+
+// tok_has_27(n): a child of n, a named node or an anonymous token, matches "^add_unique_suffix$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_27(n: node)
+.stored air302_tok_has_27 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_27(n) :- field(n, "attribute", c10), glob("add_unique_suffix", c10).
+air302_tok_has_27(n) :- op(n, t11), match("add_unique_suffix", t11).
+air302_tok_has_27(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:add_unique_suffix)(?:\\W.*)?)$", g12).
+air302_tok_has_27(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:add_unique_suffix)(?:\\W.*)?)$", g12).
+air302_tok_has_27(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:add_unique_suffix)(?:\\W.*)?)$", g12).
+
+// tok_has_28(n): a child of n, a named node or an anonymous token, matches "^create_unique_id$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air302_tok_has_28(n: node)
+.stored air302_tok_has_28 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air302_tok_has_28(n) :- field(n, "attribute", c10), glob("create_unique_id", c10).
+air302_tok_has_28(n) :- op(n, t11), match("create_unique_id", t11).
+air302_tok_has_28(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:create_unique_id)(?:\\W.*)?)$", g12).
+air302_tok_has_28(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:create_unique_id)(?:\\W.*)?)$", g12).
+air302_tok_has_28(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:create_unique_id)(?:\\W.*)?)$", g12).
 
 // demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
 .decl air302_demand_alt_6(n: node, orig: loc)
@@ -2492,36 +2804,257 @@ air302_demand_attribute_fallback(n) :- air302_demand_alt_8(n, ORIG), kind(n, "at
     within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
     field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_2(c9),
     field(c9, "attribute", c10), text(c10, t_orig6), text(ORIG, t_orig6), @doc(c10) = @doc(ORIG).
-air302_demand_attribute_fallback(n) :- air302_alt_case(q1, s1, s2), kind(n, "attribute"),
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
     within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
-    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_of(c9, s1),
-    field(c9, "attribute", c10), glob(s2, c10).
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "empty_operator"), air302_tok_has_3(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "external_dag_link"), air302_tok_has_4(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "google_api_to_s3_operator"), air302_tok_has_5(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "hive_to_druid_operator"), air302_tok_has_6(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "hive_to_my_sql_operator"), air302_tok_has_7(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "http_operator"), air302_tok_has_8(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "ms_sql_to_hive_operator"), air302_tok_has_9(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "my_sql_to_hive_operator"), air302_tok_has_10(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "pod_generator"), air302_tok_has_11(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_of(c9, "pod_manager"),
+    air302_tok_has_12(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "presto_to_my_sql_operator"), air302_tok_has_13(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "redshift_to_s3_operator"), air302_tok_has_14(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "s3_to_hive_operator"), air302_tok_has_15(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "s3_to_redshift_operator"), air302_tok_has_16(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlcheck_operator"), air302_tok_has_17(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlexecute_query_operator"), air302_tok_has_18(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlinterval_check_operator"), air302_tok_has_19(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlthreshold_check_operator"), air302_tok_has_20(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlvalue_check_operator"), air302_tok_has_21(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "v1_container_port"), air302_tok_has_22(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_of(c9, "v1_env_var"),
+    air302_tok_has_23(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "v1_resource_requirements"), air302_tok_has_24(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_of(c9, "v1_volume"),
+    air302_tok_has_25(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "v1_volume_mount"), air302_tok_has_26(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "add_unique_suffix"), air302_tok_has_27(c9).
+air302_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "create_unique_id"), air302_tok_has_28(c9).
 
 // demand_import_fallback: the nodes import_fallback is asked at (it looks at every ancestor of every node)
 .decl air302_demand_import_fallback(n: node)
 air302_demand_import_fallback(st2) :- air302_demand_alt_6(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement(c5),
-    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig1),
-    text(ORIG, t_orig1), @doc(c6) = @doc(ORIG).
+    ref_site(n, b1), st2 = b1, within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement(c5), air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig1), text(ORIG, t_orig1), @doc(c6) = @doc(ORIG).
 air302_demand_import_fallback(st2) :- air302_demand_alt_7(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_1(c5),
-    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig3),
-    text(ORIG, t_orig3), @doc(c6) = @doc(ORIG).
+    ref_site(n, b1), st2 = b1, within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_1(c5), air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig3), text(ORIG, t_orig3), @doc(c6) = @doc(ORIG).
 air302_demand_import_fallback(st2) :- air302_demand_alt_8(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    ref_site(n, b1), st2 = b1, within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_2(c5), air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig5), text(ORIG, t_orig5), @doc(c6) = @doc(ORIG).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
     within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_2(c5),
-    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig5),
-    text(ORIG, t_orig5), @doc(c6) = @doc(ORIG).
-air302_demand_import_fallback(st2) :- air302_alt_case(q1, s1, s2), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "empty_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("EmptyOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
     within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_of(c5, s1),
-    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob(s2, c6).
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "external_dag_link"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("ExternalDagLink", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "google_api_to_s3_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("GoogleApiToS3Operator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "hive_to_druid_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("HiveToDruidOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "hive_to_my_sql_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("HiveToMySqlOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "http_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("HttpOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "ms_sql_to_hive_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("MsSqlToHiveOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "my_sql_to_hive_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("MySqlToHiveOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "pod_generator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("PodGenerator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "pod_manager"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("PodManager", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "presto_to_my_sql_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("PrestoToMySqlOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "redshift_to_s3_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("RedshiftToS3Operator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "s3_to_hive_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("S3ToHiveOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "s3_to_redshift_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("S3ToRedshiftOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlcheck_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("SQLCheckOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlexecute_query_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("SQLExecuteQueryOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlinterval_check_operator"), air302_import_site(c5),
+    child(c5, c6, _), kind(c6, "identifier"), glob("SQLIntervalCheckOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlthreshold_check_operator"), air302_import_site(c5),
+    child(c5, c6, _), kind(c6, "identifier"), glob("SQLThresholdCheckOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlvalue_check_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("SQLValueCheckOperator", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "v1_container_port"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("V1ContainerPort", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "v1_env_var"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("V1EnvVar", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "v1_resource_requirements"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("V1ResourceRequirements", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_of(c5, "v1_volume"),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("V1Volume", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "v1_volume_mount"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("V1VolumeMount", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "add_unique_suffix"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("add_unique_suffix", c6).
+air302_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "create_unique_id"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("create_unique_id", c6).
 
 // demand_seen_airflow: the nodes seen_airflow is asked at (it looks at every ancestor of every node)
 .decl air302_demand_seen_airflow(n: node)
@@ -2606,35 +3139,6 @@ air302_set_273("airflow.kubernetes.pod_generator.label_safe_datestring_to_dateti
 air302_set_273("airflow.kubernetes.pod_generator.make_safe_label_value").
 air302_set_273("airflow.kubernetes.pod_generator.merge_objects").
 air302_set_273("airflow.kubernetes.pod_generator_deprecated.make_safe_label_value").
-
-// alt_case: one row per relation folded into alt: its key, then the strings that differed.
-.decl air302_alt_case(key: symbol, s1: symbol, s2: symbol)
-air302_alt_case("10", "external_dag_link", "ExternalDagLink").
-air302_alt_case("11", "google_api_to_s3_operator", "GoogleApiToS3Operator").
-air302_alt_case("12", "hive_to_druid_operator", "HiveToDruidOperator").
-air302_alt_case("13", "hive_to_my_sql_operator", "HiveToMySqlOperator").
-air302_alt_case("14", "http_operator", "HttpOperator").
-air302_alt_case("15", "ms_sql_to_hive_operator", "MsSqlToHiveOperator").
-air302_alt_case("16", "my_sql_to_hive_operator", "MySqlToHiveOperator").
-air302_alt_case("17", "pod_generator", "PodGenerator").
-air302_alt_case("18", "pod_manager", "PodManager").
-air302_alt_case("19", "presto_to_my_sql_operator", "PrestoToMySqlOperator").
-air302_alt_case("20", "redshift_to_s3_operator", "RedshiftToS3Operator").
-air302_alt_case("21", "s3_to_hive_operator", "S3ToHiveOperator").
-air302_alt_case("22", "s3_to_redshift_operator", "S3ToRedshiftOperator").
-air302_alt_case("23", "sqlcheck_operator", "SQLCheckOperator").
-air302_alt_case("24", "sqlexecute_query_operator", "SQLExecuteQueryOperator").
-air302_alt_case("25", "sqlinterval_check_operator", "SQLIntervalCheckOperator").
-air302_alt_case("26", "sqlthreshold_check_operator", "SQLThresholdCheckOperator").
-air302_alt_case("27", "sqlvalue_check_operator", "SQLValueCheckOperator").
-air302_alt_case("28", "v1_container_port", "V1ContainerPort").
-air302_alt_case("29", "v1_env_var", "V1EnvVar").
-air302_alt_case("30", "v1_resource_requirements", "V1ResourceRequirements").
-air302_alt_case("31", "v1_volume", "V1Volume").
-air302_alt_case("32", "v1_volume_mount", "V1VolumeMount").
-air302_alt_case("33", "add_unique_suffix", "add_unique_suffix").
-air302_alt_case("34", "create_unique_id", "create_unique_id").
-air302_alt_case("9", "empty_operator", "EmptyOperator").
 
 // old_of_case: one row per relation folded into old_of: its key, then the strings that differed.
 .decl air302_old_of_case(key: symbol, s1: symbol, s2: symbol)
@@ -2783,10 +3287,9 @@ air302_alt_4(n) :- within_stop(n, p2, air302_stop_3), kind(p2, "delete_statement
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air302_alt_6(n: node, orig: loc)
 air302_alt_6(n, ORIG) :- air302_demand_alt_6(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), air302_import_fallback(st2),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement(c5),
-    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    st2 = b1, air302_import_fallback(st2), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement(c5), air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
     text(c6, t_orig1), text(ORIG, t_orig1), @doc(c6) = @doc(ORIG).
 air302_alt_6(n, ORIG) :- air302_demand_alt_6(n, ORIG), kind(n, "attribute"), air302_attribute_fallback(n),
     air302_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement(c9),
@@ -2796,10 +3299,9 @@ air302_alt_6(n, ORIG) :- air302_demand_alt_6(n, ORIG), kind(n, "attribute"), air
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air302_alt_7(n: node, orig: loc)
 air302_alt_7(n, ORIG) :- air302_demand_alt_7(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), air302_import_fallback(st2),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_1(c5),
-    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    st2 = b1, air302_import_fallback(st2), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_1(c5), air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
     text(c6, t_orig3), text(ORIG, t_orig3), @doc(c6) = @doc(ORIG).
 air302_alt_7(n, ORIG) :- air302_demand_alt_7(n, ORIG), kind(n, "attribute"), air302_attribute_fallback(n),
     air302_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_1(c9),
@@ -2809,26 +3311,298 @@ air302_alt_7(n, ORIG) :- air302_demand_alt_7(n, ORIG), kind(n, "attribute"), air
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air302_alt_8(n: node, orig: loc)
 air302_alt_8(n, ORIG) :- air302_demand_alt_8(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), air302_import_fallback(st2),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_2(c5),
-    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    st2 = b1, air302_import_fallback(st2), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_2(c5), air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
     text(c6, t_orig5), text(ORIG, t_orig5), @doc(c6) = @doc(ORIG).
 air302_alt_8(n, ORIG) :- air302_demand_alt_8(n, ORIG), kind(n, "attribute"), air302_attribute_fallback(n),
     air302_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_2(c9),
     field(c9, "attribute", c10), text(c10, t_orig6), text(ORIG, t_orig6), @doc(c10) = @doc(ORIG).
 
-// alt(n, key): 26 copies of one rule set (`alt_10`, `alt_11`, `alt_12` and 23 more), folded into one: row `key` of
-// alt_case gives the strings each copy had.
-.decl air302_alt(n: node, key: symbol)
-air302_alt(n, q1) :- air302_alt_case(q1, s1, s2), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), air302_import_fallback(st2),
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_9(n: node)
+air302_alt_9(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
     within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_of(c5, s1),
-    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob(s2, c6).
-air302_alt(n, q1) :- air302_alt_case(q1, s1, s2), kind(n, "attribute"), air302_attribute_fallback(n),
-    air302_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"),
-    air302_replacement_of(c9, s1), field(c9, "attribute", c10), glob(s2, c10).
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "empty_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("EmptyOperator", c6).
+air302_alt_9(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "empty_operator"), air302_tok_has_3(c9).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_10(n: node)
+air302_alt_10(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "external_dag_link"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("ExternalDagLink", c6).
+air302_alt_10(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "external_dag_link"), air302_tok_has_4(c9).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_11(n: node)
+air302_alt_11(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "google_api_to_s3_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("GoogleApiToS3Operator", c6).
+air302_alt_11(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "google_api_to_s3_operator"), air302_tok_has_5(c9).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_12(n: node)
+air302_alt_12(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "hive_to_druid_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("HiveToDruidOperator", c6).
+air302_alt_12(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "hive_to_druid_operator"), air302_tok_has_6(c9).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_13(n: node)
+air302_alt_13(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "hive_to_my_sql_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("HiveToMySqlOperator", c6).
+air302_alt_13(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "hive_to_my_sql_operator"), air302_tok_has_7(c9).
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_14(n: node)
+air302_alt_14(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "http_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("HttpOperator", c6).
+air302_alt_14(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "http_operator"), air302_tok_has_8(c9).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_15(n: node)
+air302_alt_15(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "ms_sql_to_hive_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("MsSqlToHiveOperator", c6).
+air302_alt_15(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "ms_sql_to_hive_operator"), air302_tok_has_9(c9).
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_16(n: node)
+air302_alt_16(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "my_sql_to_hive_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("MySqlToHiveOperator", c6).
+air302_alt_16(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "my_sql_to_hive_operator"), air302_tok_has_10(c9).
+
+// alt_17(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_17(n: node)
+air302_alt_17(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "pod_generator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("PodGenerator", c6).
+air302_alt_17(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "pod_generator"), air302_tok_has_11(c9).
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_18(n: node)
+air302_alt_18(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "pod_manager"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("PodManager", c6).
+air302_alt_18(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_of(c9, "pod_manager"),
+    air302_tok_has_12(c9).
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_19(n: node)
+air302_alt_19(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "presto_to_my_sql_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("PrestoToMySqlOperator", c6).
+air302_alt_19(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "presto_to_my_sql_operator"), air302_tok_has_13(c9).
+
+// alt_20(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_20(n: node)
+air302_alt_20(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "redshift_to_s3_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("RedshiftToS3Operator", c6).
+air302_alt_20(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "redshift_to_s3_operator"), air302_tok_has_14(c9).
+
+// alt_21(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_21(n: node)
+air302_alt_21(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "s3_to_hive_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("S3ToHiveOperator", c6).
+air302_alt_21(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "s3_to_hive_operator"), air302_tok_has_15(c9).
+
+// alt_22(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_22(n: node)
+air302_alt_22(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "s3_to_redshift_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("S3ToRedshiftOperator", c6).
+air302_alt_22(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "s3_to_redshift_operator"), air302_tok_has_16(c9).
+
+// alt_23(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_23(n: node)
+air302_alt_23(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlcheck_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("SQLCheckOperator", c6).
+air302_alt_23(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlcheck_operator"), air302_tok_has_17(c9).
+
+// alt_24(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_24(n: node)
+air302_alt_24(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlexecute_query_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("SQLExecuteQueryOperator", c6).
+air302_alt_24(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlexecute_query_operator"), air302_tok_has_18(c9).
+
+// alt_25(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_25(n: node)
+air302_alt_25(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlinterval_check_operator"), air302_import_site(c5),
+    child(c5, c6, _), kind(c6, "identifier"), glob("SQLIntervalCheckOperator", c6).
+air302_alt_25(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlinterval_check_operator"), air302_tok_has_19(c9).
+
+// alt_26(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_26(n: node)
+air302_alt_26(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlthreshold_check_operator"), air302_import_site(c5),
+    child(c5, c6, _), kind(c6, "identifier"), glob("SQLThresholdCheckOperator", c6).
+air302_alt_26(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlthreshold_check_operator"), air302_tok_has_20(c9).
+
+// alt_27(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_27(n: node)
+air302_alt_27(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "sqlvalue_check_operator"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("SQLValueCheckOperator", c6).
+air302_alt_27(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "sqlvalue_check_operator"), air302_tok_has_21(c9).
+
+// alt_28(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_28(n: node)
+air302_alt_28(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "v1_container_port"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("V1ContainerPort", c6).
+air302_alt_28(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "v1_container_port"), air302_tok_has_22(c9).
+
+// alt_29(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_29(n: node)
+air302_alt_29(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "v1_env_var"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("V1EnvVar", c6).
+air302_alt_29(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_of(c9, "v1_env_var"),
+    air302_tok_has_23(c9).
+
+// alt_30(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_30(n: node)
+air302_alt_30(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "v1_resource_requirements"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("V1ResourceRequirements", c6).
+air302_alt_30(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "v1_resource_requirements"), air302_tok_has_24(c9).
+
+// alt_31(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_31(n: node)
+air302_alt_31(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_of(c5, "v1_volume"),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("V1Volume", c6).
+air302_alt_31(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_of(c9, "v1_volume"),
+    air302_tok_has_25(c9).
+
+// alt_32(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_32(n: node)
+air302_alt_32(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "v1_volume_mount"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("V1VolumeMount", c6).
+air302_alt_32(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "v1_volume_mount"), air302_tok_has_26(c9).
+
+// alt_33(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_33(n: node)
+air302_alt_33(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "add_unique_suffix"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("add_unique_suffix", c6).
+air302_alt_33(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "add_unique_suffix"), air302_tok_has_27(c9).
+
+// alt_34(n): the JSON `any`: n matches if any one of these rules does
+.decl air302_alt_34(n: node)
+air302_alt_34(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air302_replacement_of(c5, "create_unique_id"), air302_import_site(c5), child(c5, c6, _),
+    kind(c6, "identifier"), glob("create_unique_id", c6).
+air302_alt_34(n) :- kind(n, "attribute"), air302_attribute_fallback(n), air302_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, "create_unique_id"), air302_tok_has_28(c9).
 
 // alt_36(n): the JSON `any`: n matches if any one of these rules does
 //   N, ORIG: metavariables this relation binds for the calling rule

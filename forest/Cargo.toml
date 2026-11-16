@@ -19,5 +19,5 @@ block = "0.1.6"
 cc = "=1.10.0"
 
 [lints.rust]
-# The objc crate's `msg_send!` expands to a `feature = "cargo-clippy"` test, which this crate declares no feature for.
+# objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

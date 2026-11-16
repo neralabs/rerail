@@ -115,7 +115,7 @@
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, op, line, value, strprefix, value_type_of, tape_line, end_line, node_text, token
+.input doc, syntax_error, node, field, child, text, op, line, strprefix, value_type_of, tape_line, end_line, node_text, value, token
 .output violation
 esc_forbidden("SqlAdminQuery").
 esc_forbidden("SqlBuiltQuery").

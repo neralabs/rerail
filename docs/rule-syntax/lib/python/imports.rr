@@ -57,7 +57,7 @@ irel_open(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), k
 rotgt(s, y) :- irel_open(i), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope).
 rotgt(s, a) :- irel_open(i), field(i, "name", x), kind(x, "aliased_import"), field(x, "alias", al), text(al, a), nearest(i, s, scope).
 // star(s): scope s contains `from m import *`. Declared here; the rule deriving it lives in python/names.
-.decl star(s: node)
+.decl star(s: node) extensible
 
 // ==== interface ===================================================================================================
 // import_stmt(i): i is an `import ...` or a `from ... import ...` statement.

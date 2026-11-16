@@ -480,8 +480,10 @@ pub mod tests {
         // The CPU's form leaves out the masks its record pass makes (`BlockNative::records_made`).
         let unmade = native.records_made();
         let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| unmade.contains(&o) || g[o] == w[o]);
+        // Metal sets the gap marks the CPU's tier 2 tests itself (`lazy_marks`).
+        let lazy = lazy_bits(native);
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
-            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || g.codes != w.codes {
+            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || unlazy(&g.codes, lazy) != w.codes {
                 differ += 1;
                 if differ < 4 {
                     let o = (0..w.outputs.len()).find(|&o| !unmade.contains(&o) && g.outputs.get(o) != w.outputs.get(o));
@@ -1357,8 +1359,12 @@ pub mod tests {
             // The gap pass's clauses need the loop; this compares the starts and lasts alone.
             .replace("lf unless after \",\", end", "lf, end")
             .replace(", else escape \"a float the file ends with\"", "")
+            // The marks' token tests need the loop too: their masks alone.
+            .replace(", after number when count(dot) at least 1", "")
+            .replace("mark json_bad    = ff,", "mark json_bad    = ff")
             .lines()
             .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
+            .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
             .map(|l| format!("{l}\n"))
             .collect::<String>();
         assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ") && !l.contains(" read ")), "every rule written back as its mask");
@@ -1366,6 +1372,8 @@ pub mod tests {
         let files = corpus();
         let mut inputs: Vec<&[u8]> = files.iter().step_by(7).map(|f| f.as_bytes()).collect();
         inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        // Runs of two-byte spellings, and one at the end: the next byte read, against the mask.
+        inputs.extend([":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="].map(str::as_bytes));
         let (ra, rb) = (a.program.block_programs[0].records.as_ref().expect("records"), b.program.block_programs[0].records.as_ref().expect("records"));
         for f in &inputs {
             let (x, y) = (a.program.block_programs[0].run(f), b.program.block_programs[0].run(f));
@@ -1466,6 +1474,213 @@ pub mod tests {
         assert!(c.native.extracts.iter().all(|e| made.contains(e)), "every extract the record pass's");
     }
 
+    /// Decision 0177's guard for the token loop's reads: the masks it reads that are made from
+    /// the bytes near each byte (`native_cpu_bytes`) it makes where it reads them, as the lean
+    /// lexer makes its window's masks and reads a string from its opener; the CPU's body makes
+    /// none of them. The skip, the runs, the readers' openers and closers, the tests.
+    #[test]
+    fn the_cpu_reads_local_tests_at_the_token() {
+        use rerail_compiler::block_native::BlockInst;
+        let c = crate::compiled().expect("compiles");
+        let at = c.native.read_at_tokens();
+        let r = c.native.records.as_ref().expect("records");
+        assert!(at.contains(&usize::from(r.skip.expect("a skip"))), "the skip from the bytes: {at:?}");
+        assert!(at.len() >= 8, "the runs', readers' and tests' masks from the bytes: {at:?}");
+        let cpu = c.native.cpu_form();
+        for &o in &at {
+            assert!(matches!(cpu.insts[usize::from(cpu.outputs[o])], BlockInst::Const(0)), "the CPU makes test {o}'s mask");
+        }
+        // Tier 2's `\\u` checks read their mask from the bytes too: the CPU's body makes nothing.
+        let made: Vec<String> = cpu.insts.iter().filter(|i| !matches!(i, BlockInst::Const(_))).map(|i| format!("{i:?}")).collect();
+        assert!(made.is_empty(), "the CPU's body makes {made:?}");
+    }
+
+    /// The token tests a first byte decides (`native_cpu_block::test_filter`, from what their
+    /// masks need of the bytes): the `-` not before a digit, the leading `0`. Each a bit of the
+    /// token's entry on the CPU, as the lean lexer tests those at those bytes alone.
+    #[test]
+    fn a_tests_first_byte_filters_it() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        let filtered: Vec<Vec<u8>> = r.checks.iter().filter_map(|k| rerail_compiler::native_cpu_block::test_filter(&c.native, k)).map(|n| (0..=255u8).filter(|&b| n.has(b)).collect()).collect();
+        assert_eq!(filtered, vec![b"-".to_vec(), b"0".to_vec()]);
+    }
+
+    /// The pair rule's table as the lean lexer's nibble tables (`native_cpu_block::pair_nibbles`):
+    /// the token loop reads a pair's second byte from a block's word, a bit a byte, not the
+    /// table at each token. Each first byte of `.rr`'s pairs is its own bit.
+    #[test]
+    fn the_pairs_are_a_blocks_word() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        let found: Vec<usize> = r.rules.iter().enumerate().filter_map(|(k, e)| match *e {
+            rerail_compiler::records::EndRule::Next(i) => rerail_compiler::native_cpu_block::pair_nibbles(r, &r.nexts[usize::from(i)], k).map(|n| n[0].iter().fold(0u8, |a, &x| a | x).count_ones() as usize),
+            _ => None,
+        }).collect();
+        // `:` `=` `!` `<` `>` `-`: six first bytes, six bits.
+        assert_eq!(found, vec![6]);
+    }
+
+    /// A `within(d)` the CPU's windows leave out (`native_cpu_lanes::unguarded`): where another
+    /// conjunct is false on the byte it guards when that byte is zero, as the bytes off a file
+    /// of the batch are (`zero_kills`). A `.` a byte back needs none; a byte not `a`, or a zero
+    /// byte, does.
+    #[test]
+    fn a_within_goes_where_a_zero_byte_refuses() {
+        use rerail_compiler::block_native::BlockInst::{And, EqByte, Not, Prev, Within};
+        use rerail_compiler::native_cpu_lanes::{unguarded, zero_kills};
+        let c = crate::compiled().expect("compiles");
+        let mut n = c.native.clone();
+        n.insts = vec![EqByte(b'.'), Prev(0, 1), Within(1), And(1, 2), Not(0), And(4, 2), EqByte(0), And(6, 2), And(3, 0)];
+        assert!(zero_kills(&n, 1, 1));
+        assert!(!zero_kills(&n, 1, 0));
+        assert!(!zero_kills(&n, 4, 0));
+        assert!(!zero_kills(&n, 6, 0));
+        assert_eq!(unguarded(&n, 3), Some(vec![1]));
+        assert_eq!(unguarded(&n, 5), None);
+        assert_eq!(unguarded(&n, 7), None);
+        // Through the `and`s: the `.` of the outer one's inner one.
+        assert_eq!(unguarded(&n, 8), Some(vec![1, 0]));
+    }
+
+    /// A `prev`'s bound the CPU's scalar tests leave out (`native_cpu_bytes::zeros_bound`):
+    /// where its operand is false on a zero byte, read within `FRONT` bytes before the file,
+    /// the zeros there. A `.` needs none; a byte not `.`, or one read further back, does.
+    #[test]
+    fn a_prevs_bound_goes_where_the_zeros_say_it() {
+        use rerail_compiler::block_native::BlockInst::{EqByte, Not};
+        use rerail_compiler::native_cpu_bytes::zeros_bound;
+        let c = crate::compiled().expect("compiles");
+        let mut n = c.native.clone();
+        n.insts = vec![EqByte(b'.'), Not(0), EqByte(0)];
+        let front = rerail_compiler::native_cpu_block::FRONT as i64;
+        assert!(zeros_bound(&n, 0, 1));
+        assert!(zeros_bound(&n, 0, front));
+        assert!(!zeros_bound(&n, 0, front + 1));
+        assert!(!zeros_bound(&n, 1, 1));
+        assert!(!zeros_bound(&n, 2, 1));
+    }
+
+    /// A class of one run of bytes is a subtract and a compare on the CPU's vectors
+    /// (`native_cpu_lanes::set_range`): a digit's `b - '0' <= 9`. Whitespace is no run; a
+    /// byte alone is one, a compare.
+    #[test]
+    fn a_digit_is_a_range() {
+        use rerail_compiler::native_cpu_lanes::set_range;
+        let set = |bytes: &[u8]| {
+            let mut s = [0u64; 4];
+            for &b in bytes {
+                s[usize::from(b) / 64] |= 1 << (b % 64);
+            }
+            s
+        };
+        assert_eq!(set_range(set(b"0123456789")), Some((b'0', b'9')));
+        assert_eq!(set_range(set(b"/")), Some((b'/', b'/')));
+        assert_eq!(set_range(set(b" \t\n\r")), None);
+        assert_eq!(set_range(set(b"0123456789_")), None);
+        assert_eq!(set_range(set(b"")), None);
+        assert_eq!(set_range(set(&[0xfe, 0xff])), Some((0xfe, 0xff)));
+    }
+
+    /// A float's `.` counts (`count(dot) at least 1`, `at least 2`): the mask is its bytes
+    /// exactly (`native_cpu_bytes::exact`), so a short number's counts are one vector's, as a
+    /// lexer counts the `.` it reads; a mask that looks at other bytes is not.
+    #[test]
+    fn a_floats_dots_are_its_bytes() {
+        let c = crate::compiled().expect("compiles");
+        let cpu = &c.native;
+        let r = c.program.block_programs[0].records.as_ref().expect("records");
+        let counts: Vec<_> = r.checks.iter().filter(|t| t.count && !t.always()).collect();
+        let exact: Vec<_> = counts.iter().filter_map(|t| rerail_compiler::native_cpu_bytes::exact(cpu, t.o).map(|n| (t, n))).collect();
+        assert!(exact.len() >= 2, "{counts:?}");
+        for (t, n) in &exact {
+            assert_eq!((n.lo, n.hi, n.ranges()), (0, 0, vec![(b'.', b'.')]), "{t:?}");
+        }
+        assert!(exact.len() < counts.len(), "a string's counts look past their bytes");
+    }
+
+    /// A comment's JSON mark (`json_bad … after comment when count(line_open | block_open) at
+    /// least 1`): every comment the reader reads starts with an opener, so the lowering proves
+    /// the count holds (`Lowering::implies`) and makes none (`TokenCheck::always`), as a lexer
+    /// knows a comment has its opener. It holds where the reader reads a comment, not at a `/`
+    /// its other rule takes (`records::test_holds`).
+    #[test]
+    fn a_comments_opener_is_its_count() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        let always: Vec<_> = r.checks.iter().filter(|t| t.always()).collect();
+        assert_eq!(always.len(), 1, "{:?}", r.checks);
+        let t = always[0];
+        assert!(matches!(r.rules[usize::from(t.rule)], rerail_compiler::records::EndRule::Read(_)), "{t:?}");
+        // No other count folds: a string's bad bytes are not its opener.
+        assert!(r.checks.iter().filter(|x| x.count && !x.always()).count() >= 1);
+        let f = b"a(x / 2) // c\n/* d */ b(y / z).";
+        let run = block.run(f);
+        let holds = |s: usize| rerail_compiler::records::test_holds(r, t, s, s, &run.outputs);
+        for (s, want) in [(4, false), (9, true), (14, true), (26, false)] {
+            assert_eq!(holds(s), want, "at byte {s} ({:?})", f[s] as char);
+        }
+    }
+
+    /// The records' layout the compiler chose (`records::RecordLayout`): rr's token loop writes
+    /// each token's start, last and code, its only extracts, so on the CPU they are rows, the
+    /// lean lexer's `Tok`; tier 2 reads them a row a token and its tapes are the columns'.
+    #[test]
+    fn rrs_records_are_rows_on_the_cpu() {
+        let c = crate::compiled().expect("compiles");
+        let t = c.parser.tier1.records.as_ref().expect("the record pass");
+        assert_eq!(t.layout, rerail_compiler::records::RecordLayout::Rows);
+        // Every first byte of the fused pair rule (punctuation, most of rr's tokens) takes its
+        // code from the table, as the lean lexer's `TOKEN`: no word looked up. But `<`, whose
+        // two pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up.
+        let r = c.native.records.as_ref().expect("records");
+        let (kn, _) = t.fused.expect("the fused rules");
+        let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == kn) && b != b'<').collect();
+        assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
+        // Their codes fit their entries: no load beside the entry's.
+        assert!(c.parser.tier1.punct_in_entry());
+        // Its starts are the lean lexer's (`lean_starts`): a word's or a pair's token clears its
+        // own start alone. Its pairs chain (`=>=`), read left to right. `#` (`#include`), whose
+        // run starts after it, takes the general tail.
+        let (kn, kr) = t.fused.expect("the fused rules");
+        assert_eq!(rerail_compiler::native_cpu_block::lean_starts(r, &c.native, r.skip.expect("starts by the loop"), kn, kr), Some(true));
+        assert_eq!(t.lean, Some(true));
+        let src = ".decl a(x: number)\na(1). // c\na(\"s\").\n";
+        let lean = crate::rr::lean::tape(src);
+        assert_eq!(c.parser.image(src.as_bytes()).ok().as_deref(), Some(&lean[..]), "rows: the lean tape");
+    }
+
+    /// What a rule's count tests need of the bytes, together (`native_cpu_bytes::needs`): a
+    /// string's, a control byte or a backslash from the byte before it (`escaped`'s run) to
+    /// its last. A string with none of them skips its tests' call, by one vector compare.
+    #[test]
+    fn a_strings_tests_need_a_control_byte_or_a_backslash() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        let mut by_rule: std::collections::BTreeMap<u8, Option<rerail_compiler::native_cpu_bytes::Needs>> = Default::default();
+        for k in r.checks.iter().filter(|k| k.count) {
+            let n = rerail_compiler::native_cpu_bytes::needs(&c.native, k.o);
+            let e = by_rule.entry(k.rule).or_insert(n);
+            *e = e.zip(n).map(|(a, b)| a.union(b));
+        }
+        let shown: Vec<_> = by_rule.values().map(|n| n.map(|n| (n.ranges(), n.lo, n.hi))).collect();
+        assert!(shown.contains(&Some((vec![(0, 0x1f), (b'\\', b'\\')], -1, 0))), "{shown:?}");
+    }
+
+    /// The code bits of the gap marks tier 2 on the CPU tests itself
+    /// (`native_cpu_block::lazy_marks`): the CPU's tier 1 sets none of them.
+    fn lazy_bits(block: &rerail_compiler::block_native::BlockNative) -> u32 {
+        let r = block.records.as_ref().expect("records");
+        let bw = rerail_compiler::native_cpu_bytes::Bytewise::of(block);
+        rerail_compiler::native_cpu_block::lazy_marks(r, &|o| bw.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (rerail_compiler::records::MARK_SHIFT + u32::from(k)))
+    }
+
+    /// The interpreter's codes without those bits.
+    fn unlazy(codes: &[u32], lazy: u32) -> Vec<u32> {
+        codes.iter().map(|c| c & !lazy).collect()
+    }
+
     /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
     /// codes and totals, over the samples, a corpus sample and files cut at the blocks' edges.
     #[test]
@@ -1473,6 +1688,8 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let block = &c.program.block_programs[0];
         let r = block.records.as_ref().expect("records");
+        let lazy = lazy_bits(&c.native);
+        assert!(lazy != 0, "no gap mark tier 2 tests itself (`line`, `newline`)");
         let files = corpus();
         let mut inputs: Vec<Vec<u8>> = crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()).collect();
         inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
@@ -1480,6 +1697,86 @@ pub mod tests {
             inputs.push(format!("r(x) :- a(x), {}.\n", "b".repeat(n)).into_bytes());
             inputs.push(format!("{}\"open", " ".repeat(n)).into_bytes());
         }
+        // Two-byte spellings (`pairs`): runs of them, and one at the file's end. The CPU reads
+        // the next byte (`EndRule::Next`); the interpreter's rule is the same, its mask Metal's.
+        for t in [":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="] {
+            inputs.push(t.as_bytes().to_vec());
+            inputs.push(format!("{}{t}", " ".repeat(62)).into_bytes());
+        }
+        // The lean lexer's starts (`lean_starts`): no start in a run after its first byte, nor
+        // at a pair's second. Another rule's token ending where they left one out (a word right
+        // after a number or a string, pairs right after a string, in a run of them), and runs of
+        // pairs across the blocks' edges.
+        for t in ["#include \"x\"\na(1).", "#includex#y", "a(12abc).", "a(\"x\"b).", "a(\"=\"=>=b).", "a(\"x\":-=>=).", "a(1.5x, 2y).", "a(\"<\"<:<=:b)."] {
+            for pad in [0usize, 57, 58, 59, 60, 61, 62, 63] {
+                inputs.push(format!("{}{t}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        for pad in [59usize, 60, 61, 62, 63] {
+            inputs.push(format!("{}=>=>=>=>", " ".repeat(pad)).into_bytes());
+        }
+        // A word past eight bytes (`violation`) beside words that differ from it past its eighth
+        // byte, or are it with a byte more or less (`RecordTables::second`): at a block's start,
+        // across its edge, and as the file's last bytes.
+        for t in ["violation", "violatiox", "violationx", "violatio", "violations", "violation_x", "aviolation"] {
+            for pad in [0usize, 55, 56, 58, 63] {
+                inputs.push(format!("{}{t} .decl violation(x)", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}x. {t}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        // A comment's closer about 64 bytes after its opener, where a short reader's window
+        // (`RuleMode::Short`) ends, at each offset in its block; one the file ends in.
+        for n in [0usize, 59, 60, 61, 62, 63, 64, 65] {
+            for pad in [0usize, 1, 31, 62, 63] {
+                let body = "c".repeat(n);
+                inputs.push(format!("{}a(x). //{body}\nb(y).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). /*{body}*/ b(y).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). //{body}", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). /*{body}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        // A byte the string's counts need (a tab, a `\u`) at each edge of the gate's vectors
+        // (`needs_spans`): 16, 32 and 48 bytes on; and in a string past 64 bytes, at each
+        // edge of its 64-byte chunks (`needs_chunks`), in a whole chunk and in the rest.
+        for at in [14usize, 15, 16, 17, 30, 31, 32, 33, 46, 47, 48, 62, 63, 64, 65, 79, 126, 127, 128, 129, 150] {
+            for odd in ["\t", "\\u12"] {
+                inputs.push(format!("a(\"{}{odd}x\", 1).\n", "s".repeat(at)).into_bytes());
+                inputs.push(format!("a(\"{}{odd}\", 1).\n", "s".repeat(at)).into_bytes());
+                inputs.push(format!("a(\"{}{odd}{}\", 1).\n", "s".repeat(at), "x".repeat(80)).into_bytes());
+            }
+        }
+        // A token alone in its block, then spaces to and past the block's end (a spent block:
+        // the refill reads the next one), after a word, a string, a comment and pairs.
+        for gap in [1usize, 30, 61, 62, 63, 64, 65, 126, 127, 128] {
+            for t in ["x", "\"s\"", "/* c */", "=>", "\"s\"=>=>", "1.5"] {
+                inputs.push(format!("{t}{}y=>=.\n", " ".repeat(gap)).into_bytes());
+                inputs.push(format!("{}{t}{}y.\n", " ".repeat(gap), " ".repeat(gap)).into_bytes());
+            }
+        }
+        // A long string with none: no test's function.
+        for n in [64usize, 65, 127, 128, 129, 200] {
+            inputs.push(format!("a(\"{}\", 1).\n", "s".repeat(n)).into_bytes());
+        }
+        // A `\` run right before a string's quote: the opener's escape carry, which a short
+        // reader leaves to its whole function (`Bytewise::bail`).
+        for run in ["\\", "\\\\", "\\\\\\"] {
+            for pad in [0usize, 1, 62, 63] {
+                inputs.push(format!("{}a({run}\"s\", 1).\n", " ".repeat(pad)).into_bytes());
+            }
+        }
+        // Strings and comments read from the bytes (`native_cpu_bytes`): runs of backslashes
+        // across the windows' edges, the run before a window found back to its start; a
+        // string or comment over many blocks; the escape at the opener's byte.
+        for n in [1usize, 2, 3, 63, 64, 65, 66, 127, 128, 129, 130] {
+            for pad in [0usize, 1, 30, 62, 63] {
+                let run = "\\".repeat(n);
+                inputs.push(format!("{}r(\"{run}\") :- a(x).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}r(\"a{run}\\\"b\") :- a(x).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}r(\"{}\") :- a(x). // {run}\n/* {run} */ b(y).\n", " ".repeat(pad), "x".repeat(n)).into_bytes());
+            }
+        }
+        assert!(!r.rules.iter().any(|x| matches!(x, rerail_compiler::records::EndRule::Pair(_))), "a pair rule reads a mask: the pairs are read from the bytes");
+        assert!(r.rules.iter().any(|x| matches!(x, rerail_compiler::records::EndRule::Next(_))), "no pair read from the bytes");
         let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
         let got = c.parser.tier1.run_files(&refs);
         for (k, (f, g)) in refs.iter().zip(&got).enumerate() {
@@ -1493,7 +1790,12 @@ pub mod tests {
                     panic!("file {k} ({} bytes): {what} {i} the CPU's {:?}, the interpreter's {:?} ({} and {} of them), near {text:?}; the CPU's (start, last) {:?}, the interpreter's {:?}", f.len(), x.get(i), y.get(i), x.len(), y.len(), around(&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]), around(&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]));
                 }
             }
-            assert_eq!(g.codes, want.codes, "file {k}: the codes");
+            let w = unlazy(&want.codes, lazy);
+            if let Some(i) = (0..g.codes.len().max(w.len())).find(|&i| g.codes.get(i) != w.get(i)) {
+                let at = g.positions[usize::from(r.starts)].get(i).copied().unwrap_or(0) as usize;
+                let text = String::from_utf8_lossy(&f[at.saturating_sub(40).min(f.len())..(at + 12).min(f.len())]).into_owned();
+                panic!("file {k} ({} bytes): the codes (the gap marks tier 2 tests itself apart) differ at token {i}, byte {at}, the CPU's {:#x}, the interpreter's {:#x}, near {text:?}", f.len(), g.codes[i], w[i]);
+            }
             assert_eq!(g.totals, want.totals, "file {k}: the totals");
         }
     }
@@ -1506,6 +1808,23 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let cpu = c.native.cpu_form();
         let n = cpu.insts.len();
+        if let Some(r) = &c.native.records {
+            let bytes = |k: usize| (0..256).filter(|&b| usize::from(r.ends[b]) == k).count();
+            eprintln!("{} end rules: {}", r.rules.len(), r.rules.iter().enumerate().map(|(k, x)| format!("{x:?} ({} bytes)", bytes(k))).collect::<Vec<_>>().join(", "));
+            // Each rule's share of the corpus's tokens (by their first bytes): what a dispatch
+            // is laid out for.
+            let files = corpus();
+            let mut per = vec![0u64; r.rules.len() + 1];
+            for f in &files {
+                let run = c.program.block_programs[0].run(f.as_bytes());
+                for &st in &run.positions[usize::from(r.starts)] {
+                    let rule = usize::from(r.ends[usize::from(f.as_bytes()[st as usize])]);
+                    per[rule.min(r.rules.len())] += 1;
+                }
+            }
+            let all: u64 = per.iter().sum();
+            eprintln!("tokens by rule: {}", per.iter().enumerate().map(|(k, &n)| format!("{k}: {:.1}%", 100.0 * n as f64 / all as f64)).collect::<Vec<_>>().join(", "));
+        }
         let reach = |o: usize| {
             let mut seen = vec![false; n];
             let mut todo = vec![usize::from(cpu.outputs[o])];
@@ -1534,6 +1853,12 @@ pub mod tests {
                         _ => {}
                     }
                 }
+                for t in r.checks.iter().filter(|t| usize::from(t.o) == o) {
+                    let l = format!("test {:?}", t.then);
+                    if !label.contains(&l) {
+                        label.push(l);
+                    }
+                }
                 if r.skip.map(usize::from) == Some(o) {
                     label.push("skip".into());
                 }
@@ -1549,10 +1874,17 @@ pub mod tests {
                     label.push(format!("mask{i}{:?}", uses.first()));
                 }
             }
+            let d = c.native.output_delays.get(o).copied().unwrap_or(0);
+            if d > 0 {
+                label.push(format!("delay{d}"));
+            }
             rows.push((only, mine, o, label.join(",")));
         }
         rows.sort_by(|a, b| b.cmp(a));
         eprintln!("the CPU's form: {n} operations, {} outputs", cpu.outputs.len());
+        for (x, inst) in cpu.insts.iter().enumerate() {
+            eprintln!("  op {x:3} {inst:?}");
+        }
         for (only, mine, o, label) in rows {
             eprintln!("  output {o:3} {label:30} reads {mine:4}, only it {only:4}");
         }
@@ -1615,6 +1947,104 @@ pub mod tests {
         assert!(r.unplaced != 0, "a float the file ends with is the gap pass's, not a mask's");
     }
 
+    /// The marks' token tests (decision 0177): `float_after` and `json_bad` from checks at their
+    /// tokens, as a lexer marks what it reads, are the masks they replace. The old form (the
+    /// masks, from the regions; a `-` a pair's second byte, as `:-`, none: the tests take a `-`
+    /// token) and the new give the same tape or refusal through tier 2; the CPU's and Metal's
+    /// codes are the interpreter's, over the corpus and each case's edges: a JSON string's bad
+    /// bytes, a comment, a `-`, a leading zero, a form feed, a float before a comment and at the
+    /// file's end.
+    #[test]
+    fn the_marks_tests_are_the_masks() {
+        let new = crate::compiled().expect("compiles");
+        let old_text = crate::GRAMMAR
+            .replace("mark float_after = empty, after number when count(dot) at least 1,", "mask frac_last  = frac & ~next(frac)\nmark float_after = frac_last,")
+            .lines()
+            .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
+            .map(|l| if l.starts_with("mark json_bad ") { "mask in_str      = f_str & ~o_str\nmark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | (in_str & uesc & ~h4) | o_line | o_block | (code & ff) | (code & minus & ~next(digit) & ~second) | (int & zero & ~prev(int) & next(int))\n".to_string() } else { format!("{l}\n") })
+            .collect::<String>();
+        assert!(!old_text.contains(" after string when"), "the old form has the masks alone");
+        let old = crate::compile_text(&old_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles");
+        let r = new.program.block_programs[0].records.as_ref().expect("records");
+        assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::After(_))), "a mark after its token");
+        assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::At(_))), "a mark at its token");
+        assert!(r.tested_only != 0, "float_after reads no mask");
+        // No region on the CPU: its form calls no walk (the readers read them, decision 0177).
+        assert!(new.native.cpu_form().walks.is_empty(), "the CPU walks the regions");
+        let mut inputs: Vec<Vec<u8>> = Vec::new();
+        let cases = [
+            "r(x) :- x = ps - fe.\n",
+            "r(x) :- x = ps - fe, y = \"\\\\s*\".\n",
+            "r(x) :- x = {\"a\": \"b\tc\"}.\n",
+            "r(x) :- x = {\"a\": \"b\\qc\"}.\n",
+            "r(x) :- x = {\"a\": \"\\u12\"}.\n",
+            "r(x) :- x = {\"a\": \"\\u12ab\", \"b\": 1}.\n",
+            "r(x) :- x = {\"a\": // c\n 1}.\n",
+            "r(x) :- x = {\"a\": /* c */ 1}.\n",
+            "r(x) :- x = {\"a\": -1, \"b\": - 1}.\n",
+            "r(x) :- x = {\"a\": 01, \"b\": 0.5, \"c\": 0}.\n",
+            "r(x) :- x = {\"a\":\x0c1}.\n",
+            "r(x) :- x = 1.5 /* c */ , y = 2.\n",
+            "r(x) :- x = 1.5",
+            "r(x) :- x = 1.5 // c",
+            "r(x) :- x = -0.25.\n",
+            "r(x) :- x = \"a-b\", y = \"0\\\\\".\n",
+            "r(x) :- x = 1. // \\u12\n",
+            "r(x) :- x = {\"a\": 1 /* \\u12 */}.\n",
+            "r(x) :- x = \"\\u12\".\n",
+        ];
+        for pad in [0usize, 40, 55, 60, 63] {
+            for c in cases {
+                inputs.push(format!("{}{c}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        // A form feed in a gap across blocks: the refill folds a passed block's bits, and the
+        // bits before the cursor's block (a backtick literal's, a comment's) by the bytes.
+        for pad in [0usize, 30, 60] {
+            let p = " ".repeat(pad);
+            inputs.push(format!("{p}r(x) :- x = {{\"a\":\x0c{}1}}.\n", " ".repeat(70)).into_bytes());
+            inputs.push(format!("{p}r(x) :- x = `\x0c{}`, y = 1.\n", "a".repeat(80)).into_bytes());
+            inputs.push(format!("{p}r(x) :- x = {{\"a\": /* \x0c{} */ 1}}.\n", "c".repeat(80)).into_bytes());
+        }
+        let files = corpus();
+        inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()));
+        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
+        let cpu = new.parser.tier1.run_files(&refs);
+        let lazy = lazy_bits(&new.native);
+        let mut taken = [0usize; 2];
+        for (k, f) in refs.iter().enumerate() {
+            let (a, b) = (new.program.block_programs[0].run(f), old.program.block_programs[0].run(f));
+            // Tier 2's result, the tape or the refusal: the old form checks some of `json_bad`'s
+            // alternatives in tier 2 (`CHECK`, a look-ahead), the new marks their tokens.
+            let (x, y) = (rerail_compiler::stream::run(&new.program, f, &a), rerail_compiler::stream::run(&old.program, f, &b));
+            assert_eq!(x.is_ok(), y.is_ok(), "file {k} {:?}: taken by the tests' marks as by the masks", String::from_utf8_lossy(&f[..f.len().min(80)]));
+            if let (Ok(x), Ok(y)) = (&x, &y) {
+                assert!(x == y, "file {k}: the same tape");
+            }
+            if k < 5 * cases.len() {
+                taken[usize::from(x.is_ok())] += 1;
+            }
+            assert_eq!(cpu[k].codes, unlazy(&a.codes, lazy), "file {k}: the CPU's codes");
+            assert_eq!(cpu[k].totals, a.totals, "file {k}: the CPU's refusals");
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use rerail_metal::block_program::serial::{Segments, run_serial_split};
+            let batch: Vec<rerail_compiler::block::BatchFile<'_>> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
+            let got = run_serial_split(&[&new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            // Metal sets the gap marks tier 2 on the CPU tests itself: its codes are the
+            // interpreter's whole.
+            for (k, m) in got.run.files.iter().enumerate() {
+                assert_eq!(m.codes, new.program.block_programs[0].run(refs[k]).codes, "file {k}: Metal's codes");
+                assert_eq!(unlazy(&m.codes, lazy), cpu[k].codes, "file {k}: Metal's codes, the CPU's");
+                assert_eq!(m.totals, cpu[k].totals, "file {k}: Metal's refusals");
+            }
+        }
+        assert!(taken[0] > 0 && taken[1] > 0, "the cases both refused and taken: {taken:?}");
+        eprintln!("{} files: the same marks; of the cases {} refused, {} taken", refs.len(), taken[0], taken[1]);
+    }
+
     /// A number's checks at its token (`escape … at number when …`, decision 0177): a second
     /// `.` and 19 digits from its first refuse the file, on the interpreter, the CPU and Metal
     /// alike, with the token across a block's edge and longer than a block.
@@ -1623,7 +2053,7 @@ pub mod tests {
         use rerail_compiler::block;
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
-        assert_eq!(r.checks.len(), 2, "a count and a run, the number rule's");
+        assert_eq!(r.checks.iter().filter(|c| c.then == rerail_compiler::records::CheckThen::Escape).count(), 2, "a count and a run, the number rule's");
         let mut cases: Vec<(String, bool)> = Vec::new();
         for pad in [0usize, 30, 40, 44, 50, 55, 58, 60, 63] {
             let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));

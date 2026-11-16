@@ -52,7 +52,7 @@ lao_decorator("decorator").
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error, field, child, text, op, value, node_text
+.input doc, node, line, syntax_error, field, child, text, op, node_text, value
 .output violation
 lao_delegate("_legacy_delegate_stub").
 lao_delegate("_legacy_delegate_stub_async").

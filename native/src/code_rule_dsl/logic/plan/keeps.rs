@@ -63,6 +63,11 @@ pub(super) const M: f64 = 4.0;
 pub(super) const K: usize = 4;
 /// At most this many reader copies made by inlining one relation.
 pub(super) const COPIES: usize = 8;
+/// At most this many copies of one rule of the program, over every pass of the inlining (`inline::inline`): each pass may multiply
+/// a rule's copies (a negated read of a relation of several rules is their product), and a chain of inlined relations
+/// compounds them. `lazy-architecture` (data-layer) took 8 GB in 7 s unfolding, over one file. A rule past it keeps
+/// its read, and the relation read keeps its rules (stored).
+pub(super) const RULE_COPIES: usize = COPIES * 4;
 /// A relation estimated under this many rows is stored without pricing: its rows cost little either way.
 const SMALL: f64 = 1024.0;
 
@@ -277,6 +282,34 @@ pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<Str
         }
         if to_inline {
             inline.insert(rel.to_owned());
+        }
+    }
+    // Each candidate was priced with every other relation stored: its copies read the relations its rules read as
+    // rows. Two chosen where one reads the other compose instead (the reader's copies hold the read relation's body),
+    // a reader copy nobody priced: RUF/PYI's diagnostics' document key `xk_…_rr_diagnostic_3(d)`, read by an `xd_`
+    // cut, over a diagnostic relation also inlined, became `node(d, x), text(x, …), line(x, …), doc(d, …)` joined on
+    // the document alone, 197 M rows on 30 files. So a relation stays inlined only where nothing its rules read is
+    // inlined too (bottom up, its reads decided first); a forced one (`.decl … inline`, RERAIL_INLINE_ONLY) always.
+    if only.is_none() {
+        fn kept<'a>(rel: &'a str, chosen: &BTreeSet<String>, forced: &dyn Fn(&str) -> bool, reads: &dyn Fn(&str) -> Vec<&'a str>, memo: &mut BTreeMap<&'a str, bool>) -> bool {
+            if let Some(&k) = memo.get(rel) {
+                return k;
+            }
+            // Inlined relations are not recursive (`refusals`): the walk ends. Marked first, so a cycle cannot loop.
+            memo.insert(rel, false);
+            let k = chosen.contains(rel) && (forced(rel) || !reads(rel).into_iter().any(|r| r != rel && kept(r, chosen, forced, reads, memo)));
+            memo.insert(rel, k);
+            k
+        }
+        let forced = |rel: &str| f.qualified(rel, "inline");
+        let reads = |rel: &str| { ids_of.get(rel).into_iter().flatten().flat_map(|&k| reads_of(k)).collect::<Vec<_>>() };
+        let mut memo: BTreeMap<&str, bool> = BTreeMap::new();
+        let names: Vec<&str> = ids_of.keys().copied().filter(|r| inline.contains(*r)).collect();
+        let dropped: Vec<&str> = names.into_iter().filter(|r| !kept(r, &inline, &forced, &reads, &mut memo)).collect();
+        for rel in dropped {
+            inline.remove(rel);
+            let under: Vec<&str> = reads(rel).into_iter().filter(|r| memo.get(r).copied().unwrap_or(false)).collect();
+            lines.push(format!("{rel}: stored, it reads {} inlined, and was priced reading it stored", under.join(", ")));
         }
     }
     if super::super::profile::on() {
@@ -1553,18 +1586,18 @@ pub mod tests {
         let db = rusqlite::Connection::open_in_memory().unwrap();
         let mut stats = Stats::empty(&prog);
         for (rel, n) in [("load", 200_000.0), ("look", 500_000.0), ("binding", 30_000.0)] {
-            stats.card.insert(rel.into(), n);
+            stats.card.insert(rel, n);
         }
         let mut inputs = Inputs::file();
         inputs.facts.clear();
         inputs.given = Some(stats);
         let mut model = make_plan(&Placed::of_program(&prog).unwrap(), &db, inputs).unwrap();
         for (rel, n) in [("load", 200_000.0), ("look", 500_000.0), ("binding", 30_000.0)] {
-            model.stats.card.insert(rel.into(), n);
+            model.stats.card.insert(rel, n);
         }
         for (rel, ndvs) in [("load", vec![200_000.0, 500.0]), ("look", vec![5_000.0, 400.0, 800.0]), ("binding", vec![1_000.0, 700.0, 3_000.0])] {
             for (c, d) in ndvs.into_iter().enumerate() {
-                model.ndv.insert((rel.into(), c), d);
+                model.ndv.insert((rel, c), d);
             }
         }
         let decided = |model: &mut Model| choose(&Placed::of_program(&prog).unwrap(), model).unwrap().map(|(done, _)| done).unwrap_or_default();
@@ -1667,7 +1700,40 @@ pub mod tests {
         assert_eq!(first.to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
     }
 
+    /// A rule's copies over every pass stay within `RULE_COPIES`: each read of a two-rule inlined relation doubles
+    /// them, and six reads would make 64. Past the bound the rule keeps its read, so the relation keeps its rules.
+    #[test]
+    fn unfolding_stops_at_a_rules_copy_bound() {
+        let reader = rule("o(x) :- r(x), r(y1), r(y2), r(y3), r(y4), r(y5).");
+        let base = super::super::body::made(&[reader, rule("r(z) :- a(z)."), rule("r(z) :- b(z).")]).unwrap();
+        let got = super::inline::inline(&base, &base.rules().map(|r| r.id()).collect::<Vec<_>>(), &BTreeSet::from(["r".to_owned()])).unwrap();
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
+        let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists);
+        let copies: Vec<Rule> = got.rules.iter().map(|e| tree.rule(got.v.rule(e.0).unwrap())).filter(|r| r.head.rel == "o").collect();
+        assert_eq!(copies.len(), RULE_COPIES);
+        assert!(copies.iter().all(|r| r.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "r").count() == 1));
+        assert!(got.unfinished.contains("r"), "the relation keeps its rules");
+    }
+
     /// A model of `prog` whose inputs have the rows and distinct values by column given.
+    /// Each candidate is priced with every other stored. Two chosen where one reads the other would compose (the
+    /// reader's copies holding the read relation's body), which nobody priced: the reader is stored. (RUF's and PYI's
+    /// diagnostics' document key over an inlined diagnostic: 197 M rows on 30 files.)
+    #[test]
+    fn a_relation_reading_an_inlined_one_is_stored() {
+        let prog = super::super::super::rr::parse(
+            ".decl a(x: number)\n.decl b(x: number, y: number)\n.decl c(x: number)\n.input a\n.input b\n.input c\n\
+             .decl s(x: number)\ns(x) :- b(x, y).\n\
+             .decl r(x: number)\nr(x) :- s(x), c(x).\n\
+             .decl o(x: number)\no(x) :- a(x), r(x).\n.output o\n",
+        )
+        .unwrap();
+        let mut model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 1_000_000.0, &[100_000.0, 1_000.0]), ("c", 1_000_000.0, &[1_000_000.0])]);
+        let done = choose(&Placed::of_program(&prog).unwrap(), &mut model).unwrap().map(|(done, _)| done).unwrap_or_default();
+        assert!(!(done.iter().any(|r| r == "s") && done.iter().any(|r| r == "r")), "both inlined: {done:?}");
+        assert!(!done.is_empty(), "nothing inlined: the case does not choose");
+    }
+
     fn model_with(prog: &Program, inputs: &[(&str, f64, &[f64])]) -> Model {
         use super::super::{Inputs, Stats};
         use std::collections::{HashMap, HashSet};

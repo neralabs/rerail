@@ -193,104 +193,16 @@ pub mod w {
     }
 }
 
-/// A word's first 8 bytes as one integer, little-endian, their case bit set, zeros past its end.
-const fn word_key(w: &[u8]) -> u64 {
-    let mut k = 0u64;
-    let mut i = 0;
-    while i < w.len() && i < 8 {
-        k |= ((w[i] | 0x20) as u64) << (8 * i);
-        i += 1;
-    }
-    k
-}
+rerail_simd8::keyword_switch!(
+    /// The keyword switch (`rerail_simd8::words`) over `w::TEXT`: a word's code is its index there.
+    static WORDS = w::TEXT, fold: true
+);
 
-/// A word's slot in `SLOTS`, by its first 8 bytes and its length: a multiplier under which every
-/// word takes a slot of its own of 4,096 (a perfect hash; `SLOTS` is refused at compile time where
-/// two share one).
-#[inline(always)]
-const fn word_slot(key: u64, len: usize) -> usize {
-    ((key ^ (len as u64).wrapping_mul(0x9e37_79b9)).wrapping_mul(HASH) >> 52) as usize
-}
-
-const SLOT_COUNT: usize = 4096;
-
-#[allow(long_running_const_eval)]
-const HASH: u64 = find_hash();
-
-/// The first multiplier (of a fixed sequence) under which the words' slots are distinct.
-const fn find_hash() -> u64 {
-    let mut m = 0x8f58_640b_360e_7c81u64;
-    loop {
-        let mut used = [false; SLOT_COUNT];
-        let mut ok = true;
-        let mut i = 1;
-        while i < w::TEXT.len() {
-            let t = w::TEXT[i];
-            let s = ((word_key(t) ^ (t.len() as u64).wrapping_mul(0x9e37_79b9)).wrapping_mul(m) >> 52) as usize;
-            if used[s] {
-                ok = false;
-                break;
-            }
-            used[s] = true;
-            i += 1;
-        }
-        if ok {
-            return m;
-        }
-        m = m.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) | 1;
-    }
-}
-
-/// Each slot's word code (0: none): 4 KB, in the first cache levels.
-static SLOTS: [u8; SLOT_COUNT] = {
-    let mut t = [0u8; SLOT_COUNT];
-    let mut i = 1;
-    while i < w::TEXT.len() {
-        let text = w::TEXT[i];
-        assert!(text.len() <= 16);
-        let slot = word_slot(word_key(text), text.len());
-        assert!(t[slot] == 0, "two words in a slot");
-        t[slot] = i as u8;
-        i += 1;
-    }
-    t
-};
-
-/// Each word's first 8 bytes and its length, by code.
-static KEYS: [(u64, u8); 256] = {
-    let mut t = [(0u64, 0u8); 256];
-    let mut i = 1;
-    while i < w::TEXT.len() {
-        t[i] = (word_key(w::TEXT[i]), w::TEXT[i].len() as u8);
-        i += 1;
-    }
-    t
-};
-
-/// The word `src[i..end]`'s code, in any case: its first 8 bytes loaded as one integer, their case
-/// bit set, masked to its length, hashed to its one slot and compared once (and its tail, for the
-/// few words past 8 bytes). A name's bytes are `[A-Za-z0-9_]` and bytes from 0x80: setting the case
-/// bit maps no other name byte onto a keyword's.
+/// The word `src[i..end]`'s code (0: none), in any case (ASCII case folded: a name's bytes are `[A-Za-z0-9_]` and bytes from 0x80, and
+/// folding maps no other name byte onto a keyword's): one probe of the keyword switch.
 #[inline(always)]
 pub fn word(src: &[u8], i: usize, end: usize) -> u8 {
-    let len = end - i;
-    if len.wrapping_sub(1) >= 16 {
-        return 0;
-    }
-    let raw = match src.get(i..i + 8) {
-        Some(b) => u64::from_le_bytes(b.try_into().expect("8 bytes")) | 0x2020_2020_2020_2020,
-        None => word_key(&src[i..end]),
-    };
-    let k = if len >= 8 { raw } else { raw & (u64::MAX >> (64 - 8 * len)) };
-    let code = SLOTS[word_slot(k, len)];
-    let (wk, wl) = KEYS[usize::from(code)];
-    if code == 0 || wk != k || usize::from(wl) != len {
-        return 0;
-    }
-    if len > 8 && !w::TEXT[usize::from(code)][8..].eq_ignore_ascii_case(&src[i + 8..end]) {
-        return 0;
-    }
-    code
+    WORDS.find(src, i, end) as u8
 }
 
 /// The character at `at` (a UTF-8 lead byte at or past 0x80) and its length.
@@ -717,10 +629,7 @@ impl<'s> Lexer<'s> {
     /// A heredoc's or nowdoc's opening from `s` (its `<<<`): whether a nowdoc, its word's span, and
     /// where its body's line starts (past the opening line's end). `None` where none opens.
     pub fn heredoc_open(&self, s: usize) -> Option<(bool, usize, usize, usize)> {
-        let mut i = s + 3;
-        while matches!(self.at(i), b' ' | b'\t') {
-            i += 1;
-        }
+        let mut i = self.blocks.blank_end(s + 3);
         let quote = self.at(i);
         let nowdoc = quote == b'\'';
         if matches!(quote, b'\'' | b'"') {

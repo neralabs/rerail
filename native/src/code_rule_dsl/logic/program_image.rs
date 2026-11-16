@@ -69,7 +69,7 @@ pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x04";
 /// 4: a derivation's rules record their sources (`R::From`); the about rows hold no `fact_rel`.
 pub const FORMAT: u32 = 4;
 /// The program the `.about` rows are written as (`program_facts`), as the text has them.
-const ABOUT: &str = "a";
+pub(crate) const ABOUT: &str = "a";
 
 // ---- ids ----
 

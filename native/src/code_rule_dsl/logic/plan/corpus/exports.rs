@@ -219,9 +219,23 @@ pub(super) struct Counted {
 }
 
 struct CountedRel {
+    /// The rows that may be more than one file's (`patch`): each once, with how many files hold it, found by hash.
     columns: Vec<Vec<i64>>,
     counts: Vec<u32>,
     set: HashTable<u32>,
+    /// The rows naming each document (`patch_own`), as one file's entry gave them: its own document's, or a guest's,
+    /// which every file holding that guest gives alike. Counted in and out as one, compared, not hashed a row at a
+    /// time; `times` the files that gave them.
+    own: BTreeMap<i64, OwnRows>,
+    /// The column naming a row's document, where the rows have one (an export's): `source` keeps a row once that
+    /// is both a document's own and a shared row naming it.
+    at: Option<usize>,
+}
+
+/// The rows of a relation naming one document, row-major, and how many times they were counted in.
+struct OwnRows {
+    rows: Vec<i64>,
+    times: u32,
 }
 
 impl Counted {
@@ -231,10 +245,54 @@ impl Counted {
         if width == 0 || flat.is_empty() {
             return true;
         }
-        let held = self.rels.entry(rel.to_owned()).or_insert_with(|| CountedRel { columns: vec![Vec::new(); width], counts: Vec::new(), set: HashTable::new() });
-        if held.columns.len() != width {
-            return false;
+        let Some(held) = self.rel(rel, width) else { return false };
+        held.patch(flat, sign)
+    }
+
+    /// A file's rows of `rel` naming document `doc` (`flat`, each naming it in column `at` where the rows have one) in
+    /// or out, as one: counted in, they are kept as they come, or counted once more where another file gave the same;
+    /// counted out, compared with those kept. Rows that do not match those kept for `doc` are counted as shared rows.
+    pub(super) fn patch_own(&mut self, rel: &str, width: usize, doc: i64, at: Option<usize>, flat: &[i64], sign: i64) -> bool {
+        if width == 0 || flat.is_empty() {
+            return true;
         }
+        let Some(held) = self.rel(rel, width) else { return false };
+        held.at = at;
+        match (held.own.get_mut(&doc), sign > 0) {
+            (None, true) => {
+                held.own.insert(doc, OwnRows { rows: flat.to_vec(), times: 1 });
+                true
+            }
+            (Some(own), true) if own.rows == flat => {
+                own.times += 1;
+                true
+            }
+            (Some(own), false) if own.rows == flat => {
+                own.times -= 1;
+                if own.times == 0 {
+                    held.own.remove(&doc);
+                }
+                true
+            }
+            _ => held.patch(flat, sign),
+        }
+    }
+
+    /// `rel`'s rows, made at `width` when new; `None` when they are of another width.
+    fn rel(&mut self, rel: &str, width: usize) -> Option<&mut CountedRel> {
+        let held = self.rels.entry(rel.to_owned()).or_insert_with(|| CountedRel::new(width));
+        (held.columns.len() == width).then_some(held)
+    }
+}
+
+impl CountedRel {
+    fn new(width: usize) -> Self {
+        CountedRel { columns: vec![Vec::new(); width], counts: Vec::new(), set: HashTable::new(), own: BTreeMap::new(), at: None }
+    }
+
+    /// Shared rows in or out, one at a time, by hash.
+    fn patch(&mut self, flat: &[i64], sign: i64) -> bool {
+        let (width, held) = (self.columns.len(), self);
         for row in flat.chunks_exact(width) {
             let h = Held::hash(row.iter().copied());
             let columns = &held.columns;
@@ -258,11 +316,61 @@ impl Counted {
         true
     }
 
+    /// Every row held, each once with how many files hold it: the documents' own rows put in the set too.
+    fn materialized(&self) -> CountedRel {
+        let mut all = CountedRel { columns: self.columns.clone(), counts: self.counts.clone(), set: self.set.clone(), own: BTreeMap::new(), at: self.at };
+        for own in self.own.values() {
+            for _ in 0..own.times {
+                all.patch(&own.rows, 1);
+            }
+        }
+        all
+    }
+
+    /// Rows held, each once: the shared rows, less those that are also a document's own, then the documents' own.
+    fn rows_once(&self) -> Vec<Vec<i64>> {
+        let width = self.columns.len();
+        let mut out = self.columns.clone();
+        if self.own.is_empty() {
+            return out;
+        }
+        let shared = self.counts.len();
+        // A shared row naming a document whose own rows are held may be one of them (or any shared row, when the
+        // rows name no document).
+        let of = |id: usize| self.at.map(|at| super::memo::document_of(self.columns[at][id]));
+        let maybe: Vec<usize> = (0..shared).filter(|&id| of(id).is_none_or(|d| self.own.contains_key(&d))).collect();
+        if !maybe.is_empty() {
+            let mut own: rustc_hash::FxHashSet<&[i64]> = Default::default();
+            for (d, rows) in &self.own {
+                if maybe.iter().any(|&id| of(id).is_none_or(|x| x == *d)) {
+                    own.extend(rows.rows.chunks_exact(width));
+                }
+            }
+            let gone: rustc_hash::FxHashSet<usize> = maybe.into_iter().filter(|&id| own.contains(self.columns.iter().map(|c| c[id]).collect::<Vec<_>>().as_slice())).collect();
+            if !gone.is_empty() {
+                for (c, col) in out.iter_mut().enumerate() {
+                    *col = (0..shared).filter(|id| !gone.contains(id)).map(|id| self.columns[c][id]).collect();
+                }
+            }
+        }
+        for own in self.own.values() {
+            for row in own.rows.chunks_exact(width) {
+                for (col, v) in out.iter_mut().zip(row) {
+                    col.push(*v);
+                }
+            }
+        }
+        out
+    }
+
+}
+
+impl Counted {
     /// Export `rel`'s rows held, as a source of columns `c0…` (a copy: the counts stay for the next run).
     pub(super) fn source(&self, rel: &str, width: usize) -> Arc<dyn Source> {
         let names = (0..width).map(|c| format!("c{c}")).collect();
         let values = match self.rels.get(rel) {
-            Some(held) if held.columns.len() == width => held.columns.iter().cloned().map(Some).collect(),
+            Some(held) if held.columns.len() == width => held.rows_once().into_iter().map(Some).collect(),
             _ => vec![Some(Vec::new()); width],
         };
         crate::code_rule_dsl::logic::native::component::columns_source(names, values)
@@ -271,6 +379,8 @@ impl Counted {
     /// `source`, less the rows `minus` counts: a row held by more files than `minus` says.
     pub(super) fn source_without(&self, rel: &str, width: usize, minus: &Counted) -> Arc<dyn Source> {
         let (Some(held), Some(less)) = (self.rels.get(rel), minus.rels.get(rel)) else { return self.source(rel, width) };
+        // Rare (a cone of requests over files not seen yet): every row by hash.
+        let (held, less) = (&held.materialized(), &less.materialized());
         let mut values: Vec<Vec<i64>> = vec![Vec::new(); width];
         if held.columns.len() == width {
             for id in 0..held.counts.len() {
@@ -295,12 +405,22 @@ impl Counted {
         if let Some(held) = self.rels.get(rel).filter(|h| h.columns.len() == width) {
             // Mostly each row once: the columns as they are.
             if held.counts.iter().all(|&n| n == 1) {
-                return held.columns.clone();
+                out = held.columns.clone();
+            } else {
+                for (id, &n) in held.counts.iter().enumerate() {
+                    for _ in 0..n {
+                        for (c, col) in out.iter_mut().enumerate() {
+                            col.push(held.columns[c][id]);
+                        }
+                    }
+                }
             }
-            for (id, &n) in held.counts.iter().enumerate() {
-                for _ in 0..n {
-                    for (c, col) in out.iter_mut().enumerate() {
-                        col.push(held.columns[c][id]);
+            for own in held.own.values() {
+                for _ in 0..own.times {
+                    for row in own.rows.chunks_exact(width) {
+                        for (col, v) in out.iter_mut().zip(row) {
+                            col.push(*v);
+                        }
                     }
                 }
             }
@@ -310,7 +430,7 @@ impl Counted {
 
     /// Rows held, over every export.
     pub(super) fn rows(&self) -> usize {
-        self.rels.values().map(|r| r.counts.len()).sum()
+        self.rels.values().map(|r| r.counts.len() + r.own.values().map(|o| o.rows.len() / r.columns.len().max(1)).sum::<usize>()).sum()
     }
 }
 
@@ -380,6 +500,59 @@ pub mod tests {
         // Every row found again after the moves.
         assert!(c.patch("r", 2, &[5, 50, 2, 20], -1));
         assert_eq!(c.rows(), 0);
+    }
+
+    /// A file's own rows are counted in and out as one, and answer as the same rows counted a row at a time: each
+    /// row once in `source` (a shared row that is also a document's own too), as many times as files hold it in
+    /// `columns_each`, and less another count in `source_without`. Own rows that do not match those kept are counted
+    /// as shared rows.
+    #[test]
+    fn a_files_own_rows_count_as_one_and_answer_as_rows() {
+        let node = |doc: i64, i: i64| (doc << 32) | i;
+        let sorted = |cols: Vec<Vec<i64>>| {
+            let mut v: Vec<(i64, i64)> = (0..cols[0].len()).map(|r| (cols[0][r], cols[1][r])).collect();
+            v.sort();
+            v
+        };
+        let rows = |s: Arc<dyn Source>| sorted((0..2).map(|c| (0..s.len()).map(|r| s.value(r, c)).collect()).collect());
+        let one = [node(1, 0), 7, node(1, 1), 8];
+        let two = [node(2, 0), 9];
+        let three = [node(1, 1), 8, node(1, 5), 9];
+        let (mut own, mut hashed) = (Counted::default(), Counted::default());
+        assert!(own.patch_own("e", 2, 1, Some(0), &one, 1) && own.patch_own("e", 2, 2, Some(0), &two, 1) && own.patch("e", 2, &three, 1));
+        assert!(hashed.patch("e", 2, &one, 1) && hashed.patch("e", 2, &two, 1) && hashed.patch("e", 2, &three, 1));
+        assert_eq!(rows(own.source("e", 2)), rows(hashed.source("e", 2)), "each row once");
+        assert_eq!(rows(own.source("e", 2)).len(), 4);
+        assert_eq!(sorted(own.columns_each("e", 2)), sorted(hashed.columns_each("e", 2)), "as many as hold it");
+        let mut minus = Counted::default();
+        assert!(minus.patch("e", 2, &three, 1));
+        assert_eq!(rows(own.source_without("e", 2, &minus)), rows(hashed.source_without("e", 2, &minus)));
+        // Document 2 counted in again with other rows: shared; each counted out in either order.
+        let other = [node(2, 0), 9, node(2, 1), 4];
+        assert!(own.patch_own("e", 2, 2, Some(0), &other, 1) && hashed.patch("e", 2, &other, 1));
+        assert_eq!(sorted(own.columns_each("e", 2)), sorted(hashed.columns_each("e", 2)));
+        assert!(own.patch_own("e", 2, 2, Some(0), &other, -1) && own.patch_own("e", 2, 2, Some(0), &two, -1));
+        assert!(own.patch_own("e", 2, 1, Some(0), &one, -1));
+        assert_eq!(rows(own.source("e", 2)), vec![(node(1, 1), 8), (node(1, 5), 9)]);
+        assert!(!own.patch_own("e", 2, 1, Some(0), &one, -1), "own rows not held cannot be counted out");
+        assert!(own.patch("e", 2, &three, -1));
+        assert_eq!(own.rows(), 0);
+    }
+
+    /// A guest's rows that two files give alike are counted as one, twice: held while either holds them.
+    #[test]
+    fn a_guests_rows_given_alike_by_two_files_count_twice() {
+        let node = |doc: i64, i: i64| (doc << 32) | i;
+        let guest = [node(9, 0), 1, node(9, 1), 2];
+        let mut c = Counted::default();
+        assert!(c.patch_own("e", 2, 9, Some(0), &guest, 1) && c.patch_own("e", 2, 9, Some(0), &guest, 1));
+        assert_eq!(c.columns_each("e", 2)[0].len(), 4, "held by two files");
+        assert_eq!(c.source("e", 2).len(), 2, "each row once");
+        assert!(c.patch_own("e", 2, 9, Some(0), &guest, -1));
+        assert_eq!(c.source("e", 2).len(), 2, "still held by one");
+        assert!(c.patch_own("e", 2, 9, Some(0), &guest, -1));
+        assert_eq!(c.rows(), 0);
+        assert!(!c.patch_own("e", 2, 9, Some(0), &guest, -1));
     }
 
     #[test]

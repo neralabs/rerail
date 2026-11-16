@@ -9,11 +9,12 @@
 //!
 //! A file that embeds code is several documents: the **host**, the file's own tree, and one
 //! **guest** per `via` its dialect embeds that the file holds a program for. Every document holds
-//! one grammar and passes the same tape checks. An embedder builds, from a file's tree and source,
+//! one grammar and passes the same tape checks. An embedder builds, from a file's tape and source,
 //! at most one program, which is
 //! - its text, written as the host's language reads the file (a Blade view's PHP, a Vue
-//!   component's scripts and template expressions), and its tree, parsed from that text with the
-//!   grammar of `Program::dialect`, one of the dialects the host embeds through that `via` (a Vue
+//!   component's scripts and template expressions), and its parse, read from that text in the
+//!   grammar of `Program::dialect` (`Parse::read`: the dialect's lean parser's tape, or
+//!   tree-sitter's tree where it refuses), one of the dialects the host embeds through that `via` (a Vue
 //!   file's scripts are TypeScript, TSX or JavaScript, as its `lang` says). Its nodes span the
 //!   text, as any tree's do;
 //! - where its text stands in the host source (`SegmentMap`), recorded as the program is written:
@@ -31,6 +32,7 @@
 
 // cratify: `compiled_view` is rerail-lang-php's (it mounts it)
 // cratify: `script_block` is rerail-lang-ecma's (it mounts it)
+pub mod host;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_script;
@@ -41,9 +43,9 @@ pub use test_script::TestScript;
 
 use crate::code_rule_dsl::language::GrammarDialect;
 
+use host::HostNode;
 use segments::SegmentMap;
 use std::ops::Range;
-use tree_sitter::Node as TsNode;
 
 /// How a program's text was read: tree-sitter's tree, or a lean parser's tape of it, which is the
 /// tape that tree encodes to (decision 0198). Either spans the program's text.
@@ -52,6 +54,41 @@ pub enum Parse {
     /// The whole text's tape: the placeholders the program's segments omit are still in it
     /// (`DerivedImage::encode` leaves them out, as it does a tree's).
     Tape(crate::code_rule_dsl::tape::TapeImage),
+}
+
+impl Parse {
+    /// A program's text read in `dialect`: by the dialect's lean parser where it has one and that
+    /// parser reads the text, else by tree-sitter (one behavior: tree-sitter's tape, or a
+    /// refusal). `None` where tree-sitter has no grammar for the dialect.
+    pub fn read(dialect: GrammarDialect, text: &str, budget: &dyn Fn() -> bool) -> Option<Self> {
+        use crate::code_rule_dsl::tape::{Grammar, ecma_lean, php_lean};
+        let ecma = |lean| Grammar::embedded(dialect).ok().and_then(|grammar| ecma_lean::encode(lean, &grammar, text, budget).ok());
+        let lean = match dialect {
+            GrammarDialect::JavaScript => ecma(rerail_ecma_lean::Dialect::JavaScript),
+            GrammarDialect::TypeScript => ecma(rerail_ecma_lean::Dialect::TypeScript),
+            GrammarDialect::Tsx => ecma(rerail_ecma_lean::Dialect::Tsx),
+            GrammarDialect::Php => Grammar::embedded(dialect).ok().and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
+            _ => None,
+        };
+        if let Some(tape) = lean.and_then(Result::ok) {
+            return Some(Self::Tape(tape));
+        }
+        Self::tree_sitter(dialect, text).map(Self::Tree)
+    }
+
+    /// tree-sitter's tree of a program's text in `dialect`.
+    pub fn tree_sitter(dialect: GrammarDialect, text: &str) -> Option<tree_sitter::Tree> {
+        use ast_grep_language::LanguageExt;
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&dialect.get_ts_language()).ok()?;
+        parser.parse(text, None)
+    }
+
+    /// Whether a lean parser read the text.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn is_lean(&self) -> bool {
+        matches!(self, Self::Tape(_))
+    }
 }
 
 /// A program an embedder built from a host file.
@@ -74,9 +111,9 @@ pub struct Program {
 /// program's statements a meaning of its own, which its crate registers too (`scope::install_program_scopes`: a
 /// Blade view's markers define the variables its directives do).
 pub trait Embedder: Send + Sync {
-    /// The program the host tree rooted at `root`, over `source`, embeds; `None` where it embeds
-    /// none.
-    fn build(&self, root: TsNode<'_>, source: &str) -> Option<Program>;
+    /// The program the host whose tape's root is `root`, over `source`, embeds; `None` where it
+    /// embeds none. The tape is read in place (`host`), whichever parser wrote it.
+    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Option<Program>;
 }
 
 static EMBEDDERS: std::sync::OnceLock<Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>> =
@@ -87,8 +124,9 @@ pub fn install_embedders(embedders: Vec<(crate::code_rule_dsl::language::Via, &'
     let _ = EMBEDDERS.set(embedders);
 }
 
-/// `via`'s embedder. Every `Via` the build has is registered as the engine loads.
-pub(crate) fn embedder(via: crate::code_rule_dsl::language::Via) -> &'static dyn Embedder {
+/// `via`'s embedder. Every `Via` the build has is registered as the engine loads. The logic engine's guests build
+/// the programs through it too (decision 0222).
+pub fn embedder(via: crate::code_rule_dsl::language::Via) -> &'static dyn Embedder {
     EMBEDDERS
         .get()
         .and_then(|embedders| embedders.iter().find(|(known, _)| *known == via))

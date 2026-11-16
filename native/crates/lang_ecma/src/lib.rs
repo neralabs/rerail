@@ -1,7 +1,12 @@
 //! JavaScript, TypeScript and Vue: manifests, imports, values.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-#![allow(dead_code, unused_imports)]
+// A mounted module re-exports its dependency's by glob, and its sources import the same items
+// under the same names: the glob's name and the private one are one item.
+#![allow(dead_code, unused_imports, hidden_glob_reexports)]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
 pub use rerail_store::git_workspace;
@@ -342,7 +347,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::LazyLock;
     }
-    #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         #[allow(unused_imports)]
@@ -381,9 +385,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::atomic::{AtomicUsize, Ordering};
     }
-    #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
@@ -398,7 +400,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
@@ -435,7 +436,6 @@ pub mod code_rule_dsl {
     #[cfg(feature="code-rule-profile")]
     pub use rerail_w::code_rule_dsl::profile;
     pub use rerail_w::code_rule_dsl::query;
-    #[path = "residency"]
     pub mod residency {
         pub use rerail_w::code_rule_dsl::residency::admission;
         #[allow(unused_imports)]
@@ -518,7 +518,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::suppress::kinds::*;
     }
-    #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[allow(unused_imports)]
@@ -556,7 +555,6 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     }
     pub use rerail_facts::code_rule_dsl::text;
-    #[path = "transducer"]
     pub mod transducer {
         pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
         #[allow(unused_imports)]
@@ -613,7 +611,6 @@ pub mod code_rule_dsl {
     pub mod vue;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_w::code_rule_dsl::walks;
-    #[path = "waves"]
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
         pub use rerail_w::code_rule_dsl::waves::relational;

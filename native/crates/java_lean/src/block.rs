@@ -96,9 +96,9 @@ pub fn is_word(c: u8) -> bool {
 
 type Masks = [u64; MASKS];
 
-/// One block's masks.
+/// One block's masks, and its NULs' mask.
 #[inline(always)]
-unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> Masks {
+unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> (Masks, u64) {
     unsafe {
         let v = S::load(b);
         let c = S::classify(v, &LO, &HI);
@@ -108,25 +108,33 @@ unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> Masks {
         let blank = S::to_bitmask(S::test(c, S::splat(C_BLANK)));
         let stop = S::to_bitmask(S::or(is(b'"'), is(b'\\')));
         let star = S::to_bitmask(S::or(is(b'*'), is(b'/')));
-        [word, blank, eol, stop, star]
+        ([word, blank, eol, stop, star], S::to_bitmask(is(0)))
     }
 }
 
-/// Stage 1 over `src`: each block's masks, the last block's padded.
+/// Stage 1 over `src`: each block's masks, the last block's padded, and its first NUL's offset.
 #[inline(always)]
-unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> Vec<Masks> {
+unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> (Vec<Masks>, Option<usize>) {
     let mut out = Vec::with_capacity(src.len().div_ceil(64));
+    let mut nul = None;
     let mut at = 0;
     while let Some(b) = src.get(at..at + 64) {
-        out.push(unsafe { masks::<S>(b.try_into().expect("64 bytes")) });
+        let (m, z) = unsafe { masks::<S>(b.try_into().expect("64 bytes")) };
+        out.push(m);
+        if z != 0 && nul.is_none() {
+            nul = Some(at + z.trailing_zeros() as usize);
+        }
         at += 64;
     }
     if at < src.len() {
         let mut b = [0u8; 64];
         let n = src.len() - at;
         b[..n].copy_from_slice(&src[at..]);
-        let mut m = unsafe { masks::<S>(&b) };
+        let (mut m, z) = unsafe { masks::<S>(&b) };
         let past = !0u64 << n;
+        if z & !past != 0 && nul.is_none() {
+            nul = Some(at + z.trailing_zeros() as usize);
+        }
         m[WORD] &= !past;
         m[BLANK] &= !past;
         for k in EOL..MASKS {
@@ -134,23 +142,30 @@ unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> Vec<Masks> {
         }
         out.push(m);
     }
-    out
+    (out, nul)
 }
 
 rerail_simd8::dispatch! {
-    fn stage1_best(src: &[u8]) -> Vec<Masks> = stage1, on stage1_on;
+    fn stage1_best(src: &[u8]) -> (Vec<Masks>, Option<usize>) = stage1, on stage1_on;
 }
 
 /// The text's masks (stage 1), for the lexer's scans (stage 2).
 pub struct Blocks<'s> {
     src: &'s [u8],
     m: Vec<Masks>,
+    nul: Option<usize>,
 }
 
 impl<'s> Blocks<'s> {
     /// Stage 1 over `src`, on the best backend the CPU runs.
     pub fn of(src: &'s [u8]) -> Self {
-        Blocks { src, m: stage1_best(src) }
+        let (m, nul) = stage1_best(src);
+        Blocks { src, m, nul }
+    }
+
+    /// The text's first NUL, if it holds one (a syntax error in every token and between them).
+    pub fn first_nul(&self) -> Option<usize> {
+        self.nul
     }
 
     /// The first byte from `at` on whose bit in mask `k` is `set`.
@@ -209,8 +224,8 @@ impl<'s> Blocks<'s> {
 mod tests {
     use super::*;
 
-    /// The masks one byte at a time.
-    fn scalar(src: &[u8]) -> Vec<Masks> {
+    /// The masks one byte at a time, and the first NUL.
+    fn scalar(src: &[u8]) -> (Vec<Masks>, Option<usize>) {
         let mut out = vec![[0u64; MASKS]; src.len().div_ceil(64)];
         for (b, o) in out.iter_mut().enumerate() {
             for i in 0..64 {
@@ -229,7 +244,7 @@ mod tests {
                 o[STAR] |= bit(matches!(c, b'*' | b'/'));
             }
         }
-        out
+        (out, src.iter().position(|&c| c == 0))
     }
 
     #[test]
@@ -270,5 +285,7 @@ mod tests {
         assert_eq!(Blocks::of(b"// x\r\n").eol(0), 4);
         assert_eq!(Blocks::of(b"ab\\c\"").string_stop(0), 2);
         assert_eq!(Blocks::of(b"/* a */").star(2), 5);
+        assert_eq!(Blocks::of(b"ab").first_nul(), None);
+        assert_eq!(Blocks::of(&[[b'a'; 70].as_slice(), b"\0b\0"].concat()).first_nul(), Some(70));
     }
 }

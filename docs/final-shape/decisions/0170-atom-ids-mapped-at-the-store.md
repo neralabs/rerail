@@ -315,3 +315,22 @@ callers wrap the values in the brand at the call, so the claim is made where the
 - 0049 (the lease), 0104 (no SQL inside the waves), 0111 (atoms found by key), 0146 (the memo), 0160 (provisional
   ids and the translation it called for).
 - ast-index-spike indexes: interned ids were process-local, with no shared store to map against.
+
+## A support relation's kind columns are not atoms (2026-11-15)
+
+Which columns hold atoms is decided by their domains (`lower::atom_columns`): a `sym` column of a kind or a field
+holds a grammar id, which no store numbers. A support relation (`supports`, `h__supN`) has its head's columns, then
+each variable its body binds. It was given its head's domains alone. Its later columns had none, so each `sym`
+column among them counted as an atom, a kind's included.
+
+- **What it broke.** typescript-eslint's `eslint_ambient__sup3` binds `kind(p4, k5)`. Its frame tagged `k5` as an
+  atom and stored kind id 2339, over a store whose atoms end at 1,195. The next run with a changed rule set admitted
+  that frame, found no such atom, and read the store's atom segments inside its waves. Under strict mode, it aborted
+  (rc 134). A forked process would have mapped the kind id as an atom.
+- **Fix.** Each column past the head's takes its declared type, else its variable's domain in the support's rule,
+  else a name, as `lower::domains` finds them (`lower::rule_head_domains`).
+- **Older stores.** A relation's identity hashes the engine's build (`plan::identities`), so a rebuilt engine never
+  admits an older build's frames.
+- **Test.** `supports::tests::a_support_relation_keeps_its_kind_columns_out_of_its_atoms`. It fails with the head's
+  domains alone. Three runs of one rule set, then a fourth with one more violation, all on one store: the fourth
+  aborted before the fix. It now finds the same as a cold run of its rules.

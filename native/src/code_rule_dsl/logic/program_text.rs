@@ -321,11 +321,25 @@ pub fn read_stored_version(stored: &Stored, lists: &crate::code_rule_dsl::logic:
     }
 }
 
-/// Keeps `prog` in `store` as its text, a source by its sha256 (held, so the run keeps it, O95), and as its image,
-/// a source by `image_key` (decision 0173): the digest, and the sources written, which the caller names so collection
-/// keeps them. `None` when the text does not read back as `prog`: nothing is kept. An image that does not read back as
-/// `prog` is not kept; the text is.
+/// Keeps `prog` in `store` as its image (decision 0173), a source by its bytes' sha256 and by `image_key`, held so the
+/// run keeps it (O95): the digest, and the sources written, which the caller names so collection keeps them. With
+/// `RERAIL_PROGRAM_IMAGE=off`, as its text, checked to read back as `prog` (`None` when it does not: nothing is kept),
+/// alone.
 pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 32], Vec<SourceId>)>> {
+    // The stored form is the image (decision 0246 §6): encoded once, kept under the digest of its bytes, which is the
+    // source's own hash. Not printed, read back, encoded and decoded again, and digested by `{:?}` to check each.
+    if images() != "off" {
+        let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(prog) else { return Ok(None) };
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        let key = image_key(&digest);
+        let id = match store.source_by_alias(key)? {
+            Some(id) => id,
+            None => store.put_source(&bytes, &[key])?,
+        };
+        store.pin_held_sources(&[id])?;
+        return Ok(Some((digest, vec![id])));
+    }
     let Ok(text) = print(prog) else { return Ok(None) };
     let want = program_facts::debug_digest(prog);
     if !read(&text).is_ok_and(|back| program_facts::debug_digest(&back) == want) {
@@ -374,6 +388,10 @@ pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::col
                 store.pin_held_sources(&[id])?;
                 let bytes = store.get_source(id)?;
                 out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().chain([id]).collect()));
+            }
+            // A program the engine ships (decision 0264): its image from the bundle, kept by no source of the store.
+            None if let Some(bytes) = (mode != "off").then(|| crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(image_key(d)))).flatten() => {
+                out.insert(*d, (Stored::Image(bytes.to_vec()), text_ids[k].into_iter().collect()));
             }
             None if mode != "require" => want_text.push(k),
             None => {}

@@ -72,16 +72,16 @@ ruf022_all_name(n) :- (kind(n, "parenthesized_expression") ; kind(n, "tuple_patt
 
 // all_slot(n): the JSON util `all-slot`, used where the JSON says `matches: "all-slot"`
 .decl ruf022_all_slot(n: node)
-ruf022_all_slot(n) :- ruf022_demand_all_slot(n), ruf022_up_1(n, p1), field(_, "right", n),
-    field(p1, "left", c2), ruf022_all_name(c2),
-    count : { child(p3, p1, _), kind(p3, "assignment") } = 0.
-ruf022_all_slot(n) :- ruf022_demand_all_slot(n), ruf022_up_2(n, p4), field(_, "right", n),
-    field(p4, "left", c5), ruf022_all_name(c5), field(p4, "operator", c6), glob("+=", c6).
-ruf022_all_slot(n) :- ruf022_demand_all_slot(n), ruf022_up_3(n, p7),
-    k9 = count : { child(p7, c8, _), ruf022_elem(c8) }, k9 >= 1, k9 <= 1, child(p10, p7, _),
-    kind(p10, "call"), field(p10, "function", c11), kind(c11, "attribute"),
-    field(c11, "object", c12), ruf022_all_name(c12), field(c11, "attribute", c13),
-    glob("extend", c13).
+ruf022_all_slot(n) :- ruf022_demand_all_slot(n), ruf022_up_1(n, p1),
+    field(p1, "right", f2), (f2 = n ; within(n, f2)), field(p1, "left", c3),
+    ruf022_all_name(c3), count : { child(p4, p1, _), kind(p4, "assignment") } = 0.
+ruf022_all_slot(n) :- ruf022_demand_all_slot(n), ruf022_up_2(n, p5),
+    field(p5, "right", f6), (f6 = n ; within(n, f6)), field(p5, "left", c7),
+    ruf022_all_name(c7).
+ruf022_all_slot(n) :- ruf022_demand_all_slot(n), ruf022_up_3(n, p16),
+    k18 = count : { child(p16, c17, _), ruf022_elem(c17) }, k18 >= 1, k18 <= 1,
+    child(p19, p16, _), kind(p19, "call"), field(p19, "function", c20),
+    kind(c20, "attribute"), field(c20, "object", c21), ruf022_all_name(c21), ruf022_tok_has_3(c20).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf022_tok_has_1(n: node)
@@ -93,6 +93,30 @@ ruf022_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
 ruf022_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
 ruf022_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^\\+=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf022_tok_has_2(n: node)
+.stored ruf022_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf022_tok_has_2(n) :- field(n, "operator", c8), glob("+=", c8).
+ruf022_tok_has_2(n) :- op(n, t9), match("\\+=", t9).
+ruf022_tok_has_2(n) :- child(n, c15, _), structural_before(c15, g10),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+ruf022_tok_has_2(n) :- child(n, c15, _), structural_after(c15, g10),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+ruf022_tok_has_2(n) :- node_text(n, g10), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^extend$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf022_tok_has_3(n: node)
+.stored ruf022_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf022_tok_has_3(n) :- field(n, "attribute", c22), glob("extend", c22).
+ruf022_tok_has_3(n) :- op(n, t23), match("extend", t23).
+ruf022_tok_has_3(n) :- child(n, c29, _), structural_before(c29, g24),
+    match("(?s)^(?:(?:.*\\W)?(?:extend)(?:\\W.*)?)$", g24).
+ruf022_tok_has_3(n) :- child(n, c29, _), structural_after(c29, g24),
+    match("(?s)^(?:(?:.*\\W)?(?:extend)(?:\\W.*)?)$", g24).
+ruf022_tok_has_3(n) :- node_text(n, g24), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:extend)(?:\\W.*)?)$", g24).
 
 // demand_all_slot: the nodes all_slot is asked at (it looks at every ancestor of every node)
 .decl ruf022_demand_all_slot(n: node)
@@ -109,7 +133,7 @@ ruf022_up_1(n, p) :- ruf022_demand_all_slot(n), within_stop(n, p, ruf022_stop_15
 // up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl ruf022_up_2(n: node, p: node)
 ruf022_up_2(n, p) :- ruf022_demand_all_slot(n), within_stop(n, p, ruf022_stop_15),
-    kind(p, "augmented_assignment").
+    kind(p, "augmented_assignment"), ruf022_tok_has_2(p).
 
 // up_3(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl ruf022_up_3(n: node, p: node)
@@ -141,20 +165,21 @@ ruf022_stop_15(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 
 // alt_19(n): the JSON `any`: n matches if any one of these rules does
 .decl ruf022_alt_19(n: node)
-ruf022_alt_19(n) :- ruf022_demand_alt_19(n), within(n, p1), field(_, "body", n),
+ruf022_alt_19(n) :- ruf022_demand_alt_19(n), within(n, p1),
+    field(p1, "body", f2), (f2 = n ; within(n, f2)),
     (kind(p1, "function_definition") ; kind(p1, "lambda")).
-ruf022_alt_19(n) :- ruf022_demand_alt_19(n), within(n, p2),
-    ( kind(p2, "class_definition")
-    ; kind(p2, "type_alias_statement")
-    ; kind(p2, "typed_parameter")
-    ; kind(p2, "typed_default_parameter")
+ruf022_alt_19(n) :- ruf022_demand_alt_19(n), within(n, p3),
+    ( kind(p3, "class_definition")
+    ; kind(p3, "type_alias_statement")
+    ; kind(p3, "typed_parameter")
+    ; kind(p3, "typed_default_parameter")
     ).
 
-ruf022_alt_19(n) :- ruf022_demand_alt_19(n), inside(n, p3, "function_definition"),
-    field(_, "return_type", n).
 ruf022_alt_19(n) :- ruf022_demand_alt_19(n), inside(n, p4, "function_definition"),
-    field(_, "type_parameters", n).
-ruf022_alt_19(n) :- ruf022_demand_alt_19(n), within(n, p5),
-    ( child(p1, p5, _), (kind(p1, "list_comprehension") ; kind(p1, "set_comprehension") ; kind(p1, "dictionary_comprehension") ; kind(p1, "generator_expression")), count : { kind(p5, "for_in_clause"), count : { precedes(s1, p5), kind(s1, "for_in_clause") } = 0 } = 0
-    ; field(p2, "left", p5), kind(p2, "for_in_clause")
+    field(p4, "return_type", f5), (f5 = n ; within(n, f5)).
+ruf022_alt_19(n) :- ruf022_demand_alt_19(n), inside(n, p6, "function_definition"),
+    field(p6, "type_parameters", f7), (f7 = n ; within(n, f7)).
+ruf022_alt_19(n) :- ruf022_demand_alt_19(n), within(n, p8),
+    ( child(p1, p8, _), (kind(p1, "list_comprehension") ; kind(p1, "set_comprehension") ; kind(p1, "dictionary_comprehension") ; kind(p1, "generator_expression")), count : { kind(p8, "for_in_clause"), count : { precedes(s1, p8), kind(s1, "for_in_clause") } = 0 } = 0
+    ; field(p2, "left", p8), kind(p2, "for_in_clause")
     ).

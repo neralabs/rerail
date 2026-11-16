@@ -68,7 +68,13 @@ ICN001_from_import(n, PKG, MOD, E) :- inside(n, p2, "import_from_statement"),
 
 // member(n): the JSON util `member`, used where the JSON says `matches: "member"`
 .decl icn001_member(n: node)
-icn001_member(n) :- kind(n, "dotted_name"), icn001_alt_1(n).
+icn001_member(n) :- kind(n, "dotted_name"),
+    ( glob("pyplot", n), inside(n, p1, "import_from_statement"), icn001_tok_has_1(p1)
+    ; glob("typing", n), inside(n, p2, "import_from_statement"), icn001_tok_has_2(p2)
+    ; glob("express", n), inside(n, p3, "import_from_statement"), icn001_tok_has_3(p3)
+    ; glob("ElementTree", n), inside(n, p4, "import_from_statement"), icn001_tok_has_4(p4)
+    ).
+
 
 // ICN001_non_ascii_spelling(n): a finding at node n, from clause `non-ascii-spelling`.
 // Each rule below is one way the JSON `rule` can match.
@@ -92,6 +98,55 @@ icn001_spelled(n) :- kind(n, "dotted_name"), imported_sym(n, q1), icn001_set_3(q
     ).
 
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^matplotlib$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl icn001_tok_has_1(n: node)
+.stored icn001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+icn001_tok_has_1(n) :- field(n, "module_name", c2), glob("matplotlib", c2).
+icn001_tok_has_1(n) :- op(n, t3), match("matplotlib", t3).
+icn001_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:matplotlib)(?:\\W.*)?)$", g4).
+icn001_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:matplotlib)(?:\\W.*)?)$", g4).
+icn001_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:matplotlib)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^numpy$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl icn001_tok_has_2(n: node)
+.stored icn001_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+icn001_tok_has_2(n) :- field(n, "module_name", c11), glob("numpy", c11).
+icn001_tok_has_2(n) :- op(n, t12), match("numpy", t12).
+icn001_tok_has_2(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:numpy)(?:\\W.*)?)$", g13).
+icn001_tok_has_2(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:numpy)(?:\\W.*)?)$", g13).
+icn001_tok_has_2(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:numpy)(?:\\W.*)?)$", g13).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^plotly$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl icn001_tok_has_3(n: node)
+.stored icn001_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+icn001_tok_has_3(n) :- field(n, "module_name", c20), glob("plotly", c20).
+icn001_tok_has_3(n) :- op(n, t21), match("plotly", t21).
+icn001_tok_has_3(n) :- child(n, c27, _), structural_before(c27, g22),
+    match("(?s)^(?:(?:.*\\W)?(?:plotly)(?:\\W.*)?)$", g22).
+icn001_tok_has_3(n) :- child(n, c27, _), structural_after(c27, g22),
+    match("(?s)^(?:(?:.*\\W)?(?:plotly)(?:\\W.*)?)$", g22).
+icn001_tok_has_3(n) :- node_text(n, g22), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:plotly)(?:\\W.*)?)$", g22).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^xml[\\s\\\\]*\\.[\\s\\\\]*etree$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl icn001_tok_has_4(n: node)
+.stored icn001_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+icn001_tok_has_4(n) :- field(n, "module_name", c29),
+    match("xml[\\s\\\\]*\\.[\\s\\\\]*etree", c29).
+icn001_tok_has_4(n) :- op(n, t30), match("xml[\\s\\\\]*\\.[\\s\\\\]*etree", t30).
+icn001_tok_has_4(n) :- child(n, c36, _), structural_before(c36, g31),
+    match("(?s)^(?:(?:.*\\W)?(?:xml[\\s\\\\]*\\.[\\s\\\\]*etree)(?:\\W.*)?)$", g31).
+icn001_tok_has_4(n) :- child(n, c36, _), structural_after(c36, g31),
+    match("(?s)^(?:(?:.*\\W)?(?:xml[\\s\\\\]*\\.[\\s\\\\]*etree)(?:\\W.*)?)$", g31).
+icn001_tok_has_4(n) :- node_text(n, g31), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:xml[\\s\\\\]*\\.[\\s\\\\]*etree)(?:\\W.*)?)$", g31).
+
 // set_3: symbols from the JSON `resolves.imported`
 .decl icn001_set_3(v: symbol)
 icn001_set_3("altair"). icn001_set_3("matplotlib"). icn001_set_3("matplotlib.pyplot"). icn001_set_3("networkx").
@@ -99,14 +154,3 @@ icn001_set_3("numpy"). icn001_set_3("numpy.typing"). icn001_set_3("pandas"). icn
 icn001_set_3("tensorflow"). icn001_set_3("tkinter"). icn001_set_3("holoviews"). icn001_set_3("panel").
 icn001_set_3("plotly.express"). icn001_set_3("polars"). icn001_set_3("pyarrow").
 icn001_set_3("xml.etree.ElementTree").
-
-// alt_1(n): the JSON `any`: n matches if any one of these rules does
-.decl icn001_alt_1(n: node)
-icn001_alt_1(n) :- glob("pyplot", n), inside(n, p1, "import_from_statement"),
-    field(p1, "module_name", c2), glob("matplotlib", c2).
-icn001_alt_1(n) :- glob("typing", n), inside(n, p3, "import_from_statement"),
-    field(p3, "module_name", c4), glob("numpy", c4).
-icn001_alt_1(n) :- glob("express", n), inside(n, p5, "import_from_statement"),
-    field(p5, "module_name", c6), glob("plotly", c6).
-icn001_alt_1(n) :- glob("ElementTree", n), inside(n, p7, "import_from_statement"),
-    field(p7, "module_name", c8), match("xml[\\s\\\\]*\\.[\\s\\\\]*etree", c8).

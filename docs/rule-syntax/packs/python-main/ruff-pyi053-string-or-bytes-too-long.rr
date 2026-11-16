@@ -98,10 +98,9 @@ pyi053_cast_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
     kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
     field(p2, "function", c3), pyi053_ref_of(c3, "cast"), child(p4, n, _), pyi053_counted(n),
     k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 0.
-pyi053_cast_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"),
-    field(p7, "name", c8), glob("typ", c8), child(p9, p7, _),
-    kind(p9, "argument_list"), child(p10, p9, _), kind(p10, "call"),
-    field(p10, "function", c11), pyi053_ref_of(c11, "cast").
+pyi053_cast_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"), pyi053_tok_has_1(p7),
+    child(p16, p7, _), kind(p16, "argument_list"), child(p17, p16, _),
+    kind(p17, "call"), field(p17, "function", c18), pyi053_ref_of(c18, "cast").
 
 // typeform_arg(n): the JSON util `typeform-arg`, used where the JSON says `matches: "typeform-arg"`
 .decl pyi053_typeform_arg(n: node)
@@ -116,10 +115,9 @@ pyi053_newtype_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
     kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
     field(p2, "function", c3), pyi053_ref_of(c3, "newtype"), child(p4, n, _), pyi053_counted(n),
     k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 1.
-pyi053_newtype_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"),
-    field(p7, "name", c8), glob("tp", c8), child(p9, p7, _), kind(p9, "argument_list"),
-    child(p10, p9, _), kind(p10, "call"), field(p10, "function", c11),
-    pyi053_ref_of(c11, "newtype").
+pyi053_newtype_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"), pyi053_tok_has_2(p7),
+    child(p16, p7, _), kind(p16, "argument_list"), child(p17, p16, _),
+    kind(p17, "call"), field(p17, "function", c18), pyi053_ref_of(c18, "newtype").
 
 // typevar_arg(n): the JSON util `typevar-arg`, used where the JSON says `matches: "typevar-arg"`
 .decl pyi053_typevar_arg(n: node)
@@ -127,10 +125,9 @@ pyi053_typevar_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
     kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
     field(p2, "function", c3), pyi053_ref_of(c3, "typevar"),
     count : { child(p4, n, _), pyi053_counted(n), k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 0 } = 0.
-pyi053_typevar_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"),
-    field(p7, "name", c8), glob("{bound,default}", c8), child(p9, p7, _),
-    kind(p9, "argument_list"), child(p10, p9, _), kind(p10, "call"),
-    field(p10, "function", c11), pyi053_ref_of(c11, "typevar").
+pyi053_typevar_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"), pyi053_tok_has_3(p7),
+    child(p16, p7, _), kind(p16, "argument_list"), child(p17, p16, _),
+    kind(p17, "call"), field(p17, "function", c18), pyi053_ref_of(c18, "typevar").
 
 // aliastype_arg(n): the JSON util `aliastype-arg`, used where the JSON says `matches: "aliastype-arg"`
 .decl pyi053_aliastype_arg(n: node)
@@ -138,10 +135,9 @@ pyi053_aliastype_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
     kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
     field(p2, "function", c3), pyi053_ref_of(c3, "aliastype"), child(p4, n, _), pyi053_counted(n),
     k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 1.
-pyi053_aliastype_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"),
-    field(p7, "name", c8), glob("{value,type_params}", c8), child(p9, p7, _),
-    kind(p9, "argument_list"), child(p10, p9, _), kind(p10, "call"),
-    field(p10, "function", c11), pyi053_ref_of(c11, "aliastype").
+pyi053_aliastype_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"), pyi053_tok_has_4(p7),
+    child(p16, p7, _), kind(p16, "argument_list"), child(p17, p16, _),
+    kind(p17, "call"), field(p17, "function", c18), pyi053_ref_of(c18, "aliastype").
 
 // namedtuple_arg(n): the JSON util `namedtuple-arg`, used where the JSON says `matches: "namedtuple-arg"`
 .decl pyi053_namedtuple_arg(n: node)
@@ -200,44 +196,114 @@ pyi053_namedtuple_kw(n) :- field(p6, "value", n), kind(p6, "pair"), child(p7, p6
 
 // typeddict_kw(n): the JSON util `typeddict-kw`, used where the JSON says `matches: "typeddict-kw"`
 .decl pyi053_typeddict_kw(n: node)
-pyi053_typeddict_kw(n) :- field(p1, "value", n), kind(p1, "keyword_argument"),
-    field(p1, "name", c2), glob("extra_items", c2), child(p3, p1, _),
-    kind(p3, "argument_list"), child(p4, p3, _), kind(p4, "call"),
-    field(p4, "function", c5), pyi053_ref_of(c5, "typeddict").
-pyi053_typeddict_kw(n) :- field(p6, "value", n), kind(p6, "keyword_argument"),
-    field(p6, "name", c7), !glob("{total,extra_items}", c7), child(p8, p6, _),
-    kind(p8, "argument_list"), child(p9, p8, _), kind(p9, "call"),
-    field(p9, "function", c10), pyi053_ref_of(c10, "typeddict"), child(p8, c11, _),
-    child(p12, c11, _), pyi053_counted_of(c11),
-    k14 = count : { child(p12, s13, _), precedes(s13, c11), pyi053_counted_of(s13) }, k14 = 0,
-    !pyi053_alt_24(p8).
-pyi053_typeddict_kw(n) :- child(p23, n, _), kind(p23, "dictionary_splat"), child(p24, p23, _),
-    kind(p24, "argument_list"), child(p25, p24, _), kind(p25, "call"),
-    field(p25, "function", c26), pyi053_ref_of(c26, "typeddict").
-pyi053_typeddict_kw(n) :- field(p27, "value", n), kind(p27, "keyword_argument"),
-    field(p27, "name", c28), glob("extra_items", c28), child(p29, p27, _),
-    kind(p29, "argument_list"), child(p29, c30, _),
-    ( pyi053_ref_of(c30, "typeddict")
-    ; kind(c30, "subscript"), field(c30, "value", c1), pyi053_ref_of(c1, "typeddict")
+pyi053_typeddict_kw(n) :- field(p1, "value", n), kind(p1, "keyword_argument"), pyi053_tok_has_5(p1),
+    child(p10, p1, _), kind(p10, "argument_list"), child(p11, p10, _),
+    kind(p11, "call"), field(p11, "function", c12), pyi053_ref_of(c12, "typeddict").
+pyi053_typeddict_kw(n) :- field(p13, "value", n), kind(p13, "keyword_argument"),
+    field(p13, "name", c14), !glob("{total,extra_items}", c14), child(p15, p13, _),
+    kind(p15, "argument_list"), child(p16, p15, _), kind(p16, "call"),
+    field(p16, "function", c17), pyi053_ref_of(c17, "typeddict"), child(p15, c18, _),
+    child(p19, c18, _), pyi053_counted_of(c18),
+    k21 = count : { child(p19, s20, _), precedes(s20, c18), pyi053_counted_of(s20) }, k21 = 0,
+    !pyi053_alt_24(p15).
+pyi053_typeddict_kw(n) :- child(p30, n, _), kind(p30, "dictionary_splat"), child(p31, p30, _),
+    kind(p31, "argument_list"), child(p32, p31, _), kind(p32, "call"),
+    field(p32, "function", c33), pyi053_ref_of(c33, "typeddict").
+pyi053_typeddict_kw(n) :- field(p34, "value", n), kind(p34, "keyword_argument"),
+    pyi053_tok_has_6(p34), child(p43, p34, _), kind(p43, "argument_list"), child(p43, c44, _),
+    ( pyi053_ref_of(c44, "typeddict")
+    ; kind(c44, "subscript"), field(c44, "value", c1), pyi053_ref_of(c1, "typeddict")
     ),
-    child(p32, p29, _), kind(p32, "class_definition").
+    child(p46, p43, _), kind(p46, "class_definition").
 
 // all_name(n): the JSON util `all-name`, used where the JSON says `matches: "all-name"`
 .decl pyi053_all_name(n: node)
 pyi053_all_name(n) :- kind(n, "identifier"), glob("__all__", n).
-pyi053_all_name(n) :- (kind(n, "parenthesized_expression") ; kind(n, "tuple_pattern"), !pyi053_tok_has_1(n)),
+pyi053_all_name(n) :- (kind(n, "parenthesized_expression") ; kind(n, "tuple_pattern"), !pyi053_tok_has_7(n)),
     child(n, c9, _), pyi053_all_name(c9).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^typ$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi053_tok_has_1(n: node)
 .stored pyi053_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi053_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
-pyi053_tok_has_1(n) :- op(n, t2), match(",", t2).
-pyi053_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+pyi053_tok_has_1(n) :- field(n, "name", c8), glob("typ", c8).
+pyi053_tok_has_1(n) :- op(n, t9), match("typ", t9).
+pyi053_tok_has_1(n) :- child(n, c15, _), structural_before(c15, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:typ)(?:\\W.*)?)$", g10).
+pyi053_tok_has_1(n) :- child(n, c15, _), structural_after(c15, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:typ)(?:\\W.*)?)$", g10).
+pyi053_tok_has_1(n) :- node_text(n, g10), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:typ)(?:\\W.*)?)$", g10).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^tp$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi053_tok_has_2(n: node)
+.stored pyi053_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi053_tok_has_2(n) :- field(n, "name", c8), glob("tp", c8).
+pyi053_tok_has_2(n) :- op(n, t9), match("tp", t9).
+pyi053_tok_has_2(n) :- child(n, c15, _), structural_before(c15, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:tp)(?:\\W.*)?)$", g10).
+pyi053_tok_has_2(n) :- child(n, c15, _), structural_after(c15, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:tp)(?:\\W.*)?)$", g10).
+pyi053_tok_has_2(n) :- node_text(n, g10), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:tp)(?:\\W.*)?)$", g10).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^(?:bound|default)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi053_tok_has_3(n: node)
+.stored pyi053_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi053_tok_has_3(n) :- field(n, "name", c8), glob("{bound,default}", c8).
+pyi053_tok_has_3(n) :- op(n, t9), match("(?:bound|default)", t9).
+pyi053_tok_has_3(n) :- child(n, c15, _), structural_before(c15, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:bound)(?:\\W.*)?|(?:.*\\W)?(?:default)(?:\\W.*)?)$", g10).
+pyi053_tok_has_3(n) :- child(n, c15, _), structural_after(c15, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:bound)(?:\\W.*)?|(?:.*\\W)?(?:default)(?:\\W.*)?)$", g10).
+pyi053_tok_has_3(n) :- node_text(n, g10), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:bound)(?:\\W.*)?|(?:.*\\W)?(?:default)(?:\\W.*)?)$", g10).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^(?:value|type_params)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi053_tok_has_4(n: node)
+.stored pyi053_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi053_tok_has_4(n) :- field(n, "name", c8), glob("{value,type_params}", c8).
+pyi053_tok_has_4(n) :- op(n, t9), match("(?:value|type_params)", t9).
+pyi053_tok_has_4(n) :- child(n, c15, _), structural_before(c15, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:value)(?:\\W.*)?|(?:.*\\W)?(?:type_params)(?:\\W.*)?)$", g10).
+pyi053_tok_has_4(n) :- child(n, c15, _), structural_after(c15, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:value)(?:\\W.*)?|(?:.*\\W)?(?:type_params)(?:\\W.*)?)$", g10).
+pyi053_tok_has_4(n) :- node_text(n, g10), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:value)(?:\\W.*)?|(?:.*\\W)?(?:type_params)(?:\\W.*)?)$", g10).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^extra_items$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi053_tok_has_5(n: node)
+.stored pyi053_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi053_tok_has_5(n) :- field(n, "name", c2), glob("extra_items", c2).
+pyi053_tok_has_5(n) :- op(n, t3), match("extra_items", t3).
+pyi053_tok_has_5(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:extra_items)(?:\\W.*)?)$", g4).
+pyi053_tok_has_5(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:extra_items)(?:\\W.*)?)$", g4).
+pyi053_tok_has_5(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:extra_items)(?:\\W.*)?)$", g4).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^extra_items$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi053_tok_has_6(n: node)
+.stored pyi053_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi053_tok_has_6(n) :- field(n, "name", c35), glob("extra_items", c35).
+pyi053_tok_has_6(n) :- op(n, t36), match("extra_items", t36).
+pyi053_tok_has_6(n) :- child(n, c42, _), structural_before(c42, g37),
+    match("(?s)^(?:(?:.*\\W)?(?:extra_items)(?:\\W.*)?)$", g37).
+pyi053_tok_has_6(n) :- child(n, c42, _), structural_after(c42, g37),
+    match("(?s)^(?:(?:.*\\W)?(?:extra_items)(?:\\W.*)?)$", g37).
+pyi053_tok_has_6(n) :- node_text(n, g37), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:extra_items)(?:\\W.*)?)$", g37).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi053_tok_has_7(n: node)
+.stored pyi053_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi053_tok_has_7(n) :- child(n, c1, _), glob("\\,", c1).
+pyi053_tok_has_7(n) :- op(n, t2), match(",", t2).
+pyi053_tok_has_7(n) :- child(n, c8, _), structural_before(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
-pyi053_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+pyi053_tok_has_7(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
-pyi053_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+pyi053_tok_has_7(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl pyi053_up_1(n: node, p: node)

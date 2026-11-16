@@ -47,9 +47,10 @@
 //! ```
 //!
 //! A head row that read an unchanged group read the same value before and after, so the other positions' rules cover
-//! it (with the aggregate over old rows in an overdelete). A stratum with a relation made natively, a lattice, an
-//! `ast` literal, or a changed read whose old rows were not kept, is derived again from its inputs: its rules
-//! unchanged.
+//! it (with the aggregate over old rows in an overdelete). A text test made natively is a filter of its input's
+//! strings: its rows of strings gone are deleted, and only the new strings are tested (`h__ins` over `i__plus`, made
+//! natively as the whole was). A stratum with another relation made natively, a lattice, an `ast` literal, or a
+//! changed read whose old rows were not kept, is derived again from its inputs: its rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
 use super::retain::{Cut, Retained};
@@ -227,25 +228,11 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     Ok(Maintained { program: lower::Lowered { program, version: Some(v), maint, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
 }
 
-static BY_LEVELS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The recursive strata maintained by levels so far in this process (decision 0090), not by delete-and-rederive.
-pub fn strata_by_levels() -> usize {
-    BY_LEVELS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-static TOGETHER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The sets of pieces run as one component so far in this process (`together`).
-pub fn pieces_together() -> usize {
-    TOGETHER.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 // -- The rewrite over a version (decision 0241) --
 
 use crate::code_rule_dsl::logic::plan::body::{Group, Maint, Placed};
 use crate::code_rule_dsl::logic::plan::fields::Fields;
-use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit as PLit, LitRef, Rewrite, RuleId, RuleRef, TermRef, Version, T};
+use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit as PLit, LitRef, NativeSpec, Rewrite, RuleId, RuleRef, TermRef, Version, T};
 
 /// What the rewrite reads: a part of a program, by its version.
 pub(in crate::code_rule_dsl) struct Part<'v> {
@@ -308,6 +295,8 @@ enum L {
     /// An atom over the source rule's head's arguments, each computed one named (`_h{i}`).
     HeadArgs { rel: String, neg: bool },
     Atom { rel: String, args: Vec<Tm>, neg: bool, gated: bool },
+    /// A text test of term `at`: `@op(at, @set(patterns)) = 1` (`strings::test_literal`).
+    Test { at: Tm, op: String, patterns: Vec<String> },
 }
 
 #[derive(Clone, Debug)]
@@ -413,6 +402,10 @@ fn write_ir(b: &mut Builder<'_>, src: &Part<'_>, ir: &Ir) -> std::result::Result
             let n = s.map(|k| src.named(k));
             let names: Vec<String> = n.as_ref().map_or_else(Vec::new, |n| n.calls.iter().map(|p| format!("_h{p}")).collect());
             let mut rb = b.rule();
+            // Its source rule, which its plan starts from (decision 0258).
+            if let Some(k) = s {
+                rb = rb.source(src.p.id(src.rules[*k]));
+            }
             fn named_head<'a>(n: &Named<'a>, names: &'a [String]) -> Vec<T<'a>> {
                 n.r.head().args().enumerate().map(|(i, t)| match t {
                     TermRef::Call(..) => T::Var(names[n.calls.iter().position(|&p| p == i).expect("a call")].as_str()),
@@ -461,6 +454,10 @@ fn write_ir(b: &mut Builder<'_>, src: &Part<'_>, ir: &Ir) -> std::result::Result
                         rb.atom_with(rel.as_str(), &named_head(n, &names), *neg, false)
                     }
                     L::Atom { rel, args, neg, gated } => rb.atom_with(rel.as_str(), &args.iter().map(tm).collect::<Vec<_>>(), *neg, *gated),
+                    L::Test { at, op, patterns } => {
+                        let set = T::Call(crate::code_rule_dsl::logic::strings::SET, patterns.iter().map(|p| T::Str(p)).collect());
+                        rb.cmp(T::Call(op, vec![tm(at), set]), CmpOp::Eq, T::Int(1))
+                    }
                 };
             }
             rb.finish()
@@ -485,7 +482,7 @@ fn reads_ir(src: &Part<'_>, ir: &Ir) -> Vec<(String, bool, bool)> {
                     let agg = matches!(n.lits[*i].view(), PLit::Agg { .. });
                     Some((rel.clone().unwrap_or_else(|| n.rel(a).to_owned()), flags.map_or(a.neg(), |f| f.0), agg))
                 }
-                L::HeadName(_) => None,
+                L::HeadName(_) | L::Test { .. } => None,
                 L::ArgsOf { rel, neg, .. } | L::HeadArgs { rel, neg } | L::Atom { rel, neg, .. } => Some((rel.clone(), *neg, false)),
             }).collect()
         }
@@ -517,6 +514,22 @@ fn insert_ir(rules: &mut Vec<Ir>, n: &Named<'_>, k: usize, h: &str, body: Vec<L>
     let mut deleted = body;
     deleted.push(L::HeadArgs { rel: named(h, gone), neg: false });
     rules.push(Ir::Rule { src: Some(k), head, body: deleted });
+}
+
+/// States `rel` a text test (`NativeSpec::TextTest`) of `input`'s column `column`: its about rows
+/// (`native_text_test`, and `native_text_pattern` for each pattern in order), as `about_of` writes a program's.
+fn text_test(b: &mut Builder<'_>, rel: &str, input: &str, column: usize, op: &str, patterns: &[String]) {
+    use crate::code_rule_dsl::logic::program_image::Cell;
+    let p = Cell::Str(b.atom(crate::code_rule_dsl::logic::program_image::ABOUT));
+    let r = Cell::Str(b.atom(rel));
+    let mut tests = b.about_rows("native_text_test");
+    tests.push(vec![p, r, Cell::Str(b.atom(input)), Cell::Int(column as i64), Cell::Str(b.atom(op))]);
+    b.set_about_rows("native_text_test", tests);
+    let mut rows = b.about_rows("native_text_pattern");
+    for (i, pattern) in patterns.iter().enumerate() {
+        rows.push(vec![p, r, Cell::Int(i as i64), Cell::Str(b.atom(pattern))]);
+    }
+    b.set_about_rows("native_text_pattern", rows);
 }
 
 fn row_tm(width: usize) -> Vec<Tm> {
@@ -663,8 +676,46 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
             }
             continue;
         }
-        let mine: Vec<Named<'_>> = at.iter().map(|&k| src.named(k)).collect();
         let only = std::env::var("RERAIL_CROSS_MAINTAIN_ONLY").ok().map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_owned).collect::<BTreeSet<String>>());
+        // A text test made natively (`front::Native::TextTest`) is a filter of its input's strings: a row is there
+        // while its string is and passes. It is maintained exactly: the rows of strings gone are deleted, and only
+        // the new strings are tested, natively as the whole input was (`h__ins` over `i__plus`).
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(NativeSpec::TextTest { input, column, op, patterns }) = f.native(rel).map(|n| &n.spec)
+            && let input = f.rel_name(*input).to_owned()
+            && changed.contains(&input)
+            && old(rel)
+            && old(&input)
+            && only.as_ref().is_none_or(|o| o.contains(*rel))
+        {
+            let (op, patterns): (String, Vec<String>) = (f.text(*op).to_owned(), patterns.iter().map(|&p| f.text(p).to_owned()).collect());
+            maintained += 1;
+            let start = rules.len();
+            let v = row_tm(src.width(rel, &made));
+            let head = |r: String| H::Terms(r, v.clone());
+            rules.push(Ir::Rule { src: None, head: head(named(rel, "del")), body: vec![atom_tm(named(rel, "old"), v.clone(), false), atom_tm(named(&input, "minus"), v.clone(), false)] });
+            // The test in the rule too: a maintained form's pieces are rules (`plan`'s maintained run), which test
+            // the new strings row by row.
+            let test = L::Test { at: v[*column].clone(), op: op.clone(), patterns: patterns.clone() };
+            rules.push(Ir::Rule { src: None, head: head(named(rel, "ins")), body: vec![atom_tm(named(&input, "plus"), v.clone(), false), test] });
+            text_test(&mut b, &named(rel, "ins"), &named(&input, "plus"), *column, &op, &patterns);
+            // Its rules are now its old rows and the new ones, which the run makes as rules (`text_test_defined`):
+            // it stays a native, so a run that derives it again (`Again`) makes it from the vocabulary.
+            rules.push(Ir::Rule { src: None, head: head((*rel).clone()), body: vec![atom_tm(named(rel, "old"), v.clone(), false), atom_tm(named(rel, "del"), v.clone(), true)] });
+            rules.push(Ir::Rule { src: None, head: head((*rel).clone()), body: vec![atom_tm(named(rel, "ins"), v.clone(), false)] });
+            for piece in ["del", "ins"] {
+                fresh.push(((*rel).clone(), named(rel, piece)));
+            }
+            olds.insert((*rel).clone());
+            olds.insert(input.clone());
+            deltas.insert(input);
+            exact_rels.insert((*rel).clone());
+            maint.insert((*rel).clone());
+            changed.insert((*rel).clone());
+            groups.push((scc.clone(), start, rules.len(), at));
+            continue;
+        }
+        let mine: Vec<Named<'_>> = at.iter().map(|&k| src.named(k)).collect();
         let why = if only.as_ref().is_some_and(|o| !scc.iter().any(|r| o.contains(r))) { Some("not chosen") } else { unmaintainable_over(f, scc, &mine, &changed, &old) };
         if std::env::var_os("O125_LIST").is_some() && why.is_none() {
             eprintln!("O125_LIST {}", scc.iter().next().unwrap());
@@ -691,7 +742,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         let joins = |r: &Named<'_>| r.lits.iter().all(|l| matches!(l.view(), PLit::Atom(_) | PLit::Cmp { .. }));
         let lv = is_recursive && levels_wanted() && mine.iter().all(joins) && scc.iter().all(|r| kept.kept(r).is_some_and(|(h, _)| h.has_levels()));
         if lv {
-            BY_LEVELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            BY_LEVELS.with(|n| n.set(n.get() + 1));
         }
         if is_recursive && levels_wanted() && std::env::var_os("RERAIL_LEVELS_WHY").is_some() {
             let trees: Vec<Rule> = at.iter().map(|&k| tree_named(src, k)).collect();
@@ -994,6 +1045,24 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
     Ok(Over { b, inputs, domains, groups, together, heads, sources, maintained, derived_again, recursive, again, views })
 }
 
+thread_local! {
+    /// The recursive strata this thread's runs maintained by levels (decision 0090), and the sets of pieces they ran
+    /// as one component (`together`). Counted by thread, not by process: a test reads its own runs' counts while
+    /// other tests run beside it.
+    static BY_LEVELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TOGETHER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The recursive strata maintained by levels so far by this thread's runs (decision 0090), not by delete-and-rederive.
+pub fn strata_by_levels() -> usize {
+    BY_LEVELS.with(std::cell::Cell::get)
+}
+
+/// The sets of pieces run as one component so far by this thread's runs (`together`).
+pub fn pieces_together() -> usize {
+    TOGETHER.with(std::cell::Cell::get)
+}
+
 /// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
 /// level, not one each, so they pay one component's fixed cost (its spec, open and statistics) between them.
 ///
@@ -1171,7 +1240,7 @@ fn together_ir(src: &Part<'_>, b: &mut Builder<'_>, rules: &mut Vec<Ir>, groups:
                             let n = n.as_ref().expect("a source rule");
                             n.lits[*i].atom().map(|a| (rel.clone().unwrap_or_else(|| n.rel(a).to_owned()), flags.map_or(a.neg(), |f| f.0), matches!(n.lits[*i].view(), PLit::Agg { .. })))
                         }
-                        L::HeadName(_) => None,
+                        L::HeadName(_) | L::Test { .. } => None,
                         L::ArgsOf { rel, neg, .. } | L::HeadArgs { rel, neg } | L::Atom { rel, neg, .. } => Some((rel.clone(), *neg, false)),
                     };
                     // A negation, or an aggregate, of a piece of the set.
@@ -1195,7 +1264,7 @@ fn together_ir(src: &Part<'_>, b: &mut Builder<'_>, rules: &mut Vec<Ir>, groups:
         }
         groups[g].1.extend(members.iter().cloned());
         together.push(members);
-        TOGETHER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        TOGETHER.with(|n| n.set(n.get() + 1));
     }
     b.add_gates(&gates);
     together
@@ -1214,7 +1283,7 @@ pub(in crate::code_rule_dsl) struct Form {
 
 /// The about rows of the run's version a form keeps of its stratum's relations (its lattices and natives: few
 /// rows, each a relation's).
-const STRATUM_ABOUT: [&str; 12] = [
+const STRATUM_ABOUT: [&str; 14] = [
     "lattice",
     "lattice_merge",
     "lattice_widen",
@@ -1227,6 +1296,8 @@ const STRATUM_ABOUT: [&str; 12] = [
     "native_components",
     "native_reach",
     "native_reach_through",
+    "native_text_test",
+    "native_text_pattern",
 ];
 
 /// Stratum `scc`'s maintained form (decision 0117 step 3), its rules `rules` (places among the run's version `v0`'s
