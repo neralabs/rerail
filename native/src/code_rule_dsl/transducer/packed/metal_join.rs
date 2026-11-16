@@ -96,6 +96,14 @@ pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
 /// wanted verdict; X (keys 0, 1) and Y (keys 2, 3) of kinds agg[1] & 15 and agg[1] >> 4 (`OPND_*`); its value into
 /// `bind_slot[0]`.
 pub(in crate::code_rule_dsl) const ROWTEXT: u32 = 10;
+/// A witness (decision 0277): per binding, its candidates of the stage's relation until one that every probe of the
+/// rest of the body passes (`Batch::witness`); the binding out as it is. A probe's key reads a slot (`SLOT`), a
+/// constant (`CONST`) or a column of the candidate (`ACOL`, its column in `key_slot`).
+pub(in crate::code_rule_dsl) const WITNESS: u32 = 11;
+/// A witness probe's key from the candidate's row: its column.
+pub(in crate::code_rule_dsl) const ACOL: u32 = 2;
+/// The most probes a witness makes per candidate.
+pub(in crate::code_rule_dsl) const WITNESS_PROBES: usize = 3;
 /// `cat`'s text of X and Y ("." between when X is not empty).
 pub(in crate::code_rule_dsl) const ROW_CAT: u32 = 0;
 /// `str_concat`'s text of X and Y.
@@ -228,6 +236,219 @@ impl Stage {
         unsafe { std::slice::from_raw_parts((self as *const Stage).cast::<u8>(), std::mem::size_of::<Stage>()) }
     }
 }
+
+/// The chunk views' kernel (decision 0289 §2): the chunk's structures as `rerail-blocks` generates them, then
+/// `view_expand`, which makes each row as `Viewed::value_at` does.
+fn chunk_views_source() -> String {
+    let mut s = String::from("#include <metal_stdlib>\nusing namespace metal;\n");
+    s += &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::msl();
+    s += CHUNK_VIEWS;
+    s
+}
+
+const CHUNK_VIEWS: &str = r#"
+constant uint CH_NONE = 0xffffffffu;
+// A span's items: its own address plus its offset (`rerail_blocks::Span`).
+template <typename T> inline device const T* items(device const Span& s) { return (device const T*)((device const char*)&s + s.off); }
+
+inline uint view_start(device const ChunkDoc& d, uint view) {
+    return view == 1u ? d.child_row : (view == 2u ? d.field_row : d.node_row);
+}
+inline long global_of(device const ChunkDoc& d, uint l) {
+    uint low = d.preorder != 0u ? l : items<uint>(d.low)[l];
+    return long(ulong(d.key) << 32 | ulong(low));
+}
+// The projection's parent (`Projected::parent`): a node left out of it has the root for parent.
+inline uint parent_of(device const ChunkDoc& d, uint l) {
+    uint id = items<uint>(d.core)[l];
+    uint p = items<uint>(d.parent)[id];
+    uint q = p == CH_NONE ? CH_NONE : items<uint>(d.local)[p];
+    return (q == CH_NONE && l != 0u) ? 0u : q;
+}
+// The kind column (`Dialect::kind`): the canonical code's atom.
+inline long kind_of(device const ChunkDoc& d, uint id) {
+    uint code = items<uint>(d.kind)[id] % 1024u;
+    if (code == 0u) return long(d.tag * 1024u);
+    uint c = code < uint(d.canonical.len) ? uint(items<ushort>(d.canonical)[code]) : code;
+    return long(d.tag * 1024u + (c == 0xffffu ? 0u : c));
+}
+
+// A node's or span's id (`Projected::global`): past the locals with ids by definition, a span's (`granules::span_low`).
+inline long loc_global(device const ChunkDoc& d, uint l) {
+    uint low;
+    if (d.preorder != 0u) {
+        low = l;
+    } else if (l < uint(d.low.len)) {
+        low = items<uint>(d.low)[l];
+    } else {
+        uint i = l - uint(d.low.len);
+        uint slot = (GR_SLOTS - 1u) - min(i >> GR_INDEX_BITS, GR_SPAN_SLOTS - 1u);
+        low = slot << GR_INDEX_BITS | (i & ((1u << GR_INDEX_BITS) - 1u));
+    }
+    return long(ulong(d.key) << 32 | ulong(low));
+}
+// The lines starting at or before byte `at` (`core_rr::Lines::line`, before its `max(1)`).
+inline uint line_of(device const ChunkDoc& d, uint at) {
+    device const uint* st = items<uint>(d.lines);
+    uint lo = 0u, hi = uint(d.lines.len);
+    while (lo < hi) {
+        uint m = (lo + hi) / 2u;
+        if (st[m] <= at) lo = m + 1u; else hi = m;
+    }
+    return lo;
+}
+
+// The document holding node row `row` (of `node`): the last whose rows start at or before it.
+inline uint doc_of_node(device const ChunkDoc* docs, uint ndocs, uint row) {
+    uint lo = 0u, hi = ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (docs[m].node_row <= row) lo = m; else hi = m;
+    }
+    return lo;
+}
+
+// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, an axis's pairs' offset (else 0),
+// then each column's index.
+kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[buffer(1)]], constant uint* p [[buffer(2)]],
+                        uint r [[thread_position_in_grid]]) {
+    uint n = p[2];
+    if (r >= n) return;
+    device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
+    device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
+    uint view = p[1];
+    if (view == 4u) {
+        // An axis read whole (`Within`): a pair of node rows, inner << 32 | outer; each column the node's id.
+        ulong pair = ((device const ulong*)(B + p[4]))[r];
+        for (uint c = 0u; c < p[3]; c++) {
+            uint row = p[5 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
+            device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, row)];
+            out[ulong(c) * n + r] = global_of(d, row - d.node_row);
+        }
+        return;
+    }
+    if (view >= 5u) {
+        // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
+        uint lo = 0u, hi = root->ndocs;
+        while (hi - lo > 1u) {
+            uint m = (lo + hi) / 2u;
+            if (docs[m].loc_row <= r) lo = m; else hi = m;
+        }
+        device const ChunkDoc& d = docs[lo];
+        uint l = r - d.loc_row;
+        uint s, e;
+        if (l < d.nodes) {
+            uint id = items<uint>(d.core)[l];
+            s = items<uint>(d.start)[id];
+            e = items<uint>(d.end)[id];
+        } else {
+            s = items<uint>(d.spans)[2u * (l - d.nodes)];
+            e = items<uint>(d.spans)[2u * (l - d.nodes) + 1u];
+        }
+        for (uint c = 0u; c < p[3]; c++) {
+            long v;
+            if (p[5 + c] == 0u) {
+                v = loc_global(d, l);
+            } else if (view == 8u) {
+                v = long(d.key);
+            } else {
+                uint line = max(line_of(d, s), 1u);
+                if (view == 5u) v = long(line);
+                else if (view == 6u) v = long(e > s ? max(line_of(d, e - 1u), 1u) : line);
+                else v = long(s - items<uint>(d.lines)[line - 1u]);
+            }
+            out[ulong(c) * n + r] = v;
+        }
+        return;
+    }
+    // The last document whose rows start at or before `r` holds it (an empty one starts where the next does).
+    uint lo = 0u, hi = root->ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (view_start(docs[m], view) <= r) lo = m; else hi = m;
+    }
+    device const ChunkDoc& d = docs[lo];
+    uint i = r - view_start(d, view);
+    uint l = view == 1u ? i + 1u : (view == 2u ? items<uint>(d.fielded)[i] : i);
+    uint id = items<uint>(d.core)[l];
+    for (uint c = 0u; c < p[3]; c++) {
+        uint col = p[5 + c];
+        long v;
+        if ((view == 0u || view == 3u) && col == 0u) {
+            v = long(d.key);
+        } else if (view == 3u && col == 1u) {
+            v = long(id);
+        } else if (view == 0u && col == 2u) {
+            v = kind_of(d, id);
+        } else if (view == 0u && col == 3u) {
+            v = long(items<uint>(d.start)[id]);
+        } else if (view == 0u && col == 4u) {
+            v = long(items<uint>(d.end)[id]);
+        } else if ((view == 1u || view == 2u) && col == 0u) {
+            uint q = parent_of(d, l);
+            v = q == CH_NONE ? -1 : global_of(d, q);
+        } else if (view == 1u && col == 2u) {
+            // `child`'s columns are parent, child, index (`Viewed::columns`).
+            v = long(items<uint>(d.ord)[l]);
+        } else if (view == 2u && col == 1u) {
+            v = long(d.tag << 16 | uint(items<ushort>(d.field)[id]));
+        } else {
+            v = global_of(d, l);
+        }
+        out[ulong(c) * n + r] = v;
+    }
+}
+
+// A kind-set axis's batch solve in the chunk (decision 0289 §2, `Within::solved_in_chunk`), a thread per node row.
+// p: the root's offset, the node rows, the members' offset (0: every kind is one), 1 for every ancestor in the set
+// (`inside`, containment) or 0 for the nearest. The climb is bounded by the document's nodes.
+inline bool axis_member(device const char* B, uint bits_at, device const ChunkDoc& d, uint l) {
+    if (bits_at == 0u) return true;
+    uint at = d.tag * 1024u + items<uint>(d.kind)[items<uint>(d.core)[l]] % 1024u;
+    return ((((device const uint*)(B + bits_at))[at >> 5] >> (at & 31u)) & 1u) != 0u;
+}
+
+// Each node row's rows (its ancestors in the set), into `start`; the extra value past the last row is 0, so the
+// scan after leaves the total there.
+kernel void axis_count(device const char* B [[buffer(0)]], device uint* start [[buffer(1)]], constant uint* p [[buffer(2)]],
+                       uint v [[thread_position_in_grid]]) {
+    uint n = p[1];
+    if (v > n) return;
+    if (v == n) { start[v] = 0u; return; }
+    device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
+    device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
+    device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
+    uint count = 0u;
+    uint up = parent_of(d, v - d.node_row);
+    for (uint k = 0u; k < d.nodes && up != CH_NONE; k++) {
+        if (axis_member(B, p[2], d, up)) {
+            count++;
+            if (p[3] == 0u) break;
+        }
+        up = parent_of(d, up);
+    }
+    start[v] = count;
+}
+
+// Each node row's rows from its start (the scanned counts): inner << 32 | outer, nearest first. p[4] is the rows
+// the pairs' space holds: when the total (`start[n]`) is more, nothing is written, and the host writes again.
+kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device ulong* pairs [[buffer(2)]],
+                       constant uint* p [[buffer(3)]], uint v [[thread_position_in_grid]]) {
+    if (v >= p[1] || start[p[1]] > p[4]) return;
+    device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
+    device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
+    device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
+    uint at = start[v];
+    uint up = parent_of(d, v - d.node_row);
+    for (uint k = 0u; k < d.nodes && up != CH_NONE; k++) {
+        if (axis_member(B, p[2], d, up)) {
+            pairs[at++] = ulong(v) << 32 | ulong(d.node_row + up);
+            if (p[3] == 0u) break;
+        }
+        up = parent_of(d, up);
+    }
+}
+"#;
 
 const SOURCE: &str = r#"#include <metal_stdlib>
 using namespace metal;
@@ -678,6 +899,68 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         write_row(s, L, t, R, r, O, at);
         at++;
     }
+}
+
+// A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
+// candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
+static inline bool witness_probe(constant Stage& b, device const long* L, uint t, uint cap_in, device const long* RA, uint nra, uint ra,
+                                 device const long* R, device const uint* perm, device const uint* starts, device const uint* rkeys,
+                                 device const uint* nruns) {
+    long kv[8];
+    for (uint i = 0; i < b.nkeys && i < 8; i++) {
+        uint k = b.key_kind[i];
+        kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? RA[ulong(b.key_slot[i]) * nra + ra] : b.key_const[i]);
+    }
+    uint lo = 0, hi = b.nr;
+    if (b.nkeys > 0) {
+        uint h = hash_keys(kv, b.nkeys, b.mask);
+        uint a = 0, e = b.nr == 0 ? 0 : nruns[0];
+        uint runs = e;
+        for (uint k = 0; k < 34 && a < e; k++) {
+            uint mid = (a + e) / 2;
+            if (rkeys[mid] < h) a = mid + 1; else e = mid;
+        }
+        if (a < runs && rkeys[a] == h) { lo = starts[a]; hi = starts[a + 1]; } else { lo = 0; hi = 0; }
+    }
+    bool found = false;
+    for (uint q = lo; q < hi; q++) {
+        uint r = b.nkeys > 0 ? perm[q] : q;
+        if (matches(b, R, r, kv)) { found = true; break; }
+    }
+    return found != (b.mode == 2);
+}
+
+// A witness's count (mode 11): 1 for a binding with a candidate of the stage's relation that every probe passes,
+// found in the candidates' order, the loop ending at the first; else 0. `stage_scatter` (as a semi-join) writes them.
+kernel void witness_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
+                          device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
+                          device const uint* totals [[buffer(6)]], device uint* counts [[buffer(7)]], constant Stage* bs [[buffer(8)]],
+                          device const long* R0 [[buffer(9)]], device const uint* p0 [[buffer(10)]], device const uint* s0 [[buffer(11)]],
+                          device const uint* k0 [[buffer(12)]], device const uint* n0 [[buffer(13)]],
+                          device const long* R1 [[buffer(14)]], device const uint* p1 [[buffer(15)]], device const uint* s1 [[buffer(16)]],
+                          device const uint* k1 [[buffer(17)]], device const uint* n1 [[buffer(18)]],
+                          device const long* R2 [[buffer(19)]], device const uint* p2 [[buffer(20)]], device const uint* s2 [[buffer(21)]],
+                          device const uint* k2 [[buffer(22)]], device const uint* n2 [[buffer(23)]],
+                          constant Stage& s [[buffer(24)]], uint t [[thread_position_in_grid]]) {
+    if (t > s.cap_in) return;
+    uint n = min(totals[s.in_slot], s.cap_in);
+    if (t >= n) { counts[t] = 0; return; }
+    long kv[8];
+    uint lo, hi;
+    candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+    bool keyed = s.nkeys > 0;
+    uint nb = min(s.agg[0], 3u);
+    uint found = 0;
+    for (uint q = lo; q < hi; q++) {
+        uint r = keyed ? perm[q] : q;
+        if (!matches(s, R, r, kv)) continue;
+        bool all = true;
+        if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, R, s.nr, r, R0, p0, s0, k0, n0);
+        if (all && nb > 1) all = witness_probe(bs[1], L, t, s.cap_in, R, s.nr, r, R1, p1, s1, k1, n1);
+        if (all && nb > 2) all = witness_probe(bs[2], L, t, s.cap_in, R, s.nr, r, R2, p2, s2, k2, n2);
+        if (all) { found = 1; break; }
+    }
+    counts[t] = found;
 }
 
 // A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
@@ -1462,6 +1745,86 @@ pub(in crate::code_rule_dsl) fn hash_keys(kv: &[i64], mask: u32) -> u32 {
     (h as u32) & mask
 }
 
+/// A kind-set axis's batch solve on the device, written into `chunk` (decision 0289 §2, `facts::nearest::ChunkAxis`):
+/// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written,
+/// in one submission. The pairs' space is sized before the count: a nearest axis has at most a row per node, so its
+/// bound is exact; containment's is `INSIDE_ROWS` a node, and the rare batch past it writes again once its total is
+/// read. The space past the total is given back to the block. The starts and the pairs are page-aligned in the
+/// block, each bound as a buffer of its own with no copy; the block reserves address space, so the bound's pages
+/// the device never writes are never memory.
+pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, bits: Option<&[u32]>, inside: bool)
+                     -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+    axis_in_chunk_bounded(chunk, bits, inside, INSIDE_ROWS)
+}
+
+/// Containment's rows a node that the pairs' space is sized for before the count.
+const INSIDE_ROWS: usize = 8;
+
+/// `axis_in_chunk`, with containment's space sized for `inside_rows` a node (a test makes it 0, to write again).
+pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk,
+                                                      bits: Option<&[u32]>, inside: bool, inside_rows: usize)
+                                                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+    use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
+    const PAGE: usize = 16384;
+    let b = &chunk.block;
+    // SAFETY: the chunk's root, which `device_chunk::build` wrote.
+    let n = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).nodes } as usize;
+    let full = || "the chunk block cannot hold the axis".to_string();
+    let bits_at = match bits {
+        Some(words) => {
+            let p: *mut u32 = b.try_alloc_t(words.len()).ok_or_else(full)?;
+            // SAFETY: just allocated for `words.len()` values.
+            unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), p, words.len()) };
+            b.offset_of(p)
+        }
+        None => 0,
+    };
+    let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
+    let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
+    let cap = if inside { inside_rows * n } else { n }.min(u32::MAX as usize);
+    let cap_bytes = (8 * cap).max(8).next_multiple_of(PAGE);
+    let pairs_at = b.try_alloc(cap_bytes, PAGE).ok_or_else(full)?;
+    let device = rerail_accel::gpu::join::device()?;
+    let whole = b.gpu_buffer(device);
+    let part = |at: usize, bytes: usize| {
+        device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(at) as *const std::ffi::c_void, bytes as u64, metal::MTLResourceOptions::StorageModeShared, None)
+    };
+    let starts = part(start_at, start_bytes);
+    let pairs = part(pairs_at, cap_bytes);
+    let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
+    let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
+    let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
+    let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), cap as u32];
+    let scan = Scan::owned(n + 1)?;
+    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+    let pass = batch.pass(17).map_err(|e| format!("{e:?}"))?;
+    pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
+    scan.encode(pass, &starts)?;
+    if n > 0 {
+        pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
+    }
+    batch.finish().map_err(|e| format!("{e:?}"))?;
+    // SAFETY: the scan completed: its last value is the total.
+    let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
+    if len <= cap {
+        b.shrink_last(pairs_at, cap_bytes, (8 * len).max(8).next_multiple_of(PAGE));
+        return Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len });
+    }
+    // Past the bound: the write was skipped, and is made again into space of the total's size.
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("containment past {inside_rows} rows a node: written again"));
+    b.shrink_last(pairs_at, cap_bytes, 0);
+    let pairs_bytes = (8 * len).next_multiple_of(PAGE);
+    let pairs_at = b.try_alloc(pairs_bytes, PAGE).ok_or_else(full)?;
+    let pairs = part(pairs_at, pairs_bytes);
+    let whole = b.gpu_buffer(device);
+    let p = [p[0], p[1], p[2], p[3], len as u32];
+    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+    let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+    pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
+    batch.finish().map_err(|e| format!("{e:?}"))?;
+    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len })
+}
+
 /// A relation's columns on the device: `rows` 64-bit values each, column-major.
 pub(in crate::code_rule_dsl) struct DevRel {
     buffer: Held,
@@ -1482,6 +1845,11 @@ impl DevRel {
 
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         8 * self.cols * self.rows
+    }
+
+    /// The buffer: `cols` columns of `rows` 64-bit values, column-major.
+    pub(in crate::code_rule_dsl) fn held(&self) -> &Held {
+        &self.buffer
     }
 
     /// A relation of `cols` columns and `rows` rows that the device fills (`Batch::copy_rows`).
@@ -1881,6 +2249,21 @@ impl Batch {
         Ok(DevIndex { parts, mask, rows: n })
     }
 
+    /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
+    /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
+    /// `pairs`: an axis's pairs' offset in the block (`device_chunk::VIEW_AXIS`), else 0.
+    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
+        let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
+        let pass = self.pass(1)?;
+        let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
+        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, at(pairs)?];
+        p.extend(cols.iter().map(|&c| c as u32));
+        if out.rows > 0 {
+            pass.run(&expand, &[block, &out.buffer.buffer], &p, &[], groups(out.rows));
+        }
+        Ok(())
+    }
+
     /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index): count, scan,
     /// scatter. `stage`'s sizes are set here.
     #[allow(clippy::too_many_arguments)]
@@ -1950,6 +2333,71 @@ impl Batch {
         pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &scatter_bufs, stage.bytes(), groups(n));
+        Ok(())
+    }
+
+    /// A witness stage (`WITNESS`, decision 0277) from `left` into `out`: per binding, the candidates of `right` in
+    /// order until one that each of `rest`'s probes (semi- or anti-joins, at most `WITNESS_PROBES`) passes; then the
+    /// bindings that have one, as a semi-join writes them. `stage`'s sizes, and the probes', are set here.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn witness(&mut self, mut stage: Stage, left: &Table, right: (&DevRel, Option<&DevIndex>), rest: &[(Stage, &DevRel, Option<&DevIndex>)],
+                                            in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
+        assert!(rest.len() <= WITNESS_PROBES, "a witness of more probes than it takes");
+        let count = pipeline("join", "witness_count", || SOURCE.to_owned())?;
+        let scatter = pipeline("join", "stage_scatter", || SOURCE.to_owned())?;
+        stage.cap_in = left.cap as u32;
+        stage.cap_out = out.cap as u32;
+        stage.in_slot = in_slot as u32;
+        stage.out_slot = out_slot as u32;
+        stage.counter = NONE;
+        stage.nslots = left.slots as u32;
+        stage.nr = right.0.rows as u32;
+        stage.agg[0] = rest.len() as u32;
+        let dummy: metal::Buffer = self.dummy.buffer.to_owned();
+        let parts = |rel: &DevRel, ix: Option<&DevIndex>| -> [metal::Buffer; 5] {
+            match ix {
+                Some(ix) => [rel.buffer.buffer.to_owned(), ix.parts.perm.buffer.to_owned(), ix.parts.starts.buffer.to_owned(), ix.parts.rkeys.buffer.to_owned(), ix.parts.nruns.buffer.to_owned()],
+                None => [rel.buffer.buffer.to_owned(), dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone()],
+            }
+        };
+        if let Some(ix) = right.1 {
+            stage.mask = ix.mask;
+        }
+        let a = parts(right.0, right.1);
+        let mut probes = [Stage::default(); WITNESS_PROBES];
+        let mut bufs: Vec<[metal::Buffer; 5]> = Vec::new();
+        for (k, (b, rel, ix)) in rest.iter().enumerate() {
+            let mut b = *b;
+            b.nr = rel.rows as u32;
+            b.cap_in = left.cap as u32;
+            if let Some(ix) = ix {
+                b.mask = ix.mask;
+            }
+            probes[k] = b;
+            bufs.push(parts(rel, *ix));
+        }
+        while bufs.len() < WITNESS_PROBES {
+            bufs.push([dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone()]);
+        }
+        let held = Held::of(probes.iter().flat_map(|p| p.bytes().iter().copied()).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let n = left.cap + 1;
+        let counts = scratch(FREE, 4 * n)?;
+        let scan = Scan::new(n)?;
+        let pass = self.pass(3)?;
+        let lbuf: &BufferRef = &left.buffer.buffer;
+        let mut count_bufs: Vec<&BufferRef> = vec![lbuf, &a[0], &a[1], &a[2], &a[3], &a[4], &totals.buffer.buffer, &counts, &held.buffer];
+        for b in &bufs {
+            count_bufs.extend(b.iter().map(|x| &**x));
+        }
+        pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
+        scan.encode(pass, &counts)?;
+        // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
+        let mut write = stage;
+        write.mode = SEMI;
+        write.nbinds = 0;
+        let scatter_bufs: [&BufferRef; 11] = [lbuf, &a[0], &a[1], &a[2], &a[3], &a[4], &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy];
+        pass.run_bytes(&scatter, &scatter_bufs, write.bytes(), groups(n));
+        self.keep.push(held);
         Ok(())
     }
 

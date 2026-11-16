@@ -593,7 +593,6 @@ fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option
         AstMatcher::Util(util) => util.context_free_within(read),
         AstMatcher::Call(call) => call.util.context_free_within(read),
         AstMatcher::Semantic(_) => false,
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => false,
     }
 }

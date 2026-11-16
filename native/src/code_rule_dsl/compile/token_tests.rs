@@ -64,7 +64,10 @@ pub(in crate::code_rule_dsl) struct Test {
 }
 
 struct Walk<'a> {
-    lang: &'a Lang,
+    dialect: crate::code_rule_dsl::language::GrammarDialect,
+    /// The dialect's token census, made when a token test or a layout first asks (`lang`): most rules test no
+    /// token, and the census decodes the dialect's automata and walks every kind's.
+    census: std::cell::OnceCell<Option<&'static Lang>>,
     utils: &'a Map<String, Value>,
     tests: BTreeSet<Test>,
     active: Vec<String>,
@@ -82,6 +85,10 @@ const SAME_NODE: [&str; 6] = ["$option", "cases", "default", "true", "false", "c
 const FRESH: [&str; 5] = ["site", "rule", "context", "ofRule", "stopBy"];
 
 impl Walk<'_> {
+    fn lang(&self) -> Option<&'static Lang> {
+        *self.census.get_or_init(|| Lang::of(self.dialect))
+    }
+
     /// `rule`, a sub-rule over a node reached by `rel` from a node `from` (the node the relation
     /// left); `frame` is what the enclosing same-node rules said about this node.
     fn rule(&mut self, rule: &Value, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, path: &str) {
@@ -128,7 +135,7 @@ impl Walk<'_> {
                 "has" | "follows" | "precedes" | "inside" => {
                     use crate::code_rule_dsl::compile::ast_rule::{gap_split, gap_test};
                     use crate::code_rule_dsl::matcher::AstMatcher;
-                    if let Some(test) = gap_test(key, value, self.lang.dialect, Some(Box::new(AstMatcher::Never))) {
+                    if let Some(test) = gap_test(key, value, self.dialect, Some(Box::new(AstMatcher::Never))) {
                         self.lowered.insert(here.clone());
                         // The token's own relations to the tokens beside it, which the test reads.
                         if !test.token.is_empty() {
@@ -136,7 +143,7 @@ impl Walk<'_> {
                                 self.lowered.insert(format!("{here}/{nested}"));
                             }
                         }
-                    } else if gap_split(key, value, self.lang.dialect).is_some() {
+                    } else if gap_split(key, value, self.dialect).is_some() {
                         self.lowered.insert(here.clone());
                     }
                     let field = value.get("field").and_then(Value::as_str).map(str::to_owned);
@@ -181,30 +188,31 @@ impl Walk<'_> {
     }
 
     fn token_test(&mut self, regex: &str, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, declared: bool, path: &str) {
+        let Some(lang) = self.lang() else { return };
         use crate::code_rule_dsl::regexes::Regex;
         let Ok(compiled) = Regex::new(regex) else { return };
         let Ok(whole) = Regex::new(&format!("^(?:{regex})$")) else { return };
-        if !self.lang.tokens.iter().any(|token| compiled.is_match(token)) {
+        if !lang.tokens.iter().any(|token| compiled.is_match(token)) {
             return;
         }
         // A regex that matches a token without spanning it tests a node's text, and reaches a
         // token only by accident (`.`, `^[rub]*f`): `incidental`.
-        let incidental = !self.lang.tokens.iter().any(|token| whole.is_match(token)) || ["x", "foo_bar", "0"].iter().any(|text| compiled.is_match(text));
+        let incidental = !lang.tokens.iter().any(|token| whole.is_match(token)) || ["x", "foo_bar", "0"].iter().any(|text| compiled.is_match(text));
         let compiled = if incidental { compiled } else { whole };
-        let parents_of = |kind: &Option<String>| kind.as_ref().and_then(|kind| self.lang.parents.get(kind)).cloned();
+        let parents_of = |kind: &Option<String>| kind.as_ref().and_then(|kind| lang.parents.get(kind)).cloned();
         let (category, relation, implied) = match rel {
             Rel::Inside => ("never", "inside".to_owned(), BTreeSet::new()),
             // The token matched itself: under the neighbour `inside` names, where one does.
-            Rel::Root(tag) => ("root", (*tag).to_owned(), self.lang.implied_in(frame.parent.clone().map(|kind| BTreeSet::from([kind])).as_ref(), &compiled, None)),
-            Rel::Has { end: true, field } => ("below", "has end".to_owned(), self.lang.implied_in(None, &compiled, field.as_deref())),
+            Rel::Root(tag) => ("root", (*tag).to_owned(), lang.implied_in(frame.parent.clone().map(|kind| BTreeSet::from([kind])).as_ref(), &compiled, None)),
+            Rel::Has { end: true, field } => ("below", "has end".to_owned(), lang.implied_in(None, &compiled, field.as_deref())),
             Rel::Has { end: false, field } => {
                 let parents = from.kind.clone().map(|kind| BTreeSet::from([kind]));
-                (if parents.is_some() { "gap" } else { "gap?" }, "has".to_owned(), self.lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
+                (if parents.is_some() { "gap" } else { "gap?" }, "has".to_owned(), lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
             }
             Rel::Sibling { end, field } => {
                 let parents = frame.parent.clone().map(|kind| BTreeSet::from([kind])).or_else(|| parents_of(&from.kind));
                 let relation = if *end { "sibling end" } else { "sibling" }.to_owned();
-                (if parents.is_some() { "gap" } else { "gap?" }, relation, self.lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
+                (if parents.is_some() { "gap" } else { "gap?" }, relation, lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
             }
         };
         // A token test that is a lowered relation's target, or an `any` alternative or `all` item
@@ -230,9 +238,10 @@ impl Walk<'_> {
     }
 
     fn layout(&mut self, side: &str, frame: &Frame, negated: bool, path: &str) {
-        let parents = frame.parent.clone().map(|kind| BTreeSet::from([kind])).or_else(|| frame.kind.as_ref().and_then(|kind| self.lang.parents.get(kind)).cloned());
+        let Some(lang) = self.lang() else { return };
+        let parents = frame.parent.clone().map(|kind| BTreeSet::from([kind])).or_else(|| frame.kind.as_ref().and_then(|kind| lang.parents.get(kind)).cloned());
         let any = crate::code_rule_dsl::regexes::Regex::new(".").unwrap();
-        let implied = self.lang.implied_in(parents.as_ref(), &any, None);
+        let implied = lang.implied_in(parents.as_ref(), &any, None);
         let category = if implied.is_empty() { "stored" } else { "layout" };
         self.tests.insert(Test { category, negated, relation: format!("layout {side}"), regex: String::new(), implied, path: path.to_owned() });
     }
@@ -269,7 +278,7 @@ pub(in crate::code_rule_dsl) const UNANSWERED: [&str; 4] = ["root", "below", "ga
 /// Every token test of a policy document, by its language, a test reached in several contexts
 /// once, in its worst category.
 pub(in crate::code_rule_dsl) fn tests(document: &Value) -> Vec<(String, Test)> {
-    let mut langs: BTreeMap<String, Option<&'static Lang>> = BTreeMap::new();
+
     let clauses = document.get("clauses").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut utils = Map::new();
     for clause in &clauses {
@@ -283,8 +292,8 @@ pub(in crate::code_rule_dsl) fn tests(document: &Value) -> Vec<(String, Test)> {
     for (at, clause) in clauses.iter().enumerate() {
         let Some(ast) = clause.pointer("/forbid/ast").and_then(Value::as_object) else { continue };
         let Some(language) = ast.get("language").and_then(Value::as_str) else { continue };
-        let Some(lang) = *langs.entry(language.to_owned()).or_insert_with(|| dialect_by_label(language).and_then(Lang::of)) else { continue };
-        let mut walk = Walk { lang, utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new(), lowered: BTreeSet::new() };
+        let Some(dialect) = dialect_by_label(language) else { continue };
+        let mut walk = Walk { dialect, census: std::cell::OnceCell::new(), utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new(), lowered: BTreeSet::new() };
         let base = format!("clauses/{at}");
         if let Some(rule) = ast.get("rule") {
             walk.rule(rule, &Rel::Root("rule"), &Frame::default(), &Frame::default(), false, &format!("{base}/rule"));

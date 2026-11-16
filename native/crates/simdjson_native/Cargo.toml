@@ -1,0 +1,10 @@
+[package]
+name = "rerail-simdjson-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The platform's part of JSON reading: simdjson (C++, vendored at native/vendor/simdjson-5.0.5) and the v9np kernels, one for each of simdjson's implementations (arm64, icelake, haswell, westmere), with the CPU's SHA-256 instructions and without."
+links = "rerail_simdjson"
+
+[build-dependencies]
+cc = "=1.10.0"

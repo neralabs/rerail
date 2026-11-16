@@ -325,3 +325,15 @@ fn determinizing_a_group_costs_more_than_reading_it() {
     let bytes: usize = cache.0.lock().unwrap().values().flatten().map(Vec::len).sum();
     println!("built {:?} in {build:.4} s CPU; read {:?} in {reading:.4} s CPU; {bytes} bytes stored", built.compiling, read.compiling);
 }
+
+/// A glob matches as globset matches it: `**` spans line breaks, so `glob("**", n)` holds for a node of several
+/// lines (no-shadow's `unset` alternatives); a path glob's `*` still stops at `/`.
+#[test]
+fn a_glob_spans_line_breaks() {
+    let path = |g: &str| lower(&Source::of(Spelling::PathGlob(g.into())), Domain::ANY).unwrap();
+    let (found, _) = vocabulary::evaluate(&[&path("**").plan, &path("a*c").plan], &[b"a\nb", b"a\nc", b"a/c", b""]);
+    let gs = |g: &str, s: &[u8]| globset::GlobBuilder::new(g).literal_separator(true).build().unwrap().compile_matcher().is_match(std::path::Path::new(std::str::from_utf8(s).unwrap()));
+    assert_eq!(found[0], vec![0, 1, 2, 3]);
+    assert_eq!(found[1], vec![1]);
+    assert!(gs("**", b"a\nb") && gs("a*c", b"a\nc") && !gs("a*c", b"a/c"));
+}

@@ -135,11 +135,11 @@ pub(super) struct Sample {
 /// The holders a sample reads (`Sample::holders`), in MB.
 fn holders() -> [usize; 5] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
-    // Relational work's device leases: Metal's, on macOS alone.
+    // Relational work's device leases exist only where the device does (macOS).
     #[cfg(target_os = "macos")]
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
     #[cfg(not(target_os = "macos"))]
-    let (live, idle) = (0usize, 0usize);
+    let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     [driver, reserved, live >> 20, idle >> 20, sqlite >> 20]
 }

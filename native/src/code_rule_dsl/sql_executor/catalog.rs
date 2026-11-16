@@ -62,7 +62,7 @@ fn literal(l: &front::Literal) -> (&'static str, Option<&str>, bool, Option<Stri
 
 /// The column names of a typed view: the `.decl` names, unique ignoring case, or `present` for a
 /// logically nullary relation's unit column.
-pub(super) fn view_columns(decl: &[(String, String)]) -> Vec<String> {
+pub(super) fn view_columns(decl: &[(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)]) -> Vec<String> {
     if decl.is_empty() {
         return vec!["present".into()];
     }
@@ -70,7 +70,7 @@ pub(super) fn view_columns(decl: &[(String, String)]) -> Vec<String> {
     decl.iter()
         .enumerate()
         .map(|(i, (name, _))| {
-            let name = if identifier(name) { name.clone() } else { format!("col{i}") };
+            let name = if identifier(name) { name.to_string() } else { format!("col{i}") };
             if seen.insert(name.to_ascii_lowercase()) { name } else { format!("{name}_{i}") }
         })
         .collect()
@@ -130,30 +130,30 @@ impl CodeRuleSqlExecutor {
                 let kind = kind(run, name);
                 let stratum = steps.iter().filter(|s| &s.output == name).map(|s| s.stratum).min();
                 let columns = view_columns(decl);
-                let physical = if program.nullary.contains(name) { 1 } else { decl.len() };
+                let physical = if program.nullary.contains(name.as_str()) { 1 } else { decl.len() };
                 let view = (width(db, name) == Some(physical)).then(|| format!("{PREFIX}rel_{name}"));
                 relation
                     .execute(rusqlite::params![
                         e as i64,
-                        name,
+                        name.as_str(),
                         kind,
                         decl.len() as i64,
                         stratum,
-                        run.outputs.contains(name),
+                        run.outputs.iter().any(|o| o == name.as_str()),
                         run.emitted.program.file_local,
                         view
                     ])
                     .map_err(error)?;
                 for (i, (col, ty)) in decl.iter().enumerate() {
-                    column.execute(rusqlite::params![e as i64, name, i as i64, col, ty]).map_err(error)?;
+                    column.execute(rusqlite::params![e as i64, name.as_str(), i as i64, col.as_str(), ty.as_str()]).map_err(error)?;
                 }
                 if view.is_some() {
                     let derives = kind != "input";
-                    match views.get(name) {
+                    match views.get(name.as_str()) {
                         Some((true, _)) => {}
                         Some((false, _)) if !derives => {}
                         _ => {
-                            views.insert(name.clone(), (derives, columns));
+                            views.insert(name.to_string(), (derives, columns));
                         }
                     }
                 }

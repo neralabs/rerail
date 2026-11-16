@@ -23,6 +23,7 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   points it lists, matches their filter), the licence allowlist, and the pre-commit check (`pre-commit.sh`: CI's lint
   and type-check job, before each commit, on the working tree merged into the local `origin/main` when the branch is
   behind it, as CI checks the pull request merged into main; `merged-checkout.mjs` makes that throwaway checkout).
+  `merge-audit.py` lists what a merge dropped from either side (docs/merging.md): run it before committing a merge.
 - `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
   follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
   `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's

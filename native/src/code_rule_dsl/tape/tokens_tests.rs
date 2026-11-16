@@ -44,6 +44,28 @@ fn every_grammar_builds() {
     }
 }
 
+/// The automata built with the build (`token_automata`), which a process decodes, are the ones its grammar's JSON
+/// builds: the same kinds, implied tokens, parents and tokens, for every grammar the engine holds.
+#[test]
+fn the_automata_built_with_the_build_are_the_grammars() {
+    use GrammarDialect::*;
+    let mut compared = 0;
+    for lang in [Python, JavaScript, TypeScript, Tsx, Sql, Vue, Markdown, MarkdownInline, Rust, Php, Json, Java, CSharp, Html, Css] {
+        let (Some(json), Some(language)) = (grammar_json(lang), Grammar::new(lang).ok().and_then(|g| g.kinds.grammar().cloned())) else { continue };
+        let fresh = TokenGrammar::from_json(json, &language).unwrap();
+        let built = TokenGrammar::of(lang, &language).unwrap_or_else(|| panic!("{lang:?}: no automata built with the build"));
+        assert_eq!(built.kind_count(), fresh.kind_count(), "{lang:?}");
+        assert_eq!(built.implied_tokens(), fresh.implied_tokens(), "{lang:?}");
+        // The census the token tests read, as the build wrote it.
+        let census = crate::code_rule_dsl::tape::token_census::Lang::of(lang).unwrap_or_else(|| panic!("{lang:?}: no census"));
+        assert_eq!(census.implied, fresh.implied_tokens(), "{lang:?}");
+        assert_eq!(census.parents, fresh.parents(), "{lang:?}");
+        assert_eq!(census.tokens, fresh.token_texts(), "{lang:?}");
+        compared += 1;
+    }
+    assert!(compared >= 8, "{compared} grammars compared");
+}
+
 /// An implied token is never a record; a token that says more than its kind and named children
 /// is stored as tree-sitter has it.
 #[test]

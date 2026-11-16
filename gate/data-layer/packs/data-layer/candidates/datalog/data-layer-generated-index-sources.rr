@@ -43,7 +43,7 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl visit_index(n: node, i: number)
-.input doc, syntax_error, node, field, child, text, op, line, node_text, visit_index
+.input doc, syntax_error, node, field, child, text, op, line, visit_index, node_text
 .output violation
 in_scope(d) :- doc(d, p, _), glob("impl/common/l7245_versioned_backends/generic_sparse.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).

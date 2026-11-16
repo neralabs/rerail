@@ -21,6 +21,7 @@
 //! read from their sources and planned from their row estimates, with no statistics (`batch`).
 
 use super::*;
+use super::body::RuleKey;
 use crate::code_rule_dsl::waves::schedule;
 
 #[derive(Clone)]
@@ -117,14 +118,20 @@ const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT 
 
 pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
     let atoms=inputs.atoms.is_some();
-    let mut model = make_plan(prog, db, inputs)?;
-    let (sccs, _) = strata(prog)?;
-    let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
-    for r in &prog.rules {
-        rules_by.entry(r.head.rel.as_str()).or_default().push(r);
+    // The program's version (its image): its rules, read by the planner by their handles (t36 item 2), and its
+    // fields, which the planner reads (t36 item 7).
+    let placed = super::body::Placed::of_program(prog)?;
+    let mut model = make_plan(&placed, db, inputs)?;
+    let vs = super::body::Versions::with(prog, placed);
+    let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its fields are read from its version".into()))?;
+    let sccs = components_of(prog)?;
+    // Each relation's rules, by key: a stratum's rules are read by their handles.
+    let mut keys_by: IndexMap<&str, Vec<RuleKey>> = IndexMap::new();
+    for (k, r) in prog.rules.iter().enumerate() {
+        keys_by.entry(r.head.rel.as_str()).or_default().push(RuleKey::program(k));
     }
     let mut setup = vec![RDL_INT.to_owned()];
-    let planned_views = plan_views(prog, &mut model, &rules_by)?;
+    let planned_views = plan_views(f, &vs, &mut model, &keys_by)?;
     let mut views = HashSet::new();
     for (rel, view) in &planned_views {
         setup.push(view_sql(rel, view));
@@ -139,17 +146,18 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
             model.stats.card.insert(rel.to_owned(), (*rows as f64).max(1.0));
         }
     }
-    let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.clone(), cols.len())).collect();
+    let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.to_string(), cols.len())).collect();
     // The derived relations a rule body reads, in order.
-    let reads = |order: &[Step], keep: &dyn Fn(&str) -> bool| -> Vec<String> {
+    let reads = |order: Order<'_, '_>, keep: &dyn Fn(&str) -> bool| -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        for s in order {
-            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &s.lit
-                && derived(&a.rel)
-                && keep(&a.rel)
-                && !out.iter().any(|x| x == &a.rel)
+        for l in order.lits() {
+            if let Lit::Atom(a) | Lit::Agg { atom: a, .. } = l
+                && let rel = order.b.rel(a)
+                && derived(rel)
+                && keep(rel)
+                && !out.iter().any(|x| x == rel)
             {
-                out.push(a.rel.to_string());
+                out.push(rel.to_string());
             }
         }
         out
@@ -175,6 +183,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
                     .iter()
                     .map(|v| match v {
                         Value::Int(i) => i.to_string(),
+                        Value::Branded(b) => b.value().to_string(),
                         Value::Str(s) => format!("'{}'", s.replace('\'', "''")),
                     })
                     .collect::<Vec<_>>()
@@ -190,47 +199,46 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         if scc.iter().all(|r| views.contains(r)) {
             continue;
         }
-        let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
+        let rules: Vec<RuleKey> = scc.iter().flat_map(|rel| keys_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let profile_key = super::super::profile::on().then(||format!("{name} stratum {stratum}: {}",scc.iter().cloned().collect::<Vec<_>>().join(",")));
-        let record = |rule: &Rule, kind: &str, x: Option<super::super::profile::RulePlan>, took: f64| {
+        let record = |rule: RuleKey, kind: &str, x: Option<super::super::profile::RulePlan>, took: f64| {
             if let (Some(key),Some(x)) = (&profile_key,x) {
-                let number = prog.rules.iter().position(|r|std::ptr::eq(r,rule));
+                let number = rule.number();
                 super::super::profile::stratum(key,"SQL emission",||"compile-time search; runtime SQL counters are recorded separately".into());
                 super::super::profile::planned(key,kind,number,&x,took,0,None,None);
-                if let Some(number)=number { super::super::profile::note(format!("rule #{number:04}"),||rule.to_string()); }
+                if let Some(number)=number { super::super::profile::note(format!("rule #{number:04}"),||prog.rules[number].to_string()); }
             }
         };
         let mut planned = Vec::new();
-        for rule in &rules {
+        for &rule in &rules {
+            let b = vs.at(rule);
             let started = profile_key.as_ref().map(|_|super::super::profile::now());
-            let ((order, _, _), explain) = model.plan_rule_explained(prog, &rule.head, &rule.body, None)?;
+            let ((order, _, _), explain) = model.plan_rule_explained(f, &b, None)?;
             record(rule,"full query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
-            planned.push((rule, order));
+            planned.push((b, order));
         }
-        let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(a.rel.as_str()));
-        let recursive = scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| own(&s.lit));
-        for (rule, order) in &planned {
-            let query = model.checked_query(prog, &rule.head, order, None, None)?;
+        let own_lit = |b: &super::body::Body<'_>, l: Lit<'_>| matches!(l, Lit::Atom(a) if !a.neg() && scc.contains(b.rel(a)));
+        let recursive = scc.len() > 1 || planned.iter().any(|(b, o)| Order::new(b, o).lits().any(|l| own_lit(b, l)));
+        for (b, order) in &planned {
+            let order = Order::new(b, order);
+            let query = model.checked_query(f, b, order.steps, None, None)?;
             // Positive own atoms have delta variants. An aggregate needs the complete
             // current input, so wake the full query when that recursive input changes.
-            let aggregates=order.iter().filter_map(|s|match &s.lit {Literal::Agg{atom,..}=>Some(atom.rel.as_str()),_=>None}).collect::<BTreeSet<_>>();
+            let aggregates=order.lits().filter_map(|l|match l {Lit::Agg{atom,..}=>Some(b.rel(atom)),_=>None}).collect::<BTreeSet<_>>();
             let reads = reads(order, &|rel| !recursive || !scc.contains(rel) || aggregates.contains(rel));
-            step(&rule.head.rel, stratum, reads, &query.render(), Some(query));
+            step(b.rel(b.head()), stratum, reads, &query.render(), Some(query));
         }
         if recursive {
             model.stats.solve(scc.clone());
-            for rule in &rules {
-                for (i, l) in rule.body.iter().enumerate() {
-                    if !own(l) {
-                        continue;
-                    }
+            for (&rule, (b, _)) in rules.iter().zip(&planned) {
+                for i in 0..b.len() {
+                    let Some(a) = b.plain_atom(i).filter(|&a| own_lit(b, Lit::Atom(a))) else { continue };
                     let started = profile_key.as_ref().map(|_|super::super::profile::now());
-                    let ((order, _, _), explain) = model.plan_rule_explained(prog, &rule.head, &rule.body, Some(i))?;
+                    let ((order, _, _), explain) = model.plan_rule_explained(f, b, Some(i))?;
                     record(rule,"delta query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
-                    let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", rule.head)))?;
-                    let query = model.checked_query(prog, &rule.head, &order, Some(at), None)?;
-                    let Literal::Atom(a) = l else { unreachable!("an own atom") };
-                    step(&rule.head.rel, stratum, vec![a.rel.to_string()], &query.render(), Some(query));
+                    let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", b.head_text())))?;
+                    let query = model.checked_query(f, b, &order, Some(at), None)?;
+                    step(b.rel(b.head()), stratum, vec![b.rel(a).to_string()], &query.render(), Some(query));
                 }
             }
             model.stats.solve(BTreeSet::new());
@@ -239,10 +247,10 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
         constant_rows: std::sync::Arc::new(prog.facts.iter().filter(|(rel,rows)|derived(rel) && !rows.is_empty())
-            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(|v|if let Value::Int(n)=v {Some(*n)}else{None}).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
-        value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
+            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(Value::integer).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
+        value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.to_string(),c.iter().map(|(_,t)|t.clone()).map(String::from).collect())).collect()),
         analysis: model.analysis(prog),
-        program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
+        program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel.as_str()].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
         setup,
         queries,
         views: planned_views,
@@ -365,12 +373,15 @@ pub fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
     Ok(Emitted { value_types, analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs, constant_rows })
 }
 
-/// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.
+/// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own: each value as shown.
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(clippy::type_complexity)]
 pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
-) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
-    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())
+) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vec<usize>>)> {
+    let prog = &lowered.program;
+    let outputs: Vec<&str> = prog.outputs.iter().map(String::as_str).collect();
+    let (outputs, nodes) = decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
+    Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.shown())).collect(), nodes))
 }

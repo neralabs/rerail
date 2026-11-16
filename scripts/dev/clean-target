@@ -1,0 +1,500 @@
+#!/usr/bin/python3
+"""Removes what this checkout's cargo builds can no longer use from its target directory, and nothing
+they still use: never a full `cargo clean` (a rebuild of everything takes 15 minutes and more).
+
+    scripts/dev/clean-target [--dry-run] [--wait] [--keep-hours H] [--relax-keep-hours H] [TARGET_DIR]
+
+The farm's wrapper runs it on its own (`--wait`, at most once an hour per target directory, after
+the build that started it ends): scripts/build/farm/README.md, "Old builds"
+
+TARGET_DIR is cargo's target directory for this checkout (`cargo metadata`, so CARGO_TARGET_DIR
+counts) unless given. Each profile directory (`debug`, `release`, `<triple>/debug`, ...) is
+cleaned while no cargo builds in it: one that holds cargo's lock is skipped, and said so, or with
+`--wait` cleaned once that build ends.
+
+What goes, per profile directory:
+
+- **Superseded.** Builds no current build was made from. cargo records, per unit, the units it
+  was built from; the roots are the builds nothing else was made from (binaries, test binaries, the
+  workspace's libraries). Of each root the newest stays, the one before it when the same rustc
+  built it (another toolchain's builds go once a newer one exists), and any built in the last H hours
+  (default 1), with every unit they were built from: a crate one build needs in two variants (for
+  the code, and for a build script) keeps both. What no kept root reaches goes once over H hours
+  old. (Grouping builds by crate name instead removed variants still in use: 3½-minute rebuilds.)
+- **Leftover objects.** On macOS a debug build keeps its debug info in `.rcgu.o` files beside the
+  binary, which the binary's debug map names (`split-debuginfo=unpacked`). Each rebuild leaves the
+  previous ones behind. Those no binary or dylib of the directory names go.
+- **Old incremental state.** Incremental directories of crates no longer built here, and those
+  untouched for a day. A crate's next edit then compiles it whole once.
+
+- **Idle Relax run dirs.** Relax caps the stores of the run dir a run uses, and only that one. A
+  run dir no run uses any more is removed whole once idle for `--relax-keep-hours` (default 6):
+  this target's own `relax` (its runs share one under `RELAX_SHARE` now) and every
+  `<relax home>/target/<key>` but the most recently used one. Never one a Relax process runs in
+  (it holds a lock in `cache/live`). scripts/dev/relax/README.md, "How the caches stay bounded".
+
+It prints what it removes and the space freed (blocks on disk: APFS shares cloned files' blocks).
+`--dry-run` only prints (and takes no lock). Runs at nice 19.
+"""
+import fcntl
+import json
+import mmap
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+# A deps file: [lib]<crate>-<16 hex>[.ext...] (libraries, test binaries, dep-info, objects, .dSYM).
+ARTIFACT = re.compile(r"^(?:lib)?(?P<crate>[A-Za-z0-9_]+)-(?P<hash>[0-9a-f]{16})(?P<rest>(?:\..*)?)$")
+# A fingerprint or build-script directory: <package>-<16 hex>.
+UNIT = re.compile(r"^(?P<package>.+)-(?P<hash>[0-9a-f]{16})$")
+
+
+def say(message):
+    print(f"clean-target: {message}", flush=True)
+
+
+def target_dir(argv):
+    if argv:
+        return os.path.realpath(argv[0])
+    out = subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=CHECKOUT,
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        sys.exit(f"clean-target: cargo metadata failed: {out.stderr.strip()[-300:]}")
+    return json.loads(out.stdout)["target_directory"]
+
+
+def blocks(path):
+    """Bytes on disk under `path` (a file or a tree), symlinks not followed."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return 0
+    if not os.path.isdir(path) or os.path.islink(path):
+        return st.st_blocks * 512
+    total = 0
+    for d, dirs, files in os.walk(path):
+        for name in dirs + files:
+            try:
+                total += os.lstat(os.path.join(d, name)).st_blocks * 512
+            except OSError:
+                pass
+    return total
+
+
+def mtime(path):
+    try:
+        return os.lstat(path).st_mtime
+    except OSError:
+        return 0
+
+
+def referenced_objects(deps, binaries):
+    """The object files the debug maps of `binaries` name (macOS: OSO entries). Their paths are
+    NUL-terminated strings in the binary's string table: read there directly, 30 times faster than
+    `nm -ap` on the engine's binaries. A string that only looks like one keeps an object, never
+    removes one."""
+    named = set()
+    if sys.platform != "darwin":
+        return named
+    for b in binaries:
+        try:
+            with open(os.path.join(deps, b), "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+                at = m.find(b".rcgu.o\0")
+                while at >= 0:
+                    start = max(m.rfind(b"\0", 0, at), m.rfind(b"/", 0, at)) + 1
+                    named.add(m[start:at + 7].decode("utf-8", "replace"))
+                    at = m.find(b".rcgu.o\0", at + 8)
+        except (OSError, ValueError):
+            pass
+    return named
+
+
+def is_binary(deps, name):
+    path = os.path.join(deps, name)
+    if name.endswith((".dylib", ".so")):
+        return True
+    return "." not in name and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def clean_profile(profile, keep_hours, plan, label):
+    """Adds what goes from the profile directory `profile` to `plan` ([(reason, path)])."""
+    deps = os.path.join(profile, "deps")
+    groups = {}
+    for name in os.listdir(deps):
+        m = ARTIFACT.match(name)
+        if m:
+            groups.setdefault((m["crate"], m["hash"]), []).append(name)
+    gone = set()  # hashes of the builds that go
+    # No rule by compiler version: the toolchain a checkout pins is not always the one it builds
+    # with (a `cargo +1.97.1`, another cargo first on PATH), and removing by the pin removed the
+    # builds in use. Another compiler's builds go by the sweep below, once no current build uses them.
+    # Superseded: a mark and sweep over cargo's own dependency records. Each unit's fingerprint
+    # directory holds its fingerprint value (in a file named after its kind) and, in its JSON, the
+    # fingerprint values of the units it was built from. The roots are the builds nothing else was
+    # built from and that are not a dependency crate's (binaries, test binaries, the workspace's
+    # libraries); of each root (package and kind) the two newest stay, and any built in the last H
+    # hours. Every unit a kept root reaches stays: a crate one build needs in two variants (for the
+    # code, and with build-script settings for a build script) keeps both. Only what no kept root
+    # reaches goes. A unit whose records cannot be read stays.
+    fingerprints = os.path.join(profile, ".fingerprint")
+    now = time.time()
+    units, by_value, referenced = {}, {}, set()
+    for name in os.listdir(fingerprints):
+        m = UNIT.match(name)
+        if not m:
+            continue
+        d = os.path.join(fingerprints, name)
+        try:
+            files = os.listdir(d)
+        except OSError:
+            continue
+        kinds, values, children, t, known, compiler = set(), set(), set(), 0, True, None
+        for f in files:
+            path = os.path.join(d, f)
+            t = max(t, mtime(path))
+            if f.endswith(".json"):
+                try:
+                    record = json.load(open(path))
+                    compiler = record.get("rustc")
+                    for dep in record.get("deps", []):
+                        # The file holds the value as cargo's to_hex writes it: little-endian bytes.
+                        children.add((int(dep[3]).to_bytes(8, "little").hex(), dep[1]))
+                except (OSError, ValueError, TypeError, IndexError, AttributeError):
+                    known = False
+            elif not f.startswith(("dep-", "output-")) and not f.endswith(".timestamp"):
+                kinds.add(f)
+                try:
+                    values.add(open(path).read().strip())
+                except OSError:
+                    known = False
+        units[m["hash"]] = {"package": m["package"], "kinds": frozenset(kinds), "values": values,
+                            "children": children, "time": t, "known": known and bool(values), "rustc": compiler}
+        for v in values:
+            by_value.setdefault(v, set()).add(m["hash"])
+        referenced |= {v for v, _ in children}
+    by_name = {}
+    for h, u in units.items():
+        by_name.setdefault((u["package"].replace("-", "_"), u["rustc"]), set()).add(h)
+    def dependency_crate(h):
+        """Whether the unit is a registry or git crate's (its dep-info names sources under ~/.cargo)."""
+        for key, names in groups.items():
+            if key[1] == h:
+                for n in names:
+                    if n.endswith(".d"):
+                        try:
+                            head = open(os.path.join(deps, n), errors="replace").read(1 << 16)
+                        except OSError:
+                            return False
+                        return "/.cargo/registry/" in head or "/.cargo/git/" in head
+        return False
+    roots = {}
+    for h, u in units.items():
+        if u["known"] and not (u["values"] & referenced) and not dependency_crate(h):
+            roots.setdefault((u["package"], u["kinds"]), []).append((u["time"], h))
+    keep = [h for h, u in units.items() if not u["known"]]
+    for group in roots.values():
+        group.sort(reverse=True)
+        # The newest; the one before it too when the same compiler built it (two feature sets a
+        # checkout alternates between), not when a toolchain change left it; any in the window.
+        newest = units[group[0][1]]["rustc"]
+        keep += [h for i, (t, h) in enumerate(group)
+                 if i == 0 or (i == 1 and units[h]["rustc"] == newest) or now - t <= keep_hours * 3600]
+    # A format this script does not read (a cargo change) leaves even the latest build's references
+    # unresolved: then nothing is swept rather than everything. (An older build's references may
+    # point at builds since replaced; the latest one's resolve.)
+    if roots:
+        latest = max((g[0] for g in roots.values()))[1]
+        refs = [v for v, _ in units[latest]["children"]]
+        if refs and sum(1 for v in refs if v in by_value) < len(refs) * 0.9:
+            say(f"{label}: the latest build's dependency records do not resolve: "
+                "superseded builds not swept")
+            keep = list(units)
+    # A reference that resolves to no unit (the unit was rebuilt in place since: the workspace's
+    # library after `cargo build --bin`, while the test binary still names the old value) keeps every
+    # unit of that crate the same rustc built: more than needed, never less.
+    marked, stack = set(), list(keep)
+    while stack:
+        h = stack.pop()
+        if h in marked or h not in units:
+            continue
+        marked.add(h)
+        for v, crate in units[h]["children"]:
+            found = by_value.get(v)
+            stack.extend(found if found else by_name.get((crate, units[h]["rustc"]), ()))
+    for h, u in units.items():
+        if h not in marked and h not in gone and now - u["time"] > keep_hours * 3600:
+            gone.add(h)
+            plan.append(("superseded", h))
+    # Expand each removed build (a hash) into its files: deps/, build/ and its fingerprint.
+    expanded = []
+    for reason, h in plan:
+        for key, names in groups.items():
+            if key[1] == h:
+                expanded += [(reason, os.path.join(deps, n)) for n in names]
+        for sub in (".fingerprint", "build"):
+            d = os.path.join(profile, sub)
+            if os.path.isdir(d):
+                expanded += [(reason, os.path.join(d, n)) for n in os.listdir(d) if n.endswith("-" + h)]
+    plan[:] = expanded
+    # Leftover objects: those no remaining binary names. Every file counts, hashed or not: a cdylib
+    # (librerail_engine.dylib) and its objects (rerail_engine.<cgu>.rcgu.o) carry no hash.
+    removed = {os.path.basename(path) for _, path in plan}
+    left = [n for n in os.listdir(deps) if n not in removed]
+    named = referenced_objects(deps, [n for n in left if is_binary(deps, n)])
+    plan += [("leftover object", os.path.join(deps, n)) for n in left if n.endswith(".rcgu.o") and n not in named]
+    # Incremental state: of crates no longer built here, or untouched for a day.
+    inc = os.path.join(profile, "incremental")
+    if os.path.isdir(inc):
+        # Build scripts' incremental state is `build_script_build`'s, whose builds live in build/.
+        crates = {key[0] for key in groups if key[1] not in gone} | {"build_script_build"}
+        for name in os.listdir(inc):
+            path = os.path.join(inc, name)
+            crate = name.rsplit("-", 1)[0]
+            if crate not in crates:
+                plan.append(("incremental, crate not built here", path))
+            elif now - mtime(path) > 86400:
+                plan.append(("incremental, untouched", path))
+
+
+def profiles(target):
+    """Profile directories under `target`: those with `deps` and `.fingerprint`, one or two levels down."""
+    out = []
+    for first in sorted(os.listdir(target)):
+        a = os.path.join(target, first)
+        if not os.path.isdir(a):
+            continue
+        if os.path.isdir(os.path.join(a, "deps")) and os.path.isdir(os.path.join(a, ".fingerprint")):
+            out.append(a)
+            continue
+        for second in sorted(os.listdir(a)):
+            b = os.path.join(a, second)
+            if os.path.isdir(os.path.join(b, "deps")) and os.path.isdir(os.path.join(b, ".fingerprint")):
+                out.append(b)
+    return out
+
+
+# --- Relax's run dirs (scripts/dev/relax/README.md, "How the caches stay bounded")
+#
+# Relax caps a run dir's stores itself, but only the run dir a run uses: a run dir no run uses any
+# more (a worktree's own `target/relax` once its runs share one under RELAX_SHARE, another share
+# name's) is never pruned. These go here, whole, once idle for RELAX_KEEP_HOURS.
+RELAX_KEEP_HOURS = 6.0
+# A run dir's key under `<relax home>/target` (the store root of a shared workspace).
+RELAX_KEY = re.compile(r"^[0-9a-f]{8}$")
+
+
+def relax_homes():
+    """Relax's homes: RELAX_HOME when set, and the default ~/.relax."""
+    out = []
+    for h in (os.environ.get("RELAX_HOME"), os.path.expanduser("~/.relax")):
+        if h and os.path.isdir(h) and os.path.realpath(h) not in out:
+            out.append(os.path.realpath(h))
+    return out
+
+
+def relax_roots(target):
+    """(run dir, shared): this target's own `relax` dir, and every `<relax home>/target/<key>`."""
+    out = []
+    own = os.path.join(target, "relax")
+    if os.path.isdir(os.path.join(own, "cache")):
+        out.append((own, False))
+    for home in relax_homes():
+        t = os.path.join(home, "target")
+        for name in sorted(os.listdir(t)) if os.path.isdir(t) else []:
+            d = os.path.join(t, name)
+            if RELAX_KEY.match(name) and os.path.isdir(os.path.join(d, "cache")):
+                out.append((d, True))
+    return out
+
+
+def relax_last_used(root):
+    """When a run last used `root`: a run stamps every store file it opens, and writes its set."""
+    newest = 0.0
+    for d in (os.path.join(root, "cache"), os.path.join(root, "cache", "sets")):
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        newest = max(newest, e.stat(follow_symlinks=False).st_mtime)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return newest
+
+
+def relax_take(root):
+    """Every live lock of `root` held exclusively (open files), or None when a Relax process runs
+    there: each running process holds its build's `cache/live/<build>` shared (Relax store.rs
+    hold_build)."""
+    held = []
+    live = os.path.join(root, "cache", "live")
+    for name in sorted(os.listdir(live)) if os.path.isdir(live) else []:
+        try:
+            f = open(os.path.join(live, name), "r+")
+        except OSError:
+            continue
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.close()
+            for g in held:
+                g.close()
+            return None
+        held.append(f)
+    return held
+
+
+def relax_plan(target, keep_hours, now=None):
+    """The Relax run dirs to remove: (root, why, last used). Kept: one a Relax process runs in,
+    one used in the last `keep_hours`, and the most recently used shared one (whatever its age: it
+    is the one every worktree's next run starts from)."""
+    now = time.time() if now is None else now
+    roots = [(r, shared, relax_last_used(r)) for r, shared in relax_roots(target)]
+    newest_shared = max((r for r in roots if r[1]), key=lambda r: r[2], default=None)
+    out = []
+    for root, shared, used in roots:
+        if newest_shared is not None and root == newest_shared[0]:
+            continue
+        if now - used < keep_hours * 3600:
+            continue
+        why = "Relax run dir, another share's" if shared else "Relax run dir of this checkout (its runs share one now)"
+        out.append((root, f"{why}, idle {keep_hours:g}+ h", used))
+    return out
+
+
+def clean_relax(target, keep_hours, dry, counts):
+    """Removes the idle Relax run dirs relax_plan names; the bytes freed. A run dir is renamed
+    aside first (a Relax that starts meanwhile makes a fresh one, a cold run, never a broken one),
+    under its live locks, then deleted."""
+    freed = 0
+    for root, why, used in relax_plan(target, keep_hours):
+        held = None if dry else relax_take(root)
+        if not dry and held is None:
+            say(f"{root}: a Relax process runs there: kept")
+            continue
+        try:
+            b = blocks(root)
+            if not dry:
+                aside = f"{root}.removing-{os.getpid()}"
+                try:
+                    os.rename(root, aside)
+                except OSError as e:
+                    say(f"{root}: not removed ({e.strerror})")
+                    continue
+        finally:
+            for f in held or []:
+                f.close()
+        if not dry:
+            shutil.rmtree(aside, ignore_errors=True)
+        counts.setdefault(why, [0, 0])
+        counts[why][0] += 1
+        counts[why][1] += b
+        freed += b
+        say(f"{root}: {b / 1e9:.1f} GB, last used {time.strftime('%Y-%m-%d %H:%M', time.localtime(used))}"
+            f"{' (dry run)' if dry else ''}")
+    # what an interrupted removal left aside
+    for home in relax_homes():
+        for d in glob_aside(os.path.join(home, "target")) + glob_aside(target):
+            if not dry:
+                shutil.rmtree(d, ignore_errors=True)
+    return freed
+
+
+def glob_aside(parent):
+    """Run dirs a removal renamed aside whose remover is gone."""
+    try:
+        return [os.path.join(parent, n) for n in os.listdir(parent) if ".removing-" in n
+                and not pid_alive(n.rsplit("-", 1)[-1])]
+    except OSError:
+        return []
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+
+
+def main(argv):
+    dry, wait, keep_hours, relax_hours = False, False, 1.0, RELAX_KEEP_HOURS
+    rest = []
+    while argv:
+        a = argv.pop(0)
+        if a in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        if a == "--dry-run":
+            dry = True
+        elif a == "--wait":
+            wait = True
+        elif a == "--keep-hours" and argv:
+            keep_hours = float(argv.pop(0))
+        elif a == "--relax-keep-hours" and argv:
+            relax_hours = float(argv.pop(0))
+        elif a.startswith("-"):
+            sys.exit(f"clean-target: unknown option {a} (--help)")
+        else:
+            rest.append(a)
+    # Already 19 when the farm's wrapper starts it: nice() would add 19 more, which macOS refuses.
+    if os.getpriority(os.PRIO_PROCESS, 0) < 19:
+        os.setpriority(os.PRIO_PROCESS, 0, 19)
+    target = target_dir(rest)
+    if not os.path.isfile(os.path.join(target, "CACHEDIR.TAG")):
+        sys.exit(f"clean-target: {target} is not a cargo target directory (no CACHEDIR.TAG)")
+    started = time.time()
+    freed, counts = 0, {}
+    for profile in profiles(target):
+        rel = os.path.relpath(profile, target)
+        lock_path = os.path.join(profile, ".cargo-lock")
+        lock = open(lock_path, "a+") if os.path.exists(lock_path) and not dry else None
+        try:
+            if lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+                except OSError:
+                    say(f"{rel}: a cargo build is running there: skipped")
+                    continue
+            plan = []
+            clean_profile(profile, keep_hours, plan, rel)
+            size = 0
+            for reason, path in plan:
+                # Only ever inside this profile directory.
+                if not os.path.realpath(path).startswith(os.path.realpath(profile) + "/"):
+                    continue
+                b = blocks(path)
+                size += b
+                counts.setdefault(reason, [0, 0])
+                counts[reason][0] += 1
+                counts[reason][1] += b
+                if not dry:
+                    if os.path.isdir(path) and not os.path.islink(path):
+                        shutil.rmtree(path, ignore_errors=True)
+                    else:
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
+            freed += size
+            say(f"{rel}: {len(plan)} paths, {size / 1e9:.1f} GB{' (dry run)' if dry else ''}")
+        finally:
+            if lock:
+                lock.close()
+    freed += clean_relax(target, relax_hours, dry, counts)
+    for reason, (n, b) in sorted(counts.items(), key=lambda kv: -kv[1][1]):
+        say(f"  {reason}: {n} paths, {b / 1e9:.1f} GB")
+    say(f"{'would free' if dry else 'freed'} {freed / 1e9:.1f} GB in {target} "
+        f"({time.strftime('%Y-%m-%d %H:%M')}, {time.time() - started:.0f} s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

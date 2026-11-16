@@ -57,16 +57,6 @@ pub fn temp() -> PathBuf {
     std::env::temp_dir().join(format!("rerail-prefilter-{}-{nonce}-{n}.sqlite", std::process::id()))
 }
 
-/// The repository's root: the nearest directory above the test's crate that holds `docs/rule-syntax`, so a test reads
-/// the same files whichever crate compiles it (`native/` or `native/crates/<crate>/`).
-pub fn repository() -> PathBuf {
-    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !dir.join("docs/rule-syntax").is_dir() {
-        assert!(dir.pop(), "no directory above {} holds docs/rule-syntax", env!("CARGO_MANIFEST_DIR"));
-    }
-    dir
-}
-
 /// Removes the stores `temp` made for processes that have exited.
 fn sweep() {
     #[cfg(unix)]
@@ -91,4 +81,13 @@ fn sweep() {
 /// The store at `path`, opened (created if it is not there).
 pub fn open(path: &std::path::Path) -> crate::content_store::ContentStore {
     crate::content_store::ContentStore::open(path).unwrap()
+}
+/// The repository's root: the nearest directory above the test's crate that holds `docs/rule-syntax`, so a test reads
+/// the same files whichever crate compiles it (`native/` or `native/crates/<crate>/`).
+pub fn repository() -> PathBuf {
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !dir.join("docs/rule-syntax").is_dir() {
+        assert!(dir.pop(), "no directory above {} holds docs/rule-syntax", env!("CARGO_MANIFEST_DIR"));
+    }
+    dir
 }

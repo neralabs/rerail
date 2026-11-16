@@ -47,6 +47,26 @@
         assert!(err.contains("no such file in the library"), "{err}");
     }
 
+    /// A seed's graph is the same whatever seeds shared its run of `bootstrap.rr` (`Graph::of`). A module names
+    /// `core.rr` only as a file seed, and `p0_absent` names no includer: taken whole from a run that also had the
+    /// library's modules as seeds (the test stores' template's), a text's graph held their implicit includes and
+    /// every seed's absent files, and differed from its own run's.
+    #[test]
+    fn a_seeds_graph_is_its_own_whatever_run_derived_it() {
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let text = super::Seed::Text { t_shape: false, includes: vec![(0, "python/env.rr".to_owned())] };
+        let alone = super::derive(std::slice::from_ref(&text)).unwrap().of(&text, 0);
+        let seeds = vec![super::Seed::File(lib.join("python/env.rr")), super::Seed::File(lib.join("python/imports.rr")), text.clone()];
+        let shared = super::derive(&seeds).unwrap();
+        let of = shared.of(&text, 2);
+        assert_eq!(of.digest(), alone.digest(), "shared:\n{}\nalone:\n{}", of.describe(), alone.describe());
+        // Each file seed's graph too.
+        for (k, seed) in seeds.iter().enumerate().take(2) {
+            let alone = super::derive(std::slice::from_ref(seed)).unwrap().of(seed, 0);
+            assert_eq!(shared.of(seed, k).digest(), alone.digest(), "{seed:?}");
+        }
+    }
+
     /// An include's file is named as its module is loaded (`module_path`), so the module's own includes are found
     /// under it: Windows' canonical paths are `\`-separated where `bootstrap.rr` writes `cat(lib, "/", name)`, and
     /// an included module's includes were lost (`python/modules.rr`'s `python/env.rr`: "py_stdlib … not declared").

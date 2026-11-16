@@ -585,7 +585,7 @@ impl Scan {
     }
 
     /// A scan whose levels are its own: several in one command buffer, each total read after it completes.
-    fn owned(count: usize) -> Result<Scan, String> {
+    pub fn owned(count: usize) -> Result<Scan, String> {
         let (mut levels, mut owned) = (Vec::new(), Vec::new());
         let mut size = count;
         loop {
@@ -987,6 +987,276 @@ pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n
         pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
     }
     Ok(SortParts { perm, starts, rkeys, nruns, key })
+}
+
+/// A column's statistics made on the device (decision 0209 §6): its rows, distinct values, the sums of its values'
+/// counts squared and cubed, and its `k` most common values with their counts, most common first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ColStats {
+    pub rows: u64,
+    pub ndv: u64,
+    pub sq: u64,
+    pub cube: u64,
+    pub top: Vec<(i64, u64)>,
+}
+
+/// The kernels of `column_stats` for a sort word `key`.
+fn col_stats_source(key: Width) -> String {
+    let k = key.ty();
+    format!(
+        r#"#include <metal_stdlib>
+using namespace metal;
+
+// Each run's length (0 past the runs), 1,024 a threadgroup, four a thread; the group's sums of lengths squared and
+// cubed into `part` (two words a group).
+kernel void col_stats(device const uint* starts [[buffer(0)]], device const uint* nruns [[buffer(1)]], device uint* lens [[buffer(2)]],
+                      device ulong* part [[buffer(3)]], constant uint* p [[buffer(4)]],
+                      uint g [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {{
+    uint n = p[0];
+    uint runs = n > 0 ? nruns[0] : 0;
+    ulong sq = 0, cube = 0;
+    for (uint i = 0; i < 4; i++) {{
+        uint r = g * 1024 + i * 256 + t;
+        if (r >= n) break;
+        uint len = r < runs ? starts[r + 1] - starts[r] : 0;
+        lens[r] = len;
+        ulong l = len;
+        sq += l * l;
+        cube += l * l * l;
+    }}
+    threadgroup ulong S[256];
+    threadgroup ulong C[256];
+    S[t] = sq; C[t] = cube;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {{
+        if (t < s) {{ S[t] += S[t + s]; C[t] += C[t + s]; }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }}
+    if (t == 0) {{ part[2 * g] = S[0]; part[2 * g + 1] = C[0]; }}
+}}
+
+// One threadgroup: the groups' sums (`p[1]` of them) and the runs' count into `out`.
+kernel void col_sum(device const ulong* part [[buffer(0)]], device const uint* nruns [[buffer(1)]], device ulong* out [[buffer(2)]],
+                    constant uint* p [[buffer(3)]], uint t [[thread_index_in_threadgroup]]) {{
+    uint n = p[0], groups = p[1];
+    ulong sq = 0, cube = 0;
+    for (uint g = t; g < groups; g += 256) {{ sq += part[2 * g]; cube += part[2 * g + 1]; }}
+    threadgroup ulong S[256];
+    threadgroup ulong C[256];
+    S[t] = sq; C[t] = cube;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {{
+        if (t < s) {{ S[t] += S[t + s]; C[t] += C[t + s]; }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }}
+    if (t == 0) {{ out[0] = n > 0 ? nruns[0] : 0; out[1] = S[0]; out[2] = C[0]; }}
+}}
+
+// The k longest runs, longest first, from the lengths' sort (ascending, stable): each one's key and length.
+kernel void col_top(device const uint* perm [[buffer(0)]], device const uint* lens [[buffer(1)]], device const {k}* rkeys [[buffer(2)]],
+                    device ulong* out [[buffer(3)]], constant uint* p [[buffer(4)]], uint t [[thread_position_in_grid]]) {{
+    uint n = p[0], k = p[1];
+    if (t >= k) return;
+    ulong key = 0, len = 0;
+    if (t < n) {{ uint r = perm[n - 1 - t]; len = lens[r]; key = ulong(rkeys[r]); }}
+    out[3 + t] = key;
+    out[3 + k + t] = len;
+}}
+"#
+    )
+}
+
+/// A column for `column_stats_of`: values on the host, uploaded as narrow as their span lets them be; or 64-bit values
+/// the device already holds (a resident relation's column, `rows` longs from long `at` of `buffer`), read in place.
+pub enum StatCol<'a> {
+    Host(&'a [i64]),
+    Device { buffer: &'a BufferRef, at: usize, rows: usize },
+}
+
+impl StatCol<'_> {
+    fn rows(&self) -> usize {
+        match self {
+            StatCol::Host(v) => v.len(),
+            StatCol::Device { rows, .. } => *rows,
+        }
+    }
+}
+
+/// A device column's span and its keys (`col_span`, `col_base`, `col_narrow`): each tile's least and greatest into
+/// `part`, then the least (the base) and whether the span passes 32 bits into `span`, then each value less the base
+/// as a sort key, 32 bits wide, or 64 when `p[3]` says the span is wide (the batch is encoded again for those).
+const COL_SPAN_SOURCE: &str = r#"#include <metal_stdlib>
+using namespace metal;
+
+constant long LEAST = long(0x8000000000000000UL);
+constant long MOST = long(0x7fffffffffffffffUL);
+
+kernel void col_span(device const long* src [[buffer(0)]], device long* part [[buffer(1)]], constant uint* p [[buffer(2)]],
+                     uint g [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {
+    uint n = p[0];
+    ulong at = ulong(p[1]) | (ulong(p[2]) << 32);
+    long lo = MOST, hi = LEAST;
+    for (uint i = 0; i < 4; i++) {
+        uint r = g * 1024 + i * 256 + t;
+        if (r >= n) break;
+        long v = src[at + r];
+        lo = min(lo, v);
+        hi = max(hi, v);
+    }
+    threadgroup long L[256];
+    threadgroup long H[256];
+    L[t] = lo; H[t] = hi;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (t < s) { L[t] = min(L[t], L[t + s]); H[t] = max(H[t], H[t + s]); }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (t == 0) { part[2 * g] = L[0]; part[2 * g + 1] = H[0]; }
+}
+
+// One threadgroup: the tiles' (`p[0]` of them) least and greatest; the base and whether the span is wide.
+kernel void col_base(device const long* part [[buffer(0)]], device long* span [[buffer(1)]], constant uint* p [[buffer(2)]],
+                     uint t [[thread_index_in_threadgroup]]) {
+    uint groups = p[0];
+    long lo = MOST, hi = LEAST;
+    for (uint g = t; g < groups; g += 256) { lo = min(lo, part[2 * g]); hi = max(hi, part[2 * g + 1]); }
+    threadgroup long L[256];
+    threadgroup long H[256];
+    L[t] = lo; H[t] = hi;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (t < s) { L[t] = min(L[t], L[t + s]); H[t] = max(H[t], H[t + s]); }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (t == 0) { span[0] = L[0]; span[1] = (ulong(H[0]) - ulong(L[0])) >> 32 != 0 ? 1 : 0; }
+}
+
+kernel void col_narrow(device const long* src [[buffer(0)]], device const long* span [[buffer(1)]], device uchar* keys [[buffer(2)]],
+                       constant uint* p [[buffer(3)]], uint r [[thread_position_in_grid]]) {
+    uint n = p[0];
+    if (r >= n) return;
+    ulong at = ulong(p[1]) | (ulong(p[2]) << 32);
+    ulong d = ulong(src[at + r]) - ulong(span[0]);
+    if (p[3] == 0) ((device uint*)keys)[r] = uint(d); else ((device ulong*)keys)[r] = d;
+}
+"#;
+
+/// Decision 0209 §6, the GPU batch over host columns (`column_stats_of`).
+pub fn column_stats(cols: &[&[i64]], k: usize) -> Result<Vec<ColStats>, String> {
+    let cols: Vec<StatCol<'_>> = cols.iter().map(|c| StatCol::Host(c)).collect();
+    column_stats_of(&cols, k)
+}
+
+/// Decision 0209 §6, the GPU batch: each column's statistics (`ColStats`) and its `k` most common values, all in one
+/// command buffer. Per column: the radix sort with its runs (`encode_sort`), a value's count its run's length;
+/// `col_stats` reduces the lengths a tile a threadgroup, `col_sum` the tiles'; a second sort of the lengths gives
+/// the longest runs (`col_top`). The host reads one small buffer a column. Exact, as the CPU's batch is.
+///
+/// A column the device holds (`StatCol::Device`) is not read by the host: its span is found on the device
+/// (`COL_SPAN_SOURCE`), and its keys sorted 32 bits wide. A column whose span passes 32 bits is made again in a second
+/// command buffer, 64 bits wide.
+pub fn column_stats_of(cols: &[StatCol<'_>], k: usize) -> Result<Vec<ColStats>, String> {
+    device()?;
+    let mut got = stats_round(cols, k, false)?;
+    let wide: Vec<usize> = got.iter().enumerate().filter(|(_, g)| g.is_none()).map(|(i, _)| i).collect();
+    if !wide.is_empty() {
+        let again: Vec<StatCol<'_>> = wide.iter().map(|&i| match &cols[i] {
+            StatCol::Device { buffer, at, rows } => StatCol::Device { buffer, at: *at, rows: *rows },
+            StatCol::Host(v) => StatCol::Host(v),
+        }).collect();
+        for (i, g) in wide.into_iter().zip(stats_round(&again, k, true)?) {
+            got[i] = g;
+        }
+    }
+    Ok(got.into_iter().map(|g| g.expect("made 64 bits wide")).collect())
+}
+
+/// One command buffer of `column_stats_of`; a device column whose span passes 32 bits is `None` unless `wide`.
+fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<ColStats>>, String> {
+    let queue = queue()?;
+    let command = queue.new_command_buffer();
+    let pass = Pass::new(command);
+    let mut keep: Vec<Held> = Vec::new();
+    let mut reads: Vec<Column> = Vec::new();
+    // Per column: its statistics' words, and its base (on the host, or the device's span buffer).
+    let mut outs: Vec<Option<(Held, Result<i64, Held>)>> = Vec::new();
+    for col in cols {
+        let n = col.rows();
+        if n == 0 {
+            outs.push(None);
+            continue;
+        }
+        let nn = n as u32;
+        let tiles = n.div_ceil(TILE).max(1);
+        let (keys, width, bits, base): (Buffer, Width, u32, Result<i64, Held>) = match col {
+            StatCol::Host(values) => {
+                let c = Column::upload(values)?;
+                let got = (c.buffer.buffer.clone(), c.width, c.bits, Ok(c.base));
+                reads.push(c);
+                got
+            }
+            StatCol::Device { buffer, at, rows: _ } => {
+                let spans = pipeline("column span", "col_span", || COL_SPAN_SOURCE.to_owned())?;
+                let based = pipeline("column span", "col_base", || COL_SPAN_SOURCE.to_owned())?;
+                let narrow = pipeline("column span", "col_narrow", || COL_SPAN_SOURCE.to_owned())?;
+                let (lo, hi) = (*at as u32, (*at >> 32) as u32);
+                let part = Held::new(16 * tiles)?;
+                let span = Held::new(16)?;
+                let width = if wide { Width::W64 } else { Width::W32 };
+                let keys = Held::new(width.bytes() * n)?;
+                pass.run(&spans, &[buffer, &part.buffer], &[nn, lo, hi], &[], tiles);
+                pass.run(&based, &[&part.buffer, &span.buffer], &[tiles as u32], &[], 1);
+                pass.run(&narrow, &[buffer, &span.buffer, &keys.buffer], &[nn, lo, hi, u32::from(wide)], &[], groups(n));
+                let buf = keys.buffer.clone();
+                keep.extend([part, keys]);
+                (buf, width, if wide { 64 } else { 32 }, Err(span))
+            }
+        };
+        let parts = encode_sort(&pass, &keys, width, bits, n)?;
+        let variant = format!("column stats {:?}", parts.key.bytes());
+        let stats = pipeline(&variant, "col_stats", || col_stats_source(parts.key))?;
+        let sum = pipeline(&variant, "col_sum", || col_stats_source(parts.key))?;
+        let top = pipeline(&variant, "col_top", || col_stats_source(parts.key))?;
+        let lens = Held::new(4 * n)?;
+        let out = Held::zeroed(8 * (3 + 2 * k))?;
+        // The lengths' sums spread over the column's tiles, then their sums in one threadgroup.
+        let part = Held::new(16 * tiles)?;
+        pass.run(&stats, &[&parts.starts.buffer, &parts.nruns.buffer, &lens.buffer, &part.buffer], &[nn], &[], tiles);
+        pass.run(&sum, &[&part.buffer, &parts.nruns.buffer, &out.buffer], &[nn, tiles as u32], &[], 1);
+        keep.push(part);
+        let by_len = encode_sort(&pass, &lens.buffer, Width::W32, 32, n)?;
+        pass.run(&top, &[&by_len.perm.buffer, &lens.buffer, &parts.rkeys.buffer, &out.buffer], &[nn, k as u32], &[], groups(k));
+        outs.push(Some((out, base)));
+        keep.extend([lens, parts.perm, parts.starts, parts.rkeys, parts.nruns, by_len.perm, by_len.starts, by_len.rkeys, by_len.nruns]);
+    }
+    pass.end();
+    let mut done = Submitted::commit(command)?;
+    done.reads = reads;
+    done.wait();
+    drop(keep);
+    Ok(outs
+        .into_iter()
+        .zip(cols)
+        .map(|(o, col)| {
+            let Some((out, base)) = o else { return Some(ColStats::default()) };
+            let base = match base {
+                Ok(b) => b,
+                Err(span) => {
+                    // SAFETY: two longs, written by `col_base`; the command buffer completed.
+                    let s = unsafe { std::slice::from_raw_parts(span.buffer.contents().cast::<i64>(), 2) };
+                    if s[1] != 0 && !wide {
+                        return None;
+                    }
+                    s[0]
+                }
+            };
+            // SAFETY: `3 + 2k` words, written by `col_stats` and `col_top`; the command buffer completed.
+            let w = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u64>(), 3 + 2 * k) };
+            let ndv = w[0];
+            let top = (0..k.min(ndv as usize)).map(|i| ((w[3 + i] as i64).wrapping_add(base), w[3 + k + i])).collect();
+            Some(ColStats { rows: col.rows() as u64, ndv, sq: w[1], cube: w[2], top })
+        })
+        .collect())
 }
 
 /// A probe join's pairs, (left row, right host row), in left row order, and its GPU time.

@@ -11,18 +11,19 @@ fn rr_checks_its_unicode_escapes_at_the_string() {
     for name in ["h4", "b_short", "b_four", "b_five", "b_six", "u_ok"] {
         assert!(!c.values.iter().any(|v| v.name == name), "`{name}` is still tier 1's");
     }
-    // The escape's, and `json_bad`'s `\\u` part: checked in a JSON document's levels alone.
+    // The escape's, and `json_bad`'s `\\u` part: checked in a JSON document's levels alone. A
+    // number's 19 digits are the token loop's (`a_numbers_checks_are_at_its_token`).
     assert_eq!(c.program.local_checks.len(), 2, "two local checks");
     let json = |v: &str| format!(".policy {{\"a\": [1, \"{v}\"]}}");
     for (src, ok) in [(json("\\u0041"), true), (json("\\u{41}"), false), (json("\\u12"), false), ("r(x) :- x = \"\\u{41}\".".to_owned(), true)] {
         assert_eq!(super::compiled_tape(&src).is_some(), ok, "{src}");
-        assert_eq!(super::tape(&src), super::engine_columns(&super::rr::engine_tape(&src)), "{src}");
+        assert_eq!(super::tape(&src), super::engine_tape(&src), "{src}");
     }
     assert!(c.words.contains(" CHECK"), "tier 2 checks at the string");
     // The words refuse a bad escape and take a good one, as the engine's tape says.
     for (src, ok) in [("r(x) :- x = \"\\u0041\".", true), ("r(x) :- x = \"\\u{1F600}\".", true), ("r(x) :- x = \"\\uD800\".", false), ("r(x) :- x = \"a\\u12\".", false), ("r(x) :- x = \"\\u{110000}\".", false)] {
         assert_eq!(super::compiled_tape(src).is_some(), ok, "{src}");
-        assert_eq!(super::tape(src), super::engine_columns(&super::rr::engine_tape(src)), "{src}");
+        assert_eq!(super::tape(src), super::engine_tape(src), "{src}");
     }
     // A string past a word of 64 bytes, its escape in the second word.
     let long = format!("r(x) :- x = \"{}\\uD800\".", "a".repeat(70));
@@ -34,7 +35,7 @@ fn rr_checks_its_unicode_escapes_at_the_string() {
     for pad in 40..140 {
         for esc in ["\\u0041", "\\uD800", "\\u12", "\\u{41}", "\\u{110000}", "\\\\u12"] {
             let src = format!("r(x) :- x = \"{}{esc}\".", "a".repeat(pad));
-            assert_eq!(super::tape(&src), super::engine_columns(&super::rr::engine_tape(&src)), "{src}");
+            assert_eq!(super::tape(&src), super::engine_tape(&src), "{src}");
         }
     }
 }

@@ -344,7 +344,7 @@ fn witness_with_groups<'t, D: Doc>(
 
 /// Where a query could not answer: the first file it did not read, with the detail a file the
 /// parser did not read reports (`SyntaxReading::Unread`).
-pub(crate) struct Incomplete {
+pub struct Incomplete {
     pub(crate) path: String,
     pub(crate) unread: Option<String>,
 }

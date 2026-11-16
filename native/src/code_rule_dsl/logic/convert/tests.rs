@@ -233,7 +233,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     e.decls.insert("option_value".into(), "name: sym, v: sym".into());
     e.decls.insert("option_json".into(), "name: sym, pointer: sym, v: sym".into());
     // The tape's verdict (tree-sitter's ERROR and MISSING nodes), for the authored file (`GIVEN`): the converter's
-    // `syntax_error(d)`, under a name of its own, since core.rr's `syntax_error` is the engine's (decision 0047).
+    // `syntax_error(d)`, under a name of its own, since core.rr's `syntax_error` is the engine's (decision 0141).
     e.rule("tape_syntax_error($d)", "d: int", vec!["syntax_error($d)".into()]);
     let as_text = |v: &Json| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
     let mut option_facts = BTreeSet::new();
@@ -559,7 +559,7 @@ fn convert_the_data_layer_pack() {
 }
 
 /// Every authored file (`datalog/authored/<rule>.rr`) is a rule's, and merges into its conversion (core.rr's
-/// prelude, decision 0047's checks, `rr::check`, lowering, the overlay's rules), each `violation` at a clause its
+/// prelude, decision 0141's checks, `rr::check`, lowering, the overlay's rules), each `violation` at a clause its
 /// policy has, which it then authors; and what the pack holds in `datalog` is the converter's run as it is now
 /// (`convert_the_data_layer_pack` writes it): every rule's merged program and `coverage.txt`, and no other `.rr`.
 #[test]
@@ -1143,8 +1143,10 @@ fn replay_run(k: usize, event: &Event, program: &Replayed, root: &Path) -> Outco
         Err(error) => return Outcome::Error { run: true, error },
     };
     for r in &show {
-        let rows = std::fs::read_to_string(dir.join(".out").join(format!("{r}.csv"))).unwrap_or_else(|_| "(no file)".to_owned());
-        eprintln!("{} {r}:\n{rows}", event.test);
+        match crate::code_rule_dsl::logic::plan::output::shown(&dir.join(".out"), r) {
+            Ok(rows) => eprintln!("{} {r}:\n{rows:?}", event.test),
+            Err(_) => eprintln!("{} {r}:\n(no relation)", event.test),
+        }
     }
     // Where the oracle records no code, (path, line) only.
     let codeless = want.iter().any(|(_, _, code)| code.is_none());
@@ -1304,7 +1306,9 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     // Per group and check, its events with findings to compare that the baseline records exact.
     let mut by_check = BTreeMap::<(&str, &str), Vec<usize>>::new();
     for (k, (event, id)) in events.iter().zip(&ids).enumerate() {
-        if event.want.is_ok() && !baseline.misses.contains_key(id) {
+        // `RERAIL_REPLAY_CHECK`: only the checks whose group or name holds it (one check, to time or profile it).
+        let named = std::env::var("RERAIL_REPLAY_CHECK").map_or(true, |c| event.group.contains(&c) || event.check.contains(&c));
+        if event.want.is_ok() && !baseline.misses.contains_key(id) && named {
             by_check.entry((event.group, &event.check)).or_default().push(k);
         }
     }
@@ -1315,10 +1319,10 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     // Per check: the events run, the failures, the time taken.
     let sampled: Vec<(usize, Vec<String>, std::time::Duration, String)> = std::thread::scope(|s| {
         let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                // Named, so the test watchdog times the test, not each worker: on Linux an unnamed thread takes its
-                // creator's name, and the test's allowance is its own thread's.
-                std::thread::Builder::new().name("replay sample".into()).spawn_scoped(s, || {
+            .map(|k| {
+                // Named as a test's thread is, so each worker runs on a store of its own (`test_store::own`), not on
+                // the process's, which every worker would share.
+                std::thread::Builder::new().name(format!("convert::tests::replay_sample_{k}")).spawn_scoped(s, || {
                     let mut out = Vec::new();
                     while let Some(((group, check), ks)) = next() {
                         let begun = std::time::Instant::now();
@@ -1418,15 +1422,15 @@ fn findings(program: &str, dir: &Path) -> Result<Vec<String>, String> {
 fn finding_keys(program: &str, dir: &Path) -> Result<Vec<(String, u64, String)>, String> {
     let out = dir.join(".out");
     super::super::plan::corpus::run(program, dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map_err(|e| e.to_string())?;
-    // Every output has its file, empty or not: no `violation.csv` is a program without violations.
-    let csv = std::fs::read_to_string(out.join("violation.csv")).map_err(|e| format!("violation.csv: {e}"))?;
-    Ok(csv
-        .lines()
-        .map(|l| {
-            let f: Vec<&str> = l.split('\t').collect();
-            (f[3].to_owned(), f[4].parse().unwrap_or_default(), f[2].to_owned())
-        })
-        .collect())
+    // Every output is in the image, empty or not: no `violation` is a program without violations.
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).map_err(|e| format!("violation: {e}"))?;
+    let violation = outputs.get("violation").ok_or("violation: no such relation")?;
+    let mut keys: Vec<(String, u64, String)> = violation
+        .rows()
+        .map(|r| (r.get(3).to_string(), r.get(4).int().and_then(|l| u64::try_from(l).ok()).unwrap_or_default(), r.get(2).to_string()))
+        .collect();
+    keys.sort();
+    Ok(keys)
 }
 
 /// `has` filters its ancestor, the node it is at, by that node's kinds, not the descendant's: the executor's typed
@@ -1553,7 +1557,7 @@ fn converted_programs_hold_only_what_violation_reaches() {
         for r in &prog.rules {
             assert!(reached.contains(r.head.rel.as_str()), "{id}: {} is not reached", r.head.rel);
         }
-        for rel in prog.decls.keys().chain(&prog.inputs) {
+        for rel in prog.decls.keys().map(|r| r.as_str()).chain(prog.inputs.iter().map(String::as_str)) {
             assert!(reached.contains(rel), "{id}: {rel} is declared and not reached");
         }
         let sets: BTreeSet<String> = reached.iter().filter_map(|r| crate::code_rule_dsl::logic::front::axis(r).map(|(set, _)| set)).map(str::to_owned).chain(prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
@@ -1980,12 +1984,14 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
     // Of two runs, each its own file (`<file>.converted`, `<file>.hand-written`).
     if let Some(keep) = std::env::var_os("RERAIL_MEASURE_KEEP") {
         let keep = if label == "all" { PathBuf::from(keep) } else { PathBuf::from(format!("{}.{label}", PathBuf::from(keep).display())) };
-        std::fs::copy(out.join("violation.csv"), keep).unwrap();
+        // Shown for the script that compares them: each row's values, tab-separated (written, never read back here).
+        let shown: String = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().iter().map(|r| r.join("\t") + "\n").collect();
+        std::fs::write(keep, shown).unwrap();
     }
     // Violations per rule: the first column of `violation.csv` is the rule's id.
     let mut per: BTreeMap<String, usize> = BTreeMap::new();
-    for line in std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines() {
-        let id = line.split('\t').next().unwrap_or("").trim_matches('"').to_owned();
+    for row in crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default() {
+        let id = row[0].trim_matches('"').to_owned();
         *per.entry(id).or_default() += 1;
     }
     for (id, n) in &per {
@@ -2071,7 +2077,7 @@ fn library_relations_through_an_overlay_report() {
         Err(e) => panic!("the closure does not lower: {e}"),
     };
     let rule = rule_file(TARGET).unwrap();
-    for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !crate::code_rule_dsl::logic::front::is_axis(rel) && !closure.inputs.contains(rel)).enumerate() {
+    for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !crate::code_rule_dsl::logic::front::is_axis(rel) && !closure.inputs.iter().any(|i| i == rel.as_str())).enumerate() {
         let args = vec!["_"; cols.len()].join(", ");
         let authored = format!(
             "{includes}.decl in_scope(d: number)\n\

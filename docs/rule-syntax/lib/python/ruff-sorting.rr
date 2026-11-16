@@ -43,7 +43,7 @@ one_target(a) :- kind(a, "assignment"), !chained(a).
 .decl chained(a: node)
 chained(a) :- kind(p, "assignment"), field(p, "right", a), kind(a, "assignment").
 
-.decl sort_ask(v: node, style: symbol)
+.decl sort_ask(v: node, style: symbol) extensible
 .decl seq_item(v: node, i: number, e: node, s: symbol)
 seq_item(v, i, e, s) :- sort_ask(v0, _), unparen(v0, v), seq_child(v, e, j), unparen(e, m), plain_str(m, s),
     i = count : { seq_child(v, e0, j0), j0 < j }.

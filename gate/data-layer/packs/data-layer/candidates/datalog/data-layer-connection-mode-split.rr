@@ -48,7 +48,7 @@ mode_split_patterns("case_pattern").
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, op, line, name, node_text, cpython_syntax_error
+.input doc, syntax_error, node, field, child, text, op, line, name, cpython_syntax_error, node_text
 .output violation
 mode_split_async_allowed("__aenter__").
 mode_split_async_allowed("__aexit__").

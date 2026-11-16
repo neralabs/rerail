@@ -3,7 +3,7 @@
 use super::*;
 use crate::code_rule_dsl::sql_executor::phase::{Counts, Phase};
 
-pub(in crate::code_rule_dsl::sql_executor::reductions) struct Publication {
+pub struct Publication {
     pub table: String,
     pub keys: String,
     rows: String,

@@ -150,11 +150,6 @@ impl ScopeRules for Json {
         None
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
-        false
-    }
-
     /// Never reached: scope is refused, so no rule asks for a JSON file's usage.
     fn usage<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: &mut Steps<'_>) -> Result<Usage, BuildError> {
         Err(BuildError::Budget)

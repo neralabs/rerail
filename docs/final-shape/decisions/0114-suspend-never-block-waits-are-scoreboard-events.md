@@ -3,7 +3,7 @@
 Status: draft (2026-11-11). §1 and §5 are built (`plan::issue`, `content_store::atoms`), and §3's posting and
 resuming (see **Built so far** at the end); the rest is proposed.
 It builds on 0113 (strata issued from a scoreboard) and 0100 (one executor, claims, one pool), and takes up
-the requests answered inside the fixpoint of 0065 §2a and the load order of 0108.
+the requests answered inside the fixpoint of 0065 §2a and the load order of 0145.
 
 ## Intro
 
@@ -43,7 +43,7 @@ So the span is within 1.26× of the critical path, and the answers are most of w
 4. **Written back.** The chunk's export rows are added to the exports, and the answer rows (`rows_of`) go back
    to the cone.
 
-Only step 4 needs one order. The exports must take rows in the order 0108 fixes (where the load budget binds:
+Only step 4 needs one order. The exports must take rows in the order 0145 fixes (where the load budget binds:
 by module depth, module, then path), so that a run is the same however its threads ran. Steps 1 to 3 need no
 order at all.
 
@@ -56,7 +56,7 @@ order at all.
   the next event, not by a poll.
 
 Answers become jobs too. The requests of every suspended stratum are gathered into one batch, the batch's
-documents are loaded and evaluated on workers, and only the write-back runs in one place, in 0108's order.
+documents are loaded and evaluated on workers, and only the write-back runs in one place, in 0145's order.
 
 ```text
   today                                     this decision
@@ -64,7 +64,7 @@ documents are loaded and evaluated on workers, and only the write-back runs in o
   stratum ─ask─▶ main ─parse─▶ workers      stratum ─suspend─▶ board (requests posted)
      │ (spins)     │ ◀─chunks─┘                  board: batch of requests ─▶ jobs (load + evaluate)
      │             │ evaluate (main db)          job ends ─event─▶ board
-     │ ◀──reply────┘ write back                  retire step: write back in 0108 order
+     │ ◀──reply────┘ write back                  retire step: write back in 0145 order
      ▼                                           stratum ready ─▶ resumes as a job
   goes on
 ```
@@ -78,7 +78,7 @@ documents are loaded and evaluated on workers, and only the write-back runs in o
   many jobs run at once.
 - **0065 §2a** defined requests: a component with a pending request pauses (`setfix` returns "2"), its
   requests are answered, the answers are added to its produced relations, and it goes on.
-- **0108** fixed the order in which loads are taken when the load budget binds, and that a load asked again
+- **0145** fixed the order in which loads are taken when the load budget binds, and that a load asked again
   is answered from the exports, not sent again.
 - **0049** made pending atoms a reason to refuse a commit; §5 here replaces that refusal with a reservation.
 
@@ -119,7 +119,7 @@ as a ready job. No job ever calls a blocking wait, a `help_until`, or a poll loo
   then the file-local evaluation of each chunk on a connection of its own (a scope of the store, as a strand
   has), not the main one. Their outputs are the chunk's rows: exports, outputs, base rows, statistics. Each is
   an owned value, not a write to shared state.
-- **Write-back.** The jobs' results come back as events. The retire step applies them in 0108's order: rows to
+- **Write-back.** The jobs' results come back as events. The retire step applies them in 0145's order: rows to
   the exports, lines to the outputs, statistics to the keeper. Then it gives each suspended stratum its
   answers (`component::add`, or `answered` for a produced relation outside the stratum). This is the only
   point that needs one order, and it is a short merge of owned values, not an evaluation.
@@ -198,7 +198,7 @@ of the step before.
 - Whether a load's file-local evaluation can run on a connection of its own as is. It binds module sources and
   reads the main scope's tables (`modules.bind(&db, ..)`). A scope of its own may need those bound again, which
   costs CPU.
-- Whether the write-back's order must be 0108's for every load, or only where the load budget binds.
+- Whether the write-back's order must be 0145's for every load, or only where the load budget binds.
 - How the statistics keeper merges a chunk's statistics out of order (it counts files as they come today).
 
 ## Built so far (2026-11-11)

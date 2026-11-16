@@ -1,6 +1,10 @@
 //! A rule program as facts (decision 0074): every rule, literal, atom and term, every declaration and setting, as a
-//! row of a fixed schema. A program is then data a rule can read, a document the store keeps as a tape, and rows the
-//! facts memo keeps. A program written as facts reads back as the same program (`program`).
+//! row of a fixed schema, so a rule can read a program as data. A program written as facts reads back as the same
+//! program (`program`).
+//!
+//! These rows are not how a program is kept (decision 0155): a kept program is its `.rr` text (`program_text`). The
+//! rows are made from a program when asked for, and the text's `.about` part is the rows of what has no syntax
+//! (`write_about`).
 //!
 //! The schema, one program `p` among several in a document:
 //!
@@ -16,28 +20,44 @@
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
-//!   `native_group`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
+//!   `native_group`), `native_text_test` (with `native_text_pattern`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
 //!
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
-use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
+use super::front::Name;
+use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
 use super::magic::{Gate, Report};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Rows by relation, as a program's `facts` holds them.
-pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+pub type Facts = BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::name::List<Value>>>;
 
-/// A value of a fact row, as a reader takes it: owned (`Value`), or borrowed from encoded facts (`V`).
+/// A value of a fact row, as a reader takes it.
 pub trait Cell {
     fn int(&self) -> Result<i64, String>;
     fn str(&self) -> Result<&str, String>;
+}
+
+/// A branded atom's class as the program's facts write it (`term`, `fact` rows of kind `atom`, decision 0270).
+fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
+    match b.tag() {
+        'n' => "n",
+        'k' => "k",
+        _ => "f",
+    }
+}
+
+fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::Branded, String> {
+    let atom = u32::try_from(atom).map_err(|e| bad(e))?;
+    tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
 }
 
 impl Cell for Value {
     fn int(&self) -> Result<i64, String> {
         match self {
             Value::Int(i) => Ok(*i),
+            Value::Branded(b) => Ok(b.value()),
             Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
         }
     }
@@ -45,79 +65,13 @@ impl Cell for Value {
         match self {
             Value::Str(x) => Ok(x),
             Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
+            Value::Branded(b) => Err(bad(format!("the atom {b} where a string goes"))),
         }
-    }
-}
-
-/// A value of encoded facts (`encode`), its string borrowed from the encoding's table.
-#[derive(Clone, Copy, Debug)]
-pub enum V<'b> {
-    Int(i64),
-    Str(&'b str),
-}
-
-impl Cell for V<'_> {
-    fn int(&self) -> Result<i64, String> {
-        match self {
-            V::Int(i) => Ok(*i),
-            V::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
-        }
-    }
-    fn str(&self) -> Result<&str, String> {
-        match self {
-            V::Str(x) => Ok(x),
-            V::Int(i) => Err(bad(format!("{i} where a string goes"))),
-        }
-    }
-}
-
-impl V<'_> {
-    pub fn owned(&self) -> Value {
-        match self {
-            V::Int(i) => Value::Int(*i),
-            V::Str(x) => Value::Str((*x).to_owned()),
-        }
-    }
-}
-
-/// One relation of encoded facts, read in place: its values in one list, and where each row starts.
-pub struct ViewRel<'b> {
-    pub name: &'b str,
-    values: Vec<V<'b>>,
-    starts: Vec<u32>,
-}
-
-impl<'b> ViewRel<'b> {
-    pub fn rows(&self) -> impl Iterator<Item = &[V<'b>]> + '_ {
-        (0..self.starts.len()).map(move |i| {
-            let end = self.starts.get(i + 1).map_or(self.values.len(), |e| *e as usize);
-            &self.values[self.starts[i] as usize..end]
-        })
-    }
-
-    pub fn len(&self) -> usize {
-        self.starts.len()
-    }
-}
-
-/// Encoded facts (`encode`) read in place (`decode_view`): no row and no string is copied out.
-pub struct View<'b> {
-    pub rels: Vec<ViewRel<'b>>,
-}
-
-impl View<'_> {
-    /// The relations `keep` names, as owned facts.
-    pub fn owned(&self, keep: impl Fn(&str) -> bool) -> Facts {
-        let mut out = Facts::new();
-        for rel in self.rels.iter().filter(|r| keep(r.name)) {
-            out.entry(rel.name.to_owned()).or_default().extend(rel.rows().map(|r| r.iter().map(V::owned).collect()));
-        }
-        out
     }
 }
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
+pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -162,6 +116,8 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("native_roots", &["p:sym", "rel:sym", "roots:sym"]),
         ("native_match", &["p:sym", "rel:sym", "input:sym", "pattern:sym", "positions:int"]),
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
+        ("native_text_test", &["p:sym", "rel:sym", "input:sym", "column:int", "op:sym"]),
+        ("native_text_pattern", &["p:sym", "rel:sym", "i:int", "pattern:sym"]),
         ("native_python_candidates", &["p:sym", "rel:sym", "input:sym", "targets:sym", "context:sym", "member:sym"]),
         ("native_python", &["p:sym", "rel:sym", "kind:sym", "input:sym", "targets:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
@@ -179,26 +135,32 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("doc_scope_glob", &["p:sym", "k:int", "side:int", "i:int", "glob:sym"]),
         // `text_globs`: `.scope text`'s, in order.
         ("text_glob", &["p:sym", "i:int", "glob:sym"]),
-        // `ast_patterns`: the tree patterns the program's `ast` atoms match.
-        ("ast_pattern", &["p:sym", "pattern:sym"]),
         // `answers`: each request relation's answering programs, in order.
         ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
+        // `asked_by`: the k-th rule of each request relation, one row for each relation whose readers it serves
+        // (decision 0174).
+        ("asked", &["p:sym", "req:sym", "k:int", "by:sym"]),
         // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
         ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
         // `tapes`: the columns declared `tape` (decision 0103 §3).
         ("tape_column", &["p:sym", "rel:sym", "i:int"]),
+        // `shapes`: the join shape directives, in order: each one's head, literal and text, and when its literal
+        // joins (after a relation, or once its variables are bound).
+        ("shape", &["p:sym", "k:int", "head:sym", "lit:sym", "text:sym"]),
+        ("shape_after", &["p:sym", "k:int", "rel:sym"]),
+        ("shape_bound", &["p:sym", "k:int", "i:int", "var:sym"]),
     ];
     SCHEMA
         .iter()
         .map(|(rel, cols)| {
-            let cols = cols.iter().map(|c| c.split_once(':').expect("name:type")).map(|(n, t)| (n.to_owned(), t.to_owned())).collect();
-            ((*rel).to_owned(), cols)
+            let cols = cols.iter().map(|c| c.split_once(':').expect("name:type")).map(|(n, t)| (n.into(), t.into())).collect();
+            ((*rel).into(), cols)
         })
         .collect()
 }
 
 fn s(x: &str) -> Value {
-    Value::Str(x.to_owned())
+    Value::Str(x.to_owned().into())
 }
 
 fn n(x: impl TryInto<i64>) -> Value {
@@ -212,6 +174,9 @@ struct Writer<'a> {
     terms: i64,
     atoms: i64,
     literals: i64,
+    /// Whether the parts `.rr` syntax writes are written too (rules, declarations, facts, inputs, outputs), or only
+    /// the rest (`write_about`, decision 0155).
+    syntax: bool,
 }
 
 impl Writer<'_> {
@@ -221,9 +186,9 @@ impl Writer<'_> {
         row.push(s(&self.p));
         row.extend(values);
         match self.facts.get_mut(rel) {
-            Some(rows) => rows.push(row),
+            Some(rows) => rows.push(row.into()),
             None => {
-                self.facts.insert(rel.to_owned(), vec![row]);
+                self.facts.insert(rel.to_owned(), vec![row.into()]);
             }
         }
     }
@@ -235,6 +200,7 @@ impl Writer<'_> {
             Term::Var(v) => ("var", 0, v.as_str()),
             Term::Wild => ("wild", 0, ""),
             Term::Int(i) => ("int", *i, ""),
+            Term::Branded(b) => ("atom", b.value(), brand_tag(*b)),
             Term::Str(x) => ("str", 0, x.as_str()),
             Term::Top => ("top", 0, ""),
             Term::Call(f, _) => ("call", 0, f.as_str()),
@@ -306,6 +272,14 @@ impl Writer<'_> {
 
     fn program(&mut self, prog: &Program) {
         self.row("program", vec![]);
+        if self.syntax {
+            self.syntax_parts(prog);
+        }
+        self.rest(prog);
+    }
+
+    /// What `.rr` syntax writes of `prog`: its rules, declarations, facts' rows, inputs and outputs.
+    fn syntax_parts(&mut self, prog: &Program) {
         for (r, rule) in prog.rules.iter().enumerate() {
             let head = self.atom(&rule.head);
             self.row("rule", vec![n(r), n(head)]);
@@ -320,6 +294,29 @@ impl Writer<'_> {
                 self.row("decl", vec![s(rel), n(i), s(col), s(ty)]);
             }
         }
+        for (rel, rows) in &prog.facts {
+            for (row, values) in rows.iter().enumerate() {
+                self.row("fact_row", vec![s(rel), n(row), n(values.len())]);
+                for (i, v) in values.iter().enumerate() {
+                    let (kind, num, text) = match v {
+                        Value::Int(x) => ("int", *x, ""),
+                        Value::Branded(b) => ("atom", b.value(), brand_tag(*b)),
+                        Value::Str(x) => ("str", 0, x.as_str()),
+                    };
+                    self.row("fact", vec![s(rel), n(row), n(i), s(kind), n(num), s(text)]);
+                }
+            }
+        }
+        for (k, rel) in prog.inputs.iter().enumerate() {
+            self.row("input", vec![n(k), s(rel)]);
+        }
+        for (k, rel) in prog.outputs.iter().enumerate() {
+            self.row("output", vec![n(k), s(rel)]);
+        }
+    }
+
+    /// The rest: what `.rr` syntax has no form for, and each relation of facts by name (one may have no rows).
+    fn rest(&mut self, prog: &Program) {
         for rel in &prog.nullary {
             self.row("nullary", vec![s(rel)]);
         }
@@ -333,6 +330,17 @@ impl Writer<'_> {
                 self.row("tape_column", vec![s(rel), n(*i)]);
             }
         }
+        for (k, shape) in prog.shapes.iter().enumerate() {
+            self.row("shape", vec![n(k), s(&shape.head), s(&shape.lit), s(&shape.text)]);
+            match &shape.wait {
+                ShapeWait::After(a) => self.row("shape_after", vec![n(k), s(a)]),
+                ShapeWait::Bound(vars) => {
+                    for (i, x) in vars.iter().enumerate() {
+                        self.row("shape_bound", vec![n(k), n(i), s(x)]);
+                    }
+                }
+            }
+        }
         for (rel, l) in &prog.lattice {
             self.row("lattice", vec![s(rel), n(l.keys), s(&l.ty)]);
             if let Some(f) = &l.merge {
@@ -342,24 +350,8 @@ impl Writer<'_> {
                 self.row("lattice_widen", vec![s(rel), n(k)]);
             }
         }
-        for (rel, rows) in &prog.facts {
+        for rel in prog.facts.keys() {
             self.row("fact_rel", vec![s(rel)]);
-            for (row, values) in rows.iter().enumerate() {
-                self.row("fact_row", vec![s(rel), n(row), n(values.len())]);
-                for (i, v) in values.iter().enumerate() {
-                    let (kind, num, text) = match v {
-                        Value::Int(x) => ("int", *x, ""),
-                        Value::Str(x) => ("str", 0, x.as_str()),
-                    };
-                    self.row("fact", vec![s(rel), n(row), n(i), s(kind), n(num), s(text)]);
-                }
-            }
-        }
-        for (k, rel) in prog.inputs.iter().enumerate() {
-            self.row("input", vec![n(k), s(rel)]);
-        }
-        for (k, rel) in prog.outputs.iter().enumerate() {
-            self.row("output", vec![n(k), s(rel)]);
         }
         for (set, kinds) in &prog.kindsets {
             self.row("kindset", vec![s(set)]);
@@ -416,6 +408,12 @@ impl Writer<'_> {
                         self.row("native_group", vec![s(rel), n(i), s(group)]);
                     }
                 }
+                Native::TextTest { input, column, op, patterns } => {
+                    self.row("native_text_test", vec![s(rel), s(input), n(*column), s(op)]);
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        self.row("native_text_pattern", vec![s(rel), n(i), s(pattern)]);
+                    }
+                }
                 Native::PythonCandidates {input,targets,context,member} => self.row("native_python_candidates",vec![s(rel),s(input),s(targets),s(context),s(member)]),
                 Native::Python {kind,input,targets} => self.row("native_python",vec![s(rel),s(kind),s(input),s(targets.as_deref().unwrap_or(""))]),
                 Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
@@ -445,6 +443,13 @@ impl Writer<'_> {
                 self.row("answer", vec![s(req), n(i), s(b)]);
             }
         }
+        for (req, rules) in &prog.asked_by {
+            for (k, readers) in rules.iter().enumerate() {
+                for b in readers {
+                    self.row("asked", vec![s(req), n(k), s(b)]);
+                }
+            }
+        }
         for (span, text) in &prog.rx_spans {
             // Kinds and captures carry their names after a unit separator.
             let span = match span {
@@ -452,19 +457,23 @@ impl Writer<'_> {
                 SpanIn::Line => "line".to_owned(),
                 SpanIn::Comment => "comment".to_owned(),
                 SpanIn::Kind(k) => format!("kind:{k}"),
+                SpanIn::ChildOf(k) => format!("child_of:{k}"),
                 SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
             };
             self.row("rx_span", vec![s(&span), s(text)]);
-        }
-        for text in &prog.ast_patterns {
-            self.row("ast_pattern", vec![s(text)]);
         }
     }
 }
 
 /// `prog` as facts of program `p`, added to `facts`.
 pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
-    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0 }.program(prog);
+    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: true }.program(prog);
+}
+
+/// What of `prog` its `.rr` text has no syntax for (`program_text`, decision 0155), as facts of program `p`: `program`
+/// reads them back as a program of those parts alone.
+pub fn write_about(facts: &mut Facts, p: &str, prog: &Program) {
+    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: false }.program(prog);
 }
 
 /// Why facts do not read back as a program.
@@ -546,74 +555,6 @@ impl Kids {
     }
 }
 
-/// Each program's rows in `facts`, by program and relation, found in one pass: a reader per program scanned every
-/// row for its own (the prepared program's four programs were four scans of all of them, decision 0116 step 4).
-pub(in crate::code_rule_dsl) struct Grouped<'a, C: Cell = Value>(BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [C]>>>);
-
-impl<'a> Grouped<'a, Value> {
-    pub(in crate::code_rule_dsl) fn of(facts: &'a Facts) -> Self {
-        let mut by: BTreeMap<&str, BTreeMap<&str, Vec<&[Value]>>> = BTreeMap::new();
-        for (rel, all) in facts {
-            // Rows of one program come together in a relation's rows as written: each run of them is added at once,
-            // the map looked up when the program changes, not per row.
-            let mut run: Option<(&str, Vec<&[Value]>)> = None;
-            let flush = |run: Option<(&'a str, Vec<&'a [Value]>)>, by: &mut BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>| {
-                if let Some((p, rows)) = run {
-                    by.entry(p).or_default().entry(rel.as_str()).or_default().extend(rows);
-                }
-            };
-            for row in all {
-                let Some(Value::Str(q)) = row.first() else { continue };
-                match &mut run {
-                    Some((p, rows)) if *p == q.as_str() => rows.push(&row[1..]),
-                    _ => {
-                        flush(run.take(), &mut by);
-                        run = Some((q.as_str(), vec![&row[1..]]));
-                    }
-                }
-            }
-            flush(run, &mut by);
-        }
-        Grouped(by)
-    }
-}
-
-impl<'a, 'b: 'a> Grouped<'a, V<'b>> {
-    /// Each program's rows in `views` (the parts of one document's facts, `decode_view`), as `of` groups owned facts.
-    pub(in crate::code_rule_dsl) fn of_views(views: &'a [View<'b>]) -> Self {
-        let mut by: BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [V<'b>]>>> = BTreeMap::new();
-        for view in views {
-            for rel in &view.rels {
-                let mut run: Option<(&'b str, Vec<&'a [V<'b>]>)> = None;
-                for row in rel.rows() {
-                    let Some(V::Str(q)) = row.first() else { continue };
-                    match &mut run {
-                        Some((p, rows)) if *p == *q => rows.push(&row[1..]),
-                        _ => {
-                            if let Some((p, rows)) = run.take() {
-                                by.entry(p).or_default().entry(rel.name).or_default().extend(rows);
-                            }
-                            run = Some((q, vec![&row[1..]]));
-                        }
-                    }
-                }
-                if let Some((p, rows)) = run {
-                    by.entry(p).or_default().entry(rel.name).or_default().extend(rows);
-                }
-            }
-        }
-        Grouped(by)
-    }
-}
-
-impl<'a, C: Cell> Grouped<'a, C> {
-    /// Program `p`, as it was written.
-    pub(in crate::code_rule_dsl) fn program(&self, p: &str) -> Result<Program, String> {
-        let rows = self.0.get(p).cloned().unwrap_or_default();
-        Reader::from_rows(rows, p)?.program()
-    }
-}
-
 fn int<C: Cell>(v: &C) -> Result<i64, String> {
     v.int()
 }
@@ -668,14 +609,15 @@ impl<'a, C: Cell> Reader<'a, C> {
     fn term(&self, t: i64) -> Result<Term, String> {
         let row = self.terms.get(t).ok_or_else(|| bad(format!("no term {t}")))?;
         Ok(match str_of(&row[1])? {
-            "var" => Term::Var(text(&row[3])?),
+            "var" => Term::Var(text(&row[3])?.into()),
             "wild" => Term::Wild,
             "int" => Term::Int(int(&row[2])?),
-            "str" => Term::Str(text(&row[3])?),
+            "atom" => Term::Branded(branded(text(&row[3])?.as_str(), int(&row[2])?)?),
+            "str" => Term::Str(text(&row[3])?.into()),
             "top" => Term::Top,
             "call" => {
                 let args = self.call_args.of_owner(t).iter().map(|u| self.term(*u)).collect::<Result<Vec<_>, _>>()?;
-                Term::Call(text(&row[3])?, args)
+                Term::Call(text(&row[3])?.into(), args.into())
             }
             other => return Err(bad(format!("no term kind {other}"))),
         })
@@ -684,7 +626,7 @@ impl<'a, C: Cell> Reader<'a, C> {
     fn atom(&self, a: i64) -> Result<Atom, String> {
         let row = self.atoms.get(a).ok_or_else(|| bad(format!("no atom {a}")))?;
         let args = self.args.of_owner(a).iter().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()?;
-        Ok(Atom { rel: text(&row[1])?.into(), args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
+        Ok(Atom { rel: text(&row[1])?.into(), args: args.into(), neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
     }
 
     /// Rows of `rel` keyed by their first column (an id), each row less that column.
@@ -746,7 +688,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         for row in self.get("rule") {
             let r = int(&row[0])?;
             let body = self.bodies.of_owner(r).iter().map(|l| literals.take(*l).ok_or_else(|| bad(format!("rule {r}: a literal twice or none")))).collect::<Result<Vec<_>, String>>()?;
-            rules.push((r, Rule { head: self.atom(int(&row[1])?)?, body }));
+            rules.push((r, Rule { head: self.atom(int(&row[1])?)?, body: body.into() }));
         }
         prog.rules = ordered(rules);
         let decls = self.by_id_text("decl")?;
@@ -756,7 +698,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             if cols.len() as i64 != int(&row[1])? {
                 return Err(bad(format!("{rel} has {} of its {} columns", cols.len(), int(&row[1])?)));
             }
-            prog.decls.insert(rel, cols);
+            prog.decls.insert(rel.into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         }
         prog.nullary = self.get("nullary").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
         for row in self.get("qualifier") {
@@ -778,7 +720,8 @@ impl<'a, C: Cell> Reader<'a, C> {
         for row in self.get("fact") {
             let v = match str_of(&row[3])? {
                 "int" => Value::Int(int(&row[4])?),
-                _ => Value::Str(text(&row[5])?),
+                "atom" => Value::Branded(branded(text(&row[5])?.as_str(), int(&row[4])?)?),
+                _ => Value::Str(text(&row[5])?.into()),
             };
             values.entry((str_of(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
         }
@@ -794,7 +737,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             }
             facts.entry(rel).or_default().push((k, row_values));
         }
-        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows))).collect();
+        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect())).collect();
         let list = |rel: &str| -> Result<Vec<String>, String> { Ok(ordered(self.get(rel).iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
         prog.inputs = list("input")?;
         prog.outputs = list("output")?;
@@ -833,7 +776,19 @@ impl<'a, C: Cell> Reader<'a, C> {
             gates.push((k, (text(&row[1])?, Gate { src, rel: text(&row[2])?, level: int(&row[3])? as usize, quiet: indexed(quiet.get(&k))?, deps: indexed(deps.get(&k))? })));
         }
         prog.gates = ordered(gates);
-        prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(bad)?))).collect::<Result<Vec<_>, String>>()?);
+        let after = self.by_id("shape_after")?;
+        let bound = self.by_id("shape_bound")?;
+        let mut shapes = Vec::new();
+        for row in self.get("shape") {
+            let k = int(&row[0])?;
+            let wait = match after.get(&k).and_then(|r| r.first()) {
+                Some(r) => ShapeWait::After(text(&r[0])?),
+                None => ShapeWait::Bound(indexed(bound.get(&k))?),
+            };
+            shapes.push((k, Shape { head: text(&row[1])?, lit: text(&row[2])?, wait, text: text(&row[3])? }));
+        }
+        prog.shapes = ordered(shapes);
+        prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?);
         prog.settings = ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
         let roots = self.by_id_text("native_roots")?;
         for row in self.get("native_dfs") {
@@ -846,6 +801,12 @@ impl<'a, C: Cell> Reader<'a, C> {
             let rel = text(&row[0])?;
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
+        }
+        let patterns = self.by_id_text("native_text_pattern")?;
+        for row in self.get("native_text_test") {
+            let rel = text(&row[0])?;
+            let patterns = ordered(patterns.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            prog.natives.insert(rel, Native::TextTest { input: text(&row[1])?, column: int(&row[2])? as usize, op: text(&row[3])?, patterns });
         }
         for row in self.get("native_python_candidates") {
             prog.natives.insert(text(&row[0])?,Native::PythonCandidates{input:text(&row[1])?,targets:text(&row[2])?,context:text(&row[3])?,member:text(&row[4])?});
@@ -871,6 +832,7 @@ impl<'a, C: Cell> Reader<'a, C> {
                 None if named == "line" => SpanIn::Line,
                 None if named == "comment" => SpanIn::Comment,
                 Some(("kind", k)) => SpanIn::Kind(k.to_owned()),
+                Some(("child_of", k)) => SpanIn::ChildOf(k.to_owned()),
                 Some(("capture", rest)) => match rest.split_once(':') {
                     Some((g, p)) => SpanIn::Capture(p.to_owned(), g.to_owned()),
                     None => return Err(bad(format!("no span {named:?}"))),
@@ -898,12 +860,20 @@ impl<'a, C: Cell> Reader<'a, C> {
         let mut text_globs = self.get("text_glob").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?;
         text_globs.sort();
         prog.text_globs = text_globs.into_iter().map(|(_, g)| g).collect();
-        prog.ast_patterns = self.get("ast_pattern").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
         let mut answers: BTreeMap<String, Vec<(i64, String)>> = BTreeMap::new();
         for row in self.get("answer") {
             answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
         }
         prog.answers = answers.into_iter().map(|(req, by)| (req, ordered(by))).collect();
+        for row in self.get("asked") {
+            let (req, k, by) = (text(&row[0])?, int(&row[1])?, text(&row[2])?);
+            let k = usize::try_from(k).map_err(|_| format!("asked: rule {k}"))?;
+            let rules = prog.asked_by.entry(req).or_default();
+            if rules.len() <= k {
+                rules.resize_with(k + 1, BTreeSet::new);
+            }
+            rules[k].insert(by);
+        }
         Ok(prog)
     }
 
@@ -923,18 +893,12 @@ pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
 }
 
 /// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
-/// same rows (`document_facts`).
-pub fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
+/// same rows.
+pub fn document(facts: &Facts, extra: &BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>>) -> Result<String, String> {
     let mut decls = schema();
     decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     let prog = Program { decls, facts: facts.clone(), ..Program::default() };
     super::rr::print(&prog).map_err(|e| bad(format!("{e:?}")))
-}
-
-/// A document's rows, as `rr::parse` reads them.
-pub fn document_facts(text: &str) -> Result<Facts, String> {
-    let prog = super::rr::parse(text).map_err(|e| bad(format!("{e:?}")))?;
-    Ok(prog.facts)
 }
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
@@ -961,6 +925,10 @@ pub fn encode(facts: &Facts) -> Vec<u8> {
                     Value::Int(i) => {
                         body.push(0);
                         body.extend_from_slice(&i.to_le_bytes());
+                    }
+                    Value::Branded(b) => {
+                        body.push(2 + b.class as u8);
+                        body.extend_from_slice(&u64::from(b.atom).to_le_bytes());
                     }
                     Value::Str(x) => {
                         let next = table.len() as u32;
@@ -998,7 +966,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
             Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
         }
         fn len(&mut self) -> Result<usize, String> {
-            usize::try_from(self.u64()?).map_err(bad)
+            usize::try_from(self.u64()?).map_err(|e| bad(e))
         }
     }
     let mut at = At(bytes, 0);
@@ -1006,7 +974,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     let mut table = Vec::with_capacity(count.min(1 << 20));
     for _ in 0..count {
         let n = at.len()?;
-        table.push(std::str::from_utf8(at.take(n)?).map_err(bad)?.to_owned());
+        table.push(std::str::from_utf8(at.take(n)?).map_err(|e| bad(e))?.to_owned());
     }
     let string = |k: u64| table.get(k as usize).cloned().ok_or_else(|| bad("no such string"));
     let mut facts = Facts::new();
@@ -1020,11 +988,15 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
             for _ in 0..width {
                 row.push(match at.take(1)?[0] {
                     0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
-                    1 => Value::Str(string(at.u64()?)?),
+                    1 => Value::Str(string(at.u64()?)?.into()),
+                    tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::Branded {
+                        class: [crate::code_rule_dsl::logic::front::Class::Name, crate::code_rule_dsl::logic::front::Class::Kind, crate::code_rule_dsl::logic::front::Class::Field][usize::from(tag - 2)],
+                        atom: u32::try_from(at.u64()?).map_err(|e| bad(e))?,
+                    }),
                     tag => return Err(bad(format!("no value tag {tag}"))),
                 });
             }
-            rows.push(row);
+            rows.push(row.into());
         }
         facts.insert(rel, rows);
     }
@@ -1032,65 +1004,6 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
         return Err(bad("bytes after the facts"));
     }
     Ok(facts)
-}
-
-/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
-/// memory (a 16 k-rule program's is tens of megabytes).
-pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
-    use sha2::Digest as _;
-    struct Hashing(sha2::Sha256);
-    impl std::fmt::Write for Hashing {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            self.0.update(s.as_bytes());
-            Ok(())
-        }
-    }
-    let mut out = Hashing(sha2::Sha256::new());
-    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
-    out.0.finalize().into()
-}
-
-/// Bytes `encode` made, read in place: the facts `decode` reads, their strings borrowed from `bytes`.
-pub fn decode_view(bytes: &[u8]) -> Result<View<'_>, String> {
-    let mut at = 0usize;
-    // A corrupt length is refused, not added past the end (`checked_add`).
-    let take = |at: &mut usize, n: usize| -> Result<&[u8], String> {
-        let out = bytes.get(*at..at.checked_add(n).ok_or_else(|| bad("truncated"))?).ok_or_else(|| bad("truncated"))?;
-        *at += n;
-        Ok(out)
-    };
-    let u64_at = |at: &mut usize| -> Result<u64, String> { Ok(u64::from_le_bytes(take(at, 8)?.try_into().expect("eight bytes"))) };
-    let count = u64_at(&mut at)? as usize;
-    let mut table: Vec<&str> = Vec::with_capacity(count.min(1 << 20));
-    for _ in 0..count {
-        let n = u64_at(&mut at)? as usize;
-        table.push(std::str::from_utf8(take(&mut at, n)?).map_err(bad)?);
-    }
-    let string = |k: u64| table.get(k as usize).copied().ok_or_else(|| bad("no such string"));
-    let mut rels = Vec::new();
-    for _ in 0..u64_at(&mut at)? {
-        let name = string(u64_at(&mut at)?)?;
-        let rows_n = u64_at(&mut at)? as usize;
-        // Each value is at least nine bytes, so a relation's rows hold no more values than its row count leaves room for.
-        let mut values = Vec::with_capacity(rows_n.min((bytes.len() - at) / 9));
-        let mut starts = Vec::with_capacity(rows_n.min(1 << 24));
-        for _ in 0..rows_n {
-            starts.push(u32::try_from(values.len()).map_err(bad)?);
-            let width = u64_at(&mut at)? as usize;
-            for _ in 0..width {
-                values.push(match take(&mut at, 1)?[0] {
-                    0 => V::Int(i64::from_le_bytes(take(&mut at, 8)?.try_into().expect("eight bytes"))),
-                    1 => V::Str(string(u64_at(&mut at)?)?),
-                    tag => return Err(bad(format!("no value tag {tag}"))),
-                });
-            }
-        }
-        rels.push(ViewRel { name, values, starts });
-    }
-    if at != bytes.len() {
-        return Err(bad("bytes after the facts"));
-    }
-    Ok(View { rels })
 }
 
 #[cfg(test)]
@@ -1101,8 +1014,8 @@ pub mod tests {
     fn facts_encode_as_two_passes_did_and_decode_back() {
         use super::{Facts, Value};
         let mut facts = Facts::new();
-        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)], vec![Value::Str("b".into()), Value::Str("y".into())]]);
-        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)]]);
+        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)].into(), vec![Value::Str("b".into()), Value::Str("y".into())].into()]);
+        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)].into()]);
         let mut want = Vec::new();
         let u = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
         // Strings by first use: a, y, z, b, x.
@@ -1125,6 +1038,10 @@ pub mod tests {
                             want.push(0);
                             want.extend_from_slice(&i.to_le_bytes());
                         }
+                        Value::Branded(b) => {
+                            want.push(2 + b.class as u8);
+                            want.extend_from_slice(&u64::from(b.atom).to_le_bytes());
+                        }
                         Value::Str(x) => {
                             want.push(1);
                             u(&mut want, id(x));
@@ -1138,11 +1055,11 @@ pub mod tests {
         assert_eq!(super::decode(&got).unwrap(), facts);
     }
 
-    /// A program read in place off its encoded facts (`decode_view`, `Grouped::of_views`) is the program read off the
-    /// facts decoded: in any order of rows, and with ids that are not dense (a map, not a vector, indexes them).
+    /// A program reads back the same off its facts decoded: in any order of rows, and with ids that are not dense (a
+    /// map, not a vector, indexes them).
     #[test]
-    fn a_program_reads_back_the_same_in_place() {
-        use super::{Facts, Grouped, Value};
+    fn a_program_reads_back_the_same_in_any_order() {
+        use super::{Facts, Value};
         let prog = crate::code_rule_dsl::logic::rr::parse(
             ".decl e(a:number, b:number)\n.input e\n.decl p(a:number, b:number)\n.output p\n\
              p(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z), !e(z, x), z != @add(x, 1).\n.decl c(n:number)\nc(n) :- n = count : { e(_, _) }.\n",
@@ -1152,9 +1069,6 @@ pub mod tests {
         super::write(&mut facts, "q", &prog);
         let owned = super::program(&facts, "q").unwrap();
         let bytes = super::encode(&facts);
-        let views = [super::decode_view(&bytes).unwrap()];
-        let viewed = Grouped::of_views(&views).program("q").unwrap();
-        assert_eq!(format!("{viewed:?}"), format!("{owned:?}"));
         assert_eq!(format!("{owned:?}"), format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()));
         // Ids spread out (each times 1000) and rows reversed: read back the same.
         let spread = |v: &Value| match v { Value::Int(i) => Value::Int(i * 1000), v => v.clone() };
@@ -1171,11 +1085,10 @@ pub mod tests {
             };
             let mut rows: Vec<Vec<Value>> = rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| if ids.contains(&c) { spread(v) } else { v.clone() }).collect()).collect();
             rows.reverse();
-            far.insert(rel.clone(), rows);
+            far.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
         }
         let bytes = super::encode(&far);
-        let views = [super::decode_view(&bytes).unwrap()];
-        assert_eq!(format!("{:?}", Grouped::of_views(&views).program("q").unwrap()), format!("{owned:?}"));
+        assert_eq!(format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()), format!("{owned:?}"));
     }
 
     /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
@@ -1205,7 +1118,8 @@ pub mod tests {
         super::write(&mut facts, "p", &prog);
         let back = super::program(&facts, "p").unwrap();
         assert_eq!(back.facts, prog.facts);
-        assert_eq!(super::super::plan::corpus::memo::program_digest(&back), super::super::plan::corpus::memo::program_digest(&prog));
+        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::super::plan::corpus::memo::program_digest(&super::super::plan::body::Placed::of_program(p).unwrap().v);
+        assert_eq!(key(&back), key(&prog));
     }
 
     /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored
@@ -1214,7 +1128,7 @@ pub mod tests {
     fn a_relation_of_no_facts_reads_back_as_one() {
         let mut prog = crate::code_rule_dsl::logic::front::Program::default();
         prog.facts.insert("none".into(), Vec::new());
-        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)]]);
+        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)].into()]);
         let mut facts = super::Facts::new();
         super::write(&mut facts, "p", &prog);
         assert_eq!(super::program(&facts, "p").unwrap().facts, prog.facts);
@@ -1231,4 +1145,20 @@ pub mod tests {
         super::write(&mut facts, "p", &prog);
         assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
     }
+}
+
+/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
+/// memory (a 16 k-rule program's is tens of megabytes).
+pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+    use sha2::Digest as _;
+    struct Hashing(sha2::Sha256);
+    impl std::fmt::Write for Hashing {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.update(s.as_bytes());
+            Ok(())
+        }
+    }
+    let mut out = Hashing(sha2::Sha256::new());
+    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
+    out.0.finalize().into()
 }

@@ -3,7 +3,8 @@
 //! decides **how many run at once**.
 //!
 //! - **Claims.** Each submitted job is queued, scored on the scoreboard as host work with its estimate, and claimed
-//!   once, by whoever reaches it first: one of the stream's workers, largest first, or the caller when it waits.
+//!   once, by whoever reaches it first: one of the stream's workers, or the caller when it waits. Highest rank first
+//!   ([`Stream::submit_ranked`]: decision 0282, the caller's critical path first), then largest first.
 //! - **Workers.** The executor starts a worker for the stream only while the stream's queued estimate, spread over
 //!   the workers serving it, is above its **floor** (the cost below which a pool job loses to running inline), and
 //!   while the cores leave a thread: the pool's threads less the caller's, less what else runs on the cores, over
@@ -42,6 +43,8 @@ thread_local! {
 struct Queued<'s> {
     id: u64,
     estimate: f64,
+    /// Claimed before every job of a lower rank (decision 0282).
+    rank: f64,
     job: Box<dyn FnOnce() + Send + 's>,
     ticket: Ticket,
 }
@@ -67,13 +70,14 @@ struct State<'s> {
 }
 
 impl<'s> State<'s> {
-    /// The job `prefer` if it is still queued, else the largest queued (none with `only`).
+    /// The job `prefer` if it is still queued, else the queued job of the highest rank, the largest of those (none with
+    /// `only`).
     fn claim(&self, prefer: Option<u64>, only: bool) -> Option<Queued<'s>> {
         let mut q = self.queue.lock().unwrap_or_else(|p| p.into_inner());
         let at = match prefer.and_then(|id| q.iter().position(|j| j.id == id)) {
             Some(at) => at,
             None if only => return None,
-            None => (0..q.len()).max_by(|&a, &b| q[a].estimate.total_cmp(&q[b].estimate))?,
+            None => (0..q.len()).max_by(|&a, &b| q[a].rank.total_cmp(&q[b].rank).then(q[a].estimate.total_cmp(&q[b].estimate)))?,
         };
         Some(q.swap_remove(at))
     }
@@ -124,6 +128,12 @@ pub struct StreamCounts {
 impl<'s> Stream<'s, '_> {
     /// Queues `job`, estimated at `estimate` seconds, and starts the workers the executor decides on.
     pub fn submit<R: Send + 's>(&self, estimate: f64, job: impl FnOnce() -> R + Send + 's) -> Handle<R> {
+        self.submit_ranked(estimate, 0.0, job)
+    }
+
+    /// `submit`, claimed before every queued job of a lower `rank` (decision 0282: a stratum's longest chain of
+    /// estimates to the program's end, so the critical path's jobs go first).
+    pub fn submit_ranked<R: Send + 's>(&self, estimate: f64, rank: f64, job: impl FnOnce() -> R + Send + 's) -> Handle<R> {
         let st = &self.state;
         let id = st.next.fetch_add(1, Ordering::Relaxed);
         let slot: Slot<R> = Arc::new(Mutex::new(None));
@@ -133,7 +143,7 @@ impl<'s> Stream<'s, '_> {
             *to.lock().unwrap_or_else(|p| p.into_inner()) = Some(r);
         });
         let ticket = st.board.queue(Lane::Cpu, vec![Item { form: st.name, units: 0.0, estimate, host: estimate }]);
-        st.queue.lock().unwrap_or_else(|p| p.into_inner()).push(Queued { id, estimate, job, ticket });
+        st.queue.lock().unwrap_or_else(|p| p.into_inner()).push(Queued { id, estimate, rank, job, ticket });
         self.start_workers();
         Handle { id, slot }
     }
@@ -282,6 +292,27 @@ mod tests {
             hs.into_iter().map(|h| s.wait(h).unwrap()).collect::<Vec<_>>()
         });
         assert_eq!(sums, data.chunks(8).map(|c| c.iter().sum::<u64>()).collect::<Vec<_>>());
+    }
+
+    /// Decision 0282: queued jobs are claimed highest rank first, then largest first: the caller's critical path
+    /// before the larger jobs off it.
+    #[test]
+    fn jobs_are_claimed_by_rank_then_by_size() {
+        let exec = Executor::with(vec![Arc::new(crate::exec::CpuBackend::default())]);
+        let order = Mutex::new(Vec::new());
+        exec.stream("ranked", |s| {
+            // Below the floor: no worker starts, and the caller claims each in turn (`help`).
+            let o = &order;
+            let hs = vec![
+                s.submit_ranked(2e-8, 1.0, move || o.lock().unwrap().push("off the path, large")),
+                s.submit_ranked(1e-9, 3.0, move || o.lock().unwrap().push("on the path")),
+                s.submit_ranked(1e-8, 1.0, move || o.lock().unwrap().push("off the path, small")),
+                s.submit(5e-8, move || o.lock().unwrap().push("unranked")),
+            ];
+            while s.help() {}
+            hs.into_iter().for_each(|h| s.wait(h).unwrap());
+        });
+        assert_eq!(*order.lock().unwrap(), ["on the path", "off the path, large", "off the path, small", "unranked"]);
     }
 
     #[test]

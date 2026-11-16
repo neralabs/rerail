@@ -2,6 +2,6 @@
 # runs under rerail/, CI feeds the channel to dtolnay/rust-toolchain, and the
 # host-aware development launchers install or select it. Bump it in one place.
 [toolchain]
-channel = "1.95.0"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

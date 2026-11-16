@@ -1,12 +1,17 @@
 //! Metal, as the logic's and the transducer's device (macOS only; registered by the engine).
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-// The mounts glob their owners' modules and widen what the crates above read: the split's facades, not a design.
+// A mounted module re-exports its dependency's by glob, and its sources import the same items
+// under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
+// above read (the split's facades, not a design).
 #![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]
 // What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long
 // signatures and tuple types are the sources' own.
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
 pub use rerail_store::git_workspace;
@@ -23,16 +28,14 @@ pub mod code_rule_dsl {
     pub mod device_metal;
     pub use rerail_lang::code_rule_dsl::embed;
     pub use rerail_w::code_rule_dsl::eval;
-    #[path = "facts"]
+    
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
         pub use rerail_w::code_rule_dsl::facts::facts_a;
-        #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             #[cfg(any(test, feature = "test-hooks"))]
             pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
-            #[path = "syntax"]
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
                 pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
@@ -95,7 +98,6 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
     pub use rerail_lang::code_rule_dsl::regexes;
-    #[path = "language"]
     pub mod language {
         pub use rerail_lang::code_rule_dsl::language::*;
         pub use rerail_w::code_rule_dsl::language::adapter;
@@ -122,7 +124,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::LazyLock;
     }
-    #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         #[allow(unused_imports)]
@@ -136,10 +137,8 @@ pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
         pub use rerail_logic::code_rule_dsl::logic::*;
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr::code_rule_dsl::logic::front::*;
-            #[path = "."]
             pub mod caches {
                 pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
                 #[allow(unused_imports)]
@@ -147,7 +146,6 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::BTreeSet;
             }
-            #[path = "yaml"]
             pub mod yaml {
                 pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
                 #[allow(unused_imports)]
@@ -166,7 +164,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "magic"]
         pub mod magic {
             pub use rerail_rr::code_rule_dsl::logic::magic::*;
             #[allow(unused_imports)]
@@ -251,10 +248,8 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use std::time::Instant;
         }
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_logic::code_rule_dsl::logic::plan::*;
-            #[path = "corpus"]
             pub mod corpus {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
                 #[allow(unused_imports)]
@@ -325,7 +320,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUnaryOperator, SqlValue as Value_};
         }
-        #[path = "profile"]
         pub mod profile {
             pub use rerail_prof::code_rule_dsl::logic::profile::*;
             pub use rerail_logic::code_rule_dsl::logic::profile::report;
@@ -343,10 +337,8 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
         }
-        #[path = "rr"]
         pub mod rr {
             pub use rerail_logic::code_rule_dsl::logic::rr::*;
-            #[path = "aggregate_demand"]
             pub mod aggregate_demand {
                 pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
                 #[allow(unused_imports)]
@@ -354,7 +346,6 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::{BTreeMap, BTreeSet};
             }
-            #[path = "."]
             pub mod tape_type {
                 pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
                 #[allow(unused_imports)]
@@ -394,7 +385,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::vtab::syntax::core_rr::single_metavars;
         }
-        #[path = "strings"]
         pub mod strings {
             pub use rerail_facts::code_rule_dsl::logic::strings::*;
             #[allow(unused_imports)]
@@ -441,7 +431,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     pub use rerail_w::code_rule_dsl::suppress;
-    #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[allow(unused_imports)]
@@ -728,10 +717,10 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::search_index::persist_search_index_batch;
     }
     pub use rerail_lang::code_rule_dsl::tree;
-    #[path = "typing"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "typing")]
     pub mod typing {
         pub use rerail_logic::code_rule_dsl::typing::*;
-        #[path = "file_local"]
+        #[cfg_attr(any(test, feature = "test-hooks"), path = "file_local")]
         pub mod file_local {
             pub use rerail_logic::code_rule_dsl::typing::file_local::*;
             #[cfg(any(test, feature = "test-hooks"))]
@@ -752,7 +741,6 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::violations;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_w::code_rule_dsl::walks;
-    #[path = "waves"]
     pub mod waves {
         pub use rerail_logic::code_rule_dsl::waves::owner;
         #[cfg(any(test, feature = "test-hooks"))]
@@ -790,3 +778,17 @@ pub use rerail_w::git_ignore;
 pub use rerail_w::panic_boundary;
 pub use rerail_logic::threads;
 // cratify: mounts end
+
+/// The language packs this crate's tests read through the load-time registry (`language::base`), registered once:
+/// the engine registers them as it loads (`install_languages`), and a test of this crate runs without it (work
+/// queue Q23). The first registration holds, so a test may call it at any point.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn test_languages() {
+    use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
+    use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        register(Family::Python, &Pack::<Python>::NEW);
+        language::register_base(Family::Python, &Pack::<Python>::NEW);
+    });
+}

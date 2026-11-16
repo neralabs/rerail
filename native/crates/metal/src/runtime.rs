@@ -155,10 +155,17 @@ struct BufferReservation {
 
 impl BufferReservation {
     fn acquire(bytes: usize, ledger: &'static AtomicUsize, limit: usize) -> Result<Self, Error> {
-        let take = || ledger.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next <= limit));
-        // The idle blocks of the device's pool give way to a reservation the budget refuses.
+        // The device pool's ledger shares the one Metal budget with the pool's live leases (the residency's slabs,
+        // the device blocks, relational work: 0266 §16), so a reservation counts them; room is made in the pool's one
+        // order (idle buffers, then the residency's least recently used slabs).
+        let pooled = std::ptr::eq(ledger, pool());
+        let take = || {
+            // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
+            let live = if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::held_bytes().0 } else { 0 };
+            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next + live <= limit))
+        };
         let previous = take()
-            .or_else(|used| if std::ptr::eq(ledger, pool()) && crate::pool::give_way(bytes, limit) { take() } else { Err(used) })
+            .or_else(|used| if pooled && rerail_accel::gpu::shared::make_room(bytes) { take() } else { Err(used) })
             .map_err(|used| {
                 if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                     eprintln!(
@@ -169,7 +176,10 @@ impl BufferReservation {
                 rerail_prof::count("capacity.metal_pool_ledger", 1);
                 Error::BackendCapacity
             })?;
-        let pooled = std::ptr::eq(ledger, pool());
+        if pooled {
+            // Idle buffers fit what the budget leaves now.
+            rerail_accel::gpu::shared::trim_idle();
+        }
         #[cfg(any(test, feature = "test-hooks"))]
         if pooled {
             test_pool::admit(bytes);
@@ -745,10 +755,14 @@ pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> 
     if let Some(cached) = PIPELINES.lock().ok()?.get(&key).cloned() {
         return Some(cached);
     }
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    rerail_accel::forms::interpreted("msl-pipeline", &hex, name, 1);
     if COMPILING.lock().ok()?.insert(key) {
         let (source, name) = (source.to_owned(), name.to_owned());
         let spawned = rerail_accel::exec::service("rerail-msl-compile", None, move || {
-            let _ = pipeline_named(&source, &name);
+            let started = std::time::Instant::now();
+            let ok = pipeline_named(&source, &name).is_ok();
+            rerail_accel::forms::compiled("msl-pipeline", &hex, &name, started.elapsed().as_secs_f64(), ok);
             if let Ok(mut compiling) = COMPILING.lock() {
                 compiling.remove(&key);
             }

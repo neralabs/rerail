@@ -7,9 +7,9 @@ use std::fs::{File, OpenOptions};
 /// A handle's shared lease: the lock file, opened once, and how many leases hold it. A lock belongs to the open
 /// file, so leases on one handle share it; the last one to go unlocks it. Was: the file canonicalized, opened, locked
 /// and closed for every lease, once per guest the Python pack parses (40,000, about 1.4 s).
+#[cfg(not(target_family = "wasm"))]
 #[derive(Default)]
 pub(super) struct SharedLease {
-    #[cfg(not(target_family = "wasm"))]
     state: std::sync::Mutex<(Option<File>, usize)>,
 }
 

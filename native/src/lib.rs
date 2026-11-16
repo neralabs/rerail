@@ -4,17 +4,12 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-// The self dev-dependency owns the production allocator. Keep it linked even
-// when split-crate tests no longer reference one of its exported types.
-#[cfg(test)]
-extern crate rerail_engine as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
-/// so `cargo test` checks how the build validates the language registry (the build scripts' entry
-/// points go unused here).
+/// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
 #[allow(dead_code)]
 mod build_languages;
@@ -23,6 +18,8 @@ mod build_languages;
 mod test_watchdog;
 #[cfg(test)]
 mod executors_guard_tests;
+#[cfg(test)]
+mod text_readers_guard_tests;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
@@ -31,6 +28,7 @@ pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
+pub use rerail_store::source_tree;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
@@ -47,10 +45,9 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. A test build links the engine
-// again as its own dev-dependency (`test-hooks`), whose copy declares the allocator (kept linked by the
-// `extern crate rerail_engine as _` above; `rust_allocations_reach_the_profile_allocator` checks it).
-#[cfg(not(any(test, windows, target_family = "wasm", feature = "system-allocator")))]
+// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// (`rust_allocations_reach_the_profile_allocator` checks it).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: Sampled = Sampled;
 
@@ -113,17 +110,22 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 });
 
 /// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
-/// and the prefilter's tapes. Set as the library loads, before any store is opened.
-fn install_store_functions() {
-    code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
-    code_rule_dsl::install_devices();
-    code_rule_dsl::install_languages();
-    content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
-    content_store::set_connection_functions(|db| {
-        code_rule_dsl::text::install(db)?;
-        code_rule_dsl::prefilter::tapes::install(db)
+/// and the prefilter's tapes; with the build's identities, devices and languages. Once a process, before any store is
+/// opened: as the library loads (the allocator's hook; Windows' module init), and where neither runs (the browser's
+/// build) at the first command (`tools::cli_in`).
+pub(crate) fn install_store_functions() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+        code_rule_dsl::install_devices();
+        code_rule_dsl::install_languages();
+        content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
+        content_store::set_connection_functions(|db| {
+            code_rule_dsl::text::install(db)?;
+            code_rule_dsl::prefilter::tapes::install(db)
+        });
+        code_rule_dsl::sql_hazards::strict_on_every_connection();
     });
-    code_rule_dsl::sql_hazards::strict_on_every_connection();
 }
 
 /// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.
@@ -139,6 +141,9 @@ fn install_store_functions_on_load() {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
+    // No pool here: a constructor runs inside `dlopen` (`configure_thread_pool` says why that hangs). The CLI
+    // registers its own main thread before its first job (`threads::configure(true)`); Node's pool is made as it
+    // registers the addon's exports.
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
@@ -194,8 +199,8 @@ fn install_tree_sitter_allocator() {
 /// glibc's loader lock; rayon's `build_global` waits for every pool thread to start, and each one's first
 /// thread-local with a destructor registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load
 /// never returned. Node's main thread returns to its event loop while an async call runs, so the pool's threads are
-/// all actual workers, including with RERAIL_THREADS=1. The headless CLI registers its own main thread explicitly,
-/// before its first job.
+/// all actual workers (not the loading thread, which a pool made with it would wait on), including with
+/// RERAIL_THREADS=1.
 #[cfg(not(target_family = "wasm"))]
 #[napi(module_exports)]
 pub fn configure_thread_pool(_exports: napi::bindgen_prelude::Object) {
@@ -517,6 +522,21 @@ impl ConversationEngine {
 }
 
 pub(crate) use code_rule_dsl::prof::lower_hex;
+
+#[cfg(test)]
+mod executor_tests {
+    /// The run's executors are installed as the library loads (`install_store_functions`), and the facts' lookup of a
+    /// binding's executor is the run's (2026-11-15). Its fallback, an executor of every lane, was made on every
+    /// lookup (`map_or`'s default is evaluated first): every CPU run compiled the GPU's kernels, prewarmed its sorts
+    /// and built the Neural Engine's lane.
+    #[test]
+    fn the_facts_executor_of_the_cpu_binding_is_the_runs_and_asks_for_no_device_lane() {
+        let before = rerail_accel::lanes::device_lanes_asked();
+        let ex = rerail_facts::code_rule_dsl::facts::core::executor_for(false);
+        assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the lookup asked for a device lane");
+        assert!(std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
+    }
+}
 
 #[cfg(all(test, not(windows)))]
 mod tests {

@@ -366,7 +366,7 @@ fn python() {
         package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Python,
-            string: Value::Str("é".to_owned()),
+            string: Value::Str("é".into()),
             numbers: [Value::int(16), Value::int(u64::MAX)],
             decoded: ("x = 0x10\n", "integer", Value::int(16)),
             name_kinds: &["identifier"],
@@ -1102,7 +1102,7 @@ fn sql() {
         package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Sql,
-            string: Value::Str("é".to_owned()),
+            string: Value::Str("é".into()),
             numbers: [Value::int(16), Value::int(u64::MAX)],
             decoded: ("SELECT 0x10;\n", "literal", Value::int(16)),
             name_kinds: &[],
@@ -1213,7 +1213,7 @@ fn rust() {
         package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Rust,
-            string: Value::Str("é".to_owned()),
+            string: Value::Str("é".into()),
             numbers: [
                 Value::RustInt {
                     value: 16.into(),
@@ -1436,13 +1436,20 @@ fn adapters_read_the_capabilities_the_registry_supports() {
 #[test]
 fn shared_walks_read_the_kinds_they_named() {
     fn scope_kinds<S: ScopeRules>(dialect: GrammarDialect) {
+        // A family without scope (format strings, directive comments) has no walks; its grammar's own kinds
+        // (brace-format's `attribute`) are not the walks' kinds.
+        if !S::SUPPORTED {
+            return;
+        }
         let ids = |names: &[&str]| kind_ids(dialect, names);
         assert_eq!(
             ids(S::PAREN_KINDS),
             ids(&["parenthesized_expression"]),
             "{dialect:?}"
         );
-        if S::FLOW {
+        // A family whose scope is refused (the format strings') has no walks: its own trees may name
+        // a kind `attribute` (a brace-format field's `.name`) that is no expression's.
+        if S::FLOW || !S::SUPPORTED {
             return;
         }
         assert_eq!(
@@ -1466,7 +1473,7 @@ fn shared_walks_read_the_kinds_they_named() {
                     is_comment_kind(name),
                     matches!(
                         name,
-                        "comment" | "html_comment" | "line_comment" | "block_comment"
+                        "comment" | "html_comment" | "line_comment" | "block_comment" | "js_comment"
                     ),
                     "{name} in {dialect:?}"
                 );

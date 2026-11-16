@@ -155,6 +155,41 @@ def cfg_lines(n, indent):
     return ''.join(f'{indent}{c}\n' for c in split_attrs(n.cfg) if c.startswith('#[cfg('))
 
 
+def dir_attr(path, body, indent):
+    """An inline module's `#[path]`, for the `body` lines it encloses: used only where a direct child's file is found
+    through it (`mod x;`, or a child's own `#[path]`). Where every such child is under a `#[cfg(..)]` (or its
+    `#[path]` is a `cfg_attr`), the attribute is under their union (`cfg_attr`): rustc warns of a `#[path]` that
+    nothing in the build reads."""
+    inner = indent + '    '
+    direct = [l for l in body if l.startswith(inner) and not l.startswith(inner + ' ')]
+    preds, used = set(), False
+    for i, l in enumerate(direct):
+        a = re.match(r'\s*#\[cfg_attr\((.*), path = "[^"]*"\)\]\s*$', l)
+        if a:
+            used = True
+            preds.add(a.group(1))
+            continue
+        if not re.match(r'\s*(#\[path\b|(pub(\([^)]*\))? )?mod \w+;)', l):
+            continue
+        if l.lstrip().startswith('#[path') and i + 1 < len(direct) and re.match(r'\s*(pub(\([^)]*\))? )?mod \w+', direct[i + 1]):
+            continue  # its `mod` line, next, is the child: counted once there
+        used = True
+        j = i - 1
+        while j >= 0 and direct[j].lstrip().startswith('#[path'):
+            j -= 1
+        m = re.match(r'\s*#\[cfg\((.*)\)\]\s*$', direct[j]) if j >= 0 else None
+        preds.add(m.group(1) if m else None)
+    if not used:
+        return ''
+    if None in preds:
+        return f'{indent}#[path = "{path}"]\n'
+    hooks = 'any(test, feature = "test-hooks")'
+    if hooks in preds:
+        preds.discard('test')
+    pred = preds.pop() if len(preds) == 1 else f'any({", ".join(sorted(preds))})'
+    return f'{indent}#[cfg_attr({pred}, path = "{path}")]\n'
+
+
 def split_attrs(s):
     out, depth, cur = [], 0, ''
     for ch in s:
@@ -221,8 +256,11 @@ class Facades:
             # `#[path]` ones, and a path through it fails, so the facade's directory is its nearest existing one
             while not k.inline and not os.path.isdir(kd) and kd != ROOT:
                 kd = os.path.dirname(kd)
-            lines.append(f'{cfg}{indent}#[path = "{rel(kd, attr_dir)}"]\n{indent}{vis}mod {k.name} {{\n')
-            self.body(k, indent + '    ', kd, lines)
+            body = []
+            self.body(k, indent + '    ', kd, body)
+            body = ''.join(body).splitlines(keepends=True)
+            lines.append(f'{cfg}{dir_attr(rel(kd, attr_dir), body, indent)}{indent}{vis}mod {k.name} {{\n')
+            lines.extend(body)
             lines.append(f'{indent}}}\n')
         elif k.owner in ALLOW.get(c, ()):
             # pub: the module's glob in the crates above carries it
@@ -248,8 +286,11 @@ def emit_crate(c, nodes, v):
             continue
         if f.need_inline(k):
             kd = child_dir(k)
-            lines.append(f'{cfg_lines(k, "")}#[path = "{rel(kd, lib_dir)}"]\npub mod {k.name} {{\n')
-            f.body(k, '    ', kd, lines)
+            body = []
+            f.body(k, '    ', kd, body)
+            body = ''.join(body).splitlines(keepends=True)
+            lines.append(f'{cfg_lines(k, "")}{dir_attr(rel(kd, lib_dir), body, "")}pub mod {k.name} {{\n')
+            lines.extend(body)
             lines.append('}\n')
         else:
             f.child(k, '', lib_dir, lines)

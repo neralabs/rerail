@@ -209,7 +209,7 @@ all_entry(s, x) :- all_value(s), str(s, x).                                     
 //   __all__ = [  # noqa: F822
 //       "Missing",              not reported
 //   ]
-.decl noqa_ask(st: node, code: symbol)
+.decl noqa_ask(st: node, code: symbol) extensible
 .decl noqa(st: node, code: symbol)
 noqa(st, c) :- noqa_ask(st, c), line(st, l), docof(st, d), kind(n, "comment"), line(n, l), docof(n, d), comment(n, t),
     (match("(?i)\\s*noqa\\s*", t) ; match("(?i)\\s*noqa\\s*:[\\s\\S]*", t), contains(c, t)).

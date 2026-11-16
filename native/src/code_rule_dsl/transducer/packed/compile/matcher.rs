@@ -1268,7 +1268,7 @@ impl LoweredWave {
     }
 
     /// Each clause's matches of the batch from `roots`, every clause's passes and roots in one command buffer.
-    pub(in crate::code_rule_dsl) fn roots_metal(&self, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, super::device::Outcome), Error> {
+    pub fn roots_metal(&self, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, super::device::Outcome), Error> {
         super::device::required()?.wave_roots(self, tapes, roots)
     }
 }

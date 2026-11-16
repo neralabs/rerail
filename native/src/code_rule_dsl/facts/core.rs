@@ -106,6 +106,116 @@ pub fn facts_tag(f: &Facts) -> u8 {
     f.tag
 }
 
+/// A column the read-pattern count (E17) watches: a plain `Vec` unless the `tape-reads` feature is on.
+#[cfg(not(feature = "tape-reads"))]
+pub type Col<T> = Vec<T>;
+#[cfg(feature = "tape-reads")]
+pub use counted::Col;
+
+/// With `tape-reads`: a column whose reads by index are counted by where they lie (`tape::reads::at`), and
+/// whose reads whole (a slice, `iter`) are counted as in order. It is the `Vec` otherwise.
+#[cfg(feature = "tape-reads")]
+mod counted {
+    use crate::code_rule_dsl::tape::reads;
+    use std::ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo};
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Col<T> {
+        v: Vec<T>,
+        /// The part's index in `reads::PATTERN_PARTS`, or `usize::MAX` for a column not watched.
+        part: usize,
+    }
+
+    impl<T> Col<T> {
+        pub fn watched(v: Vec<T>, name: &str) -> Self {
+            Col { v, part: reads::PATTERN_PARTS.iter().position(|p| *p == name).expect("a pattern part") }
+        }
+        pub fn iter(&self) -> std::slice::Iter<'_, T> {
+            if self.part != usize::MAX {
+                reads::bulk(self.part, self.v.len());
+            }
+            self.v.iter()
+        }
+        #[track_caller]
+        pub fn get(&self, i: usize) -> Option<&T> {
+            if self.part != usize::MAX && i < self.v.len() {
+                reads::at(self.part, i as u32);
+            }
+            self.v.get(i)
+        }
+    }
+    impl<T> Default for Col<T> {
+        fn default() -> Self {
+            Col { v: Vec::new(), part: usize::MAX }
+        }
+    }
+    impl<T> From<Vec<T>> for Col<T> {
+        fn from(v: Vec<T>) -> Self {
+            Col { v, part: usize::MAX }
+        }
+    }
+    impl<'a, T> IntoIterator for &'a Col<T> {
+        type Item = &'a T;
+        type IntoIter = std::slice::Iter<'a, T>;
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter()
+        }
+    }
+    impl<T> Deref for Col<T> {
+        type Target = Vec<T>;
+        fn deref(&self) -> &Vec<T> {
+            &self.v
+        }
+    }
+    impl<T> DerefMut for Col<T> {
+        fn deref_mut(&mut self) -> &mut Vec<T> {
+            &mut self.v
+        }
+    }
+    impl<T> Index<usize> for Col<T> {
+        type Output = T;
+        #[inline]
+        #[track_caller]
+        fn index(&self, i: usize) -> &T {
+            if self.part != usize::MAX {
+                reads::at(self.part, i as u32);
+            }
+            &self.v[i]
+        }
+    }
+    impl<T> IndexMut<usize> for Col<T> {
+        fn index_mut(&mut self, i: usize) -> &mut T {
+            &mut self.v[i]
+        }
+    }
+    macro_rules! whole {
+        ($($r:ty),*) => {$(
+            impl<T> Index<$r> for Col<T> {
+                type Output = [T];
+                fn index(&self, r: $r) -> &[T] {
+                    let s = &self.v[r];
+                    if self.part != usize::MAX {
+                        reads::bulk(self.part, s.len());
+                    }
+                    s
+                }
+            }
+        )*};
+    }
+    whole!(Range<usize>, RangeFrom<usize>, RangeTo<usize>, RangeFull);
+}
+
+/// The watched columns, named for the count (E17); a no-op without `tape-reads`.
+fn watch(f: &mut Facts) {
+    #[cfg(feature = "tape-reads")]
+    {
+        for (col, name) in [(&mut f.parent, "facts parent"), (&mut f.start, "facts start"), (&mut f.end, "facts end"), (&mut f.subtree_end, "facts subtree_end")] {
+            *col = Col::watched(std::mem::take(&mut **col), name);
+        }
+    }
+    let _ = f;
+}
+
 /// One file's facts. Columns are indexed by node id.
 pub struct Facts {
     /// The tape tag of the file's dialect, which every kind atom is of.
@@ -114,10 +224,10 @@ pub struct Facts {
     pub lines: Arc<LineTable>,
     /// node(id, kind, parent, start, end) + subtree_end, flags, field.
     pub kind: Vec<u32>,
-    pub parent: Vec<u32>,
-    pub start: Vec<u32>,
-    pub end: Vec<u32>,
-    pub subtree_end: Vec<u32>,
+    pub parent: Col<u32>,
+    pub start: Col<u32>,
+    pub end: Col<u32>,
+    pub subtree_end: Col<u32>,
     /// named | extra<<1 | missing<<2 | error<<3
     pub flags: Vec<u8>,
     /// Field (grammar field code, 0 = none) under which the node hangs from its parent.
@@ -137,6 +247,9 @@ pub struct Facts {
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
     pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
+    /// The tape these facts were read off, its ids theirs (decision 0293): what the kind-set axes read in place.
+    /// `None` for facts made otherwise (a text-only document, or read off no image), which the axes read as before.
+    pub tape: Option<Arc<crate::code_rule_dsl::tape::formats::DocTape>>,
 }
 
 /// An anonymous child: a token the tape stores ([`Facts::tokens`]).
@@ -183,7 +296,7 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &image.primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = from_image(Arc::clone(file.source()), &grammar, &image.primary, lines)?;
+    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &image.primary, lines)?, image.primary);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
@@ -257,7 +370,11 @@ pub fn build_in_wave_with_tape(
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decompress".into());
             Some(std::sync::Arc::new(frame.bytes().map_err(|e| e.to_string())?))
         }
-        None => cache.pending::<Vec<u8>>(&key),
+        // Still queued for the writer: its compressed frame, decompressed.
+        None => match cache.pending::<crate::content_store::SourceAndTapeFrames>(&key) {
+            Some(frames) => Some(std::sync::Arc::new(frames.tape_bytes().map_err(|e| e.to_string())?)),
+            None => None,
+        },
     };
     let primary = match kept {
         Some(stored) => {
@@ -276,16 +393,20 @@ pub fn build_in_wave_with_tape(
             drop(parse);
             let tape = std::sync::Arc::new(image.primary.to_bytes()?);
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
-            // Handed to the writer, the source and the tape each moved, not copied; read from memory until written.
-            let (source, held, stored) = (std::sync::Arc::clone(file.source()), std::sync::Arc::clone(&tape), stored.cloned());
+            // Compressed here, on the parse's worker; the store's one writer only inserts the frames. The queue holds
+            // the frames and the tape (read from memory until written), not the source.
+            let canonical = HashKey::from_sha256_digest(digest);
+            let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
+            let (held, stored) = (std::sync::Arc::clone(&frames), stored.cloned());
             // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
             // the file again (decision 0104: no wave waits for the writer).
             cache.write_back_unless_full(
+                crate::content_store::write_back::Syms::None,
                 "a tape and its source",
-                bytes.len() + tape.len(),
-                vec![(key, Some(std::sync::Arc::clone(&tape) as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
+                frames.bytes(),
+                vec![(key, Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
                 Box::new(move |store| {
-                    let (id, _) = store.put_source_and_tape(source.as_bytes(), HashKey::from_sha256_digest(digest), tag, gv, fv, &held)?;
+                    let (id, _) = store.put_source_and_tape_framed(canonical, tag, gv, fv, &held)?;
                     if let Some(stored) = &stored {
                         stored.lock().expect("the stored sources").push(id);
                     }
@@ -298,7 +419,7 @@ pub fn build_in_wave_with_tape(
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = from_image(Arc::clone(file.source()), &grammar, &primary, lines)?;
+    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
@@ -332,12 +453,13 @@ pub(crate) fn build_cached_with_tape(
     {
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-        if let Some(held) = cache.pending::<Vec<u8>>(&queued_tape(&digest, tag, gv, fv)) {
+        if let Some(frames) = cache.pending::<crate::content_store::SourceAndTapeFrames>(&queued_tape(&digest, tag, gv, fv)) {
+            let held = frames.tape_bytes().map_err(|e| e.to_string())?;
             let grammar = Arc::new(tape::Grammar::new(language)?);
             let primary = TapeImage::from_bytes(&held, &grammar)?;
             let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
-            return Ok((Built::Facts(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?), known, doc));
+            return Ok((Built::Facts(holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary)), known, doc));
         }
     }
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
@@ -377,14 +499,18 @@ pub(crate) fn build_cached_with_tape(
             // (`pending`, above): the source's id is the writer's, so none is returned for a source not stored yet.
             use sha2::Digest as _;
             let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-            let (source, held) = (std::sync::Arc::clone(file.source()), std::sync::Arc::clone(&tape));
+            // Compressed here, on the parse's worker; the writer only inserts (as above).
+            let canonical = HashKey::from_sha256_digest(digest);
+            let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
+            let held = std::sync::Arc::clone(&frames);
             // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
             // the file again (decision 0104: no wave waits for the writer).
             cache.write_back_unless_full(
+                crate::content_store::write_back::Syms::None,
                 "a tape and its source",
-                bytes.len() + tape.len(),
-                vec![(queued_tape(&digest, tag, gv, fv), Some(tape as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
-                Box::new(move |store| store.put_source_and_tape(source.as_bytes(), HashKey::from_sha256_digest(digest), tag, gv, fv, &held).map(|_| ())),
+                frames.bytes(),
+                vec![(queued_tape(&digest, tag, gv, fv), Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
+                Box::new(move |store| store.put_source_and_tape_framed(canonical, tag, gv, fv, &held).map(|_| ())),
             );
             image.primary
         }
@@ -392,7 +518,7 @@ pub(crate) fn build_cached_with_tape(
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = from_image(Arc::clone(file.source()), &grammar, &primary, lines)?;
+    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
     Ok((Built::Facts(facts), source_id, doc))
 }
@@ -400,6 +526,8 @@ pub(crate) fn build_cached_with_tape(
 pub mod postings;
 
 pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
+    #[cfg(feature = "tape-reads")]
+    let _paused = crate::code_rule_dsl::tape::reads::pause();
     let tag = tape_tag(doc.file_dialect()).ok_or("the tape's dialect has no tape tag")?;
     let n = doc.transducer_len();
     let mut f = empty(tag, Arc::clone(doc.document_source()), lines, n);
@@ -420,7 +548,15 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> 
     let _classes = crate::code_rule_dsl::logic::profile::span(|| "class postings".into());
     let classes = doc.transducer_supertypes().map(|(node, class)| (kind_atom(tag, class), node)).collect();
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
+    watch(&mut f);
+    f.tape = Some(Arc::clone(doc.doc_tape()));
     Ok(f)
+}
+
+/// `facts` holding the image they were read off (`Facts::tape`), moved in: not copied.
+fn holding(mut facts: Facts, image: crate::code_rule_dsl::tape::TapeImage) -> Facts {
+    facts.tape = Some(Arc::new(crate::code_rule_dsl::tape::formats::DocTape::new(Arc::new(image))));
+    facts
 }
 
 /// Allocates only the core columns. Line numbers are lookups in the shared source line table.
@@ -430,10 +566,10 @@ fn empty(tag: u8, source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts
         source,
         lines,
         kind: Vec::with_capacity(n),
-        parent: Vec::with_capacity(n),
-        start: Vec::with_capacity(n),
-        end: Vec::with_capacity(n),
-        subtree_end: Vec::with_capacity(n),
+        parent: Vec::with_capacity(n).into(),
+        start: Vec::with_capacity(n).into(),
+        end: Vec::with_capacity(n).into(),
+        subtree_end: Vec::with_capacity(n).into(),
         flags: Vec::with_capacity(n),
         field: Vec::with_capacity(n),
         child_offsets: Vec::new(),
@@ -446,6 +582,7 @@ fn empty(tag: u8, source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts
         class_nodes: Vec::new(),
         syntax_errors: false,
         python_syntax: Default::default(),
+        tape: None,
     }
 
 }
@@ -453,10 +590,18 @@ fn empty(tag: u8, source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts
 /// Reads the admitted tape directly into columns. The matcher and this reader share validation.
 pub fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::tape::Grammar,
     image: &crate::code_rule_dsl::tape::TapeImage, lines: Arc<LineTable>) -> Result<Facts, String> {
+    #[cfg(feature = "tape-reads")]
+    let _paused = crate::code_rule_dsl::tape::reads::pause();
     let tag = tape_tag(grammar.dialect()).ok_or("the tape's dialect has no tape tag")?;
     let mut f = empty(tag, Arc::clone(&source), lines, 0);
     let mut classes = Vec::new();
     let decode = crate::code_rule_dsl::logic::profile::span(|| "validated tape columns".into());
+    #[cfg(feature = "tape-reads")]
+    {
+        use crate::code_rule_dsl::tape::reads;
+        reads::hit(reads::part("facts docs"), 1);
+        reads::hit(reads::part("facts nodes"), image.node_count() as u64);
+    }
     crate::code_rule_dsl::tape::validated::visit(&source, grammar, image, &|| false, |node, memberships| {
         if node.id == 0 { f = empty(tag, Arc::clone(&f.source), Arc::clone(&f.lines), image.node_count()); }
         f.kind.push(kind_atom(tag, node.kind));
@@ -473,6 +618,7 @@ pub fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::tape::Gra
     index(&mut f);
     let _classes = crate::code_rule_dsl::logic::profile::span(|| "class postings".into());
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
+    watch(&mut f);
     Ok(f)
 }
 
@@ -488,10 +634,10 @@ pub fn text(source: Arc<String>) -> Facts {
         source,
         lines,
         kind: Vec::new(),
-        parent: Vec::new(),
-        start: Vec::new(),
-        end: Vec::new(),
-        subtree_end: Vec::new(),
+        parent: Vec::new().into(),
+        start: Vec::new().into(),
+        end: Vec::new().into(),
+        subtree_end: Vec::new().into(),
         flags: Vec::new(),
         field: Vec::new(),
         child_offsets: Vec::new(),
@@ -504,6 +650,7 @@ pub fn text(source: Arc<String>) -> Facts {
         class_nodes: Vec::new(),
         syntax_errors: false,
         python_syntax: Default::default(),
+        tape: None,
     };
     index(&mut f);
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
@@ -562,6 +709,7 @@ fn posting<'a>(keys: &[u32], offsets: &[u32], nodes: &'a [u32], key: u32) -> &'a
 }
 
 impl Facts {
+    #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn start_line(&self, id: u32) -> u32 {
         self.lines.line(self.start[id as usize] as usize) as u32 + 1
     }
@@ -609,12 +757,14 @@ impl Facts {
     pub fn of_class(&self, class: u32) -> &[u32] {
         posting(&self.class_keys, &self.class_offsets, &self.class_nodes, class)
     }
+    #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn text(&self, id: u32) -> &str {
         &self.source[self.start[id as usize] as usize..self.end[id as usize] as usize]
     }
     pub fn named(&self, id: u32) -> bool {
         self.flags[id as usize] & 1 != 0
     }
+    #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn parent(&self, id: u32) -> Option<u32> {
         let p = self.parent[id as usize];
         (p != NONE).then_some(p)
@@ -627,6 +777,10 @@ impl Facts {
             + self.child_offsets.len() * 4
             + self.kind_nodes.len() * 4
             + self.class_nodes.len() * 4
+    }
+    /// The resident bytes of the tape they were read off (`tape`), in each format made of it.
+    pub fn tape_bytes(&self) -> usize {
+        self.tape.as_ref().map_or(0, |t| t.bytes())
     }
 }
 
@@ -685,8 +839,8 @@ impl LeBytes for u16 {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations `core.rr` declares (the engine's names, decision 0047), as the rule language reads them;
-/// registered at load (`install_core_names`). Empty without one.
+/// The relations a program in `core.rr`'s shape declares (the engine's names, decision 0141, less those decision
+/// 0174's rewrite adds), as the rule language reads them; registered at load (`install_core_names`). Empty without one.
 pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     CORE_NAMES.get().map_or(&EMPTY, |names| names())
@@ -699,6 +853,15 @@ pub fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<Str
     let _ = CORE_NAMES.set(names);
 }
 
+/// A column's name as the planner and SQL read it: a positional name (`c1`, as the engine names a derived
+/// relation's rows) of a relation named like a base one (`input_columns`) is that column's base name. Such a
+/// relation is derived where an attribute is answered on request (`value`, `node_text`: decision 0174), and handed
+/// on from the chunks it is the cross-file part's input, read as `value(n, v)`.
+pub fn input_column_name(rel: &str, name: &str) -> Option<&'static str> {
+    let i: usize = name.strip_prefix('c')?.parse().ok()?;
+    input_columns(rel)?.get(i).copied()
+}
+
 /// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
 pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
     Some(match rel {
@@ -709,7 +872,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "field" => &["p", "f", "c"],
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
-        "value" | "static_value" => &["n", "v"],
+        "value" | "static_value" | "rr_value_lit" => &["n", "v"],
         "value_type_of" => &["n", "t"],
         "value_type" => &["v", "t"],
         // W's f-string trees (`facts::vtab::syntax::fstring`).
@@ -748,10 +911,12 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "str_part_start" => &["lit", "i", "l", "c"],
         "first_token" | "last_token" => &["n", "t"],
         "token_before" | "token_after" => &["x", "t"],
+        "end_point" => &["n", "p"],
         "tree_digest" | "def_digest" => &["n", "s"],
         // core.rr's tokens (`facts::vtab::syntax::tree`).
         "prev_token" => &["n", "s"],
-        "token" => &["p", "i", "s", "start", "end_"],
+        "token" | "rr_token_anon" => &["p", "i", "s", "start", "end_"],
+        "rr_token_named" => &["p", "i", "c", "start", "end_"],
         // W's Python reference graph (`logic::plan::corpus::references`).
         "reference_edge" => &["src", "dst", "via"],
         "reference_open" => &["n"],
@@ -797,10 +962,14 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
 }
 
 /// The executor of a binding (the run's lanes: every lane under the device binding, the cores' otherwise), registered
-/// at load (`install_executors`); without one, a fresh executor of the machine's lanes.
-pub(crate) fn executor_for(device: bool) -> &'static rerail_accel::Executor {
-    static OWN: std::sync::LazyLock<rerail_accel::Executor> = std::sync::LazyLock::new(rerail_accel::Executor::new);
-    EXECUTORS.get().map_or(&*OWN, |executor| executor(device))
+/// at load (`install_executors`); without one, a fresh executor of the machine's lanes, made only then (making it
+/// compiles the GPU's kernels and builds the Neural Engine's lane).
+pub fn executor_for(device: bool) -> &'static rerail_accel::Executor {
+    static OWN: std::sync::OnceLock<rerail_accel::Executor> = std::sync::OnceLock::new();
+    match EXECUTORS.get() {
+        Some(executor) => executor(device),
+        None => OWN.get_or_init(rerail_accel::Executor::new),
+    }
 }
 
 static EXECUTORS: std::sync::OnceLock<fn(bool) -> &'static rerail_accel::Executor> = std::sync::OnceLock::new();

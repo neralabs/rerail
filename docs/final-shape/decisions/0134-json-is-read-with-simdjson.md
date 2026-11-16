@@ -163,3 +163,10 @@ Two steps did most of it:
   captures the walk's state by reference puts all that state in memory. That cost 30 instructions a
   node until it was found.
 - **The digest's block loop unrolled by hand** (6.2 instructions a byte before).
+
+## Amendment (2026-11-13): every CPU family, and a router (0148)
+
+The stage 2 and the fused hash were arm64's alone. They now run on x86-64 too: the kernel is compiled for
+each of simdjson's implementations, in `rerail-simdjson-native`, the crate that holds all the native
+code. The engine's parser router takes the best kernel the host runs, and simdjson's DOM parser with the
+index writer is the router's last JSON entry (0148).

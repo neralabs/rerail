@@ -144,6 +144,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 
 ```sh
 rerail rules test draft.json            # validate, run the cases, list the matches in the repo; writes nothing
+rerail rules test rule.rr               # a .rr rule file: run the tests it carries (.test ... .end)
 rerail rules test draft.json --json     # the same, listing every match and every file the rule could not check
 rerail rules test rule.rr               # a .rr rule file: run the tests it carries (.test ... .end)
 rerail rules add draft.json             # store it in your library and add it, on, to this repo

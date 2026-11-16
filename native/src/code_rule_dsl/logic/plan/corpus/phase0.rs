@@ -173,6 +173,16 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     Ok(found.into_iter().map(|g| g.expect("each seed's graph")).collect())
 }
 
+/// The include graphs of program files `paths`, derived by one run of `bootstrap.rr` and kept: files read one by one
+/// after it find theirs (`rr::read_file`, `parse_file`), as a pack's programs do in a run (`settings::program_texts`).
+/// Read one by one with none kept, each file is a run of its own: a test over a pack's programs was hundreds of corpus
+/// runs, most of its time spent waiting on the pool. A file that does not canonicalize, or a run that fails, is left
+/// to its read, which derives its graph again and reports the error.
+pub fn keep_files<'p>(paths: impl IntoIterator<Item = &'p std::path::PathBuf>) {
+    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| dunce::canonicalize(&p).ok()).map(Seed::File).collect();
+    let _ = graphs(&seeds);
+}
+
 /// Keeps the graph of a text made from a program file (`tools::program_texts`), taken from the file's graph rather
 /// than from another run of `bootstrap.rr`: each name the text includes is a library module the file's graph holds,
 /// found as `bootstrap.rr` finds a text's names (the library alone). The graph is the one that run would give, so
@@ -209,7 +219,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
 /// (an included module's `#include "python/env.rr"`, read as missing). The canonical path where the file is there,
 /// else the candidate in the platform's separators.
 pub fn module_path(candidate: &str) -> PathBuf {
-    dunce::canonicalize(candidate).unwrap_or_else(|_| PathBuf::from(in_separators(candidate, std::path::MAIN_SEPARATOR)))
+    dunce::canonicalize(&candidate).unwrap_or_else(|_| PathBuf::from(in_separators(candidate, std::path::MAIN_SEPARATOR)))
 }
 
 /// `path` with its `/` separators written as `separator`, as a canonical path on that platform spells them.
@@ -228,13 +238,28 @@ fn quote(s: &str) -> String {
 
 impl Graph {
     /// The part of a run's graph one seed reaches (its `k`, its place among the run's seeds), a text's key named
-    /// [`TEXT`].
+    /// [`TEXT`]: the graph a run of `bootstrap.rr` over that seed alone gives, whatever seeds shared the run. A module
+    /// names `core.rr` only as a file seed (`p0_from(f, -1, "core.rr") :- p0_file(f), …`), so another seed's module
+    /// does not here; and `p0_absent` names no includer, so the seed's absent candidates are those of the names its
+    /// modules ask (`p0_cand`). Taken whole, a text's graph held every seed's absent files and the implicit includes
+    /// of the modules that were seeds too, and its digest depended on the run it was derived in.
     pub fn of(&self, seed: &Seed, k: usize) -> Graph {
         let start = match seed {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
         };
-        let mut g = Graph { absent: self.absent.clone(), plans: self.plans.clone(), ..Graph::default() };
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().map(|l| l.to_string_lossy().into_owned());
+        let mut candidates: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        let mut candidate = |from: &str, name: &str| {
+            if let Some(l) = &lib {
+                candidates.insert(PathBuf::from(format!("{l}/{name}")));
+            }
+            if !from.starts_with("text:") && from != "engine" && let Some((dir, _)) = from.rsplit_once('/') {
+                candidates.insert(PathBuf::from(format!("{dir}/{name}")));
+            }
+        };
+        let own = |from: &str, at: i64, name: &str| from == start || !(at == -1 && name == "core.rr");
+        let mut g = Graph { plans: self.plans.clone(), ..Graph::default() };
         let mut pending = vec![start.clone(), "engine".to_owned()];
         let mut seen = std::collections::BTreeSet::new();
         while let Some(from) = pending.pop() {
@@ -243,12 +268,9 @@ impl Graph {
             }
             let name = if from == start && matches!(seed, Seed::Text { .. }) { TEXT.to_owned() } else { from.clone() };
             if let Some(to) = self.includes.get(&from) {
-                // The implicit `core.rr` (at -1) is a program file's own (`p0_file`): a module this seed includes,
-                // which the run was given as a seed of its own too, does not name it here, as a run of this seed
-                // alone would not.
-                let to: Vec<(i64, String, PathBuf)> =
-                    if from == start || from == "engine" { to.clone() } else { to.iter().filter(|(at, _, _)| *at >= 0).cloned().collect() };
-                for (_, _, path) in &to {
+                let to: Vec<(i64, String, PathBuf)> = to.iter().filter(|(at, n, _)| own(&from, *at, n)).cloned().collect();
+                for (_, n, path) in &to {
+                    candidate(&from, n);
                     pending.push(path.to_string_lossy().into_owned());
                     if let Some(d) = self.digests.get(path) {
                         g.digests.insert(path.clone(), *d);
@@ -258,8 +280,12 @@ impl Graph {
                     g.includes.insert(name.clone(), to);
                 }
             }
-            g.missing.extend(self.missing.iter().filter(|(f, _, _)| *f == from).map(|(_, at, n)| (name.clone(), *at, n.clone())));
+            for (_, at, n) in self.missing.iter().filter(|(f, at, n)| *f == from && own(&from, *at, n)) {
+                candidate(&from, n);
+                g.missing.push((name.clone(), *at, n.clone()));
+            }
         }
+        g.absent = self.absent.iter().filter(|p| candidates.contains(*p)).cloned().collect();
         if let Seed::File(p) = seed
             && let Some(d) = self.digests.get(p)
         {
@@ -310,34 +336,42 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&dir.to_string_lossy())));
     }
     // No corpus: an empty root, and the library a root the loader may read (`env`).
+    // Canonical (`/private/var/...`, not `/var/...` on macOS), as the run's world names its roots: one journal root.
+    // Both are rerail's own (decision 0284), as the family `rerail-phase-0-…`: answered, never kept, and nothing above
+    // them watched for them. Canonicalizing the root had watched the whole temporary directory, whose news (other
+    // programs' files, the last process's outputs) the run after a cold one stored.
+    crate::content_store::observe::own(&std::env::temp_dir().join("rerail-phase-0"));
     let root = std::env::temp_dir().join("rerail-phase-0-root");
     std::fs::create_dir_all(&root).map_err(|e| PlanError::Plan(format!("{}: {e}", root.display())))?;
+    let root = dunce::canonicalize(&root).unwrap_or(root);
     static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let out = std::env::temp_dir().join(format!("rerail-phase-0-{}-{}", std::process::id(), RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     let options = serde_json::json!({ "reuse": true });
     IN_PHASE_0.with(|c| c.set(true));
     let run = super::run_with_options(&[&text], &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
     IN_PHASE_0.with(|c| c.set(false));
-    let read = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
-    };
     let result = run.map(|report| {
+        use crate::code_rule_dsl::logic::plan::output::Value as V;
         let mut g = Graph { plans: report.plans, ..Graph::default() };
-        for r in read("p0_include") {
-            if let [from, at, name, path] = r.as_slice() {
-                g.includes.entry(from.clone()).or_default().push((at.parse().unwrap_or(0), name.clone(), module_path(path)));
+        // The outputs' image, read where it is: each value typed, nothing parsed.
+        let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap_or_else(|_| crate::code_rule_dsl::logic::plan::output::Outputs::of(&[]).expect("no image"));
+        for r in outputs.rows("p0_include") {
+            if let (V::Text(from), Some(at), V::Text(name), V::Text(path)) = (r.get(0), r.get(1).int(), r.get(2), r.get(3)) {
+                g.includes.entry(from.to_owned()).or_default().push((at, name.to_owned(), module_path(path)));
+
             }
         }
         for v in g.includes.values_mut() {
             v.sort();
         }
-        for r in read("p0_missing") {
-            if let [from, at, name] = r.as_slice() {
-                g.missing.push((from.clone(), at.parse().unwrap_or(0), name.clone()));
+        for r in outputs.rows("p0_missing") {
+            if let (V::Text(from), Some(at), V::Text(name)) = (r.get(0), r.get(1).int(), r.get(2)) {
+                g.missing.push((from.to_owned(), at, name.to_owned()));
             }
         }
         g.missing.sort();
-        g.absent = read("p0_absent").into_iter().filter_map(|r| r.first().map(PathBuf::from)).collect();
+        g.absent = outputs.rows("p0_absent").iter().filter_map(|r| r.get(0).text().map(PathBuf::from)).collect();
+        drop(outputs);
         let files = seeds.iter().filter_map(|s| match s {
             Seed::File(p) => Some(p.clone()),
             Seed::Text { .. } => None,

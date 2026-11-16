@@ -50,6 +50,17 @@ pub trait RowCells: Send+Sync {
 }
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
+/// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
+#[cfg(target_os = "macos")]
+pub struct DeviceView<'a> {
+    pub block: &'a rerail_blocks::Block,
+    pub root: usize,
+    pub view: u32,
+    pub rows: usize,
+    /// An axis's pairs in the block (`device_chunk::VIEW_AXIS`), else 0.
+    pub pairs: usize,
+}
+
 pub trait Source: Send + Sync {
     fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
@@ -125,12 +136,25 @@ pub trait Source: Send + Sync {
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
     }
+    /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
+    /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
+    #[cfg(target_os = "macos")]
+    fn device_view(&self) -> Option<DeviceView<'_>> {
+        None
+    }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
     /// makes every one: a join probes such a source through `lookup`, whatever its match estimate.
     fn made_on_lookup(&self) -> bool {
         false
     }
-    /// The planner expects `keys` lookups on `column` (decision 0105): a source that can make every row at once for
+    /// For a reader that takes the whole relation where a join would look it up (the device's keyed read, which
+    /// sorts the rows it is given, decision 0277): whether its rows can be made at once, at the cost of a solve the
+    /// source runs, rather than one lookup each. A source that answers so makes them (and its lookups then read
+    /// them). Every source not made on lookup has them.
+    fn complete_rows(&self) -> bool {
+        !self.made_on_lookup()
+    }
+    /// The planner expects `keys` lookups on `column` (decision 0143): a source that can make every row at once for
     /// less than that many lookups cost chooses to.
     fn expect_lookups(&self, _column: usize, _keys: f64) {}
     /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
@@ -287,7 +311,9 @@ impl Modules {
         }
         // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
         let at = connection_scope(db);
-        let shape = (source.columns(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
+        // A derived relation named like a base one is read by the base names (`core::input_column_name`).
+        let columns: Vec<String> = source.columns().into_iter().map(|c| crate::code_rule_dsl::facts::core::input_column_name(name, &c).map_or(c, str::to_owned)).collect();
+        let shape = (columns.clone(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
         let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
         // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
         // drops is no longer kept, `dropped_temp`.)
@@ -298,7 +324,7 @@ impl Modules {
             return Ok(());
         }
         let binding = Binding {
-            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns: source.columns(), writable:source.writable() }),
+            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns, writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
         };
@@ -622,6 +648,11 @@ static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Bi
 /// The source bound now to the table `name` on `db`'s connection, if one is.
 pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
     BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
+}
+
+/// `bound_source` by the connection's scope (`Scoped::at`), for a callback that holds the scope, not the connection.
+pub fn bound_source_at(at: usize, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(at, name.to_owned())).map(Binding::current)
 }
 
 /// Rebind through the existing cell so its owning Modules and prepared cursors agree.
@@ -1173,7 +1204,12 @@ pub struct Relation {
 struct ColumnIndex {
     rows: Vec<u32>,
     distinct: usize,
+    /// Every `FENCE`th row's value, in order: a search reads these, contiguous, before the rows they bound, whose
+    /// values it reads one random access each (a search of 100 k rows was 34 of them a probe, two bounds).
+    fence: Vec<i64>,
 }
+/// Rows a fence entry stands for (0.125 bytes a row).
+const FENCE: usize = 64;
 impl Relation {
     pub fn new(columns: &[&str]) -> Self {
         assert!(!columns.is_empty());
@@ -1194,14 +1230,27 @@ impl Relation {
             let mut rows: Vec<u32> = (0..self.len() as u32).collect();
             rows.sort_by_key(|&r| self.value(r as usize, column));
             let distinct = 1 + rows.windows(2).filter(|w| self.value(w[0] as usize, column) != self.value(w[1] as usize, column)).count();
-            ColumnIndex { rows, distinct }
+            let fence = rows.iter().step_by(FENCE).map(|&r| self.value(r as usize, column)).collect();
+            ColumnIndex { rows, distinct, fence }
         })
     }
     /// The positions in `column`'s index of the rows with values in `lo..=hi`.
     fn between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
-        let rows = &self.index(column).rows;
-        let start = rows.partition_point(|&r| self.value(r as usize, column) < lo);
-        let end = rows.partition_point(|&r| self.value(r as usize, column) <= hi);
+        let index = self.index(column);
+        // The first position whose value is not `below` (ascending): the fence's entry past it bounds the rows to
+        // search to one fence's span.
+        // `RERAIL_FENCE=off`: every row searched, as before (to measure the fence).
+        static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off"));
+        let first = |below: &dyn Fn(i64) -> bool| -> usize {
+            if *OFF {
+                return index.rows.partition_point(|&r| below(self.value(r as usize, column)));
+            }
+            let j = index.fence.partition_point(|&k| below(k));
+            let (from, to) = (j.saturating_sub(1) * FENCE, (j * FENCE).min(index.rows.len()));
+            from + index.rows[from..to].partition_point(|&r| below(self.value(r as usize, column)))
+        };
+        let start = first(&|v| v < lo);
+        let end = first(&|v| v <= hi);
         start..end.max(start)
     }
 }

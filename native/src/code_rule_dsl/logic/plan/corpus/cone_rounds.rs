@@ -1,4 +1,4 @@
-//! The cone of requests maintained by delta (decision 0108).
+//! The cone of requests maintained by delta (decision 0145).
 //!
 //! With its answers and its gates taken as inputs, the cone's rules stratify: each relation is a stratum of its own,
 //! and all of the cone's recursion is through the answers. So the cone is run as rounds of one stratified program,
@@ -22,7 +22,10 @@
 
 use super::{Result, lower, maintained, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source};
-use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
+use crate::code_rule_dsl::logic::plan::body::Placed;
+use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, RuleOut, RulePass, Select, Step};
+use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Rewrite, RuleRef, T, Version};
 use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -32,7 +35,16 @@ const LIMIT: usize = 64;
 
 /// The cone's program as rounds: its answers and gates as inputs.
 pub(in crate::code_rule_dsl) struct RoundProgram {
-    pub(in crate::code_rule_dsl) program: front::Program,
+    /// Its version, made once: a derivation of the cone's (`answers::split`'s load part), read by the run and by the
+    /// kept part's reads and writes (`retain`).
+    pub(in crate::code_rule_dsl) placed: crate::code_rule_dsl::logic::plan::body::Placed,
+    /// Its relations' column domains: the prepared program's, which its run reads (`lower::Lowered::domains`), each
+    /// relation of the file system's (`fs_input`) its answer's.
+    pub(in crate::code_rule_dsl) domains: lower::Domains,
+    /// Its inputs, in order.
+    inputs: Vec<String>,
+    /// Its components, dependencies first (`Placed::components`).
+    sccs: Arc<crate::code_rule_dsl::logic::program_image::analyses::Components>,
     /// Each gate's `done` relation and its `ask` (none: the whole relation's gate, `done_N(0)`).
     gates: Vec<(String, Option<String>)>,
     /// Each request relation and its width.
@@ -45,74 +57,144 @@ pub(in crate::code_rule_dsl) struct RoundProgram {
     fs: Vec<(String, String)>,
 }
 
-/// The relation of the file system an answer is the join of its request with (decision 0108, t33's K2): its rows are
+/// The relation of the file system an answer is the join of its request with (decision 0145, t33's K2): its rows are
 /// the file system's where asked, kept as inputs, and the answer is derived.
 pub(in crate::code_rule_dsl) fn fs_input(answer: &str) -> String {
     format!("rr_fs_{answer}")
 }
 
-impl RoundProgram {
-    /// The round program of `load` (the gated cone, `answers::split`), when it stratifies with its answers and
-    /// gates as inputs; `per_file` the per-file relations a load adds rows to (inputs already).
-    pub(in crate::code_rule_dsl) fn of(load: &front::Program, per_file: &[String]) -> Option<RoundProgram> {
-        let mut program = load.clone();
-        let gates: Vec<(String, Option<String>)> = load.gates.iter().map(|(done, g)| (done.clone(), g.src.clone())).collect();
-        let names: BTreeSet<&str> = gates.iter().map(|(d, _)| d.as_str()).collect();
-        program.rules.retain(|r| !names.contains(r.head.rel.as_str()));
-        for rule in &mut program.rules {
-            for l in &mut rule.body {
-                if let Literal::Atom(a) = l {
-                    a.gated = false;
-                }
-            }
+/// A rule's gated atoms copied ungated.
+struct Ungated<'v>(&'v Version);
+
+impl Rewrite for Ungated<'_> {
+    fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
+        a.gated().then(|| (self.0.rel_name(a.rel()).to_owned(), a.neg(), false))
+    }
+}
+
+/// `RoundProgram::of` as a rule pass: each gate's rule dropped, each other rule kept or ungated, then the file
+/// system's joins and the fields (`finish`). `refused` where an answer's relation is derived by rules too.
+struct Rounds<'a> {
+    per_file: &'a [String],
+    fields: Option<Arc<FieldsData>>,
+    gates: Vec<(String, Option<String>)>,
+    /// The relations the rules kept derive.
+    heads: BTreeSet<String>,
+    refused: bool,
+    inputs: Vec<String>,
+    requests: Vec<(String, usize)>,
+    produced: Vec<(String, usize)>,
+    fs: Vec<(String, String)>,
+}
+
+impl RulePass for Rounds<'_> {
+    const NAME: &'static str = "round program";
+    fn begin(&mut self, cx: &Cx<'_>) -> std::result::Result<Select, String> {
+        let d = cx.get::<FieldsData>()?;
+        let f = Fields::over(cx.v(), &d);
+        self.gates = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()))).collect();
+        self.fields = Some(d.clone());
+        Ok(Select::All)
+    }
+    fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> std::result::Result<Step, String> {
+        let v: &Version = cx.v();
+        let head = v.rel_name(r.head().rel());
+        if self.gates.iter().any(|(d, _)| d == head) {
+            return Ok(Step::Drop);
         }
-        let heads: BTreeSet<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
-        let produced: Vec<(String, usize)> = load.answers.values().flatten().filter(|r| !per_file.contains(r)).filter_map(|r| Some((r.clone(), load.decls.get(r)?.len()))).collect::<BTreeSet<_>>().into_iter().collect();
+        self.heads.insert(head.to_owned());
+        if r.reads().any(|a| a.gated()) { out.rewrite(&mut Ungated(v)) } else { Ok(Step::Keep) }
+    }
+    fn finish(&mut self, cx: &Cx<'_>, b: &mut Builder<'_>) -> std::result::Result<(), String> {
+        let f = Fields::over(cx.v(), self.fields.as_ref().expect("begun"));
+        // Each request and what answers it, by request (`Program::answers`).
+        let mut answers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for &(q, a) in f.answers() {
+            answers.entry(f.rel_name(q)).or_default().push(f.rel_name(a));
+        }
+        let per_file = self.per_file;
+        let mut produced: Vec<(String, usize)> = answers.values().flatten().filter(|r| !per_file.iter().any(|p| p == *r)).filter_map(|r| Some(((*r).to_owned(), f.arity(r)?))).collect::<BTreeSet<_>>().into_iter().collect();
         // An answer's relation that rules derive too is not an input.
-        if produced.iter().any(|(r, _)| heads.contains(r.as_str())) {
-            return None;
+        if produced.iter().any(|(r, _)| self.heads.contains(r.as_str())) {
+            self.refused = true;
+            cx.decide("refused", || "an answer's relation is derived by rules too".into());
+            return Ok(());
         }
         // The file system's answers as joins: each request with a relation of the file system, the input.
-        let mut fs = Vec::new();
+        let mut inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
+        let mut kept = Vec::new();
         for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
             let Some(width) = produced.iter().find(|(r, _)| r == answer).map(|(_, w)| *w) else { continue };
-            if !load.answers.contains_key(req) || load.decls.get(req).is_none_or(|d| d.len() != 1) {
+            if !answers.contains_key(req) || f.arity(req) != Some(1) {
                 continue;
             }
             let input = fs_input(answer);
-            program.decls.insert(input.clone(), load.decls[answer].clone());
-            let vars: Vec<Term> = (0..width).map(|c| Term::Var(format!("rr_c{c}"))).collect();
-            program.rules.push(Rule {
-                head: Atom { rel: (answer).to_owned().into(), args: vars.clone(), neg: false, gated: false },
-                body: vec![
-                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: vec![vars[0].clone()], neg: false, gated: false }),
-                    Literal::Atom(Atom { rel: input.clone().into(), args: vars, neg: false, gated: false }),
-                ],
-            });
+            b.declare(&input, &f.columns(answer).ok_or_else(|| format!("{answer} has no declaration"))?);
+            let vars: Vec<String> = (0..width).map(|c| format!("rr_c{c}")).collect();
+            let vars: Vec<T<'_>> = vars.iter().map(|x| T::Var(x.as_str())).collect();
+            b.rule().head(answer, &vars).atom(req, &vars[..1]).atom(input.as_str(), &vars).finish()?;
             // Read back by the rest of the cross part: kept, not inlined.
-            program.qualifiers.entry((answer).to_owned()).or_default().insert("no_inline".to_owned());
-            program.inputs.retain(|r| r != answer);
-            fs.push(((answer).to_owned(), input));
+            kept.push(((*answer).to_owned(), "no_inline".to_owned()));
+            inputs.retain(|r| r != answer);
+            self.fs.push(((*answer).to_owned(), input));
         }
-        let mut produced = produced;
-        for (answer, input) in &fs {
+        b.add_qualifiers(&kept);
+        for (answer, input) in &self.fs {
             for p in produced.iter_mut().filter(|(r, _)| r == answer) {
                 p.0 = input.clone();
             }
         }
-        for rel in gates.iter().map(|(d, _)| d.clone()).chain(produced.iter().map(|(r, _)| r.clone())) {
-            if !program.inputs.contains(&rel) {
-                program.inputs.push(rel);
+        for rel in self.gates.iter().map(|(d, _)| d.clone()).chain(produced.iter().map(|(r, _)| r.clone())) {
+            if !inputs.contains(&rel) {
+                inputs.push(rel);
             }
         }
-        let requests = load.answers.keys().filter_map(|r| Some((r.clone(), load.decls.get(r)?.len()))).collect();
-        program.answers.clear();
-        program.gates.clear();
+        self.requests = answers.keys().filter_map(|r| Some(((*r).to_owned(), f.arity(r)?))).collect();
+        b.set_inputs(&inputs);
+        b.set_answers(&BTreeMap::new());
+        b.keep_relation_fields(&|_| true, &|_| true, &|_| false);
         // The rounds hand on rows (requests to the driver, the cone's relations to the rest), never output lines: so
         // each is kept in the frames as any derived relation, with its rows.
-        program.outputs.clear();
-        front::strata(&program).ok()?;
-        Some(RoundProgram { program, gates, requests, produced, fs })
+        b.set_outputs::<&str>(&[]);
+        self.inputs = inputs;
+        self.produced = produced;
+        Ok(())
+    }
+}
+
+impl RoundProgram {
+    /// The round program of `load` (the gated cone's version, `answers::split`), when it stratifies with its answers
+    /// and gates as inputs; `per_file` the per-file relations a load adds rows to (inputs already), `domains` the
+    /// prepared program's. A rule pass over `load` (`Rounds`, decision 0281): a derivation (decision 0241's form), its
+    /// rules less the gates', each gated atom ungated, and each answer of the file system a join; no tree is read.
+    pub(in crate::code_rule_dsl) fn of(load: &Arc<Version>, per_file: &[String], domains: &lower::Domains) -> Option<RoundProgram> {
+        let mut pass = Rounds { per_file, fields: None, gates: Vec::new(), heads: BTreeSet::new(), refused: false, inputs: Vec::new(), requests: Vec::new(), produced: Vec::new(), fs: Vec::new() };
+        let mut p = Pipeline::new("round program", load.clone());
+        p.rules(&mut pass);
+        let (rv, _) = p.finish().ok()?;
+        if pass.refused {
+            return None;
+        }
+        let placed = Placed::whole(rv);
+        let sccs = placed.components().ok()?;
+        let mut domains = domains.clone();
+        for (answer, input) in &pass.fs {
+            if let Some(d) = domains.get(answer).cloned() {
+                domains.insert(input.clone(), d);
+            }
+        }
+        let Rounds { inputs, gates, requests, produced, fs, .. } = pass;
+        Some(RoundProgram { placed, domains, inputs, sccs, gates, requests, produced, fs })
+    }
+
+    /// Relation `rel`'s width: its declaration's.
+    fn width(&self, rel: &str) -> usize {
+        self.placed.fields().ok().and_then(|f| f.arity(rel)).unwrap_or_else(|| panic!("the round program declares {rel}"))
+    }
+
+    /// Its components, dependencies first.
+    pub(in crate::code_rule_dsl) fn components(&self) -> &[BTreeSet<String>] {
+        &self.sccs
     }
 
     /// The relations a round's caller reads: its requests and asks.
@@ -128,8 +210,8 @@ impl RoundProgram {
 
     /// What `kept` lacks of a final round: the requests and inputs it does not hold.
     pub(in crate::code_rule_dsl) fn missing(&self, kept: &retain::Retained) -> Vec<String> {
-        let requests = self.requests.iter().map(|(r, _)| r).filter(|r| !kept.holds(r, &self.program));
-        requests.chain(self.program.inputs.iter().filter(|r| !kept.has_input(r))).cloned().collect()
+        let requests = self.requests.iter().map(|(r, _)| r).filter(|r| !kept.holds(r, &self.placed));
+        requests.chain(self.inputs.iter().filter(|r| !kept.has_input(r))).cloned().collect()
     }
 
 }
@@ -161,7 +243,7 @@ pub(in crate::code_rule_dsl) struct Inputs<'a> {
     pub(in crate::code_rule_dsl) ledger: &'a std::sync::Mutex<LoadLedger>,
 }
 
-/// What the rounds and the thread answering their loads share (decision 0108, a load taken back).
+/// What the rounds and the thread answering their loads share (decision 0145, a load taken back).
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct LoadLedger {
     /// Each file a load answered (its path's atom, `loaded`'s first column) with its document: what a load taken
@@ -174,7 +256,7 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
     /// the budget's levels.
     pub(in crate::code_rule_dsl) rounds: bool,
     /// A load the rounds asked was past the budget: what they load then depends on their order, so they give up and
-    /// the cone runs fresh, in levels (decision 0108).
+    /// the cone runs fresh, in levels (decision 0145).
     pub(in crate::code_rule_dsl) bound: bool,
     /// The rounds gave up and the cone runs fresh: what was answered to them is not the run's answers.
     pub(in crate::code_rule_dsl) restarted: bool,
@@ -184,9 +266,10 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
 }
 
 impl Inputs<'_> {
-    /// The constants' digests: the inputs a round binds as they are, which the frames' reads record.
-    pub(in crate::code_rule_dsl) fn constant_digests(&self) -> HashMap<String, u64> {
-        self.constants.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect()
+    /// The constants' digests: the inputs a round binds as they are, which the frames' reads record; of their
+    /// content (`retain::cells_of`, decision 0212), as `program` types them.
+    pub(in crate::code_rule_dsl) fn constant_digests(&self, atoms: &crate::content_store::atoms::Atoms, program: &crate::code_rule_dsl::logic::plan::body::Placed, domains: &super::lower::Domains) -> HashMap<String, u64> {
+        self.constants.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref(), &retain::cells_of(atoms, program, domains, rel, source.columns().len())))).collect()
     }
 }
 
@@ -297,6 +380,8 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     /// Whether a carried request of the file system (`rr::WORLD`) still has the answer the last run kept: the
     /// journal names no change at its path since (decision 0105). Such a key is not asked again.
     pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64]) -> bool>,
+    /// The run's text tests (`plan::Hooks::texts`).
+    pub(in crate::code_rule_dsl) texts: &'a Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 }
 
 /// The digest of the file system's answers `kept` holds as inputs (`rr::WORLD`'s relations): what a record of the
@@ -344,33 +429,41 @@ impl RoundProgram {
             for (done, ask) in &self.gates {
                 open.insert(done.clone(), match ask {
                     Some(ask) => asks.get(ask).cloned().unwrap_or_default(),
-                    None => vec![vec![0; self.program.decls[done].len()]],
+                    None => vec![vec![0; self.width(done)]],
                 });
             }
         }
         let closing = closing.is_some();
+        // Each round's inputs digested by content (decision 0212), as the frames' reads record them.
+        // The round program's domains are the prepared program's with its answers' inputs (`RoundProgram::of`): no
+        // tree is lowered again for them.
+        let domains = &self.domains;
+        let atoms = on.store.atoms_handle();
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.
         let was = match &kept {
             Some(k) => k.frames().cloned(),
-            None => retain::Retained::from_frames(on.store, on.space, on.key, &self.program, &crate::code_rule_dsl::logic::front::strata(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?.0, &inputs.constant_digests())?.frames().cloned(),
+            None => retain::Retained::from_frames(on.store, on.space, on.key, on.key, &self.placed, &self.sccs, &inputs.constant_digests(&atoms, &self.placed, domains))?.frames().cloned(),
         };
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
-            let program = &self.program;
+            let program = &self.placed;
             // A cone's program has no split: its inputs' rows are grouped by their first node column (`group_col`).
             let no_locations = retain::Locations::new();
+            // A granule the store no longer holds: the last run's round is not as kept, and the rounds give up (the
+            // fixpoint derives the part again), not the run.
+            let rows = |read: std::result::Result<Option<Vec<Vec<i64>>>, String>| read.map(Option::unwrap_or_default).map_err(Gave::Up);
             for (done, _) in &self.gates {
-                open.insert(done.clone(), k.read_input(on.store, program, &no_locations, done, None)?.unwrap_or_default());
+                open.insert(done.clone(), rows(k.read_input(on.store, program, &no_locations, done, None)?)?);
             }
             for (rel, _) in &self.produced {
-                provisional.insert(rel.clone(), k.read_input(on.store, program, &no_locations, rel, None)?.unwrap_or_default());
+                provisional.insert(rel.clone(), rows(k.read_input(on.store, program, &no_locations, rel, None)?)?);
             }
             // The loaded documents' rows of each per-file relation: the kept rows not of the corpus's documents
             // (only their granules read, where the documents are the column the frames group its rows by).
             for (rel, _, at) in inputs.per_file {
                 let loaded = |d: i64| !inputs.corpus.contains(&d);
-                let rows = k.read_input(on.store, program, &no_locations, rel, (*at == retain::group_col(program, &no_locations, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
-                provisional.insert(rel.clone(), rows.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
+                let got = rows(k.read_input(on.store, program, &no_locations, rel, (*at == retain::group_col(program, &no_locations, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?)?;
+                provisional.insert(rel.clone(), got.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
                 carried.extend(k.read_derived(on.store, req)?.unwrap_or_default().into_iter().map(|r| (req.clone(), r)));
@@ -401,7 +494,7 @@ impl RoundProgram {
         // Each input as the last round bound it, with its digest; the relations whose rows changed since (all, at
         // first) are made and bound again.
         let mut bound: BTreeMap<String, (Arc<dyn Source>, u64)> = BTreeMap::new();
-        let mut dirty: BTreeSet<String> = self.program.inputs.iter().cloned().collect();
+        let mut dirty: BTreeSet<String> = self.inputs.iter().cloned().collect();
         let corpus_rows: BTreeMap<&str, Vec<Vec<i64>>> = inputs.per_file.iter().map(|(r, s, _)| (r.as_str(), rows(s.as_ref()))).collect();
         loop {
             rounds += 1;
@@ -411,7 +504,7 @@ impl RoundProgram {
             let s = crate::code_rule_dsl::logic::profile::span(|| "rounds/inputs".into());
             let fresh = std::mem::take(&mut dirty);
             for rel in fresh.iter().cloned() {
-                let width = self.program.decls[&rel].len();
+                let width = self.width(&rel);
                 let source = if let Some(c) = inputs.constants.get(&rel) {
                     Arc::clone(c)
                 } else if let Some(keys) = open.get(&rel) {
@@ -421,12 +514,12 @@ impl RoundProgram {
                     let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
                     of_rows(width, all)
                 };
-                let digest = retain::digest(source.as_ref());
+                let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, &domains, &rel, width));
                 bound.insert(rel, (source, digest));
             }
             let given: Vec<(String, Arc<dyn Source>, u64, bool)> = bound.iter().map(|(r, (s, d))| (r.clone(), Arc::clone(s), *d, !fresh.contains(r))).collect();
             drop(s);
-            let ran = maintained::run(Some(on.store), on.db, on.modules, on.lowered, on.key, &given, kept.take(), &mut stats, on.keep, on.modes)?;
+            let ran = maintained::run(Some(on.store), on.db, on.modules, on.lowered, on.key, &given, kept.take(), &mut stats, on.keep, on.modes, on.texts)?;
             strata = (strata.0 + ran.strata.0, ran.strata.1);
             maintained_n += ran.maintained;
             again += ran.derived_again;
@@ -486,7 +579,7 @@ impl RoundProgram {
             for (done, ask) in &self.gates {
                 let keys = match ask {
                     Some(ask) => next.read_derived(on.store, ask)?.ok_or_else(|| Gave::Up(format!("{ask} is not kept")))?,
-                    None => vec![vec![0; self.program.decls[done].len()]],
+                    None => vec![vec![0; self.width(done)]],
                 };
                 opened.insert(done.clone(), keys);
             }
@@ -525,12 +618,12 @@ impl RoundProgram {
         // input's granules whose documents' rows changed. What no round derived again stays as stored.
         let written = match &was {
             Some(was) => {
-                let derived: BTreeSet<String> = self.program.rules.iter().map(|r| r.head.rel.to_string()).collect();
+                let derived: BTreeSet<String> = self.placed.v.rules().map(|r| self.placed.v.rel_name(r.head().rel()).to_owned()).collect();
                 let clean = derived.into_iter().filter(|r| next.kept(r).is_none()).collect();
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_frames(on.store, was, &self.program, &retain::Locations::new(), &crate::code_rule_dsl::logic::front::strata(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?.0, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
+                next.write_frames(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
             }
             None => 0,
         };

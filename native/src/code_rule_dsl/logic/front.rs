@@ -21,10 +21,11 @@ use std::fmt;
 
 pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
-pub use name::Name;
+pub use name::{List, Lists, Name, Stacks};
 pub mod cycles;
+pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+pub use ast::{AXIS, Again, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
 
 /// A token and the byte offset where it starts.
 #[derive(Clone, Debug, PartialEq)]
@@ -264,8 +265,8 @@ impl Parser<'_> {
 
     fn term(&mut self) -> Result<Term, Error> {
         let t = match self.peek().clone() {
-            Tok::Var(v) => Term::Var(v),
-            Tok::Str(s) => Term::Str(s),
+            Tok::Var(v) => Term::Var(v.into()),
+            Tok::Str(s) => Term::Str(s.into()),
             Tok::Int(n) => Term::Int(n),
             Tok::Id(s) if s == "_" => Term::Wild,
             Tok::Id(s) if s == "top" => Term::Top,
@@ -274,7 +275,7 @@ impl Parser<'_> {
                 self.i += 1;
                 let items = if self.is_p("}") { Vec::new() } else { self.list(Self::term)? };
                 self.p("}")?;
-                return Ok(Term::Call(crate::code_rule_dsl::logic::strings::SET.to_owned(), items));
+                return Ok(Term::Call(crate::code_rule_dsl::logic::strings::SET.to_owned().into(), items.into()));
             }
             Tok::P("@") => {
                 self.i += 1;
@@ -282,7 +283,7 @@ impl Parser<'_> {
                 self.p("(")?;
                 let args = self.list(Self::term)?;
                 self.p(")")?;
-                return Ok(Term::Call(f, args));
+                return Ok(Term::Call(f.into(), args.into()));
             }
             _ => return self.fail("a term"),
         };
@@ -304,11 +305,11 @@ impl Parser<'_> {
             let set = self.id()?;
             self.p(")")?;
             let (axis, args) = if rel == "inside" { (AXIS, vec![x, y]) } else { (DESCENDANTS, vec![y, x]) };
-            return Ok(Atom { rel: format!("{axis}{set}").into(), args, neg, gated: false });
+            return Ok(Atom { rel: format!("{axis}{set}").into(), args: args.into(), neg, gated: false });
         }
         let args = self.list(Self::term)?;
         self.p(")")?;
-        Ok(Atom { rel: rel.into(), args, neg, gated: false })
+        Ok(Atom { rel: rel.into(), args: args.into(), neg, gated: false })
     }
 
     /// The source text of a balanced `{ … }`, braces included.
@@ -377,7 +378,7 @@ impl Parser<'_> {
         if self.is_id("in") {
             self.i += 1;
             let set = self.term()?;
-            return Ok(Literal::Cmp { l: Term::Call("equals".to_owned(), vec![l, set]), op: "=", r: Term::Int(1) });
+            return Ok(Literal::Cmp { l: Term::Call("equals".into(), [l, set].into()), op: "=", r: Term::Int(1) });
         }
         let op = match self.peek() {
             Tok::P(p @ ("=" | "!=" | "<" | "<=" | ">" | ">=")) => *p,
@@ -406,7 +407,7 @@ impl Parser<'_> {
                 self.p("{")?;
                 let atom = self.atom(false)?;
                 self.p("}")?;
-                return Ok(Literal::Agg { var: var.clone(), op, over, atom });
+                return Ok(Literal::Agg { var: var.to_string(), op, over, atom });
             }
         }
         Ok(Literal::Cmp { l, op, r: self.term()? })
@@ -452,7 +453,7 @@ impl Parser<'_> {
                     let ty = cols.last().map(|c| c.1.clone()).unwrap_or_default();
                     prog.lattice.insert(name.clone(), LatticeDecl { keys: cols.len() - 1, ty, merge, widen });
                 }
-                prog.decls.insert(name, cols);
+                prog.decls.insert(name.into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
             }
             "input" | "output" => {
                 let names = self.list(Self::id)?;
@@ -525,7 +526,7 @@ pub fn parse(src: &str) -> Result<Program, Error> {
                 .iter()
                 .map(|a| match a {
                     Term::Int(n) => Ok(Value::Int(*n)),
-                    Term::Str(s) => Ok(Value::Str(s.clone())),
+                    Term::Str(s) => Ok(Value::Str(s.clone().into())),
                     other => Err(Error::Syntax(format!("fact {} has a non-constant {other:?}", head.rel))),
                 })
                 .collect::<Result<_, _>>()?;
@@ -535,7 +536,7 @@ pub fn parse(src: &str) -> Result<Program, Error> {
         p.p(":-")?;
         let body = p.list(Parser::literal)?;
         p.p(".")?;
-        prog.rules.push(Rule { head, body });
+        prog.rules.push(Rule { head, body: body.into() });
     }
     finish(prog)
 }
@@ -572,15 +573,15 @@ fn order_nodes(prog: &mut Program) {
     }
     let decls = prog.decls.clone();
     let typed = |a: &Atom, nodes: &mut BTreeSet<String>| {
-        for (t, (_, ty)) in a.args.iter().zip(decls.get(a.rel.as_str()).map_or(&[][..], Vec::as_slice)) {
+        for (t, (_, ty)) in a.args.iter().zip(decls.get(a.rel.as_str()).map_or(&[][..], |c| c.as_slice())) {
             if let Term::Var(v) = t
                 && ty == "node"
             {
-                nodes.insert(v.clone());
+                nodes.insert(v.to_string());
             }
         }
     };
-    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned().into(), args: vec![Term::Var(n.to_owned()), Term::Var(k.to_owned())], neg: false, gated: false });
+    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned().into(), args: [Term::Var(n.to_owned().into()), Term::Var(k.to_owned().into())].into(), neg: false, gated: false });
     let mut used = false;
     let mut helpers: Vec<(Rule, Vec<(String, String)>)> = Vec::new();
     let mut fresh = 0usize;
@@ -614,10 +615,10 @@ fn order_nodes(prog: &mut Program) {
         let mut body = Vec::with_capacity(r.body.len());
         for l in std::mem::take(&mut r.body) {
             match l {
-                Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } if matches!(op, "<" | "<=" | ">" | ">=") && nodes.contains(&x) && nodes.contains(&y) => {
+                Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } if matches!(op, "<" | "<=" | ">" | ">=") && nodes.contains(x.as_str()) && nodes.contains(y.as_str()) => {
                     let (kx, ky) = (format!("rr_ord{fresh}"), format!("rr_ord{}", fresh + 1));
                     fresh += 2;
-                    body.extend([order(&x, &kx), order(&y, &ky), Literal::Cmp { l: Term::Var(kx), op, r: Term::Var(ky) }]);
+                    body.extend([order(&x, &kx), order(&y, &ky), Literal::Cmp { l: Term::Var(kx.into()), op, r: Term::Var(ky.into()) }]);
                     used = true;
                 }
                 Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom } if {
@@ -638,33 +639,33 @@ fn order_nodes(prog: &mut Program) {
                             && !head_args.contains(t)
                         {
                             head_args.push(t.clone());
-                            head_cols.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.clone())));
-                            agg_args.push(Term::Var(v.clone()));
+                            head_cols.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
+                            agg_args.push(Term::Var(v.clone().into()));
                         }
                     }
                     let k = format!("rr_ord{fresh}");
                     let kv = format!("rr_ord{}", fresh + 1);
                     fresh += 2;
                     let name = format!("rr_ordered{}", helpers.len());
-                    head_args.push(Term::Var(k.clone()));
-                    agg_args.push(Term::Var(k.clone()));
+                    head_args.push(Term::Var(k.clone().into()));
+                    agg_args.push(Term::Var(k.clone().into()));
                     head_cols.push(("k".to_owned(), "int".to_owned()));
-                    helpers.push((Rule { head: Atom { rel: name.clone().into(), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom), order(&o, &k)] }, head_cols));
-                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name.into(), args: agg_args, neg: false, gated: false } });
+                    helpers.push((Rule { head: Atom { rel: name.clone().into(), args: head_args.into(), neg: false, gated: false }, body: [Literal::Atom(atom), order(&o, &k)].into() }, head_cols));
+                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name.into(), args: agg_args.into(), neg: false, gated: false } });
                     body.push(order(&var, &kv));
                     used = true;
                 }
                 other => body.push(other),
             }
         }
-        r.body = body;
+        r.body = body.into();
     }
     for (rule, cols) in helpers {
-        prog.decls.insert(rule.head.rel.to_string(), cols);
+        prog.decls.insert(rule.head.rel.clone(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         prog.rules.push(rule);
     }
     if used {
-        prog.decls.entry(NODE_ORDER.to_owned()).or_insert_with(|| vec![("n".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())]);
+        prog.decls.entry(NODE_ORDER.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("k".into(), "int".into())].into());
         if !prog.inputs.iter().any(|i| i == NODE_ORDER) {
             prog.inputs.push(NODE_ORDER.to_owned());
         }
@@ -694,18 +695,20 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
     // The tree axes' relations are inputs, made by the transducer.
     let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| is_axis(r)).collect();
     for rel in axes {
-        if !prog.decls.contains_key(&rel) {
-            prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        if !prog.decls.contains_key(rel.as_str()) {
+            prog.decls.insert(rel.clone().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
             prog.inputs.push(rel);
         }
     }
     // An input's columns are its declaration's: the planner reads them.
-    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(*rel)) {
+    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(rel.as_str())) {
         return Err(Error::UndeclaredInput { relation: relation.clone() });
     }
+    let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
     cycles::check(&prog)?;
     // A cache is two rules (decision 0103): a broken form refuses the program.
     caches::caches(&prog)?;
+    drop(checking);
     Ok(prog)
 }
 
@@ -728,6 +731,25 @@ pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {
         !prog.decls.contains_key(a.rel.as_str()) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_") && !matches!(a.rel.as_str(), "match_all" | "match_group")
     }) {
         return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
+    }
+    // And with the columns it declares: a read of another arity names some other relation (a rule's own `field(n)`
+    // beside the core `field(p, f, c)`), which no plan can join.
+    let atoms = rule.body.iter().filter_map(|l| match l {
+        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
+        _ => None,
+    });
+    for a in std::iter::once(&rule.head).chain(atoms) {
+        if let Some(cols) = prog.decls.get(a.rel.as_str())
+            && cols.len() != a.args.len()
+        {
+            return Err(Error::Syntax(format!(
+                "relation {} is declared with {} columns and read with {} in the rule for {}",
+                a.rel,
+                cols.len(),
+                a.args.len(),
+                rule.head.rel
+            )));
+        }
     }
     Ok(())
 }
@@ -752,66 +774,192 @@ pub fn rules_by_stratum<'a>(prog: &'a Program, sccs: &[BTreeSet<String>]) -> Vec
 }
 
 pub fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
-    let (sccs, edges, aggs) = components(prog);
-    match first_unstratified(&sccs, &edges, &aggs, true).into_iter().next() {
-        Some(e) => Err(e),
-        None => Ok((sccs, edges)),
-    }
+    let sccs = components_of(prog)?;
+    Ok((sccs, edges(prog)))
+}
+
+/// The program's components, dependencies first (`strata` without its edges): an error if a negation or a
+/// non-monotone aggregate closes a cycle. What most callers of `strata` read, made without the edges by name.
+pub fn components_of(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
+    Graph::of(prog).components(&prog.together)
+}
+
+/// `components_of` of a dependency graph read from a version (`program_image::analyses::components_by_name`): the
+/// derived relations' names, sorted; each one's dependencies by their places among them, with whether negative, sorted
+/// and each once; the non-monotone aggregation edges; and the sets run as one component. The components, their order
+/// and the error are the tree's.
+pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
+    Graph { names, succ, aggs }.components(together)
 }
 
 /// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
 /// the first): a caller that drops what made each cycle (demand's split, decision 0048) drops them all in one round.
 pub fn unstratified(prog: &Program) -> Vec<Error> {
-    let (sccs, edges, aggs) = components(prog);
-    first_unstratified(&sccs, &edges, &aggs, false)
+    let g = Graph::of(prog);
+    let sccs = g.together(&prog.together);
+    g.first_unstratified(&sccs, false)
 }
 
-/// The first error of each component a negative edge closes a cycle in (`first`: only the first component's).
-fn first_unstratified(sccs: &[BTreeSet<String>], edges: &Edges, aggs: &BTreeSet<(String, String)>, first: bool) -> Vec<Error> {
-    let mut out = Vec::new();
-    for scc in sccs {
-        'scc: for v in scc {
-            for (w, neg) in edges.get(v).into_iter().flatten() {
-                if !*neg || !scc.contains(w) {
-                    continue;
+/// The dependency graph of `strata` on numbers: the derived relations in their order, each one's dependencies among
+/// them (with whether negative, sorted as `Edges` sorts them), and the non-monotone aggregation edges. The search, the
+/// stratification check and `together`'s rings run on it; the edges by name are made only for a caller that reads
+/// them (`edges`). Each edge as a pair of names in a sorted map was most of the strata's cost.
+struct Graph<'p> {
+    names: Vec<&'p str>,
+    succ: Vec<Vec<(u32, bool)>>,
+    aggs: rustc_hash::FxHashSet<(u32, u32)>,
+}
+
+impl<'p> Graph<'p> {
+    fn of(prog: &'p Program) -> Graph<'p> {
+        let mut names: Vec<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        for produced in prog.answers.values() {
+            names.extend(produced.iter().map(String::as_str));
+        }
+        names.sort_unstable();
+        names.dedup();
+        let id: rustc_hash::FxHashMap<&str, u32> = names.iter().enumerate().map(|(i, n)| (*n, i as u32)).collect();
+        let mut succ: Vec<Vec<(u32, bool)>> = vec![Vec::new(); names.len()];
+        // An answer is an edge: each produced relation reads its request (decision 0065 §2a).
+        for (request, produced) in &prog.answers {
+            if let Some(&r) = id.get(request.as_str()) {
+                for p in produced {
+                    succ[id[p.as_str()] as usize].push((r, false));
                 }
-                out.push(if aggs.contains(&(v.clone(), w.clone())) {
-                    Error::AggregationInRecursion { head: v.clone(), aggregated: w.clone(), component: scc.clone() }
-                } else {
-                    Error::NotStratifiable {
-                        message: format!("not stratifiable: {v} depends negatively on {w} in its own component"),
-                        component: scc.clone(),
-                        negated: w.clone(),
+            }
+        }
+        for (rel, native) in &prog.natives {
+            let Some(&h) = id.get(rel.as_str()) else { continue };
+            succ[h as usize].extend(native.reads().into_iter().filter_map(|read| id.get(read).map(|&r| (r, false))));
+        }
+        // Aggregation edges that are not monotone: negative, and named apart when they close a cycle.
+        let mut aggs = rustc_hash::FxHashSet::default();
+        for r in &prog.rules {
+            let h = id[r.head.rel.as_str()];
+            for l in &r.body {
+                let Some(a) = l.atom() else { continue };
+                let Some(&d) = id.get(a.rel.as_str()) else { continue };
+                let agg = match l {
+                    Literal::Agg { op, .. } => !prog.lattice.get(r.head.rel.as_str()).is_some_and(|d| {
+                        matches!((op, d.lattice()), (AggOp::Count | AggOp::Max, "max") | (AggOp::Min, "min"))
+                    }),
+                    _ => false,
+                };
+                if agg && !a.gated {
+                    aggs.insert((h, d));
+                }
+                succ[h as usize].push((d, (a.neg || agg) && !a.gated));
+            }
+        }
+        for s in &mut succ {
+            s.sort_unstable();
+            s.dedup();
+        }
+        Graph { names, succ, aggs }
+    }
+
+    /// The components, each set of `sets` one of them (decision 0101 §3): its relations joined in a ring for the
+    /// search only, so the edges stay the rules' own. A set that would take in a relation outside it (one read by a
+    /// member and reading another) is left apart.
+    fn together(&self, sets: &[BTreeSet<String>]) -> Vec<Vec<u32>> {
+        let id = |r: &str| self.names.binary_search(&r).ok().map(|i| i as u32);
+        let mut sets: Vec<Vec<u32>> = sets.iter().map(|t| t.iter().filter_map(|r| id(r)).collect::<Vec<_>>()).filter(|t| t.len() > 1).collect();
+        loop {
+            if sets.is_empty() {
+                return tarjan_ids(&self.succ);
+            }
+            let mut ring = self.succ.clone();
+            for t in &sets {
+                for (i, &r) in t.iter().enumerate() {
+                    let e = (t[(i + 1) % t.len()], false);
+                    let s = &mut ring[r as usize];
+                    if let Err(at) = s.binary_search(&e) {
+                        s.insert(at, e);
                     }
-                });
-                if first {
-                    return out;
                 }
-                break 'scc;
+            }
+            let sccs = tarjan_ids(&ring);
+            let n = sets.len();
+            sets.retain(|t| sccs.iter().find(|s| s.contains(&t[0])).is_some_and(|s| s.len() == t.len()));
+            if sets.len() == n {
+                return sccs;
             }
         }
     }
-    out
+
+    /// The components, dependencies first, `together`'s sets each one (`together`): an error if a negation or a
+    /// non-monotone aggregate closes a cycle.
+    fn components(&self, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
+        let sccs = self.together(together);
+        match self.first_unstratified(&sccs, true).into_iter().next() {
+            Some(e) => Err(e),
+            None => Ok(self.named(&sccs)),
+        }
+    }
+
+    fn named(&self, sccs: &[Vec<u32>]) -> Vec<BTreeSet<String>> {
+        sccs.iter().map(|scc| scc.iter().map(|&r| self.names[r as usize].to_owned()).collect()).collect()
+    }
+
+    /// The first error of each component a negative edge closes a cycle in (`first`: only the first component's).
+    fn first_unstratified(&self, sccs: &[Vec<u32>], first: bool) -> Vec<Error> {
+        let mut at = vec![usize::MAX; self.names.len()];
+        for (i, scc) in sccs.iter().enumerate() {
+            for &r in scc {
+                at[r as usize] = i;
+            }
+        }
+        let mut out = Vec::new();
+        for (i, scc) in sccs.iter().enumerate() {
+            // In the order of names, as the components by name are read.
+            let mut members = scc.clone();
+            members.sort_unstable();
+            'scc: for &v in &members {
+                for &(w, neg) in &self.succ[v as usize] {
+                    if !neg || at[w as usize] != i {
+                        continue;
+                    }
+                    let component: BTreeSet<String> = scc.iter().map(|&r| self.names[r as usize].to_owned()).collect();
+                    let (vn, wn) = (self.names[v as usize].to_owned(), self.names[w as usize].to_owned());
+                    unstratified_trace(&vn, &wn, &component);
+                    out.push(if self.aggs.contains(&(v, w)) {
+                        Error::AggregationInRecursion { head: vn, aggregated: wn, component }
+                    } else {
+                        Error::NotStratifiable { message: format!("not stratifiable: {vn} depends negatively on {wn} in its own component"), component, negated: wn }
+                    });
+                    if first {
+                        return out;
+                    }
+                    break 'scc;
+                }
+            }
+        }
+        out
+    }
 }
 
-/// The program's components (dependencies first), its dependency edges, and its non-monotone aggregation edges.
-fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String, String)>) {
-    let mut derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
+/// `RERAIL_STRATA_COUNTS` (a diagnostic): a refused component's members, which the error's message leaves out.
+pub fn unstratified_trace(head: &str, dep: &str, component: &BTreeSet<String>) {
+    if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
+        eprintln!("RERAIL_STRATA_COUNTS unstratified (magic sets may recover): {head} -> {dep} in a component of {}: {}", component.len(), component.iter().cloned().collect::<Vec<_>>().join(" "));
+    }
+}
+
+/// The dependency edges by name (`strata`'s second part): head → {(dependency, negative)}.
+fn edges(prog: &Program) -> Edges {
+    let mut derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
     let mut edges = Edges::new();
-    // An answer is an edge: each produced relation reads its request (decision 0065 §2a).
     for (request, produced) in &prog.answers {
         for p in produced {
-            derived.insert(p.clone());
+            derived.insert(p.as_str());
             edges.entry(p.clone()).or_default().insert((request.clone(), false));
         }
     }
     for (rel, native) in &prog.natives {
-        if !derived.contains(rel) { continue; }
+        if !derived.contains(rel.as_str()) { continue; }
         edges.entry(rel.clone()).or_default().extend(native.reads().into_iter()
             .filter(|read| derived.contains(*read)).map(|read| (read.to_owned(), false)));
     }
-    // Aggregation edges that are not monotone: negative, and named apart when they close a cycle.
-    let mut aggs = BTreeSet::new();
     for r in &prog.rules {
         for l in &r.body {
             let Some(a) = l.atom() else { continue };
@@ -824,99 +972,140 @@ fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String
                 }),
                 _ => false,
             };
-            if agg && !a.gated {
-                aggs.insert((r.head.rel.to_string(), a.rel.to_string()));
-            }
             edges.entry(r.head.rel.to_string()).or_default().insert((a.rel.to_string(), (a.neg || agg) && !a.gated));
         }
     }
-    let sccs = together(&derived, &edges, &prog.together);
-    (sccs, edges, aggs)
+    edges
 }
 
-/// The sets of `prog.together` that are not each one component as `strata` makes them (`together`, below).
+/// The sets of `prog.together` that are not each one component as `strata` makes them.
 pub fn apart(prog: &Program) -> Vec<usize> {
-    let (sccs, _, _) = components(prog);
+    let g = Graph::of(prog);
+    let sccs = g.named(&g.together(&prog.together));
     (0..prog.together.len()).filter(|&i| {
         let t = &prog.together[i];
         !sccs.iter().any(|s| s == t)
     }).collect()
 }
 
-/// The components, each set of `together` one of them (decision 0101 §3): its relations joined in a ring for the
-/// search only, so the edges stay the rules' own. A set that would take in a relation outside it (one read by a
-/// member and reading another) is left apart.
-fn together(derived: &BTreeSet<String>, edges: &Edges, sets: &[BTreeSet<String>]) -> Vec<BTreeSet<String>> {
-    let mut sets: Vec<Vec<&String>> = sets.iter().map(|t| t.iter().filter(|r| derived.contains(*r)).collect::<Vec<_>>()).filter(|t| t.len() > 1).collect();
-    loop {
-        if sets.is_empty() {
-            return tarjan(derived, edges);
-        }
-        let mut ring = edges.clone();
-        for t in &sets {
-            for (i, r) in t.iter().enumerate() {
-                ring.entry((*r).clone()).or_default().insert((t[(i + 1) % t.len()].clone(), false));
-            }
-        }
-        let sccs = tarjan(derived, &ring);
-        let n = sets.len();
-        sets.retain(|t| sccs.iter().find(|s| s.contains(t[0])).is_some_and(|s| s.len() == t.len()));
-        if sets.len() == n {
-            return sccs;
-        }
-    }
+/// `apart` over a graph given by its names (sorted) and each name's reads (sorted, each with whether negative): for
+/// a program held as a version, whose rules are not trees.
+pub fn apart_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, together: &[BTreeSet<String>]) -> Vec<usize> {
+    let g = Graph { names, succ, aggs: rustc_hash::FxHashSet::default() };
+    let sccs = g.named(&g.together(together));
+    (0..together.len()).filter(|&i| !sccs.iter().any(|s| *s == together[i])).collect()
 }
 
-/// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.
-/// Iterative, where T's recursed (with a raised recursion limit).
-pub fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) -> Vec<BTreeSet<String>> {
-    let empty = BTreeSet::new();
-    let succ = |v: &str| -> Vec<&String> {
-        edges.get(v).unwrap_or(&empty).iter().map(|(w, _)| w).filter(|w| nodes.contains(*w)).collect()
-    };
-    let (mut index, mut low) = (BTreeMap::<&str, usize>::new(), BTreeMap::<&str, usize>::new());
-    let (mut on, mut stack, mut sccs, mut counter) = (BTreeSet::<&str>::new(), Vec::<&str>::new(), Vec::new(), 0);
-    for root in nodes {
-        if index.contains_key(root.as_str()) {
+/// Strongly connected components on numbers (`tarjan`), dependencies first; each component's members in the order
+/// they leave the stack.
+fn tarjan_ids(succ: &[Vec<(u32, bool)>]) -> Vec<Vec<u32>> {
+    const NONE: u32 = u32::MAX;
+    let n = succ.len();
+    let (mut index, mut low, mut on) = (vec![NONE; n], vec![0u32; n], vec![false; n]);
+    let (mut stack, mut sccs, mut counter) = (Vec::<u32>::new(), Vec::new(), 0u32);
+    for root in 0..n as u32 {
+        if index[root as usize] != NONE {
             continue;
         }
-        // Frames: a node and the position of its next successor.
-        let mut frames: Vec<(&str, Vec<&String>, usize)> = vec![(root, succ(root), 0)];
-        index.insert(root, counter);
-        low.insert(root, counter);
+        let mut frames: Vec<(u32, usize)> = vec![(root, 0)];
+        index[root as usize] = counter;
+        low[root as usize] = counter;
         counter += 1;
         stack.push(root);
-        on.insert(root);
-        while let Some((v, ws, at)) = frames.last_mut() {
+        on[root as usize] = true;
+        while let Some((v, at)) = frames.last_mut() {
             let v = *v;
-            if let Some(&w) = ws.get(*at) {
+            if let Some(&(w, _)) = succ[v as usize].get(*at) {
                 *at += 1;
-                if !index.contains_key(w.as_str()) {
-                    index.insert(w, counter);
-                    low.insert(w, counter);
+                if index[w as usize] == NONE {
+                    index[w as usize] = counter;
+                    low[w as usize] = counter;
                     counter += 1;
                     stack.push(w);
-                    on.insert(w);
-                    frames.push((w, succ(w), 0));
-                } else if on.contains(w.as_str()) {
-                    let lw = index[w.as_str()];
-                    let lv = low.get_mut(v).unwrap();
-                    *lv = (*lv).min(lw);
+                    on[w as usize] = true;
+                    frames.push((w, 0));
+                } else if on[w as usize] {
+                    low[v as usize] = low[v as usize].min(index[w as usize]);
                 }
                 continue;
             }
             frames.pop();
-            if let Some((parent, _, _)) = frames.last() {
-                let lv = low[v];
-                let lp = low.get_mut(parent).unwrap();
-                *lp = (*lp).min(lv);
+            if let Some(&(parent, _)) = frames.last() {
+                low[parent as usize] = low[parent as usize].min(low[v as usize]);
             }
-            if low[v] == index[v] {
+            if low[v as usize] == index[v as usize] {
+                let mut scc = Vec::new();
+                loop {
+                    let w = stack.pop().unwrap();
+                    on[w as usize] = false;
+                    scc.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                sccs.push(scc);
+            }
+        }
+    }
+    sccs
+}
+
+/// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.
+/// Iterative, where T's recursed (with a raised recursion limit).
+///
+/// The nodes are numbered in their order and each edge looked up once, so the search runs on numbers: it looked up
+/// each node's index, low link and stack mark by name at every step, a string comparison per level of three maps (the
+/// strata are asked of every program a batch prepares, by some thirty passes). Roots and successors are taken in the
+/// same order as by name, so the components and their order are the same.
+pub fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) -> Vec<BTreeSet<String>> {
+    let names: Vec<&String> = nodes.iter().collect();
+    let id: rustc_hash::FxHashMap<&str, u32> = names.iter().enumerate().map(|(i, n)| (n.as_str(), i as u32)).collect();
+    // Each node's successors among the nodes, in the edges' order.
+    let succ: Vec<Vec<u32>> = names
+        .iter()
+        .map(|v| edges.get(v.as_str()).into_iter().flatten().filter_map(|(w, _)| id.get(w.as_str()).copied()).collect())
+        .collect();
+    const NONE: u32 = u32::MAX;
+    let n = names.len();
+    let (mut index, mut low, mut on) = (vec![NONE; n], vec![0u32; n], vec![false; n]);
+    let (mut stack, mut sccs, mut counter) = (Vec::<u32>::new(), Vec::new(), 0u32);
+    for root in 0..n as u32 {
+        if index[root as usize] != NONE {
+            continue;
+        }
+        // Frames: a node and the position of its next successor.
+        let mut frames: Vec<(u32, usize)> = vec![(root, 0)];
+        index[root as usize] = counter;
+        low[root as usize] = counter;
+        counter += 1;
+        stack.push(root);
+        on[root as usize] = true;
+        while let Some((v, at)) = frames.last_mut() {
+            let v = *v;
+            if let Some(&w) = succ[v as usize].get(*at) {
+                *at += 1;
+                if index[w as usize] == NONE {
+                    index[w as usize] = counter;
+                    low[w as usize] = counter;
+                    counter += 1;
+                    stack.push(w);
+                    on[w as usize] = true;
+                    frames.push((w, 0));
+                } else if on[w as usize] {
+                    low[v as usize] = low[v as usize].min(index[w as usize]);
+                }
+                continue;
+            }
+            frames.pop();
+            if let Some(&(parent, _)) = frames.last() {
+                low[parent as usize] = low[parent as usize].min(low[v as usize]);
+            }
+            if low[v as usize] == index[v as usize] {
                 let mut scc = BTreeSet::new();
                 loop {
                     let w = stack.pop().unwrap();
-                    on.remove(w);
-                    scc.insert(w.to_owned());
+                    on[w as usize] = false;
+                    scc.insert(names[w as usize].clone());
                     if w == v {
                         break;
                     }
@@ -930,44 +1119,85 @@ pub fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) -> Vec<BTreeSet<String>> 
 
 /// The relations `roots` read, directly or through other rules, the roots included (`prune`'s, from the outputs).
 pub fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
-    let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
-    for r in &prog.rules {
-        body_of.entry(&r.head.rel).or_default().push(&r.body);
-    }
-    let (mut need, mut todo) = (BTreeSet::new(), roots);
-    while let Some(r) = todo.pop() {
-        if !need.insert(r.clone()) {
-            continue;
-        }
-        if let Some(native) = prog.natives.get(&r) {
-            todo.extend(native.reads().into_iter().map(str::to_owned));
-        }
-        for body in body_of.get(r.as_str()).into_iter().flatten() {
-            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
-        }
-    }
-    need
+    reach(prog, roots, false).0
 }
 
-/// Drops the rules of relations no output reads, directly or through other rules. T's `prune`.
+/// `needed`, and which rules are kept: every rule of a needed relation. With `gated` (`prune`), a request rule
+/// (`Program::asked_by`, decision 0174) only once a relation whose readers it serves is needed, or its relation is a
+/// root. `needed` reads every request rule: a stage that computes requests names them as its roots. A request rule is read through its
+/// attribute's answer, which every reader reads; without its readers' gate an unreached reader's request would keep
+/// its body's relations alive, and lowering a program whole would prune to more than lowering it without its
+/// unreached clauses (`dropping_unreached_clauses_prunes_to_the_same_program`).
+fn reach(prog: &Program, roots: Vec<String>, gated: bool) -> (BTreeSet<String>, Vec<bool>) {
+    // Each request rule's readers, by its place among its relation's rules; a relation whose rules no longer match
+    // the record (rules added or dropped since lowering) keeps them ungated.
+    let mut gate: Vec<Option<&BTreeSet<String>>> = vec![None; prog.rules.len()];
+    for (req, readers) in prog.asked_by.iter().filter(|(req, _)| gated && !roots.contains(req)) {
+        let at: Vec<usize> = prog.rules.iter().enumerate().filter(|(_, r)| r.head.rel == req.as_str()).map(|(i, _)| i).collect();
+        if at.len() == readers.len() {
+            for (i, by) in at.into_iter().zip(readers) {
+                gate[i] = Some(by);
+            }
+        }
+    }
+    let mut body_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, r) in prog.rules.iter().enumerate() {
+        body_of.entry(&r.head.rel).or_default().push(i);
+    }
+    let mut kept = vec![false; prog.rules.len()];
+    let (mut need, mut todo) = (BTreeSet::new(), roots);
+    loop {
+        while let Some(r) = todo.pop() {
+            if !need.insert(r.clone()) {
+                continue;
+            }
+            if let Some(native) = prog.natives.get(&r) {
+                todo.extend(native.reads().into_iter().map(str::to_owned));
+            }
+            for &i in body_of.get(r.as_str()).into_iter().flatten() {
+                if gate[i].is_none() {
+                    kept[i] = true;
+                    todo.extend(prog.rules[i].body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
+                }
+            }
+        }
+        // The request rules whose relation and one of whose readers are needed: their bodies are read, which may
+        // need more readers.
+        for (i, by) in gate.iter().enumerate() {
+            if let Some(by) = by
+                && !kept[i]
+                && need.contains(prog.rules[i].head.rel.as_str())
+                && by.iter().any(|b| need.contains(b))
+            {
+                kept[i] = true;
+                todo.extend(prog.rules[i].body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
+            }
+        }
+        if todo.is_empty() {
+            return (need, kept);
+        }
+    }
+}
+
+/// Drops the rules of relations no output reads, directly or through other rules, and the request rules none of
+/// whose readers is read (`reach`). T's `prune`. Facts stay: the engine reads some by name, read by no rule (`env`'s
+/// settings, `corpus::World`; `unconverged`, the pending round).
 pub fn prune(mut prog: Program) -> Program {
-    let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
-    for r in &prog.rules {
-        body_of.entry(&r.head.rel).or_default().push(&r.body);
-    }
-    let (mut need, mut todo) = (BTreeSet::new(), prog.outputs.clone());
-    while let Some(r) = todo.pop() {
-        if !need.insert(r.clone()) {
-            continue;
-        }
-        if let Some(native) = prog.natives.get(&r) {
-            todo.extend(native.reads().into_iter().map(str::to_owned));
-        }
-        for body in body_of.get(r.as_str()).into_iter().flatten() {
-            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
+    let (need, kept) = reach(&prog, prog.outputs.clone(), true);
+    // The record follows the rules kept: each request relation's kept rules, in order, with their readers.
+    let gated: BTreeMap<String, Vec<bool>> = prog.asked_by.keys().map(|req| {
+        let mine: Vec<bool> = prog.rules.iter().zip(&kept).filter(|(r, _)| r.head.rel == req.as_str()).map(|(_, k)| *k).collect();
+        (req.clone(), mine)
+    }).collect();
+    for (req, readers) in prog.asked_by.iter_mut() {
+        if let Some(mine) = gated.get(req) && mine.len() == readers.len() {
+            let mut it = mine.iter();
+            readers.retain(|_| *it.next().unwrap());
         }
     }
-    prog.rules.retain(|r| need.contains(r.head.rel.as_str()));
+    let mut keep = kept.into_iter();
+    prog.rules.retain(|_| keep.next().unwrap());
+    prog.asked_by.retain(|req, readers| !readers.is_empty() || prog.rules.iter().any(|r| r.head.rel == req.as_str()));
     // Native metadata owns real dependency edges. A dead producer must not keep its demands
     // alive in the file-local split or cause them to be exported across every chunk.
     prog.natives.retain(|rel, _| need.contains(rel));

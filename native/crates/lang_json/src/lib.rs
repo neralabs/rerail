@@ -1,12 +1,17 @@
 //! JSON: its Bitlex parser.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-// The mounts glob their owners' modules and widen what the crates above read: the split's facades, not a design.
+// A mounted module re-exports its dependency's by glob, and its sources import the same items
+// under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
+// above read (the split's facades, not a design).
 #![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]
 // What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long
 // signatures and tuple types are the sources' own.
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
 pub use rerail_store::git_workspace;
@@ -21,11 +26,9 @@ pub mod code_rule_dsl {
     pub use rerail_transducer::code_rule_dsl::demand;
     pub use rerail_lang::code_rule_dsl::embed;
     pub use rerail_w::code_rule_dsl::eval;
-    #[path = "facts"]
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
         pub use rerail_w::code_rule_dsl::facts::facts_a;
-        #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             #[cfg(any(test, feature = "test-hooks"))]
@@ -135,7 +138,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::LazyLock;
     }
-    #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         #[allow(unused_imports)]
@@ -146,9 +148,7 @@ pub mod code_rule_dsl {
         use serde::{Deserialize, Serialize};
     }
     pub use rerail_w::code_rule_dsl::literal;
-    #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
@@ -163,7 +163,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
@@ -209,7 +208,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     pub use rerail_w::code_rule_dsl::suppress;
-    #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[allow(unused_imports)]
@@ -332,7 +330,6 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::violations;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_w::code_rule_dsl::walks;
-    #[path = "waves"]
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
         pub use rerail_w::code_rule_dsl::waves::relational;

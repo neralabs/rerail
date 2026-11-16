@@ -1,0 +1,148 @@
+.policy "ruff-ruf007-zip-instead-of-pairwise" revision 1
+.guests off
+.description "Use itertools.pairwise to iterate over successive pairs instead of zipping a sequence with a copy of itself shifted by one; it is clearer and avoids slicing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/names.rr"
+
+// RUF007(n): a finding at node n, from clause `zip-instead-of-pairwise`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes A1, A2, B2, C1, C2, D1, S1, S2, S3, S4, S5, S6, S7, S8, S9, V1, V2 from other metavariables' text; its literals end each rule.
+// `options` carries JSON settings that have no .rr form yet.
+.violation RUF007(at: node, id1: loc) "Replace this `zip` with `itertools.pairwise({id1})`, or pairwise over the common slice when both arguments are slices; keep `zip` if the upper bounds differ or `{id1}` is not a plain sequence."
+    suppress noqa "RUF007"
+// A2, B2, C2, D1: not bound by this rule, so empty (unset) here, as in ast-grep.
+RUF007(n, ID1) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "zip"),
+    sym_of(n, "builtins.zip"), within_stop(n, p3, ruf007_stop_2),
+    field(p3, "function", f4), (f4 = n ; within(n, f4)), kind(p3, "call"),
+    field(p3, "arguments", c5), kind(c5, "argument_list"),
+    count : { child(c5, c6, _), kind(c6, "list_splat") } = 0, child(c5, c7, _),
+    child(p8, c7, _), ruf007_counted(c7),
+    k10 = count : { child(p8, s9, _), precedes(s9, c7), ruf007_counted(s9) }, k10 = 0,
+    ruf007_first_arg(c7, ID1, L1), child(c5, c11, _), child(p12, c11, _), ruf007_counted(c11),
+    k14 = count : { child(p12, s13, _), precedes(s13, c11), ruf007_counted(s13) }, k14 = 1,
+    ruf007_second_arg(c11, ID2, L2),
+    count : { child(c5, c15, _), child(p16, c15, _), ruf007_counted(c15), k18 = count : { child(p16, s17, _), precedes(s17, c15), ruf007_counted(s17) }, k18 = 2, !kind(c15, "keyword_argument"), !kind(c15, "dictionary_splat") } = 0,
+    text(ID1, t19), text(ID2, t19), A2 = B2, D1 = C2, unset(A2),
+    unset(B2), unset(C2), unset(D1), @doc(ID1) = @doc(ID2).
+
+// name1(n): the JSON util `name1`, used where the JSON says `matches: "name1"`
+//   ID1: metavariable this relation binds for the calling rule
+.decl ruf007_name1(n: node, id1: loc)
+ruf007_name1(n, ID1) :- kind(n, "identifier"), node(_, n, _, _, _), ID1 = n.
+ruf007_name1(n, ID1) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf007_name1(c1, ID1).
+
+// name2(n): the JSON util `name2`, used where the JSON says `matches: "name2"`
+//   ID2: metavariable this relation binds for the calling rule
+.decl ruf007_name2(n: node, id2: loc)
+ruf007_name2(n, ID2) :- kind(n, "identifier"), node(_, n, _, _, _), ID2 = n.
+ruf007_name2(n, ID2) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf007_name2(c1, ID2).
+
+// int1(n): the JSON util `int1`, used where the JSON says `matches: "int1"`
+//   L1: metavariable this relation binds for the calling rule
+.decl ruf007_int1(n: node, l1: loc)
+ruf007_int1(n, L1) :- kind(n, "integer"), node(_, n, _, _, _), L1 = n.
+ruf007_int1(n, L1) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf007_int1(c1, L1).
+
+// int2(n): the JSON util `int2`, used where the JSON says `matches: "int2"`
+//   L2: metavariable this relation binds for the calling rule
+.decl ruf007_int2(n: node, l2: loc)
+ruf007_int2(n, L2) :- kind(n, "integer"), node(_, n, _, _, _), L2 = n, value(n, v1),
+    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) <= 2147483647.
+ruf007_int2(n, L2) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf007_int2(c2, L2).
+
+// one(n): the JSON util `one`, used where the JSON says `matches: "one"`
+.decl ruf007_one(n: node)
+ruf007_one(n) :- kind(n, "integer"), value(n, "1").
+ruf007_one(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf007_one(c1).
+
+// lower_node(n): the JSON util `lower-node`, used where the JSON says `matches: "lower-node"`
+.decl ruf007_lower_node(n: node)
+ruf007_lower_node(n) :- ruf007_code(n), !glob(":", n), !ruf007_tok_follows_1(n).
+
+// step_node(n): the JSON util `step-node`, used where the JSON says `matches: "step-node"`
+.decl ruf007_step_node(n: node)
+ruf007_step_node(n) :- ruf007_code(n), !glob(":", n), precedes(s1, n), glob(":", s1),
+    ruf007_tok_follows_2(s1).
+
+// step_ok(n): the JSON util `step-ok`, used where the JSON says `matches: "step-ok"`
+.decl ruf007_step_ok(n: node)
+ruf007_step_ok(n) :- node(_, n, _, _, _),
+    count : { child(n, c1, _), ruf007_step_node(c1), !ruf007_one(c1) } = 0.
+
+// sliced(n): the JSON util `sliced`, used where the JSON says `matches: "sliced"`
+.decl ruf007_sliced(n: node)
+ruf007_sliced(n) :- kind(n, "subscript"), !ruf007_tok_has_3(n).
+
+// first_arg(n): the JSON util `first-arg`, used where the JSON says `matches: "first-arg"`
+//   ID1, L1: metavariables this relation binds for the calling rule
+.decl ruf007_first_arg(n: node, id1: loc, l1: loc)
+// L1: not bound by this rule, so empty (unset) here, as in ast-grep.
+ruf007_first_arg(n, ID1, L1) :- ruf007_name1(n, ID1), unset(L1).
+// L1: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
+ruf007_first_arg(n, ID1, L1) :- ruf007_sliced(n), field(n, "value", c1), ruf007_name1(c1, ID1),
+    field(n, "subscript", c2), kind(c2, "slice"), ruf007_step_ok(c2),
+    ( count : { child(c2, c3, _), ruf007_lower_node(c3) } = 0, unset(L1)
+    ; child(c2, c4, _), ruf007_lower_node(c4), ruf007_int1(c4, L1), count : { count : { child(c2, c3_e0, _), ruf007_lower_node(c3_e0) } = 0 } = 0
+    ).
+
+ruf007_first_arg(n, ID1, L1) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    ruf007_first_arg(c5, ID1, L1).
+
+// second_arg(n): the JSON util `second-arg`, used where the JSON says `matches: "second-arg"`
+//   ID2, L2: metavariables this relation binds for the calling rule
+.decl ruf007_second_arg(n: node, id2: loc, l2: loc)
+ruf007_second_arg(n, ID2, L2) :- ruf007_sliced(n), field(n, "value", c1), ruf007_name2(c1, ID2),
+    field(n, "subscript", c2), kind(c2, "slice"), ruf007_step_ok(c2), child(c2, c3, _),
+    ruf007_lower_node(c3), ruf007_int2(c3, L2).
+ruf007_second_arg(n, ID2, L2) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ruf007_second_arg(c4, ID2, L2).
+
+// ruf007_code(n): the JSON util `code`, used where the JSON says `matches: "code"`
+.decl ruf007_code(n: node)
+ruf007_code(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf007_tok_follows_1(n: node)
+.stored ruf007_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf007_tok_follows_1(n) :- precedes(s1, n), glob(":", s1).
+ruf007_tok_follows_1(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match(":", t2).
+ruf007_tok_follows_1(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf007_tok_follows_1(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf007_tok_follows_2(n: node)
+.stored ruf007_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf007_tok_follows_2(n) :- precedes(s2, n), glob(":", s2).
+ruf007_tok_follows_2(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match(":", t3).
+ruf007_tok_follows_2(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf007_tok_follows_2(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf007_tok_has_3(n: node)
+.stored ruf007_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf007_tok_has_3(n) :- child(n, c1, _), glob("\\,", c1).
+ruf007_tok_has_3(n) :- op(n, t2), match(",", t2).
+ruf007_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf007_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf007_tok_has_3(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf007_stop_2(n: node)
+ruf007_stop_2(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// counted(n): 3 identical copies of one rule set (`counted_3`, `counted_4`, `counted_5`), folded into one.
+.decl ruf007_counted(n: node)
+ruf007_counted(n) :- ruf007_code(n).

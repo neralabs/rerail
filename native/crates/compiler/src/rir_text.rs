@@ -73,11 +73,17 @@ pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
 pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
     use std::fmt::Write as _;
     for m in marks {
-        let _ = write!(out, "  tokenmark {}", m.order);
+        let _ = write!(out, "  tokenmark {}{}", m.order, if m.refuses { " refuses" } else { "" });
         for e in &m.elems {
             let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
             for s in &e.words {
                 let _ = write!(out, " s{s}");
+            }
+            if e.not {
+                out.push_str(" not");
+            }
+            if e.end {
+                out.push_str(" end");
             }
         }
         out.push('\n');
@@ -92,10 +98,18 @@ pub fn count_rows(out: &mut String, counts: &[u16]) {
 }
 
 pub fn local_check_rows(out: &mut String, checks: &[crate::program::LocalCheck]) {
+    for c in checks {
+        out.push_str(&format!("  localcheck {}\n", local_check_text(c)));
+    }
+}
+
+/// A local check's words: `mM dD` and its ops (`localcheck`, `reclocal`).
+pub fn local_check_text(c: &crate::program::LocalCheck) -> String {
     use crate::program::LocalOp;
     use std::fmt::Write as _;
-    for c in checks {
-        let _ = write!(out, "  localcheck m{} d{}", c.mask, c.delay);
+    let mut out = String::new();
+    {
+        let _ = write!(out, "m{} d{}", c.mask, c.delay);
         for op in &c.ops {
             let _ = match *op {
                 LocalOp::Bytes(s) => write!(out, " b{:x}.{:x}.{:x}.{:x}", s[0], s[1], s[2], s[3]),
@@ -109,8 +123,8 @@ pub fn local_check_rows(out: &mut String, checks: &[crate::program::LocalCheck])
                 LocalOp::Prev(a, k) => write!(out, " p{a}.{k}"),
             };
         }
-        out.push('\n');
     }
+    out
 }
 
 pub fn rule_rows(out: &mut String, rules: &[u16]) {

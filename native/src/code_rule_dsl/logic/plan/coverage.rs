@@ -237,7 +237,7 @@ fn probes() -> Vec<Probe> {
         ".decl {HEAD}_l(a: number, d: min<>) widen 8\n{HEAD}_l(x, 0) :- n(x), x = 1.\n{HEAD}_l(y, d + 1) :- {HEAD}_l(x, d), e(x, y).\n{HEAD}(a, d) :- {HEAD}_l(a, d)."));
     out.push(probe("aggregate count = 0 (a negation)", &["agg count"], "a: symbol", "{HEAD}(a) :- s(a), count : { p(a, _) } = 0."));
     out.push(probe("aggregate over two atoms' bag", &["agg count"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = count : { q(a, _) }."));
-    let a = Atom { rel: "n".into(), args: Vec::new(), neg: false, gated: false };
+    let a = Atom { rel: "n".into(), args: Vec::new().into(), neg: false, gated: false };
     let t = Term::Wild;
     for l in [
         Literal::Atom(a.clone()),
@@ -267,7 +267,7 @@ fn fresh() -> (PathBuf, ContentStore, Connection) {
     (path, store, db)
 }
 
-fn sorted(mut v: Vec<String>) -> Vec<String> {
+fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
     v.sort();
     v
 }
@@ -276,9 +276,7 @@ fn sorted(mut v: Vec<String>) -> Vec<String> {
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = parse(src).map_err(|e| format!("unparsed: {e}"))?;
-    // A run's rows of `rel`, whether it ran natively, and where its strata ran.
-    type ProbeRun = (Vec<String>, bool, Vec<(String, placement::Ran)>);
-    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<ProbeRun, String> {
+    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
@@ -289,7 +287,7 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
         placement::set_binding(was);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);
-        Ok((sorted(got.outputs.get(rel).cloned().unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
+        Ok((sorted(got.outputs.get(rel).map(|r| r.shown()).unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
     };
     let (want, _, _) = lower_run("", placement::Binding::Cpu).map_err(|e| format!("sqlite: {e}"))?;
     let native = match lower_run("program", placement::Binding::Cpu) {

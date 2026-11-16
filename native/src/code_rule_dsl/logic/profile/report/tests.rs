@@ -4,9 +4,45 @@
         RulePlan, StepPlan,
     };
 
+    /// A job on another thread opens its spans under the path of the run that
+    /// issued it (`based`, `here`), as if it ran there; without a base, at the profile's root as before.
+    #[test]
+    fn a_jobs_spans_open_under_the_run_that_issued_it() {
+        let _serial = one_run();
+        set(true);
+        reset();
+        let under = {
+            let _run = span(|| "xrun".into());
+            let _eval = span(|| "evaluate".into());
+            super::super::here()
+        };
+        assert_eq!(under.as_deref(), Some("xrun/evaluate"));
+        // As `Ambient::enter` opens a job: its span at the issuing run's path, the members' spans under it.
+        std::thread::spawn(move || {
+            let _issued = super::super::span_at(under.as_deref(), || "issued components (stream job)".into());
+            let _job = span(|| "stratum s (in a job)".into());
+            assert_eq!(super::super::here().as_deref(), Some("xrun/evaluate/issued components (stream job)/stratum s (in a job)"));
+        })
+        .join()
+        .unwrap();
+        std::thread::spawn(|| {
+            let _job = span(|| "xloose".into());
+            assert_eq!(super::super::here().as_deref(), Some("xloose"));
+        })
+        .join()
+        .unwrap();
+        let s = super::super::spans();
+        set(false);
+        assert!(s.contains_key("xrun/evaluate/issued components (stream job)/stratum s (in a job)") && s.contains_key("xloose"), "{:?}", s.keys().collect::<Vec<_>>());
+        assert!(!s.contains_key("stratum s (in a job)"));
+    }
+
     #[test]
     fn explain_shows_engines_plans_devices_and_decisions() {
         let _serial = one_run();
+        // This thread is a run's, before its waves until it opens them: SQL outside them is the run's own, even while
+        // another test's run is in its waves (a thread of no run goes by the process's count).
+        let _run = crate::code_rule_dsl::logic::profile::run_begins();
         set(true);
         reset();
         decision("xtopic", || "2 chunks".into());
@@ -18,8 +54,8 @@
             subsets: 4,
             candidates: 6,
             steps: vec![
-                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new(), basis: "relation size".into() },
-                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0, "postings".into())], basis: "postings, containment 0.500".into() },
+                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, all: 5.0, passed: Vec::new(), basis: "relation size".into() },
+                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, all: 2.0, passed: vec![("c($x)".into(), 7.0, "postings".into())], basis: "postings, containment 0.500".into() },
             ],
             shaped: Vec::new(),
         };
@@ -40,7 +76,7 @@
         // writer (behind the run), none.
         sql_in_wave("run", "SELECT 1 FROM xbefore", 1_000);
         {
-            let _w = waves(true);
+            let _w = waves();
             let _s = span(|| "xwave".into());
             sql_in_wave("store", "BEGIN IMMEDIATE", 2_000_000);
             std::thread::spawn(|| {

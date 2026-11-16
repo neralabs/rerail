@@ -128,6 +128,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+        BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
         BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
         // `j` in `a`; below 6 the period's pattern in `b` and `imm`.
         BlockInst::Position(j) => {
@@ -216,6 +217,9 @@ pub fn run_batch(
     // frame, within `block::MAX_ROUNDS`, to the same values.
     // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet.
     if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
+        // Decision 0202's `metal-form` list: what the program needs that Metal lacks.
+        let reason = if programs.iter().any(|p| !p.groups.is_empty()) { "a fixed point (rounds)" } else { "a back fill or a load" };
+        rerail_accel::forms::missing("metal-form", "block program", "block program", reason, files.len() as u64);
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
@@ -313,7 +317,7 @@ pub fn run_batch(
     ];
     // The slabs, each bound as it is (no copy); unused bindings repeat the first.
     for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
-        buffers.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
+        buffers.push((at, slabs.get(k).unwrap_or(&slabs[0]).buffer(), 0));
     }
     let interpreter;
     let pipeline = match executor {
@@ -1341,6 +1345,7 @@ fn emit(
             }
             BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
+            BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
             // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a
             // word, in the output buffer `out`.
             BlockInst::Load(k) => format!("out[f.slot_base + ({offset}) / 64u * SLOTS{p} + {k}u]"),

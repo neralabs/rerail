@@ -48,6 +48,9 @@ pub(super) fn describe_matcher(semantic: &Semantic, language: GrammarDialect) ->
         Semantic::Gap(test) => json!({ "gap": format!("{test:?}") }),
         Semantic::FilePath(condition) => json!({ "filePath": format!("{condition:?}") }),
         Semantic::Calls(_) => json!({ "calls": true }),
+        Semantic::Gap(test) => json!({ "gap": {
+            "place": format!("{:?}", test.place), "regex": test.regex.as_str(), "past": test.past.is_some(),
+        } }),
         Semantic::Term(term) => {
             serde_json::Value::Object([(term.key().to_owned(), term.profile())].into_iter().collect())
         }

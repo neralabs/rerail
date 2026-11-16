@@ -6,7 +6,7 @@ use crate::code_rule_dsl::logic::analysis::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct Bag {
+pub struct Bag {
     columns: Vec<usize>,
     tests: Vec<(usize, usize)>,
     pub value: Option<usize>,

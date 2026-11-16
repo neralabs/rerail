@@ -510,7 +510,7 @@ strata retire about 8 G (4%) more on the pool.
 The store read before the first wave (decision 0104) read every frame of every space: 1.86 GB on the store measured,
 1.75 GB of it no run would read. The frames came from three places:
 - **Every engine build's memo stayed live.** A plan names the engine build, and its memo is a space of frames
-  (decision 0108). A plan was live while any kept manifest named it, and manifests are kept by the bytes of their
+  (decision 0146). A plan was live while any kept manifest named it, and manifests are kept by the bytes of their
   sources and tapes, which a small corpus never fills.
 - **Killed runs' holds.** A run holds its plans for a 6-hour lease and releases them as it ends. A run the watchdog
   killed never did, so its plans stayed live for 6 hours.
@@ -525,7 +525,7 @@ What the store does now:
 - **A pass collects every dead plan**, a transaction each, within its budget of rows. A dead plan's memo is a few
   frames, and the pass counted none as work, so it stopped after one plan a run.
 - **A path keeps its 4 newest contents** (`MEMO_CONTENTS`, `keep_newest_by_path`), so worktrees or branches that take
-  turns at a file keep theirs (decision 0108 §4).
+  turns at a file keep theirs (decision 0146 §4).
 - **The read before the first wave takes the live plans' memo outputs only** (`preload_frames_live`), each path's
   newest. A memo's entries (`local`, 15 MB for the edited file) are read by their keys where they are looked up. The
   files of a run are looked up before its first wave, from the store; the entries a wave may look up (a load's files)
@@ -590,6 +590,8 @@ rows became this run's single copy: 20 copies became 1, and later edits flipped 
 - Test: `a_strings_rows_keep_the_other_files_copies`.
 
 ### A run's use is one row, not a stamp on every frame
+
+Superseded by decision 0227: a frame is kept while a live program names its relation, not for `RUNS` runs.
 
 After the above, the end-of-run wait was mostly the `used` stamp. That `UPDATE` covered every frame of the 16,481
 relations a run used, 2.5 s of a 3.25 s wait. SQLite rewrites a whole record, blob included, to change one column.

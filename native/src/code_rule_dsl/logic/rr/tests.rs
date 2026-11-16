@@ -16,7 +16,7 @@ fn the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it() {
     for name in ["core.rr", "bootstrap.rr"] {
         let joined = std::path::PathBuf::from(format!("{}/{name}", lib.display()));
         assert!(std::fs::read(&joined).is_ok(), "{} is not readable", joined.display());
-        assert_eq!(dunce::canonicalize(joined).unwrap(), dunce::canonicalize(lib.join(name)).unwrap());
+        assert_eq!(dunce::canonicalize(&joined).unwrap(), dunce::canonicalize(lib.join(name)).unwrap());
     }
 }
 
@@ -236,7 +236,10 @@ fn rr_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
     files(&rule_syntax(), "rr", &mut out);
     // `typing/programs` holds copies of the engine's typing programs (T's dialect, its own inputs): not rules.
-    out.retain(|p| !p.starts_with(rule_syntax().join("site")) && !p.starts_with(rule_syntax().join("typing")));
+    // `packs/python-main` is generated from all of main's rules (`site/regen_main_pack.sh`), the ones the reader
+    // refuses too, so a test over every rule of main sees them all; its own check is `reader-check.txt`.
+    let generated = rule_syntax().join("packs/python-main");
+    out.retain(|p| !p.starts_with(rule_syntax().join("site")) && !p.starts_with(rule_syntax().join("typing")) && !p.starts_with(&generated));
     out
 }
 
@@ -263,7 +266,7 @@ fn rule_syntax_files_pass_check_rr() {
     }
     let mut problems = Vec::new();
     // Phase 0 resolves every file's includes in one run of `bootstrap.rr`, not one run each.
-    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(dunce::canonicalize(f).unwrap())).collect();
+    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(dunce::canonicalize(&f).unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
     for f in rr_files() {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
@@ -309,15 +312,15 @@ fn cmp(l: Term, op: &'static str, r: Term) -> Literal {
 }
 
 fn call(f: &str, args: Vec<Term>) -> Term {
-    Term::Call(f.to_owned(), args)
+    Term::Call(f.to_owned().into(), args.into())
 }
 
 fn s(x: &str) -> Term {
-    Term::Str(x.to_owned())
+    Term::Str(x.to_owned().into())
 }
 
 fn v(x: &str) -> Term {
-    Term::Var(x.to_owned())
+    Term::Var(x.to_owned().into())
 }
 
 fn set(items: &[&str]) -> Term {
@@ -356,7 +359,7 @@ best(n, @dot("a", x)) :- name(n, x).
 "#,
     )
     .unwrap();
-    assert_eq!(p.decls["name"], vec![("n".to_owned(), "node".to_owned()), ("s".to_owned(), "sym".to_owned())]);
+    assert_eq!(p.decls["name"], [("n", "node"), ("s", "sym")].map(|(c, t)| (c.into(), t.into())));
     assert_eq!(p.kindsets["scope"], vec!["module".to_owned(), "class_definition".to_owned()]);
     assert!(!p.decls.contains_key("scope") && !p.facts.contains_key("scope"));
     let best = &p.lattice["best"];
@@ -387,6 +390,25 @@ best(n, @dot("a", x)) :- name(n, x).
     let best_rule = p.rules.iter().find(|r| r.head.rel == "best").unwrap();
     assert_eq!(best_rule.head.args[1], call("cat", vec![s("a"), v("x")]));
     assert_eq!(p.rules.iter().find(|r| r.head.rel == "cv").unwrap().head.args[1], Term::Top);
+}
+
+/// A context built from a rule's literals that sit in the rule's own recursion (another relation of it, as a
+/// translator's demand is) is widened past them: the aggregate it narrows would otherwise close the cycle
+/// (`pyi051_has_of` with `pyi051_demand_has_of`, main's pack).
+#[test]
+fn a_context_in_a_negations_cycle_is_widened() {
+    let p = parse(concat!(
+        ".decl e(n: node, x: symbol, s: number)\n.decl seed(n: node)\n.input e, seed\n",
+        ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n",
+        ".decl ask(n: node)\n.decl cb(n: node)\n.output cb\n",
+        "ask(n) :- seed(n).\n",
+        "ask(m) :- cb(n), e(n, x, s), e(m, x, s).\n",
+        "cb(n) :- ask(n), count : { e(m, \"x\", _), m > n } = 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
 }
 
 /// An aggregate's context leaves out the clause's own head where the rest binds its variables: through it, the
@@ -443,6 +465,27 @@ fn a_context_leaves_out_literals_not_tied_to_its_variables() {
     let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
     assert!(!ctx.is_empty(), "the parse's demand has a context");
     assert!(ctx.iter().all(|r| !r.contains("root(")), "{ctx:?}");
+}
+
+/// A literal over a file's nodes tied to the asked variables only through their document tests that some node is
+/// in the same file: in the context it was every pair of the file's nodes (`latest_alias`'s `max` beside
+/// `docof(a, d), docof(e, d)`, 18 M rows on 100 files), so it is left out. A relation of the document itself stays.
+#[test]
+fn a_context_leaves_out_a_files_nodes_tied_only_through_the_document() {
+    let p = parse(concat!(
+        ".decl site(e: node, x: symbol)\n.decl alias_at(a: node, x: symbol)\n.decl docof(n: node, d: number)\n",
+        ".decl visit_index(n: node, i: number)\n.decl earlier(m: node, n: node)\n.decl first(d: number)\n",
+        ".input site, alias_at, docof, visit_index, earlier, first\n",
+        ".decl alias(a: node, x: symbol)\nalias(a, x) :- alias_at(a, x).\n",
+        ".decl last(e: node, a: node)\n.output last\n",
+        "last(e, a) :- site(e, x), k = max j : { alias(b, x), earlier(b, e), visit_index(b, j) },\n",
+        "    alias(a, x), visit_index(a, k), docof(a, d), docof(e, d), first(d).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx") || r.head.rel.starts_with("rr_cover")).map(|r| r.to_string()).collect();
+    assert!(ctx.iter().any(|r| r.starts_with("rr_ctx")), "the max has a context: {ctx:?}");
+    assert!(ctx.iter().all(|r| !r.contains("visit_index(") && r.matches("docof(").count() <= 1), "{ctx:?}");
 }
 
 /// A context's second group binding only what the first binds still narrows it, joined once a binding: as a
@@ -566,7 +609,7 @@ fn directives_and_functions_lower() {
     .unwrap();
     assert!(p.outputs.contains(&"BAD".to_owned()) && p.outputs.contains(&"violation".to_owned()));
     let rule = |rel: &str| p.rules.iter().find(|r| r.head.rel == rel).map(ToString::to_string).unwrap_or_default();
-    assert_eq!(rule("violation"), "violation(\"data-layer:p\", \"BAD\", $rr_v1, $rr_p, $rr_l) :- BAD($rr_v0, $rr_v1), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)");
+    assert_eq!(rule("violation"), "violation(\"data-layer:p\", \"BAD\", $rr_v1, $rr_p, $rr_l, $rr_c) :- BAD($rr_v0, $rr_v1), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l), col($rr_v0, $rr_c)");
     let bad = rule("BAD");
     for part in ["$j = @add($i, 1)", "@concat($t, @to_string(@strlen($t)))", "!rr_inside_fdef($c, _)"] {
         assert!(bad.contains(part), "{part} in {bad}");
@@ -647,15 +690,15 @@ prod(p, e) :- kv(4, _), p = product k : { kv(k, _) }, e = product k : { kv(k, _)
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("joined"), "12-7-12\n7-12-7\n");
-    assert_eq!(read("num"), "12\t12\t2\t12\t10\n7\t7\t2\t10\t7\n");
-    assert_eq!(read("fl"), "1.5\t3\n1e3\t2000\n");
-    assert_eq!(read("neg"), "-2.25\n");
-    assert!(read("assigns").ends_with("\t3\n"), "{}", read("assigns"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("joined"), [["12-7-12"], ["7-12-7"]]);
+    assert_eq!(read("num"), [["12", "12", "2", "12", "10"], ["7", "7", "2", "10", "7"]]);
+    assert_eq!(read("fl"), [["1.5", "3"], ["1e3", "2000"]]);
+    assert_eq!(read("neg"), [["-2.25"]]);
+    assert!(read("assigns").last().and_then(|r| r.last()).is_some_and(|v| v == "3"), "{:?}", read("assigns"));
     // `sum strlen(v) * 2 : { kv(_, v) }` sums over kv's four rows, a twice (Soufflé's tuples): 8.
-    assert_eq!(read("agg"), "a,b,c,a\t10\t8\t\n");
-    assert_eq!(read("prod"), "24\t1\n");
+    assert_eq!(read("agg"), [["a,b,c,a", "10", "8", ""]]);
+    assert_eq!(read("prod"), [["24", "1"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -688,11 +731,11 @@ up(p, k, u) :- q(p, k), u = @pkg_up(p, k).
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("lo"), "1\t3\n2\t4\n");
-    assert_eq!(read("hi"), "1\t9\n2\t4\n");
-    assert_eq!(read("one"), "1\n2\n");
-    assert_eq!(read("up"), "a\t3\t\na.b.c\t1\ta.b\na.b.c\t2\ta\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("lo"), [["1", "3"], ["2", "4"]]);
+    assert_eq!(read("hi"), [["1", "9"], ["2", "4"]]);
+    assert_eq!(read("one"), [["1"], ["2"]]);
+    assert_eq!(read("up"), [["a", "3", ""], ["a.b.c", "1", "a.b"], ["a.b.c", "2", "a"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -729,17 +772,25 @@ lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("near"), "f\tblock\ng\tfunction_definition\n");
-    assert_eq!(read("out_of_loop"), "h\n");
-    assert_eq!(read("fn_with_call"), "outer\n");
-    assert_eq!(read("own"), "g\tinner\n");
-    assert_eq!(read("lonely"), "f\ng\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("near"), [["f", "block"], ["g", "function_definition"]]);
+    assert_eq!(read("out_of_loop"), [["h"]]);
+    assert_eq!(read("fn_with_call"), [["outer"]]);
+    assert_eq!(read("own"), [["g", "inner"]]);
+    assert_eq!(read("lonely"), [["f"], ["g"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A program and what it was read from, compared field by field: the first difference.
 fn difference(a: &front::Program, b: &front::Program) -> Option<String> {
+    // Inputs as a set: the lowering declares `node_order` in `finish`, after the requests it makes (decision 0174),
+    // where the `.rdl` reads it from the start.
+    let sorted = |p: &front::Program| {
+        let mut p = p.clone();
+        p.inputs.sort();
+        p
+    };
+    let (a, b) = (&sorted(a), &sorted(b));
     macro_rules! field {
         ($f:ident) => {
             if a.$f != b.$f {
@@ -780,7 +831,7 @@ fn authored() -> Vec<(String, String, PathBuf)> {
 fn normalized(mut p: front::Program) -> front::Program {
     let r = |name: &str| translate::relation(name);
     let rename = |a: &mut front::Atom| a.rel = r(&a.rel).into();
-    p.decls = std::mem::take(&mut p.decls).into_iter().map(|(k, v)| (r(&k), v)).collect();
+    p.decls = std::mem::take(&mut p.decls).into_iter().map(|(k, v)| (r(&k).into(), v)).collect();
     p.lattice = std::mem::take(&mut p.lattice).into_iter().map(|(k, v)| (r(&k), v)).collect();
     p.facts = std::mem::take(&mut p.facts).into_iter().map(|(k, v)| (r(&k), v)).collect();
     for list in [&mut p.inputs, &mut p.outputs, &mut p.demand] {
@@ -793,11 +844,11 @@ fn normalized(mut p: front::Program) -> front::Program {
                 rename(a);
             }
         }
-        rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body));
+        rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body).to_vec()).into();
     }
-    // The lowering's projections (`lower::projections`, decision 0047): `kind` and `docof` over nodes, read as
+    // The lowering's projections (`lower::projections`, decision 0141): `kind` and `docof` over nodes, read as
     // inputs, are rules over `node`, first.
-    let v = |s: &str| front::Term::Var(s.to_owned());
+    let v = |s: &str| front::Term::Var(s.to_owned().into());
     let mut at = 0;
     for (rel, head, args) in [
         ("kind", [v("n"), v("k")], [front::Term::Wild, v("n"), v("k"), front::Term::Wild, front::Term::Wild]),
@@ -805,10 +856,15 @@ fn normalized(mut p: front::Program) -> front::Program {
     ] {
         if p.inputs.iter().any(|i| i == rel) && p.decls.contains_key("node") {
             p.inputs.retain(|i| i != rel);
-            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.into(), args, neg: false, gated: false };
-            p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: vec![Literal::Atom(atom("node", args.to_vec()))] });
+            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.into(), args: args.into(), neg: false, gated: false };
+            p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: [Literal::Atom(atom("node", args.to_vec()))].into() });
             at += 1;
         }
+    }
+    // The node attributes answered on request (decision 0174, `lower::sources_on_request`): an input the `.rdl`
+    // reads is the lowering's requests, answers and widened copies.
+    for round in lower::ON_REQUEST {
+        lower::sources_on_request(&mut p, round);
     }
     p
 }
@@ -829,7 +885,7 @@ fn without_requests(mut p: front::Program) -> front::Program {
         }
         gone.extend(more);
     }
-    p.decls.retain(|k, _| !gone.contains(k));
+    p.decls.retain(|k, _| !gone.contains(k.as_str()));
     p
 }
 
@@ -990,7 +1046,7 @@ fn sum_and_join_lower() {
     assert!(op == front::AggOp::Sum && over.starts_with("rr_val"), "{over}");
     let cols = &p.decls[atom.rel.as_str()];
     assert_eq!(cols.len(), 4, "c, t, the named `_` and the value: {cols:?}");
-    assert!(cols.contains(&(over.clone(), "int".to_owned())), "{cols:?}");
+    assert!(cols.contains(&(over.clone().into(), "int".into())), "{cols:?}");
     let (_, _, atom) = agg("r");
     assert_ne!(atom.rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
     let e = ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.";
@@ -1011,7 +1067,7 @@ fn aggregates_inside_terms_lower() {
     .unwrap();
     let cc = p.rules.iter().find(|r| r.head.rel == "cc").unwrap();
     let Some(Literal::Agg { var, op: front::AggOp::Count, .. }) = cc.body.iter().find(|l| matches!(l, Literal::Agg { .. })) else { panic!("{cc}") };
-    assert_eq!(cc.head.args[1], Term::Call("add".to_owned(), vec![Term::Int(1), Term::Var(var.clone())]), "{cc}");
+    assert_eq!(cc.head.args[1], Term::Call("add".into(), [Term::Int(1), Term::Var(var.clone().into())].into()), "{cc}");
     let two = p.rules.iter().find(|r| r.head.rel == "two").unwrap();
     assert_eq!(two.body.iter().filter(|l| matches!(l, Literal::Agg { .. })).count(), 2, "{two}");
 }
@@ -1087,22 +1143,22 @@ fn violations_at_places_and_their_lines_lower() {
     ))
     .unwrap();
     let settings: Vec<(&str, &str)> = p.settings.iter().map(|(k, t)| (k.as_str(), t.as_str())).collect();
-    assert_eq!(settings, [("policy", "\"p\" revision 1"), ("suppress", "V eslint \"@scope/a-b\", \"a-b\" over {x}"), ("suppress", "V oxlint \"a-b\""), ("fix", "V safe drop \"Remove it\"")]);
+    assert_eq!(settings, [("policy", "\"p\" revision 1"), ("suppress", "V eslint \"@scope/a-b\", \"a-b\" over {x}"), ("suppress", "V oxlint \"a-b\""), ("fix", "V safe drop \"Remove it\""), ("message", "V \"{x}\""), ("message", "W \"w\"")]);
     let rules = |rel: &str| p.rules.iter().filter(|r| r.head.rel == "violation" && r.head.args[1] == s(rel)).map(ToString::to_string).collect::<Vec<_>>();
     assert_eq!(
         rules("V"),
         [
-            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- V($rr_v0, _), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
-            "violation(\"p\", \"V\", \"@scope/a-b\", @place_path($rr_v0), @place_line($rr_v0)) :- V($rr_v0, _), $rr_v0 < -1",
-            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- rr_place_V($rr_p, $rr_l, _)",
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l, $rr_c) :- V($rr_v0, _), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l), col($rr_v0, $rr_c)",
+            "violation(\"p\", \"V\", \"@scope/a-b\", @place_path($rr_v0), @place_line($rr_v0), 0) :- V($rr_v0, _), $rr_v0 < -1",
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l, 0) :- rr_place_V($rr_p, $rr_l, _)",
         ]
     );
     // A span column: its rows' documents, and the `@place` values a rule made.
     assert_eq!(
         rules("W"),
         [
-            "violation(\"p\", \"W\", \"W\", $rr_p, $rr_l) :- W($rr_v0), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
-            "violation(\"p\", \"W\", \"W\", @place_path($rr_v0), @place_line($rr_v0)) :- W($rr_v0), $rr_v0 < -1",
+            "violation(\"p\", \"W\", \"W\", $rr_p, $rr_l, $rr_c) :- W($rr_v0), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l), col($rr_v0, $rr_c)",
+            "violation(\"p\", \"W\", \"W\", @place_path($rr_v0), @place_line($rr_v0), 0) :- W($rr_v0), $rr_v0 < -1",
         ]
     );
     let printed = print(&p).unwrap();
@@ -1138,8 +1194,8 @@ s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
     )
     .unwrap();
     let rules: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "r").collect();
-    let v = |s: &str| Term::Var(s.to_owned());
-    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".to_owned().into(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
+    let v = |s: &str| Term::Var(s.to_owned().into());
+    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".into(), args: [v("n"), v("a")].into(), neg: false, gated: false })]);
     assert!(!p.kindsets.contains_key("blk") && p.kindsets.contains_key("fn"));
     // The nearest block: a climb from n that stops at the first member of blk, which is a.
     assert!(rules[1].body.iter().any(|l| matches!(l, Literal::Atom(x) if x.rel.starts_with("rr_up") && x.args == [v("n"), v("a")])), "{}", rules[1]);
@@ -1262,11 +1318,11 @@ seen(x) :- p(x).
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("seen"), "a\nb\n");
-    assert_eq!(read("rr_must_seen"), "a\n");
-    assert_eq!(read("q"), "b\nc\n");
-    assert_eq!(read("rr_must_q"), "c\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("seen"), [["a"], ["b"]]);
+    assert_eq!(read("rr_must_seen"), [["a"]]);
+    assert_eq!(read("q"), [["b"], ["c"]]);
+    assert_eq!(read("rr_must_q"), [["c"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1291,9 +1347,9 @@ by_set(x, y) :- node(_, a, "expression_statement", x, _), node(_, b, _, y, _), p
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("pairs"), "13\t21\n");
-    assert_eq!(read("by_set"), "13\t21\n13\t29\n21\t29\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("pairs"), [["13", "21"]]);
+    assert_eq!(read("by_set"), [["13", "21"], ["13", "29"], ["21", "29"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1324,11 +1380,11 @@ given(x) :- node(_, n, "call", x, _), !unset(n).
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("other"), "38\t0\n46\t17\n");
-    assert_eq!(read("same"), "0\n");
-    assert_eq!(read("empty"), "0\t\n");
-    assert_eq!(read("given"), "38\n46\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("other"), [["38", "0"], ["46", "17"]]);
+    assert_eq!(read("same"), [["0"]]);
+    assert_eq!(read("empty"), [["0", ""]]);
+    assert_eq!(read("given"), [["38"], ["46"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1353,12 +1409,10 @@ seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
     let program = crate::code_rule_dsl::tools::read_rr(&policy).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let actual = std::fs::read_to_string(out.join("seen.csv")).unwrap();
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap();
     let lines = [&long, "two", "", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
-    let mut expected: Vec<String> = lines.iter().enumerate().map(|(i, t)| format!("a.py\t{}\t{t}", i + 1)).collect();
-    expected.push("b.py\t1\tshort".to_owned());
-    let mut rows: Vec<&str> = actual.lines().collect();
-    rows.sort();
+    let mut expected: Vec<Vec<String>> = lines.iter().enumerate().map(|(i, t)| vec!["a.py".to_owned(), (i + 1).to_string(), (*t).to_owned()]).collect();
+    expected.push(vec!["b.py".to_owned(), "1".to_owned(), "short".to_owned()]);
     expected.sort();
     assert_eq!(rows, expected);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1432,6 +1486,27 @@ Seen(@place(p, l), m) :- doc(d, p, _), split_line(d, l, _), env("mark", m).
     std::fs::write(root.join("rerail.env"), "mark = here\n").unwrap();
     assert!(!marks("set").is_empty() && marks("again").iter().all(|m| m == "here"), "the setting read");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A program `run-rr` read is handed to the run, keyed by its digest (decision 0249 §5). With a store, the run's
+/// whole-run cutoff asks whether it would read alike: of the program handed, never of its key as a text. Run twice
+/// over an unchanged root, the second finds what the first did.
+#[test]
+fn a_handed_program_run_again_finds_the_same() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrhanded");
+    let root = dir.join("corpus");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "def f():\n    pass\n\nf()\n").unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, ".policy \"handed-again\" revision 1\n.language python\n.violation Call(at: node) code \"CALL\" \"a call\"\nCall(n) :- kind(n, \"call\").\n").unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |out: &str| crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).map(|r| r["diagnostics"].clone());
+    let first = run("first").unwrap();
+    assert_eq!(first.as_array().map(Vec::len), Some(1), "{first}");
+    let again = run("again");
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(again.unwrap(), first);
 }
 
 /// async_executor uses str.split('\n'), not physical lines or Python splitlines.
@@ -1592,7 +1667,7 @@ verified(name) :- candidate(name, message),
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    assert_eq!(std::fs::read_to_string(out.join("verified.csv")).unwrap(), "original\n");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "verified").unwrap(), [["original"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1615,7 +1690,7 @@ same(l, m) :- rhs(l, r), rhs(m, s), l < m, @tree_digest(r) = @tree_digest(s).
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    assert_eq!(std::fs::read_to_string(out.join("same.csv")).unwrap(), "a\tb\nc\td\ne\tf\ng\th\n");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "same").unwrap(), [["a", "b"], ["c", "d"], ["e", "f"], ["g", "h"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1639,7 +1714,7 @@ unit(x, s) :- def_digest(n, s), field(n, "name", i), text(i, x).
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        std::fs::read_to_string(out.join("unit.csv")).unwrap().lines().map(|l| { let (k, s) = l.split_once('\t').unwrap(); (k.to_owned(), s.to_owned()) }).collect()
+        crate::code_rule_dsl::logic::plan::output::shown(&out, "unit").unwrap().into_iter().map(|r| (r[0].clone(), r[1].clone())).collect()
     };
     let base = digests("import os\n\nclass C:\n    def m(self):\n        return 1\n\n    def n(self):\n        return 2\n\ndef f():\n    pass\n");
     assert_eq!(base.keys().map(String::as_str).collect::<Vec<_>>(), ["<module>", "C", "f", "m", "n"]);
@@ -1663,7 +1738,7 @@ unit(x, s) :- def_digest(n, s), field(n, "name", i), text(i, x).
 #[test]
 fn definition_ids_keep_other_definitions_rows_across_a_body_edit() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("defids");
-    let rows = |source: &str| -> std::collections::BTreeSet<String> {
+    let rows = |source: &str| -> std::collections::BTreeSet<Vec<String>> {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), source).unwrap();
@@ -1672,7 +1747,7 @@ fn definition_ids_keep_other_definitions_rows_across_a_body_edit() {
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        ["k", "p"].iter().flat_map(|r| std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap().lines().map(|l| format!("{r} {l}")).collect::<Vec<_>>()).collect()
+        ["k", "p"].iter().flat_map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().into_iter().map(|row| std::iter::once((*r).to_owned()).chain(row).collect::<Vec<_>>()).collect::<Vec<_>>()).collect()
     };
     let body = |extra: &str| format!("import os\n\ndef f(a):\n    {extra}return a + 1\n\nclass C:\n    def m(self, x):\n        return [x, x * 2]\n\n    def n(self):\n        return {{1: 2}}\n\ndef g():\n    return os.path.join('a', 'b')\n");
     let before = rows(&body(""));
@@ -1726,18 +1801,14 @@ NQ(m, c) :- hit(m, c).
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
-        rows.sort();
-        rows.join("\n")
-    };
-    assert_eq!(read("sec"), "1\tSEC1\t1\n1\tSEC22\t1");
-    assert_eq!(read("cls"), "Bar\t4\nFoo\t2");
-    assert_eq!(read("whole"), "1\t1");
-    assert_eq!(read("kv"), "a\t1\nb\t22");
-    assert_eq!(read("hasb"), "a=1 b=22 c=x");
-    assert_eq!(read("nob"), "none here");
-    assert_eq!(read("via"), "Bar\nFoo");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("sec"), [["1", "SEC1", "1"], ["1", "SEC22", "1"]]);
+    assert_eq!(read("cls"), [["Bar", "4"], ["Foo", "2"]]);
+    assert_eq!(read("whole"), [["1", "1"]]);
+    assert_eq!(read("kv"), [["a", "1"], ["b", "22"]]);
+    assert_eq!(read("hasb"), [["a=1 b=22 c=x"]]);
+    assert_eq!(read("nob"), [["none here"]]);
+    assert_eq!(read("via"), [["Bar"], ["Foo"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1761,13 +1832,9 @@ odd(x) :- piece(t), match_all("(?<w>[a-z0-9ℝ]+)", t), !match(".*ℝ.*", w), te
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
-        rows.sort();
-        rows.join("\n")
-    };
-    assert_eq!(read("wide"), "2\u{211d}6789\nx\u{211d}y");
-    assert_eq!(read("odd"), "plain");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("wide"), [["2ℝ6789"], ["xℝy"]]);
+    assert_eq!(read("odd"), [["plain"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1797,15 +1864,11 @@ ndig(t, n) :- wd(w), text(w, t), n = count : { match_all("(?<d>[0-9])", w) }.
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
-        rows.sort();
-        rows.join("\n")
-    };
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
     // Two strings with one text: each its own spans, at its own line and column.
-    assert_eq!(read("param"), "id\t1\t9\nid\t2\t9\nname\t1\t14\nname\t2\t14");
-    assert_eq!(read("digit"), "1\n2\n3");
-    assert_eq!(read("ndig"), "AB12\t2\nCD3\t1");
+    assert_eq!(read("param"), [["id", "1", "9"], ["id", "2", "9"], ["name", "1", "14"], ["name", "2", "14"]]);
+    assert_eq!(read("digit"), [["1"], ["2"], ["3"]]);
+    assert_eq!(read("ndig"), [["AB12", "2"], ["CD3", "1"]]);
 }
 
 /// `match_all` over a node's own text, and over an earlier match's captures (decision 0081): each group is a span
@@ -1832,13 +1895,9 @@ per(x, n) :- piece_word(_, w), text(w, x), n = count : { match_all("(?<d>[0-9])"
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
-        rows.sort();
-        rows.join("\n")
-    };
-    assert_eq!(read("digits"), "1\t1\t7\n22\t1\t11\n1\t2\t7\n22\t2\t11\n3\t2\t20".split('\n').collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>().join("\n"));
-    assert_eq!(read("per"), "ab1\t1\ncd22\t2\nef3\t1");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("digits"), [["1", "1", "7"], ["1", "2", "7"], ["22", "1", "11"], ["22", "2", "11"], ["3", "2", "20"]]);
+    assert_eq!(read("per"), [["ab1", "1"], ["cd22", "2"], ["ef3", "1"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1865,14 +1924,10 @@ in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all("
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
-        rows.sort();
-        rows.join("\n")
-    };
-    assert_eq!(read("comma"), "1\t3\n1\t6");
-    assert_eq!(read("in_node"), "(a, b, c)\t2\n(d)\t0");
-    assert_eq!(read("in_text"), "(a, b, c)\t2\n(d)\t0");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("comma"), [["1", "3"], ["1", "6"]]);
+    assert_eq!(read("in_node"), [["(a, b, c)", "2"], ["(d)", "0"]]);
+    assert_eq!(read("in_text"), [["(a, b, c)", "2"], ["(d)", "0"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1887,7 +1942,7 @@ fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    assert_eq!(std::fs::read_to_string(out.join("annotations.csv")).unwrap(), "noqa_sec_annotations\t4\n");
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "annotations").unwrap(), [["noqa_sec_annotations", "4"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1913,12 +1968,10 @@ err(d) :- syntax_error(d, _, _).
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    let mut v: Vec<String> = read("violation").lines().map(str::to_owned).collect();
-    v.sort();
-    assert_eq!(v, ["t:withheld\tASSIGN\tASSIGN\tgood.py\t1", "t:withheld\tsyntax_error\tBAD000\tbad.py\t1"]);
-    assert_eq!(read("lines").lines().count(), 2, "raw-text policies retain both documents");
-    assert_eq!(read("err").lines().count(), 1);
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("violation"), [["t:withheld", "ASSIGN", "ASSIGN", "good.py", "1", "0"], ["t:withheld", "syntax_error", "BAD000", "bad.py", "1", "0"]]);
+    assert_eq!(read("lines").len(), 2, "raw-text policies retain both documents");
+    assert_eq!(read("err").len(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1958,11 +2011,7 @@ UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(
         // Every file evaluated in every run: a memo hit would not be chunked (decision 0063 memoises base rows too).
         let options = serde_json::json!({ "memo": "off" });
         crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes, &Default::default(), &options).unwrap();
-        ["called", "violation"].map(|rel| {
-            let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
-            rows.sort();
-            rows
-        })
+        ["called", "violation"].map(|rel| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap())
     };
     let whole = run(1 << 18);
     assert_eq!(whole[0].len(), 12 + 2 * 29, "every call of a defined function: {:?}", whole[0]);
@@ -2008,10 +2057,10 @@ none(r) :- e(r, _, _), !dfs_first(r, _, _, e, t).
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("hit"), "10\t30\t1\n20\t30\t5\n40\t30\t2\n");
-    assert_eq!(read("hm"), "10\t30\t1\n40\t30\t2\n");
-    assert_eq!(read("none"), "50\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("hit"), [["10", "30", "1"], ["20", "30", "5"], ["40", "30", "2"]]);
+    assert_eq!(read("hm"), [["10", "30", "1"], ["40", "30", "2"]]);
+    assert_eq!(read("none"), [["50"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2038,10 +2087,10 @@ named(d, c) :- comp(d, c, _).
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("named"), "1\t1\n2\t2\n3\t2\n4\t4\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("named"), [["1", "1"], ["2", "2"], ["3", "2"], ["4", "4"]]);
     // 1 and 4 have the same digest and the same closure; 2 and 3 share their component.
-    assert_eq!(read("same"), "1\t4\n2\t3\n");
+    assert_eq!(read("same"), [["1", "4"], ["2", "3"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2154,8 +2203,23 @@ Subtree(n) :- kind(n, "module"), text(n, _).
     assert_eq!(rows.iter().filter(|row| row["code"] == "TREE").count(), 1, "the module, a kind the rule reads, has its whole text");
 }
 
-/// Decision 0055's guests: a run of `rule` over `files`, each output's sorted rows.
-fn guests_run(name: &str, files: &[(&str, &str)], rule: &str, outputs: &[&str]) -> Vec<Vec<String>> {
+/// Decision 0055's guests: a run of `rule` over `files`, each output's sorted rows, each value as shown.
+fn guests_run(name: &str, files: &[(&str, &str)], rule: &str, outputs: &[&str]) -> Vec<Vec<Vec<String>>> {
+    guests_run_with(name, files, rule, |o| outputs.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect())
+}
+
+/// Each output's rows as shown, a row's cells joined by tabs: for comparing with expected rows written as one string.
+fn joined(outputs: Vec<Vec<Vec<String>>>) -> Vec<Vec<String>> {
+    outputs.into_iter().map(|rows| rows.into_iter().map(|r| r.join("\t")).collect()).collect()
+}
+
+/// One row's values as shown, for comparing with `guests_run`'s.
+fn shown_row(values: &[&str]) -> Vec<String> {
+    values.iter().map(|v| (*v).to_owned()).collect()
+}
+
+/// A run of `rule` over `files`, its outputs read by `read`.
+fn guests_run_with<T>(name: &str, files: &[(&str, &str)], rule: &str, read: impl FnOnce(&crate::code_rule_dsl::logic::plan::output::Outputs) -> T) -> T {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     for (path, text) in files {
@@ -2166,47 +2230,47 @@ fn guests_run(name: &str, files: &[(&str, &str)], rule: &str, outputs: &[&str]) 
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let rows = outputs
-        .iter()
-        .map(|rel| {
-            let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
-            rows.sort();
-            rows
-        })
-        .collect();
+    let rows = read(&crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap());
     let _ = std::fs::remove_dir_all(&dir);
     rows
 }
 
 /// A string annotation is parsed where it stands: its names have the file's lines and columns, through the escapes
 /// and the parts of a concatenation (the normalized text's map); a string inside a parsed one is parsed in the next
-/// round. Bytes give no guest.
+/// round, for a rule that reaches it through the annotation (`ann`): an annotation is not shown to rules that do not
+/// name it, so `ident`'s `kind(s, "string")` does not see it. Bytes give no guest.
 #[test]
 fn string_annotations_are_guests_at_their_host_lines() {
     let py = "x: \"List[int]\" = []\n\ndef f(y: 'Dict[str, Foo]') -> \"Bar\": ...\nz: \"A\\x42\" = 1\nw: (\"Li\" \"st\") = 2\nq: \"Opt['Baz']\" = 3\nb: b\"Nope\" = 4\n";
     let rule = r#"
 .decl ident(x: symbol, l: number, c: number)
 ident(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+.decl ann(n: node)
+ann(r) :- kind(s, "string"), parsed(s, "annotation", r).
+ann(c) :- ann(p), child(p, c, _).
+.decl nested(x: symbol, l: number, c: number)
+nested(x, l, c) :- ann(s), kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
 .decl whole(x: symbol, l: number, c: number)
 whole(x, l, c) :- kind(s, "concatenated_string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
 .decl roots(k: symbol)
 roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
-.output ident, whole, roots
+.output ident, nested, whole, roots
 "#;
-    let [names, whole, roots] = <[Vec<String>; 3]>::try_from(guests_run("annotations", &[("a.py", py)], rule, &["ident", "whole", "roots"])).unwrap();
-    assert!(names.contains(&"List\t1\t4".to_owned()), "{names:?}");
-    assert!(names.contains(&"int\t1\t9".to_owned()), "{names:?}");
-    assert!(names.contains(&"Foo\t3\t20".to_owned()), "{names:?}");
-    assert!(names.contains(&"Bar\t3\t31".to_owned()), "{names:?}");
+    let [names, nested, whole, roots] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("annotations", &[("a.py", py)], rule, &["ident", "nested", "whole", "roots"])).unwrap();
+    assert!(names.contains(&shown_row(&["List", "1", "4"])), "{names:?}");
+    assert!(names.contains(&shown_row(&["int", "1", "9"])), "{names:?}");
+    assert!(names.contains(&shown_row(&["Foo", "3", "20"])), "{names:?}");
+    assert!(names.contains(&shown_row(&["Bar", "3", "31"])), "{names:?}");
     // "A\x42" is AB: its normalized text, mapped (decision 0058 §3), so AB starts at the A.
-    assert!(names.contains(&"AB\t4\t4".to_owned()), "{names:?}");
+    assert!(names.contains(&shown_row(&["AB", "4", "4"])), "{names:?}");
     // ("Li" "st"): each part is a string of its own, and the concatenation is List, from its first part's text.
-    assert!(names.contains(&"Li\t5\t5".to_owned()), "{names:?}");
-    assert_eq!(whole, ["List\t5\t5"]);
-    assert_eq!(roots, ["identifier", "subscript"]);
-    // 'Baz' inside "Opt['Baz']": round 2.
-    assert!(names.contains(&"Baz\t6\t9".to_owned()), "{names:?}");
-    assert!(!names.iter().any(|n| n.starts_with("Nope")), "{names:?}");
+    assert!(names.contains(&shown_row(&["Li", "5", "5"])), "{names:?}");
+    assert_eq!(whole, [["List", "5", "5"]]);
+    assert_eq!(roots, [["identifier"], ["subscript"]]);
+    // 'Baz' inside "Opt['Baz']": round 2, through the annotation; `ident` does not see inside it.
+    assert_eq!(nested, [["Baz", "6", "9"]]);
+    assert!(!names.iter().any(|n| n[0].starts_with("Baz")), "{names:?}");
+    assert!(!names.iter().any(|n| n[0].starts_with("Nope")), "{names:?}");
 }
 
 /// `.on guest_error`: a guest that does not parse is withheld (skip, the default) or keeps its partial tree, and
@@ -2228,13 +2292,13 @@ kept(l) :- kind(s, "string"), guest(_, _, s, "annotation"), line(s, l).
 "#
         )
     };
-    let [v, roots, kept] = <[Vec<String>; 3]>::try_from(guests_run("gskip", &[("a.py", py)], &rule(".on guest_error annotation report GBAD"), &["violation", "roots", "kept"])).unwrap();
-    assert_eq!(v, ["t:guest\tguest_error\tGBAD\ta.py\t2"]);
-    assert_eq!(roots, ["1"], "the broken guest has no tree");
-    assert_eq!(kept, ["1", "2"], "both are guests");
-    let [v, roots] = <[Vec<String>; 2]>::try_from(guests_run("gpartial", &[("a.py", py)], &rule(".on guest_error partial"), &["violation", "roots"])).unwrap();
+    let [v, roots, kept] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("gskip", &[("a.py", py)], &rule(".on guest_error annotation report GBAD"), &["violation", "roots", "kept"])).unwrap();
+    assert_eq!(v, [["t:guest", "guest_error", "GBAD", "a.py", "2", "0"]]);
+    assert_eq!(roots, [["1"]], "the broken guest has no tree");
+    assert_eq!(kept, [["1"], ["2"]], "both are guests");
+    let [v, roots] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("gpartial", &[("a.py", py)], &rule(".on guest_error partial"), &["violation", "roots"])).unwrap();
     assert!(v.is_empty(), "{v:?}");
-    assert_eq!(roots, ["1", "2"], "the broken guest keeps its partial tree");
+    assert_eq!(roots, [["1"], ["2"]], "the broken guest keeps its partial tree");
 }
 
 /// A library's `embed` and `embed_value` declare guests of a role. `sub_tape` gives a guest's tape: equal texts share
@@ -2259,12 +2323,12 @@ top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
 "#
         )
     };
-    let guests = ["code\timport os\t1", "code\timport os\t2", "made\timport sys\t3"];
-    let [imp, tapes, top] = <[Vec<String>; 3]>::try_from(guests_run("embed", &[("a.py", py)], &rule(""), &["imp", "tapes", "top"])).unwrap();
+    let guests = [["code", "import os", "1"], ["code", "import os", "2"], ["made", "import sys", "3"]];
+    let [imp, tapes, top] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("embed", &[("a.py", py)], &rule(""), &["imp", "tapes", "top"])).unwrap();
     assert_eq!(imp, guests);
     assert_eq!(tapes.len(), 1, "{tapes:?}");
-    assert_eq!(top, ["import os\t1", "import os\t2", "import sys\t3"], "Python guests are shown in a Python run");
-    let [imp, top] = <[Vec<String>; 2]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp", "top"])).unwrap();
+    assert_eq!(top, [["import os", "1"], ["import os", "2"], ["import sys", "3"]], "Python guests are shown in a Python run");
+    let [imp, top] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp", "top"])).unwrap();
     assert_eq!(imp, guests, "`.guests off` hides guests; it does not stop a library's embeds");
     assert!(top.is_empty(), "{top:?}");
 }
@@ -2291,19 +2355,82 @@ qualified(x) :- kind(n, "sql:object_reference"), text(n, x).
 counted(c) :- c = count : { kind(_, "sql:object_reference") }.
 .output sqlkinds, docs, objects, unscoped, qualified, counted
 "#;
-    let [sqlkinds, docs, objects, unscoped, qualified, counted] =
-        <[Vec<String>; 6]>::try_from(guests_run("sqlguest", &[("a.py", py)], rule, &["sqlkinds", "docs", "objects", "unscoped", "qualified", "counted"])).unwrap();
-    assert!(sqlkinds.contains(&"object_reference".to_owned()), "{sqlkinds:?}");
-    assert!(!sqlkinds.contains(&"call".to_owned()), "SQL nodes are SQL's kinds: {sqlkinds:?}");
-    assert!(docs.len() == 2 && docs.iter().all(|g| g.parse::<i64>().unwrap() >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL guest in a Python run is a hidden document: {docs:?}");
-    assert!(objects.contains(&"users\t2\t33".to_owned()), "{objects:?}");
+    let names = ["sqlkinds", "objects", "unscoped", "qualified", "counted"];
+    let (shown, docs) = guests_run_with("sqlguest", &[("a.py", py)], rule, |o| {
+        let shown: Vec<Vec<Vec<String>>> = names.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect();
+        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vec<i64>>())
+    });
+    let [sqlkinds, objects, unscoped, qualified, counted] = <[Vec<Vec<String>>; 5]>::try_from(shown).unwrap();
+    assert!(sqlkinds.contains(&shown_row(&["object_reference"])), "{sqlkinds:?}");
+    assert!(!sqlkinds.contains(&shown_row(&["call"])), "SQL nodes are SQL's kinds: {sqlkinds:?}");
+    assert!(docs.len() == 2 && docs.iter().all(|&g| g >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL guest in a Python run is a hidden document: {docs:?}");
+    assert!(objects.contains(&shown_row(&["users", "2", "33"])), "{objects:?}");
     // `"SELECT \"id\" FROM orders"` parses as its normalized text, and `orders` keeps its column past the escapes.
-    assert!(objects.contains(&"orders\t3\t35".to_owned()), "{objects:?}");
-    assert!(unscoped.contains(&"call".to_owned()), "{unscoped:?}");
-    assert!(!unscoped.contains(&"object_reference".to_owned()), "SQL nodes are hidden: {unscoped:?}");
+    assert!(objects.contains(&shown_row(&["orders", "3", "35"])), "{objects:?}");
+    assert!(unscoped.contains(&shown_row(&["call"])), "{unscoped:?}");
+    assert!(!unscoped.contains(&shown_row(&["object_reference"])), "SQL nodes are hidden: {unscoped:?}");
     assert!(qualified.is_empty(), "{qualified:?}");
     // An aggregate's atom is bounded too.
-    assert!(counted.iter().all(|c| c == "0"), "{counted:?}");
+    assert!(counted.iter().all(|c| c == &["0"]), "{counted:?}");
+}
+
+/// An HTML file's `<script>` and `<style>` are guests (`html/embeds.rr`, decision 0238): a script's text is
+/// JavaScript, or JSON by its type, and none for a type no grammar reads; a style's text is CSS. Each stands at its
+/// `raw_text`, so its nodes have the file's lines.
+#[test]
+fn html_scripts_and_styles_are_javascript_json_and_css_guests() {
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"text/template\"><b>x</b></script>\n<script type=\"module\">g(2)</script>\n<script type=\"application/ld+json\">{\"a\": 1}</script>\n<style>\np { color: red; }\n</style>\n";
+    let rule = r#"
+.language html
+#include "html/embeds.rr"
+.decl calls(x: symbol, l: number)
+calls(x, l) :- guest(g, _, _, "javascript"), node(g, c, "call_expression", _, _), text(c, x), line(c, l).
+.decl decls(x: symbol, l: number)
+decls(x, l) :- guest(g, _, _, "css"), node(g, n, "declaration", _, _), text(n, x), line(n, l).
+.decl pairs(x: symbol, l: number)
+pairs(x, l) :- guest(g, _, _, "json"), node(g, n, "pair", _, _), text(n, x), line(n, l).
+.decl guests(g: symbol, r: symbol)
+guests(g, r) :- guest(d, _, _, g), doc_role(d, r).
+.output calls, decls, pairs, guests
+"#;
+    let [calls, decls, pairs, guests] = <[Vec<String>; 4]>::try_from(joined(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests"]))).unwrap();
+    assert_eq!(calls, ["f(1)\t3", "g(2)\t6"]);
+    assert_eq!(decls, ["color: red;\t9"]);
+    assert_eq!(pairs, ["\"a\": 1\t7"]);
+    assert_eq!(guests, ["css\tprogram", "javascript\tprogram", "json\tprogram"], "the template script has no guest");
+}
+
+/// A Markdown file's inline content is guests of tree-sitter-md's inline grammar (`markdown/embeds.rr`, decision
+/// 0238): each `inline` and `pipe_table_cell` node, its text less the block continuations inside it (a quote's
+/// `> `), so its nodes stand at the file's lines and columns, past the continuations too.
+#[test]
+fn markdown_inline_content_is_a_guest_at_its_host_places() {
+    let md = "# A *b*\n\n> Some *text* and a [link](u)\n> on `two` lines.\n\n| a | **b** |\n|---|---|\n| `c` | d |\n";
+    let rule = r#"
+.language markdown
+#include "markdown/embeds.rr"
+.decl at(k: symbol, x: symbol, l: number, c: number)
+at("emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "emphasis", _, _), text(n, x), line(n, l), col(n, c).
+at("strong_emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "strong_emphasis", _, _), text(n, x), line(n, l), col(n, c).
+at("code_span", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "code_span", _, _), text(n, x), line(n, l), col(n, c).
+at("link_destination", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "link_destination", _, _), text(n, x), line(n, l), col(n, c).
+.decl roles(r: symbol)
+roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
+.output at, roles
+"#;
+    let [at, roles] = <[Vec<String>; 2]>::try_from(joined(guests_run("mdinline", &[("a.md", md)], rule, &["at", "roles"]))).unwrap();
+    assert_eq!(
+        at,
+        [
+            "code_span\t`c`\t8\t2",
+            "code_span\t`two`\t4\t5",
+            "emphasis\t*b*\t1\t4",
+            "emphasis\t*text*\t3\t7",
+            "link_destination\tu\t3\t27",
+            "strong_emphasis\t**b**\t6\t6",
+        ]
+    );
+    assert_eq!(roles, ["fragment"]);
 }
 
 /// Tape operations (decision 0058 §4): `@parse(g, x)` makes a value document from a text (here a string's
@@ -2327,12 +2454,12 @@ seen(x) :- kind(n, "object_reference"), text(n, x).
 roles(r) :- doc_role(_, r).
 .output tables, back, fixed, seen, roles
 "#;
-    let [tables, back, fixed, seen, roles] = <[Vec<String>; 5]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen", "roles"])).unwrap();
+    let [tables, back, fixed, seen, roles] = <[Vec<Vec<String>>; 5]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen", "roles"])).unwrap();
     // `"SELECT name \<newline> FROM users"`: the escaped newline is gone from the text that is parsed.
-    assert_eq!(back, ["SELECT name  FROM users"]);
-    assert_eq!(tables, ["users\t1"], "a value's places are its own text's");
-    assert_eq!(fixed, ["SELECT name  FROM accounts"]);
-    assert_eq!(roles, ["primary", "value"]);
+    assert_eq!(back, [["SELECT name  FROM users"]]);
+    assert_eq!(tables, [["users", "1"]], "a value's places are its own text's");
+    assert_eq!(fixed, [["SELECT name  FROM accounts"]]);
+    assert_eq!(roles, [["primary"], ["value"]]);
     assert!(seen.is_empty(), "{seen:?}");
 }
 
@@ -2378,7 +2505,7 @@ Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
 "#);
     let a = complete_rule(&rule("A", "xx xx", "xx"));
     let b = complete_rule(&rule("B", "yy yy", "yy"));
-    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
     assert_eq!(combined.natives.len(), 2);
     for native in combined.natives.values() {
         for input in native.reads() { assert!(combined.decls.contains_key(input), "{input}"); }
@@ -2404,8 +2531,8 @@ fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
     let out = root.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &root, None, &out, "program",
         crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let rows = std::fs::read_to_string(out.join("rr_diagnostic.csv")).unwrap().lines()
-        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    // Each diagnostic, from its finding relation's typed row (`rr::lower::findings`, `tools::diagnostic`).
+    let rows = crate::code_rule_dsl::tools::diagnostics(&out).unwrap();
     std::fs::remove_dir_all(root).unwrap();
     rows
 }
@@ -2467,21 +2594,14 @@ objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "obj
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         let out = dir.join("out");
         let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let rows: Vec<Vec<String>> = ["tables", "objects"]
-            .iter()
-            .map(|rel| {
-                let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
-                rows.sort();
-                rows
-            })
-            .collect();
+        let rows: Vec<Vec<Vec<String>>> = ["tables", "objects"].iter().map(|rel| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default()).collect();
         let _ = std::fs::remove_dir_all(&dir);
         (report.memo, rows)
     };
     let (memo, first) = run("valmemo1");
     assert_eq!(memo, (0, 0), "every chunk's rows are attributed to files");
     assert_eq!(first[0].len(), 3, "{first:?}");
-    assert_eq!(first[1].iter().map(|r| r.split('\t').nth(1).unwrap().to_owned()).collect::<BTreeSet<_>>(), BTreeSet::from(["orders".to_owned(), "users".to_owned()]), "{first:?}");
+    assert_eq!(first[1].iter().map(|r| r[1].clone()).collect::<BTreeSet<_>>(), BTreeSet::from(["orders".to_owned(), "users".to_owned()]), "{first:?}");
     let (memo, second) = run("valmemo2");
     assert_eq!(memo, (3, 0), "every file is read from the memo");
     assert_eq!(second, first);
@@ -2519,16 +2639,12 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
         .collect();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run_all(&printed.iter().map(String::as_str).collect::<Vec<_>>(), &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
-        rows.sort();
-        rows
-    };
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
     let (off, on, off_through, on_through) = (read("p0_top"), read("p1_top"), read("p0_through"), read("p1_through"));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(off.is_empty(), "`.guests off` hides the guests from its own rules: {off:?}");
-    assert_eq!(on, ["import os\t1", "import sys\t2"], "the other program shows them");
-    assert_eq!(off_through, ["import os", "import sys"], "a guest relation reaches them under `.guests off`");
+    assert_eq!(on, [["import os", "1"], ["import sys", "2"]], "the other program shows them");
+    assert_eq!(off_through, [["import os"], ["import sys"]], "a guest relation reaches them under `.guests off`");
     assert_eq!(on_through, off_through);
 }
 
@@ -2547,9 +2663,27 @@ enclosing(x, k) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), 
 outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
 .output enclosing, outer
 "#;
-    let [within, outer] = <[Vec<String>; 2]>::try_from(guests_run("sqlkindset", &[("a.py", py)], rule, &["enclosing", "outer"])).unwrap();
-    assert_eq!(within, ["users\trelation"], "the set names SQL's `relation` over the guest");
-    assert_eq!(outer, ["function_definition"], "and Python's kinds over the file");
+    let [within, outer] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("sqlkindset", &[("a.py", py)], rule, &["enclosing", "outer"])).unwrap();
+    assert_eq!(within, [["users", "relation"]], "the set names SQL's `relation` over the guest");
+    assert_eq!(outer, [["function_definition"]], "and Python's kinds over the file");
+}
+
+/// The tree axes over a guest's nodes (decision 0058 §2): `has(r, f, "field")` and `inside(x, f, "field")` name
+/// `field` in the guest's grammar (a format string's, decision 0176), and the axis's other node is the guest's
+/// too, so it is not bounded to the shown documents. Before, both found nothing.
+#[test]
+fn tree_axes_over_a_guest_are_its_grammars() {
+    let py = "\"{a} {b:>{w}}\".format(a=1, b=2, w=3)\n";
+    let rule = r#"
+.decl fields(f: symbol)
+fields(t) :- kind(s, "string"), parsed(s, "braceFormat", r), has(r, f, "field"), text(f, t).
+.decl names(x: symbol)
+names(t) :- kind(s, "string"), parsed(s, "braceFormat", r), within(x, r), kind(x, "name"), inside(x, _, "field"), text(x, t).
+.output fields, names
+"#;
+    let [fields, names] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("guestaxes", &[("a.py", py)], rule, &["fields", "names"])).unwrap();
+    assert_eq!(fields, [["{a}"], ["{b:>{w}}"], ["{w}"]], "`has` reaches the guest's fields, nested ones too");
+    assert_eq!(names, [["a"], ["b"], ["w"]], "`inside` climbs to a guest's field");
 }
 
 /// `.scope` selects a repository's files (`core.rr`): a finding in a document outside `dirs`, or under a `tests`
@@ -2578,7 +2712,7 @@ Call(c) :- node(_, c, "call", _, _).
     let paths = |program: &str| {
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| l.split('\t').nth(3).unwrap().to_owned()).collect();
+        let mut got: Vec<String> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().iter().map(|r| r[3].clone()).collect();
         got.sort();
         got
     };
@@ -2618,7 +2752,7 @@ Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
     let paths = |options: serde_json::Value| {
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[flat.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
-        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| format!("{}:{}", l.split('\t').nth(3).unwrap(), l.split('\t').nth(4).unwrap())).collect();
+        let mut got: Vec<String> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().iter().map(|r| format!("{}:{}", r[3], r[4])).collect();
         got.sort();
         got
     };
@@ -2630,6 +2764,38 @@ Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
     assert_eq!(lowered.text_globs, ["**/*.md"]);
     let off = lowered.facts.get(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY).into_iter().flatten().any(|r| r == &vec![crate::code_rule_dsl::logic::front::Value::Str("library".into()), crate::code_rule_dsl::logic::front::Value::Str("off".into())]);
     assert!(off, "embedded false is guests off");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A finding is keyed by its column too: two on one line are two rows (main reports each). And an annotation's
+/// guest is not shown to rules that do not name it: `tctx`'s demand asks for every string its inputs hold, `"--host"`
+/// (an argument) too, and shown, that guest was code to `Neg`: `--host`, a doubled minus (B002 on 157 argparse
+/// lines). A type expression is not code; the rules that read one reach it through `parsed`.
+#[test]
+fn findings_keep_their_columns_and_an_annotation_is_not_code() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("finding-columns");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "p.add(\"--host\")\nq = --a + --b\nv: \"--k\" = 1\n").unwrap();
+    let program = r#"
+.policy "t:finding-columns" revision 1
+.language python
+#include "python/ast.rr"
+.violation Neg(at: node) "a doubled minus"
+Neg(u) :- kind(u, "unary_operator"), op(u, "-"), field(u, "argument", a), kind(a, "unary_operator").
+.decl tctx(n: node)
+tctx(t) :- kind(t, "type").
+tctx(r) :- tctx(s), str_node(s), parsed(s, "annotation", r).
+tctx(c) :- tctx(p), child(p, c, _).
+"#;
+    let rule = dir.with_extension("finding-columns.rr");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    std::fs::remove_file(&rule).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&flat, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut got: Vec<String> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().iter().map(|r| r[3..].join(":")).collect();
+    got.sort();
+    assert_eq!(got, ["a.py:2:10", "a.py:2:4"], "both of line 2's, and none in the argument's string");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2654,10 +2820,7 @@ Plain(n) :- kind(n, "subscript"), !(n ~ `$O[:-$K]`).
     let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&text, &dir.join("src"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| {
-        let f: Vec<&str> = l.split('\t').collect();
-        format!("{}:{}", f[1], f[4])
-    }).collect();
+    let mut got: Vec<String> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().iter().map(|f| format!("{}:{}", f[1], f[4])).collect();
     got.sort();
     assert_eq!(got, ["Cut:1", "Cut:3", "Plain:2"]);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2706,11 +2869,11 @@ select(x) :- values(x), !order(x, _).
 group(n) :- n = count : { order(_, _) }.
 .output values, order, select, group
 "#;
-    let [values, order, select, group] = <[Vec<String>; 4]>::try_from(guests_run("sqlkeywords", &[("a.py", "x = 1\n")], rule, &["values", "order", "select", "group"])).unwrap();
-    assert_eq!(values, ["1", "2", "3"]);
-    assert_eq!(order, ["1\t2", "1\t3", "2\t3"]);
-    assert_eq!(select, ["3"]);
-    assert_eq!(group, ["3"]);
+    let [values, order, select, group] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("sqlkeywords", &[("a.py", "x = 1\n")], rule, &["values", "order", "select", "group"])).unwrap();
+    assert_eq!(values, [["1"], ["2"], ["3"]]);
+    assert_eq!(order, [["1", "2"], ["1", "3"], ["2", "3"]]);
+    assert_eq!(select, [["3"]]);
+    assert_eq!(group, [["3"]]);
 }
 
 /// The native steps a string rule takes: a concatenation (`q = cat("m", ".", x)`), a split read back
@@ -2731,12 +2894,12 @@ hit(x) :- ident(_, x), (contains("ol", x) ; contains("et", x)).
 one(x) :- ident(_, x), (x = "alpha" ; x = "beta").
 .output last, hit, one
 "#;
-    let [last, hit, one] = <[Vec<String>; 3]>::try_from(guests_run("stringsteps", &[("a.py", "alpha = beta + gamma\nwolf = 1\n")], rule, &["last", "hit", "one"])).unwrap();
-    let mut words: Vec<String> = last.iter().map(|l| l.split('\t').nth(1).unwrap().to_owned()).collect();
+    let [last, hit, one] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("stringsteps", &[("a.py", "alpha = beta + gamma\nwolf = 1\n")], rule, &["last", "hit", "one"])).unwrap();
+    let mut words: Vec<String> = last.iter().map(|l| l[1].clone()).collect();
     words.sort();
     assert_eq!(words, ["alpha", "beta", "gamma", "wolf"]);
-    assert_eq!(hit, ["beta", "wolf"]);
-    assert_eq!(one, ["alpha", "beta"]);
+    assert_eq!(hit, [["beta"], ["wolf"]]);
+    assert_eq!(one, [["alpha"], ["beta"]]);
 }
 
 /// Decision 0091: in a combined run, an included library's relations are one copy for the run, made over every
@@ -2764,7 +2927,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(|l| format!("{}:{}", l.split('\t').nth(1).unwrap(), l.split('\t').nth(3).unwrap())).collect();
+        let mut got: Vec<String> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default().iter().map(|r| format!("{}:{}", r[1], r[3])).collect();
         got.sort();
         got
     };
@@ -2772,7 +2935,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     assert_eq!(alone, ["Fn:a/x.py"]);
     assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
     // The library's relation is unguarded in both policies (so the simplifier makes it one); B's rule is guarded.
-    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
     let reads_scope = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).any(|r| r.body.iter().filter_map(|l| l.atom()).any(|x| x.rel.contains("rr_scope_")));
     assert!(!reads_scope("p0_def_at") && !reads_scope("p1_def_at"), "the library's rules stay as written");
     assert!(combined.rules.iter().any(|r| r.head.rel.starts_with("p1_") && r.body.iter().filter_map(|l| l.atom()).any(|x| x.neg && x.rel == "p1_rr_scope_not")), "B's reads are guarded");
@@ -2781,8 +2944,8 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     let c = named("c", "a", "named(f) :- kind(f, \"function_definition\").");
     let d = named("d", "b", "named(x) :- kind(x, \"function_definition\").");
     let e = named("e", "b", "named(f) :- kind(f, \"class_definition\").");
-    assert!(crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &d], "").is_ok());
-    let refused = crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &e], "").err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &d]).is_ok());
+    let refused = crate::code_rule_dsl::logic::plan::corpus::combine(&[&c, &e]).err().map(|e| e.to_string()).unwrap_or_default();
     assert!(refused.contains(".global named"), "{refused}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2803,14 +2966,14 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(|l| format!("{}:{}", l.split('\t').nth(1).unwrap(), l.split('\t').nth(3).unwrap())).collect();
+        let mut got: Vec<String> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default().iter().map(|r| format!("{}:{}", r[1], r[3])).collect();
         got.sort();
         got
     };
     let alone: Vec<String> = [run(&[&a], "out-a"), run(&[&b], "out-b")].concat();
     assert_eq!(alone, ["Fn:a/x.py"]);
     assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
-    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
     let rules_of = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).collect::<Vec<_>>();
     assert!(!rules_of("call_name").is_empty() && rules_of("p0_call_name").is_empty(), "the library is held once, under its own names");
     assert!(rules_of("call_name").iter().all(|r| r.body.iter().filter_map(|l| l.atom()).all(|x| !x.rel.contains("rr_scope_"))), "the library's rules are unguarded");
@@ -2878,17 +3041,14 @@ first(l) :- m = min k : { xs(k) }, line(m, l).
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
     let lines = [1, 2, 4, 6, 7, 8, 10];
-    let want: String = lines.iter().enumerate().flat_map(|(i, a)| lines[i + 1..].iter().map(move |b| format!("{a}\t{b}\n"))).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
-    let before = read("before");
-    let mut got: Vec<&str> = before.lines().collect::<Vec<_>>();
-    got.sort_unstable();
-    let mut want_sorted: Vec<&str> = want.lines().collect();
-    want_sorted.sort_unstable();
-    assert_eq!(got, want_sorted);
-    assert_eq!(read("last"), "10\n");
-    assert_eq!(read("first"), "1\n");
+    let mut want: Vec<Vec<String>> = lines.iter().enumerate().flat_map(|(i, a)| lines[i + 1..].iter().map(move |b| vec![a.to_string(), b.to_string()])).collect();
+    want.sort_unstable();
+    want.dedup();
+    assert_eq!(read("before"), want);
+    assert_eq!(read("last"), [["10"]]);
+    assert_eq!(read("first"), [["1"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3192,6 +3352,7 @@ fn lowers_back(dirs: &[&str], k: usize, n: usize) {
         .filter(|p| p.extension().is_some_and(|e| e == "rr"))
         .collect();
     paths.sort();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().skip(k).step_by(n));
     let (mut read, mut differ) = (0, Vec::new());
     for path in paths.iter().skip(k).step_by(n) {
         let Ok((program, _)) = super::read_file(path) else { continue };
@@ -3296,17 +3457,24 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
     }
     // The `part.0`th of `part.1` parts, by position in name order: a group too long for one test is split.
     paths.sort();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p));
     let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
         let path = path.as_path();
         let Ok((statements, _)) = program(path) else { return None };
         let Ok(whole) = lower_files_dropping(path, statements.clone(), false) else { return None };
-        let own = dunce::canonicalize(path).unwrap();
+        let own = dunce::canonicalize(&path).unwrap();
         let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
-        let less = lower_files_dropping(path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
-        // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them: renumbered by their
-        // first appearance in the pruned rules, as dropped clauses no longer take numbers before them.
+        let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
+        // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them, and `simplify` the
+        // variables it renames apart (`rr_earlier27_f18`, `_t<k>` and `_f<k>` after the name, simplify.rs); dropped
+        // clauses no longer take numbers before them, and a context or cover made once is read again where an equal
+        // one is asked for (`Lowerer::helper_once`), so its rules sit where the first asker, maybe a dropped clause,
+        // made them. So the programs are compared with every helper's number masked (`rr_agg#`, `rr_earlier#_f18`),
+        // and a helper's rules by its stem alone (an aggregate's columns are its fresh variables in the order of
+        // their names, which the numbers change).
         let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
+        let fresh = regex::Regex::new(r"\brr_([a-z]+)([0-9]+)_([ft][0-9]+)\b").unwrap();
         let shape = |mut p: Program| {
             // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
             // (`corpus::run_observed`), those a library derives (embeds, loads) and those lowering makes of a body's
@@ -3317,30 +3485,77 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                     p.outputs.push(rel.to_owned());
                 }
             }
+            // Then simplified and pruned again, as `corpus::run_observed` prepares it: identical relations merge
+            // (`simplify::merge_identical`), so a widened copy (decision 0174) whose kept rules are its relation's own
+            // once its unreached readers' requests are pruned is read as that relation.
+            let mut p = front::prune(p);
+            crate::code_rule_dsl::logic::simplify::simplify(&mut p);
             let p = front::prune(p);
-            let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-            let mut renumber = |s: &str| -> String {
-                helper.replace_all(s, |c: &regex::Captures| {
-                    let n = names.len();
-                    names.entry(c[0].to_owned()).or_insert_with(|| format!("rr_{}#{n}", &c[1])).clone()
-                }).into_owned()
+            // Q3's property itself: no widened copy is left with its relation's own rules, each copy read as its
+            // relation (a recursive copy reads itself, a copy of `r` reads the copy of what `r` reads). A copy equals
+            // its relation when their rules are equal with every equal copy read as its relation: the greatest such
+            // set, from all copies assumed equal, each dropped once its rules differ. (A copy whose read copy differs,
+            // as a cross-file `node_text` read makes it, is rightly its own.)
+            let copies = lower::ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| format!("rr_wide_{}_", a.rel)).collect::<Vec<_>>();
+            let source = |rel: &str| -> String {
+                let mut at = rel;
+                while let Some(r) = copies.iter().find_map(|pre| at.strip_prefix(pre.as_str())) {
+                    at = r;
+                }
+                at.to_owned()
             };
+            // Each as `congruence` compares rules (`simplify::canonical_rule`): up to variable names in every position,
+            // as `simplify` renames inlined variables apart with one counter for the whole program (`_f<k>`, `_t<k>`).
+            let rules_as = |rel: &str, same: &BTreeSet<String>| {
+                let label = |n: &str| front::Name::new(&if same.contains(n) { source(n) } else { n.to_owned() });
+                p.rules.iter().filter(|x| x.head.rel == rel).map(|x| crate::code_rule_dsl::logic::simplify::canonical_rule(x, &label)).collect::<BTreeSet<_>>()
+            };
+            let mut same: BTreeSet<String> = p.decls.keys().filter(|w| source(w) != w.as_str()).map(|w| w.to_string()).collect();
+            loop {
+                let next: BTreeSet<String> = same.iter().filter(|w| rules_as(w, &same) == rules_as(&source(w), &same)).cloned().collect();
+                if next == same {
+                    break;
+                }
+                same = next;
+            }
+            for w in &same {
+                let r = source(w);
+                let raw = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(|x| format!("{x:?}")).collect::<Vec<_>>();
+                assert!(raw(w).is_empty(), "{}: {w} is left with {r}'s own rules\n {w}: {:#?}\n {r}: {:#?}", path.display(), raw(w), raw(&r));
+            }
+            // Why a copy is needed (`RERAIL_WIDE_WITNESS`, from the tape-lab branch's form of this check): a copy kept
+            // apart from its relation reads, to a fixpoint, a copy whose rules differ from its relation's.
+            if std::env::var_os("RERAIL_WIDE_WITNESS").is_some() {
+                let show = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(|x| x.to_string()).collect::<Vec<_>>();
+                for w in p.decls.keys().filter(|w| source(w) != w.as_str() && !same.contains(w.as_str())) {
+                    let differs: Vec<String> = p.rules.iter().filter(|x| x.head.rel == w.as_str()).flat_map(|x| x.body.iter()).filter_map(Literal::atom).map(|a| a.rel.to_string()).filter(|c| source(c) != *c && !same.contains(c)).collect();
+                    eprintln!("{}: {w} needed: reads {differs:?}: {:#?} against {:#?}", path.display(), show(w), show(&source(w)));
+                }
+            }
+            let kept = p.rules.clone();
+            let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#").into_owned();
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.
             let place_variant = |r: &front::Rule| r.head.rel.as_str() == "violation" && r.head.args.iter().any(|a| matches!(a, Term::Call(n, _) if n == "place_path"));
             // A helper's rules (`rr_agg7`, its columns its fresh variables in the order of their names, which the
-            // numbers change) are compared by their number for each helper; every other rule exactly.
-            let numbered = |rel: &str| helper.is_match(rel);
-            let mut rules: Vec<String> = p.rules.iter().filter(|r| !place_variant(r)).map(|r| {
-                let text = renumber(&format!("{r:?}"));
-                if numbered(r.head.rel.as_str()) { format!("helper {}", renumber(r.head.rel.as_str())) } else { text }
-            }).collect();
+            // numbers change) are compared by their stem; every other rule exactly, its helpers' numbers masked. A
+            // widened copy (`rr_wide_node_text_rr_up9`) is compared by its rules.
+            let numbered = |rel: &str| helper.is_match(rel) && !rel.starts_with("rr_wide_");
+            let mut rules: Vec<String> = p
+                .rules
+                .iter()
+                .filter(|r| !place_variant(r))
+                .map(|r| if numbered(r.head.rel.as_str()) { format!("helper {}", mask(r.head.rel.as_str())) } else { mask(&format!("{r:?}")) })
+                .collect();
             rules.sort();
             let named: BTreeSet<String> = p.rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))).collect();
-            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(*r)).map(|(r, c)| if numbered(r) { format!("{}/{}", renumber(r), c.len()) } else { renumber(&format!("{r}{c:?}")) }).collect();
+            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(r.as_str())).map(|(r, c)| if numbered(r) { format!("{}/{}", mask(r), c.len()) } else { mask(&format!("{r}{c:?}")) }).collect();
             decls.sort();
-            let natives: BTreeSet<String> = p.natives.keys().map(|n| renumber(n)).collect();
+            let natives: BTreeSet<String> = p.natives.keys().map(|n| mask(n)).collect();
+            // The facts of the relations the rules name (`simplify` makes ground rules facts), and the outputs'.
+            let mut facts: Vec<String> = p.facts.iter().filter(|(r, _)| named.contains(r.as_str()) || p.outputs.contains(r)).map(|(r, rows)| mask(&format!("{r}{rows:?}"))).collect();
+            facts.sort();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
             // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.
             let text = format!("{:?}{:?}", p.rules, p.natives);
@@ -3348,15 +3563,43 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             inputs.sort();
             let mut outputs = p.outputs.clone();
             outputs.sort();
-            (rules, decls, natives, outputs, inputs)
+            ((rules, decls, natives, outputs, inputs, facts), kept)
         };
-        let (a, b) = (shape(less), shape(whole));
+        let ((a, kept_less), (b, kept_whole)) = (shape(less), shape(whole));
         if a != b {
-            let only = |x: &Vec<String>, y: &Vec<String>| x.iter().filter(|r| !y.contains(r)).take(3).cloned().collect::<Vec<_>>();
+            // The first relation only the whole keeps, and the kept rules that read it, back to an output.
+            let heads = |rules: &[front::Rule]| rules.iter().map(|r| r.head.rel.to_string()).collect::<BTreeSet<String>>();
+            let less_heads = heads(&kept_less);
+            let mut chain: Vec<String> = Vec::new();
+            if let Some(extra) = kept_whole.iter().map(|r| r.head.rel.to_string()).find(|h| !less_heads.contains(h) && !helper.is_match(h)) {
+                let mut at = extra;
+                while chain.len() < 12 && !chain.contains(&at) {
+                    chain.push(at.clone());
+                    match kept_whole.iter().find(|r| r.head.rel != at.as_str() && r.body.iter().filter_map(Literal::atom).any(|l| l.rel == at.as_str())) {
+                        Some(r) => {
+                            chain.push(format!("{r}"));
+                            at = r.head.rel.to_string()
+                        }
+                        None => break,
+                    }
+                }
+            }
+            // What `x` has more of than `y` (a rule twice on one side is a difference).
+            let only = |x: &Vec<String>, y: &Vec<String>| {
+                let mut left = y.clone();
+                x.iter().filter(|r| match left.iter().position(|l| l == *r) {
+                    Some(i) => {
+                        left.remove(i);
+                        false
+                    }
+                    None => true,
+                }).take(3).cloned().collect::<Vec<_>>()
+            };
             panic!(
-                "{}: its pruned program changed with its unreached clauses dropped\n rules only dropped: {:?}\n rules only whole: {:?}\n decls only dropped: {:?}\n decls only whole: {:?}\n natives {:?} vs {:?}\n outputs {:?} vs {:?}\n inputs {:?} vs {:?}",
+                "{}: its pruned program changed with its unreached clauses dropped\n read by: {chain:?}\n rules only dropped: {:?}\n rules only whole: {:?}\n decls only dropped: {:?}\n decls only whole: {:?}\n natives {:?} vs {:?}\n outputs {:?} vs {:?}\n inputs {:?} vs {:?}\n facts only dropped: {:?}\n facts only whole: {:?}",
                 path.display(), only(&a.0, &b.0), only(&b.0, &a.0), only(&a.1, &b.1), only(&b.1, &a.1), a.2, b.2, a.3, b.3,
-                (a.0.len(), a.1.len(), a.4.len(), only(&a.4, &b.4)), (b.0.len(), b.1.len(), b.4.len(), only(&b.4, &a.4))
+                (a.0.len(), a.1.len(), a.4.len(), only(&a.4, &b.4)), (b.0.len(), b.1.len(), b.4.len(), only(&b.4, &a.4)),
+                only(&a.5, &b.5), only(&b.5, &a.5)
             );
         }
         Some((n, n - kept))
@@ -3408,3 +3651,226 @@ fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
     assert!(n > 20, "{n} programs compared");
 }
 
+
+/// tsx/es-globals.rr is es_global's rows: the engine's ECMAScript globals table for `ecmaVersion: "latest"`, name for
+/// name (the scope code reads the same table, `scope::options::EsGlobals`).
+#[test]
+fn es_globals_match_the_engines_table() {
+    let table: serde_json::Value = serde_json::from_str(include_str!("../../scope/data/es_globals.generated.json")).unwrap();
+    let latest = table["latest"].as_u64().unwrap().to_string();
+    let want: std::collections::BTreeSet<String> = table["versions"][&latest].as_object().unwrap().keys().cloned().collect();
+    let rows = include_str!("../../../../../docs/rule-syntax/lib/tsx/es-globals.rr");
+    let got: std::collections::BTreeSet<String> = rows
+        .lines()
+        .filter_map(|l| l.strip_prefix("es_global(\"")?.strip_suffix("\").").map(str::to_owned))
+        .collect();
+    assert!(!want.is_empty());
+    assert_eq!(got, want, "regenerate tsx/es-globals.rr from es_globals.generated.json's version {latest}");
+}
+
+/// What only the engine reads is reached: a library's request rule, whose head nothing reads but whose body reads
+/// the file system (`py_listed(d) :- py_file_at(_, _, d, _), dir_entry(d, _, _)`), and a rule deriving one of the
+/// engine's relations (`load(f, q, "python")`). Dropped, a run loading modules listed no directory and loaded
+/// nothing (`the_cone_of_requests_is_kept_while_its_reads_and_answers_are`).
+#[test]
+fn dropping_unreached_clauses_keeps_what_the_engine_reads() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("engine-reads");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("p.rr");
+    std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let p = parse_file(&rule).unwrap();
+    let heads: std::collections::BTreeSet<&str> = p.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    assert!(heads.contains("load"), "load's rule is kept");
+    assert!(heads.contains("py_listed"), "the request rule is kept");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two programs run as one: each one's `has` over a guest's nodes still finds them. The merge names kind sets by
+/// their kinds; it renamed `inside`'s axis to the shared set but left `has`'s on the program's own set name, which
+/// guest hiding then could not name in the guest's grammar: no row.
+#[test]
+fn has_over_a_guest_holds_with_two_programs() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("has2");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f(db):\n    db.execute(\"SELECT name FROM users\")\n").unwrap();
+    let text = |clause: &str, body: &str| {
+        let path = dir.join(format!("{clause}.rr"));
+        std::fs::write(&path, format!(
+            "embed(d, s, \"sql\", \"query\") :- kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), docof(s, d).\n.violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
+        )).unwrap();
+        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
+    };
+    let has = text("has_ref", "guest(g, _, _, \"sql\"), doc_root(g, n), has(n, _, \"object_reference\")");
+    let other = text("calls", "kind(n, \"call\")");
+    let out = dir.join("out");
+    let options = serde_json::json!({ "memo": "off" });
+    crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[has.as_str(), other.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+    // The findings as the image holds them (decision 0249 §6), not as text.
+    let rows = crate::code_rule_dsl::tools::diagnostics(&out).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let codes: std::collections::BTreeSet<&str> = rows.iter().filter_map(|r| r["code"].as_str()).collect();
+    assert!(codes.contains("has_ref") && codes.contains("calls"), "both programs' findings: {rows:?}");
+}
+
+/// Decision 0246 §1: a pack's library lowered one module at a time, each module against the modules it reaches, and
+/// linked, is the program lowering its files as one gives. Every pack's library, in the order a run of the pack
+/// lists its files (each program's includes first).
+#[test]
+fn library_modules_link_to_the_lowering_of_them_together() {
+    let packs = crate::code_rule_dsl::logic::rr::library().join("../packs");
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&packs).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    let mut checked = 0;
+    for dir in dirs {
+        let mut programs: Vec<PathBuf> = walk_rr(&dir);
+        programs.sort();
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for p in &programs {
+            let Ok(src) = std::fs::read_to_string(p) else { continue };
+            let Ok(Some(m)) = modules(&src) else { continue };
+            for (path, _, _) in m.files {
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+        if paths.is_empty() {
+            continue;
+        }
+        let files: Vec<(PathBuf, Vec<syntax::Statement>)> = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect())).collect();
+        let together = lower::lower(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
+        let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        // Each module read back from its image (decision 0246 §6) links to the same program.
+        let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
+        let linked = lower::link(modules).unwrap();
+        let from_images = print(&lower::link(images).unwrap()).unwrap();
+        let (a, b) = (print(&together).unwrap(), print(&linked).unwrap());
+        let differ = |what: &str, a: &str, b: &str| {
+            let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+            let first = la.iter().zip(&lb).position(|(x, y)| x != y).unwrap_or(la.len().min(lb.len()));
+            // The lines one side has and the other not, helper numbers aside (`rr_agg169` and `rr_agg167` are one).
+            let plain = |l: &str| l.split(|c: char| !(c.is_alphanumeric() || c == '_')).map(|w| if w.starts_with("rr_") { w.trim_end_matches(|c: char| c.is_ascii_digit()) } else { w }).collect::<Vec<_>>().join(" ");
+            let (sa, sb): (BTreeSet<String>, BTreeSet<String>) = (la.iter().map(|l| plain(l)).collect(), lb.iter().map(|l| plain(l)).collect());
+            let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(30).cloned().collect::<Vec<_>>().join("\n    ");
+            panic!("{}: {} files; {what} differs at line {first} ({} lines and {}):\n  {:?}\n  {:?}\n  only the first:\n    {}\n  only the second:\n    {}", dir.display(), paths.len(), la.len(), lb.len(), la.get(first), lb.get(first), only(&sa, &sb), only(&sb, &sa));
+        };
+        if a != b {
+            differ("the library linked from its modules, from the one lowered together,", &a, &b);
+        }
+        if b != from_images {
+            differ("the library linked from its modules' images, from the one linked from its modules,", &b, &from_images);
+        }
+        checked += 1;
+    }
+    assert!(checked > 5, "{checked} packs with a library");
+}
+
+fn walk_rr(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk_rr(&p));
+        } else if p.extension().is_some_and(|x| x == "rr") {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
+/// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rr`).
+#[test]
+fn a_program_adds_only_to_extensible_library_relations() {
+    let closed = "#include \"python/ast.rr\"\nunparen(a, a) :- kind(a, \"call\").\n";
+    let refused = super::read_text(closed).unwrap().lower(false).expect_err("unparen is not extensible");
+    assert!(refused.to_string().contains("`unparen` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
+    let open = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
+    super::read_text(open).unwrap().lower(false).expect("cmp_same_ask is extensible");
+}
+
+/// Decision 0275: a text's header is kept under its bytes with the library files its includes read, and found again:
+/// the header found is the header read, and another text's is its own.
+#[test]
+fn a_texts_header_is_found_under_its_bytes() {
+    let text = "#include \"core.rr\"\n.policy \"test:header-0275\" revision 1\n.language python\n.decl out(x: symbol)\n.output out\n";
+    let header = text_header(text).unwrap();
+    let kept = kept_header_found(text).expect("kept by the first read");
+    assert_eq!(format!("{kept:?}"), format!("{header:?}"), "the header kept is the header read");
+    assert!(kept.settings.iter().any(|(k, v)| k == "policy" && v.contains("test:header-0275")), "{:?}", kept.settings);
+    assert_eq!(format!("{:?}", text_header(text).unwrap()), format!("{header:?}"), "read again from the entry");
+    let other = text.replace("header-0275", "header-0275-b");
+    assert!(kept_header_found(&other).is_none(), "another text: its own entry");
+}
+
+/// Decision 0275: a rule file's program is kept under its path and sha with the files it read, and found again while
+/// each still reads as recorded: by its `stat`, and by its sha where the stat moved. An edit to an included file reads
+/// the program again; its bytes put back, the stat moved but the sha holds, and the entry is found again.
+#[test]
+fn a_rule_files_program_is_found_while_what_it_read_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let (main, helper) = (dir.path().join("main.rr"), dir.path().join("helper_0275.rr"));
+    let original = ".decl helper(x: symbol)\nhelper(\"a\").\n";
+    std::fs::write(&helper, original).unwrap();
+    std::fs::write(&main, "#include \"helper_0275.rr\"\n.decl out(x: symbol)\nout(x) :- helper(x).\n.output out\n").unwrap();
+    let main = dunce::canonicalize(&main).unwrap();
+    let found = || kept_program_found(&main);
+    assert!(found().is_none(), "nothing kept before the first read");
+    let (program, files) = read_file(&main).unwrap();
+    let (kept, kept_files) = found().expect("kept by the first read");
+    assert_eq!(format!("{kept:?}"), format!("{program:?}"), "the program kept is the program read");
+    assert_eq!(kept_files, files, "with the files it read, in reading order");
+    std::fs::write(&helper, ".decl helper(x: symbol)\nhelper(\"b\").\n").unwrap();
+    assert!(found().is_none(), "an included file edited: read again");
+    std::fs::write(&helper, original).unwrap();
+    assert!(found().is_some(), "its bytes put back: its sha holds though its stat moved");
+}
+
+/// Decision 0089 §3 with 0174: a program that adds to a library relation takes the library's readers of it (its
+/// cone), not the on-request rewrite's rules. Through those (`x`'s readers' request for `value`, `value`'s answer) the
+/// cone reached every reader of the attribute: `z` here, and 1,300 of the Python pack's library rules in each of its
+/// five programs that ask of the library.
+#[test]
+fn a_cone_is_taken_without_the_attributes_requests() {
+    let decls = ".decl kind(n: node, k: symbol)\n.input kind\n.decl value(n: node, v: symbol)\n.input value\n.decl x(n: node)\n.decl y(n: node, v: symbol)\n.decl z(n: node, v: symbol)\n";
+    let library = parse(&format!("{decls}x(n) :- kind(n, \"call\").\ny(n, v) :- x(n), value(n, v).\nz(n, v) :- kind(n, \"name\"), value(n, v).\n.output y, z\n")).unwrap();
+    assert!(library.rules.iter().any(|r| r.head.rel == "rr_value_req"), "the library reads `value` on request: {:?}", library.rules.iter().map(|r| r.head.rel.to_string()).collect::<Vec<_>>());
+    // As `Text::lower_in` does: the program's own rewrite undone, the cone added, the rewrite made again over both.
+    let mut program = parse(&format!("{decls}x(n) :- kind(n, \"attribute\").\n")).unwrap();
+    lower::undo_on_request(&mut program);
+    let declared: BTreeSet<String> = ["kind", "value", "x", "y", "z"].into_iter().map(str::to_owned).collect();
+    crate::code_rule_dsl::logic::rr::with_cone(&mut program, &library, &["x".to_owned()].into(), &declared);
+    let heads: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    assert!(heads.contains("y"), "`y` reads `x`: {heads:?}");
+    assert!(!heads.contains("z"), "`z` reads only `value`: {heads:?}");
+    assert!(!heads.iter().any(|h| lower::on_request_rule(h)), "the rewrite's rules are not copied from the library: {heads:?}");
+    for round in lower::ON_REQUEST {
+        lower::sources_on_request(&mut program, round);
+    }
+    let asks: Vec<String> = program.rules.iter().filter(|r| r.head.rel == "rr_value_req").map(|r| format!("{:?}", r.body)).collect();
+    assert!(asks.len() == 1 && asks[0].contains("\"x\""), "`y`'s nodes are asked for, by `x`: {asks:?}");
+}
+
+/// Decision 0174 §6: an attribute a cross-file reader asks for stays eager. `@rr_node_value` reads the node's document
+/// from the chunk's batch, which the cross-file part does not hold: answered there, every reader of `value` saw no
+/// value, the file-local ones too (`vals`), as the Python pack's `__all__` and `exports` readers made it.
+#[test]
+fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
+    let rule = r#"
+.policy "t:values" revision 1
+.decl pick(n: node)
+pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
+.decl cv(v: symbol)
+cv(v) :- pick(n), value(n, v).
+.decl vals(v: symbol)
+vals(v) :- kind(n, "integer"), value(n, v).
+.decl ends(l: number)
+ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
+.output cv, vals, ends
+"#;
+    let [cv, vals, ends] = <[Vec<String>; 3]>::try_from(joined(guests_run("cross-value", &[("a.py", "x = 1\n"), ("b.py", "x = 2\n")], rule, &["cv", "vals", "ends"]))).unwrap();
+    assert_eq!(vals, ["1", "2"], "the file-local reader's values");
+    assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
+    // With `value`'s round undone the program still has core.rr's shape: its token leaves are made.
+    assert_eq!(ends, ["1"], "a token leaf's reader");
+}

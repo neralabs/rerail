@@ -1,0 +1,58 @@
+.policy "ruff-air002-airflow-dag-no-schedule-argument" revision 1
+.guests off
+.description "Give every Airflow Dag an explicit schedule; the implicit default changed from daily to none in Airflow 3, silently stopping Dags that relied on it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/names.rr"
+
+// AIR002(n): a finding at node n, from clause `dag-without-schedule`.
+// Each rule below is one way the JSON `rule` can match.
+.violation AIR002(at: node) "Pass an explicit `schedule=` to this Dag (`schedule=None` if it should only run when triggered); relying on the default changes behaviour between Airflow 2 and 3."
+    suppress noqa "AIR002"
+AIR002(n) :- kind(n, "call"), field(n, "function", c1), air002_dag_callee(c1),
+    count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), air002_tok_has_2(c3) } = 0.
+
+// dag_site(n): the JSON util `dag-site`, used where the JSON says `matches: "dag-site"`
+.decl air002_dag_site(n: node)
+air002_dag_site(n) :- kind(n, "dotted_name"), glob("{DAG,dag}", n), child(p1, n, _),
+    kind(p1, "import_from_statement").
+air002_dag_site(n) :- kind(n, "aliased_import"), field(n, "name", c2),
+    match(".*(^|\\.)\\s*(DAG|dag)", c2).
+
+// dag_callee(n): the JSON util `dag-callee`, used where the JSON says `matches: "dag-callee"`
+.decl air002_dag_callee(n: node)
+air002_dag_callee(n) :- kind(n, "attribute"), sym_of(n, q1), match("(airflow)(\\.|$).*", q1),
+    air002_tok_has_1(n).
+air002_dag_callee(n) :- kind(n, "identifier"),
+    sym_of(n, q10), match("(airflow)(\\.|$).*", q10), ref_site(n, b11), st12 = b11,
+    air002_dag_site(st12).
+air002_dag_callee(n) :- kind(n, "parenthesized_expression"), child(n, c13, _),
+    air002_dag_callee(c13).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(DAG|dag)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air002_tok_has_1(n: node)
+.stored air002_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air002_tok_has_1(n) :- field(n, "attribute", c2), glob("{DAG,dag}", c2).
+air002_tok_has_1(n) :- op(n, t3), match("(DAG|dag)", t3).
+air002_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:DAG)(?:\\W.*)?|(?:.*\\W)?(?:dag)(?:\\W.*)?)$", g4).
+air002_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:DAG)(?:\\W.*)?|(?:.*\\W)?(?:dag)(?:\\W.*)?)$", g4).
+air002_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:DAG)(?:\\W.*)?|(?:.*\\W)?(?:dag)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(schedule|schedule_interval|timetable)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air002_tok_has_2(n: node)
+.stored air002_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air002_tok_has_2(n) :- field(n, "name", c4),
+    glob("{schedule,schedule_interval,timetable}", c4).
+air002_tok_has_2(n) :- op(n, t5), match("(schedule|schedule_interval|timetable)", t5).
+air002_tok_has_2(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:schedule)(?:\\W.*)?|(?:.*\\W)?(?:schedule_interval)(?:\\W.*)?|(?:.*\\W)?(?:timetable)(?:\\W.*)?)$", g6).
+air002_tok_has_2(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:schedule)(?:\\W.*)?|(?:.*\\W)?(?:schedule_interval)(?:\\W.*)?|(?:.*\\W)?(?:timetable)(?:\\W.*)?)$", g6).
+air002_tok_has_2(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:schedule)(?:\\W.*)?|(?:.*\\W)?(?:schedule_interval)(?:\\W.*)?|(?:.*\\W)?(?:timetable)(?:\\W.*)?)$", g6).

@@ -15,10 +15,28 @@ pub fn max() -> usize {
 }
 
 /// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
-/// the addon, `lib.rs`, never its constructor). The engine's `main` calls it with `this_thread`, so its main thread
-/// is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
+/// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
+/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
 pub fn configure(this_thread: bool) {
     rerail_accel::exec::configure(this_thread);
+}
+
+/// Whether this is the process's main thread.
+pub fn is_main_thread() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: no arguments.
+        unsafe { libc::pthread_main_np() == 1 }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: no arguments.
+        unsafe { libc::gettid() == libc::getpid() }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        false
+    }
 }
 
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
@@ -34,10 +52,12 @@ impl<'s> Jobs<'s, '_> {
     pub fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
         #[cfg(not(target_family = "wasm"))]
         {
-            // The job's span is under the one open where it was started, on whichever thread runs it.
-            let under = crate::code_rule_dsl::logic::profile::here();
+            // The job runs in the run's context where it was started (`run_state`), and its span is under the one
+            // open there, on whichever thread runs it.
+            let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             self.0.spawn(move |s| {
-                let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
+                let _in = carry.enter();
+                let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
                 rerail_accel::exec::as_job(name, || f(&Jobs(s)))
             });
         }
@@ -70,14 +90,21 @@ pub(crate) struct Beside<T> {
     slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
 }
 
+/// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
+/// every rule) is work the caller does not need done before it goes on. It reads no run context, so it carries none.
+pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
+    rayon::spawn(move || drop(value));
+}
+
 /// Starts `f` beside the caller ([`Beside`]).
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
     let held = std::sync::Arc::clone(&slot);
-    let under = crate::code_rule_dsl::logic::profile::here();
+    let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let run = move || {
         held.1.store(true, std::sync::atomic::Ordering::Release);
-        let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
+        let _in = carry.enter();
+        let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.0.lock() = Some(r);
     };

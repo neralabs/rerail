@@ -1,5 +1,8 @@
 //! Capacity limits, object pins, and collection of unreachable rows.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
+use super::connection::{BusyRetries, retry_busy};
 use super::rows::{generation, intern_string};
 use super::snapshots::GIT_TREE_BATCH_ENTRIES;
 use super::{
@@ -26,6 +29,21 @@ impl ContentStore {
         self.pin_object(OBJECT_SOURCE, source_id.0, owner, lease_until)
     }
 
+    /// When `owner`'s pin of `source_id` ends (unix seconds), where it has one: a reader renews a lease only once it
+    /// has run down, so a run that reads what an earlier run kept writes nothing (decision 0250).
+    pub fn source_lease(&self, source_id: SourceId, owner: &str) -> StoreResult<Option<i64>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        connection
+            .query_row_cached(
+                "SELECT p.lease_until FROM object_pins p JOIN strings s ON s.string_id=p.owner_string_id \
+                 WHERE p.object_kind_id=?1 AND p.object_id=?2 AND s.domain_id=?3 AND s.value=?4",
+                params![OBJECT_SOURCE, source_id.0, STRING_OWNER, owner],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
     pub fn pin_tape(&self, tape_id: TapeId, owner: &str, lease_until: i64) -> StoreResult<()> {
         self.pin_object(OBJECT_TAPE, tape_id.0, owner, lease_until)
     }
@@ -46,7 +64,7 @@ impl ContentStore {
             .expect("content store mutex poisoned");
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let owner_id = intern_string(&transaction, STRING_OWNER, owner)?;
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
@@ -171,14 +189,17 @@ impl ContentStore {
         if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
             *self.holder.lock() = None;
         }
-        let connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        connection.execute(
-            "DELETE FROM object_pins WHERE owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2)",
-            params![STRING_OWNER, owner],
-        ).map_err(StoreError::from)
+        // A write: it waits out other writers as every store write does, the connection held by each attempt alone.
+        retry_busy(&mut BusyRetries::default(), || {
+            self.connection
+                .lock()
+                .expect("content store mutex poisoned")
+                .execute(
+                    "DELETE FROM object_pins WHERE owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2)",
+                    params![STRING_OWNER, owner],
+                )
+                .map_err(StoreError::from)
+        })
     }
 
     pub fn capacity(&self) -> StoreResult<StoreCapacity> {
@@ -231,8 +252,35 @@ impl ContentStore {
         self.collect_held(now, batch)
     }
 
-    /// The caller holds the exclusive collection lease through the complete pass.
+    /// The caller holds the exclusive collection lease through the complete pass. Its transaction, and then the
+    /// vacuum (a write too), wait out other writers as every store write does (`retry_busy`): one attempt each, with
+    /// SQLite's busy timeout alone, failed the pass while parallel writers held the store (O-collector-busy-flake).
     pub(super) fn collect_held(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
+        let report = retry_busy(&mut BusyRetries::default(), || self.collect_held_once(now, batch))?;
+        // Free pages back to the file system, a write of its own after the pass committed: a writer holding the
+        // store past the retries leaves them to the next pass. Failing the pass for it failed a collector whose rows
+        // were already collected.
+        match retry_busy(&mut BusyRetries::default(), || {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+            incremental_vacuum(&connection, 4096)
+        }) {
+            Ok(()) | Err(StoreError::Busy) => {}
+            Err(error) => return Err(error),
+        }
+        self.decompressed_cache
+            .lock()
+            .expect("decompressed cache mutex poisoned")
+            .clear();
+        self.local_result_cache
+            .lock()
+            .expect("local result cache mutex poisoned")
+            .clear();
+        Ok(report)
+    }
+
+    /// One attempt at `collect_held`'s transaction: run again whole if it finds the store busy.
+    fn collect_held_once(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
         self.decompressed_cache
             .lock()
             .expect("decompressed cache mutex poisoned")
@@ -497,17 +545,6 @@ impl ContentStore {
             [],
         )?;
         self.commit(transaction)?;
-        connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
-        incremental_vacuum(&connection, 4096)?;
-        drop(connection);
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .clear();
-        self.local_result_cache
-            .lock()
-            .expect("local result cache mutex poisoned")
-            .clear();
         Ok(report)
     }
 }

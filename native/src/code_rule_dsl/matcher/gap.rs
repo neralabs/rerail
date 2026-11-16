@@ -58,7 +58,9 @@ pub(in crate::code_rule_dsl) enum Place {
 pub struct GapTest {
     pub(in crate::code_rule_dsl) place: Place,
     pub(in crate::code_rule_dsl) regex: Regex,
-    pub(in crate::code_rule_dsl) grammar: Arc<TokenGrammar>,
+    /// The dialect's automata, decoded when the test first runs on a tape ([`Self::grammar`]): compiling a rule
+    /// asks the census, and a warm run that tests no tape decodes nothing.
+    pub(in crate::code_rule_dsl) grammar: std::sync::OnceLock<Option<Arc<TokenGrammar>>>,
     pub(in crate::code_rule_dsl) dialect: GrammarDialect,
     /// A neighbour walk's `stopBy: {not: X}`: X, which must name only kinds and tokens (by a bare
     /// regex), so the walk passes them. `None`: a plain neighbour, where an extra
@@ -300,6 +302,10 @@ impl ImpliedPassed {
 }
 
 impl GapTest {
+    fn grammar(&self) -> Option<&Arc<TokenGrammar>> {
+        self.grammar.get_or_init(|| TokenGrammar::of_dialect(self.dialect)).as_ref()
+    }
+
     /// Whether an implied token the regex matches is at the test's place.
     pub(in crate::code_rule_dsl) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         let found = self.found(node, true);
@@ -333,7 +339,7 @@ impl GapTest {
         match items[candidate] {
             Item::Child(child) => Some((children[child].range(), children[child].text().into_owned())),
             Item::Token(text, _) => {
-                let start = ParentReader(&self.grammar).token_starts(&found.owner, children, items)[candidate]?;
+                let start = ParentReader(self.grammar()?).token_starts(&found.owner, children, items)[candidate]?;
                 Some((start..start + text.len(), text.to_owned()))
             }
         }
@@ -352,7 +358,8 @@ impl GapTest {
             Place::Own | Place::Field(_) => node.clone(),
             _ => node.parent()?,
         };
-        let read = super::memo::parent_gaps(Arc::as_ptr(&self.grammar) as usize, &owner, || ParentReader(&self.grammar).read(&owner))?;
+        let grammar = self.grammar()?;
+        let read = super::memo::parent_gaps(Arc::as_ptr(grammar) as usize, &owner, || ParentReader(grammar).read(&owner))?;
         let items = &read.items;
         let children = std::cell::OnceCell::new();
         let child = |k: usize| children.get_or_init(|| owner.children().collect::<Vec<_>>())[k].clone();

@@ -31,13 +31,13 @@ fn kinds_flow_through_derived_columns_and_facts() {
     })
     .unwrap();
     let tag = tape_tag(python).unwrap();
-    let integer = i64::from(kind_atom(tag, python.kinds().kind_id("integer")));
-    assert_eq!(l.program.facts["lit"][0][0], Value::Int(integer));
-    assert!(matches!(l.program.facts["lit"][0][1], Value::Int(n) if n > 100));
+    let integer = kind_atom(tag, python.kinds().kind_id("integer"));
+    assert_eq!(l.program.facts["lit"][0][0], Value::Branded(Branded { class: Class::Kind, atom: integer }));
+    assert!(matches!(l.program.facts["lit"][0][1], Value::Branded(Branded { class: Class::Name, atom }) if atom > 100));
     let body = &l.program.rules.iter().find(|r| r.head.rel == "typed").unwrap().body;
     let Literal::Atom(field) = &body[2] else { panic!() };
-    let left = i64::from(field_atom(tag, python.kinds().field_id("left").unwrap()));
-    assert_eq!(field.args[1], Term::Int(left));
+    let left = field_atom(tag, python.kinds().field_id("left").unwrap());
+    assert_eq!(field.args[1], Term::Branded(Branded { class: Class::Field, atom: left }));
     assert!(interned.contains(&"x".to_owned()) && interned.contains(&"+".to_owned()));
 }
 
@@ -71,9 +71,70 @@ fn a_kind_membership_compares_kind_atoms() {
     })
     .unwrap();
     let tag = tape_tag(python).unwrap();
-    let atom = |k: &str| Term::Int(i64::from(kind_atom(tag, python.kinds().kind_id(k))));
-    let cmp = |op, k: &str| Literal::Cmp { l: Term::Var("k".to_owned()), op, r: atom(k) };
+    let atom = |k: &str| Term::Branded(Branded { class: Class::Kind, atom: kind_atom(tag, python.kinds().kind_id(k)) });
+    let cmp = |op, k: &str| Literal::Cmp { l: Term::Var("k".into()), op, r: atom(k) };
     let bodies = |rel: &str| l.program.rules.iter().filter(|r| r.head.rel == rel).map(|r| r.body[1..].to_vec()).collect::<Vec<_>>();
     assert_eq!(bodies("r"), [vec![cmp("=", "call")], vec![cmp("=", "attribute")]]);
     assert_eq!(bodies("s"), [vec![cmp("!=", "call"), cmp("!=", "attribute")]]);
+}
+
+/// Lowered for two stores that number their atoms apart, a program differs only in its branded names, and moving the
+/// first's to the second's atoms (`relocate`, decision 0270) gives the second: every name is found, kinds, fields and
+/// integers stay. Its image keeps each atom's brand.
+#[test]
+fn a_program_lowered_for_one_store_moves_to_another() {
+    let p = parse(&format!(
+        "{BASE}.decl kind(n: node, k: symbol)\n.decl lit(k: symbol, t: symbol)\n.decl typed(n: node, t: symbol, i: number)\n.output typed\n\
+         kind(n, k) :- node(_, n, k, _, _).\nlit(\"integer\", \"int\").\n\
+         typed(n, t, 3) :- kind(n, k), lit(k, t), field(p, \"left\", n), text(p, \"x\"), t != \"str\".\n"
+    ))
+    .unwrap();
+    let python = dialect_by_label("python").unwrap();
+    let lowered = |base: u32| {
+        let mut names = Vec::new();
+        let l = lower(&p, python, &mut |s| {
+            names.extend(s.iter().map(|s| (*s).to_owned()));
+            Ok((0..s.len() as u32).map(|i| base + 3 * i).collect())
+        })
+        .unwrap();
+        (l.program, names)
+    };
+    let (mut here, names) = lowered(7);
+    let (there, again) = lowered(1000);
+    assert_eq!(names, again);
+    assert_ne!(format!("{:?}", here.rules), format!("{:?}", there.rules));
+    let to: HashMap<u32, u32> = (0..names.len() as u32).map(|i| (7 + 3 * i, 1000 + 3 * i)).collect();
+    assert!(relocate(&mut here, &to));
+    assert_eq!(format!("{:?}", here.rules), format!("{:?}", there.rules));
+    assert_eq!(here.facts, there.facts);
+    // A name no intern call made is not moved: the caller prepares again.
+    let (mut short, _) = lowered(7);
+    assert!(!relocate(&mut short, &HashMap::default()));
+    // The image keeps the brands: read back, the program is the one written.
+    let bytes = crate::code_rule_dsl::logic::program_image::encode(&there).unwrap();
+    let back = crate::code_rule_dsl::logic::program_image::decode(&bytes, &Default::default()).unwrap();
+    assert_eq!(format!("{:?}", back.rules), format!("{:?}", there.rules));
+    assert_eq!(back.facts, there.facts);
+}
+
+/// Outside the run (a memo entry, a session's frames) a column of kind or field atoms is no store atom: they are
+/// grammar codes (`field.f` is `tag << 16 | code`), and mapped as atoms between processes a field atom past the
+/// store's end was read as another process's atom, inside the waves.
+#[test]
+fn kind_and_field_columns_are_not_stored_as_atoms() {
+    let p = parse(&format!(
+        "{BASE}.decl kind(n: node, k: symbol)\n.decl named(n: node, f: symbol, s: symbol)\n.output named\n\
+         kind(n, k) :- node(_, n, k, _, _).\nnamed(c, f, s) :- field(p, f, c), kind(p, \"call\"), text(c, s).\n"
+    ))
+    .unwrap();
+    let d = domains(&p).unwrap();
+    let atom_columns = |p: &Program, d: &Domains, rel: &str| {
+        let types: Vec<&str> = p.decls.get(rel).map(|cs| cs.iter().map(|(_, t)| t.as_str()).collect()).unwrap_or_default();
+        super::atom_columns(&types, d, rel)
+    };
+    assert_eq!(atom_columns(&p, &d, "field"), [false, false, false]);
+    assert_eq!(atom_columns(&p, &d, "node"), [false; 5]);
+    assert_eq!(atom_columns(&p, &d, "text"), [false, true]);
+    assert_eq!(atom_columns(&p, &d, "kind"), [false, false], "a derived kind column");
+    assert_eq!(atom_columns(&p, &d, "named"), [false, false, true], "a derived field column, and a name");
 }

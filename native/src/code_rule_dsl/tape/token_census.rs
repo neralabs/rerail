@@ -2,7 +2,6 @@
 //! kind, and each kind's parents (`compile::token_tests`, `logic::rr::token_reads`).
 
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::tape::tokens::TokenGrammar;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One dialect's automata, as the census asks them.
@@ -11,19 +10,33 @@ pub struct Lang {
     pub implied: BTreeMap<String, BTreeSet<(String, String)>>,
     pub parents: BTreeMap<String, BTreeSet<String>>,
     pub tokens: BTreeSet<String>,
+    pub extras: BTreeSet<String>,
 }
 
 impl Lang {
-    /// Built once per dialect, like its `TokenGrammar` (every rule compiled reads it).
+    /// Read once per dialect, as the build wrote it (`tokens::census`): no automaton is decoded for it.
     pub fn of(lang: GrammarDialect) -> Option<&'static Self> {
         static BY_DIALECT: [std::sync::OnceLock<Option<Lang>>; 256] = [const { std::sync::OnceLock::new() }; 256];
         BY_DIALECT
             .get(lang as usize)?
             .get_or_init(|| {
-                let grammar = TokenGrammar::of_dialect(lang)?;
-                Some(Self { dialect: lang, implied: grammar.implied_tokens(), parents: grammar.parents(), tokens: grammar.token_texts() })
+                let census = super::token_automata::decode_census(super::tokens::census(lang)?)?;
+                Some(Self { dialect: lang, implied: census.implied, parents: census.parents, tokens: census.tokens, extras: census.extras })
             })
             .as_ref()
+    }
+
+    /// Whether `regex` tests a token the grammar implies somewhere, in `field` where one is given: it matches one. A
+    /// regex that also matches names (`(?s).`, `^`) counts too: `not follows (?s).` asks for a first child, and a
+    /// node after an implied `(` was never one. A `has` in a field whose implied words hold no such token asks only
+    /// for stored children.
+    pub fn tests_implied(&self, regex: &regex::Regex, field: Option<&str>) -> bool {
+        self.implied.values().flatten().any(|(token, token_field)| field.is_none_or(|field| field == token_field) && regex.is_match(token))
+    }
+
+    /// Whether `kind` is one of the grammar's extras (a comment and the like).
+    pub fn is_extra(&self, kind: &str) -> bool {
+        self.extras.contains(kind)
     }
 
     /// The parents among `parents` (all kinds where `None`) where a token `regex` matches is

@@ -113,7 +113,7 @@ spta_rc_type("type").
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl within(n: node, a: node)
-.input doc, node, child, field, text, name, line, syntax_error, within, value, value_type_of, node_text
+.input doc, node, child, field, text, name, line, syntax_error, within, value_type_of, node_text, value
 .output violation
 option_on("requiredShape").
 option_value("entryPoint", "all").

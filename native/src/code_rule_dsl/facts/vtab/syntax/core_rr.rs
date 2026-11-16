@@ -30,6 +30,12 @@ pub trait DialectFacts: Send + Sync {
         let _ = (prefix, text);
         None
     }
+    /// Each node's value, by node id, of a document of tape tag `tag` and text `source`, where the family's parser
+    /// gives values the node's text does not (a format string's: `literal::format_tape::values`).
+    fn node_values(&self, tag: u8, source: &str) -> Vec<Option<(String, &'static str)>> {
+        let _ = (tag, source);
+        Vec::new()
+    }
     /// A document's syntax verdict where the family gives its own (`verdict`); `None`: the tree's first error.
     fn verdict(&self, f: &Facts) -> Option<Result<Option<(u32, String)>, String>> {
         let _ = f;
@@ -75,12 +81,14 @@ pub enum Family {
     Rust,
     /// `.rr` rule files (decision 0061).
     Rr,
+    /// Python's format strings (decision 0176): `percent-format` and `brace-format` guests.
+    Format,
     Other,
 }
 
 impl Family {
     /// How many families there are.
-    const COUNT: usize = 6;
+    const COUNT: usize = 7;
 
     pub(super) fn of(label: Option<&str>) -> Self {
         match label {
@@ -89,6 +97,7 @@ impl Family {
             Some("php" | "blade") => Self::Php,
             Some("rust") => Self::Rust,
             Some("rr") => Self::Rr,
+            Some("percent-format" | "brace-format" | "eslint-directive") => Self::Format,
             _ => Self::Other,
         }
     }
@@ -141,6 +150,10 @@ impl Lines {
     }
     pub(super) fn shared(source: std::sync::Arc<String>, python: bool) -> Self {
         Self { source, python, index: Default::default() }
+    }
+    /// Each line's first byte, from line 1 (the device's `Loc` views read them in a chunk block).
+    pub(super) fn starts(&self) -> &[u32] {
+        &self.index().starts
     }
     fn index(&self) -> &LineIndex {
         self.index.get_or_init(|| {
@@ -538,13 +551,16 @@ pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &
 pub(super) struct CoreRows {
     /// The per-node relations no rule reads (`Batch::build`, from the projection): their rows are not made.
     pub(super) skip: Skip,
+    /// The values of the format string document being read (decision 0176: `literal::format_tape::values`), by
+    /// node id, with the document's source they were read off: one parse a document, not one a node.
+    format_values: Option<(std::sync::Arc<String>, Vec<Option<(String, &'static str)>>)>,
     /// The node kinds whose `text` is made at any length (`Projection::long_text`).
     pub(super) long_text: BTreeSet<String>,
     /// Every node's `text` at any length (`Projection::long_text_any`).
     pub(super) long_text_any: bool,
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
-    pub(super) text_nodes: Option<(BTreeSet<String>, BTreeSet<String>)>,
+    pub(super) text_nodes: Option<super::TextNodes>,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
@@ -569,6 +585,8 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    /// `end_point(n, p)`: node n's end point, a zero-width span (`Locs::ends`).
+    end_point: Vec<[i64; 2]>,
     structural_before: Vec<[i64; 2]>,
     structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
@@ -599,6 +617,10 @@ pub(super) struct Skip {
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
     pub(super) literal: bool,
+    /// `str`'s strings, where the literals are read for another relation: each literal's contents interned.
+    pub(super) str: bool,
+    /// The literal values (`value`, `static_value`, `value_type`, `rr_value_lit`), likewise.
+    pub(super) literal_value: bool,
     /// `str`, `strprefix`, `value` rows themselves. `literal` may be off for `text` alone (a prefix makes a node
     /// token-like), which reads no literal's value: 139 k of execution_authority_bypass's strings were string values.
     pub(super) literal_rows: bool,
@@ -631,11 +653,9 @@ pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::ast::Span
 pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
-    /// Whether a rule reads node `id`'s `text` (`text_nodes`): of kind `kind`, or in a field read.
-    fn reads_text(&self, f: &Facts, dialect: &Dialect, id: u32, kind: &str) -> bool {
-        self.text_nodes.as_ref().is_none_or(|(kinds, fields)| {
-            kinds.contains(kind) || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| fields.contains(name))
-        })
+    /// Whether a rule reads node `id`'s `text` (`text_nodes`, `TextNodes::reads`).
+    fn reads_text(&self, f: &Facts, dialect: &Dialect, id: u32) -> bool {
+        self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(f, id, dialect))
     }
 
     /// The nodes `node` visits. Where it makes no row but `text`, and the rules read only some nodes' (`text_nodes`),
@@ -659,7 +679,7 @@ impl CoreRows {
             Visits::None => false,
             Visits::TextNodes => {
                 let id = p.core[local as usize];
-                self.reads_text(&p.facts, dialect, id, dialect.name(&p.facts, id))
+                self.reads_text(&p.facts, dialect, id)
             }
         }
     }
@@ -743,17 +763,27 @@ impl CoreRows {
                 (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
                 _ => false,
             };
-            let lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
+            let mut lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
+            // A format string's node: its value is its parser's (an `error`'s message, a `field_name`'s argument).
+            if !self.skip.literal
+                && dialect.family == Family::Format
+                && let Some(own) = dialect_facts(Family::Format)
+            {
+                if self.format_values.as_ref().is_none_or(|(src, _)| !std::sync::Arc::ptr_eq(src, &f.source)) {
+                    self.format_values = Some((std::sync::Arc::clone(&f.source), own.node_values(dialect.tag, &f.source)));
+                }
+                lit.value = self.format_values.as_ref().and_then(|(_, v)| v.get(id as usize).cloned().flatten());
+            }
             if let Some(prefix) = &lit.prefix {
                 if !self.skip.literal_rows {
                     self.strprefix.push([n, string(prefix) as i64]);
                 }
                 token_like = true;
             }
-            if let Some(v) = lit.str.as_ref().filter(|_| !self.skip.literal_rows) {
+            if !self.skip.str && let Some(v) = &lit.str {
                 self.str.push([n, string(v) as i64]);
             }
-            if let Some((v, ty)) = lit.value.as_ref().filter(|_| !self.skip.literal_rows) {
+            if !self.skip.literal_value && let Some((v, ty)) = &lit.value {
                 self.value.push([n, string(v) as i64, string(ty) as i64]);
             }
             if dialect.family == Family::Python
@@ -787,7 +817,7 @@ impl CoreRows {
                 }
             }
         }
-        if wants_text && self.reads_text(f, dialect, id, kind) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
+        if wants_text && self.reads_text(f, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
             self.text.push([n, string(text) as i64]);
         }
     }
@@ -804,6 +834,10 @@ impl CoreRows {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
+        if x.ends > 0 {
+            let from = p.len() + x.ends_from();
+            self.end_point.extend((0..x.ends).map(|l| [p.global(l), p.global(from + l)]));
+        }
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;
@@ -829,15 +863,26 @@ impl CoreRows {
         // line where one reads theirs (`requested_container`), or, where the rules read every node's text (no
         // `text_nodes`), within the bound. Every line's and token's text was 1.27 M of execution_authority_bypass's
         // 1.61 M strings over the data layer's 7,416 files, read by no rule.
+        // RERAIL_LINE_TEXT=all makes every line's and the source's text within the bound, as before span_text_demand.
+        let all_line_text = std::env::var("RERAIL_LINE_TEXT").is_ok_and(|v| v == "all");
         let narrowed = self.text_nodes.is_some();
         let token_text = projection.token_text || std::env::var("RERAIL_TOKEN_TEXT").is_ok_and(|v| v == "all");
         if wants_text {
-            for i in 0..(p.locs() - p.len()) as usize {
+            // An end point has no text (it is empty): the positions before them.
+            for i in 0..x.ends_from() as usize {
                 let [a, b] = p.span(p.len() + i as u32);
+                // The source and its lines have text where a rule reads it (`span_text_demand`), at any length:
+                // within the inline bound too, or every distinct line of the corpus is an atom (40 of the 55 MB of
+                // atoms authentication-plan-purity left over `impl/`). `RERAIL_LINE_TEXT=all` makes every one
+                // within the bound, as before.
+                let container = i >= x.tokens as usize && i <= x.tokens as usize + x.lines.count();
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
                 let token = i < x.tokens as usize;
-                if requested_container || token && token_text || !narrowed && !token && (b - a) as usize <= TEXT_INLINE {
+                // Within the bound: a line or the source only where asked for (or RERAIL_LINE_TEXT=all); another
+                // location where the rules read every node's text (not `narrowed`).
+                let bounded = (b - a) as usize <= TEXT_INLINE && if container { all_line_text } else { !narrowed };
+                if requested_container || token && token_text || !token && bounded {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
@@ -1077,6 +1122,7 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("end_point", pair(&["n", "p"], &self.end_point)),
             ("structural_before", node_sym(&self.structural_before)),
             ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),

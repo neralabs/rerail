@@ -1043,7 +1043,8 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
         ("precedes", true, None) => Place::Later,
         _ => return None,
     };
-    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
+    // The census answers what compiling asks (the automata are decoded when the test first runs on a tape).
+    let grammar = crate::code_rule_dsl::tape::token_census::Lang::of(language)?;
     // A token regex, alone or beside a `not` that holds on every implied token: a `not` of kinds
     // none of which is the token's own (an implied `accessor` is no `property_identifier`), or of
     // an extra (no implied token is a comment).
@@ -1102,8 +1103,8 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     }
     let regex = Regex::new(&regexes.join("|")).ok()?;
     let tests = match &place {
-        Place::Field(field) => grammar.tests_implied_in(&regex, field),
-        _ => grammar.tests_implied(&regex),
+        Place::Field(field) => grammar.tests_implied(&regex, Some(field)),
+        _ => grammar.tests_implied(&regex, None),
     };
     if !tests {
         return None;
@@ -1127,7 +1128,7 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     if past.is_some() && !object.get("stopBy").and_then(|stop| stop.get("not")).is_some_and(passable) {
         return None;
     }
-    Some(GapTest { place, regex, grammar, dialect: language, past, token, stored: false })
+    Some(GapTest { place, regex, grammar: Default::default(), dialect: language, past, token, stored: false })
 }
 
 /// A token's relation to a token regex beside it, under the same parent (`follows: {regex: "^,$",
@@ -1171,12 +1172,12 @@ pub(in crate::code_rule_dsl) fn gap_split(key: &str, relation: &Value, language:
         return None;
     }
     let regex = Regex::new(&format!("(?:{})", object.get("regex")?.as_str()?)).ok()?;
-    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
-    if !grammar.tests_implied(&regex) {
+    let census = crate::code_rule_dsl::tape::token_census::Lang::of(language)?;
+    if !census.tests_implied(&regex, None) {
         return None;
     }
     let token = vec![TokenCondition::Stored(place.clone())];
-    Some((crate::code_rule_dsl::matcher::gap::GapTest { place, regex, grammar, dialect: language, past: None, token, stored: false }, nested.clone()))
+    Some((crate::code_rule_dsl::matcher::gap::GapTest { place, regex, grammar: Default::default(), dialect: language, past: None, token, stored: false }, nested.clone()))
 }
 
 /// A relation's term, or it or the gap test.

@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 pub mod program;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Class {
+pub(crate) enum Class {
     File,
     Vocabulary,
     Request,
@@ -31,7 +31,7 @@ struct Definition {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Node {
+pub(crate) struct Node {
     pub id: usize,
     pub class: Class,
 }

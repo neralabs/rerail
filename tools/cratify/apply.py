@@ -26,6 +26,11 @@ from mounts import DIRS, DSL, ENGINE, GEN_BEGIN, GEN_END, ident, sees, subtree
 NATIVE = os.path.join(ROOT, 'native')
 TOOL = os.environ.get('CRATIFY_BIN', 'cratify')
 EXISTING = {'rerail-prof', 'rerail-rr-syntax', 'rerail-store'}
+# A mounted module re-exports its dependency's by glob, and its sources import the same items under the same
+# names: the glob's name and the private one are one item (`hidden_glob_reexports`).
+HEADER_ALLOW = ("// A mounted module re-exports its dependency's by glob, and its sources import the same items\n"
+                "// under the same names: the glob's name and the private one are one item.\n"
+                '#![allow(dead_code, unused_imports, hidden_glob_reexports)]\n')
 HOOKS = 'any(test, feature = "test-hooks")'
 DESCRIPTIONS = {
     'rerail-lang': 'The language registry and what every crate reads of a language: tapes, trees, lines, JSON, budgets.',
@@ -651,13 +656,7 @@ def main(tree_tsv, join_out, *flags):
             text = own.rstrip('\n') + '\n\n' + GEN_BEGIN + body + GEN_END
         else:
             doc = f'//! {DESCRIPTIONS.get(c, c)}\n//!\n//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.\n'
-            allow = ("// The mounts glob their owners' modules and widen what the crates above read: the split's facades, not a design.\n"
-                     '#![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]\n'
-                     "// What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long\n"
-                     "// signatures and tuple types are the sources' own.\n"
-                     '#![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]\n'
-                     '#![allow(clippy::type_complexity, clippy::too_many_arguments)]\n')
-            text = doc + allow + GEN_BEGIN + body + GEN_END
+            text = doc + HEADER_ALLOW + GEN_BEGIN + body + GEN_END
         if write:
             os.makedirs(os.path.dirname(lib), exist_ok=True)
             open(lib, 'w').write(text)

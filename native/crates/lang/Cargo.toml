@@ -10,11 +10,15 @@ build = "build.rs"
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-java", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+all-languages = ["lang-blade", "lang-csharp", "lang-css", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
 lang-blade = []
+lang-csharp = ["ast-grep-language/tree-sitter-c-sharp"]
+lang-css = ["ast-grep-language/tree-sitter-css"]
+lang-html = ["ast-grep-language/tree-sitter-html"]
 lang-java = ["ast-grep-language/tree-sitter-java"]
 lang-javascript = []
 lang-json = ["ast-grep-language/tree-sitter-json"]
+lang-markdown = []
 lang-php = ["ast-grep-language/tree-sitter-php"]
 lang-python = []
 lang-rr = []
@@ -26,6 +30,8 @@ headless = ["napi-derive/noop"]
 dump-cli = []
 python-syntax-error = []
 tape-cache = []
+# E7: counts of the tape parts readers take (`tape::reads`).
+tape-reads = []
 system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
@@ -81,6 +87,31 @@ rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 # The tape's format and the writer the parsers write it with (decision 0140).
 rerail-tape-format = { path = "../tape_format" }
+# Python's lean parser: tree-sitter-python's tape, written as the parse goes (`tape::python_lean`).
+rerail-python-lean = { path = "../python_lean" }
+# JavaScript's, TypeScript's and TSX's lean parser: their tree-sitter tapes, written as the parse
+# goes (`tape::ecma_lean`).
+rerail-ecma-lean = { path = "../ecma_lean" }
+# Rust's lean parser: tree-sitter-rust's tape, written as the parse goes (`tape::rust_lean`).
+rerail-rust-lean = { path = "../rust_lean" }
+# Java's lean parser: tree-sitter-java's tape, written as the parse goes (`tape::java_lean`).
+rerail-java-lean = { path = "../java_lean" }
+# C#'s lean parser: tree-sitter-c-sharp's tape, written as the parse goes (`tape::csharp_lean`).
+rerail-csharp-lean = { path = "../csharp_lean" }
+# PHP's lean parser: tree-sitter-php's tape, written as the parse goes (`tape::php_lean`).
+rerail-php-lean = { path = "../php_lean" }
+# HTML's lean parser: tree-sitter-html's tape, written as the parse goes (`tape::html_lean`).
+rerail-html-lean = { path = "../html_lean" }
+# CSS's lean parser: tree-sitter-css's tape, written as the parse goes (`tape::css_lean`).
+rerail-css-lean = { path = "../css_lean" }
+# Markdown's lean parser: tree-sitter-md's block tape, written as the parse goes (`tape::markdown_lean`).
+rerail-markdown-lean = { path = "../markdown_lean" }
+# Markdown's inline grammar's lean parser: tree-sitter-md-inline's tape (`tape::markdown_inline_lean`).
+rerail-markdown-inline-lean = { path = "../markdown_inline_lean" }
+# SQL's lean parser: tree-sitter-sql's tape, written as the parse goes (`tape::sql_lean`).
+rerail-sql-lean = { path = "../sql_lean" }
+# Vue's lean parser: tree-sitter-vue's tape, written as the parse goes (`tape::vue_lean`).
+rerail-vue-lean = { path = "../vue_lean" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }
@@ -118,6 +149,8 @@ ast-grep-language = { version = "=0.51.0", default-features = false, features = 
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
 
 [build-dependencies]
+# The grammars' token automata (`tape::token_automata`), built with the build.
+rustc-hash = "=2.1.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # The vendored grammars (`src/build_grammars.rs`): compiled, their parsers generated from grammar.json, SQL's read

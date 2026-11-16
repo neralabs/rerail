@@ -344,6 +344,8 @@ impl CodeRuleDslWorkspace {
         let Some(_slot) = cpu_slot().try_lock() else {
             return Ok(None);
         };
+        // Upkeep yields to the apply (decision 0190 §8).
+        let _run = rerail_accel::upkeep::run_begins(&[]);
         let guard = match self.state.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::Poisoned(error)) => {
@@ -917,6 +919,8 @@ impl Task for WorkspaceApplyTask {
             let Some(_slot) = cpu_slot().try_lock() else {
                 return Err(invalid(WORKSPACE_BUSY));
             };
+            // Upkeep yields to the apply (decision 0190 §8): its steps stop, their work left due.
+            let _run = rerail_accel::upkeep::run_begins(&[]);
             self.apply_with_slot()
         })
     }

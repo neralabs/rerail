@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A `count` object: its one relation (key and value), its bounds, and what it binds (`as`).
-pub(super) struct CountSpec<'a> {
+pub struct CountSpec<'a> {
     pub(super) key: &'static str,
     pub(super) relation: &'a Value,
     pub(super) min: usize,
@@ -263,7 +263,7 @@ pub fn parse_comparison(value: &Value, path: &str) -> Result<Comparison> {
 /// A `compare` in a validated rule: its path, the side, the name it reads, and the scopes it sits
 /// in, innermost last. A utility's comparison has a site where the utility stands alone and one
 /// per distinct scope a call runs it in.
-pub(super) struct CompareSite<'a> {
+pub struct CompareSite<'a> {
     pub(super) path: String,
     pub(super) side: &'static str,
     pub(super) name: &'a str,

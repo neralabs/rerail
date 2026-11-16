@@ -1,12 +1,17 @@
 //! The .rr front end: parsing to programs, magic sets, lowering, printing, checking.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-// The mounts glob their owners' modules and widen what the crates above read: the split's facades, not a design.
+// A mounted module re-exports its dependency's by glob, and its sources import the same items
+// under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
+// above read (the split's facades, not a design).
 #![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]
 // What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long
 // signatures and tuple types are the sources' own.
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
 pub use rerail_store::git_workspace;
@@ -27,7 +32,6 @@ pub mod code_rule_dsl {
     pub mod logic {
         pub mod front;
         pub mod magic;
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
@@ -98,11 +102,9 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
-    #[path = "stats"]
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;
     }
-    #[path = "suppress"]
     pub mod suppress {
         pub use rerail_lang::code_rule_dsl::suppress::kinds;
         #[allow(unused_imports)]
@@ -113,7 +115,6 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tape;
     pub use rerail_facts::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
-    #[path = "value"]
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
         #[allow(unused_imports)]

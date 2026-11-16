@@ -108,7 +108,7 @@ mod form {
         let err = format!("{:?}", find(&mut prog).unwrap_err());
         assert!(err.contains("more than one rule reads it"), "{err}");
     }
-    /// A rewrite after `find` (magic sets' demand, decision 0108) can read a closure inside its edges' or seeds'
+    /// A rewrite after `find` (magic sets' demand, decision 0145) can read a closure inside its edges' or seeds'
     /// component: then it is rows again, with its rules as written, and so is a relation through it. At O125 the
     /// demand put `anc` in a component of 44 relations, which had no maintained form and was derived at every edit.
     #[test]

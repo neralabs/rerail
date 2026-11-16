@@ -220,11 +220,6 @@ impl ScopeRules for Sql {
         None
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
-        false
-    }
-
     fn usage<D: Doc>(
         table: &ScopeTable,
         _: &Node<'_, D>,
@@ -382,7 +377,7 @@ impl ValueRules for Sql {
     }
 
     fn string(text: &str) -> Value {
-        Value::Str(text.to_owned())
+        Value::Str(text.to_owned().into())
     }
 
     /// A JSON integer is an integer literal's value.

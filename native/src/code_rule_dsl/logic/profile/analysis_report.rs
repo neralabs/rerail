@@ -45,6 +45,13 @@ fn input(state: &State) -> Input {
         .filter(|(topic, _)| topic == "projection provenance")
         .map(|(_, text)| text.clone())
         .collect();
+    for ((topic, text), _) in &state.decisions {
+        if let Some(attr) = topic.strip_suffix(" on request")
+            && let Some(why) = text.strip_prefix("no, every node: ")
+        {
+            i.eager_attributes.push((attr.to_owned(), why.to_owned()));
+        }
+    }
     for ((topic, text), count) in &state.decisions {
         match topic.as_str() {
             "composed automatic reprepare" => {
@@ -190,6 +197,15 @@ pub mod tests {
         assert!(text.contains("REPREPARE"));
         assert_eq!(json["findings"][0]["code"], "CACHED_TAPE_REBUILD");
         assert_eq!(json["coverage"]["tapeCacheObservations"], 5725);
+    }
+    /// A per-node attribute the lowering left eager (decision 0174) is a finding, with the reader's reason.
+    #[test]
+    fn an_eager_node_attribute_is_a_finding() {
+        let mut s = State::default();
+        s.decisions.insert(("node_text on request".into(), "no, every node: out reads `!node_text($n, \"x\")`, a negation or a constant node".into()), 1);
+        let (text, json) = report(&s);
+        assert!(text.contains("EAGER_NODE_ATTRIBUTE"), "{text}");
+        assert_eq!(json["findings"][0]["location"], "input relation node_text");
     }
     #[test]
     fn missing_projection_reads_are_unknown_not_empty() {

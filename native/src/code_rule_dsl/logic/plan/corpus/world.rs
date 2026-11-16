@@ -34,17 +34,24 @@ pub(super) const LOADED: &str = "loaded";
 
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
-    prog.rules.iter().any(|r| r.head.rel == LOAD || WORLD.iter().any(|(_, d)| *d == r.head.rel))
+    std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, req))
+}
+
+/// Whether `prog` makes request `req`: by a rule, or as facts (a constant key lowers to one: `dir_entry("sub", …)`
+/// asks with the fact `rr_dir_req("sub")`, `rr::lower`'s `world_demand`).
+fn asks(prog: &front::Program, req: &str) -> bool {
+    prog.rules.iter().any(|r| r.head.rel == req) || prog.facts.get(req).is_some_and(|rows| !rows.is_empty())
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
 /// (`corpus::loading`): a directory's entries, a file's lines and a load's `loaded` row.
-pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
+pub(super) fn answers(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>) -> BTreeMap<String, Vec<String>> {
     WORLD
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
-        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req))
+        // By a rule, or as facts, as `asks` counts them (a constant key lowers to a request fact).
+        .filter(|(req, _)| f.derives(req) || f.has_facts(req))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
         .collect()
 }
@@ -90,19 +97,35 @@ impl World {
                 if k == "load.budget" {
                     budget = v.parse().unwrap_or(budget);
                 }
-                if let Some(dir) = canonical(&root.join(v)).filter(|p| p.is_dir()) {
+                if let Some(dir) = canonical(&root.join(v.as_str())).filter(|p| p.is_dir()) {
                     roots.push(dir);
                 }
             }
         }
         // What the requests may read is watched (decision 0105): a directory listed or a file read that the
         // journal says is unchanged is not statted.
-        super::observe(|o| o.watch(&roots));
+        // Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is watched as it comes.
+        let placeholder = super::phase0::active().then(|| canonical(root)).flatten();
+        let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
+        super::observe(|o| o.watch(&watched));
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
     /// Resolved by phase 0's observer: where the journal says nothing changed, with no `realpath` (decision 0105).
+    /// A load's request is resolved once (`resolve`) and its path handed to `bounded`, `loaded_as`, `reload` and
+    /// `load`: each resolution takes the observer's lock and, where the journal cannot vouch, a `realpath`.
+    pub(super) fn resolve(&self, asked: &str) -> Option<PathBuf> {
+        self.allowed(asked)
+    }
+
+    /// Each of `asked`'s paths, resolved as [`World::resolve`] does, their `realpath`s at once on the pool.
+    pub(super) fn resolve_all(&self, asked: &[String]) -> Vec<Option<PathBuf>> {
+        let paths: Vec<PathBuf> = asked.iter().map(|a| self.root.join(a)).collect();
+        let canon = crate::content_store::observe::Observer::canonical_all(|f| super::observe(|o| f(o)), &paths);
+        canon.into_iter().map(|c| c.filter(|path| self.roots.iter().any(|r| path.starts_with(r)))).collect()
+    }
+
     fn allowed(&self, asked: &str) -> Option<PathBuf> {
         let path = super::observe(|o| o.canonical(&self.root.join(asked)))?;
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
@@ -158,9 +181,12 @@ impl World {
     /// workspace.
     /// The corpus's documents as canonical paths, as `load` compares them, with their given names too.
     pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = &'a String>) -> BTreeSet<String> {
+        let paths: Vec<&String> = paths.into_iter().collect();
+        let joined: Vec<PathBuf> = paths.iter().map(|p| self.root.join(p)).collect();
+        let canon = crate::content_store::observe::Observer::canonical_all(|f| super::observe(|o| f(o)), &joined);
         let mut out = BTreeSet::new();
-        for p in paths {
-            if let Some(c) = super::observe(|o| o.canonical(&self.root.join(p))) {
+        for (p, c) in paths.into_iter().zip(canon) {
+            if let Some(c) = c {
                 out.insert(c.to_string_lossy().into_owned());
             }
             out.insert(p.clone());
@@ -168,17 +194,18 @@ impl World {
         out
     }
 
-    /// The document a load of `asked` gave earlier in this run, if any: a load asked again is answered alike.
-    pub(super) fn loaded_as(&self, asked: &str) -> Option<Loaded> {
-        let path = self.allowed(asked)?;
-        self.loads.get(path.to_string_lossy().as_ref()).cloned()
+    /// The document a load gave earlier in this run, if any, by its request's path (`resolve`): a load asked again
+    /// is answered alike.
+    pub(super) fn loaded_as(&self, path: Option<&Path>) -> Option<Loaded> {
+        self.loads.get(path?.to_string_lossy().as_ref()).cloned()
     }
 
-    pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
+    /// `path` is `asked` resolved (`resolve`).
+    pub(super) fn load(&mut self, asked: &str, path: Option<&Path>, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
         if corpus.contains(asked) || self.refused.contains(asked) {
             return None;
         }
-        let Some(path) = self.allowed(asked).filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
+        let Some(path) = path.filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
@@ -216,22 +243,23 @@ impl World {
         self.taken.keys()
     }
 
-    /// Whether a load of `asked` is one the budget bounds: a file beyond the corpus root, not loaded yet this run.
-    pub(super) fn bounded(&self, asked: &str) -> bool {
-        self.allowed(asked).is_some_and(|p| {
+    /// Whether a load is one the budget bounds, by its request's path (`resolve`): a file beyond the corpus root, not
+    /// loaded yet this run.
+    pub(super) fn bounded(&self, path: Option<&Path>) -> bool {
+        path.is_some_and(|p| {
             let p = p.to_string_lossy();
             !self.own(&p) && !self.loads.contains_key(p.as_ref())
         })
     }
 
     /// Takes back every document loaded from beyond the corpus root this run: a cone that starts again in levels
-    /// (decision 0108) asks them again, level by level. How many.
+    /// (decision 0145) asks them again, level by level. How many.
     pub(super) fn take_back_libraries(&mut self) -> usize {
         let paths: Vec<String> = self.loads.keys().filter(|p| !self.own(p)).cloned().collect();
         paths.iter().filter(|p| self.unload(p)).count()
     }
 
-    /// Takes back the document loaded from `path` this run (decision 0108, a load taken back): its place in the
+    /// Takes back the document loaded from `path` this run (decision 0145, a load taken back): its place in the
     /// budget is free again. Whether it was loaded.
     pub(super) fn unload(&mut self, path: &str) -> bool {
         let Some(loaded) = self.loads.remove(path) else { return false };
@@ -240,10 +268,10 @@ impl World {
         true
     }
 
-    /// The document of `asked` taken back this run, loaded again when the budget allows: it is the same document,
-    /// with the rows it was given (`unload`).
-    pub(super) fn reload(&mut self, asked: &str) -> Option<Loaded> {
-        let path = self.allowed(asked)?.to_string_lossy().into_owned();
+    /// The document of a request's path (`resolve`) taken back this run, loaded again when the budget allows: it is
+    /// the same document, with the rows it was given (`unload`).
+    pub(super) fn reload(&mut self, path: Option<&Path>) -> Option<Loaded> {
+        let path = path?.to_string_lossy().into_owned();
         if !self.taken.contains_key(&path) {
             return None;
         }
@@ -285,15 +313,22 @@ impl World {
     /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike. Phase 0's
     /// observer answers each by a `stat`, reading only what changed.
     pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
-        consulted.iter().all(|(what, path, digest)| {
+        self.changed(consulted).is_none()
+    }
+
+    /// The first of `consulted` that would be answered otherwise now, with its answer now (`None` for a kind of
+    /// request no longer asked).
+    pub(super) fn changed<'c>(&mut self, consulted: &'c [(String, String, String)]) -> Option<(&'c (String, String, String), Option<String>)> {
+        consulted.iter().find_map(|c| {
+            let (what, path, digest) = c;
             let now = match what.as_str() {
                 "dir" => listing_digest(&self.dir(path)),
                 "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
-                _ => return false,
+                _ => return Some((c, None)),
             };
-            now == *digest
+            (now != *digest).then_some((c, Some(now)))
         })
     }
 
@@ -345,4 +380,31 @@ fn listing_digest(entries: &[(String, bool)]) -> String {
 /// A file's bytes' digest ("" when it cannot be read), from phase 0's observer: read only when its stat changed.
 pub(in crate::code_rule_dsl::logic::plan) fn bytes_digest(path: &Path) -> String {
     super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
+}
+
+/// Each file's `bytes_digest`, at once: the observer answers what it holds, and the files it must read are read and
+/// hashed on the pool, outside its lock, then recorded. One at a time, a run's first pass over PostHog's 29,885
+/// files read and hashed each on the main thread, under the observer's lock (1.9 s on an M3 Max, the pool idle).
+pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests(paths: &[PathBuf]) -> Vec<String> {
+    use crate::content_store::observe::DigestStep;
+    use rayon::prelude::*;
+    let steps: Vec<DigestStep> = super::observe(|o| paths.iter().map(|p| o.digest_step(p)).collect());
+    let hashed: Vec<Option<(u64, [u8; 32])>> = steps
+        .par_iter()
+        .map(|s| match s {
+            DigestStep::Read(r) => r.hash(),
+            DigestStep::Answered(_) => None,
+        })
+        .collect();
+    super::observe(|o| {
+        steps
+            .into_iter()
+            .zip(hashed)
+            .map(|(s, h)| match s {
+                DigestStep::Answered(d) => d,
+                DigestStep::Read(r) => o.digest_read(r, h),
+            })
+            .map(|d| d.map(|d| hex(&d)).unwrap_or_default())
+            .collect()
+    })
 }

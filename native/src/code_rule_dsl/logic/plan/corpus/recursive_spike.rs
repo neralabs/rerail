@@ -63,7 +63,7 @@ fn rel_rows(rel: &Arc<InRel>, width: usize) -> Rows {
 
 /// The recursive components of `program`.
 fn recursive(program: &Program) -> Vec<BTreeSet<String>> {
-    let Ok((sccs, _)) = front::strata(program) else { return Vec::new() };
+    let Ok(sccs) = front::components_of(program) else { return Vec::new() };
     sccs.into_iter()
         .filter(|scc| {
             scc.len() > 1
@@ -410,6 +410,7 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &
             Term::Var(v) => Arg::Slot(slot(v, names)),
             Term::Wild => Arg::Wild,
             Term::Int(i) => Arg::Const(*i),
+            Term::Branded(a) => Arg::Const(a.value()),
             other => return Err(format!("term {other:?}")),
         })
     };
@@ -440,8 +441,9 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &
     }
     fn head_term(t: &Term, names: &BTreeMap<String, usize>) -> Result<Head, String> {
         Ok(match t {
-            Term::Var(v) => Head::Slot(*names.get(v).ok_or_else(|| format!("head variable {v} unbound"))?),
+            Term::Var(v) => Head::Slot(*names.get(v.as_str()).ok_or_else(|| format!("head variable {v} unbound"))?),
             Term::Int(i) => Head::Const(*i),
+            Term::Branded(a) => Head::Const(a.value()),
             Term::Call(f, args) if f == "cat" && args.len() == 2 => Head::Cat(Box::new(head_term(&args[0], names)?), Box::new(head_term(&args[1], names)?)),
             other => return Err(format!("head term {other:?}")),
         })
@@ -590,7 +592,7 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &
         .head
         .args
         .iter()
-        .filter_map(|t| if let Term::Var(v) = t { names.get(v).copied() } else { None })
+        .filter_map(|t| if let Term::Var(v) = t { names.get(v.as_str()).copied() } else { None })
         .collect();
     let mut plans = vec![plan(BTreeSet::new(), None)?, plan(head_bound, None)?];
     // A negated seed (a row of the negated relation gone or new) binds the slots the rule binds elsewhere, and keeps
@@ -1778,7 +1780,7 @@ pub(in crate::code_rule_dsl) fn run(
         let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())).collect();
         let reads: BTreeSet<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| if let Literal::Atom(a) = l { Some(a.rel.to_string()) } else { None }).filter(|r| !scc.contains(r.as_str())).collect();
         let facts = |rel: &str| -> Option<Rows> {
-            program.facts.get(rel).map(|rows| rows.iter().map(|r| r.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Str(_) => i64::MIN }).collect()).collect())
+            program.facts.get(rel).map(|rows| rows.iter().map(|r| r.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Branded(b) => b.value(), front::Value::Str(_) => i64::MIN }).collect()).collect())
         };
         let new_of = |rel: &str| derived.iter().find(|(r, _, _)| r == rel).map(|(_, w, h)| rel_rows(h, *w)).or_else(|| inputs.iter().find(|(r, _)| r == rel).map(|(_, s)| rows_of(s.as_ref())));
         let old_of = |rel: &str| old.kept(rel).map(|(h, w)| rel_rows(&h, w)).or_else(|| old.input_source(rel).map(|s| rows_of(s.as_ref())));
@@ -1807,7 +1809,7 @@ pub(in crate::code_rule_dsl) fn run(
         }
         let names: Vec<String> = scc.iter().chain(&reads).cloned().collect();
         let index: BTreeMap<&str, usize> = names.iter().enumerate().map(|(i, n)| (n.as_str(), i)).collect();
-        let mut stores: Vec<Store> = names.iter().map(|n| Store::new(program.decls.get(n).map_or(0, Vec::len))).collect();
+        let mut stores: Vec<Store> = names.iter().map(|n| Store::new(program.decls.get(n.as_str()).map_or(0, |c| c.len()))).collect();
         let mut assumed: Vec<String> = Vec::new();
         let mut as_was: Vec<String> = Vec::new();
         let mut want: Vec<std::collections::HashSet<Vec<i64>>> = vec![Default::default(); names.len()];

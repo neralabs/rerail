@@ -1,7 +1,7 @@
 //! Metal, as the engine's device (`rerail-device-metal`): the implementations of the logic's and the transducer's
 //! device interfaces (`logic::device::SolverDevice`, `transducer::packed::device::MatcherDevice`) over the Metal
 //! code, registered as the engine loads (`crate::install_devices`). macOS only; the core never names it.
-use crate::code_rule_dsl::logic::device::{JoinPlan, Refused, Report, SolverDevice, lattice, nearest};
+use crate::code_rule_dsl::logic::device::{ColumnStats, JoinPlan, Refused, Report, SolverDevice, StatColumn, lattice, nearest};
 use crate::code_rule_dsl::logic::native::setfix::{Fresh, Interner, JoinRule, Store, device as joins};
 use crate::code_rule_dsl::transducer::packed::{self, Error};
 
@@ -15,6 +15,8 @@ pub(crate) static METAL: Metal = Metal;
 pub fn register() {
     crate::code_rule_dsl::logic::device::register(&METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
+    // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
+    crate::code_rule_dsl::facts::nearest::install_chunk_axis(packed::metal_join::axis_in_chunk);
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
@@ -104,6 +106,10 @@ impl SolverDevice for Metal {
 
     fn install_launch_guard(&self) {
         packed::metal_sort::install_guard();
+    }
+
+    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
+        joins::column_stats(cols, k).map_err(Refused::Failed)
     }
 }
 

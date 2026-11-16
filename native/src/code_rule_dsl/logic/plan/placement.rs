@@ -18,8 +18,9 @@
 //! (`DEVICE_FORMS`), and only under the Metal binding. Otherwise the stratum runs on the CPU, and the profile says
 //! where the GPU would have been cheaper and which forms it lacks: the work the device must take on next, by its cost.
 
-use super::{Mode, Step};
-use crate::code_rule_dsl::logic::front::{AggOp, Literal, Term};
+use super::{Mode, Order};
+use crate::code_rule_dsl::logic::program_image::{AggRef, CmpOp, Lit, TermRef, Version};
+use crate::code_rule_dsl::logic::device::caps::{self, DeviceFn};
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -85,6 +86,9 @@ pub(in crate::code_rule_dsl) struct JoinEst {
     pub(in crate::code_rule_dsl) input: f64,
     pub(in crate::code_rule_dsl) relation: f64,
     pub(in crate::code_rule_dsl) output: f64,
+    /// Its input and output when every row is walked (`StepPlan::all`): the CPU's walk keeps one witness past the
+    /// bound head (decision 0229), the device's stages make every row (decision 0277).
+    pub(in crate::code_rule_dsl) walked: (f64, f64),
     pub(in crate::code_rule_dsl) keys: usize,
     pub(in crate::code_rule_dsl) range: bool,
 }
@@ -148,10 +152,26 @@ const DEVICE_SUBMISSION: f64 = 100e-6;
 const DEVICE_RULE: f64 = 6e-6;
 const DEVICE_STAGE: f64 = 8e-6;
 const DEVICE_SORT: f64 = 45e-6;
-const DEVICE_ROW_BACK: f64 = 40e-9;
+/// A head row back costs its read into the store and the store's insert after the wave, which the CPU's walk pays
+/// in its work too: 75 ns, measured on PostHog's `posthog/hogql` (437 files, 2026-11-14: 24 ns read back, about 50 ns
+/// inserted, over the strata whose every run was on the GPU). At the 40 ns measured before (the read alone), a pure
+/// copy (`kind(n, k) :- node(_, n, k, _, _)`) priced as cheaper on the GPU and cost the same there.
+const DEVICE_ROW_BACK: f64 = 75e-9;
+/// A value of a relation the device reads, per column an atom reads (decision 0277), in the host's CPU: 2.2 ns,
+/// measured on PostHog's `posthog/hogql` (2026-11-16, the profile's split of the uploads: 13.9 ms for 6.3 M values).
+/// A flat relation's value is a copy (1.7 ns), a view's made on the host a row read (2.5 ns), and a view's made on
+/// the device (decision 0289) its share of the chunk block's build, of the axes' solve and of the kernel (2.7 ns).
+/// It was 7 ns while every view's rows were made on the host (98.7 ms for 13.7 M values, 2026-11-14). Priced for
+/// every stratum, though a relation an earlier stratum of the chunk uploaded is found resident.
+const DEVICE_UPLOAD_PER_VALUE: f64 = 2.2e-9;
 
 /// CPU: seconds per unit of planned work, and per stratum (measured; see the module's comment).
 const CPU_PER_WORK: f64 = 100e-9;
+/// CPU: seconds per row a scan reads (decision 0277). A copy of an input (`kind(n, k) :- node(_, n, k, _, _)`) on
+/// PostHog's `posthog/hogql` (437 files, 2026-11-14): 8.5 M rows scanned and 4.9 M made in 0.56 s, the rows made
+/// costing what the device's rows back do (`DEVICE_ROW_BACK`), so about 30 ns a row scanned. Priced at
+/// `CPU_PER_WORK`, a copy looked twice as dear on the CPU as it was, and went to the device, which did it no cheaper.
+const CPU_PER_SCANNED: f64 = 30e-9;
 const CPU_PER_STRATUM: f64 = 0.13e-3;
 /// GPU: seconds per unit of planned work, and per submission (assumed; see the module's comment).
 const GPU_PER_WORK: f64 = 2e-9;
@@ -172,6 +192,11 @@ pub enum Binding {
 thread_local! {
     /// This thread's run's binding (`typing::file_local::Binding::Metal` is `Metal`).
     static DEVICE: Cell<Binding> = const { Cell::new(Binding::Cpu) };
+}
+
+/// Carries the binding to a job on another thread (`run_state`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.copy(&["DEVICE"], &DEVICE);
 }
 
 /// Whether this thread's run may use the device.
@@ -213,6 +238,12 @@ pub(in crate::code_rule_dsl) struct Shape {
     pub(in crate::code_rule_dsl) rules: usize,
     /// Its join steps' estimates, when the planner recorded them (profiling, or a run that may use the device).
     pub(in crate::code_rule_dsl) joins: Vec<JoinEst>,
+    /// The relations its atoms read, each with its rows and the columns an atom reads of it (the most any one
+    /// does): what the device uploads (decision 0277).
+    pub(in crate::code_rule_dsl) reads: Vec<(String, f64, usize)>,
+    /// The rows its scans read (a positive atom read whole), of its planned work: on the CPU a scanned row costs a
+    /// read, not a probe (`CPU_PER_SCANNED`).
+    pub(in crate::code_rule_dsl) scanned: f64,
     /// Its rules' steps, all told: on the device, about a stage each.
     pub(in crate::code_rule_dsl) steps: usize,
     /// The rows its rules' last steps make (the planner's estimate): what the device reads back.
@@ -222,73 +253,80 @@ pub(in crate::code_rule_dsl) struct Shape {
     pub(in crate::code_rule_dsl) uses: BTreeMap<Form, BTreeSet<String>>,
 }
 
-/// The first call in `t` that is no row code: the operation a computed term needs (`@concat`).
-fn not_row(t: &Term) -> Option<String> {
+/// A call's name and arguments.
+fn call<'v, 't>(v: &'v Version, t: TermRef<'t>) -> Option<(&'v str, Vec<TermRef<'t>>)> {
     match t {
-        Term::Call(f, args) if !row_term(t) => Some(args.iter().find_map(not_row).unwrap_or_else(|| format!("@{f}"))),
-        // Row code as a whole (a cat inside `str_cmp` is read from its parts).
-        Term::Call(..) => None,
+        TermRef::Call(f, args) => Some((v.text(f), args.collect())),
         _ => None,
     }
+}
+
+fn is_call(t: &TermRef<'_>) -> bool {
+    matches!(t, TermRef::Call(..))
+}
+
+/// The first call in `t` that is no row code: the operation a computed term needs (`@concat`).
+fn not_row(v: &Version, t: TermRef<'_>) -> Option<String> {
+    let (f, args) = call(v, t)?;
+    // Row code as a whole (a cat inside `str_cmp` is read from its parts).
+    (!row_term(v, t)).then(|| args.iter().find_map(|&a| not_row(v, a)).unwrap_or_else(|| format!("@{f}")))
 }
 
 /// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, a set of constants
 /// (`@in(x, {…})`), integer arithmetic of row code (`setfix::device`'s arithmetic binds), or `str_cmp` of variables
 /// and constants (the device compares the names). Anything else computes
 /// a value the device has no form for.
-fn row_term(t: &Term) -> bool {
-    match t {
-        Term::Call(f, args) if f == "doc" => matches!(args.as_slice(), [Term::Var(_)]),
-        Term::Call(f, args) if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !matches!(a, Term::Call(..))),
-        Term::Call(f, args) if DEVICE_ARITHMETIC.contains(&f.as_str()) && args.len() == 2 => args.iter().all(row_term),
-        // The order of two symbols' names (`<` of symbols lowers to it): their texts are the device's.
-        // Of names or cats' texts (compared from their parts, never made).
-        Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..)) || is_cat_of_rows(a) || is_text_fn_of_rows(a)),
-        // A name's characters (or a cat's text's): counted over the device's names.
-        Term::Call(f, args) if (f == "strlen" || f == "rr_strlen") && args.len() == 1 => !matches!(args[0], Term::Call(..)) || is_cat_of_rows(&args[0]) || is_text_fn_of_rows(&args[0]),
-        // A text function the device makes into its text arena (`setfix::device`'s `TEXTFN`).
-        Term::Call(f, _) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) => is_text_fn_of_rows(t),
-        Term::Call(..) => false,
-        _ => true,
+fn row_term(v: &Version, t: TermRef<'_>) -> bool {
+    let Some((f, args)) = call(v, t) else { return true };
+    match f {
+        "doc" => matches!(args.as_slice(), [TermRef::Var(_)]),
+        f if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !is_call(a)),
+        // The device's functions (`device::caps`, the table its compile reads).
+        f => match device_fn(f) {
+            Some(d) if d.arity() != args.len() => false,
+            Some(DeviceFn::Arith(_)) => args.iter().all(|&a| row_term(v, a)),
+            // The order of two symbols' names (`<` of symbols lowers to it), or a name's characters: of names or
+            // cats' texts (compared from their parts, never made), or of texts the device makes.
+            Some(DeviceFn::Names { .. }) => args.iter().all(|&a| !is_call(&a) || is_cat_of_rows(v, a) || is_text_fn_of_rows(v, a)),
+            // A text function the device makes into its text arena (`setfix::device`'s `TEXTFN`).
+            Some(DeviceFn::Text { .. } | DeviceFn::RegexReplace) => is_text_fn_of_rows(v, t),
+            None => false,
+        },
     }
 }
 
-/// `cat(a, b)` (lowered, `concat`) of variables and constants: a text the device compares where it is read.
-fn is_cat_of_rows(t: &Term) -> bool {
-    matches!(t, Term::Call(f, args) if (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !matches!(a, Term::Call(..))))
+/// The device's form of `.rr`'s (or the native engine's) function `f`.
+fn device_fn(f: &str) -> Option<DeviceFn> {
+    caps::device_fn(caps::native(f))
 }
 
-/// The text functions the device makes (`metal_join::ROW_MAP`), by the names the planner's terms and the native
-/// engine's steps give them.
-const DEVICE_TEXT_FUNCTIONS: [&str; 14] = [
-    "lower", "sql_lower", "sql_upper", "head", "dir", "substr", "rr_substr", "sql_substr", "slice", "to_string", "rr_to_string", "sql_replace",
-    "replace_all", "rx_replace",
-];
+/// Whether the device makes `f`'s value into its text arena.
+fn makes_text(f: &str) -> bool {
+    device_fn(f).is_some_and(DeviceFn::makes_text)
+}
+
+/// `cat(a, b)` (lowered, `concat`) of variables and constants: a text the device compares where it is read.
+fn is_cat_of_rows(v: &Version, t: TermRef<'_>) -> bool {
+    call(v, t).is_some_and(|(f, args)| (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !is_call(a)))
+}
 
 /// A text function of variables and constants (its text argument perhaps another's value): a text the device makes.
-fn is_text_fn_of_rows(t: &Term) -> bool {
-    match t {
-        Term::Call(f, args) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) && !args.is_empty() => {
+fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
+    match call(v, t) {
+        Some((f, args)) if makes_text(f) && !args.is_empty() => {
             // A regex's and its replacement's texts are constants (the device's automaton is made before the run).
-            let constants = !matches!(f.as_str(), "replace_all" | "rx_replace") || args[1..].iter().all(|a| !matches!(a, Term::Var(_)));
-            constants && (!matches!(args[0], Term::Call(..)) || is_text_fn_of_rows(&args[0])) && args[1..].iter().all(|a| !matches!(a, Term::Call(..)))
+            let constants = device_fn(f) != Some(DeviceFn::RegexReplace) || args[1..].iter().all(|a| !matches!(a, TermRef::Var(_)));
+            constants && (!is_call(&args[0]) || is_text_fn_of_rows(v, args[0])) && args[1..].iter().all(|a| !is_call(a))
         }
         _ => false,
     }
 }
 
-/// The first text function in `t` (`@lower`): a text the device makes into its arena, which a recursive stratum's
-/// rounds and an atom's keys cannot read.
-fn text_fn_in(t: &Term) -> Option<String> {
-    match t {
-        Term::Call(f, _) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) => Some(format!("@{f}")),
-        Term::Call(_, args) => args.iter().find_map(text_fn_in),
-        _ => None,
-    }
+/// The first text function the device makes in `t` (its arena), the operation it needs.
+fn text_fn_in(v: &Version, t: TermRef<'_>) -> Option<String> {
+    let (f, args) = call(v, t)?;
+    if makes_text(f) { Some(format!("@{f}")) } else { args.iter().find_map(|&a| text_fn_in(v, a)) }
 }
-
-/// The integer functions the device computes (`.rr`'s `+ - * / %`, Soufflé's `max` and `min`).
-const DEVICE_ARITHMETIC: [&str; 7] = ["add", "sub", "mul", "div", "mod", "max", "min"];
 
 impl Shape {
     /// Notes form `f`, and where the device lacks it, the operation that uses it.
@@ -299,8 +337,9 @@ impl Shape {
         }
     }
 
-    /// Adds one planned rule: its steps in order, its head's terms and its planned work.
-    pub(in crate::code_rule_dsl) fn add(&mut self, order: &[Step], head: &[Term], work: f64, recursive: bool) {
+    /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
+    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool) {
+        let (b, v) = (order.b, order.b.v);
         self.rules += 1;
         self.steps += order.len();
         self.work += work.max(0.0);
@@ -310,53 +349,72 @@ impl Shape {
         // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
         // not in a recursive stratum, whose rounds would join it before it is one.
         // A text function's text, likewise (the device's arena; never in a recursive stratum).
-        let arena = |t: &Term| if recursive { text_fn_in(t) } else { None };
-        if let Some(op) = head.iter().filter(|t| recursive || !is_cat_of_rows(t)).find_map(|t| not_row(t).or_else(|| arena(t))) {
+        let arena = |t: TermRef<'_>| if recursive { text_fn_in(v, t) } else { None };
+        if let Some(op) = b.head().args().filter(|&t| recursive || !is_cat_of_rows(v, t)).find_map(|t| not_row(v, t).or_else(|| arena(t))) {
             self.note(Form::Computed, || format!("{op} in a head"));
         }
-        for step in order {
+        let tests = |t: TermRef<'_>| call(v, t).map(|(f, _)| f).filter(|f| crate::code_rule_dsl::logic::strings::TESTS.contains(f));
+        for step in order.steps {
             if let Some(m @ (Mode::Range | Mode::Climb | Mode::Descend)) = step.mode {
                 self.note(Form::TreeAxis, || format!("a tree axis read as a {}", m.name()));
             }
-            match &step.lit {
-                Literal::Atom(a) => {
-                    self.forms.insert(if a.neg { Form::Negation } else { Form::Join });
-                    if a.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
-                        self.note(Form::TextTest, || format!("text test {}", a.rel));
+            match order.view(step) {
+                Lit::Atom(a) => {
+                    let rel = b.rel(a);
+                    self.forms.insert(if a.neg() { Form::Negation } else { Form::Join });
+                    if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
+                        self.note(Form::TextTest, || format!("text test {rel}"));
                     }
-                    if let Some(op) = a.args.iter().find_map(|t| not_row(t).or_else(|| text_fn_in(t))) {
+                    if let Some(op) = a.args().find_map(|t| not_row(v, t).or_else(|| text_fn_in(v, t))) {
                         self.note(Form::Computed, || format!("{op} in an atom's argument"));
                     }
                 }
                 // A text test as a comparison (`@contains(s, p) = 1`, `rx`'s search): a text test, not a value.
-                Literal::Cmp { l: Term::Call(f, _), .. } | Literal::Cmp { r: Term::Call(f, _), .. } if crate::code_rule_dsl::logic::strings::TESTS.contains(&f.as_str()) => {
+                Lit::Cmp { l, r, .. } if let Some(f) = tests(l).or_else(|| tests(r)) => {
                     self.note(Form::TextTest, || format!("text test @{f}"));
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
                 // text bound, made on the device when the head alone reads it; not in a recursive stratum.
-                Literal::Cmp { l, op: "=" | "!=", r } if [(l, r), (r, l)].iter().any(|(c, o)| is_cat_of_rows(c) && match o {
-                    Term::Var(v) => !recursive || order.iter().any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(w) if w == v)))),
-                    Term::Call(..) => false,
-                    _ => true,
-                }) => {
+                Lit::Cmp { l, op: CmpOp::Eq | CmpOp::Ne, r }
+                    if [(l, r), (r, l)].into_iter().any(|(c, o)| {
+                        is_cat_of_rows(v, c)
+                            && match o {
+                                TermRef::Var(x) => {
+                                    !recursive || order.steps.iter().any(|s| b.plain_atom(s.at).is_some_and(|a| !a.neg() && a.args().any(|t| t.var() == Some(x))))
+                                }
+                                TermRef::Call(..) => false,
+                                _ => true,
+                            }
+                    }) =>
+                {
                     self.note(Form::Comparison, String::new);
                 }
-                Literal::Cmp { l, r, .. } => match [l, r].iter().find_map(|t| not_row(t).or_else(|| arena(t))) {
+                Lit::Cmp { l, r, .. } => match [l, r].into_iter().find_map(|t| not_row(v, t).or_else(|| arena(t))) {
                     Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
                     None => self.note(Form::Comparison, String::new),
                 },
-                Literal::Agg { op, atom, .. } => {
+                Lit::Agg { op, atom, .. } => {
                     match op {
-                        AggOp::Join { .. } => self.note(Form::StringJoin, || "string join".into()),
-                        op => self.note(Form::Aggregate, || format!("aggregate {}", format!("{op:?}").to_lowercase())),
+                        AggRef::Join { .. } => self.note(Form::StringJoin, || "string join".into()),
+                        op => {
+                            let name = match op {
+                                AggRef::Count => "count",
+                                AggRef::Min => "min",
+                                AggRef::Max => "max",
+                                AggRef::Sum => "sum",
+                                _ => "product",
+                            };
+                            self.note(Form::Aggregate, || format!("aggregate {name}"))
+                        }
                     }
-                    if atom.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
-                        self.note(Form::TextTest, || format!("text test {} in an aggregate", atom.rel));
+                    let rel = b.rel(atom);
+                    if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
+                        self.note(Form::TextTest, || format!("text test {rel} in an aggregate"));
                     }
                 }
-                Literal::Nearest { .. } => self.note(Form::Nearest, || "nearest".into()),
-                Literal::Ast { .. } => self.note(Form::Matcher, || "an ast matcher".into()),
+                Lit::Nearest { .. } => self.note(Form::Nearest, || "nearest".into()),
+                Lit::Ast { .. } => self.note(Form::Matcher, || "an ast matcher".into()),
             }
         }
     }
@@ -376,19 +434,32 @@ impl Shape {
 
     /// Adds a planned rule's join steps: `order` its steps, `plan` the planner's record of them (one per step, its
     /// access and rows out), `card` a relation's rows.
-    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: &[Step], plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64) {
-        let mut input = 1.0;
-        for (step, priced) in order.iter().zip(&plan.steps) {
-            if let Literal::Atom(a) = &step.lit
-                && !a.neg
+    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_, '_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64) {
+        let (mut input, mut walked) = (1.0, 1.0);
+        for (step, priced) in order.steps.iter().zip(&plan.steps) {
+            if let Some(a) = order.b.plain_atom(step.at) {
+                let rel = order.b.rel(a);
+                let cols = a.args().filter(|t| !matches!(t, TermRef::Wild)).count();
+                match self.reads.iter_mut().find(|r| r.0 == rel) {
+                    Some(r) => r.2 = r.2.max(cols),
+                    None => self.reads.push((rel.to_string(), card(rel), cols)),
+                }
+            }
+            if let Some(a) = order.b.plain_atom(step.at)
+                && !a.neg()
             {
+                let rel = order.b.rel(a);
                 // "lookup on (c0, c1)", "membership on (c0)", "range in document on (c0)"; a scan has no key.
                 let keys = priced.access.split_once('(').map_or(0, |(_, cols)| cols.split(',').count());
+                if keys == 0 {
+                    self.scanned += card(rel);
+                }
                 if keys > 0 {
-                    self.joins.push(JoinEst { rel: a.rel.to_string(), input, relation: card(&a.rel), output: priced.rows, keys, range: step.mode == Some(Mode::Range) });
+                    self.joins.push(JoinEst { rel: rel.to_string(), input, relation: card(rel), output: priced.rows, walked: (walked, priced.all), keys, range: step.mode == Some(Mode::Range) });
                 }
             }
             input = priced.rows;
+            walked = priced.all;
         }
         self.rows += input.max(0.0);
     }
@@ -537,7 +608,9 @@ pub(in crate::code_rule_dsl) fn gpu_price(runs: u64, work: f64) -> f64 {
 /// work at the GPU's unit price, and its rows read back. The stratum's floor (planning, opening, closing) is paid
 /// wherever its joins run, so the choice weighs the joins alone: the GPU when its part is cheaper by `MARGIN`.
 pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
-    let cpu_s = CPU_PER_STRATUM + CPU_PER_WORK * shape.work;
+    let scanned = shape.scanned.min(shape.work).max(0.0);
+    let cpu_work_s = CPU_PER_WORK * (shape.work - scanned) + CPU_PER_SCANNED * scanned;
+    let cpu_s = CPU_PER_STRATUM + cpu_work_s;
     let mut sorted: BTreeSet<(&str, usize)> = BTreeSet::new();
     let joins: Vec<JoinChoice> = shape.joins.iter().map(|j| {
         let c = price_join(j, sorted.contains(&(j.rel.as_str(), j.keys)));
@@ -551,18 +624,21 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     let mut device_joins = 0.0;
     for j in &shape.joins {
         let keys = j.keys as f64;
-        device_joins += j.input * (keys * UPLOAD_PER_VALUE + PROBE_PER_ROW) + j.output.min(1e12) * PROBE_PER_PAIR;
+        // The device walks every row (no witness cut): its input and output uncut.
+        let (input, output) = j.walked;
+        device_joins += input.min(1e12) * (keys * UPLOAD_PER_VALUE + PROBE_PER_ROW) + output.min(1e12) * PROBE_PER_PAIR;
         if sorts.insert((j.rel.as_str(), j.keys)) {
             device_joins += DEVICE_SORT + j.relation * (keys * UPLOAD_PER_VALUE + SORT_PER_ROW);
         }
     }
-    let device_s = DEVICE_SUBMISSION + DEVICE_RULE * shape.rules as f64 + DEVICE_STAGE * shape.steps as f64 + device_joins
+    let uploads: f64 = shape.reads.iter().map(|(_, rows, cols)| rows * *cols as f64).sum::<f64>().min(1e12) * DEVICE_UPLOAD_PER_VALUE;
+    let device_s = DEVICE_SUBMISSION + DEVICE_RULE * shape.rules as f64 + DEVICE_STAGE * shape.steps as f64 + device_joins + uploads
         + GPU_PER_WORK * (shape.work - join_work).max(0.0) + DEVICE_ROW_BACK * shape.rows.min(1e12);
     let gpu_s = CPU_PER_STRATUM + device_s;
     let missing: Vec<Form> = shape.forms.iter().copied().filter(|f| !DEVICE_FORMS.contains(f)).collect();
     let binding = DEVICE.with(Cell::get);
     let device = binding != Binding::Cpu;
-    let gpu_cheaper = device_s * MARGIN < CPU_PER_WORK * shape.work;
+    let gpu_cheaper = device_s * MARGIN < cpu_work_s;
     let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
     Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking() }
 }
@@ -577,10 +653,20 @@ pub(crate) fn device_joins_off() -> bool {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::code_rule_dsl::logic::front::Atom;
+    use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
+    use crate::code_rule_dsl::logic::plan::Step;
 
-    fn atom(rel: &str, neg: bool) -> Step {
-        Step { at: 0, lit: Literal::Atom(Atom { rel: rel.into(), args: vec![Term::Var("x".into())], neg, gated: false }), mode: None }
+    fn atom(rel: &str, neg: bool) -> Literal {
+        Literal::Atom(Atom { rel: rel.into(), args: [Term::Var("x".into())].into(), neg, gated: false })
+    }
+
+    /// Adds `lits`, planned in their order, to `shape`.
+    fn adds(shape: &mut Shape, lits: &[Literal], head: &[Term], work: f64, recursive: bool) {
+        let steps: Vec<Step> = (0..lits.len()).map(|at| Step { at, mode: None }).collect();
+        let head = Atom { rel: "out".into(), args: head.to_vec().into(), neg: false, gated: false };
+        let made = crate::code_rule_dsl::logic::plan::body::alone(&Rule { head, body: lits.to_vec().into() }).expect("a rule");
+        let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
+        shape.add(Order::new(&b, &steps), work, recursive);
     }
 
     #[test]
@@ -588,8 +674,8 @@ pub mod tests {
         // A large join with a negation, a text test and a computed head: the GPU's price is lower, and the computed
         // term is the form it lacks.
         let mut big = Shape::default();
-        let len = Term::Call("sha256".into(), vec![Term::Var("x".into())]);
-        big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
+        let len = Term::Call("sha256".into(), [Term::Var("x".into())].into());
+        adds(&mut big, &[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
         assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
@@ -597,7 +683,7 @@ pub mod tests {
         assert!(p.why().contains("no computed term"), "{}", p.why());
         // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
         let mut plain = Shape::default();
-        plain.add(&[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
+        adds(&mut plain, &[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
         assert!(plain.missing_none());
         let was = set_device(true);
         let p = place(&plain);
@@ -607,31 +693,31 @@ pub mod tests {
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
         // `sha256(x)` is not, nor a cat or `lower(x)` in a recursive stratum (its rounds would join the text before it
         // is a symbol); `lower(x)` is (a text the device makes into its arena).
-        let cmp = |l: Term, r: Term| Step { at: 0, lit: Literal::Cmp { l, op: "=", r }, mode: None };
-        let doc = |v: &str| Term::Call("doc".into(), vec![Term::Var(v.into())]);
+        let cmp = |l: Term, r: Term| Literal::Cmp { l, op: "=", r };
+        let doc = |v: &str| Term::Call("doc".into(), [Term::Var(v.into())].into());
         let mut docs = Shape::default();
-        docs.add(&[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
+        adds(&mut docs, &[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
         assert!(docs.forms.contains(&Form::Comparison) && !docs.forms.contains(&Form::Computed));
-        let made = || cmp(Term::Var("z".into()), Term::Call("cat".into(), vec![Term::Var("x".into()), Term::Var("y".into())]));
+        let made = || cmp(Term::Var("z".into()), Term::Call("cat".into(), [Term::Var("x".into()), Term::Var("y".into())].into()));
         let mut cat = Shape::default();
-        cat.add(&[atom("kind", false), made()], &[], 1.0, false);
+        adds(&mut cat, &[atom("kind", false), made()], &[], 1.0, false);
         assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
         let mut rec = Shape::default();
-        rec.add(&[atom("kind", false), made()], &[], 1.0, true);
+        adds(&mut rec, &[atom("kind", false), made()], &[], 1.0, true);
         assert!(rec.forms.contains(&Form::Computed));
-        let lower = || cmp(Term::Var("z".into()), Term::Call("lower".into(), vec![Term::Var("x".into())]));
+        let lower = || cmp(Term::Var("z".into()), Term::Call("lower".into(), [Term::Var("x".into())].into()));
         let mut len = Shape::default();
-        len.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("sha256".into(), vec![Term::Var("x".into())]))], &[], 1.0, false);
+        adds(&mut len, &[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("sha256".into(), [Term::Var("x".into())].into()))], &[], 1.0, false);
         assert!(len.forms.contains(&Form::Computed));
         let mut low = Shape::default();
-        low.add(&[atom("kind", false), lower()], &[], 1.0, false);
+        adds(&mut low, &[atom("kind", false), lower()], &[], 1.0, false);
         assert!(!low.forms.contains(&Form::Computed), "{:?}", low.forms);
         let mut low_rec = Shape::default();
-        low_rec.add(&[atom("kind", false), lower()], &[], 1.0, true);
+        adds(&mut low_rec, &[atom("kind", false), lower()], &[], 1.0, true);
         assert!(low_rec.forms.contains(&Form::Computed));
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
-        small.add(&[atom("kind", false)], &[], 10.0, false);
+        adds(&mut small, &[atom("kind", false)], &[], 10.0, false);
         let was = set_device(true);
         let p = place(&small);
         set_device(was);
@@ -639,15 +725,27 @@ pub mod tests {
         assert_eq!(p.why(), "CPU: cheaper");
         // Join steps priced on each form: a large equi-join takes the sort and probe, its second probe of the same
         // relation pays no sort; a range inside a document takes the tile; a small lookup stays on the CPU's index.
-        let est = |rel: &str, input: f64, output: f64, range: bool| JoinEst { rel: rel.into(), input, relation: 1e6, output, keys: 1, range };
-        let joined = Shape { joins: vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)], ..Shape::default() };
+        let est = |rel: &str, input: f64, output: f64, range: bool| JoinEst { rel: rel.into(), input, relation: 1e6, output, walked: (input, output), keys: 1, range };
+        let mut joined = Shape::default();
+        joined.joins = vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)];
         let p = place(&joined);
         let forms: Vec<JoinForm> = p.joins.iter().map(|c| c.form).collect();
         assert_eq!(forms, vec![JoinForm::Probe, JoinForm::Probe, JoinForm::Tile, JoinForm::Index], "{p:?}");
         assert!(p.joins[1].probe_s < p.joins[0].probe_s, "the second probe finds the relation sorted");
+        // A copy of an input (one scan, every row out) stays on the CPU: the device saves no join, and pays the upload
+        // and the rows back (decision 0277). A join whose rows the device would make past the bound head, where the
+        // CPU's walk keeps one witness (decision 0229), is priced with every row on the device.
+        let was = set_device(true);
+        let mut copy = Shape { work: 250_000.0, rows: 150_000.0, scanned: 250_000.0, rules: 1, steps: 1, ..Shape::default() };
+        copy.reads = vec![("node".into(), 250_000.0, 2)];
+        let p = place(&copy);
+        assert!(!p.gpu_cheaper && !p.gpu, "{p:?}");
+        let cut = |walked: f64| Shape { work: 2e6, rows: 1e3, rules: 1, steps: 2, joins: vec![JoinEst { rel: "node".into(), input: 1e3, relation: 1e6, output: 1e3, walked: (1e3, walked), keys: 1, range: false }], ..Shape::default() };
+        assert!(place(&cut(1e3)).gpu_s < place(&cut(1e7)).gpu_s, "every row walked costs the device more");
+        set_device(was);
         // Recursion and computed terms are forms too.
         let mut rec = Shape::default();
-        rec.add(&[atom("edge", false)], &[Term::Call("add".into(), vec![])], 1.0, true);
+        adds(&mut rec, &[atom("edge", false)], &[Term::Call("add".into(), vec![].into())], 1.0, true);
         assert!(rec.forms.contains(&Form::Recursion) && rec.forms.contains(&Form::Computed));
     }
 }

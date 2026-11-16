@@ -8,15 +8,12 @@ fn packs() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(|d| d.join("docs/rule-syntax/packs/python")).find(|d| d.is_dir()).expect("the rule packs")
 }
 
-/// The process has one session: its tests take turns, with every other test of a session (`SESSION_TESTS`).
-use super::super::SESSION_TESTS as SERIAL;
 
 /// Two runs of one program in a session: the second compiles nothing and reads the unchanged file from the memo;
 /// a third, after an edit, evaluates the edited file only, and every run's findings are a fresh run's.
 #[test]
 fn a_session_reruns_what_an_edit_changed() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let base = std::env::temp_dir().join(format!("rerail-session-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-run");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("a.py"), "import hashlib\nhashlib.md5(b'x')\n").unwrap();
@@ -24,11 +21,11 @@ fn a_session_reruns_what_an_edit_changed() {
     let rule = packs().join("bandit-b301-pickle.rr");
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let findings = || std::fs::read_to_string(out.join("violation.csv")).unwrap();
+    let findings = || crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap();
     let fresh = run();
     let expected = findings();
     let _ = fresh;
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     let first = run();
     assert_eq!((first.memo.0, findings()), (0, expected.clone()), "a session's first run evaluates every file");
     let second = run();
@@ -36,8 +33,54 @@ fn a_session_reruns_what_an_edit_changed() {
     std::fs::write(src.join("a.py"), "import pickle\nimport hashlib\nhashlib.md5(b'x')\npickle.loads(b'y')\n").unwrap();
     let third = run();
     assert_eq!(third.memo.0, 1, "only the edited file is evaluated");
-    assert!(findings().lines().count() == expected.lines().count() + 1, "the edit's finding: {}", findings());
-    stop();
+    assert!(findings().len() == expected.len() + 1, "the edit's finding: {:?}", findings());
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A session's runs write their outputs over one stack (decision 0239 stage 4): an edit's run appends an overlay of
+/// the rows it changed (or nothing, where none did), and the stack reads as a fresh run's outputs at every step,
+/// folded at its depth.
+#[test]
+fn a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed() {
+    use crate::code_rule_dsl::logic::plan::output;
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-overlays");
+    let (src, out, fresh) = (base.join("src"), base.join("out"), base.join("fresh"));
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..6 {
+        std::fs::write(src.join(format!("m{i}.py")), format!("import pickle\npickle.loads(b'{i}')\n")).unwrap();
+    }
+    let rule = packs().join("bandit-b301-pickle.rr");
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = |to: &std::path::Path| super::super::run(&program, &src, None, to, "program", Binding::Cpu, 1 << 18).unwrap();
+    let names = |dir: &std::path::Path| -> Vec<String> { output::Outputs::open(dir).unwrap().names().into_iter().map(str::to_owned).collect() };
+    let session = start(&base.join("session")).unwrap();
+    run(&out);
+    assert_eq!(output::read(&out).unwrap().len(), 1, "a session's first run writes a base");
+    let len = || std::fs::metadata(out.join(output::FILE)).unwrap().len();
+    let before = len();
+    run(&out);
+    assert_eq!(len(), before, "nothing changed: nothing written");
+    let mut partly = false;
+    for step in 0..(output::MAX_DEPTH + 2) {
+        // One file's finding moves, another's goes or comes back.
+        let i = step % 6;
+        std::fs::write(src.join(format!("m{i}.py")), format!("import pickle\n\n{}pickle.loads(b'{step}')\n", "\n".repeat(step))).unwrap();
+        if step % 2 == 1 {
+            std::fs::write(src.join("m5.py"), if step % 4 == 1 { "x = 1\n".to_owned() } else { "import pickle\npickle.loads(b'5')\n".to_owned() }).unwrap();
+        }
+        run(&out);
+        full(|| run(&fresh));
+        let stack = output::read(&out).unwrap();
+        assert!(stack.len() <= output::MAX_DEPTH, "step {step}: folded at its depth");
+        partly |= stack.iter().any(|i| i.entry("violation", output::kind::GONE).is_some());
+        assert_eq!(names(&out), names(&fresh), "step {step}");
+        for rel in names(&fresh) {
+            assert_eq!(output::shown(&out, &rel).unwrap(), output::shown(&fresh, &rel).unwrap(), "step {step}: {rel}");
+        }
+    }
+    assert!(partly, "an edit's overlay holds the rows it changed");
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -45,8 +88,7 @@ fn a_session_reruns_what_an_edit_changed() {
 /// a run after an edit evaluates those whose inputs changed, and every run's findings are a full run's.
 #[test]
 fn a_session_runs_the_cross_file_strata_an_edit_changed() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let base = std::env::temp_dir().join(format!("rerail-session-cross-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-cross");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(src.join("pkg")).unwrap();
     std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
@@ -58,7 +100,7 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -67,7 +109,7 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
         assert_eq!(report.cross_strata, None, "a full run is no session's");
         findings()
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     let first = run();
     let (ran, all) = first.cross_strata.expect("a session's run");
     assert_eq!(ran, all, "the first run evaluates every stratum");
@@ -94,7 +136,42 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
         maintained += report.cross_maintained.0;
     }
     assert!(maintained > 0, "an edit's strata are maintained from deltas (stage 2)");
-    stop();
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An edit of a file-local rule leaves the cross-file part's program as it was: the session finds its part kept
+/// under that program (not the whole program, whose key the edit changes), and runs no cross-file stratum; the rows
+/// are a full run's.
+#[test]
+fn a_session_keeps_its_cross_part_across_a_file_local_edit() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-local-edit");
+    let (src, out) = (base.join("src"), base.join("out"));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("a.py"), "def helper(x):\n    assert x\n    return x\n\ndef other(y):\n    while y:\n        assert y\n    return helper(y)\n").unwrap();
+    std::fs::write(src.join("b.py"), "from a import helper, other\n\ndef main():\n    assert True\n    helper(1)\n    other(2)\n").unwrap();
+    // `at` is the cross-file part; `flagged`, file-local, is the rule edited.
+    let program = |kind: &str| format!(
+        "#include \"core.rr\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number)\nat(x, k) :- called(c, x), defined(_, x), col(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), line(n, l).\n.output at, flag_line\n"
+    );
+    let program = |kind: &str| crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&program(kind)).unwrap()).unwrap();
+    let run = |text: &str| super::super::run(text, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rows = || ["at", "flag_line"].map(|r| {
+        let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+        v.sort();
+        v
+    });
+    let expected = full(|| { run(&program("while_statement")); rows() });
+    let session = start(&base.join("session")).unwrap();
+    let first = run(&program("try_statement"));
+    let (_, all) = first.cross_strata.expect("a session's run");
+    assert!(all > 0, "the program has a cross-file part");
+    let edited = run(&program("while_statement"));
+    assert_eq!(rows(), expected, "the edited run's rows are a full run's");
+    assert!(edited.cross_changed.is_empty(), "no input of the cross part changed: {:?}", edited.cross_changed);
+    assert_eq!(edited.cross_strata, Some((0, all)), "the cross part's program is as it was: no stratum runs");
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -103,12 +180,11 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
 /// and every run's findings are a full run's.
 #[test]
 fn a_session_maintains_a_recursive_cross_file_stratum() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     recursive_cross_file_stratum();
 }
 
 fn recursive_cross_file_stratum() {
-    let base = std::env::temp_dir().join(format!("rerail-session-reach-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-reach");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("reach.rr");
@@ -136,7 +212,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -144,7 +220,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         full(run);
         findings()
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     run();
     assert_eq!(findings(), full());
     assert!(findings().len() >= 3, "the cycle's imports: {:?}", findings());
@@ -168,7 +244,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     // Every input delta the maintained forms read was priced by its size, not the default's 1,000 rows.
     let unsized_reads = crate::code_rule_dsl::logic::plan::unsized_deltas() - unsized_before;
     assert_eq!(unsized_reads, 0, "reads of an input delta priced with no size");
-    stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -177,8 +253,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
 /// nothing. The findings are a full run's, with the skip and without it.
 #[test]
 fn a_session_passes_on_a_quiet_stratum() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let base = std::env::temp_dir().join(format!("rerail-session-quiet-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-quiet");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("quiet.rr");
@@ -207,7 +282,7 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -215,20 +290,22 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
         full(run);
         findings()
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     run();
     assert_eq!(findings(), full());
     assert_eq!(findings().len(), 1, "a.py's import of h: {:?}", findings());
     std::fs::write(src.join("a.py"), "from h import x\nfrom d import y\n").unwrap();
-    let quiet = crate::code_rule_dsl::logic::plan::quiet_strata();
     let report = run();
-    let quiet = crate::code_rule_dsl::logic::plan::quiet_strata() - quiet;
+    let (quiet, unmeasured) = report.cross_quiet;
     let got = findings();
     eprintln!("{:?} strata run, {:?} maintained; {quiet} quiet; {} findings", report.cross_strata, report.cross_maintained, got.len());
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_eq!(got.len(), 2, "both of a.py's imports: {got:?}");
     assert!(quiet > 0, "`seen`'s stratum is quiet: nothing deleted, nothing to derive");
-    stop();
+    // Each relation held as kept is planned with its columns' statistics, not its rows' count alone (t39: a probe of
+    // one was priced as all its rows, and a 3-row delta was read after a scan of it).
+    assert_eq!(unmeasured, 0, "quiet relations held with no column measured");
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -237,8 +314,7 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
 /// findings are a full run's.
 #[test]
 fn a_session_keeps_its_part_around_an_inlined_relation() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let base = std::env::temp_dir().join(format!("rerail-session-inlined-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-inlined");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("near.rr");
@@ -265,7 +341,7 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -273,7 +349,7 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
         full(run);
         findings()
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     run();
     assert_eq!(findings(), full());
     assert_eq!(findings().len(), 2, "both imports of the pair: {:?}", findings());
@@ -283,7 +359,7 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
         assert_eq!(findings(), full(), "after editing {path}, the session's findings are a full run's");
         assert!(report.cross_strata.is_some(), "a session's run");
     }
-    stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -292,8 +368,7 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
 /// Without the stop, the inserts walked the closure from the new edge again (9,000,000 rows on `session_costs`).
 #[test]
 fn a_session_inserts_only_rows_new_against_the_survivors() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let base = std::env::temp_dir().join(format!("rerail-session-ins-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-ins");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("reach.rr");
@@ -320,14 +395,13 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     }
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     run();
     std::fs::write(src.join("a.py"), "from b import x\nfrom c import q\n").unwrap();
-    // SAFETY: the session tests run one at a time (`SERIAL`), and only a session's run reads the variable.
-    unsafe { std::env::set_var("RERAIL_CROSS_DELTA_COUNTS", "1") };
+    let switched = super::super::switches::set(&[("RERAIL_CROSS_DELTA_COUNTS", "1")]);
     let report = run();
-    unsafe { std::env::remove_var("RERAIL_CROSS_DELTA_COUNTS") };
-    stop();
+    drop(switched);
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
     let [_, inserted, _, _, _, new] = report.cross_delta_counts;
     assert!(report.cross_maintained.1 > 0, "the recursive stratum is maintained: {:?}", report.cross_maintained);
@@ -338,7 +412,6 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
 /// importers counted, up and down to none, give a full run's findings.
 #[test]
 fn a_session_maintains_a_cross_file_aggregate() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     cross_file_aggregate();
 }
 
@@ -358,17 +431,12 @@ fn a_session_derives_again_only_the_strata_priced_cheaper_so() {
 }
 
 fn derive_again_with(vars: &[(&str, &str)]) {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    unsafe {
-        vars.iter().for_each(|(k, v)| std::env::set_var(k, v));
-    }
+    let switched = super::super::switches::set(vars);
     let run = std::panic::catch_unwind(|| {
         recursive_cross_file_stratum();
         cross_file_aggregate();
     });
-    unsafe {
-        vars.iter().for_each(|(k, _)| std::env::remove_var(k));
-    }
+    drop(switched);
     if let Err(e) = run {
         std::panic::resume_unwind(e);
     }
@@ -380,18 +448,10 @@ fn derive_again_with(vars: &[(&str, &str)]) {
 /// survivors) can find it. Each run's findings must be a full run's, and the stratum must be maintained (not
 /// derived again: `RERAIL_AGAIN=off`), in both the default and `RERAIL_WAVE0=kept`.
 fn wave0_case(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str, &str)]) {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     for mode in ["changes", "kept"] {
-        // SAFETY: the session tests run one at a time (`SERIAL`), and only a session's run reads the variables.
-        unsafe {
-            std::env::set_var("RERAIL_AGAIN", "off");
-            std::env::set_var("RERAIL_WAVE0", mode);
-        }
+        let switched = super::super::switches::set(&[("RERAIL_AGAIN", "off"), ("RERAIL_WAVE0", mode)]);
         let run = std::panic::catch_unwind(|| wave0_session(&format!("{tag}-{mode}"), rules, files, edits));
-        unsafe {
-            std::env::remove_var("RERAIL_AGAIN");
-            std::env::remove_var("RERAIL_WAVE0");
-        }
+        drop(switched);
         if let Err(e) = run {
             eprintln!("wave0 case {tag} failed with RERAIL_WAVE0={mode}");
             std::panic::resume_unwind(e);
@@ -400,7 +460,7 @@ fn wave0_case(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str, &s
 }
 
 fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str, &str)]) {
-    let base = std::env::temp_dir().join(format!("rerail-session-w0-{tag}-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension(format!("session-w0-{tag}"));
     let _ = std::fs::remove_dir_all(&base);
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
@@ -413,7 +473,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -421,20 +481,13 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     // K4, and t32 4.1's kept part) and maintains it from them, so a plain full run after the first one shares any
     // missed derivation of the mode under test. This one keeps none, and must maintain no stratum.
     let full = || {
-        let vars = [("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off"), ("RERAIL_WAVE0", "kept")];
-        let was: Vec<Option<String>> = vars.iter().map(|(k, _)| std::env::var(k).ok()).collect();
-        unsafe { vars.iter().for_each(|(k, v)| std::env::set_var(k, v)) };
+        let switched = super::super::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off"), ("RERAIL_WAVE0", "kept")]);
         let report = full(run);
-        for ((k, _), w) in vars.iter().zip(was) {
-            match w {
-                Some(v) => unsafe { std::env::set_var(k, v) },
-                None => unsafe { std::env::remove_var(k) },
-            }
-        }
+        drop(switched);
         assert_eq!((report.cross_maintained.0, report.cross_maintained.1), (0, 0), "{tag}: the oracle maintains nothing");
         findings()
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     run();
     assert_eq!(findings(), full(), "{tag}: the first run");
     let mut recursive = 0;
@@ -449,7 +502,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
         recursive += report.cross_maintained.1;
         counts.insert(got.len());
     }
-    stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
     assert!(recursive > 0, "{tag}: the recursive stratum is maintained from deltas");
     assert!(counts.len() > 1, "{tag}: the edits change how many findings there are: {counts:?}");
@@ -507,7 +560,7 @@ fn wave0_a_compacted_start() {
 }
 
 fn cross_file_aggregate() {
-    let base = std::env::temp_dir().join(format!("rerail-session-count-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-count");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("hub.rr");
@@ -538,7 +591,7 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -546,10 +599,10 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
         full(run);
         findings()
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     run();
     assert_eq!(findings(), full());
-    assert!(findings().iter().any(|r| r.contains("HUB")) && findings().iter().any(|r| r.contains("LEAF")), "{:?}", findings());
+    assert!(findings().iter().any(|r| r.iter().any(|v| v.contains("HUB"))) && findings().iter().any(|r| r.iter().any(|v| v.contains("LEAF"))), "{:?}", findings());
     let edits: [(&str, &str); 4] = [
         ("b.py", "x = 2\n"),
         ("d.py", "from a import w\n"),
@@ -567,7 +620,7 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
         maintained += report.cross_maintained.0;
     }
     assert!(maintained > 0);
-    stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -575,8 +628,7 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
 /// (spike O125). Delete-and-rederive's insert rule must test it over the new rows, not take the lost row for it.
 #[test]
 fn a_session_keeps_a_negation_that_still_fails() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let base = std::env::temp_dir().join(format!("rerail-session-lone-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-lone");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("lone.rr");
@@ -601,7 +653,7 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -609,7 +661,7 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
         full(run);
         findings()
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     run();
     assert_eq!(findings(), full());
     let mut maintained = 0;
@@ -620,7 +672,7 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
         maintained += report.cross_maintained.0;
     }
     assert!(maintained > 0, "the negation's stratum is maintained");
-    stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -630,9 +682,8 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
 #[test]
 #[ignore]
 fn session_costs() {
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let n: usize = std::env::var("RERAIL_SESSION_COST_FILES").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
-    let base = std::env::temp_dir().join(format!("rerail-session-costs-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-costs");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("costs.rr");
@@ -687,7 +738,7 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
             eprintln!("    {total:>7.3} s  {}: open {:.3} s, joins {:.3} s", path.rsplit('/').next().unwrap_or(""), part("engine open (load inputs, build indexes)"), part("engine run (joins)"));
         }
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     let r = run();
     show("first run", &r);
     for (k, (i, extra)) in [(n / 2, "z = 1\n"), (n / 3, "from m0 import q\n"), (n / 2, "")].into_iter().enumerate() {
@@ -695,7 +746,7 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
         let r = run();
         show(&format!("edit {k} (m{i})"), &r);
     }
-    stop();
+    drop(session);
     let r = run();
     show("cold run, no session", &r);
     crate::code_rule_dsl::logic::profile::set(false);
@@ -707,8 +758,7 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
 #[test]
 fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() {
     use super::super::tests::{REACH_EDITS, REACH_RULE, REACH_START};
-    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let base = std::env::temp_dir().join(format!("rerail-session-reach-index-{}", std::process::id()));
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-reach-index");
     let _ = std::fs::remove_dir_all(&base);
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
@@ -720,7 +770,7 @@ fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() 
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
-        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
         rows.sort();
         rows
     };
@@ -728,7 +778,7 @@ fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() 
         full(run);
         findings()
     };
-    start(&base.join("session")).unwrap();
+    let session = start(&base.join("session")).unwrap();
     run();
     assert_eq!(findings(), full());
     for (path, text, what) in REACH_EDITS {
@@ -740,6 +790,6 @@ fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() 
         run();
         assert_eq!(findings(), got, "an unchanged run after editing {path} ({what})");
     }
-    stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }

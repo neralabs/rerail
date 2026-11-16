@@ -334,9 +334,9 @@ fn corpus_sql_mode_matches_native_rule_execution() {
         }
     }
     let output =
-        |name: &str| std::fs::read_to_string(dir.path().join(name).join("reach.csv")).unwrap();
+        |name: &str| crate::code_rule_dsl::logic::plan::output::shown(&dir.path().join(name), "reach").unwrap();
     assert_eq!(output("sql"), output("native"));
-    assert_eq!(output("sql").lines().count(), 6);
+    assert_eq!(output("sql").len(), 6);
 }
 
 #[test]
@@ -600,21 +600,17 @@ named(n, x) :- def(n, x), x = "g".
     // A frame that does not decode fails the statement that needs it, naming the file; a lookup
     // into another document does not decode it, so it still answers.
     let a_node = rows(&mut executor, "SELECT min(n) FROM def JOIN corpus_document d ON d.doc = n >> 32 WHERE sym_text(d.path) LIKE '%a.py'")[0][0]["integer"].as_str().unwrap().to_owned();
-    // Only this run's entries: b.py's frames in the per-file memo (decision 0108), its content's digest among each
-    // frame's reads (a frame per program that read it).
-    let b = {
+    // Only this run's entries: b.py's in the per-file memo (decision 0240 §4), found by its content's digest (an entry
+    // per program that read it), its bytes in the pack cut one short.
+    let b: [u8; 32] = {
         use sha2::Digest as _;
-        let digest: [u8; 32] = sha2::Sha256::digest(std::fs::read(dir.join("b.py")).unwrap()).into();
-        let mut first = vec![6, 0, 0, 0];
-        first.extend(b"sha256");
-        first.extend(&digest[..8]);
-        first
+        sha2::Sha256::digest(std::fs::read(dir.join("b.py")).unwrap()).into()
     };
     // Through a connection of its own: the executor's refuses a commit while atoms it holds are pending (0049).
     let path = executor.connection().path().expect("a store on disk").to_owned();
     let changed = rusqlite::Connection::open(&path)
         .unwrap()
-        .execute("UPDATE frames SET rows = rows - 1 WHERE rel = 'local' AND instr(reads, ?1) > 0", rusqlite::params![&b])
+        .execute("UPDATE memo_entries SET len = len - 1 WHERE digest = ?1", rusqlite::params![&b[..]])
         .unwrap();
     assert!(changed >= 1);
     // This process holds the frames in memory (decision 0104): an edit from outside is the next process's to read.

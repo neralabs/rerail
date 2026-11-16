@@ -2462,6 +2462,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lz4-sys"
+version = "1.11.1+lz4-1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3149,12 +3159,24 @@ version = "0.1.0"
 dependencies = [
  "block",
  "cc",
+ "core-foundation-sys",
  "libc",
  "metal",
  "objc",
+ "parking_lot",
  "rayon",
+ "rerail-blocks",
  "rerail-forest",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "rerail-blocks"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "metal",
+ "rayon",
 ]
 
 [[package]]
@@ -3170,6 +3192,23 @@ dependencies = [
  "libc",
  "rayon",
  "rerail-compiler",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-csharp-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
+name = "rerail-css-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
@@ -3212,10 +3251,12 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-lang",
+ "rerail-lang-python",
  "rerail-logic",
  "rerail-metal",
  "rerail-prof",
@@ -3245,6 +3286,14 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-ecma-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3291,9 +3340,13 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-compiler",
+ "rerail-csharp-lean",
+ "rerail-css-lean",
  "rerail-device-metal",
- "rerail-engine",
+ "rerail-ecma-lean",
  "rerail-facts",
+ "rerail-html-lean",
+ "rerail-java-lean",
  "rerail-lang",
  "rerail-lang-ecma",
  "rerail-lang-json",
@@ -3302,17 +3355,24 @@ dependencies = [
  "rerail-lang-rust",
  "rerail-lang-sql",
  "rerail-logic",
+ "rerail-markdown-inline-lean",
+ "rerail-markdown-lean",
  "rerail-metal",
  "rerail-parser-tests",
+ "rerail-php-lean",
  "rerail-prof",
+ "rerail-python-lean",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-rust-lean",
  "rerail-sessions",
  "rerail-simdjson",
+ "rerail-sql-lean",
  "rerail-store",
  "rerail-tape-format",
  "rerail-transducer",
+ "rerail-vue-lean",
  "rerail-w",
  "roaring",
  "ruff_python_ast",
@@ -3378,6 +3438,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3385,6 +3446,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -3418,6 +3480,23 @@ dependencies = [
  "objc",
  "rayon",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "rerail-html-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-java-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -3462,12 +3541,24 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-compiler",
+ "rerail-csharp-lean",
+ "rerail-css-lean",
+ "rerail-ecma-lean",
+ "rerail-html-lean",
+ "rerail-java-lean",
  "rerail-lang",
+ "rerail-markdown-inline-lean",
+ "rerail-markdown-lean",
+ "rerail-php-lean",
  "rerail-prof",
+ "rerail-python-lean",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-rust-lean",
+ "rerail-sql-lean",
  "rerail-store",
  "rerail-tape-format",
+ "rerail-vue-lean",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -3940,6 +4031,7 @@ dependencies = [
  "indexmap",
  "libc",
  "memchr",
+ "memmap2 0.9.12",
  "metal",
  "mimalloc",
  "model2vec-rs",
@@ -3954,6 +4046,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3987,6 +4080,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-markdown-inline-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-markdown-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-metal"
 version = "0.1.0"
 dependencies = [
@@ -3994,6 +4103,7 @@ dependencies = [
  "libc",
  "metal",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-metal",
  "rerail-prof",
@@ -4011,6 +4121,14 @@ dependencies = [
  "rerail-rr-syntax",
  "tree-sitter",
  "tree-sitter-json",
+]
+
+[[package]]
+name = "rerail-php-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4073,6 +4191,15 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-python-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -4145,6 +4272,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-rr-aot"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-compiler",
+ "rerail-rr-parser",
+ "rerail-rr-syntax",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-rr-parser"
 version = "0.1.0"
 dependencies = [
@@ -4197,6 +4335,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-rr-syntax",
+ "rerail-simd8",
  "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",
@@ -4217,6 +4356,15 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-rust-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -4292,13 +4440,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-simd8"
+version = "0.1.0"
+
+[[package]]
 name = "rerail-simdjson"
 version = "0.1.0"
 dependencies = [
- "cc",
  "libc",
  "memchr",
+ "rerail-simdjson-native",
  "sha2 0.11.1",
+]
+
+[[package]]
+name = "rerail-simdjson-native"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "rerail-sql-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4330,6 +4497,7 @@ dependencies = [
 name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
+ "lz4-sys",
  "sha2 0.11.1",
 ]
 
@@ -4402,6 +4570,15 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-vue-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-html-lean",
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
