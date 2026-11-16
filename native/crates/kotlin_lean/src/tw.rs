@@ -479,12 +479,19 @@ impl Tw {
     /// The nodes read since mark `m` (the comments passed) given `field`, where they have none: a
     /// hidden rule's children all take the field given it (`a?` as a navigation's target).
     pub fn field_since(&mut self, m: Mark, field: u8) {
-        let mut i = self.frames[m.0 as usize].at as usize;
+        let f = &self.frames[m.0 as usize];
+        let (mut i, held) = (f.at as usize, f.held as usize);
         while i < self.w.len() {
             if self.w.key(i) >> 16 & 1 == 0 {
                 self.set_field(i as u32, field);
             }
             i += self.w.size(i) as usize;
+        }
+        // The tokens held since the mark (their node not yet known) take it too.
+        for h in &mut self.held[held..] {
+            if h.key >> 10 & 0x3f == 0 {
+                h.key |= u32::from(field) << 10;
+            }
         }
     }
 
@@ -492,6 +499,12 @@ impl Tw {
     #[inline]
     pub fn kind_at(&self, id: u32) -> K {
         kind_of((self.w.key(id as usize) & 0x3ff) as usize)
+    }
+
+    /// Node `id` given `field` in place of the one it has (none for 0).
+    pub fn refield(&mut self, id: u32, field: u8) {
+        let k = self.w.key(id as usize) & !(0x3f << 10);
+        self.w.set_key(id as usize, k | u32::from(field) << 10);
     }
 
     /// Node `id` given `kind`.

@@ -113,6 +113,10 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         self.user_type()?;
+        if self.peek() == T::LParen && !self.touching() && !matches!(self.t_text_last(), b"escaping" | b"Sendable" | b"autoclosure") {
+            // `@A (…)`: arguments or a function type's parameters, as the GLR decides (both seen).
+            return self.refuse();
+        }
         if self.peek() == T::LParen && self.touching() {
             self.tk(K::TLParen)?;
             self.level(false, |p| {
@@ -160,8 +164,9 @@ impl<'a> P<'a> {
             }
             return Ok(());
         }
-        if matches!(self.peek(), T::Star) {
-            return self.refuse();
+        if self.peek() == T::Star {
+            self.tk(K::TStar)?;
+            return Ok(());
         }
         self.expression()
     }
@@ -344,6 +349,12 @@ impl<'a> P<'a> {
         }
         self.close(n);
         Ok(())
+    }
+
+    /// The text of the last token read.
+    fn t_text_last(&self) -> &'a [u8] {
+        let t = self.toks[self.i - 1];
+        &self.src[t.start as usize..t.end as usize]
     }
 
     /// `ownership_modifier` (a capture's).
@@ -1124,10 +1135,16 @@ impl<'a> P<'a> {
     /// `_binding_pattern_with_expr` (hidden): a binding, a case pattern, `_`, a tuple, a cast, or
     /// an expression.
     pub(super) fn binding_pattern_with_expr(&mut self) -> R<()> {
+        // `let x as T`: the cast's pattern is what follows the binding.
+        let binds = matches!(self.word(), w::LET | w::VAR) && self.peek() == T::Name;
+        if binds {
+            self.value_binding_pattern(f::NONE)?;
+        }
         let m = self.mark();
         match self.peek() {
-            T::Name if matches!(self.word(), w::LET | w::VAR) => {
-                self.value_binding_pattern(f::NONE)?;
+            // `case let .some(x)`.
+            T::Dot if binds => self.case_pattern()?,
+            _ if binds => {
                 self.no_expr_pattern(true)?;
             }
             T::Name if self.is_word(w::UNDERSCORE) && !matches!(self.kind_at(1), T::Dot) => {
@@ -1200,6 +1217,7 @@ impl<'a> P<'a> {
     }
 
     pub(super) fn binding_pattern_no_expr_inner(&mut self, bound: bool) -> R<()> {
+        // `catch let e as T`: the cast's pattern holds the binding (a switch case's does not).
         let m = self.mark();
         match self.peek() {
             T::Name if matches!(self.word(), w::LET | w::VAR) => {

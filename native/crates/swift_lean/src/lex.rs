@@ -545,6 +545,12 @@ impl<'s> Lexer<'s> {
         let mut wide = false;
         loop {
             i = self.blocks.word_end(i);
+            // `*` and `#` are `\p{Emoji}` (keycap bases): the grammar's name goes on through them
+            // (`i*4` is one name).
+            if matches!(self.at(i), b'*' | b'#') {
+                i += 1;
+                continue;
+            }
             if self.at(i) < 0x80 || i >= self.src.len() {
                 return Ok((i, wide));
             }

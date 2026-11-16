@@ -40,8 +40,8 @@ pub(super) const VALUE: Cx = Cx { prec: -100, right: false, hack: false, stop: 0
 pub(super) const TOP: Cx = Cx { prec: -100, right: false, hack: false, stop: 0, split: false };
 const HACK: Cx = Cx { prec: -2, right: false, hack: true, stop: 0, split: false };
 const PREFIX: Cx = Cx { prec: 7, right: false, hack: false, stop: 0, split: false };
-const TRY: Cx = Cx { prec: -2, right: true, hack: false, stop: 1, split: true };
-const AWAIT: Cx = Cx { prec: -2, right: true, hack: false, stop: 2, split: true };
+const TRY: Cx = Cx { prec: -2, right: true, hack: false, stop: 1, split: false };
+const AWAIT: Cx = Cx { prec: -2, right: true, hack: false, stop: 2, split: false };
 
 impl Cx {
     #[inline]
@@ -82,7 +82,7 @@ impl<'a> P<'a> {
         let m = self.mark();
         // `try await …`: `try`'s operand ends with the `await`'s (its `prec.left(0)` choice).
         let awaits = cx.stop == 1 && self.is_word(w::AWAIT);
-        self.unary()?;
+        self.unary(cx)?;
         if !awaits {
             self.operators(m, cx)?;
         }
@@ -176,7 +176,8 @@ impl<'a> P<'a> {
                     let n = self.t.wrap(m, K::CallExpression, f::NONE);
                     self.call_suffix(true, cx.split)?;
                     self.close(n);
-                    if cx.stop != 0 {
+                    // (An optional chain's `?` after the call: the operand goes on.)
+                    if cx.stop != 0 && !(self.peek() == T::Question && self.touching()) {
                         return Ok(());
                     }
                 }
@@ -339,13 +340,17 @@ impl<'a> P<'a> {
     // ---- Operands.
 
     /// A prefix operator and its operand, or a primary expression.
-    fn unary(&mut self) -> R<()> {
+    fn unary(&mut self, cx: Cx) -> R<()> {
         let t = self.tok();
         match t.kind {
-            T::Bang if self.kind_at(1) == T::LParen && self.adjacent(0) => {
-                // `!(…)`: a call of `!` (the operator as a function, `_referenceable_operator`).
+            T::Bang | T::Minus | T::Plus | T::Tilde if self.kind_at(1) == T::LParen && self.adjacent(0) => {
+                // `!(…)`, `-(…)`: a call of the operator (`_referenceable_operator`).
                 let n = self.open(K::CallExpression);
-                self.leaf(K::Bang, f::NONE)?;
+                if t.kind == T::Bang {
+                    self.leaf(K::Bang, f::NONE)?;
+                } else {
+                    self.tk(super::punct(t.kind).expect("an operator"))?;
+                }
                 self.call_suffix(true, true)?;
                 self.close(n);
                 Ok(())
@@ -367,6 +372,19 @@ impl<'a> P<'a> {
                 if !self.touching() {
                     return self.refuse();
                 }
+                if t.kind == T::Dot && self.peek() == T::Name && !self.tok().tick && matches!(self.word(), w::DEFAULT | w::CASE | w::ELSE | w::IN | w::WHERE | w::CATCH | w::LET | w::VAR | w::FUNC | w::RETURN | w::IMPORT | w::INIT | w::REPEAT) {
+                    // `.default`: after a `.`, any word is a name.
+                    let m = self.mark();
+                    self.simple_identifier()?;
+                    let stmt = std::mem::replace(&mut self.stmt, false);
+                    let r = self.operators(m, PREFIX);
+                    self.stmt = stmt;
+                    r?;
+                    self.t.field_since(m, f::TARGET);
+                    self.t.unmark(m);
+                    self.close(n);
+                    return Ok(());
+                }
                 let stmt = std::mem::replace(&mut self.stmt, false);
                 let r = self.expr_f(PREFIX, f::TARGET);
                 self.stmt = stmt;
@@ -387,11 +405,11 @@ impl<'a> P<'a> {
                 self.close(n);
                 Ok(())
             }
-            _ => self.primary(),
+            _ => self.primary(cx),
         }
     }
 
-    fn primary(&mut self) -> R<()> {
+    fn primary(&mut self, cx: Cx) -> R<()> {
         let t = self.tok();
         match t.kind {
             T::Name => {
@@ -418,7 +436,8 @@ impl<'a> P<'a> {
                         w::TRY => {
                             let n = self.open(K::TryExpression);
                             self.try_operator()?;
-                            self.expr_f(TRY, f::EXPR)?;
+                            // A property's value splits a trailing closure off the call in `try`'s operand too.
+                            self.expr_f(Cx { split: cx.split, ..TRY }, f::EXPR)?;
                             self.close(n);
                             return Ok(());
                         }
@@ -441,7 +460,7 @@ impl<'a> P<'a> {
                 // A generic type's constructor: `Name<…>(`.
                 if self.kind_at(1) == T::Lt && self.adjacent(0) {
                     if let Some(close) = self.type_args_end(1) {
-                        if self.kind_at(close + 1) == T::Dot && self.adjacent(close) && self.generic_member_is_type(close + 2) {
+                        if self.kind_at(close + 1) == T::Dot && self.adjacent(close) && self.generic_member_is_type(1, close + 2) {
                             // `Name<…>.member`: the type a navigation's target.
                             let u = self.open(K::UserType);
                             self.ident_as(K::TypeIdentifier, f::NONE)?;
@@ -485,6 +504,29 @@ impl<'a> P<'a> {
                 self.close(n);
                 Ok(())
             }
+            T::LBracket if self.bracket_type_constructor() => {
+                let n = self.open(K::ConstructorExpression);
+                let b = self.mark();
+                self.tk(K::TLBracket)?;
+                let dict = self.level(false, |p| {
+                    p.ty_f(f::NONE)?;
+                    if p.peek() == T::Colon {
+                        p.tk(K::TColon)?;
+                        p.ty_f(f::NONE)?;
+                        return Ok(true);
+                    }
+                    Ok(false)
+                })?;
+                self.expect(T::RBracket)?;
+                let a = self.t.wrap(b, if dict { K::DictionaryType } else { K::ArrayType }, f::CONSTRUCTED_TYPE);
+                self.close(a);
+                self.t.unmark(b);
+                let s = self.open(K::ConstructorSuffix);
+                self.value_arguments()?;
+                self.close(s);
+                self.close(n);
+                Ok(())
+            }
             T::LBracket => self.collection_literal(),
             T::LBrace => self.lambda_literal(),
             T::Backslash => self.key_path_expression(),
@@ -497,9 +539,25 @@ impl<'a> P<'a> {
     /// type (a navigation of `user_type`) over the comparisons it also parses (`Name < … > .member`).
     /// Measured on the corpus: the type where a binary operator follows and its operand is no call,
     /// or where a call is navigated on; else the comparisons.
-    fn generic_member_is_type(&mut self, k: usize) -> bool {
+    fn generic_member_is_type(&mut self, lt: usize, k: usize) -> bool {
         if self.kind_at(k) != T::Name {
             return false;
+        }
+        // Where the comparisons cannot parse: a `>` inside before no operand, or a `,` at the
+        // arguments' top where no list takes it.
+        let mut d = 0;
+        for j in lt..k - 2 {
+            match self.kind_at(j) {
+                T::Lt => d += 1,
+                T::Gt | T::GtGt => {
+                    d -= if self.kind_at(j) == T::Gt { 1 } else { 2 };
+                    if matches!(self.kind_at(j + 1), T::Comma | T::Gt | T::GtGt | T::RParen) {
+                        return true;
+                    }
+                }
+                T::Comma if d == 1 && self.stmt => return true,
+                _ => {}
+            }
         }
         let mut j = k + 1;
         if self.kind_at(j) == T::LParen && self.adjacent(k) {
@@ -528,6 +586,32 @@ impl<'a> P<'a> {
                 !(self.kind_at(j + 1) == T::Name && self.kind_at(j + 2) == T::LParen)
             }
             _ => false,
+        }
+    }
+
+    /// Whether the `[` next opens a type a constructor calls (`[T<U>]()`, `[K: () -> V]()`): a
+    /// `<` or `->` in it, `(` touching its `]`. (`[Int](…)` is a call of an array literal.)
+    fn bracket_type_constructor(&mut self) -> bool {
+        let mut d = 0;
+        let mut typed = false;
+        let mut j = 0;
+        loop {
+            match self.kind_at(j) {
+                T::LBracket | T::LParen => d += 1,
+                T::RBracket | T::RParen => {
+                    d -= 1;
+                    if d == 0 {
+                        return typed && self.kind_at(j) == T::RBracket && self.kind_at(j + 1) == T::LParen && self.adjacent(j);
+                    }
+                }
+                T::Lt | T::Arrow => typed = true,
+                T::Name | T::Comma | T::Colon | T::Dot | T::Gt | T::GtGt | T::Question => {}
+                _ => return false,
+            }
+            j += 1;
+            if j > 64 {
+                return false;
+            }
         }
     }
 
@@ -656,6 +740,15 @@ impl<'a> P<'a> {
             }
             self.value_argument_label(f::NAME)?;
             self.tk(K::TColon)?;
+        }
+        // An operator as a value (`reduce(0, +)`).
+        let t = self.tok();
+        if matches!(self.kind_at(1), T::Comma | T::RParen)
+            && matches!(t.kind, T::Plus | T::Minus | T::Star | T::Slash | T::Percent | T::Lt | T::Gt | T::EqEq | T::AmpAmp | T::PipePipe | T::Amp | T::Pipe | T::Caret)
+        {
+            self.tkf(super::punct(t.kind).expect("an operator"), f::VALUE)?;
+            self.close(n);
+            return Ok(());
         }
         self.expression_f(f::VALUE)?;
         self.close(n);

@@ -249,8 +249,10 @@ impl<'a> P<'a> {
     fn tuple_type(&mut self) -> R<()> {
         let n = self.open(K::TupleType);
         self.tk(K::TLParen)?;
-        self.level(false, |p| {
+        let items = self.level(false, |p| {
+            let mut items = (0u32, 0u32);
             while p.peek() != T::RParen {
+                let named = p.peek() == T::Name && p.kind_at(1) == T::Colon;
                 let q = p.open_field(K::TupleTypeItem, f::ELEMENT);
                 // A name: `name:`, or `_ name:`.
                 if p.peek() == T::Name && p.kind_at(1) == T::Colon {
@@ -269,14 +271,21 @@ impl<'a> P<'a> {
                     p.close(m);
                 }
                 p.ty_f(f::TYPE)?;
-                p.close(q);
+                let id = p.close(q);
+                items = (items.0 + 1, if named { 0 } else { id });
                 if p.peek() != T::Comma {
                     break;
                 }
                 p.tk(K::TComma)?;
             }
-            Ok(())
+            Ok(items)
         })?;
+        // `(dictionary)`, `(any P)`: `_parenthesized_type`, its item no field and its type
+        // `element`.
+        if items.0 == 1 && items.1 != 0 && matches!(self.t.kind_at(items.1 + 1), K::DictionaryType | K::ExistentialType) {
+            self.t.refield(items.1, f::NONE);
+            self.t.refield(items.1 + 1, f::ELEMENT);
+        }
         self.expect(T::RParen)?;
         self.close(n);
         Ok(())

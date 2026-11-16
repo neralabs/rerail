@@ -434,6 +434,8 @@ impl<'a> P<'a> {
         match self.semi_at() {
             Semi::No | Semi::Comment(_) => Ok(false),
             Semi::Implicit(at) => {
+                // The comments before it lexed (the next token's), then written inside.
+                let _ = self.tok();
                 self.t.flush(at);
                 self.t.last_end = self.t.last_end.max(at);
                 Ok(true)
