@@ -1247,14 +1247,16 @@ describe("autostartDaemon", () => {
       { content: String(process.pid), at: new Date(Date.now() + 60_000) },
     ];
     const homes = await Promise.all(claims.map(async () => await mkdtemp(join(tmpdir(), "rerail-autostart-"))));
-    for (const [index, { content, at }] of claims.entries()) {
-      const claim = join(homes[index]!, AUTOSTART_CLAIM_FILE);
-      await writeFile(claim, content);
-      if (at !== undefined) await utimes(claim, at, at);
-    }
     const hooks = homes.map(home => hookProcess(home));
     try {
       await Promise.all(hooks.map(async hook => await hook.ready));
+      // Written once every hook is up, just before they look: a claim holds for 5 s unrenewed, and six hooks starting
+      // on a busy machine can take longer than that.
+      for (const [index, { content, at }] of claims.entries()) {
+        const claim = join(homes[index]!, AUTOSTART_CLAIM_FILE);
+        await writeFile(claim, content);
+        if (at !== undefined) await utimes(claim, at, at);
+      }
       for (const hook of hooks) hook.go();
       expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 0, 1, 1, 1, 1]);
     } finally {
