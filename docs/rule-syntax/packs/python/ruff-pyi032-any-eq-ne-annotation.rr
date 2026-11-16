@@ -12,6 +12,8 @@
 
 .violation PYI032(at: node) code "PYI032" "Annotate the other operand of this `__eq__` or `__ne__` as `object` instead of `Any`; `==` and `!=` must accept any value, and `Any` turns type checking off."
     suppress ruff "PYI032"
+// `within(t, f)` holds of every row: it places the annotation in f's file for the engine (sig_param's annotation
+// column is a loc), so the rule runs file by file.
 PYI032(a) :- pyi_method(_, f, x), (x = "__eq__" ; x = "__ne__"), count : { sig_param(f, p, n, i, "pos", b, d) } = 2,
     sig_param(f, _, _, j, "pos", a, _), count : { sig_param(f, p, n, i, "pos", b, d), i < j } = 1, !unset(a),
-    type_bare(a, t), typing_sym(t, "Any").
+    type_bare(a, t), within(t, f), typing_sym(t, "Any").
