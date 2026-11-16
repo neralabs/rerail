@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 16
+VERSION = 19
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -513,9 +513,10 @@ def cli_without_hooks(pid, checkout):
     return bool(checkout) and os.path.realpath(cwd) == os.path.realpath(os.path.join(checkout, "native"))
 
 
-def whole_tier(pid):
+def whole_tier(pid, filtered=False):
     """The command line of cargo process `pid` when it runs a whole test tier here (`cargo test` or
-    `cargo nextest run` with no filter, or nextest's gate profile), else None."""
+    `cargo nextest run` with no filter, or nextest's gate profile), else None; with `filtered`, any
+    test run's."""
     def ps(pid):
         try:
             out = subprocess.run(["ps", "-o", "ppid=,args=", "-p", str(pid)], capture_output=True, text=True,
@@ -541,12 +542,12 @@ def whole_tier(pid):
     while j < len(rest):
         r = rest[j]
         if r == "--" or r in ("-E", "--filterset", "--filter-expr") or r.startswith(("-E=", "--filterset=")):
-            return None  # a filter (after `--`, or an expression)
+            return " ".join(words) if filtered else None  # a filter (after `--`, or an expression)
         if r in VALUED:
             j += 2
             continue
         if not r.startswith("-"):
-            return None  # a test name filter
+            return " ".join(words) if filtered else None  # a test name filter
         j += 1
     return " ".join(words)
 
@@ -590,13 +591,14 @@ def advise(checkout, rustc):
         lines.append(f"this build runs rustc {m.group(1)}, but the checkout pins {pinned.group(1)}: its crates are cached "
                      "apart from every other worktree's. Use rustup's cargo (`which cargo` is ~/.cargo/bin/cargo), "
                      "without `cargo +VERSION` or RUSTUP_TOOLCHAIN")
-    tier = whole_tier(cargo)
+    tier = whole_tier(cargo, filtered=True)
     if tier and not os.environ.get("RERAIL_FARM_TESTS_HERE"):
-        free = [h for h in usable("tests") if spare(h) >= 4]
+        free = [h for h in usable("tests") if free_test_slots(h)]
         if free:
-            lines.append(f"this command runs a whole test tier here while {free[0]['name']} has "
-                         f"{spare(free[0]):.0f} cores to spare: `scripts/dev/test-remote -- {tier.split(' ', 1)[-1]}` "
-                         "runs it there (RERAIL_FARM_TESTS_HERE=1 says it must run here)")
+            lines.append(f"this command builds and runs tests here while {free[0]['name']} has a free test slot: "
+                         f"`scripts/dev/test-remote -- {tier.split(' ', 1)[-1]}` runs it there, in a warm target "
+                         "directory of this checkout's, and leaves this machine to the edit loop "
+                         "(RERAIL_FARM_TESTS_HERE=1 says it must run here)")
     if cli_without_hooks(cargo, checkout):
         lines.append("this builds the engine's CLI without `--features test-hooks`, so every dependency crate is compiled "
                      "apart from the tests' build of it, and keeps a second set of incremental state: "
@@ -952,6 +954,30 @@ def usable(kind=None):
     return sorted(out, key=lambda h: -spare(h))
 
 
+def test_slots(host):
+    """How many test commands `host` runs at once (`test-remote`): `test_slots` in the configuration,
+    else a third of its cores. A targeted test run is mostly one big crate's compile, a few cores: one
+    command at a time left a 16-core host mostly idle while others queued behind it for 25 minutes
+    (2026-11-16)."""
+    return max(1, int(host.get("test_slots") or host.get("cores", 3) // 3))
+
+
+def free_test_slots(host):
+    """How many of `host`'s test slots are free now."""
+    n = 0
+    for path in test_slot_paths(host["name"], host):
+        lock = Lock(path, blocking=False)
+        n += lock.held
+        lock.release()
+    return n
+
+
+def test_slot_paths(name, host=None):
+    """The lock files of `name`'s test slots."""
+    host = host or next((h for h in hosts() if h["name"] == name), {"name": name})
+    return [state("tests", f"{name}.{i}.lock") for i in range(test_slots(host))]
+
+
 def capacity(host):
     """How many compiles `host` takes now: none while it is not usable (`health`); one per core while
     nobody has used it for 5 minutes, half as many while someone does. Not its load average: macOS's
@@ -1130,6 +1156,18 @@ def on_host(script):
     with the command, so a host needs nothing installed and a cleaned one still works."""
     here = os.path.join(os.path.dirname(os.path.realpath(__file__)), script)
     return "exec /usr/bin/python3 -u -c " + shlex.quote(open(here).read())
+
+
+def agent_exec(job):
+    """The command that runs `job` with farm-agent on a host (test-remote, live-test-remote,
+    quiet-run). The cleaner's text goes with it: once the command ends, the agent cleans the job's
+    target directory with it (farm-agent, `clean`)."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    for c in (os.path.join(here, "clean-target"), os.path.join(here, "../../dev/clean-target")):
+        if os.path.isfile(c):
+            job = dict(job, cleaner=open(c).read())
+            break
+    return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
 
 
 # ---- leases: a quiet machine for a benchmark (scripts/dev/quiet-run, README.md "Quiet runs")
