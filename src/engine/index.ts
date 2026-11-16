@@ -59,6 +59,7 @@ export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule }
 export { BLOCK_STEERS_NOTE, RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
 export {
   HELD_OFF_SINCE,
+  LANGUAGE_SINCE,
   loadRulePacks,
   RULE_PACK_RULE_ID,
   type RulePack,
@@ -72,6 +73,7 @@ export { type ConversationRule, parseConversationRule } from "./catalog/rule-sch
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
+export { RepositoryWorktreeWalks } from "./code-rule/worktree-walks.js";
 export {
   bundledCodeRuleDslDirectory,
   CheckoutCatalogs,
