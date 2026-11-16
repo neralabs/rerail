@@ -56,7 +56,7 @@ The last is 6.6 MB of code and 1.6 MB of data (the Python grammar's 0.44 MB, Pyt
     wasmtime run -W exceptions=y -W unknown-imports-trap=y --dir .::/w --env RERAIL_TAPE_CACHE=off \
       target/wasm32-wasip1/debug/rerail-engine.wasm logic /w/rule.rr /w/src /w/out
 
-The outputs land in `out` as for a native run (`<relation>.csv`, `store.sqlite`). `exceptions` is for libc++'s
+The outputs land in `out` as for a native run (`outputs.rro`, decision 0239; `rerail-engine csv` writes them as `<relation>.csv`; `store.sqlite`). `exceptions` is for libc++'s
 unwinding; `unknown-imports-trap` stubs the few `napi_*` imports still linked (napi types' drops), which a
 CLI run never calls.
 `RERAIL_TAPE_CACHE` names the tape store, since WASI has no temporary directory (`off` keeps none); a build

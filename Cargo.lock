@@ -3160,6 +3160,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-blocks"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "metal",
+]
+
+[[package]]
 name = "rerail-compiler"
 version = "0.1.0"
 dependencies = [
@@ -4003,6 +4011,7 @@ dependencies = [
  "indexmap",
  "libc",
  "memchr",
+ "memmap2 0.9.12",
  "metal",
  "mimalloc",
  "model2vec-rs",
@@ -4017,6 +4026,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",

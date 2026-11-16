@@ -441,3 +441,7 @@ pass.
    unchanged document, in sessions too); (c) keep every batch held to the end of the run (memory grows with the
    corpus; does not cover sessions). Recommended: (a), the magic-sets widening 0174 already does, and no new
    mechanism.
+   **Answered (2026-11-15): (a).** Built on sync-integration-hub-tape as decision 0286 (numbered 0264 when written)
+   (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
+   `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
+   runs again.

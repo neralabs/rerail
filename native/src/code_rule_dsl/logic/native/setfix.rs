@@ -74,8 +74,12 @@ mod survivor_tests;
 #[cfg(test)]
 mod cut_tests;
 #[cfg(test)]
+mod view_tests;
+#[cfg(test)]
 mod base_probe;
 mod inputs_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod blocks_compare_tests;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;
@@ -4614,6 +4618,9 @@ fn view(conn: impl Scoped, table: &str, cols: &str) -> Option<View> {
     let conn = conn.db();
     let (schema, rest) = table.split_once('.')?;
     let (name, filters) = match rest.split_once(" WHERE ") { Some((n, f)) => (n, Some(f)), None => (rest, None) };
+    // The name as the statement writes it: a relation named like a SQLite keyword is quoted (`main."plan"`,
+    // `sql::ident`), and is bound by its own name (O-pse-alone-strict).
+    let name = &*crate::code_rule_dsl::logic::sql::unquote(name);
     let src = if schema == "main" {
         crate::code_rule_dsl::facts::vtab::bound_source(conn, name)?
     } else {
@@ -6190,13 +6197,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let value = if let Some(nodes) = texts {
                     node_read(name, Some(&**nodes), val(slots, args[0])).map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
                 } else {
-                    let mut texts = Vec::new();
+                    let mut strs = Vec::new();
                     let mut numbers = Vec::new();
                     for (k, a) in kinds.iter().zip(args) {
-                        match k { Kind::Text => texts.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                        match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
                     }
-                    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-                    eval(name, &texts, &numbers)
+                    let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
+                    eval(name, &strs, &numbers)
                 };
                 let mark = cx.texts.len();
                 let v = match value {

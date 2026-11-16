@@ -59,7 +59,7 @@ pub(super) struct Chosen {
 /// image holds them, with its maintained parts'), kept as the version was made, so the key reads no rule. Both
 /// rewrites keep the program's meaning whatever its rules' order, so the digest, a sum, need not see it: a program of
 /// the same rules in another order takes the same choices, which derive the same rows.
-pub(super) fn key(p: &super::body::Placed) -> [u8; 32] {
+pub fn key(p: &super::body::Placed) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.plan-choices/v2\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());

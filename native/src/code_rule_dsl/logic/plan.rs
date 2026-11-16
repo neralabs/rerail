@@ -608,11 +608,13 @@ impl Stats {
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
+        // Positional names of a relation named like a base one are its base names (`input_column_name`).
+        let named = |col: String| crate::code_rule_dsl::facts::core::input_column_name(rel, &col).map_or(col, str::to_owned);
         for (col, m) in cols {
-            self.col.insert((rel.to_owned(), col), m);
+            self.col.insert((rel.to_owned(), named(col)), m);
         }
         for (col, v, n) in vals {
-            self.memo.entry(rel.to_owned()).or_default().insert((col, Constant::Int(v)), n);
+            self.memo.entry(rel.to_owned()).or_default().insert((named(col), Constant::Int(v)), n);
         }
     }
 
@@ -4387,9 +4389,10 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    /// Each output's rows as text lines (`Rows::lines`): sorted, each once, a node as its number.
-    pub fn text(&self) -> BTreeMap<String, Vec<String>> {
-        self.outputs.iter().map(|(rel, rows)| (rel.clone(), rows.lines())).collect()
+    /// Each output's rows, each value as shown (`Rows::shown`): sorted, each once, a node as its number. For
+    /// comparing outcomes, never read back.
+    pub fn shown(&self) -> BTreeMap<String, Vec<Vec<String>>> {
+        self.outputs.iter().map(|(rel, rows)| (rel.clone(), rows.shown())).collect()
     }
 }
 
@@ -4660,7 +4663,7 @@ mod complete_answer_tests {
             };
             let result = run_atoms_native_answering(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), "program", &mut answer, None, None, None).unwrap();
             assert_eq!(result.outputs["shown"].len(), 1000, "later consumers must see all deferred positives");
-            assert_eq!(result.outputs["shown"].lines().iter().map(|s| s.parse::<i64>().unwrap()).collect::<BTreeSet<_>>(), (0..1000).collect(), "every returned value stays exact");
+            assert_eq!(result.outputs["shown"].shown().iter().map(|r| r[0].parse::<i64>().unwrap()).collect::<BTreeSet<_>>(), (0..1000).collect(), "every returned value stays exact");
             assert_eq!(batches.len(), 2, "held keys resume as one batch, never one callback per key");
             assert_eq!(batches[0].len(), 1000);
             assert_eq!(batches[1].len(), 1000-immediate);
@@ -5958,20 +5961,24 @@ fn reads_of(vs: &body::Versions, k: RuleKey) -> impl Iterator<Item = &str> + '_ 
 /// The relations of `scc` that reach themselves through `rules` (any read: positive, negated or aggregated), each
 /// read by its handles.
 fn cyclic_relations(vs: &body::Versions, scc: &BTreeSet<String>, rules: &[RuleKey]) -> BTreeSet<String> {
+    cyclic_in(scc, rules.iter().flat_map(|&r| {
+        let head = vs.head_at(r);
+        reads_of(vs, r).map(move |a| (head, a))
+    }))
+}
+
+/// The relations of `scc` that reach themselves through `edges`, each `(head, a relation its rule reads)`.
+fn cyclic_in<'a>(scc: &BTreeSet<String>, edges: impl Iterator<Item = (&'a str, &'a str)>) -> BTreeSet<String> {
     // A relation reaches itself where it is in a strongly connected part of more than one relation, or reads itself:
     // one pass over the edges (Tarjan's), not a walk from each relation (a 220-relation stratum walked 48,000 times).
     let names: Vec<&str> = scc.iter().map(String::as_str).collect();
     let at = |r: &str| names.binary_search(&r).ok();
     let mut next: Vec<Vec<usize>> = vec![Vec::new(); names.len()];
     let mut own = vec![false; names.len()];
-    for &r in rules {
-        let Some(h) = at(vs.head_at(r)) else { continue };
-        for a in reads_of(vs, r) {
-            if let Some(b) = at(a) {
-                next[b].push(h);
-                own[b] |= b == h;
-            }
-        }
+    for (head, read) in edges {
+        let (Some(h), Some(b)) = (at(head), at(read)) else { continue };
+        next[b].push(h);
+        own[b] |= b == h;
     }
     let n = names.len();
     let (mut index, mut low, mut on) = (vec![usize::MAX; n], vec![0; n], vec![false; n]);
@@ -7954,6 +7961,17 @@ impl<'a> Run<'a, '_> {
                 }
                 // The line's work: its counts, and a whole plan's work as its cut reported it.
                 let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64 + if whole { c.work as f64 } else { 0.0 };
+                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
+                // orders run over a sample of the rows left (decision 0274: only a line observed on a run's critical
+                // path, `joins::take_trial`), each cut at `trial_cutoff` times the least work measured
+                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
+                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
+                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
+                // under `TRIAL_LEAST` rows, the trials wait for a later check.
+                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
+                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
+                const TRIAL_LEAST: usize = 8;
+                let joined = positive_atoms(&b) >= 2;
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
@@ -7963,27 +7981,24 @@ impl<'a> Run<'a, '_> {
                         joins::flag_slow(key, rule, est, work);
                         super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
                         let exact = self.exact_statistics(&name, line, &b, &running);
-                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len()));
+                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
                         joins::put_exact(key, rule, exact);
                         self.heavy_for([r], true, Some(key));
                         joins::take_forced(&key);
                         self.request_search(r, None, rule, key, work, Some((&name, line, &running)))?;
-                        // With trials (decision 0207) the orders are measured below instead.
-                        if !joins::trials_on() && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                        // With trials (decision 0207) the orders are measured below instead, where they can be. Decision
+                        // 0271: a line no trial measures is planned again now, with the exact statistics just taken,
+                        // and its replacement runs under the handoff's limit. That is a line whose sample is under
+                        // `TRIAL_LEAST` (its few lead rows each cost more than its check's budget: `pre_570` did 0 of
+                        // 423 in 201,431 rows of work, then ran 22 s unbounded). A line in a handoff is judged by it.
+                        if !joins::measured_below(sample >= TRIAL_LEAST && joined && joins::trial_due(&key), handoff[line].is_some()) && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                            if joins::trials_on() {
+                                joins::log(|| format!("slow {}: {} of its lead rows done, under a trial's {TRIAL_LEAST}: planned again now", b.head_text(), c.done));
+                            }
                             place!(new);
                         }
                     }
                 }
-                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
-                // orders run over a sample of the rows left, each cut at `trial_cutoff` times the least work measured
-                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
-                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
-                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
-                // under `TRIAL_LEAST` rows, the trials wait for a later check.
-                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
-                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
-                const TRIAL_LEAST: usize = 8;
-                let joined = positive_atoms(&b) >= 2;
                 if let Some(key) = keys.get(line).copied().flatten() && joins::trials_on() && joined && sample >= TRIAL_LEAST && handoff[line].is_none() && joins::take_trial(key) {
                     // Decision 0209: the candidates are priced with the line's skewed join columns' heavy values.
                     self.heavy_for([r], true, Some(key));
@@ -8287,11 +8302,16 @@ impl<'a> Run<'a, '_> {
                     Some(h) => {
                         let ran = per_row(c.work, c.done);
                         let back = ran > h.per_row;
-                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
                         joins::count_handoff(back);
+                        let (other, other_rate) = if back { (now.clone(), ran) } else { (h.old.clone(), h.per_row) };
                         if back && !place!(h.old) {
                             return Err(Error::Plan(format!("a join of {} has no native step", b.head_text())));
                         }
+                        // Decision 0271: the order that goes on keeps a limit, and the two are compared again at it.
+                        let base = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
+                        let limit = joins::limit_again(if back { h.per_row } else { ran }, base, c.left as f64, c.work as f64);
+                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on, limit {limit:.0}", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
+                        handoff[line] = Some(joins::Handoff { old: other, per_row: other_rate, limit });
                     }
                 }
             }
@@ -11483,7 +11503,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     let to_sql: Vec<String> = written.iter().filter(|r| !native_out.contains(*r)).cloned().collect();
     run.materialize(&to_sql)?;
     let outputs_of: Vec<&str> = f0.outputs().collect();
-    let (outputs, nodes) = decoded_outputs(&outputs_of, &|r| f0.is_input(r), &|r| f0.arity(r), db, lowered, &facts, atoms, &kept, &native_out)?;
+    let (outputs, nodes) = decoded_outputs(&outputs_of, &|r| f0.is_input(r), &|r| f0.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, lowered, &facts, atoms, &kept, &native_out)?;
     let mut outputs=outputs;let mut nodes=nodes;
     for rel in &sentinels {
         if let Some(rows)=outputs.get_mut(rel){*rows=std::sync::Arc::new(rows.without_first());}
@@ -11704,9 +11724,15 @@ pub fn decode_kept(
     for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
         super::native::component::hold_as(db, &rel, held);
     }
-    let prog = &lowered.program;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
-    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.len()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
+    // The inputs and the outputs' column types from the program's version where it has one (t36 item 7: a maintained
+    // run decodes no tree, `a_maintained_run_decodes_and_copies_no_tree`); else from its tree, which is then held.
+    let placed = lowered.version.as_ref().map(|_| lowered.placed()).transpose()?;
+    if let Some(f) = placed.as_ref().and_then(Fields::of) {
+        return decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names);
+    }
+    let prog = &lowered.program;
+    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
 /// The program's outputs as rows (decision 0239: symbols, kinds and fields as their text, every other value as it
@@ -11717,7 +11743,7 @@ pub fn decode_kept(
 fn decoded_outputs(
     outputs_of: &[&str],
     is_input: &dyn Fn(&str) -> bool,
-    arity: &dyn Fn(&str) -> Option<usize>,
+    types: &dyn Fn(&str) -> Option<Vec<String>>,
     db: &Connection,
     lowered: Option<lower::Lowering<'_>>,
     facts: &str,
@@ -11730,7 +11756,8 @@ fn decoded_outputs(
     for &rel in outputs_of.iter().filter(|r| !kept.contains(**r)) {
         // The findings form `finding(key, n)` is written as `finding_at` (key, path, start); a `finding` of another
         // shape (a data-layer program's `finding(clause, code, n)`) is an output like any other.
-        let findings_form = rel == "finding" && arity(rel).is_none_or(|n| n == 2);
+        let declared = types(rel);
+        let findings_form = rel == "finding" && declared.as_ref().is_none_or(|t| t.len() == 2);
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
         let domains: Vec<lower::Domain> = match lowered {
             Some(l) if !findings_form => l.domains.get(rel).cloned().ok_or_else(|| Error::Plan(format!("the output {rel} has no columns' domains")))?,
@@ -11768,15 +11795,39 @@ fn decoded_outputs(
                 _ => None,
             }
         };
-        // A value as the row holds it: an integer as it is; a kind or a field by its name; any other as its text.
-        let cell = |i: usize, v: SqlValue| -> Shown {
-            match v {
+        // A value as the row holds it: an integer as it is; a kind or a field by its name; NULL as none
+        // (`output::NULL`, shown `None`); a text as it is, in a text column. No integer column holds a text, a real
+        // or a blob: the engine has no such value there.
+        // Each column typed by its domain (a node; a text: a name, a kind, a field; else an integer), or where the run
+        // was not lowered, by its declared type. A table's rows are a set; a row seeded from SQL may also be one the
+        // engine derived: each row is once where it is read (the image).
+        let types: Vec<u8> = if findings_form {
+            vec![output::col::TEXT, output::col::TEXT, output::col::INT]
+        } else if lowered.is_some() {
+            domains
+                .iter()
+                .map(|d| match d {
+                    lower::Domain::Node => output::col::NODE,
+                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
+                    _ => output::col::INT,
+                })
+                .collect()
+        } else {
+            declared
+                .as_ref()
+                .map(|cols| cols.iter().map(|t| match t.as_str() { "node" => output::col::NODE, "number" | "int" | "unsigned" => output::col::INT, _ => output::col::TEXT }).collect())
+                .unwrap_or_default()
+        };
+        let text_domain = |i: usize| types.get(i).is_none_or(|&t| t == output::col::TEXT);
+        let cell = |i: usize, v: SqlValue| -> Result<Shown> {
+            Ok(match v {
                 SqlValue::Integer(v) => decode(i, v).map_or(Shown::Int(v), Shown::Text),
-                SqlValue::Real(f) => Shown::Text(format!("{f:?}")),
-                SqlValue::Text(s) => Shown::Text(s),
-                SqlValue::Null => Shown::Text("None".to_owned()),
-                SqlValue::Blob(b) => Shown::Text(format!("{b:?}")),
-            }
+                SqlValue::Null if text_domain(i) => Shown::Text("None".to_owned()),
+                SqlValue::Null => Shown::Int(output::NULL),
+                SqlValue::Text(s) if text_domain(i) => Shown::Text(s),
+                SqlValue::Real(f) if text_domain(i) => Shown::Text(format!("{f:?}")),
+                other => return Err(Error::Plan(format!("{rel}: {other:?} in integer column {i}"))),
+            })
         };
         let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
         let held = if native.contains(rel) && rel == "finding" {
@@ -11789,29 +11840,16 @@ fn decoded_outputs(
         } else {
             None
         };
-        // Each column typed by its domain: a node, a text (a name, a kind, a field), else an integer until a text
-        // arrives in it. A table's rows are a set; a row seeded from SQL may also be one the engine derived: each row
-        // is once where it is read (`Rows::lines`, the image).
-        let types: Vec<u8> = if findings_form {
-            vec![output::col::TEXT, output::col::TEXT, output::col::INT]
-        } else {
-            domains
-                .iter()
-                .map(|d| match d {
-                    lower::Domain::Node => output::col::NODE,
-                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
-                    _ => output::col::INT,
-                })
-                .collect()
-        };
-        let mut rows = output::Rows::new(types);
+        let mut rows = output::Rows::new(types.clone());
         let mut row: Vec<Shown> = Vec::new();
         let push = |rows: &mut output::Rows, row: &[Shown]| rows.push(&row.iter().map(Shown::cell).collect::<Vec<_>>());
         match held {
             Some(held) => {
                 for r in held {
                     row.clear();
-                    row.extend(r.into_iter().enumerate().map(|(i, v)| cell(i, v)));
+                    for (i, v) in r.into_iter().enumerate() {
+                        row.push(cell(i, v)?);
+                    }
                     push(&mut rows, &row);
                 }
             }
@@ -11822,7 +11860,7 @@ fn decoded_outputs(
                 while let Some(r) = q.next()? {
                     row.clear();
                     for i in 0..width {
-                        row.push(cell(i, r.get::<_, SqlValue>(i)?));
+                        row.push(cell(i, r.get::<_, SqlValue>(i)?)?);
                     }
                     push(&mut rows, &row);
                 }
@@ -12798,7 +12836,11 @@ impl<'a, 'v> Walker<'a, 'v> {
             }
             sample = next;
         }
-        work
+        // Decision 0273: the rows the last step makes are work too, as the engine counts a line's work
+        // (`profile::plan_work`: each step's rows in, and the last step's rows out). Without them, a walk exact by its
+        // own count read 0.87 of the engine's work on the heavy lines of both packs, and a common term of every
+        // order's walk was missing from their ratios.
+        work + sample.iter().map(|x| x.0).sum::<f64>()
     }
 }
 

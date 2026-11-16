@@ -1,5 +1,5 @@
 //! A corpus run's file-local results, memoised per file (decision 0052): what the chunks hand on for one document
-//! (its rows of each exported relation and its file-local output lines) under its content, its path and the run's
+//! (its rows of each exported relation and its file-local outputs' rows) under its content, its path and the run's
 //! plan. A later run whose plan is the same reads a file's entry instead of parsing and evaluating it.
 //!
 //! The rows are replayable as they are because their values are stable across runs: a document's key is a function
@@ -39,7 +39,7 @@ pub(super) const COVERED: &str = "own:covered";
 /// running the slice. Not an output: they are no relation of the file-local part.
 pub(super) const GUESTS: &str = "guests:";
 
-/// An entry's `lines` key for round `round`'s lines of slice relation `rel`.
+/// An entry's `outputs` key for round `round`'s lines of slice relation `rel`.
 pub(super) fn guest_key(round: usize, rel: &str) -> String {
     format!("{GUESTS}{round}:{rel}")
 }
@@ -52,13 +52,8 @@ pub(super) fn guest_round(key: &str) -> Option<(usize, &str)> {
 
 /// Whether `a` and `b` hold the same guests' requests (`GUESTS`).
 pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
-    let of = |e: &Entry| -> Vec<(String, Vec<String>)> {
-        e.lines.iter().filter(|(k, _)| k.starts_with(GUESTS)).map(|(k, (_, l))| {
-            let mut l = l.clone();
-            l.sort_unstable();
-            l.dedup();
-            (k.clone(), l)
-        }).filter(|(_, l)| !l.is_empty()).collect()
+    let of = |e: &Entry| -> Vec<(String, Vec<Vec<String>>)> {
+        e.outputs.iter().filter(|(k, _)| k.starts_with(GUESTS)).map(|(k, (_, r))| (k.clone(), r.shown())).filter(|(_, l)| !l.is_empty()).collect()
     };
     of(a) == of(b)
 }
@@ -73,7 +68,7 @@ pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
     entry.rows.get(COVERED).map(|(_, v)| v.chunks_exact(2).map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
 }
 
-/// Whether `a` and `b` hold the same rows (or lines) of relation `rel`, in any order.
+/// Whether `a` and `b` hold the same rows (exported or output) of relation `rel`, in any order.
 pub(super) fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
     let rows = |e: &Entry| -> Option<(usize, Vec<Vec<i64>>)> {
         e.rows.get(rel).filter(|(_, v)| !v.is_empty()).map(|(w, v)| {
@@ -82,13 +77,8 @@ pub(super) fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
             (*w, rows)
         })
     };
-    let lines = |e: &Entry| -> Option<Vec<String>> {
-        e.lines.get(rel).filter(|(_, l)| !l.is_empty()).map(|(_, l)| {
-            let mut l = l.clone();
-            l.sort_unstable();
-            l
-        })
-    };
+    // An output's rows by their values (`Rows::shown`, sorted): two entries' texts are numbered apart.
+    let lines = |e: &Entry| -> Option<Vec<Vec<String>>> { e.outputs.get(rel).filter(|(_, r)| !r.is_empty()).map(|(_, r)| r.shown()) };
     rows(a) == rows(b) && lines(a) == lines(b)
 }
 
@@ -196,8 +186,8 @@ pub struct Entry {
     pub nodes: u64,
     /// Per exported relation: its width and its rows, flat.
     pub rows: BTreeMap<String, (usize, Vec<i64>)>,
-    /// Per file-local output: its node columns and its lines.
-    pub lines: BTreeMap<String, (Vec<usize>, Vec<String>)>,
+    /// Per file-local output: its node columns and its rows, typed as the run handed them.
+    pub outputs: BTreeMap<String, (Vec<usize>, crate::code_rule_dsl::logic::plan::output::Rows)>,
 }
 
 /// Each path's document key: from its hash, in `1..2^30`, the next free one on a collision. A key is in each entry,
@@ -264,7 +254,8 @@ pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Op
 /// its atoms included).
 pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local/v4\0");
+    // v5: an entry is one image in a pack (0240 §4), its outputs' rows typed, not their lines (0239).
+    hash.update(b"rerail.corpus-local/v5\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     // A memoised row's node ids are those of the scheme it was made under: preorder, or per definition.
@@ -628,7 +619,7 @@ impl Found {
         let entry = match self {
             Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
                 rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
-                lines: e.lines.clone() },
+                outputs: e.outputs.clone() },
             Found::Frame(f) => f.projected(keep)?,
         };
         Ok(Some(entry).filter(|e| e.key == key))
@@ -763,8 +754,8 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
                 at.0 += v.len() / (*w).max(1);
                 at.1 += v.len() * 8;
             }
-            for (r, (_, l)) in &e.lines {
-                by.entry(r.as_str()).or_default().1 += l.iter().map(|t| t.len() + 24).sum::<usize>();
+            for (r, (_, rows)) in &e.outputs {
+                by.entry(r.as_str()).or_default().1 += rows.bytes();
             }
         }
         let mut by: Vec<_> = by.into_iter().collect();
@@ -810,7 +801,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
 impl Entry {
     /// The bytes the entry holds (its rows and lines), about.
     fn bytes(&self) -> usize {
-        self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
+        self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.outputs.iter().map(|(r, (c, rows))| r.len() + c.len() * 8 + rows.bytes()).sum::<usize>()
     }
 }
 
@@ -1036,18 +1027,28 @@ pub(super) fn document_of(value: i64) -> i64 {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::code_rule_dsl::logic::plan::output::{Cell, col};
+
+    /// Rows of columns typed `types`, of `rows`.
+    pub fn rows_of(types: &[u8], rows: &[&[Cell<'_>]]) -> crate::code_rule_dsl::logic::plan::output::Rows {
+        let mut out = crate::code_rule_dsl::logic::plan::output::Rows::new(types.to_vec());
+        for r in rows {
+            out.push(r);
+        }
+        out
+    }
 
     #[test]
     fn a_held_entry_is_projected_and_keyed() {
         let mut entry = Entry { key: 5, nodes: 100, ..Entry::default() };
         entry.rows.insert("wanted".into(), (2, vec![5, 9]));
         entry.rows.insert("unused".into(), (2, vec![1; 2000]));
-        entry.lines.insert("diagnostic".into(), (vec![0], vec!["5\tbad".into()]));
+        entry.outputs.insert("diagnostic".into(), (vec![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
         let keep = |r: &str| r == "wanted";
         let held = Found::Held(std::sync::Arc::new(entry.clone()));
         let projected = held.projected(5, &keep).unwrap().unwrap();
         assert_eq!(projected.rows.keys().collect::<Vec<_>>(), ["wanted"]);
-        assert_eq!((projected.lines, projected.nodes), (entry.lines, 100));
+        assert_eq!((projected.outputs, projected.nodes), (entry.outputs, 100));
         assert!(held.projected(6, &keep).unwrap().is_none());
         assert_ne!(with_tree_demand([0; 32], false), with_tree_demand([0; 32], true), "wider consumers cannot hit narrower frames");
     }

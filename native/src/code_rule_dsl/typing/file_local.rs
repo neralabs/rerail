@@ -512,10 +512,221 @@ fn base_locations(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str)
     if rel == "docof" && !columns.contains(&1) {
         columns.push(1);
     }
-    if rel == "docof" {
-        columns.push(1);
+    // The tape's `tape(n, par, size, depth)` (the climbs' parent column, lower.rs `need_tape`) is declared over
+    // numbers, but a node's parent is a node of its document: both are locations (O-cold-seed-join).
+    if rel == "tape" {
+        for column in [0, 1] {
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        }
     }
     columns
+}
+
+/// Narrows each request of `requests` (decision 0174's `rr_<a>_req(n)`) that the split finds cross-file to literals
+/// over the asked node's own document. A node's attribute is its own document's, so a request over that document
+/// alone is answered in its chunk, while the batch holding its text is there, and kept per file; asked in the
+/// cross-file part, it found no batch (O-cross-file-answers; the hub's work-queue question 2, option a).
+///
+/// A request keeps the positive atoms of base and file-local relations joined to `n` through their location columns
+/// (and `d = @doc(n)`-like equalities), and the comparisons over what those bind. When none of them places `n`, a
+/// cross-file atom that holds `n` is unfolded: each of its relation's rules, narrowed the same way to the column
+/// `n` is in, is a request rule of its own (`passes(f) :- uses(_, f), …` with `uses(n, f) :- imp(n, q), def(f, q)`
+/// asks `def(f, _)`). Past `UNFOLD` levels, or where a rule gives `n` no variable, the request asks for every node
+/// (`node`). Dropping literals widens a request, which is sound. Returns each narrowed request and how.
+pub fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::Program, requests: &[&str]) -> Vec<(String, String)> {
+    use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
+    if !prog.rules.iter().any(|r| requests.contains(&r.head.rel.as_str())) {
+        return Vec::new();
+    }
+    let (local, _, same) = split_located(prog);
+    let node_arity = prog.decls.get("node").map(|cols| cols.len());
+    let mut by_head: std::collections::HashMap<&str, Vec<&Rule>> = std::collections::HashMap::new();
+    for rule in &prog.rules {
+        by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
+    }
+    let narrower = Narrower { same: &same, local: &local, by_head: &by_head, fresh: std::cell::Cell::new(0) };
+    let mut narrowed = Vec::new();
+    let mut every_node = false;
+    let mut rules: Vec<Rule> = Vec::with_capacity(prog.rules.len());
+    for rule in &prog.rules {
+        let req = rule.head.rel.as_str();
+        let n = match rule.head.args.first() {
+            Some(Term::Var(n)) if requests.contains(&req) && !local.contains(req) => n.to_string(),
+            _ => {
+                rules.push(rule.clone());
+                continue;
+            }
+        };
+        let bodies = match (narrower.narrow(&rule.body, &n, 0), node_arity) {
+            (Some(bodies), _) => bodies,
+            (None, Some(arity)) => {
+                every_node = true;
+                let mut args = vec![Term::Wild; arity];
+                args[1] = Term::Var(n.clone().into());
+                vec![vec![Literal::Atom(Atom { rel: "node".into(), args: args.into(), neg: false, gated: false })]]
+            }
+            (None, None) => {
+                rules.push(rule.clone());
+                continue;
+            }
+        };
+        if let [body] = bodies.as_slice() && body.as_slice() == &rule.body[..] {
+            rules.push(rule.clone());
+            continue;
+        }
+        let shown: Vec<String> = bodies.iter().map(|b| b.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", ")).collect();
+        narrowed.push((req.to_owned(), format!("`{}` asks {}", rule.body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), shown.join(" ; "))));
+        rules.extend(bodies.into_iter().map(|body| Rule { head: rule.head.clone(), body: body.into() }));
+    }
+    drop(by_head);
+    // Two rules narrowed to one body are one rule.
+    let mut seen = std::collections::HashSet::new();
+    rules.retain(|r| !requests.contains(&r.head.rel.as_str()) || seen.insert(r.clone()));
+    prog.rules = rules;
+    if every_node && !prog.inputs.iter().any(|i| i == "node") {
+        prog.inputs.push("node".to_owned());
+    }
+    narrowed
+}
+
+/// How deep `requests_file_local` unfolds cross-file relations, and how many alternative bodies a request may have.
+const UNFOLD: usize = 3;
+const ALTERNATIVES: usize = 8;
+
+/// `requests_file_local`'s narrowing of one body to the asked node's document.
+struct Narrower<'a> {
+    same: &'a std::collections::BTreeMap<String, Vec<usize>>,
+    local: &'a std::collections::BTreeSet<String>,
+    by_head: &'a std::collections::HashMap<&'a str, Vec<&'a crate::code_rule_dsl::logic::front::Rule>>,
+    fresh: std::cell::Cell<usize>,
+}
+
+impl Narrower<'_> {
+    /// The bodies, over `n`'s document only, whose union holds every `n` that `body` binds; `None` when that takes
+    /// every node.
+    fn narrow(&self, body: &[crate::code_rule_dsl::logic::front::Literal], n: &str, depth: usize) -> Option<Vec<Vec<crate::code_rule_dsl::logic::front::Literal>>> {
+        use crate::code_rule_dsl::logic::front::{Literal, Term};
+        use std::collections::BTreeSet;
+        let equal = var_equalities(body);
+        // Each atom over locations, with the variables in its location columns.
+        let located: Vec<(usize, BTreeSet<String>)> = body
+            .iter()
+            .enumerate()
+            .filter_map(|(k, l)| match l {
+                Literal::Atom(a) if !a.neg => self.same.get(a.rel.as_str()).map(|cols| {
+                    let vars = cols.iter().filter_map(|&c| match a.args.get(c) {
+                        Some(Term::Var(v)) => Some(v.to_string()),
+                        _ => None,
+                    });
+                    (k, vars.collect())
+                }),
+                Literal::Nearest { n, a, .. } => Some((k, BTreeSet::from([n.clone(), a.clone()]))),
+                _ => None,
+            })
+            .collect();
+        // n's document: the atoms joined to it by a location, to a fixpoint.
+        let mut document = BTreeSet::from([n.to_owned()]);
+        close_under(&mut document, &equal);
+        let mut keep: BTreeSet<usize> = BTreeSet::new();
+        loop {
+            let before = keep.len();
+            for (k, vars) in &located {
+                if !keep.contains(k) && !vars.is_disjoint(&document) {
+                    keep.insert(*k);
+                    document.extend(vars.iter().cloned());
+                    close_under(&mut document, &equal);
+                }
+            }
+            if keep.len() == before {
+                break;
+            }
+        }
+        let mut bound: BTreeSet<String> = BTreeSet::new();
+        for &k in &keep {
+            bound.extend(body[k].vars());
+        }
+        // `m = x` binds m where x is bound.
+        let same_value: Vec<(String, String)> = body.iter().filter_map(|l| match l {
+            Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => Some((a.to_string(), b.to_string())),
+            _ => None,
+        }).collect();
+        close_under(&mut bound, &same_value);
+        for (k, l) in body.iter().enumerate() {
+            if matches!(l, Literal::Cmp { .. }) && l.vars().is_subset(&bound) {
+                keep.insert(k);
+            }
+        }
+        let mut bodies: Vec<Vec<Literal>> = vec![body.iter().enumerate().filter(|(k, _)| keep.contains(k)).map(|(_, l)| l.clone()).collect()];
+        let mut places = bound.contains(n);
+        // Each cross-file atom joined to the document by a variable is unfolded: each of its relation's rules,
+        // narrowed to that variable's column, an alternative ANDed with the rest (where the alternatives stay few).
+        if depth < UNFOLD {
+            for l in body {
+                let Literal::Atom(a) = l else { continue };
+                if a.neg || self.local.contains(a.rel.as_str()) || !self.by_head.contains_key(a.rel.as_str()) {
+                    continue;
+                }
+                let Some((column, v)) = a.args.iter().enumerate().find_map(|(c, t)| match t {
+                    Term::Var(v) if document.contains(v.as_str()) => Some((c, v.to_string())),
+                    _ => None,
+                }) else {
+                    continue;
+                };
+                let Some(alternatives) = self.unfold(&a.rel, column, &v, depth) else { continue };
+                if alternatives.len() * bodies.len() > ALTERNATIVES {
+                    continue;
+                }
+                places |= v == n;
+                bodies = bodies.iter().flat_map(|b| alternatives.iter().map(move |alt| b.iter().chain(alt).cloned().collect())).collect();
+            }
+        }
+        places.then_some(bodies)
+    }
+
+    /// `rel`'s rules, each narrowed to the document of its column `column`, named `v`: `None` when one cannot be.
+    fn unfold(&self, rel: &str, column: usize, v: &str, depth: usize) -> Option<Vec<Vec<crate::code_rule_dsl::logic::front::Literal>>> {
+        use crate::code_rule_dsl::logic::front::{Literal, Term};
+        let mut bodies = Vec::new();
+        for rule in &self.by_head[rel] {
+            let Some(Term::Var(h)) = rule.head.args.get(column) else { return None };
+            // A recursive rule that passes the column through (`down(l, m) :- …, down(x, m)`) gives it no value the
+            // other rules do not.
+            let passes = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel == rule.head.rel && matches!(a.args.get(column), Some(Term::Var(x)) if x == h)));
+            if passes {
+                continue;
+            }
+            // The rule's variables apart from the reader's, its head's at `column` named v.
+            let k = self.fresh.get();
+            self.fresh.set(k + 1);
+            let rename = |x: &str| if x == h.as_str() { v.to_owned() } else { format!("rq{k}_{x}") };
+            let renamed: Vec<Literal> = rule.body.iter().filter_map(|l| renamed(l, &rename)).collect();
+            bodies.extend(self.narrow(&renamed, v, depth + 1)?);
+            if bodies.len() > ALTERNATIVES {
+                return None;
+            }
+        }
+        (!bodies.is_empty()).then_some(bodies)
+    }
+}
+
+/// `l` with its variables renamed, for the literals a narrowed request may keep (positive atoms, nearest, comparisons).
+fn renamed(l: &crate::code_rule_dsl::logic::front::Literal, rename: &dyn Fn(&str) -> String) -> Option<crate::code_rule_dsl::logic::front::Literal> {
+    use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
+    fn term(t: &Term, rename: &dyn Fn(&str) -> String) -> Term {
+        match t {
+            Term::Var(v) => Term::Var(rename(v).into()),
+            Term::Call(f, xs) => Term::Call(f.clone(), xs.iter().map(|x| term(x, rename)).collect::<Vec<_>>().into()),
+            other => other.clone(),
+        }
+    }
+    Some(match l {
+        Literal::Atom(a) if !a.neg => Literal::Atom(Atom { rel: a.rel.clone(), args: a.args.iter().map(|t| term(t, rename)).collect::<Vec<_>>().into(), neg: false, gated: a.gated }),
+        Literal::Nearest { n, a, kindset } => Literal::Nearest { n: rename(n), a: rename(a), kindset: kindset.clone() },
+        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, rename), op, r: term(r, rename) },
+        _ => return None,
+    })
 }
 
 /// A program's split, each part a greatest fixpoint over its derived relations: the constant relations

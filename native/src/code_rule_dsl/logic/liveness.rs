@@ -175,13 +175,12 @@ pub fn program(prog: &Program) -> Program {
     out
 }
 
-/// `COUNTS`' rows (`liveof_count.csv`), by relation: each measure's count, absent where the relation had no row.
-pub fn read_counts(csv: &str) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+/// `COUNTS`' rows, by relation, from a run's outputs: each measure's count, absent where the relation had no row.
+pub fn read_counts(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
     let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
-    for line in csv.lines() {
-        let mut f = line.split('\t');
-        if let (Some(rel), Some(what), Some(n)) = (f.next(), f.next(), f.next()) {
-            out.entry(rel.to_owned()).or_default().insert(what.to_owned(), n.parse().unwrap_or(0));
+    for row in outputs.rows(COUNTS) {
+        if let (Some(rel), Some(what)) = (row.get(0).text(), row.get(1).text()) {
+            out.entry(rel.to_owned()).or_default().insert(what.to_owned(), row.get(2).int().map_or(0, |n| n as u64));
         }
     }
     out

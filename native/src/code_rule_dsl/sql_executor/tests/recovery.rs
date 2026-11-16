@@ -376,8 +376,8 @@ fn corpus_sql_uses_the_shared_wave_kernel_for_min_lattices() {
     );
     result.unwrap();
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("out/smallest.csv")).unwrap(),
-        "1\t3\n"
+        crate::code_rule_dsl::logic::plan::output::shown(&dir.path().join("out"), "smallest").unwrap(),
+        [["1", "3"]]
     );
 }
 
@@ -417,18 +417,19 @@ fn both_sql_entry_points_share_custom_lattices_and_logical_zero_arity_outputs() 
         &[],
     )
     .unwrap();
-    for (name, text) in [
-        ("smallest", "1\t3\n"),
-        ("largest", "1\t8\n"),
-        ("best", "3\n"),
-        ("permission", "1\t3\n"),
-        ("flag", "\n"),
-        ("total", "2\n"),
+    // Each relation's one row (`flag`'s, of no columns).
+    for (name, row) in [
+        ("smallest", &["1", "3"][..]),
+        ("largest", &["1", "8"]),
+        ("best", &["3"]),
+        ("permission", &["1", "3"]),
+        ("flag", &[]),
+        ("total", &["2"]),
     ] {
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(format!("out/{name}.csv")))
+            crate::code_rule_dsl::logic::plan::output::shown(&dir.path().join("out"), name)
                 .unwrap_or_else(|e| panic!("{name}: {e}")),
-            text,
+            [row],
             "{name}"
         );
     }
@@ -478,8 +479,8 @@ fn combined_corpus_programs_keep_boolean_output_metadata_after_renaming() {
     .unwrap();
     for name in ["p0_flag", "p1_flag"] {
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(format!("out/{name}.csv"))).unwrap(),
-            "\n"
+            crate::code_rule_dsl::logic::plan::output::shown(&dir.path().join("out"), name).unwrap(),
+            [Vec::<String>::new()]
         );
     }
 }

@@ -1,6 +1,7 @@
 # 0102: Write-back: SQLite is written behind the run, and waves go on from memory
 
-Status: built (2026-11-10). It builds the writer that 0024 §5 planned ("a writer thread; reads see the
+Status: built (2026-11-10). Its commits by size and idleness are superseded by decision 0259 (one transaction a wave, sealed at
+the run's boundaries; 2026-11-15). It builds the writer that 0024 §5 planned ("a writer thread; reads see the
 overlay and SQLite; the writer lags at most a wave; back-pressure from a cap").
 
 ## Intro

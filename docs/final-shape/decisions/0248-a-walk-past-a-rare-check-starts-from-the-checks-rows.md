@@ -55,6 +55,8 @@ Planner 128 and engine 52 pass.
     squared, and the overstated size raised the variance.
   - Left: the check's pass share at the key (a lookahead through the check), or a wider walk in the idle job.
 - **The walks read low** (0.71 to 0.90 of the work). The choice compares walks with the walk of the order that ran,
-  so a bias they share cancels; one they do not share remains.
+  so a bias they share cancels; one they do not share remains. Mostly answered in
+  [0273](0273-a-walk-counts-the-rows-its-last-step-makes.md): the walks did not count the rows a line's last step
+  makes, 12–13% of a heavy line's work.
 - **The walks and trials read the rule's tree.** Done in [0256](0256-the-walks-read-the-rules-body.md): they read the
   body.
