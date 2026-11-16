@@ -33,7 +33,8 @@ are swept.
    `build_ids::grammar`), so a new build makes a new one. It lives in `$TMPDIR/rerail-store-templates/<key>.sqlite`.
    It is made by the first process that needs it:
    - under a file lock (`<key>.lock`), into a staging store;
-   - then drained (pending atoms, queued writes) and written whole with `VACUUM INTO`;
+   - then drained (pending atoms, queued writes) and written whole with `VACUUM INTO`, its memo packs
+     (`<key>.sqlite.memo/`, decision 0240 §4) copied beside it, and a copy clones both;
    - then renamed into place, after which `<key>.ready` names the key.
 
    The processes that come after find it ready. Another build's template unused for an hour is removed, and so is
