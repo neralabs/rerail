@@ -43,15 +43,31 @@ export const NOTICE_PATHS_CAP = 16_384;
 export function noticeCounts(seen: WorktreeRead, event: "change" | "rename", path: string): boolean {
   const parts = path.split("/");
   const git = parts.indexOf(".git");
-  if (git >= 0 && (git < parts.length - 1 || event !== "rename")) return false;
-  // What the read left out may come or go (a file where an ignored folder was is no longer ignored); its own times and
-  // anything under it do not matter.
+  if (git >= 0 && underOrTimesOf(parts, git, event)) return false;
+  if (inLeftOut(seen, event, parts)) return false;
+  return event === "rename" || !seen.folders.has(path);
+}
+
+/**
+ * Whether a notice of `event` for the path of `parts` names something under the path of `parts` up to `index`, or the
+ * times of that path itself (a `change`); a `rename` of that path itself is neither.
+ */
+function underOrTimesOf(parts: readonly string[], index: number, event: "change" | "rename"): boolean {
+  return index < parts.length - 1 || event !== "rename";
+}
+
+/**
+ * Whether a notice of `event` for the path of `parts` names the times of, or anything under, what the read left out.
+ * What the read left out may come or go (a file where an ignored folder was is no longer ignored); its own times and
+ * anything under it do not matter.
+ */
+function inLeftOut(seen: WorktreeRead, event: "change" | "rename", parts: readonly string[]): boolean {
   let prefix = "";
   for (const [index, part] of parts.entries()) {
     prefix = index === 0 ? part : `${prefix}/${part}`;
-    if (seen.leftOut.has(prefix) && (index < parts.length - 1 || event !== "rename")) return false;
+    if (seen.leftOut.has(prefix) && underOrTimesOf(parts, index, event)) return true;
   }
-  return event === "rename" || !seen.folders.has(path);
+  return false;
 }
 
 /** Whether any path a notice names counts against `seen` (`noticeCounts`). */
@@ -154,9 +170,9 @@ export class WorktreeNotices {
       this.#watched.delete(root);
       this.#watch?.unwatch(root);
     }
-    for (const root of this.#failed.keys()) if (!roots.has(root)) this.#failed.delete(root);
-    for (const root of this.#ended.keys()) if (!roots.has(root)) this.#ended.delete(root);
-    for (const root of this.#noticed) if (!roots.has(root)) this.#noticed.delete(root);
+    forgetOthers(this.#failed, roots);
+    forgetOthers(this.#ended, roots);
+    forgetOthers(this.#noticed, roots);
   }
 
   /** Starts watching `root`, its root folder alone until a read names its folders; undefined when it cannot be watched now. */
@@ -205,16 +221,20 @@ export class WorktreeNotices {
       this.#watched.delete(notice.root);
       this.#ended.set(notice.root, this.#now());
     }
-    // A notice that lost its paths may have lost a folder that went and came back: the next read's folders are all
-    // watched again, and the engine keeps the watches it holds.
-    if (this.#byFolder) {
-      if (notice.lost) watched.folders = new Set();
-      else this.#replaced(watched, notice.renamed);
-    }
-    if (notice.ended || notice.lost || watched.seen === undefined || counts(watched.seen, notice)) {
+    if (this.#byFolder) this.#unfollow(watched, notice);
+    if (marksChanged(watched, notice)) {
       watched.changed = true;
       this.#noticed.add(notice.root);
     }
+  }
+
+  /**
+   * A notice that lost its paths may have lost a folder that went and came back: the next read's folders are all
+   * watched again, and the engine keeps the watches it holds. Otherwise only the folders that came or went are (`#replaced`).
+   */
+  #unfollow(watched: Watched, notice: TreeNotice): void {
+    if (notice.lost) watched.folders = new Set();
+    else this.#replaced(watched, notice.renamed);
   }
 
   /**
@@ -226,6 +246,19 @@ export class WorktreeNotices {
     if (gone.length === 0) return;
     watched.folders = new Set([...watched.folders].filter(folder => !gone.some(path => folder === path || folder.startsWith(`${path}/`))));
   }
+}
+
+/**
+ * Whether a notice marks its worktree changed: its watch ended, it lost its paths, no finished read stands (one runs, or
+ * none ran yet), or a path it names counts against the last read (`counts`).
+ */
+function marksChanged(watched: Watched, notice: TreeNotice): boolean {
+  return notice.ended || notice.lost || watched.seen === undefined || counts(watched.seen, notice);
+}
+
+/** Forgets from `kept` each worktree not in `roots`. */
+function forgetOthers(kept: Map<string, unknown> | Set<string>, roots: ReadonlySet<string>): void {
+  for (const root of kept.keys()) if (!roots.has(root)) kept.delete(root);
 }
 
 /** `queued` and `notice`, of one root, as one notice: past `NOTICE_PATHS_CAP` paths, or with either lost, one that lost its paths. */

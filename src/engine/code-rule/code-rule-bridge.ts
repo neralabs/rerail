@@ -495,6 +495,23 @@ function takeGaps(worktree: string, findings: WorktreeFindings, scan: SourceScan
 }
 
 /**
+ * Puts what the session reads now of a changed source the walk kept no text of (`#reread`) into `scan`, and into `kept`
+ * a source it leaves to the next walk: one it cannot read now, with what it saw before, and one it never saw and finds gone.
+ */
+function takeReread(path: string, read: Source | "gone" | "unread", walk: WalkStart, scan: SourceScan, kept: Map<string, ObservedSource | undefined>): void {
+  if (typeof read !== "string") scan.sources.set(path, read);
+  else scan.sources.delete(path);
+  if (read === "unread") kept.set(path, walk.previous.get(path));
+  else if (read === "gone" && !walk.previous.has(path)) kept.set(path, undefined);
+}
+
+/** `read`, a file changed again since a walk found it as `found`, stamped as the walk found it: what was written since was written later still. */
+function stampedAsFound(read: Source, found: Source): Source {
+  const { modifiedAt, observedAt } = found;
+  return { ...read, ...(modifiedAt === undefined ? {} : { modifiedAt }), ...(observedAt === undefined ? {} : { observedAt }) };
+}
+
+/**
  * Which paths of the worktree at `root` (relative to it) a session in `folder` takes from the shared walk: every one, but
  * in a worktree around the folder, none in the folder on the way to it. The session names those files from its folder
  * (`../x.py`), a path under no worktree's, and no walk records a change there; the snapshot names them from the worktree
@@ -684,6 +701,22 @@ interface WalkStart {
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
+}
+/** A worktree whose walk a session takes: its root (physical), its path as the session names it, and what the walk found. */
+interface TakenWorktree {
+  readonly root: string;
+  readonly worktree: string;
+  readonly findings: WorktreeFindings;
+  readonly scan: SourceScan;
+}
+/**
+ * What the Git of `checkout` lists as modified or untracked: as the walk listed it, else listed now; undefined when it
+ * ran past its time limit.
+ */
+async function listedChanges(discovery: SourceDiscovery, findings: WorktreeFindings, checkout: string): Promise<readonly string[] | undefined> {
+  return findings.listed.has(checkout)
+    ? findings.listed.get(checkout)
+    : await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }));
 }
 /**
  * Each walk answers for what it covers: a path a tool wrote elsewhere is never observed missing here. A worktree that
@@ -1990,27 +2023,44 @@ export class CodeRuleBridge {
     found: ReadonlyMap<string, WorktreeFindings>,
   ): Promise<Map<string, ObservedSource | undefined>> {
     const kept = new Map<string, ObservedSource | undefined>();
-    for (const [path, before] of walk.previous) {
-      // Only what the session saw itself: one its last snapshot held and this one lacks, a later read found gone.
-      if (scan.sources.has(path) || !this.#observed.has(path)) continue;
-      if (this.#abandoned(discovery)) return kept;
-      const read = await this.#readSource(discovery.root, path);
-      if (read !== undefined && read.deleted !== true) kept.set(path, before);
-    }
-    for (const [path, after] of scan.sources) {
-      if (this.#abandoned(discovery)) return kept;
-      if (!this.#textMissing(discovery, walk, after)) continue;
-      const read = await this.#reread(discovery, after);
-      if (typeof read !== "string") scan.sources.set(path, read);
-      else scan.sources.delete(path);
-      if (read === "unread") kept.set(path, walk.previous.get(path));
-      else if (read === "gone" && !walk.previous.has(path)) kept.set(path, undefined);
-    }
+    if (!await this.#keepSeenStill(discovery, walk, scan, kept) || !await this.#rereadMissingTexts(discovery, walk, scan, kept)) return kept;
     const listed = await this.#firstSeenInWorktrees(discovery, walk, scan, found);
     // A first sight Git lists puts the walk's observation back; the next walk shows these instead.
     for (const path of kept.keys()) scan.sources.delete(path);
     await this.#takeFirstSeenTexts(discovery, listed, scan);
     return kept;
+  }
+
+  /**
+   * Puts into `kept` each source the session saw itself that the walk's snapshot lacks (its last snapshot held it) and
+   * a read finds still there, with what the session saw of it. Returns false once the discovery is abandoned.
+   */
+  async #keepSeenStill(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, kept: Map<string, ObservedSource | undefined>): Promise<boolean> {
+    for (const [path, before] of walk.previous) {
+      // Only what the session saw itself: one its last snapshot held and this one lacks, a later read found gone.
+      if (scan.sources.has(path) || !this.#observed.has(path)) continue;
+      if (this.#abandoned(discovery)) return false;
+      if (await this.#stillThere(discovery.root, path)) kept.set(path, before);
+    }
+    return true;
+  }
+
+  /** Whether a read of `path` finds a file there; a path the session does not read finds none. */
+  async #stillThere(root: string, path: string): Promise<boolean> {
+    const read = await this.#readSource(root, path);
+    return read !== undefined && read.deleted !== true;
+  }
+
+  /**
+   * Rereads each source of `scan` the walk kept no text of (`#textMissing`) as the session reads it now (`takeReread`).
+   * Returns false once the discovery is abandoned.
+   */
+  async #rereadMissingTexts(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, kept: Map<string, ObservedSource | undefined>): Promise<boolean> {
+    for (const [path, after] of scan.sources) {
+      if (this.#abandoned(discovery)) return false;
+      if (this.#textMissing(discovery, walk, after)) takeReread(path, await this.#reread(discovery, after), walk, scan, kept);
+    }
+    return true;
   }
 
   /**
@@ -2027,9 +2077,7 @@ export class CodeRuleBridge {
     if (read.deleted === true) return "gone";
     if (read.readError !== undefined) return "unread";
     if (read.digest === after.digest) return read.text === undefined ? after : { ...after, text: read.text };
-    // Stamped as the walk found it: what was written since was written later still.
-    const { modifiedAt, observedAt } = after;
-    return { ...read, ...(modifiedAt === undefined ? {} : { modifiedAt }), ...(observedAt === undefined ? {} : { observedAt }) };
+    return stampedAsFound(read, after);
   }
 
   /** Whether the walk found `after` changed, or first saw it changed since the session opened, and kept no text of it. */
@@ -2054,23 +2102,35 @@ export class CodeRuleBridge {
     for (const [root, findings] of found) {
       const worktree = sessionPath(discovery.root, root);
       if (!walk.worktrees.has(worktree) || !this.#mayFirstSee(discovery, worktree)) continue;
-      const taken = { worktree, findings, scan };
-      for (const checkout of findings.checkouts) {
-        if (this.#abandoned(discovery)) return listed;
-        const changed = findings.listed.has(checkout)
-          ? findings.listed.get(checkout)
-          : await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }));
-        if (changed === undefined) {
-          const owned = [...findings.snapshot.sources.keys()].filter(takenFrom(root, discovery.root)).map(path => inWorktree(worktree, path));
-          scan.lateListings.set(checkout, this.#firstSeenOf(discovery, walk, taken, owned.filter(path => this.#owningCheckout(discovery.root, path) === checkout)));
-          continue;
-        }
-        const firstSeen = this.#firstSeenOf(discovery, walk, taken, changed.map(path => sessionPath(discovery.root, resolve(checkout, path))));
-        for (const [path, source] of firstSeen) scan.sources.set(path, source);
-        listed.push(...firstSeen.keys());
-      }
+      if (!await this.#firstSeenInCheckouts(discovery, walk, { root, worktree, findings, scan }, listed)) return listed;
     }
     return listed;
+  }
+
+  /**
+   * Puts into `taken.scan` and `listed` what the walk is the first to show the session in each checkout of the worktree
+   * at `taken.root` that its Git lists as changed; a checkout that lists none puts what it shows first in
+   * `scan.lateListings` (`#lateFirstSeen`). Returns false once the discovery is abandoned.
+   */
+  async #firstSeenInCheckouts(discovery: SourceDiscovery, walk: WalkStart, taken: TakenWorktree, listed: string[]): Promise<boolean> {
+    for (const checkout of taken.findings.checkouts) {
+      if (this.#abandoned(discovery)) return false;
+      const changed = await listedChanges(discovery, taken.findings, checkout);
+      if (changed === undefined) {
+        taken.scan.lateListings.set(checkout, this.#lateFirstSeen(discovery, walk, taken, checkout));
+        continue;
+      }
+      const firstSeen = this.#firstSeenOf(discovery, walk, taken, changed.map(path => sessionPath(discovery.root, resolve(checkout, path))));
+      for (const [path, source] of firstSeen) taken.scan.sources.set(path, source);
+      listed.push(...firstSeen.keys());
+    }
+    return true;
+  }
+
+  /** What the walk is the first to show the session of the sources `checkout` owns in the worktree, for a checkout whose Git listed none. */
+  #lateFirstSeen(discovery: SourceDiscovery, walk: WalkStart, taken: TakenWorktree, checkout: string): Map<string, Source> {
+    const owned = [...taken.findings.snapshot.sources.keys()].filter(takenFrom(taken.root, discovery.root)).map(path => inWorktree(taken.worktree, path));
+    return this.#firstSeenOf(discovery, walk, taken, owned.filter(path => this.#owningCheckout(discovery.root, path) === checkout));
   }
 
   /** Of `paths` (session-relative), those in `worktree` that the walk is the first to show the session, as it found them. */

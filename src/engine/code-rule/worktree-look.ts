@@ -78,7 +78,7 @@ function folderIdentity(root: string): string {
 }
 
 /** What a walk reads once for every worktree it looks at: each ignore file's text and the mount table. */
-interface WalkFiles {
+export interface WalkFiles {
   readonly texts: Map<string, string>;
   readonly mounts: ReadonlyArray<readonly [string, string]>;
 }
