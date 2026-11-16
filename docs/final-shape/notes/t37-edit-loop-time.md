@@ -88,6 +88,22 @@ features for every crate but the engine itself and the test-only `rerail-parser-
 up with the dev-dependencies, target-specific ones included, and the farm's wrapper tells a CLI
 build without it. Product and `profiling` builds are unchanged.
 
+A crate's own tests made variants too. `cargo test -p rerail-logic` gave logic its `default`, which
+the engine's builds did not (they take the crates without defaults), and it gave `rerail-metal` no
+hooks: the hooks reached it only through the engine's own dev-dependencies. Two manifest rules fix
+both, and the check enforces them: each crate's `default` turns on the `default` of the workspace
+crates it takes without defaults, and each crate's `test-hooks` turns on the `test-hooks` of every
+hooked workspace crate below it, its own test build turning on its own. `cargo tree` then gives
+every workspace crate the same features in the CLI build, the engine's tests and each crate's own
+tests (registry crates still differ in a crate's own tests, but they compile once into the cache,
+with no incremental state).
+
+What the rules miss, the farm's wrapper catches as it happens: it records the feature set of each
+workspace crate's compile per target and profile, and a new one within 2 hours of another is told
+in that build's output and at the checkout's builds for 3 hours, with the differing features, the
+earlier command and what to do. A new dependency graph with the same features (after a Cargo.toml
+change) is not told.
+
 ## 2. The test suite is the slow part
 
 One run of the engine's library tests took 762 s wall and 2,682 s CPU (45 CPU-minutes):

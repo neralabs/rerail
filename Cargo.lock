@@ -4086,6 +4086,7 @@ dependencies = [
  "bitlex",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-parser-tests",
  "rerail-rr-syntax",
  "tree-sitter",
  "tree-sitter-json",
@@ -4245,6 +4246,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "rerail-compiler",
+ "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-tape-format",
@@ -4259,6 +4261,7 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-tape-format",
  "sha2 0.10.9",

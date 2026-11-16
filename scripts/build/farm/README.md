@@ -152,7 +152,11 @@ What an agent does wrong is printed in its own build output, not left for someon
 first compile of each cargo command the wrapper prints, as `warning: rerail-farm:` lines: a nice
 value under 19, a rustc other than the checkout pins, a development build of the engine's CLI without
 `--features test-hooks` (it compiles every dependency crate apart from the tests' build of it:
-native/Cargo.toml), and the checkout's latest `diagnose --brief`
+native/Cargo.toml), a workspace crate compiled with other features than a build of the same target
+and profile in the last 2 hours did (a second variant, compiled at each edit with every crate above
+it and with its own incremental state; said once per command and difference, with the crates, the
+features and the earlier command, and repeated at the checkout's builds for 3 hours; the records are
+in `~/Library/Caches/rerail-farm/variants/`), and the checkout's latest `diagnose --brief`
 findings (another toolchain or cargo configuration than the active worktrees, profile settings that
 differ, scripts that set the variables builds share), each with what to do. A cargo command that
 runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate

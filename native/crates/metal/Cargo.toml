@@ -7,7 +7,7 @@ description = "The engine's Metal runtime: device, buffer budget, mapped buffers
 
 [features]
 # Per-thread buffer ledgers and buffer observations, for tests (the engine's and this crate's).
-test-hooks = []
+test-hooks = ["rerail-compiler/test-hooks", "rerail-prof/test-hooks"]
 
 [dependencies]
 rerail-accel = { path = "../../../accel" }

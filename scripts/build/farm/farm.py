@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 15
+VERSION = 16
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -355,6 +355,122 @@ VALUED = {"-p", "--package", "--profile", "--features", "-F", "-j", "--jobs", "-
           "--message-format", "--partition", "--test-threads", "--retries", "--archive-file", "--cargo-profile"}
 
 
+# A workspace crate compiled in a second variant (another feature set) within this long of the first
+# is told: both stay current, each compiled per edit, each with 1-3 GB of incremental state (the
+# cleaner keeps unused incremental state as long: scripts/dev/clean-target).
+VARIANT_SECONDS = 2 * 3600
+# ... and the checkout's builds repeat it this long.
+VARIANT_ADVICE_SECONDS = 3 * 3600
+# The engine's own variants are the tests' (cfg(test), without its `test-hooks`) and the CLI's: they
+# are inherent, and no crate is built above it.
+VARIANT_EXEMPT = {"rerail_engine"}
+
+
+def features_of(args):
+    return sorted(v[len('feature="'):-1] for v in values(args, "--cfg") if v.startswith('feature="') and v.endswith('"'))
+
+
+def variant_hint(plus, minus):
+    """What to do about a variant whose features differ by `plus` and `minus` from the earlier one."""
+    changed = set(plus) | set(minus)
+    if "test-hooks" in changed:
+        return ("build the CLI with the tests' features: `nice -n 19 cargo build --bin rerail-engine --features "
+                "test-hooks` (AGENTS.md)")
+    if "default" in changed:
+        return ("a crate's `default` differs from what the engine gives it: scripts/check/check-dev-features.py names "
+                "the manifest to fix")
+    return (f"a build with other features ({', '.join(sorted(changed))}) compiles every crate below again: run it on "
+            "a farm host (scripts/dev/test-remote), not in this worktree's target directory")
+
+
+def note_variant(checkout, args, out_dir, crate):
+    """Records the variant (feature set) this compile of a workspace crate builds, and when a recent
+    compile of the same crate in the same target and profile built another, says so on stderr and in
+    the checkout's next builds (`variant_advice`). Cascades (the same features over another
+    dependency graph, as after a Cargo.toml change) are not told: the crate whose features differ is."""
+    if crate in VARIANT_EXEMPT or not out_dir:
+        return
+    src = next((a for a in args if a.endswith(".rs") and not a.startswith("-")), None)
+    if src is None or (os.path.isabs(src) and not src.startswith(checkout + os.sep)):
+        return  # a registry or git dependency: its features follow the workspace's
+    meta = codegen(args, "metadata")
+    if not meta:
+        return
+    # Every package's build script is crate `build_script_build`: the package tells them apart.
+    package = os.environ.get("CARGO_PKG_NAME")
+    if package and package.replace("-", "_") != crate:
+        crate = f"{package} ({crate})"
+    kind = "test" if "--test" in args else ",".join(sorted(set(",".join(values(args, "--crate-type")).split(",")))) or "lib"
+    features = features_of(args)
+    now = time.time()
+    path = state("variants", key(os.path.dirname(os.path.realpath(out_dir))), key(crate) + ".json")
+    seen = [e for e in read_json(path, []) if now - e.get("at", 0) < VARIANT_SECONDS]
+    same = [e for e in seen if e["meta"] == meta]
+    if same:
+        for e in same:
+            e["at"] = now
+        write_json(path, seen)
+        return
+    try:
+        cmd = subprocess.run(["ps", "-o", "args=", "-p", str(os.getppid())], capture_output=True, text=True,
+                             timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        cmd = ""
+    alike = [e for e in seen if e["kind"] == kind]
+    other = [e for e in alike if e["features"] != features]
+    seen.append({"meta": meta, "kind": kind, "features": features, "at": now, "cmd": cmd[:300]})
+    write_json(path, seen)
+    # A feature set seen before is a cascade (another dependency graph) or a known variant, told already.
+    if not other or any(e["features"] == features for e in alike):
+        return
+    # The nearest earlier feature set: the difference is then what this build changed.
+    prev = min(other, key=lambda e: (len(set(e["features"]) ^ set(features)), -e["at"]))
+    plus = [f for f in features if f not in prev["features"]]
+    minus = [f for f in prev["features"] if f not in features]
+    diff = ", ".join([f"+{f}" for f in plus] + [f"-{f}" for f in minus])
+    # One message per cargo command and difference, however many crates it varies: the record keeps
+    # them all, and the checkout's next builds say it with the crates named.
+    advice = state("variants", key(checkout) + ".advice.json")
+    entries = [e for e in read_json(advice, []) if now - e.get("at", 0) < VARIANT_ADVICE_SECONDS]
+    mine = next((e for e in entries if e["diff"] == diff and e.get("cargo") == os.getppid()), None)
+    if mine:
+        mine["crates"] = sorted(set(mine["crates"]) | {crate})
+        mine["at"] = now
+    else:
+        entries = [e for e in entries if e["diff"] != diff]
+        mine = {"at": now, "diff": diff, "crates": [crate], "cargo": os.getppid(), "prev_at": prev["at"],
+                "prev_cmd": short_cargo(prev.get("cmd", "")), "hint": variant_hint(plus, minus)}
+        entries.append(mine)
+        sys.stderr.write(f"warning: rerail-farm: {variant_text(mine)}\n")
+        sys.stderr.flush()
+    write_json(advice, entries)
+
+
+def variant_text(e):
+    crates = ", ".join(e["crates"][:6]) + (f" and {len(e['crates']) - 6} more" if len(e["crates"]) > 6 else "")
+    hint = e["hint"][:1].upper() + e["hint"][1:]
+    return (f"this checkout's builds compile {crates} a second way, with features {e['diff']} against the build of "
+            f"{time.strftime('%H:%M', time.localtime(e['prev_at']))} (`{e['prev_cmd']}`). Each variant is compiled at "
+            f"every edit, with every crate above it, and keeps 1-3 GB of incremental state. {hint}")
+
+
+def short_cargo(cmd):
+    """`cmd` from its `cargo` word on, for a message."""
+    words = cmd.split()
+    for i, w in enumerate(words):
+        if os.path.basename(w) == "cargo":
+            return " ".join(words[i:])[:160]
+    return cmd[:160]
+
+
+def variant_advice(checkout):
+    """The variant warnings `advise` repeats at `checkout`'s builds, the latest few."""
+    now = time.time()
+    entries = [e for e in read_json(state("variants", key(checkout) + ".advice.json"), [])
+               if now - e.get("at", 0) < VARIANT_ADVICE_SECONDS]
+    return [variant_text(e) for e in sorted(entries, key=lambda e: -e["at"])[:3]]
+
+
 def cli_without_hooks(pid, checkout):
     """True when cargo process `pid` builds the engine's CLI for development without `test-hooks`:
     `cargo build` or `cargo run` of `rerail-engine` (by `--bin` or `-p`, or with no package named, from
@@ -491,6 +607,7 @@ def advise(checkout, rustc):
                      f"at the latest ({lease.get('label') or 'unnamed'}): this build's compiles wait for it, and anything heavy "
                      "you run here now (tests, Relax) is unfair to the benchmark: run it with scripts/dev/test-remote, or after")
     lines += interference_advice(checkout)
+    lines += variant_advice(checkout)
     try:
         f = findings_path(checkout)
         if time.time() - os.stat(f).st_mtime < 2 * DIAGNOSE_SECONDS:
@@ -529,6 +646,10 @@ def wrapper(rustc, args):
     if target and crate != "___":
         tidy(target, checkout)
         advise(checkout, rustc)
+        try:
+            note_variant(checkout, args, out_dir, crate)
+        except (OSError, ValueError, KeyError):
+            pass  # never fail a compile over its bookkeeping
     # Every compile of a checkout's waits while this machine is leased for a benchmark: a hot
     # incremental one too, which runs rustc itself (scripts/dev/quiet-run).
     if crate != "___":
