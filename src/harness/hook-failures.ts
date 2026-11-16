@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats, type Stats } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "../engine/native/native.js";
+import { openNoFollowSync } from "../engine/no-follow.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { processState } from "../engine/process-liveness.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -338,11 +339,27 @@ function copyLines(descriptor: number, taken: string, path: string): void {
   // own name was refused: the lines are there, and status counts them under that name. Copied as well, they would count
   // twice.
   if (heldElsewhere(id, taken, path)) return;
-  appendFileSync(path, lines, { mode: 0o600 });
+  appendToLive(path, lines);
   // A hook that opened the log to append before this one took it can write after the read above: that goes back too.
   // One that writes later still, after this read, loses its line.
   const later = readFrom(descriptor, lines.length);
-  if (later.length > 0) appendFileSync(path, later, { mode: 0o600 });
+  if (later.length > 0) appendToLive(path, later);
+}
+
+/**
+ * Appends `text` to the live log at `path`, never through a link there: a person can make the live name one after the
+ * give-back looked at it, as it removes its own name and lists the others. The open then fails and the lines are lost,
+ * as when any append after the removal fails, and none reaches the person's file. Where the system has `O_NOFOLLOW` the
+ * kernel refuses the link; on Windows the name is looked at before the open, and the file opened is checked to be the
+ * one looked at ({@link openNoFollowSync}).
+ */
+function appendToLive(path: string, text: Buffer): void {
+  const descriptor = openNoFollowSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT, 0o600);
+  try {
+    appendFileSync(descriptor, text);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 /**

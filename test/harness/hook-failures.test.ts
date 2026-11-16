@@ -374,14 +374,18 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     return { elsewhere, text, made };
   };
   // The wraps of a hook's process under which every open, read or append of the file `elsewhere`, by any name, prints
-  // its call and fails, as when the share it is on stops answering or a program holds a write lease on it.
+  // its call and fails, as when the share it is on stops answering or a program holds a write lease on it. An open that
+  // refuses a link at its name (`O_NOFOLLOW`) of a name that is a link goes on to the real open, which refuses it
+  // without reaching the file.
   const refusedThrough = (elsewhere: string): Wraps => {
     const refused = (call: string): string => `${call} => {
       const target = fs.realpathSync(${JSON.stringify(elsewhere)});
+      const noFollow = fs.constants.O_NOFOLLOW ?? 0;
       return (path, ...rest) => {
         let reaches = null;
         try { reaches = fs.realpathSync(String(path)); } catch {}
         if (reaches !== target) return ${call}(path, ...rest);
+        if (noFollow !== 0 && typeof rest[0] === "number" && (rest[0] & noFollow) !== 0 && fs.lstatSync(String(path)).isSymbolicLink()) return ${call}(path, ...rest);
         fs.writeSync(1, "${call} ");
         throw Object.assign(new Error("EIO: i/o error, ${call}"), { code: "EIO" });
       };
@@ -656,6 +660,45 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
       opened: "", live: "file", movedAside: "link",
       files: [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`, expect.stringMatching(/^hook-failures\.jsonl\.\d+\.[0-9a-f-]+\.old$/u)],
       counted: 4, leftAsItWas: true,
+    });
+  });
+
+  // As above, but the live name is another hook's new log when the copy looks at it under its lock, and the person's
+  // link replaces that log right after, as the copy removes the hook's own name. The copy's append refuses a link at the
+  // live name, so none of the lines reach the person's file: they are lost, as when that append fails for any reason,
+  // and the hook moves the link as `main`'s rename moves what it finds there.
+  it("writes nothing through a link a person makes at the live name as a give-back by copy removes its own name", async context => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFileSync(live, [3, 4, 5].map(at => `${JSON.stringify(failure(at))}\n`).join(""));
+    const { elsewhere, text, made } = await linkMadeLater(context, rerailHome, full);
+    const opened = await recordWithWrapped(rerailHome, 2, {
+      ...refusedThrough(elsewhere),
+      statSync: `stat => (path, ...rest) => {
+        const stats = stat(path, ...rest);
+        if (String(path) === ${JSON.stringify(live)} && !globalThis.sized) {
+          globalThis.sized = true;
+          stats.size = ${300 * 1024};
+        }
+        return stats;
+      }`,
+      linkSync: `link => (existing, path) => {
+        if (path === ${JSON.stringify(live)} && !globalThis.begun) {
+          globalThis.begun = true;
+          fs.appendFileSync(path, ${lineSource(6, "began a live log")});
+        }
+        return link(existing, path);
+      }`,
+      unlinkSync: `unlink => path => {
+        if (String(path).endsWith(".old") && !globalThis.made) {
+          globalThis.made = true;
+          fs.renameSync(${JSON.stringify(made)}, ${JSON.stringify(live)});
+        }
+        return unlink(path);
+      }`,
+    });
+    expect({ opened, ...afterTheMove(rerailHome), leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({
+      opened: "", ...movedAsTheLink(1), leftAsItWas: true,
     });
   });
 
