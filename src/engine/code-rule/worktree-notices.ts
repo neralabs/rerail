@@ -27,9 +27,10 @@ export interface WorktreeRead {
 /** A worktree that could not be watched is tried again after this long, read on every walk meanwhile. */
 export const WATCH_RETRY_MS = 600_000;
 /**
- * A worktree whose watch ended is watched again no sooner than this after: read whole on every walk meanwhile. On
- * Windows a change among a worktree's top entries ends its watch, and watching it again at once could end it again on
- * every walk.
+ * A worktree whose watch ended is watched again no sooner than this after: read whole on every walk meanwhile. A watch
+ * ends when the worktree or a folder above it is renamed, moved or deleted (on Windows, when the path then holds no
+ * folder or another, or after a run of renames: the engine's `REOPENS` within `REOPEN_WINDOW`), or on a watch error.
+ * Watching it again at once would chase a worktree still being moved or replaced, its watch ending again on every walk.
  */
 export const REWATCH_MS = 5_000;
 
