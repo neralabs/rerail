@@ -59,10 +59,11 @@ This record is steps 2, 3 and 4, and the API they need.
    image (`TapeImage`) holds format 15's columns or format 16's (or 16z's) bytes as stored, and its tape
    (`TapeImage::tape`) is read where it lies in that format. Each stored form starts with its own magic
    (`TMPTAP9N`, `TMPTAP16`, `TMPTAP6Z`) and the language's tag after it, so a load reads whatever the store
-   holds, as held. Format 16 is written from format 15's columns where a file's documents are made
-   (`FileImage::single`, `FileImage::embedding`, after the embedders have read the host): the parsers write
-   format 15 until they call format 16's writer. A language without a table, or an image with a code its table
-   lacks, keeps format 15, and the run says so once a language. The store keys a tape by the run's format
+   holds, as held. The lean parsers write the run's format directly (§7). A tape from another parser
+   (tree-sitter's) is written from format 15's columns where a file's documents are made (`FileImage::single`,
+   `FileImage::embedding`, after the embedders have read the host), in one pass to format 16 or straight to
+   16z's blocks. A language without a table, or an image with a code its table lacks, keeps format 15, and the
+   run says so once a language. The store keys a tape by the run's format
    (`tape_format_version`: 15, 16, or 1016 for 16z; `formats::stored_version`), so a store holds a document once
    per format and a run finds only its own. A restore checks the codes a tape uses (a language's table lists
    every code its grammar allows).
@@ -124,6 +125,31 @@ This record is steps 2, 3 and 4, and the API they need.
    in the three formats (49 bandit rules and 178 ruff rules over 10 files, cold and warm; the bait file's five
    findings).
 
+7. **The lean parsers write format 16 and 16z directly** (built, 2026-11-16, the user: "generalize the lean
+   parsers so that they produce format 16 directly, and ideally format 16 compressed directly, without doing
+   multiple passes or going through format 15"). Each lean parser crate's `tape_into` (the `.rr` parser's
+   `lean::tape_into`, through the `Finish` trait, as it is generic over its widths) hands its writer, once the
+   parse holds, to a finish the engine gives (`tape::formats::lean`, `formats::Rr`):
+
+   - in a run of format 15, the writer's columns, as before (`Writer::finish_columns`, `TapeImage::written`);
+   - in a run of 16 or 16z, each code the parser's keys name is numbered once in the language's table, and
+     `Writer::finish_16` writes the tape from the writer's own working state (keys, starts, subtree sizes and
+     tails) in one pass in preorder (`f16::write`): a node's slot is set when the next node is reached, and a block
+     of 1,024 nodes is laid, or LZ4-compressed for 16z, as the pass leaves it. No format 15 column, image or format
+     16 tape is made on the way to 16z.
+
+   The writer's sizes and tails are exact by then, but where its widths were too narrow (the parser runs again at
+   the wider widths, as for format 15); format 15's offsets are not read. A code the table lacks, or a node past
+   format 16's bounds, keeps format 15 and says so once a language. `f16::write_from` (a tape of any format, read
+   through the API) is the same pass, for tree-sitter's tapes (§4).
+
+   Checked (2026-11-16): for every lean parser whose language has a table (Python, JavaScript, TypeScript, TSX,
+   Rust, PHP, SQL, Vue and `.rr`), the tape written directly in 16 and in 16z is byte for byte what format 15's
+   image converts to, and answers every node's code, span, subtree and parent alike
+   (`the_lean_parsers_write_each_format_directly`). The CLI under strict SQL (178 ruff rules over 10 files) gives
+   byte-identical outputs in the three formats, cold and warm from each store; the stores hold 835 tapes in 1.20 MB
+   (15), 727 KB (16) and 448 KB (16z).
+
 ## Interim, until step 5
 
 - **What reads the image's tape through the API** in whichever format it is held: the checks a restore makes
@@ -141,6 +167,7 @@ This record is steps 2, 3 and 4, and the API they need.
 
 ## Not done
 
-- The writer's calls from every parser (0156 §7).
+- Format 16 tables for C#, CSS, HTML, Java, Markdown and Markdown's inline grammar: their lean parsers write
+  format 15 until the lab's table generator (`tape16 table`) covers them.
 - 16z's blocks over the language's dictionary: each block is compressed alone for now.
 - The text stream (0156 §6), hashes per algorithm (§5), edits (§4).
