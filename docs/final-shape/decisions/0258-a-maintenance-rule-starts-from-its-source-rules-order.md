@@ -1,6 +1,6 @@
 # 0258: A maintenance rule starts from its source rule's order
 
-Status: built (2026-11-15); re-validated the same day: a net cost in planning (see "Re-validated"). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
+Status: built (2026-11-15); off by default since the same day: a net cost in planning (see "Re-validated" and "The start inside the search"). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
 0123 §5 ("carry the cold run's plans into the session"). `plan.rs` (`Model::started`, `source_order`,
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).
@@ -148,6 +148,37 @@ where a start saves planning.
 **The −0.9% above was noise.** The sessions' instruction totals move more between rounds than planning can move
 them: f597b540c off read 36.95, 38.08 and 37.03 G (3%), against about 0.03 G of planning. Merged: off 34.19, 33.98,
 34.43; on 33.82, 34.19, 34.19. The join work is unchanged either way.
+
+## The start inside the search, then off by default
+
+2026-11-15. Two changes, then measured:
+
+1. **The search tries the start first** (`SearchCx::start`, read back as `SearchCx::started`). `start_order` finds
+   the order; the search prices it under its own set-up (`price`, the same loop a kept order is priced by) and takes
+   it, before greedy-first, where it runs, is led by the delta and prices under a search's cost. A refused start
+   then costs its steps, not a second set-up.
+2. **No start where a search prices fewer than three orders** (`START_CANDIDATES`): there the search prices about
+   what the start does.
+
+Thread CPU of first-sight planning, sessions 12 to 16, off and on run alternately (two rounds, load steady):
+
+| | lines | ms |
+|---|---|---|
+| off: every line searched | 6,325 | 40.7, 40.8 |
+| on: in all | 6,332 | 47.7, 47.9 |
+| of which finding start orders (`start_order`) | 2,950 | 5.2, 5.3 |
+| starts taken (with finding them) | 1,503 | 10.1, 10.3 |
+| starts refused (with finding them, and the search) | 1,446 | 18.5, 18.6 |
+| searched with no start | 3,370 | 19.2, 19.0 |
+
+Still 7 ms more, as before the change. Most of it is finding the order (the source's body, its literal map, the
+mapped order, two lookups: about 1.8 µs a line). Without it the starts would still not save: greedy-first (decision
+0123 §7) already prices one cheap order and takes it under a search's cost, under the same set-up, so a start saves
+only greedy's other candidates.
+
+So source orders are **off by default** (`RERAIL_SOURCE_ORDERS=on` turns them on): the plans are the same either
+way (join work at parity, "same as full: true" with them on, steps 12 and 13), and off plans for less. With them
+off, no order is kept for them either (`orders_put`).
 
 ## Open
 
