@@ -4897,9 +4897,13 @@ pub(crate) fn install_languages() {
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
-            // (`json_parser::tape::Bitlex`) is not yet the product's.
-            #[cfg(not(target_family = "wasm"))]
+            // (`json_parser::tape::Bitlex`) is not yet the product's. MSVC builds none of simdjson's
+            // C++: the Bitlex parser, then tree-sitter-json, read files as simdjson's route does there
+            // (`json_parser::fallback`).
+            #[cfg(not(any(target_family = "wasm", all(windows, target_env = "msvc"))))]
             parsers.extend(transducer::packed::json_parser::simdjson::registrations());
+            #[cfg(all(windows, target_env = "msvc"))]
+            parsers.push(transducer::packed::json_parser::fallback::registration());
         }
         tape::install_parsers(parsers);
     }

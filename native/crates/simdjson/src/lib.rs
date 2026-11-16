@@ -11,6 +11,9 @@
 //! The index holds, in order, the offset of each structural byte (`{ } [ ] : ,`) and of each
 //! scalar's first byte (a string's opening quote, a number's or a literal's first byte). Each
 //! thread parses with a parser of its own.
+//!
+//! Nothing on MSVC, as `rerail-simdjson-native` (its C++ does not build there).
+#![cfg(not(all(windows, target_env = "msvc")))]
 
 pub use rerail_simdjson_native::{Error, Kernel, implementation, structurals};
 use rerail_simdjson_native::{KEEP, Sink, release_above};

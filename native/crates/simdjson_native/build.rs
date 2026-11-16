@@ -3,6 +3,10 @@
 //! dependency's code, as the `[profile.dev.package."*"]` setting has the others (a workspace
 //! member is not covered by it).
 fn main() {
+    // MSVC compiles none of it (GCC and Clang target regions and attributes): the crate is empty there.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        return;
+    }
     let vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/simdjson-5.0.5");
     let shim = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shim.cpp");
     let kernel = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/kernel.inc");
