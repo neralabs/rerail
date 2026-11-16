@@ -180,7 +180,7 @@ def busy_of(machine, host):
     else:
         h = farm.health(host, fresh=True)
         out = subprocess.run(farm.ssh(machine, top, "health"), capture_output=True, text=True, timeout=20).stdout
-        cores, idle = host["cores"], h.get("idle_s")
+        cores, idle = host["cores"], (0 if farm.attended(host, h) else None)
     m = re.search(r"([\d.]+)% idle", out)
     return (cores * (1 - float(m.group(1)) / 100) if m else float(cores)), cores, idle
 

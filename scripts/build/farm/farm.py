@@ -20,7 +20,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 10
+VERSION = 11
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -767,7 +767,16 @@ def capacity(host):
     h = health(host)
     if not h.get("ok"):
         return 0
-    return host["cores"] if h.get("idle_s", 0) > USER_IDLE_SECONDS else host["cores"] // 2
+    return host["cores"] if not attended(host, h) else host["cores"] // 2
+
+
+def attended(host, h=None):
+    """Whether a person uses `host` now: input in the last USER_IDLE_SECONDS. Never for a host the
+    configuration marks `unattended` (a machine nobody sits at, whose input device reports
+    touches on its own)."""
+    if host.get("unattended"):
+        return False
+    return (h or health(host)).get("idle_s", 0) <= USER_IDLE_SECONDS
 
 
 # The ssh connection a compile's calls go over: one master per slot, since sshd serves only so many

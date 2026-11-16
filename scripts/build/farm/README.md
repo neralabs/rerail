@@ -171,7 +171,7 @@ hosts, and everything compiles and tests here, as without the farm.
 
 | Key | Meaning |
 |---|---|
-| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link"}` |
+| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link", "unattended"}` |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
@@ -182,7 +182,9 @@ hosts, and everything compiles and tests here, as without the farm.
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
-half as many otherwise (`HIDIdleTime`). Compiles take slots in turn across the hosts (each host's
+half as many otherwise (`HIDIdleTime`), and `quiet-run` does not take it. A host nobody sits at whose
+trackpad reports touches on its own (one did, every 0.1–4 s, on 2026-11-15) is marked
+`"unattended": true`: then its input counts for nothing. Compiles take slots in turn across the hosts (each host's
 first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
 Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
 
