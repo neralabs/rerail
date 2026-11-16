@@ -2494,3 +2494,63 @@ widths, a deciding constant, effects and reached blocks kept);
 Counts, reported: words 99.0, punctuation 54.4, mixed 55.8,
 strings 268.4, numbers 153.3, comments 234.4. With the gate tested
 over the whole window, strings were 344.4.
+
+## What a callee always returns, its caller knows
+
+A rule function returns two words. The first packs the token's last
+and its tag, `(last + 1) | (tag + 1) << 32`, and the caller unpacks
+both. The string's function never retags (its tag is always none, so
+its field is always 0), yet the caller shifted and subtracted it out
+on every string. The comment's hits word was ORed with a constant
+bit, so the "any hit" test was always true, and its merge block,
+marked cold, ran on every comment.
+
+**Known bits** (`clif_fold`). The fold now tracks, for each value,
+the bits known zero and the bits known one, not only whole
+constants:
+
+- the bit logic and constant shifts carry them;
+- a widened 32-bit value has its high half zero;
+- an `and` with ones wherever its operand may have a one is that
+  operand;
+- a compare for equality is decided where a known bit differs;
+- a branch is decided where a bit is known one.
+
+**Joins.** A block parameter that every branch passes the same
+value, or the same constant, becomes that value. A block whose only
+way in is its predecessor's jump is joined to that predecessor, so a
+branch that folds into a block marked cold leaves no cold block on
+the hot path.
+
+**Across calls** (`clif_fold::returns`, `fold_all`). A function's
+summary is what every `return` knows of each result. A call's results
+get the callee's summary. The block compiler defines callees before
+their callers, and it folds each function with the summaries of those
+defined before it. The stream folds its functions together until the
+summaries settle. `pack_rule` states the packing's own contract: the
+last's field is 32 bits (`ireduce`, then `uextend`). The caller then
+knows the tag's field is exactly the tag.
+
+```text
+before: r = f31(..); l = (r & 0xffffffff) - 1; tag = (r >> 32) - 1
+after:  r = f31(..); l = r - 1                  ; tag: -1, a constant
+```
+
+Two details found on the way:
+
+- a cached flow graph made before the fold is dropped before the
+  backend compiles;
+- an operation with one constant operand takes the immediate form
+  only for a 32-bit immediate, as a wide constant may be an address
+  that `clif_rust` places.
+
+Tests:
+- `a_parameter_every_branch_gives_alike_is_that_value`;
+- `known_bits_decide_an_and_and_a_shift`;
+- `a_callees_known_results_are_its_callers` (a callee whose tag is
+  none in both returns: the caller's shift is a constant and its
+  `and` is gone);
+- `a_known_bit_decides_a_test_and_its_cold_block_joins`.
+
+Counts, reported: words 101.4, punctuation 54.9, mixed 56.2,
+strings 266.4, numbers 151.3, comments 233.4.

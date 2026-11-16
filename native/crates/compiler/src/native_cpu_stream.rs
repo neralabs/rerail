@@ -4721,8 +4721,9 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         items.push((fid, context_of(&module, func)));
     }
     // Each function's constants folded (`clif_fold`) before either backend is given it.
-    for (_, c) in &mut items {
-        crate::clif_fold::fold(&mut c.func);
+    {
+        let mut funcs: Vec<&mut cranelift_codegen::ir::Function> = items.iter_mut().map(|(_, c)| &mut c.func).collect();
+        crate::clif_fold::fold_all(&mut funcs);
     }
     let mut clif = String::new();
     for (_, c) in &items {

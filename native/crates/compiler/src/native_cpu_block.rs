@@ -1558,9 +1558,15 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     }
     let merged = tables.is_some() && matches!(passes.passes.last(), Some(Pass::Forward { .. }));
     let mut ir = Vec::new();
-    // Each function's constants folded (`clif_fold`) before either backend is given it.
+    // Each function's constants folded (`clif_fold`) before either backend is given it, with
+    // what the functions defined before it return known of their calls' results (a callee is
+    // defined before its callers).
+    let sums = std::cell::RefCell::new(crate::clif_fold::Summaries::new());
     let keep = |ir: &mut Vec<(u32, cranelift_codegen::ir::Function)>, id: cranelift_module::FuncId, func: &mut cranelift_codegen::ir::Function| {
-        crate::clif_fold::fold(func);
+        let mut s = sums.borrow_mut();
+        crate::clif_fold::fold_with(func, &s);
+        let r = crate::clif_fold::returns(func, &s);
+        s.insert(id.as_u32(), r);
         if crate::native_cpu_stream::KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) {
             ir.push((id.as_u32(), func.clone()));
         }
@@ -2413,7 +2419,11 @@ fn packs(r: &crate::records::Records) -> bool {
 
 /// A rule function's four results packed (`packs`).
 fn pack_rule(f: &mut FunctionBuilder<'_>, l: Value, refuse: Value, tag: Value, hits: Value) -> [Value; 2] {
+    // The last's field is its low 32 bits, said so: a caller knows the tag's field is the
+    // rest (`clif_fold`), a constant where every return's tag is.
     let l1 = f.ins().iadd_imm(l, 1);
+    let l1 = f.ins().ireduce(types::I32, l1);
+    let l1 = f.ins().uextend(types::I64, l1);
     let t1 = f.ins().iadd_imm(tag, 1);
     let t1 = f.ins().ishl_imm(t1, 32);
     let a = f.ins().bor(l1, t1);
