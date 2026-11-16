@@ -523,6 +523,10 @@ impl Facts {
     pub fn children(&self, id: u32) -> Vec<u32> {
         on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).map(|c| c as u32).collect())
     }
+    /// `id`'s children in order, each handed to `f`, read off the tape with no list made (a probe's).
+    pub fn each_child(&self, id: u32, mut f: impl FnMut(u32)) {
+        on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).for_each(|c| f(c as u32)))
+    }
     /// Whether `id` has no children.
     pub fn is_leaf(&self, id: u32) -> bool {
         on_tape!(self, |t| t.subtree_end(id as usize) == id as usize + 1)

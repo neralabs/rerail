@@ -187,6 +187,12 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    /// The rows whose `column` is `value` and whose columns hold every `(column, value)` of `eqs`, in `lookup`'s
+    /// order, where the source tests `eqs` as it finds them (a view's children by parent and field, off the tape)
+    /// rather than each row's values read back; `None`: looked up, then filtered.
+    fn lookup_eq(&self, _column: usize, _value: i64, _eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+        None
+    }
     fn value(&self, row: usize, column: usize) -> i64;
     /// The rows whose `column` is `value`, as a slice of the source's own sorted index (no allocation); `None`
     /// where the source keeps none.
@@ -1207,10 +1213,14 @@ unsafe impl VTabCursor for Cursor {
 
 /// Row-major integer cells with every column indexed: each column's rows sorted by value, built on
 /// first use. Producers' compact relations (S `relation.rs`) and small derived relations.
+/// A column whose values were pushed in order (a document's lines, columns and texts, by node) is its own index:
+/// searched in the cells, with no sort and no row list. Its distinct values are counted as it is pushed.
 pub struct Relation {
     columns: Vec<String>,
     cells: Vec<i64>,
     indexes: Box<[OnceLock<ColumnIndex>]>,
+    /// Per column, its distinct values while its values have come in nondecreasing order, else `None`.
+    ordered: Box<[Option<usize>]>,
 }
 struct ColumnIndex {
     rows: Vec<u32>,
@@ -1228,11 +1238,22 @@ impl Relation {
             columns: columns.iter().map(|c| (*c).to_owned()).collect(),
             cells: Vec::new(),
             indexes: columns.iter().map(|_| OnceLock::new()).collect(),
+            ordered: columns.iter().map(|_| Some(0)).collect(),
         }
     }
     pub fn push(&mut self, row: &[i64]) {
         assert_eq!(row.len(), self.columns.len());
         assert!(self.len() < u32::MAX as usize);
+        let last = self.len().checked_sub(1);
+        for (c, o) in self.ordered.iter_mut().enumerate() {
+            let prev = last.map(|l| self.cells[l * row.len() + c]);
+            *o = match (*o, prev) {
+                (Some(d), None) => Some(d + 1),
+                (Some(d), Some(p)) if row[c] > p => Some(d + 1),
+                (Some(d), Some(p)) if row[c] == p => Some(d),
+                _ => None,
+            };
+        }
         self.cells.extend_from_slice(row);
         self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
     }
@@ -1244,6 +1265,30 @@ impl Relation {
             let fence = rows.iter().step_by(FENCE).map(|&r| self.value(r as usize, column)).collect();
             ColumnIndex { rows, distinct, fence }
         })
+    }
+    /// Whether `column`'s values were pushed in order, so that it is its own index.
+    pub fn ordered(&self, column: usize) -> bool {
+        self.ordered[column].is_some()
+    }
+    /// The rows with values in `lo..=hi` of a column pushed in order (`ordered`): a search of the cells.
+    fn ordered_between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
+        let first = |below: &dyn Fn(i64) -> bool| -> usize {
+            let (mut a, mut b) = (0, self.len());
+            while a < b {
+                let m = a + (b - a) / 2;
+                if below(self.value(m, column)) { a = m + 1 } else { b = m }
+            }
+            a
+        };
+        let start = first(&|v| v < lo);
+        start..first(&|v| v <= hi).max(start)
+    }
+    /// The rows with values in `lo..=hi`, in value order.
+    fn rows_between(&self, column: usize, lo: i64, hi: i64) -> Vec<usize> {
+        if self.ordered[column].is_some() {
+            return self.ordered_between(column, lo, hi).collect();
+        }
+        self.index(column).rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect()
     }
     /// The positions in `column`'s index of the rows with values in `lo..=hi`.
     fn between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
@@ -1274,7 +1319,8 @@ impl Source for Relation {
         self.cells.len() / self.columns.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        let one = self.len().div_ceil(self.index(column).distinct.max(1));
+        let distinct = self.ordered[column].unwrap_or_else(|| self.index(column).distinct);
+        let one = self.len().div_ceil(distinct.max(1));
         if batch { one * 8 } else { one }
     }
     fn indexed(&self, _: usize) -> bool {
@@ -1300,12 +1346,14 @@ impl Source for Relation {
                 None => return Some(Vec::new()),
             },
         };
-        let rows = &self.index(column).rows;
-        Some(rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect())
+        Some(self.rows_between(column, lo, hi))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         #[cfg(any(test, feature = "test-hooks"))]
         if let Some(rows) = lookup_spike::selected(self, column, values) { return Some(rows); }
+        if self.ordered[column].is_some() {
+            return Some(values.iter().flat_map(|&v| self.ordered_between(column, v, v)).collect());
+        }
         let rows = &self.index(column).rows;
         Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
     }

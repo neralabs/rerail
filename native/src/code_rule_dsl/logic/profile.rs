@@ -254,6 +254,8 @@ impl State {
             s.forms = t.forms;
             s.missing = t.missing;
             s.planned_work += t.planned_work;
+            s.planned_scanned += t.planned_scanned;
+            s.steps += t.steps;
             s.work += t.work;
             s.cpu_estimate += t.cpu_estimate;
             s.gpu_estimate += t.gpu_estimate;
@@ -303,6 +305,9 @@ pub struct PlacedTotal {
     pub forms: Vec<&'static str>,
     pub missing: Vec<&'static str>,
     pub planned_work: f64,
+    /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
+    pub planned_scanned: f64,
+    pub steps: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,

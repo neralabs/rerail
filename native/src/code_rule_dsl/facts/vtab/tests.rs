@@ -172,3 +172,32 @@ fn a_relations_fenced_search_finds_what_a_whole_search_finds() {
         assert_eq!(got, whole(v, v), "lookup {v}");
     }
 }
+
+/// A column pushed in order is its own index (a node's lines, by node): its lookups, ranges and estimates are the
+/// sorted index's, and a column pushed out of order is still sorted.
+#[test]
+fn a_column_pushed_in_order_answers_as_its_sorted_index_does() {
+    // `n` in order with repeats, `l` out of order.
+    let rows: Vec<[i64; 2]> = (0..300).map(|i| [i / 3, (i * 37) % 101]).collect();
+    let mut r = Relation::new(&["n", "l"]);
+    rows.iter().for_each(|row| r.push(row));
+    assert!(r.ordered(0) && !r.ordered(1));
+    for column in 0..2 {
+        let sorted = |lo: i64, hi: i64| -> Vec<usize> {
+            let mut want: Vec<usize> = (0..rows.len()).filter(|&i| (lo..=hi).contains(&rows[i][column])).collect();
+            want.sort_by_key(|&i| rows[i][column]);
+            want
+        };
+        for v in [-1, 0, 7, 50, 99, 100, 200] {
+            assert_eq!(r.lookup(column, &[v]).unwrap(), sorted(v, v), "column {column}, {v}");
+        }
+        assert_eq!(r.lookup(column, &[3, 9]).unwrap(), [sorted(3, 3), sorted(9, 9)].concat());
+        assert_eq!(r.range_lookup(column, Some((10, true)), Some((20, false))).unwrap(), sorted(10, 19));
+    }
+    assert_eq!(r.estimated_matches(0, false), 3);
+    // A value below the last one ends the order.
+    let mut late = Relation::new(&["n"]);
+    [[1], [2], [2], [1]].iter().for_each(|row| late.push(row));
+    assert!(!late.ordered(0));
+    assert_eq!(late.lookup(0, &[1]).unwrap(), vec![0, 3]);
+}

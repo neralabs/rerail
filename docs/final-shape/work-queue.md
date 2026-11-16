@@ -914,6 +914,32 @@ pass.
   view at 30 ns, measured then on a stored copy).
 - **Done when**: placement's CPU estimate is within 2× of the measured CPU for the costliest strata of this run, and
   the strata the GPU then runs cheaper move there.
+- **Repriced** (2026-11-16, decision 0304, after 0297 and 0299 merged): the planned work is now within 5% of the
+  work done over the run, and placement's CPU prices are fitted to that unit: 0.7 ms a stratum run, 117 ns a row
+  scanned, 52 ns any other unit. The strata's CPU priced 3.17 s against 3.22 s ran (was 2.54 s against 3.52 s);
+  `kind` 450 ms against 452 ms. The GPU kept 4 strata, not 7: the three that left were neutral.
+- **Still open, placement's**: views whose rows cost far more than a unit. `ann_root`'s seed (`kind`, `field`)
+  costs about 1.5 µs a unit, `fzk287`'s (`line`, `col`) about 18 µs, and `rdefn` and `attr_of` read `text`. Each
+  is priced at a quarter to a tenth of its CPU. The next step is a per-relation price for a view's row, measured
+  per view, or else a cheaper read of those views (the row read above).
+- **Not placement's**: the recursive strata's misses are join statistics, now Q44.
+- **Two view reads made cheaper** (2026-11-16, a sample of the whole run, 1 ms): of the join engine's time, 23% was
+  `View::find`, a probe into a view. Two shapes in it were wasted:
+  - A field probed by its parent with its field a constant (`field($a, #f65565, $t)`, `$a` bound): the parent's
+    children were listed into a `Vec` (`Facts::children`), each child's row found again and its field read back
+    through the row's document search, to be filtered. Now the field view answers parent and field together
+    (`Source::lookup_eq`): the children are walked off the tape and each one's field compared there. `lookup_docs`
+    went from 9% of the join time to 1%.
+  - A materialized relation (`line`, `col`, `text`, the extra relations) sorted all its rows on its first lookup of
+    a column, once a chunk, and the planner's `estimated_matches` asked for that sort too. Their rows are pushed in
+    node order, so a column pushed in order is now its own index (`Relation::ordered`): searched in the cells, its
+    distinct values counted as it is pushed. The sorts are gone from the sample.
+  - Measured on the same run (load 28 against 55 before, so CPU is only a guide; instructions 82.7 G and 83.6 G,
+    within run-to-run noise): `ann_root` 174 to 112 ms, `fl274_P` 67 to 45 ms, `rdefn` 95 to 76 ms, `def_name`
+    58 to 48 ms.
+- **Still priced under their CPU**: `attr_of` (113 ms against 20 ms priced), `rdefn` (76 against 15), `ann_root` (112
+  against 57), and `fzk287` (56 against 11, unchanged by either fix: 790 rows over 18 runs, a cost per run that no
+  span names yet). A per-view price needs each step's CPU, which the profile does not split by step.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
@@ -1014,6 +1040,45 @@ pass.
   The same class as Q12 (a native step that falls back to SQL).
 - **Keep**: decision 0104 (no SQL inside the waves).
 - **Done when**: the five rules run under strict on 50 corpus0 files, `value` served from the run's memory.
+
+### Q40. The memo's publish read its sources' digests by SQL in the waves (phased-facts' to take)
+
+- **Found** (2026-11-16, after merging cost-classifier at 609a95d91): a cold hogql run under `RERAIL_SQL_STRICT=1`
+  aborted in phase 1. `memo::remember_all_but` (0295 step 4, entries written into mapped segments by the run) read
+  each stored source's digest with `store.source_digests`, under the span "write the entries into their
+  segments", which runs in the waves (decision 0104).
+- **Fixed here, narrowly**: every entry the run publishes is a miss, whose source was read and hashed before the
+  first wave (`Unbuilt::digest`). The digest now goes with the document (`Made`, the chunk's documents, the
+  publish's entries), and `remember_all_but` reads from the store only the digests it is not given: none in the
+  waves. The same run passes strict, with its 1,629 findings.
+- **For phased-facts**: take the fix with the next merge, or replace it where 0295's later steps name entries
+  otherwise. Callers that give no digest (`remember_all`, `Memo::remember`) still read them, outside the waves.
+- **Done when**: phased-facts holds the fix or its replacement, and a strict cold run writes its entries with no
+  SQL in the waves.
+- **Done** (2026-11-16, in the hub): phased-facts built the same fix (9f2a1a055, the run's digest with the chunk's
+  document to the publish; the store asked only for those not given), merged first; the hub keeps that form and
+  this branch's 559b974b9 is left out of the merge.
+
+### Q44. (Q41 at df7124e20) Recursive strata's seeds priced far under their rows (cost-classifier's to take)
+
+- **Found** (2026-11-16, Native-and-GPU-strata, decision 0304's run over PostHog's `posthog/hogql`, after 0297 and
+  0299): the recursive strata's planned work misses their work by 10× or more. Two causes:
+  - **The rounds** (fixed, 0304 §3): a probe was priced at the delta the planner saw at open, one round's. It is
+    now priced over its seeds' rows and one round more.
+  - **The seeds' estimates** (open): the rounds multiply them.
+    - `qualname`: the seed `def_name($f, $x), rr_nearest_scope($f, $s), modname($s, $m)` is priced at 32.5 rows a
+      plan and makes about 181 a loop. `modname` after `rr_nearest_scope` is given a containment of 0.056, while
+      about 30% of definitions sit at module scope. With it right, the count is about 71 K a loop against 52 K
+      run, not 8 K.
+    - `qn`: the seed `ibind($s, $x, $q), bound_in($s, $x), walk($n, $x, $s)` is priced at 405 units and did 72 K;
+      `walk` by `(x, s)` is priced at 1 row a binding and gives 7.
+    - `exports/resolve_export`: priced over its work (259 K against 27 K).
+    - The 50-relation `ask_*` stratum: every probe priced at a delta of 1 row, with no seeds' rows to go on.
+- **Why it matters**: placement prices a stratum by its planned work (0304). A stratum planned at a tenth of its
+  work is priced at a tenth of its CPU.
+- **Whose**: the planner's statistics: the containment of a lookup after a `nearest` relation, and a lookup on two
+  derived columns (0299's line of work).
+- **Done when**: these strata's planned work is within 2× of their work.
 
 ## Questions for the user
 
