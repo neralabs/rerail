@@ -125,10 +125,17 @@ const TAKEN_LOG = new RegExp(`^${HOOK_FAILURES_FILE.replaceAll(".", "\\.")}\\.(\
  * name, leaving it to the hook that holds it last.
  *
  * A live name that is a link, as a person can make it to keep the log elsewhere, is never taken: it moves as `main` moves
- * the log ({@link moveLink}), and throws where `main`'s move fails.
+ * the log ({@link moveLink}), and throws where `main`'s move fails. So does a link a person makes there while this hook
+ * moves the log it found full and does not move it on: `main`'s rename, which comes after its size check, moves whatever
+ * it finds at the live name, and its hook writes nothing when that rename fails.
  */
 function moveAside(path: string, movedAside: string): boolean {
   if (isLink(path)) return moveLink(path, movedAside);
+  return moveFile(path, movedAside) || (isLink(path) && moveLink(path, movedAside));
+}
+
+/** Moves the regular file at the live name `path` on to `movedAside` through a name of this hook's own, as {@link moveAside} says. */
+function moveFile(path: string, movedAside: string): boolean {
   const taken = takenName(path);
   try {
     renameWithRetrySync(path, taken);
@@ -217,9 +224,8 @@ function moveTakenLink(taken: string, path: string, movedAside: string): true {
 
 /**
  * Throws {@link LinkInTheWay} when the name `path` is a link: a give-back holds only a regular file a hook took
- * ({@link moveTaken}), and writes only into a live log Rerail began. A link here would have the give-back read a
- * person's file through it, copy it and remove it, or write the log into it. The hook then writes nothing, and the log
- * it took stays under its own name, where status counts it.
+ * ({@link moveTaken}). A link here would have the give-back read a person's file through it, copy it and remove it. The
+ * hook then writes nothing.
  */
 function assertNoLink(path: string): void {
   if (isLink(path)) throw new LinkInTheWay(`${path} is a link, which a hook never gives a log back through`);
@@ -254,8 +260,8 @@ function giveBack(taken: string, path: string): void {
 
 /**
  * Appends the lines of the log taken as `taken` to the live log at `path`, and removes it. The live name is a link only
- * when a person made it one while this hook held the log: the lines then stay under the hook's name, and the hook
- * writes nothing ({@link copyLines}).
+ * when a person made it one while this hook held the log: the lines then stay under the hook's name, where status
+ * counts them, and the hook moves the link as `main`'s rename would ({@link moveAside}).
  */
 function copyBack(taken: string, path: string): void {
   assertNoLink(taken);
@@ -268,13 +274,11 @@ function copyBack(taken: string, path: string): void {
   const lock = copyLock(dirname(path));
   try {
     copyLines(descriptor, taken, path);
-  } catch (error) {
-    // A person's link at the live name ends the hook's record. Gone from its name: another hook moved it on, and gives
-    // it back or moves it aside. A read or removal refused for any other reason leaves the lines under this hook's name,
-    // where status still counts them until a later move removes the file. An append that fails after the removal loses
-    // the lines, as the same failure loses this hook's own line, and a second read that fails loses those written since
-    // the first.
-    if (error instanceof LinkInTheWay) throw error;
+  } catch {
+    // Gone from its name: another hook moved it on, and gives it back or moves it aside. A read or removal refused for
+    // any other reason leaves the lines under this hook's name, where status still counts them until a later move
+    // removes the file. An append that fails after the removal loses the lines, as the same failure loses this hook's
+    // own line, and a second read that fails loses those written since the first.
   } finally {
     if (lock !== null) lock.release();
     closeSync(descriptor);
@@ -326,8 +330,8 @@ function copyLines(descriptor: number, taken: string, path: string): void {
   const id = fileId(fstatSync(descriptor, { bigint: true }), taken);
   const lines = readFrom(descriptor, 0);
   // Looked at under the lock, right before the lines leave this hook's name: a person can make the live name a link
-  // while this hook waits for the lock or reads.
-  assertNoLink(path);
+  // while this hook waits for the lock or reads. The lines then stay under this hook's name.
+  if (isLink(path)) return;
   // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
   unlinkSync(taken);
   // Still under another name, as when another hook gave it back while this one moved it on, or a hook's removal of its

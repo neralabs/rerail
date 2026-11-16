@@ -600,9 +600,69 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
   });
 
+  // Another hook takes the full log first, as hooks that find it full at once do, and a person makes the live name a link
+  // to a log they keep elsewhere before this hook, whose take found nothing, writes its failure. `main`'s hook renames
+  // what it finds at the live name after its size check: this one moves the link itself to `.1` too, and its failure
+  // goes into a new log of the Rerail home, never through the link.
+  it("moves a link a person makes at the live name after another hook took the log to .1, writing nothing through it", async context => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFullLog(rerailHome);
+    const { elsewhere, text, made } = await linkMadeLater(context, rerailHome, full);
+    const opened = await recordWithWrapped(rerailHome, 2, {
+      ...refusedThrough(elsewhere),
+      renameSync: `rename => (from, to) => {
+        if (from !== ${JSON.stringify(live)} || !to.endsWith(".old") || globalThis.made) return rename(from, to);
+        globalThis.made = true;
+        rename(from, from + ".1");
+        rename(${JSON.stringify(made)}, from);
+        throw Object.assign(new Error("ENOENT: no such file or directory, rename"), { code: "ENOENT" });
+      }`,
+    });
+    expect({ opened, ...afterTheMove(rerailHome), leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({
+      opened: "", ...movedAsTheLink(1), leftAsItWas: true,
+    });
+  });
+
+  // A hook took a log it found full, but another hook had moved that one on and begun a new one, so what this hook took
+  // is small and goes back; a person makes the live name a link as it goes back, so the give-back copies. The copy looks
+  // at the live name under its lock and finds the link: the lines stay under the hook's name, where status counts them,
+  // and the hook moves the link to `.1` as `main`'s rename moves what it finds there, so its own failure goes into a new
+  // log. Here the size check is told the small log is full.
+  it("moves a link a person makes at the live name as a hook gives a log back to .1, copying nothing through it", async context => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFileSync(live, [3, 4, 5].map(at => `${JSON.stringify(failure(at))}\n`).join(""));
+    const { elsewhere, text, made } = await linkMadeLater(context, rerailHome, full);
+    const opened = await recordWithWrapped(rerailHome, 2, {
+      ...refusedThrough(elsewhere),
+      statSync: `stat => (path, ...rest) => {
+        const stats = stat(path, ...rest);
+        if (String(path) === ${JSON.stringify(live)} && !globalThis.sized) {
+          globalThis.sized = true;
+          stats.size = ${300 * 1024};
+        }
+        return stats;
+      }`,
+      linkSync: `link => (existing, path) => {
+        if (path === ${JSON.stringify(live)} && !globalThis.made) {
+          globalThis.made = true;
+          fs.renameSync(${JSON.stringify(made)}, path);
+        }
+        return link(existing, path);
+      }`,
+    });
+    expect({ opened, ...afterTheMove(rerailHome), leftAsItWas: readFileSync(elsewhere, "utf8") === text }).toEqual({
+      opened: "", live: "file", movedAside: "link",
+      files: [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`, expect.stringMatching(/^hook-failures\.jsonl\.\d+\.[0-9a-f-]+\.old$/u)],
+      counted: 4, leftAsItWas: true,
+    });
+  });
+
   // A person makes the live name a link to a file they keep elsewhere while a hook holds the log it took and gives it
   // back, here because `.1` refuses it. The give-back finds the link in its way: it copies nothing into the person's
-  // file and writes nothing through the link, and the log stays under the hook's name, where status counts it.
+  // file, and the log stays under the hook's name, where status counts it. The hook then moves the link as `main`'s
+  // rename would; `.1` refuses it here, and the hook writes nothing through the link, as `main`'s does.
   it("copies nothing through a link a person makes at the live name while a hook gives the log back", async context => {
     const rerailHome = await home();
     const live = join(rerailHome, HOOK_FAILURES_FILE);
@@ -631,7 +691,8 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
   // As above, but the person makes the link once a give-back by copy has begun, as it waits for the copy lock or reads
   // the log it took: here another hook began a live log as the move to `.1` was refused, and the person's link replaces
   // that log as the give-back reads. The give-back looks at the live name again under its lock, right before the lines
-  // leave the hook's name: it copies nothing into the person's file, and the hook writes nothing through the link.
+  // leave the hook's name: it copies nothing into the person's file. The hook then moves the link as `main`'s rename
+  // would, `.1` refuses it as it refuses every rename here, and the hook writes nothing, as `main`'s does.
   it("copies nothing through a link a person makes at the live name once a give-back by copy has begun", async context => {
     const rerailHome = await home();
     const live = join(rerailHome, HOOK_FAILURES_FILE);
@@ -641,7 +702,7 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
       ...refusedThrough(elsewhere),
       renameSync: `rename => (from, to) => {
         if (!to.endsWith(".1")) return rename(from, to);
-        fs.appendFileSync(${JSON.stringify(live)}, ${lineSource(3, "began a live log")});
+        if (fs.lstatSync(${JSON.stringify(live)}, { throwIfNoEntry: false }) === undefined) fs.appendFileSync(${JSON.stringify(live)}, ${lineSource(3, "began a live log")});
         throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
       }`,
       fstatSync: `fstat => (...args) => {
