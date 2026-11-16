@@ -32,7 +32,7 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 
 | Pack | Category | Equivalent to | Rules (on) | Recommended for |
 |---|---|---|--:|---|
-| Function complexity | language | counts like lizard 1.24.0 | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Function complexity](#function-complexity). |
+| Function complexity | language | counts like lizard 1.24.0 | 8 (8) | Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source outside tests. See [Function complexity](#function-complexity). |
 | JavaScript | language | ESLint 10.11.0, eslint-plugin-unicorn 76.0.0 | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
 | TypeScript | language | typescript-eslint 8.70.1, @vitest/eslint-plugin 1.6.27 | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
 | Python | language | Ruff 0.16.9, Bandit 1.9.4 | 537 (316) | Python source outside tests, scripts and docs |
@@ -307,7 +307,7 @@ A finding names the function and number: `` CYCLOMATIC_COMPLEXITY src/grade.py:1
 <details>
 <summary>How complexity is counted</summary>
 
-Complexity is one plus a function's decision points, as lizard 1.24.0 counts them minus its tokenizer defects, in Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue. Blade directives and Vue templates run in no function and are never scored; nor are test files.
+Complexity is one plus a function's decision points, as lizard 1.24.0 counts them minus its tokenizer defects, in Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java. Blade directives and Vue templates run in no function and are never scored; nor are test files.
 
 - **`switch`/`match`** counts once however many cases, as slapkit scores a function. One difference (a default-only switch beside a cased one) is in the pack README.
 - **Python** matches lizard for every function lizard reads correctly, checked function by function on jinja, click and marshmallow.
@@ -321,7 +321,7 @@ Complexity is one plus a function's decision points, as lizard 1.24.0 counts the
 
 The pack matches the study's C arm: same tool semantics, same limit, only the functions the agent changed.
 
-1. **Add the `complexity` pack.** Set-up offers it for Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source. Or run `rerail packs add complexity`, then `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "checkout": "<absolute path of a checkout>", "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`, or `"repository": "<repository key>"` in place of `checkout`).
+1. **Add the `complexity` pack.** Set-up offers it for Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source. Or run `rerail packs add complexity`, then `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "checkout": "<absolute path of a checkout>", "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`, or `"repository": "<repository key>"` in place of `checkout`).
 2. **Keep the default `ai-output` audit scope**, which reports only functions the agent changed.
 
 <details>
