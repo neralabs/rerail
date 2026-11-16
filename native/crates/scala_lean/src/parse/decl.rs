@@ -417,7 +417,7 @@ impl P<'_> {
             }
             self.template_body(f::BODY)?;
         } else if self.is_op(op::COLON) && !self.tok().nl {
-            self.indented_template_body()?;
+            self.indented_template_body(f::BODY)?;
         }
         Ok(())
     }
@@ -458,7 +458,7 @@ impl P<'_> {
         }
         let saved = std::mem::replace(&mut self.enum_cases, true);
         let r = if self.is_op(op::COLON) && !self.tok().nl {
-            self.indented_body(K::EnumBody)
+            self.indented_body(K::EnumBody, f::BODY)
         } else if self.peek() == T::LBrace && !self.tok().nl {
             let n = self.open_field(K::EnumBody, f::BODY);
             self.tk(K::TLBrace)?;
@@ -622,19 +622,19 @@ impl P<'_> {
 
     /// `:` at a line's end, then indented statements (`template_body`, field `body`: from the `:` to
     /// the outdent).
-    fn indented_template_body(&mut self) -> R<()> {
+    pub(super) fn indented_template_body(&mut self, field: u8) -> R<()> {
         let saved = std::mem::replace(&mut self.enum_cases, false);
-        let r = self.indented_body(K::TemplateBody);
+        let r = self.indented_body(K::TemplateBody, field);
         self.enum_cases = saved;
         r
     }
 
     /// `:` at a line's end, an indent, statements, the outdent: a node of `kind`, field `body`.
-    fn indented_body(&mut self, kind: K) -> R<()> {
+    fn indented_body(&mut self, kind: K, field: u8) -> R<()> {
         if self.layout(v::COLON_EOL)? != Some(Ext::ColonEol) {
             return self.refuse();
         }
-        let n = self.open_field(kind, f::BODY);
+        let n = self.open_field(kind, field);
         self.take();
         // The lexer's token for the same `:`.
         self.tk(K::TColon)?;

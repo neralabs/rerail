@@ -104,7 +104,8 @@ impl P<'_> {
         if self.is_word(w::CASE) && !matches!(self.word_at(1), w::CLASS | w::OBJECT) {
             let n = self.t.open(K::IndentedCases, field, at);
             self.with_fol(v::OUTDENT | v::COMMA_OUTDENT, |p| {
-                while p.is_word(w::CASE) {
+                // To the outdent: a `case` after it is an enclosing match's.
+                while p.is_word(w::CASE) && !matches!(p.layout(v::OUTDENT | v::COMMA_OUTDENT)?, Some(Ext::Outdent | Ext::CommaOutdent)) {
                     p.case_clause(Region::Indent)?;
                 }
                 Ok(())
@@ -376,10 +377,58 @@ impl P<'_> {
                     // `f _`: a method value.
                     return self.refuse();
                 }
+                T::Op if t.code == op::COLON && !t.nl && !self.right_operand => {
+                    let Some(eol) = self.colon_argument_ahead()? else { break };
+                    self.t.refield(n, f::FUNCTION);
+                    let x = self.t.wrap(m, K::CallExpression, f::NONE);
+                    self.colon_argument(eol)?;
+                    n = self.close(x);
+                }
                 _ => break,
             }
         }
         Ok(n)
+    }
+
+    /// Whether a colon argument (fewer braces) comes next: `Some(true)` for `:` at the line's end,
+    /// `Some(false)` for `: x =>` (or `_`, `(a, b)`, `?=>`) at the line's end.
+    fn colon_argument_ahead(&mut self) -> R<Option<bool>> {
+        if self.layout(v::COLON_EOL | AFTER_OPERAND)? == Some(Ext::ColonEol) {
+            return Ok(Some(true));
+        }
+        let t = self.peek_at(1);
+        let j = match t.kind {
+            T::Id | T::BackId if t.code == w::UNDERSCORE || Self::is_name(t) => 2,
+            T::LParen => self.matching(1) + 1,
+            _ => return Ok(None),
+        };
+        let a = self.peek_at(j);
+        let arrow = a.kind == T::Op && !a.nl && matches!(a.code, op::ARROW | op::QARROW);
+        Ok((arrow && self.peek_at(j + 1).nl).then_some(false))
+    }
+
+    /// `:` then a colon argument (`colon_argument`, field `arguments`: a lambda's start in
+    /// `lambda_start`, then an indented block or cases); `eol` when the `:` ends the line.
+    fn colon_argument(&mut self, eol: bool) -> R<()> {
+        if eol {
+            self.take();
+        }
+        self.tk(K::TColon)?;
+        let c = self.open_field(K::ColonArgument, f::ARGUMENTS);
+        if !eol {
+            self.lambda_parameters(f::LAMBDA_START)?;
+            let code = self.op_at(0);
+            self.tkf(if code == op::QARROW { K::TQFatArrow } else { K::TFatArrow }, f::LAMBDA_START)?;
+        }
+        match self.layout(v::INDENT)? {
+            Some(Ext::Indent) => {
+                let at = self.take();
+                self.indented_block(f::NONE, at)?;
+            }
+            _ => return self.refuse(),
+        }
+        self.close(c);
+        Ok(())
     }
 
     /// A simple expression's first part.
@@ -581,7 +630,7 @@ impl P<'_> {
         }
         if self.peek() != T::RBrace && self.lambda_ahead() {
             let l = self.open(K::LambdaExpression);
-            self.lambda_parameters()?;
+            self.lambda_parameters(f::PARAMETERS)?;
             let code = self.op_at(0);
             self.tk(if code == op::QARROW { K::TQFatArrow } else { K::TFatArrow })?;
             if self.tok().nl && self.peek() != T::RBrace {
@@ -1085,7 +1134,7 @@ impl P<'_> {
     /// `params => body` (`lambda_expression`: `parameters`).
     fn lambda_expression(&mut self) -> R<u32> {
         let n = self.open(K::LambdaExpression);
-        self.lambda_parameters()?;
+        self.lambda_parameters(f::PARAMETERS)?;
         let code = self.op_at(0);
         self.tk(if code == op::QARROW { K::TQFatArrow } else { K::TFatArrow })?;
         self.indentable_f(f::NONE)?;
@@ -1093,23 +1142,23 @@ impl P<'_> {
     }
 
     /// A lambda's parameters: `x`, `_`, `implicit x`, `(a, b: T)` (`bindings`).
-    fn lambda_parameters(&mut self) -> R<()> {
+    fn lambda_parameters(&mut self, field: u8) -> R<()> {
         let t = self.tok();
         match t.kind {
             T::Id if t.code == w::UNDERSCORE => {
-                let n = self.open_field(K::Wildcard, f::PARAMETERS);
+                let n = self.open_field(K::Wildcard, field);
                 self.tk(K::TUnderscore)?;
                 self.close(n);
             }
             T::Id if t.code == w::IMPLICIT => {
-                self.tkf(K::TImplicit, f::PARAMETERS)?;
-                self.identifier(f::PARAMETERS)?;
+                self.tkf(K::TImplicit, field)?;
+                self.identifier(field)?;
             }
             T::Id | T::BackId => {
-                self.identifier(f::PARAMETERS)?;
+                self.identifier(field)?;
             }
             T::LParen => {
-                let n = self.open_field(K::Bindings, f::PARAMETERS);
+                let n = self.open_field(K::Bindings, field);
                 self.tk(K::TLParen)?;
                 while self.peek() != T::RParen {
                     let b = self.open(K::Binding);
@@ -1190,6 +1239,9 @@ impl P<'_> {
         }
         if self.peek() == T::LBrace && !self.tok().nl {
             self.template_body(f::NONE)?;
+        } else if self.is_op(op::COLON) && !self.tok().nl && self.layout(v::COLON_EOL | AFTER_OPERAND)? == Some(Ext::ColonEol) {
+            // `new A(x):` and an indented body: the template body's.
+            self.indented_template_body(f::NONE)?;
         }
         Ok(self.close(n))
     }
