@@ -32,6 +32,7 @@ use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_de
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
 use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use crate::code_rule_dsl::logic::device::caps;
+use crate::code_rule_dsl::logic::profile;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -1315,6 +1316,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 rep.uploads += 1;
                 rep.upload_bytes += dev.bytes() as u64;
                 rep.upload_cpu += thread_cpu() - c0;
+                let by = &mut rep.upload_by[if rel.view.is_some() { profile::UPLOAD_VIEW } else { profile::UPLOAD_FLAT }];
+                by.0 += dev.bytes() as u64;
+                by.1 += thread_cpu() - c0;
                 let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                 let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
                 res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
@@ -1408,6 +1412,8 @@ fn column_text(e: &mut Entry, rel: &InRel, col: usize, rep: &mut Report, names: 
     rep.uploads += 1;
     rep.upload_bytes += t.bytes() as u64;
     rep.upload_cpu += thread_cpu() - c0;
+    rep.upload_by[profile::UPLOAD_NAMES].0 += t.bytes() as u64;
+    rep.upload_by[profile::UPLOAD_NAMES].1 += thread_cpu() - c0;
     e.bytes += t.bytes();
     e.texts.push((oc, t.clone()));
     Ok(t)
@@ -1582,6 +1588,8 @@ fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: 
         rep.uploads += 1;
         rep.upload_bytes += t.bytes() as u64;
         rep.upload_cpu += thread_cpu() - c0;
+        rep.upload_by[profile::UPLOAD_NAMES].0 += t.bytes() as u64;
+        rep.upload_by[profile::UPLOAD_NAMES].1 += thread_cpu() - c0;
         res.trim(t.bytes());
         res.unions.push((cols.iter().map(|(r, c)| (Arc::downgrade(r), *c)).collect(), consts.to_vec(), t.clone()));
         res.bytes = res.bytes();

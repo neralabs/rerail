@@ -333,6 +333,8 @@ pub struct GpuTotal {
     pub decode: f64,
     pub uploads: u64,
     pub upload_bytes: u64,
+    /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
+    pub upload_by: [(u64, f64); 3],
     pub resident: u64,
     pub sorts: u64,
     pub sort_hits: u64,
@@ -365,6 +367,10 @@ impl GpuTotal {
         self.decode += o.decode;
         self.uploads += o.uploads;
         self.upload_bytes += o.upload_bytes;
+        for (a, b) in self.upload_by.iter_mut().zip(&o.upload_by) {
+            a.0 += b.0;
+            a.1 += b.1;
+        }
         self.resident += o.resident;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
@@ -1642,6 +1648,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
     let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
         sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
+    let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
+    let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
     let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>5} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU)", "cpu ms", "host ms", "gpu ms", "est ms", "runs", "rules", "subm", "rows");
@@ -2301,6 +2309,13 @@ pub mod tests {
 
 }
 
+/// What a device's uploads read (`Report::upload_by`): a flat relation's rows (the store's), a view's rows (a
+/// source's, a tape view's read row by row), and the names of symbols (text tests, `str_cmp`).
+pub const UPLOAD_KINDS: [&str; 3] = ["flat relations", "views", "names"];
+pub const UPLOAD_FLAT: usize = 0;
+pub const UPLOAD_VIEW: usize = 1;
+pub const UPLOAD_NAMES: usize = 2;
+
 /// What a stratum's device run did, for the profile.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
@@ -2332,6 +2347,8 @@ pub struct Report {
     /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
     pub uploads: u32,
     pub upload_bytes: u64,
+    /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
+    pub upload_by: [(u64, f64); 3],
     pub resident_hits: u32,
     pub sorts: u32,
     pub sort_hits: u32,
