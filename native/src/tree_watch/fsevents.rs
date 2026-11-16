@@ -8,7 +8,9 @@
 //! reports real paths; a root is a physical path, so each event's path is the root's followed by
 //! the entry's, its letters' case and composition aside (the volume may tell neither). An event
 //! whose path does not read as under the root (a root spelled through a symlink or firmlink)
-//! makes it `lost`. A root that is not there is not watched.
+//! makes it `lost`. A root that is not there is not watched, nor is one on a volume that is not
+//! this Mac's own (`statfs` gives it no `MNT_LOCAL`: a network share), as FSEvents never hears
+//! what another machine writes there.
 //!
 //! The streams run on the queue `rerail-tree-watch`, which libdispatch serves from its own
 //! threads: no thread here is the engine's to join. Every stream is stopped, invalidated and
@@ -19,7 +21,7 @@ use super::Backend;
 use super::notices::Notices;
 use crate::panic_boundary::contain_panic;
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 
@@ -334,8 +336,31 @@ fn path_array(root: &str) -> Option<CFTypeRef> {
     }
 }
 
-/// Creates and starts `root`'s stream on `queue`, or none (none for a root that is not there).
+/// Whether `root` is on a volume of this Mac's own, which FSEvents hears every write to.
+fn local_volume(root: &str) -> bool {
+    let Ok(path) = CString::new(root) else {
+        return false;
+    };
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: a NUL-terminated path and room for one `statfs`.
+    if unsafe { libc::statfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    // SAFETY: `statfs` filled it.
+    marked_local(unsafe { stat.assume_init() }.f_flags)
+}
+
+/// Whether a volume's `statfs` flags mark it this Mac's own.
+fn marked_local(flags: u32) -> bool {
+    flags & libc::MNT_LOCAL as u32 != 0
+}
+
+/// Creates and starts `root`'s stream on `queue`, or none (none for a root that is not there or not
+/// on a volume of this Mac's own).
 fn start_stream(root: &str, notices: &Arc<Notices>, queue: DispatchQueue) -> Option<Stream> {
+    if !local_volume(root) {
+        return None;
+    }
     let folder = identity(root)?;
     let paths = path_array(root)?;
     let info = Arc::into_raw(Arc::new(Context {
@@ -422,11 +447,12 @@ impl Backend for FsEvents {
 mod tests {
     use super::{
         Context, DROPPED, ITEM_CREATED, ITEM_MODIFIED, ITEM_RENAMED, MUST_SCAN_SUB_DIRS,
-        ROOT_CHANGED, identity, relative_to, report,
+        ROOT_CHANGED, identity, local_volume, marked_local, relative_to, report,
     };
     use crate::tree_watch::TreeWatcher;
     use crate::tree_watch::notices::Notices;
     use crate::tree_watch::tests::{Scratch, wait_for_watcher};
+    use std::ffi::CStr;
     use std::sync::Arc;
 
     #[test]
@@ -539,6 +565,48 @@ mod tests {
         scratch.write("real/checkout/src/a.txt", "written");
         let notice = wait_for_watcher(&mut watcher, &root, |notice| notice.lost);
         assert!(!notice.ended);
+        watcher.close().expect("close");
+    }
+
+    /// The mount points of the volumes mounted now that are not this Mac's own.
+    fn network_mounts() -> Vec<String> {
+        let mut mounts = std::ptr::null_mut();
+        // SAFETY: `getmntinfo` points `mounts` at its own buffer of as many entries as it returns.
+        let count = unsafe { libc::getmntinfo(&mut mounts, libc::MNT_NOWAIT) };
+        let count = usize::try_from(count).unwrap_or(0);
+        if count == 0 || mounts.is_null() {
+            return Vec::new();
+        }
+        // SAFETY: as above.
+        unsafe { std::slice::from_raw_parts(mounts, count) }
+            .iter()
+            .filter(|mount| !marked_local(mount.f_flags))
+            // SAFETY: each entry's mount point is NUL-terminated.
+            .map(|mount| unsafe { CStr::from_ptr(mount.f_mntonname.as_ptr()) })
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_root_on_a_volume_that_is_not_this_macs_own_is_not_watched() {
+        // A share as Finder mounts it (`nodev`, `nosuid`), and an APFS volume.
+        assert!(!marked_local((libc::MNT_NODEV | libc::MNT_NOSUID) as u32));
+        assert!(marked_local((libc::MNT_LOCAL | libc::MNT_JOURNALED) as u32));
+        assert!(local_volume(&std::env::temp_dir().to_string_lossy()));
+        assert!(!local_volume("/no/such/folder"));
+
+        let scratch = Scratch::new("local-volume");
+        let mut watcher = TreeWatcher::new();
+        assert!(
+            watcher
+                .watch(scratch.root(), vec![String::new()])
+                .expect("watch")
+        );
+        // macOS mounts its `auto_home` map (autofs, not a local volume) at `/System/Volumes/Data/home`.
+        for mount in network_mounts() {
+            let watched = watcher.watch(mount.clone(), vec![String::new()]);
+            assert!(!watched.expect("watch"), "{mount} is watched");
+        }
         watcher.close().expect("close");
     }
 }
