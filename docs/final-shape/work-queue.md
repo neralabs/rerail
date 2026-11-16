@@ -660,6 +660,11 @@ pass.
   0264 switches, in neither list); `plan::coverage::every_operation_runs_on_every_executor` (the executors' gaps by
   pack differ from `gate/executor-coverage/packs.tsv`).
 - **Done when**: each passes, traced to its cause; the hub's own fix taken at the next merge where it has one.
+- **Record** (2026-11-16, after the phased-facts merge 871d6d684): all seven pass under cargo nextest on a farm
+  host. Six came right with the merge (the long-text nodes bound, 0240's tables listed, the switches classified).
+  `every_operation_runs_on_every_executor`: the executor matrix is as its ledger says; only `packs.tsv` moved, the
+  python-main pack (regenerated since the ledger, 164d6d072, 27b616adc, 47576e01a) now has 462 programs with a
+  bound-pattern text match, not 432. No executor gap changed, so the count is recorded (`RERAIL_BLESS_COVERAGE=1`).
 
 ### Q33. (Q27 on cost-classifier) `within` read from its container is priced far under its work
 
@@ -690,6 +695,10 @@ pass.
   queue counts their pointer rows (about 100 bytes an entry), not their images. Frames are its step 5.
 - **Done when**: 0295 step 4 is merged here (through the hub), and a strict 300-file run with
   `RERAIL_WRITE_QUEUE_MB=96` completes.
+- **Record** (2026-11-16, after the phased-facts merge 871d6d684 and eb5a89e41): on a farm host, the 317 rules over
+  the 300-file corpus with `RERAIL_SQL_STRICT=1` and `RERAIL_WRITE_QUEUE_MB=96` complete cold (0 SQLite statements
+  in every phase, peak RSS 2.2 GB), and the warm run after it with `RERAIL_WARM=list` has no fault. The two runs'
+  outputs are equal, relation by relation (660 relations, as `.csv`); their `outputs.rro` files differ in bytes only.
 
 ## Questions for the user
 
