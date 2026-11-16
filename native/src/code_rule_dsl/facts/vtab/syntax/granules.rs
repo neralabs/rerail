@@ -395,18 +395,18 @@ fn own_digest(p: &Projected, of: &[u32], starts: &[u32], g: usize) -> String {
     let f = &*p.facts;
     let l = starts[g] as usize;
     let id = p.core[l] as usize;
-    let (start, end) = (f.start[id] as usize, f.end[id] as usize);
+    let (start, end) = (f.start(id as u32) as usize, f.end(id as u32) as usize);
     let mut h = Sha256::new();
     let mut at = start;
     // Core IDs retain preorder. Find this subtree without materializing projection sizes.
-    let until = p.core.partition_point(|&node| node < f.subtree_end[id]);
+    let until = p.core.partition_point(|&node| node < f.subtree_end(id as u32));
     for x in l + 1..until {
         // A nested granule's start whose parent is in this one: cut it out.
         if of[x] as usize != g && of[p.parent(x) as usize] as usize == g {
             let c = p.core[x] as usize;
-            h.update(&f.source.as_bytes()[at..f.start[c] as usize]);
+            h.update(&f.source.as_bytes()[at..f.start(c as u32) as usize]);
             h.update([0]);
-            at = f.end[c] as usize;
+            at = f.end(c as u32) as usize;
         }
     }
     h.update(&f.source.as_bytes()[at.min(end)..end]);

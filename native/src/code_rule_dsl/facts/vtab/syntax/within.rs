@@ -388,7 +388,7 @@ impl Within {
             return true;
         }
         let p = &self.batch.docs[doc];
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local as usize] as usize]);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.core[local as usize]));
         self.members.get(&p.tag).is_some_and(|t| t.get(usize::from(code)).is_some_and(|&m| m))
     }
 
@@ -401,7 +401,7 @@ impl Within {
     fn span(&self, doc: usize, local: u32) -> (u32, u32) {
         let p = &self.batch.docs[doc];
         let id = p.core[local as usize] as usize;
-        (p.facts.start[id], p.facts.end[id])
+        (p.facts.start(id as u32), p.facts.end(id as u32))
     }
 
     fn zero(&self) -> &Vec<Vec<u32>> {

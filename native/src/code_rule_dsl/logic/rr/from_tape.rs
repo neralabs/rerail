@@ -346,15 +346,22 @@ pub fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
 
 /// A stored tape's nodes, from the facts the store's tape gives (`facts::core::build_cached`).
 pub(super) fn nodes_of_facts(facts: &crate::code_rule_dsl::facts::core::Facts) -> Vec<Node> {
+    // Each node's parent from the subtrees open around it, in one pass (a parent asked per node is a search on
+    // format 15).
+    let mut open: Vec<(u32, u32)> = Vec::new();
     (0..facts.len())
         .map(|i| {
-            let flags = facts.flags[i];
-            let parent = facts.parent[i];
+            let flags = facts.flags(i as u32);
+            while open.last().is_some_and(|&(_, end)| end as usize <= i) {
+                open.pop();
+            }
+            let parent = open.last().map_or(u32::MAX, |&(at, _)| at);
+            open.push((i as u32, facts.subtree_end(i as u32)));
             Node {
-                kind: if flags & 8 != 0 { ERROR } else { crate::code_rule_dsl::facts::core::kind_code(facts.kind[i]) },
-                field: facts.field[i],
-                start: facts.start[i],
-                end: facts.end[i],
+                kind: if flags & 8 != 0 { ERROR } else { crate::code_rule_dsl::facts::core::kind_code(facts.kind(i as u32)) },
+                field: facts.field(i as u32),
+                start: facts.start(i as u32),
+                end: facts.end(i as u32),
                 parent: (i != 0 && parent != u32::MAX).then_some(parent),
                 extra: flags & 2 != 0,
             }

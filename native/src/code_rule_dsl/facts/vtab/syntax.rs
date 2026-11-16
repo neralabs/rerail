@@ -250,13 +250,14 @@ pub struct TextNodes {
 impl TextNodes {
     /// Whether node `id` of `f` is one of these: of a kind read, in a field read, a child of a kind read or of a node in
     /// a field read, or with a text a rule compares it with.
-    pub(crate) fn reads(&self, f: &crate::code_rule_dsl::facts::core::Facts, id: u32, dialect: &Dialect) -> bool {
+    pub(crate) fn reads(&self, p: &Projected, local: u32, dialect: &Dialect) -> bool {
+        let (f, id) = (&*p.facts, p.core[local as usize]);
         self.kinds.contains(dialect.name(f, id))
-            || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| self.fields.contains(name))
+            || dialect.catalog.field_name(f.field(id)).is_some_and(|name| self.fields.contains(name))
             || !(self.parents.is_empty() && self.parent_fields.is_empty())
-                && f.parent(id).is_some_and(|p| {
-                    self.parents.contains(dialect.name(f, p))
-                        || dialect.catalog.field_name(f.field[p as usize]).is_some_and(|name| self.parent_fields.contains(name))
+                && p.parent_node(local as usize).is_some_and(|q| {
+                    self.parents.contains(dialect.name(f, q))
+                        || dialect.catalog.field_name(f.field(q)).is_some_and(|name| self.parent_fields.contains(name))
                 })
             || !self.values.is_empty() && self.values.contains(f.text(id))
     }
@@ -391,8 +392,8 @@ impl LongTexts {
             use crate::code_rule_dsl::language::is_comment_kind;
             let dialect = self.batch.dialects.get(&p.tag)?;
             let mut j = 0;
-            for id in 0..f.len() as u32 {
-                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || f.parent(id).is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
+            for (id, up) in f.with_parents(0, f.len() as u32) {
+                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || up.is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
                     continue;
                 }
                 if p.local[id as usize] == NONE {
@@ -1534,7 +1535,7 @@ impl Dialect {
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
     pub(super) fn code(&self, f: &Facts, id: u32) -> u16 {
-        kind_code(f.kind[id as usize])
+        kind_code(f.kind(id))
     }
     fn class(&self, f: &Facts, id: u32) -> Class {
         self.classes.get(usize::from(self.code(f, id))).copied().unwrap_or(Class::Other)
@@ -1554,7 +1555,7 @@ impl Dialect {
     /// The child of `id` in field `field`.
     fn field_child(&self, f: &Facts, id: u32, field: &str) -> Option<u32> {
         let field = self.catalog.field_id(field)?;
-        f.children(id).iter().copied().find(|&c| f.field[c as usize] == field)
+        f.children(id).iter().copied().find(|&c| f.field(c) == field)
     }
     /// A name's dotted text: an identifier's, or an attribute's object's and attribute's joined by a dot (`a.b.c`),
     /// whatever spaces the source has between them. `None` where the object has no name (a call, a subscript).
@@ -1595,6 +1596,9 @@ pub struct Projected {
     pub core: Vec<u32>,
     /// The node of each core id, `NONE` for one left out.
     pub local: Vec<u32>,
+    /// The parent of each core id, as a core id (`parent`), found in the walk that numbers them: the tape stores no
+    /// parent, and format 15's is a search back.
+    up: Vec<u32>,
     pub idx: OnceLock<Vec<u32>>,
     pub size: OnceLock<Vec<u32>>,
     pub depth: OnceLock<Vec<u32>>,
@@ -1733,6 +1737,7 @@ impl Projected {
             tag: f.tag,
             core: Vec::new(),
             local: vec![NONE; f.len()],
+            up: Vec::new(),
             idx: OnceLock::new(),
             size: OnceLock::new(),
             depth: OnceLock::new(),
@@ -1743,18 +1748,18 @@ impl Projected {
         };
         let mut tokens = 0;
         let (first, last) = match guest {
-            Some((g, _)) => (g.root, f.subtree_end.get(g.root as usize).copied().unwrap_or(g.root + 1).max(g.root + 1)),
+            Some((g, _)) => (g.root, if (g.root as usize) < f.len() { f.subtree_end(g.root) } else { g.root + 1 }.max(g.root + 1)),
             None => (0, f.len() as u32),
         };
         let end = if withheld { first } else { last.min(f.len() as u32) };
         // The id ranges walked: the document's, or (`anchors`) its root's and each outermost anchor's subtree.
         let ranges: Vec<(u32, u32)> = match (anchors, dialect) {
             (Some(kinds), Some(dialect)) if guest.is_none() && first < end => {
-                let mut starts: Vec<u32> = f.kind_keys.iter().filter(|&&k| kinds.contains(dialect.atom_name(k))).flat_map(|&k| f.of_kind(k).iter().copied()).collect();
+                let mut starts: Vec<u32> = f.kinds().into_iter().filter(|&k| kinds.contains(dialect.atom_name(k))).flat_map(|k| f.of_kind(k)).collect();
                 starts.sort_unstable();
                 let mut out = vec![(first, first + 1)];
                 for a in starts {
-                    let b = f.subtree_end.get(a as usize).copied().unwrap_or(a + 1).max(a + 1).min(end);
+                    let b = if (a as usize) < f.len() { f.subtree_end(a) } else { a + 1 }.max(a + 1).min(end);
                     match out.last_mut() {
                         Some(last) if a < last.1 => last.1 = last.1.max(b),
                         _ => out.push((a, b)),
@@ -1767,26 +1772,27 @@ impl Projected {
         if !withheld {
             let count = ranges.iter().flat_map(|&(a, b)| a..b).filter(|&id| f.named(id) && dialect.is_some_and(|d| shape != Shape::T || d.class(f, id) != Class::Comment)).count();
             p.core.reserve_exact(count);
+            p.up.reserve_exact(count);
         }
         // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a `;`
         // between two statements) are in no range, yet are tokens of an included node, as `Projected::span` reads
         // them. Counted here, so the tokens' ids are the spans'.
         if ranges.len() > 1 && !withheld && shape == Shape::Core && dialect.is_some() && f.named(first) {
             let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
-            tokens += f.children(first).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize] && outside(c)).count() as u32;
+            tokens += f.children(first).iter().filter(|&&c| !f.named(c) && f.end(c) > f.start(c) && outside(c)).count() as u32;
         }
-        for id in ranges.iter().flat_map(|&(a, b)| a..b) {
+        for (id, up) in ranges.iter().flat_map(|&(a, b)| f.with_parents(a, b)) {
             if !f.named(id) {
                 // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
-                if shape == Shape::Core && dialect.is_some() && f.end[id as usize] > f.start[id as usize]
-                    && f.parent(id).is_some_and(|q| p.local[q as usize] != NONE) { tokens += 1; }
+                if shape == Shape::Core && dialect.is_some() && f.end(id) > f.start(id)
+                    && up.is_some_and(|q| p.local[q as usize] != NONE) { tokens += 1; }
                 continue;
             }
             if dialect.is_none_or(|dialect| shape == Shape::T && dialect.class(f, id) == Class::Comment) {
                 continue;
             }
             // T walks named children from the root: a node under one left out is not reached.
-            let parent = match f.parent(id) {
+            let parent = match up {
                 _ if id == first => NONE,
                 None => NONE,
                 Some(q) if p.local[q as usize] != NONE => p.local[q as usize],
@@ -1800,6 +1806,7 @@ impl Projected {
             let local = p.core.len() as u32;
             p.local[id as usize] = local;
             p.core.push(id);
+            p.up.push(up.map_or(NONE, |q| p.local[q as usize]));
         }
         drop(identity_span);
         if shape == Shape::Core {
@@ -1809,7 +1816,7 @@ impl Projected {
             let _ids_span = crate::code_rule_dsl::logic::profile::span(|| "definition ids".into());
             if definition_ids() && let Some(dialect) = dialect {
                 let mut owners = Vec::with_capacity(tokens as usize);
-                owners.extend(p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)));
+                owners.extend(p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)));
                 p.defs = Some(DefIds::new(&p, dialect, &owners));
             }
             // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
@@ -1826,9 +1833,17 @@ impl Projected {
     #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn parent(&self, local: usize) -> u32 {
         // Only an anchor of a narrowed projection (`narrowed`) has no parent in it but the root: it hangs from the root.
-        match self.facts.parent(self.core[local]).map_or(NONE, |p| self.local[p as usize]) {
+        match self.up[local] {
             NONE if local != 0 => 0,
             p => p,
+        }
+    }
+    /// The node above core id `local`, as a node id: the parent the walk found, or read off the tape where the
+    /// projection leaves it out (an anchor's, a guest's root's).
+    pub fn parent_node(&self, local: usize) -> Option<u32> {
+        match self.up[local] {
+            NONE => self.facts.parent(self.core[local]),
+            q => Some(self.core[q as usize]),
         }
     }
     #[inline]
@@ -1871,9 +1886,9 @@ impl Projected {
     fn fielded(&self) -> &[u32] {
         self.fielded.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection fields".into());
-            let count = self.core.iter().skip(1).filter(|&&id| self.facts.field[id as usize] != 0).count();
+            let count = self.core.iter().skip(1).filter(|&&id| self.facts.field(id) != 0).count();
             let mut out = Vec::with_capacity(count);
-            out.extend(self.core.iter().enumerate().skip(1).filter_map(|(l, &id)| (self.facts.field[id as usize] != 0).then_some(l as u32)));
+            out.extend(self.core.iter().enumerate().skip(1).filter_map(|(l, &id)| (self.facts.field(id) != 0).then_some(l as u32)));
             out
         })
     }
@@ -1886,7 +1901,7 @@ impl Projected {
         match local.checked_sub(self.len()) {
             None => {
                 let id = self.core[local as usize] as usize;
-                [self.facts.start[id], self.facts.end[id]]
+                [self.facts.start(id as u32), self.facts.end(id as u32)]
             }
             Some(i) => self.extra.as_ref().map_or([0, 0], |x| {
                 if i < x.tokens {
@@ -1895,9 +1910,9 @@ impl Projected {
                         let f = &self.facts;
                         let mut spans = Vec::with_capacity(x.tokens as usize);
                         for &id in &self.core {
-                            for &c in f.children(id) {
-                                if !f.named(c) && f.end[c as usize] > f.start[c as usize] {
-                                    spans.push([f.start[c as usize], f.end[c as usize]]);
+                            for c in f.children(id) {
+                                if !f.named(c) && f.end(c) > f.start(c) {
+                                    spans.push([f.start(c), f.end(c)]);
                                 }
                             }
                         }
@@ -1907,7 +1922,7 @@ impl Projected {
                     spans[i as usize]
                 } else if i >= x.ends_from() {
                     let id = self.core[(i - x.ends_from()) as usize] as usize;
-                    [self.facts.end[id], self.facts.end[id]]
+                    [self.facts.end(id as u32), self.facts.end(id as u32)]
                 } else if i == x.tokens {
                     [0, self.facts.source.len() as u32]
                 } else {
@@ -1951,7 +1966,7 @@ impl Projected {
     }
     /// The included children of `local`, in order.
     pub fn children(&self, local: u32) -> impl Iterator<Item = u32> + '_ {
-        self.facts.children(self.core[local as usize]).iter().map(|&c| self.local[c as usize]).filter(|&c| c != NONE)
+        self.facts.children(self.core[local as usize]).into_iter().map(move |c| self.local[c as usize]).filter(|&c| c != NONE)
     }
 }
 
@@ -2365,7 +2380,7 @@ impl Extra {
         if self.line_rows() || self.end_line || self.col || self.node_text {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
-                let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+                let (start, end) = (f.start(id) as usize, f.end(id) as usize);
                 if self.node_text {
                     self.node_texts.push([n, string(f.text(id)) as i64]);
                 }
@@ -2519,9 +2534,9 @@ impl Extra {
         if self.comment && let Some(dialect) = dialect {
             use crate::code_rule_dsl::language::is_comment_kind;
             let mut k = 0;
-            for id in 0..f.len() as u32 {
+            for (id, up) in f.with_parents(0, f.len() as u32) {
                 // A comment kind's node, not inside another (Rust's doc comment parts are not comments).
-                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || f.parent(id).is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
+                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || up.is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
                     continue;
                 }
                 let whole = f.text(id);
@@ -2529,7 +2544,7 @@ impl Extra {
                     NONE => {
                         k += 1;
                         let c = span(ExtraSpan::Comment, k)?;
-                        let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+                        let (start, end) = (f.start(id) as usize, f.end(id) as usize);
                         let col = start - f.lines.start(f.lines.line(start));
                         self.span(c, f.start_line(id) as usize, f.lines.line(end) + 1, col, whole, true, text, string);
                         if self.node_text {
@@ -2866,7 +2881,7 @@ impl NodeRows {
                 }
                 Class::Operator => {
                     let operator = dialect.operator.filter(|&o| o != 0);
-                    if let Some(&o) = f.children(id).iter().find(|&&c| operator == Some(f.field[c as usize])) {
+                    if let Some(&o) = f.children(id).iter().find(|&&c| operator == Some(f.field(c))) {
                         self.op.push([n, string(dialect.name(f, o)) as i64]);
                     }
                 }
@@ -3133,7 +3148,7 @@ impl Batch {
                     path_part.push([key, string(part) as i64]);
                 }
             }
-            if d.facts.syntax_errors {
+            if d.facts.syntax_errors() {
                 errors.push(key);
             }
             let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
@@ -3148,7 +3163,7 @@ impl Batch {
                     for local in 0..p.len() {
                         if wants_long_text_nodes {
                             let id = p.core[local as usize] as usize;
-                            if (p.facts.end[id] - p.facts.start[id]) as usize > core_rr::TEXT_INLINE {
+                            if (p.facts.end(id as u32) - p.facts.start(id as u32)) as usize > core_rr::TEXT_INLINE {
                                 long_text_nodes.push(p.global(local));
                             }
                         }
@@ -3620,12 +3635,12 @@ impl Viewed {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id as i64,
             (View::Node, 2) => self.batch.dialects[&p.tag].kind(&p.facts, id as u32),
-            (View::Node, 3) => i64::from(p.facts.start[id]),
-            (View::Node, 4) => i64::from(p.facts.end[id]),
+            (View::Node, 3) => i64::from(p.facts.start(id as u32)),
+            (View::Node, 4) => i64::from(p.facts.end(id as u32)),
             (View::Line, 1) => i64::from(p.facts.start_line(id as u32)),
             (View::Child | View::Field, 0) | (View::Tape, 1) => parent(),
             (View::Child, 2) => i64::from(p.idx(l)),
-            (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field[id])),
+            (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field(id as u32))),
             (View::Tape, 2) => i64::from(p.size(l)),
             (View::Tape, 3) => i64::from(p.depth(l)),
             (View::Depth, 1) => i64::from(p.depth(l)),
@@ -3649,7 +3664,7 @@ pub fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u3
         .iter()
         .enumerate()
         .filter(|(_, id)| matches!(dialect.name(facts, **id), "function_definition" | "class_definition"))
-        .map(|(local, &id)| ((facts.start[id as usize], facts.end[id as usize]), p.global(local as u32)))
+        .map(|(local, &id)| ((facts.start(id), facts.end(id)), p.global(local as u32)))
         .collect())
 }
 

@@ -482,12 +482,16 @@ fn within_holds_exactly_the_contained_pairs() {
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
     let axes: Vec<(&[u32], &[u32])> = batch.docs.iter().map(|p| (p.sizes(), p.depths())).collect();
     // (document, local, size, depth, start, end) of node row r.
-    let at = |r: usize| {
-        let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
-        let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
-        let core = p.core[local] as usize;
-        (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, p.facts.start[core], p.facts.end[core])
-    };
+    // Read once: the reference loop below visits every pair.
+    let rows: Vec<_> = (0..nodes)
+        .map(|r| {
+            let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
+            let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
+            let (start, end) = p.facts.span(p.core[local]);
+            (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, start, end)
+        })
+        .collect();
+    let at = |r: usize| rows[r];
     let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
     assert!(zero > 0, "the broken documents have nodes of zero width");
     let cpu = || { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s };
@@ -566,7 +570,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local] as usize]);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.core[local]));
         i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
     // Nested kinds: the root's, and two from inside the documents.
@@ -786,8 +790,8 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     // Independent eager reference: tokens grouped by the named parent's preorder, then source and lines.
     let mut expected = Vec::new();
     for &id in &p.core {
-        for &c in f.children(id) {
-            if !f.named(c) && f.end[c as usize] > f.start[c as usize] { expected.push([f.start[c as usize], f.end[c as usize]]); }
+        for c in f.children(id) {
+            if !f.named(c) && f.end(c) > f.start(c) { expected.push([f.start(c), f.end(c)]); }
         }
     }
     let tokens = expected.len();
@@ -810,7 +814,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
         let mut depth=0;let mut up=parent;
         while up!=NONE { depth+=1;up=p.parent(up as usize); }
         assert_eq!(p.depth(l),depth);
-        let subtree_end=f.subtree_end[p.core[l] as usize];
+        let subtree_end=f.subtree_end(p.core[l]);
         assert_eq!(p.size(l),p.core[l+1..].iter().filter(|&&id|id<subtree_end).count() as u32);
     }
     assert!(p.fielded.get().is_none(),"reading other axes must not build field rows");
@@ -1090,7 +1094,7 @@ fn definition_ids_census() {
                         let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                         row.parse += cpu_now() - t_parse;
                         let f = &*facts;
-                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)).collect();
+                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
                         let t0 = cpu_now();
                         let _ = granules::number(&p, &dialect, &tokens).0;
                         row.cpu += cpu_now() - t0;

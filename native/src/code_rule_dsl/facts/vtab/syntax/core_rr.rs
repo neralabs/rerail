@@ -529,15 +529,15 @@ pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, Strin
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
 /// MISSING nodes. Python uses its demanded, cached native grammar verdict instead.
 pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
-    if !f.syntax_errors {
+    if !f.syntax_errors() {
         return None;
     }
     (0..f.len() as u32).find_map(|id| {
-        let flags = f.flags[id as usize];
+        let flags = f.flags(id);
         let (missing, error) = (flags & 4 != 0, flags & 8 != 0);
         (missing || error).then(|| {
             let msg = if missing { format!("missing {}", kind_name(id)) } else { "syntax error".to_owned() };
-            (lines.line(f.start[id as usize]), msg)
+            (lines.line(f.start(id)), msg)
         })
     })
 }
@@ -651,8 +651,8 @@ pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
     /// Whether a rule reads node `id`'s `text` (`text_nodes`, `TextNodes::reads`).
-    fn reads_text(&self, f: &Facts, dialect: &Dialect, id: u32) -> bool {
-        self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(f, id, dialect))
+    fn reads_text(&self, p: &Projected, dialect: &Dialect, local: u32) -> bool {
+        self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(p, local, dialect))
     }
 
     /// The nodes `node` visits. Where it makes no row but `text`, and the rules read only some nodes' (`text_nodes`),
@@ -674,10 +674,7 @@ impl CoreRows {
         match visits {
             Visits::All => true,
             Visits::None => false,
-            Visits::TextNodes => {
-                let id = p.core[local as usize];
-                self.reads_text(&p.facts, dialect, id)
-            }
+            Visits::TextNodes => self.reads_text(p, dialect, local),
         }
     }
 
@@ -713,9 +710,10 @@ impl CoreRows {
         // neighbours (the sibling before or after it, else the parent's edge); a root's, between
         // it and the source's edges.
         if !self.skip.structural {
-            let (start, end) = (f.start[id as usize], f.end[id as usize]);
+            let (start, end) = (f.start(id), f.end(id));
             let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
-            if f.parent(id).is_none() {
+            // Only the root has no parent.
+            if id == 0 {
                 self.structural_before.push([n, string(between(0, start)) as i64]);
                 self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
             }
@@ -724,11 +722,11 @@ impl CoreRows {
                 if local_c == crate::code_rule_dsl::facts::core::NONE {
                     continue;
                 }
-                let a = if k == 0 { start } else { f.end[children[k - 1] as usize] };
-                let b = children.get(k + 1).map_or(end, |&d| f.start[d as usize]);
+                let a = if k == 0 { start } else { f.end(children[k - 1]) };
+                let b = children.get(k + 1).map_or(end, |&d| f.start(d));
                 let c_global = p.global(local_c);
-                self.structural_before.push([c_global, string(between(a, f.start[c as usize])) as i64]);
-                self.structural_after.push([c_global, string(between(f.end[c as usize], b)) as i64]);
+                self.structural_before.push([c_global, string(between(a, f.start(c))) as i64]);
+                self.structural_after.push([c_global, string(between(f.end(c), b)) as i64]);
             }
         }
         let mut prev = None;
@@ -785,7 +783,7 @@ impl CoreRows {
             }
             if dialect.family == Family::Python
                 && (wants_parts || wants_part_starts || wants_words)
-                && (kind == "concatenated_string" || kind == "string" && f.parent(id).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
+                && (kind == "concatenated_string" || kind == "string" && p.parent_node(local as usize).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
             {
                 // A word-only reader also gets coordinates from this pass. It never interns full values.
                 let own = dialect_facts(dialect.family);
@@ -807,14 +805,14 @@ impl CoreRows {
                     if wants_part_starts {
                         // `at` is a node id: its low bits are a preorder index only under preorder ids.
                         let Some(at_local) = p.local_of(at as u32) else { continue };
-                        let absolute = f.start[p.core[at_local as usize] as usize] + offset as u32;
+                        let absolute = f.start(p.core[at_local as usize]) + offset as u32;
                         let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
                         self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
                     }
                 }
             }
         }
-        if wants_text && self.reads_text(f, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
+        if wants_text && self.reads_text(p, dialect, local) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
             self.text.push([n, string(text) as i64]);
         }
     }
@@ -933,7 +931,7 @@ impl CoreRows {
         let mut at: std::collections::HashMap<(u32, u32, &str), u32> = std::collections::HashMap::new();
         for local in 0..p.len() {
             let id = p.core[local as usize];
-            at.entry((f.start[id as usize], f.end[id as usize], dialect.name(f, id))).or_insert(local);
+            at.entry((f.start(id), f.end(id), dialect.name(f, id))).or_insert(local);
         }
         // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
         // document's tape, kept for it or encoded here from tree-sitter's parse, not over tree-sitter's tree.
@@ -1033,11 +1031,11 @@ impl CoreRows {
                 None => {
                     for &c in &kept {
                         if let Some(h) = h.as_mut() {
-                            h.update(f.field[c as usize].to_le_bytes());
+                            h.update(f.field(c).to_le_bytes());
                             h.update(hash[c as usize]);
                         }
                         if let Some(o) = o.as_mut() {
-                            o.update(f.field[c as usize].to_le_bytes());
+                            o.update(f.field(c).to_le_bytes());
                             o.update(if unit(c) { placeholder(c) } else { own[c as usize] });
                         }
                     }

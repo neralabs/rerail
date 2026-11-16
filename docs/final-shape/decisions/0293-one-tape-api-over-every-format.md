@@ -21,7 +21,7 @@ Format 16 (0156) is built and measured in the lab only. The user's terms for the
 - So nothing is measured until five steps are done: 0156 accepted or amended; format 16's writer and reader in the
   engine; the axes over the reader; the base views on the tape with `Facts` gone; the matcher and Metal on it.
 
-This record is steps 2 and 3, and the API they need.
+This record is steps 2, 3 and 4, and the API they need.
 
 ## Decision
 
@@ -86,20 +86,45 @@ This record is steps 2 and 3, and the API they need.
    node reads the format's parent: a few sibling steps on format 16, a search back over the nodes before on format
    15 (the cost 0156 §1.7 names), which is what the lab weighs.
 
-## Interim, until steps 4 and 5
+6. **The base views read the tape** (step 4; built). `Facts` holds a document's tape (`DocTape`, shared with its
+   `TapeDoc` where the matchers keep one), its source, lines and grammar, and no column: a node's kind, flags,
+   field, span, subtree end, parent and children are the tape's answers through the API, in the format it is held
+   in. The nodes of a kind or a class, the kind histogram and the ERROR and MISSING nodes are scans of the codes, 64
+   nodes at a time (`match_groups`), made where asked; nothing is posted. A text-only document has no tape and no
+   nodes. A restore checks the image (`validated::visit`) and moves it in.
+
+   A walk reads parents from the subtrees open around it (`Facts::with_parents`: one subtree end a node), so it
+   reads one parent off the tape a range, not one a node; on format 15 a parent read is a search back. So does
+   everything that asked for parents node by node:
+
+   - a projection keeps the parent of each node it numbers (`Projected::up`), found in the walk that numbers them,
+     as it keeps `core` and `local`; the tape stores no parent;
+   - a Python call's execution context is the innermost body that holds it, from the bodies' ranges
+     (`families::Contexts`), not a climb of the call's parents;
+   - "an ERROR or MISSING node around this one" is a test against those few nodes' subtrees
+     (`Facts::under_error`, `touches_error`), not a climb.
+
+   The core facts' digest is of the source and the tape's stored bytes (`core-facts/v2`). Checked (2026-11-16):
+   a test reads every node's answers and every kind's and class's nodes alike in the three formats, for twelve
+   dialects; the facts, syntax, Python producer, workspace, findings, rule, wave and matcher tests (849) pass in
+   15, 16 and 16z, but for the failures format 15 has too; the CLI under strict SQL gives byte-identical outputs
+   in the three formats (49 bandit rules and 178 ruff rules over 10 files, cold and warm; the bait file's five
+   findings).
+
+## Interim, until step 5
 
 - **What reads the image's tape through the API** in whichever format it is held: the checks a restore makes
   (`tape::validated`), the embedders' reading of the host (`embed::host`), the axes (§5), and the image's node
   counts and subtree sizes.
-- **What still copies it into nodes:** a document's records (`TapeDoc`'s `Rec`) and its facts' columns (`Facts`)
-  are built from it at restore, through the API, in every format. The matcher reads the records; the base views
-  read the facts. Steps 4 and 5 remove both. So nothing is measured before then: a restore's copy would be counted
-  as a read.
+- **What still copies it into nodes:** a document's records (`TapeDoc`'s `Rec`), built from it at restore,
+  through the API, in every format, for the matcher. Step 5 removes them. So nothing is measured before then: a
+  restore's copy would be counted as a read.
+- **The core facts' digest** serializes a format 15 image to hash it (format 16's bytes are hashed as held).
 - **The device's kernels read format 15 only** (`facts::nearest`'s Metal solve, the matcher's Metal runs): a
   Metal run over a store of format 16 stops at the residency with the reason (`resident::header_counts`). The
   lab's format-16 kernels (E30, E31) replace them in step 5.
-- **What the axes still read off the facts:** spans (`span_within`), the planner's statistics (the projection's
-  subtree sizes and depths), and every document whose facts hold no tape. Step 4 moves them.
+- **The tape tests** (`tape::tests`) are format 15's: they assert the run stores format 15, and fail under
+  `RERAIL_TAPE=16`.
 
 ## Not done
 

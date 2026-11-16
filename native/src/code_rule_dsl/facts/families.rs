@@ -140,17 +140,14 @@ pub fn derived_inputs(
 
 /// A file's (kind atom, count) and (class atom, count), each sorted by atom.
 pub(crate) fn histogram(f: &Facts) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
-    let counts = |keys: &[u32], offsets: &[u32]| {
-        keys.iter().enumerate().map(|(i, &key)| (key, offsets[i + 1] - offsets[i])).collect::<Vec<_>>()
-    };
-    (counts(&f.kind_keys, &f.kind_offsets), counts(&f.class_keys, &f.class_offsets))
+    f.histogram()
 }
 
 pub(crate) fn histogram_digest(f: &Facts) -> [u8; 32] {
     let (kinds, classes) = histogram(f);
     let mut hash = Sha256::new();
     hash.update(b"rerail.kind-histogram/v1\0");
-    hash.update([u8::from(f.syntax_errors)]);
+    hash.update([u8::from(f.syntax_errors())]);
     for table in [kinds, classes] {
         hash.update((table.len() as u64).to_le_bytes());
         for (key, count) in table {

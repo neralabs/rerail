@@ -2257,7 +2257,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let lines = Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)));
     let reject = |image: &TapeImage| {
         assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), image, &|| false).is_err());
-        assert!(core::from_image(Arc::clone(&source), &grammar, image, Arc::clone(&lines)).is_err());
+        assert!(core::from_image(Arc::clone(&source), &grammar, image.clone(), Arc::clone(&lines)).is_err());
     };
     let mut corrupt = image.clone(); corrupt.source_digest.as_mut().expect("the image holds its source's digest")[0] ^= 1; reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.code.pop(); reject(&corrupt);
@@ -2271,7 +2271,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let (_, _, nested, ng) = fixture("f(g(x))\n", GrammarDialect::Python);
     let mut corrupt = nested.clone();
     corrupt.size[2..4].copy_from_slice(&2u16.to_le_bytes());
-    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, &corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
+    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
 }
 
 

@@ -2434,6 +2434,11 @@ impl TapeDoc {
         self.host.as_ref().map(|link| &link.host)
     }
 
+    /// Its dialect's grammar.
+    pub fn grammar(&self) -> &Arc<Grammar> {
+        &self.grammar
+    }
+
     /// This document's own text, which its spans index.
     pub fn document_source(&self) -> &Arc<String> {
         &self.source
