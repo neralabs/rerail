@@ -2313,8 +2313,9 @@ enum Side {
     Both,
     Fused,
     /// The rare starts', all their rules (`None`); or, as the lean lexer's `match` arms, the
-    /// rules whose tokens end one way (`TokenEnd`), each class with its own tail.
-    Rare(Option<TokenEnd>),
+    /// rules whose tokens end one way (`TokenEnd`) and whose reader tags its token or not
+    /// (`Reader::retag`, `tagged`), each class with its own tail.
+    Rare(Option<(TokenEnd, bool)>),
 }
 
 /// Where `rule_last` builds the rules' blocks.
@@ -2752,7 +2753,16 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     // (`TokenEnd`), each rule's arms going to its class's, as the lean lexer's arms each set
     // their `cursor` (the class's tail after it, `record_tokens`). The others' last.
     let forms: Vec<Side> = match side {
-        Side::Rare(_) => [TokenEnd::Plain, TokenEnd::Word, TokenEnd::Any].into_iter().filter(|e| *e == TokenEnd::Any || t.ends.contains(e)).map(|e| Side::Rare(Some(e))).collect(),
+        Side::Rare(_) => {
+            let mut v: Vec<Side> = (0..r.rules.len()).map(|k| Side::Rare(Some((t.ends.get(k).copied().unwrap_or(TokenEnd::Any), tagged(r, k))))).collect();
+            v.push(Side::Rare(Some((TokenEnd::Any, false))));
+            let mut seen = Vec::new();
+            v.retain(|x| !seen.contains(x) && {
+                seen.push(*x);
+                true
+            });
+            v
+        }
         x => vec![x],
     };
     let exits: Vec<(Side, cranelift_codegen::ir::Block, cranelift_codegen::ir::Block)> = forms.iter().map(|&x| {
@@ -2772,8 +2782,9 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     }).collect();
     let exit_of = |k: usize| match side {
         Side::Rare(_) => {
-            let e = t.ends.get(k).copied().unwrap_or(TokenEnd::Any);
-            let x = exits.iter().find(|x| x.0 == Side::Rare(Some(e))).unwrap_or(&exits[exits.len() - 1]);
+            let e = t.ends.get(k).filter(|_| k < r.rules.len()).copied().unwrap_or(TokenEnd::Any);
+            let want = Side::Rare(Some((e, k < r.rules.len() && tagged(r, k))));
+            let x = exits.iter().find(|x| x.0 == want).expect("the class's exit");
             (x.1, x.2)
         }
         _ => (exits[0].1, exits[0].2),
@@ -3275,6 +3286,32 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         f.ins().jump(done, &[l.into(), no.into(), tag.into(), zero.into()]);
     }
     (exits.iter().map(|&(x, _, d)| (x, d)).collect(), fused_exit)
+}
+
+/// A tagging reader's tag and hits (`records::check_hits`) where an arm reads its token: its
+/// `retag`, and its rule's tests' bits where each holds at every such token
+/// (`TokenCheck::always`); none where a test is the bytes'.
+fn tag_known(r: &crate::records::Records, k: usize) -> Option<(i64, u32)> {
+    use crate::records::{CheckThen, EndRule};
+    let &EndRule::Read(i) = r.rules.get(k)? else { return None };
+    let (kind, marks) = r.readers.get(usize::from(i))?.retag?;
+    let mut hits = 0u32;
+    for c in r.checks.iter().filter(|c| usize::from(c.rule) == k) {
+        if !c.always() {
+            return None;
+        }
+        hits |= match c.then {
+            CheckThen::Escape => 0,
+            CheckThen::At(m) => 1 << m,
+            CheckThen::After(m) => 1 << (crate::records::AFTER_SHIFT + u32::from(m)),
+        };
+    }
+    Some((i64::from(kind) | i64::from(marks) << crate::records::MARK_SHIFT, hits))
+}
+
+/// Whether rule `k` is a reader that tags its token (`Reader::retag`).
+fn tagged(r: &crate::records::Records, k: usize) -> bool {
+    matches!(r.rules.get(k), Some(&crate::records::EndRule::Read(i)) if r.readers.get(usize::from(i)).is_some_and(|x| x.retag.is_some()))
 }
 
 /// The rule from a first byte's entry (`RecordTables::token`).
@@ -4810,7 +4847,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let len = f.ins().isub(next_after, s);
     let kind = f.ins().band_imm(entry, 0xff);
     // A reader's token's kind and marks (`Reader::retag`), where it gives them.
-    let retag = retag.filter(|_| r.readers.iter().any(|rd| rd.retag.is_some()));
+    // None in a rare class of no tagging reader's rules (`Side::Rare`).
+    let retag = retag.filter(|_| r.readers.iter().any(|rd| rd.retag.is_some()) && !matches!(side, Side::Rare(Some((_, false)))));
     // A punctuation of the fused pair rule (`TOKEN_PUNCT`): its code bits by its first byte
     // and its length, a load beside the entry's, no word looked up, as the lean lexer's.
     if common {
@@ -4838,6 +4876,19 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     if let Some(tag) = retag {
         let rest = f.create_block();
         let has = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, tag, 0);
+        // A rare class whose tagging rules give one tag, and tests that hold at each of their
+        // tokens (`tag_known`): a token tagged is one of theirs, its tag and hits the
+        // compiler's, as the lean lexer's comment arm knows what it read.
+        let (tag, hits) = match side {
+            Side::Rare(Some((e, true))) => {
+                let known: Vec<Option<(i64, u32)>> = (0..r.rules.len()).filter(|&j| tagged(r, j) && t.ends.get(j) == Some(&e)).map(|j| tag_known(r, j)).collect();
+                match known.first() {
+                    Some(&Some((tc, hc))) if known.iter().all(|&x| x == Some((tc, hc))) => (f.ins().iconst(types::I64, tc), f.ins().iconst(types::I64, i64::from(hc))),
+                    _ => (tag, hits),
+                }
+            }
+            _ => (tag, hits),
+        };
         f.ins().brif(has, coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), tag.into(), hits.into()], rest, &[]);
         f.switch_to_block(rest);
     }
@@ -5108,7 +5159,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // past it, as the lean lexer's after its string's arm; else the bytes put back, as
             // its number's arm reads the word after it.
             let form = match side {
-                Side::Rare(Some(e)) => e,
+                Side::Rare(Some((e, _))) => e,
                 _ => TokenEnd::Any,
             };
             if let (Some((wi, _)), TokenEnd::Word) = (lean.map(|(wi, pi, _)| (wi, pi)), form) {

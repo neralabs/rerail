@@ -1942,3 +1942,38 @@ Stepped, the rare head: `add …, uxtb #3; ldr` (the entry), then
 cmp #0xa` to the number's call (lean: `cmp #0x2e; b.gt; cmp #0x22;
 b.eq`). Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
 strings 289.6, numbers 166.6, comments 268.2.
+
+## A tagging reader's exit apart
+
+**Intro.** A comment's reader tags its token (`Reader::retag`): the
+code's kind and marks, which no first byte gives. The rare class it
+shared with the string merged the comment's tag with the string's
+"none" (`-1`), so the tail tested for a tag after the join.
+
+**The change.** A rare class is keyed by how its tokens end and by
+whether its reader tags (`Side::Rare(Some((end, tagged)))`). In a
+tagged class whose readers give one tag, and whose tests all hold at
+each token an arm reads (`TokenCheck::always`), the tag and the hits
+are the compiler's constants where the tag says an arm read it
+(`tag_known`). `.rr`'s comment is such a reader:
+
+```
+after comment when count(line_open | block_open) at least 1
+// always: the comment's first byte is its opener
+```
+
+**What is left.** The marks' merge after a comment (13 instructions)
+is the grammar's: the mark goes to the token after it (`json_bad`),
+into the loop's `pending`. Lean has no such mark. The comment's
+function also reads `/` alone (`Reader::other`), whose code and hits
+are the bytes', so the two meet at the tail's `coded` and the
+constants do not reach the merge.
+
+Tried and dropped: the last and the tag as signed halves of the
+returned word, to take each out by one sign extension. A comment's
+tag has its marks in its high bits and does not fit an `i32`, so
+every rule call went back to four words through memory
+(`packs`).
+
+Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 287.6, numbers 164.6, comments 267.2.
