@@ -362,6 +362,48 @@ projection 0.012 s, statistics 0.011 s, reading the prepared program's two texts
 0.006 s. Each is a function of the prepared program (with the run's options and phase rows for the identities): the
 next step keeps them with its image.
 
+### The memo's strata kept with the prepared program (2026-11-15)
+
+The per-file memo's identity of each relation (decision 0225 §2) is a digest of its stratum's rules and of what they
+read, then of the run's options, its earlier phases' rows and the projection, where its rules reach them. The first
+part is a function of the file-local part alone, so it now is the prepared program's (`memo::Strata`, made with the
+split, `Prepared::memo_strata`), kept with it as three relations (`prepared_memo_part`, `prepared_memo_stratum`,
+`prepared_memo_reach`; the prepared plan is v3) and read back with it. A run adds the second part
+(`Strata::identities`); a run whose file-local part is another (the digest differs) makes the strata again. The
+identities are the same as before: a stratum's leaves are now every relation the part does not derive, of which a
+run digests only the phased ones, as before (an earlier phase's export is never derived in the part, checked in a
+debug build).
+
+Measured as above: every bundle run reads the strata kept (`corpus.memo_strata_kept`), and the run is 23.00 G
+(23.03 G before), every output the baseline's. The step's other half, the components' plan and the memo space's
+digest, stays. With it the hit path's prepare is the derivations listed above, about 0.1 G each; they are small next
+to what the run does outside the main run (below), and each next step there is measured against that.
+
+### What a bundle run does outside the main run (2026-11-15)
+
+A cold bundle run of one file was 23.0 G, and the main run's sections sum to 12.3 G. The timeline now carries the
+process's instructions retired (`i=`, `RERAIL_TIMELINE=sections` for the sections and the CLI's marks alone, without
+a line per span), which places the other 10.7 G:
+
+| Stretch | G |
+|---|---|
+| The CLI's start and the settings | 0.30 |
+| Phase 0's run (`bootstrap.rr`, the texts' include graphs) | 3.06 |
+| Phase 0's observations written, and the stretch to the next run | 1.98 |
+| Phase 0's second run (`components.rr`) | 0.28 |
+| After the main run's write: the whole-run cutoff's record | 5.11 |
+
+The record is the largest. `reuse::record` lists the rule files the run depends on (`rule_files`) through
+`Texts::names`, which resolves every text's includes again: 42 `.rr` modules, 458 KB, each read back into statements
+(`rr::stored_statements`, a tape and its facts, then the statements), 4.3 G, about 9.4 k instructions a byte. With
+the bundle nothing else parses those modules: combining reads the combined program's image. The warm check
+(`reuse::reused`) calls the same `rule_files` once every recorded digest matched, so a warm run pays it too.
+
+What the list needs, the run has: each text's includes, transitively, are phase 0's graph's (`Texts::derived`, with
+each module's digest), and the phase programs its declarations name are the only other rule files. The next step is
+for phase 0 to derive that second dependency with the first, the phase programs a text's declarations name (a
+`bootstrap.rr` output beside `p0_include`), so the record and its check read both off the graph and parse nothing.
+
 ## Aligned with django-bugs (decisions 0239, 0240)
 
 - **Symbols by content.** A module image holds its names as strings, and a reader takes its own ids of them, as

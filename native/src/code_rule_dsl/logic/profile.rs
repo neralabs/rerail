@@ -418,6 +418,20 @@ impl Activity {
 /// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
 /// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
 /// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
+/// The process's instructions retired so far (macOS; 0 elsewhere), as `settings::process_counters` reads them: what a
+/// timeline line carries beside its clock.
+pub fn retired_instructions() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+        if unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return info.ri_instructions;
+        }
+    }
+    0
+}
+
 /// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
 /// runs and threads read on one axis.
 pub fn timeline_clock() -> f64 {
@@ -1163,8 +1177,15 @@ pub fn span(name: impl FnOnce() -> String) -> Span {
         static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
         let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
-        if on && (all || std::thread::current().name() == Some("main")) {
-            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}]", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"));
+        // `RERAIL_TIMELINE=sections`: the runs' sections alone (`corpus::run_observed`), no span: a line per span
+        // costs as much as a small span's work, so a timeline of every span is not the run's instructions.
+        static SECTIONS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let sections = *SECTIONS.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "sections"));
+        if on && !sections && (all || std::thread::current().name() == Some("main")) {
+            // With the process's instructions retired so far (macOS): a gap between two spans is then its work, not
+            // only its wall time.
+            let retired = retired_instructions();
+            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}] i={:.3}", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"), retired as f64 / 1e9);
         }
         return Span(false);
     }
