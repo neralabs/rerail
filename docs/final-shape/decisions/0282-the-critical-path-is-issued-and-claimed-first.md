@@ -71,6 +71,15 @@ issued, so a ready stratum on the path waits for the loop to finish its job.
 Every run gave the same 63 rows. The peak was 838–930 MB in both forms. The rank costs no measured CPU or
 instructions, and it is kept.
 
+On a quieter machine (load 4.5 at the start, 16–19 during the runs), alternating three times:
+
+| | waited | ready → submitted | span | wall s | CPU s | G instructions |
+|---|---|---|---|---|---|---|
+| ranked | 0.04–0.16 | 0.04–0.09 | 0.27–0.29 | 4.5–5.0 | 15.4–15.8 | 171–173 |
+| `RERAIL_STRATA_RANK=off` | 0.17–0.23 | 0.15–0.18 | 0.34–0.38 | 4.5–4.7 | 15.6–15.7 | 171–172 |
+
+Here the strata span is about a fifth shorter, and the run's wall is unchanged: the strata are 0.3 s of it.
+
 The strata part is a small part of the run's wall. The 6.9–13.9 s walls (CPU 17–18 s) are about the main
 thread's serial phases: combine 0.97 s, prepare 0.76 s, local 2.5–3.1 s (the strata span is 1–2 s of it),
 and cross 0.53 s of CPU. With 200 K involuntary context switches, the main thread waits for a core.
@@ -83,5 +92,3 @@ and cross 0.53 s of CPU. With 200 K involuntary context switches, the main threa
   O-loop-thread-issues.
 - **The main thread's serial phases** (combine, prepare, local outside the strata) are the run's wall
   critical path. A measured path over the phases, like 0208's over the strata, would show them.
-- At low load, the gain was measured on the queue's wait only (0.20 → 0.01 s of a 0.33 s span). No
-  unloaded machine was free to measure the span.
