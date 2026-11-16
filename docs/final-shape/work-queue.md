@@ -272,7 +272,14 @@ into notes once the queue is done).
   The phase `p1`'s cross-file part (`corpus.rs` "plan and evaluate", the driven run) compiles a rule reading `text`'s
   long-text twin on the run's main connection, and since chunks evaluate on connections of their own (0254) the main
   connection binds no batch (0268's binding is the chunk's). Before 0254 the main connection held the one batch.
-- **Record**: —
+- **Fixed (2026-11-16)**: the rule was `def(@cat("m", x), k) :- kind(n, k), …, field(n, "name", i), text(i, x)`, cross-file
+  only because another rule of `def` reads any document. The split pushed its join into a file-local helper
+  (`fl102_def(k, i)`) but left the long-text twin's `x = @rr_node_text(i)` in the cross part. A node read of a node the
+  helper binds now goes into the helper (`typing::file_local::node_read_of`): a node's text is its own document's.
+  The phase test passes, and so does `a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies`
+  (un-ignored). The pack's outputs are unchanged over c1x and c50. Still open (O-cross-file-answers): a read whose
+  node only a cross-file relation binds (B010's `rr_value_req` answer rule) has no helper to go into.
+- **Record**: O-cross-file-answers, 2026-11-16 entry.
 
 ### Q6. Printing a lowered program round-trips exactly
 

@@ -5249,6 +5249,13 @@ final-rerail-shape-phased-facts (2026-11-15), by `corpus::tests::a_pair_of_progr
 connection). Neither side of that merge binds the relation there, and the merge left lowering's placement as it was.
 The test is ignored with this item's name until the item is answered.
 
+Partly answered (2026-11-16, work-queue Q5): the split takes a node read whose node the pushed file-local join binds
+into the helper it makes (`typing::file_local::node_read_of`), so a cross-file rule's long-text twin or request read
+over a file-local join runs in the chunk, with its batch. That fixes the phase test the hub failed and the PYI062/PYI059
+pair (no longer ignored); the pack's outputs are unchanged over c1x and c50. Still open: a read whose node only a
+cross-file relation binds (B010's answer rule over `rr_value_req`, which C414's asker makes cross-file) has no
+file-local join to go with. Option (a) above, widening such a request to its file-local literals, is what is left.
+
 ## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
 
 Status: open. Found by E32 (t39 step 24): the data-layer candidates over 50 files take 100 s of CPU cold

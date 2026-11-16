@@ -1599,6 +1599,17 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                         lits.insert(j);
                     }
                 }
+                // A node read of a node the component binds (`$x = @rr_node_text($i)`, a long-text twin's) goes with
+                // it: a node's text or value is its own document's, and only a chunk's connection binds the batch it
+                // is read from (decision 0268). Left, the cross part read it on a connection with no batch
+                // (O-cross-file-answers). The value it binds is typed as `text`'s (a symbol, as `node_text`'s and `value`'s).
+                let mut read: BTreeSet<String> = BTreeSet::new();
+                for (j, l) in rule.body.iter().enumerate() {
+                    if let Some(v) = node_read_of(l, &vars) {
+                        lits.insert(j);
+                        read.insert(v);
+                    }
+                }
                 // The head's variables, those inside a call (`@cat(p, s)`) too.
                 let mut outside: BTreeSet<String> = BTreeSet::new();
                 rule.head.args.iter().for_each(|t| t.vars(&mut outside));
@@ -1639,6 +1650,9 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 let typed: Option<Vec<(String, String)>> = iface
                     .iter()
                     .map(|v| {
+                        if read.contains(v) {
+                            return prog.decls.get("text")?.get(1).map(|(_, t)| (v.clone(), t.to_string()));
+                        }
                         atoms.iter().find_map(|a| {
                             let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
                             prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| (v.clone(), t.to_string()))
@@ -1690,6 +1704,20 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             *level.entry(i).or_default() += 1;
         }
     }
+}
+
+/// The variable `l` binds by reading a node's text or value (`$x = @rr_node_text($i)`, `syntax::NODE_READS`), where
+/// the node's variables are all `vars` and the bound one is not.
+fn node_read_of(l: &crate::code_rule_dsl::logic::front::Literal, vars: &std::collections::BTreeSet<String>) -> Option<String> {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    let Literal::Cmp { l, op: "=", r } = l else { return None };
+    let ((Term::Var(v), Term::Call(name, args)) | (Term::Call(name, args), Term::Var(v))) = (l, r) else { return None };
+    if !crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&name.as_str()) || vars.contains(v.as_str()) {
+        return None;
+    }
+    let mut of = std::collections::BTreeSet::new();
+    args.iter().for_each(|t| t.vars(&mut of));
+    (!of.is_empty() && of.is_subset(vars)).then(|| v.to_string())
 }
 
 /// Gives every relation the chunks hand on (an export, or a file-local output) a location column, so each of its

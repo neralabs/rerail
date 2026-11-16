@@ -1112,7 +1112,6 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
 /// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
 /// with `value` through that negation, and the pair was refused as not stratifiable.
 #[test]
-#[ignore = "the answer rule for `value` runs in the cross-file part, which binds no batch: since decision 0268 `@rr_node_value` there is an error (open item O-cross-file-answers)"]
 fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));
