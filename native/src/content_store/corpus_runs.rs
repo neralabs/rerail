@@ -177,7 +177,7 @@ struct Manifest {
 /// Which manifests, met newest first, are among their lane's last `protected_runs` and their lane among the root's
 /// newest `protected_lanes`.
 ///
-/// A lane of a policy set (decision 0301) is protected only while it is its set's newest: an older one (the set's
+/// A lane of a policy set (decision 0302) is protected only while it is its set's newest: an older one (the set's
 /// programs before an edit) holds no protection and takes no place among the root's lanes.
 #[derive(Default)]
 struct Protection<'m> {
@@ -409,7 +409,7 @@ impl ContentStore {
         self.record_corpus_run_policy(root, sources, grammar_version, tape_format, plan, also, lane, None, now)
     }
 
-    /// `record_corpus_run_lane`, the lane of policy set `policy` (decision 0301): a newer lane of the set supersedes
+    /// `record_corpus_run_lane`, the lane of policy set `policy` (decision 0302): a newer lane of the set supersedes
     /// its older ones, which keep no protection (`Protection`). `None`: a lane of no set, protected as before.
     #[allow(clippy::too_many_arguments)]
     pub fn record_corpus_run_policy(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, policy: Option<[u8; 32]>, now: i64) -> StoreResult<bool> {
@@ -576,7 +576,7 @@ impl ContentStore {
         if displaced.is_some() {
             return Ok(true);
         }
-        // A policy set's newer lane (decision 0301): its older lanes lose their protection.
+        // A policy set's newer lane (decision 0302): its older lanes lose their protection.
         let superseded: Option<i64> = connection
             .query_row_cached(
                 "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 AND m.policy IS NOT NULL \

@@ -344,7 +344,7 @@ struct Snapshot {
     preloaded: HashSet<[u8; 32]>,
     /// A dev trace's (`RERAIL_FRAMES_TRACE`): the space read by identity, and its frames' identities left out.
     left_out: Option<([u8; 32], HashSet<Rel>)>,
-    /// The (space, program) pairs known to hold there (`hold_frames`, decision 0301): each looked up once a process.
+    /// The (space, program) pairs known to hold there (`hold_frames`, decision 0302): each looked up once a process.
     holding: HashSet<([u8; 32], [u8; 32])>,
 }
 
@@ -534,7 +534,7 @@ impl ContentStore {
                 }
             }
             snapshot.confirmed = confirmed;
-            // Which programs hold which spaces (`hold_frames`, decision 0301): a few rows, read here, not in a wave.
+            // Which programs hold which spaces (`hold_frames`, decision 0302): a few rows, read here, not in a wave.
             {
                 let mut st = connection.prepare("SELECT space, program FROM frame_program_used WHERE run = 0")?;
                 let rows = st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
@@ -834,7 +834,7 @@ impl ContentStore {
 
     /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's
     /// rows only until it is encoded.
-    /// Records, behind the run, that `program` holds `rels` in `space` (`frame_program_used`, decision 0301), when
+    /// Records, behind the run, that `program` holds `rels` in `space` (`frame_program_used`, decision 0302), when
     /// it does not hold there yet (the snapshot's, read before the first wave, and this process's writes since): a
     /// program that reuses its predecessor's frames puts nothing, and the predecessor superseded, nothing else would
     /// keep them. Whether it queued the holding. No snapshot (no run read the store): queued, and the writer writes
@@ -1980,7 +1980,7 @@ mod tests {
         assert!(!again.any(), "nothing left to collect: {again:?}");
     }
 
-    /// Decision 0301: an edited program reuses its predecessor's frames and puts nothing (decision 0227: a warm run
+    /// Decision 0302: an edited program reuses its predecessor's frames and puts nothing (decision 0227: a warm run
     /// writes nothing). Its predecessor superseded and dead, only its own holding keeps them: `hold_frames` records
     /// it, queued once, and only when the store has none (a run of a program that holds queues nothing, 0197).
     #[test]

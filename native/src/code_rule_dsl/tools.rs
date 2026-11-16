@@ -637,7 +637,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     logic_of_set(programs, None, root, t_facts, out, modes, metal, chunk_nodes, settings)
 }
 
-/// `logic`, its programs read from `policy_set` (the rules' path): its runs' lanes are the set's (decision 0301), and
+/// `logic`, its programs read from `policy_set` (the rules' path): its runs' lanes are the set's (decision 0302), and
 /// a run of its programs edited supersedes the set's older lanes over the root.
 #[allow(clippy::too_many_arguments)]
 pub fn logic_of_set(programs: &[String], policy_set: Option<&str>, root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
@@ -808,16 +808,14 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     crate::code_rule_dsl::logic::profile::command_begins();
     let out = cli_in(args, &mut Default::default());
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
-    match (out, after) {
-        (Ok(mut text), Some(c)) => {
-            text += &format!(
-                "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
-                c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
-            );
-            Ok(text)
-        }
-        (out, _) => out,
+    // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
+    if let (Ok(_), Some(c)) = (&out, after) {
+        eprint!(
+            "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
+            c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
+        );
     }
+    out
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
@@ -1148,7 +1146,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }
-    // The rules' path names the runs' policy set (decision 0301).
+    // The rules' path names the runs' policy set (decision 0302).
     let set = std::fs::canonicalize(program.as_str()).map_or_else(|_| program.clone(), |p| p.to_string_lossy().into_owned());
     let run = || crate::tools::logic_of_set(&programs, Some(&set), Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
     if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }

@@ -550,7 +550,7 @@ pass.
       ep2 all 357 plans are live and 31 live programs hold the cross space (`frame_program_used`): each edit is a new
       lane, so the 64 protected lanes keep up to 64 edits' predecessors. The space's size is the policy's, not a
       missing collector.
-    - **Built, decision 0301** (the user chose: a lane names its policy set). A set's newer lane supersedes its
+    - **Built, decision 0302** (the user chose: a lane names its policy set). A set's newer lane supersedes its
       older, which keeps no protection; the program that reuses frames and puts nothing holds them (`hold_frames`:
       without it, the sweep dropped the space after each edit and every other edit ran its cross part cold, seen on
       the PYI062 repro). Tests: `a_policy_sets_newer_lane_supersedes_its_older`,

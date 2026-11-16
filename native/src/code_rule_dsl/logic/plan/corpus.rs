@@ -76,6 +76,7 @@ pub mod constants;
 pub mod inputs;
 pub use inputs::parameters as input_parameters;
 pub mod world;
+pub mod texts;
 pub mod connections;
 pub mod reuse;
 
@@ -670,6 +671,9 @@ pub struct Texts<'a> {
     pub derived: Vec<Arc<phase0::Graph>>,
     /// The program the run was handed, already read (`run_read`): the run holds it, and `programs` is its key.
     pub read: Option<&'a front::Program>,
+    /// The source texts of the run inside which this one runs (phase 1's: the outer run's, decision 0300), which its
+    /// builder borrows.
+    pub sources: Option<&'a texts::Sources>,
     reads: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
     names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
 }
@@ -680,7 +684,7 @@ impl<'a> Texts<'a> {
     pub fn of_read(key: &'a [&'a str], read: &'a front::Program) -> Self {
         let names = std::cell::OnceCell::new();
         let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(read)]);
-        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), reads: std::cell::RefCell::new(Vec::new()), names }
+        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, reads: std::cell::RefCell::new(Vec::new()), names }
     }
 
     /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
@@ -690,7 +694,7 @@ impl<'a> Texts<'a> {
         let derived = if phase0::active() { Vec::new() } else { phase0::graphs(&seeds)? };
         let mut at = derived.iter();
         let graphs = reads.iter().map(|r| r.seed.as_ref().and_then(|_| at.next()).map(|g| g.digest())).collect();
-        Ok(Texts { programs, graphs, derived, read: None, reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
+        Ok(Texts { programs, graphs, derived, read: None, sources: None, reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
     }
 
     /// Each text's library files, declared relations and phase (`rr::TextRead::resolved`).
@@ -2058,7 +2062,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
     let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer && first_of_batch;
-    // A run inside another is no set's lane: it would supersede the outer run's (decision 0301).
+    // A run inside another is no set's lane: it would supersede the outer run's (decision 0302).
     let set = set.filter(|_| outer);
     // The frames a keep decision leaves unreachable are a utility upkeep job's (decision 0227): one a process for the
     // store, finished at the outermost run's end (`upkeep::finish_soon`) if the scheduler has not run it.
@@ -2416,7 +2420,7 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_handed(programs, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options)
+    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options)
 }
 
 /// `run_with_options` of a program already read (`tools::run_program`, which read the file): the run holds that
@@ -2432,8 +2436,24 @@ pub fn run_read(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    run_read_handing(read, None, root, out, modes, binding, chunk_nodes, typing, options)
+}
+
+/// `run_read` inside another run that hands it the source texts it read (`sources`, decision 0300): phase 1's.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_read_handing(
+    read: &front::Program,
+    sources: Option<&texts::Sources>,
+    root: &Path,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<Report> {
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), root, None, out, modes, binding, chunk_nodes, typing, options)
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options)
 }
 
 /// A handed program's key, in the place of a text: its version's digest (`choices::key`, decision 0173 §7), named so
@@ -2447,6 +2467,7 @@ fn read_key(read: &front::Program) -> Result<String> {
 fn run_handed(
     programs: &[&str],
     read: Option<&front::Program>,
+    sources: Option<&texts::Sources>,
     root: &Path,
     t_facts: Option<&Path>,
     out: &Path,
@@ -2505,6 +2526,10 @@ fn run_handed(
     let texts = match read {
         Some(read) => Texts::of_read(programs, read),
         None => Texts::of(programs)?,
+    };
+    let texts = Texts {
+        sources,
+        ..texts
     };
     let mut component_seeded = false;
     if !phase0::active() {
@@ -2757,7 +2782,7 @@ fn run_observed(
         added.hash(&mut h);
         h.finalize().into()
     };
-    // The lane's policy set (decision 0301): where the programs come from (`policy_set`, the command line's rules
+    // The lane's policy set (decision 0302): where the programs come from (`policy_set`, the command line's rules
     // path) and the run's options (its dialect, settings, phase marks). A run of the set's programs edited, under the
     // same options, supersedes the set's older lanes over the root. A run naming no set is a lane of no set.
     let policy: Option<[u8; 32]> = options.get("policy_set").map(|_| {
@@ -2881,6 +2906,10 @@ fn run_observed(
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
     let mut listing: Option<(Vec<String>, &'static str)> = None;
     let mut phase_one_run = None;
+    // The source texts the digests read (decision 0300): this run's builder takes them, and phase 1's, handed them,
+    // borrows them.
+    let own_sources = texts::Sources::default();
+    let source_texts = texts::Given { own: &own_sources, handed: given.sources };
     let phase_one = crate::threads::scope(|jobs| {
         let prog = &prog;
         let bridged_slot = &bridged_slot;
@@ -2901,7 +2930,8 @@ fn run_observed(
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
             let renamed = package_root_modules(root, &files);
             let of_label: Vec<&String> = files.iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label)).collect();
-            let digests = world::bytes_digests(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>());
+            // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders.
+            let digests = world::bytes_digests_held(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>(), Some(&own_sources));
             let stated: Vec<(String, String, String, String)> = of_label
                 .into_iter()
                 .zip(digests)
@@ -2916,7 +2946,7 @@ fn run_observed(
                 None
             } else {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
-                let (one, run) = phases::sources(&stated, label, root, out, modes, binding, chunk_nodes, typing, options)?;
+                let (one, run) = phases::sources(&stated, &own_sources, label, root, out, modes, binding, chunk_nodes, typing, options)?;
                 let (made, libraries) = (one.documents.len(), one.libraries.len());
                 crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || {
                     format!("{made} of {} source files are its documents; {libraries} library documents the imports reached", stated.len())
@@ -4600,6 +4630,10 @@ fn run_observed(
             .map(|i| {
                 let path = &window[*i].1;
                 let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
+                // Held from the run's digests (decision 0300): taken here only where this window's texts are kept.
+                if let Some(source) = source_texts.text(&root.join(path), keep) {
+                    return Ok(Some(source));
+                }
                 let source = match std::fs::read_to_string(root.join(path)) {
                     Ok(source) => source,
                     // A text file that is not UTF-8 (an image, an archive) is no document: its wave finds it so.
@@ -4934,7 +4968,9 @@ fn run_observed(
                     Some(text) => (text, b.content, b.digest, b.tape),
                     None => {
                         let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
-                        let text = match std::fs::read_to_string(root.join(path)) {
+                        // Held from the run's digests (decision 0300), as of the stat it was read at.
+                        let held = source_texts.text(&root.join(path), true);
+                        let text = match held.map_or_else(|| std::fs::read_to_string(root.join(path)), Ok) {
                             Ok(text) => text,
                             // A text file that is not UTF-8 (an image, an archive) is no document.
                             Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path, label) => return Ok(None),
@@ -7787,7 +7823,12 @@ fn run_observed(
         }
     }
     drop(binding_exports);
-    // The chunks' freed pages go back before the cross part builds its own.
+    // The source texts no wave took (decision 0300), and the chunks' freed pages, go back before the cross part
+    // builds its own.
+    {
+        let (files, bytes) = own_sources.release();
+        crate::code_rule_dsl::logic::profile::decision("source texts read once (decision 0300)", || format!("{files} kept texts left untaken as the waves ended, {:.1} MB", bytes as f64 / 1e6));
+    }
     { let _s = crate::code_rule_dsl::logic::profile::span(|| "release the chunks' pages".into()); crate::code_rule_dsl::prof::release(); }
     phase("stats", statements.count());
     // What the file-local part left queued (the files' stats) goes to the writer now, not with the cross part's

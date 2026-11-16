@@ -366,7 +366,7 @@ CREATE TABLE IF NOT EXISTS corpus_manifests (
     -- What the run was of (`record_corpus_run_lane`): a root's last runs are protected by lane. NULL: the root's one
     -- lane.
     lane BLOB CHECK(lane IS NULL OR length(lane) = 32),
-    -- The lane's policy set (`record_corpus_run_policy`, decision 0301): a set's newer lane supersedes its older. NULL:
+    -- The lane's policy set (`record_corpus_run_policy`, decision 0302): a set's newer lane supersedes its older. NULL:
     -- a lane of no set. Additive (`ADDED_COLUMNS`): an older binary ignores it.
     policy BLOB CHECK(policy IS NULL OR length(policy) = 32),
     UNIQUE (root_id, digest)
