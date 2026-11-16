@@ -711,6 +711,12 @@ export interface PruneCheckoutsOptions {
   readonly now?: number;
   /** Once aborted, the pass forgets nothing and ends at once, even while the filesystem has not answered it. */
   readonly signal?: AbortSignal;
+  /**
+   * The checkouts whose folder the filesystem has not answered for yet, kept across passes: a folder is in it while it
+   * is looked at, and stays in it when a pass gives up on it. A pass skips them, so they stay, and asks nothing of a
+   * share that keeps a pool thread waiting already; one that answers late leaves it.
+   */
+  readonly unanswered?: Set<string>;
 }
 
 /**
@@ -723,20 +729,26 @@ export interface PruneCheckoutsOptions {
  * decide. A checkout recorded or seen again since `now` stays, as when a session starts in a worktree made again at a
  * removed one's path while the others are looked at.
  */
-export async function pruneCheckouts(db: RerailDatabase, { now = Date.now(), signal }: PruneCheckoutsOptions = {}): Promise<string[]> {
+export async function pruneCheckouts(db: RerailDatabase, { now = Date.now(), signal, unanswered = new Set() }: PruneCheckoutsOptions = {}): Promise<string[]> {
   const rows = db.select({ path: checkouts.checkoutPath, cloneId: checkouts.cloneId }).from(checkouts).all();
-  const gone = await unlessAborted(goneCheckouts(rows, signal), signal);
+  const gone = await unlessAborted(goneCheckouts(rows.filter(row => !unanswered.has(row.path)), signal, unanswered), signal);
   if (gone === undefined || gone.length === 0 || signal?.aborted === true) return [];
   return db.transaction(tx => forgetCheckouts(tx, gone, now), { behavior: "immediate" });
 }
 
 /** {@link unlistedByTheirClones} of `rows`, their folders looked at one by one; none once `signal` aborts. */
-async function goneCheckouts(rows: ReadonlyArray<{ readonly path: string; readonly cloneId: string }>, signal: AbortSignal | undefined): Promise<string[]> {
+async function goneCheckouts(
+  rows: ReadonlyArray<{ readonly path: string; readonly cloneId: string }>,
+  signal: AbortSignal | undefined,
+  unanswered: Set<string>,
+): Promise<string[]> {
   const looked: LookedAt[] = [];
   const drives = new Map<string, Promise<boolean | undefined>>();
   for (const row of rows) {
     if (signal?.aborted === true) return [];
+    unanswered.add(row.path);
     looked.push({ ...row, onDisk: await onDiskOf(row.path, drives) });
+    unanswered.delete(row.path);
   }
   return await unlistedByTheirClones(looked, signal);
 }
