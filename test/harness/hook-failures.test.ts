@@ -372,7 +372,7 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
   // ago is removed. Read by its change time alone, the first would go too, with what the running hook still writes.
   it("keeps a log a hook wrote into within the day where the file system keeps no change time, and removes an older one", async () => {
     const rerailHome = await home();
-    // This test's own process stands for the running hook.
+    // The removal reads no pid: `recent` stays for its write time alone, whatever process has its pid.
     const [recent, old] = [takenName(rerailHome, process.pid), takenName(rerailHome, 2 ** 31 - 1)];
     writeFileSync(old, `${fullLine}\n`);
     const dayAgo = (Date.now() - 25 * 60 * 60 * 1_000) / 1_000;
