@@ -8,6 +8,7 @@ import { methodGaps, type RunMethod } from "./platform.js";
 import type { Candidate, CellVerdict, Corpus, MeasuredMetric, PackVerdict, RuleTiming, Verdict } from "./shipbar.js";
 import { type CellCost, KNOWN_GAPS, type RuleMultiple, ruleMultiples } from "./metric.js";
 import { median, spread, TOLERANCE_PERCENT } from "./verdict.js";
+import type { WaitsSection } from "./waits-model.js";
 
 export const SCHEMA = "ship-no-ship/report/v1";
 
@@ -147,8 +148,10 @@ export interface Report {
     /** Each way runs were pinned, capped and measured, how many runs it measured, and what it lacks. */
     methods: { method: RunMethod; runs: number; gaps: string[] }[];
   };
-  verdict: { status: "PASS" | "FAIL" | "INCOMPLETE"; gate: Candidate[]; candidates: Partial<Record<Candidate, { status: CandidateItem["status"]; failing_packs: number; failing_items: number }>> };
+  verdict: { status: "PASS" | "FAIL" | "INCOMPLETE"; gate: Candidate[]; candidates: Partial<Record<Candidate, { status: CandidateItem["status"]; failing_packs: number; failing_items: number }>>; waits: WaitsSection["status"] | null };
   candidates: CandidateItem[];
+  /** The waits a user experiences (waits-model.ts), ids wait/<W>/<scenario>; null when the run measured none. */
+  waits: WaitsSection | null;
   scope: { measured: string[]; not_measured: string[]; known_gaps: string[] };
 }
 
@@ -370,7 +373,7 @@ export interface RunMeta {
   drillReps: number;
 }
 
-export function buildReport(verdict: Verdict, meta: RunMeta): Report {
+export function buildReport(verdict: Verdict, meta: RunMeta, waits: WaitsSection | null = null): Report {
   const reproduce: ReproduceSettings = { baseline: verdict.baseline.ref ?? verdict.baseline.sha, runs: verdict.runs };
   const candidates: CandidateItem[] = verdict.candidates.map((c) => {
     const packs = c.packs.map((p) => packItem(c.candidate, p, reproduce));
@@ -389,7 +392,8 @@ export function buildReport(verdict: Verdict, meta: RunMeta): Report {
     };
   });
   const gated = candidates.filter((c) => verdict.gate.includes(c.candidate));
-  const overallStatus = gated.some((c) => c.status === "FAIL") ? "FAIL" : gated.some((c) => c.status === "INCOMPLETE") ? "INCOMPLETE" : "PASS";
+  const statuses = [...gated.map((c) => c.status), ...(waits === null ? [] : [waits.status])];
+  const overallStatus = statuses.includes("FAIL") ? "FAIL" : statuses.includes("INCOMPLETE") ? "INCOMPLETE" : "PASS";
   return {
     schema: SCHEMA,
     run: { started_at: meta.startedAt, finished_at: meta.finishedAt, invoked_by: meta.invokedBy, command: meta.command, harness_sha: meta.harnessSha },
@@ -407,11 +411,20 @@ export function buildReport(verdict: Verdict, meta: RunMeta): Report {
       threads: verdict.machine.threads,
       methods: verdict.machine.methods.map((m) => ({ ...m, gaps: methodGaps(m.method) })),
     },
-    verdict: { status: overallStatus, gate: verdict.gate, candidates: Object.fromEntries(candidates.map((c) => [c.candidate, { status: c.status, failing_packs: c.counts.failing_packs, failing_items: c.counts.failing_items }])) },
+    verdict: { status: overallStatus, gate: verdict.gate, candidates: Object.fromEntries(candidates.map((c) => [c.candidate, { status: c.status, failing_packs: c.counts.failing_packs, failing_items: c.counts.failing_items }])), waits: waits?.status ?? null },
     candidates,
+    waits,
     scope: {
-      measured: ["every pack the baseline ships, all of its rules enabled together, on its upstream fixtures and one pinned real-code corpus: wall, CPU and peak RSS, cold and warm; findings; completion; coverage"],
-      not_measured: ["user waits through hooks, daemon and CLI (W1–W8)", "a repository's whole enabled rule set across packs, and the rule work budget"],
+      measured: [
+        ...(candidates.length > 0 ? ["every pack the baseline ships, all of its rules enabled together, on its upstream fixtures and one pinned real-code corpus: wall, CPU and peak RSS, cold and warm; findings; completion; coverage"] : []),
+        ...(waits === null ? [] : [`user waits through hooks, daemon and CLI: ${[...new Set(waits.items.map((i) => i.wait))].join(", ")}`]),
+      ],
+      not_measured: [
+        ...(candidates.length > 0 ? [] : ["pack timing (§5.1): no pack runs in this directory"]),
+        ...(waits === null ? ["user waits through hooks, daemon and CLI (W1–W8)"] : waits.not_measured.map((n) => `${n.id}: ${n.reason}`)),
+        "a repository's whole enabled rule set across packs, and the rule work budget",
+        ...(waits === null ? [] : ["user waits on macOS and Windows: waits measure on Linux only"]),
+      ],
       known_gaps: KNOWN_GAPS,
     },
   };

@@ -5,6 +5,7 @@
 
 import { type CandidateItem, type CellItem, formatMs, type ItemStatus, type MetricItem, metricLabel, type PackItem, type Report, signedMs } from "./report-model.js";
 import { COST_NOTE, costRows, multipleColumn } from "./metric-report.js";
+import type { WaitItem, WaitMetricItem, WaitsSection } from "./waits-model.js";
 
 const CORPUS_LABEL = { fixtures: "Fixtures", real: "Real code" } as const;
 const TOP_RULES = 5;
@@ -249,6 +250,133 @@ function runSection(report: Report, baseline: string): string[] {
   return lines;
 }
 
+// ---------------------------------------------------------------- waits
+
+function waitFigure(m: WaitMetricItem, value: number | null): string {
+  if (value === null) return "–";
+  return m.unit === "rate" ? `${(value * 100).toFixed(1)}%` : formatMs(value);
+}
+
+function ciText(c: WaitMetricItem["first"]): string {
+  return c.ci === null ? "" : ` (CI ${c.ci.lo.toFixed(2)}–${c.ci.hi.toFixed(2)})`;
+}
+
+/** The scenario's figure for the table: the median, or p50 / p95 of a distribution, and its worst counted ratio. */
+function waitRow(item: WaitItem): string {
+  const metric = (name: string): WaitMetricItem | undefined => item.metrics.find((m) => m.metric === name);
+  const shown = item.kind === "single" ? [metric("median")] : [metric("p50"), metric("p95")];
+  const side = (pick: (m: WaitMetricItem) => number | null): string => shown.map((m) => (m === undefined ? "–" : waitFigure(m, pick(m)))).join(" / ");
+  const counted = item.metrics.filter((m) => m.gated && m.first.ratio !== null);
+  const worst = counted.sort((a, b) => (b.status === "fail" ? 1 : 0) - (a.status === "fail" ? 1 : 0) || (b.first.ratio ?? 0) - (a.first.ratio ?? 0))[0];
+  const ratio = worst === undefined ? "–" : `${worst.metric === "median" ? "" : `${worst.metric} `}${markedRatio(worst.first.ratio, worst.status)}${ciText(worst.first)}`;
+  const limits = item.metrics.filter((m) => m.limit !== null).map((m) => (m.limit!.value === null ? `${m.limit!.name}: not set` : `${m.limit!.name} ${formatMs(m.limit!.value)}: ${m.limit!.candidate_within === false ? "**over**" : "within"}`));
+  const status = `${statusWord(item.status)}${item.gated ? "" : " (report only)"}`;
+  return `| [\`${item.id}\`](#${item.id.replaceAll("/", "-")}) | ${item.title} | ${status} | ${side((m) => m.first.baseline)} | ${side((m) => m.first.candidate)} | ${ratio} | ${limits.join("; ") || "–"} | ${(item.hint ?? "").replaceAll("|", "\\|")} |`;
+}
+
+function waitDetails(item: WaitItem): string[] {
+  const notes = (["baseline", "candidate"] as const).flatMap((side) =>
+    Object.entries(item.notes[side]).map(([key, values]) => `- ${side} ${key.replaceAll("_", " ")}: ${values.map(String).join(", ")}`),
+  );
+  const failed = item.runs.failed.map((f) => `- ${f.side} run ${f.rep} failed: ${f.reason}`);
+  return [
+    `<a id="${item.id.replaceAll("/", "-")}"></a>`,
+    `**\`${item.id}\`: ${item.title}** · ${statusWord(item.status)}${item.gated ? "" : " (report only)"}`,
+    "",
+    `Entry point: ${item.entry}. Store: ${item.store}. Runs per side: ${item.runs.baseline} baseline, ${item.runs.candidate} candidate${item.runs.confirm > 0 ? `; ${item.runs.confirm} confirmation runs` : ""}. Page cache dropped: ${item.cache_dropped === null ? "not applicable (warm)" : item.cache_dropped ? "yes" : "**no** (no passwordless sudo)"}.`,
+    "",
+    "| Metric | Baseline | Candidate | Ratio | 95% CI | Events or runs | Status | Confirmation | Limit |",
+    "|---|---|---|---|---|---|---|---|---|",
+    ...item.metrics.map((m) => {
+      const c = m.first;
+      const confirm = m.confirm === null ? "–" : `${waitFigure(m, m.confirm.baseline)} → ${waitFigure(m, m.confirm.candidate)} ${times(m.confirm.ratio)}${ciText(m.confirm)}`;
+      const limit = m.limit === null ? "–" : m.limit.value === null ? `${m.limit.name}: not set` : `${formatMs(m.limit.value)}: baseline ${m.limit.baseline_within ? "within" : "over"}, candidate ${m.limit.candidate_within ? "within" : "**over**"}`;
+      const status = m.gated ? statusWord(m.status) : `${statusWord(m.status)} (reported)`;
+      return `| ${m.metric} | ${waitFigure(m, c.baseline)} | ${waitFigure(m, c.candidate)} | ${markedRatio(c.ratio, m.gated ? m.status : "pass")} | ${c.ci === null ? "–" : `${c.ci.lo.toFixed(2)}–${c.ci.hi.toFixed(2)}${c.within_spread ? " (holds the bar)" : ""}`} | ${c.n.baseline} / ${c.n.candidate} | ${status} | ${confirm} | ${limit} |`;
+    }),
+    "",
+    ...failed,
+    ...notes,
+    `- load (1 min) baseline ${item.load.baseline.join(", ") || "–"}; candidate ${item.load.candidate.join(", ") || "–"}; busiest sibling thread ${(item.sibling_busy_max * 100).toFixed(0)}%`,
+    `- reproduce: \`${item.reproduce}\``,
+    "",
+  ];
+}
+
+function waitsHeadline(w: WaitsSection): string {
+  const failing = w.items.filter((i) => i.gated && i.status === "fail");
+  const lead = failing.length === 0 ? "" : ` · ${failing.map((i) => `${i.id.replace(/^wait\//, "")}${i.hint === null ? "" : ` (${i.hint})`}`).join("; ")}`;
+  return `- **waits: ${w.status}** · ${w.counts.failing} of ${w.items.filter((i) => i.gated).length} scenarios fail${lead}`;
+}
+
+/** A note's values on one side as one figure: the median of its numbers, else its values joined. */
+function noteFigure(item: WaitItem | undefined, side: "baseline" | "candidate", key: string): string {
+  const values = item?.notes[side][key] ?? [];
+  const numbers = values.filter((v): v is number => typeof v === "number").sort((a, b) => a - b);
+  if (numbers.length > 0) return String(Math.round(numbers[(numbers.length - 1) >> 1]!));
+  return values.length > 0 ? values.map(String).join(", ") : "–";
+}
+
+/**
+ * One shape's steps as the step benchmarks print them, one row per step: the scan after it (W5) and the verdict on its
+ * edit (W1), each side's median, and the scan's findings and daemon CPU (medians; reported).
+ */
+function stepsTable(shape: string, items: readonly WaitItem[]): string[] {
+  const figure = (item: WaitItem | undefined, side: "baseline" | "candidate"): string => {
+    const value = item?.metrics[0]?.first[side];
+    return value == null ? "–" : formatMs(value);
+  };
+  const ratio = (item: WaitItem | undefined): string => (item === undefined ? "–" : markedRatio(item.metrics[0]?.first.ratio ?? null, item.status));
+  const steps = [...new Set(items.map((i) => i.step!))];
+  return [
+    `**Step benchmark, ${shape}**`,
+    "",
+    "| Step | Scan baseline | Scan candidate | Ratio | Verdict baseline | Verdict candidate | Ratio | Findings | Daemon CPU per scan |",
+    "|---|---|---|---|---|---|---|---|---|",
+    ...steps.map((step) => {
+      const scan = items.find((i) => i.step === step && i.wait === "W5");
+      const verdict = items.find((i) => i.step === step && i.wait === "W1");
+      const pair = (key: string, unit = ""): string => (["baseline", "candidate"] as const).map((side) => noteFigure(scan, side, key)).map((v) => (v === "–" ? v : `${v}${unit}`)).join(" / ");
+      return `| ${step} | ${figure(scan, "baseline")} | ${figure(scan, "candidate")} | ${ratio(scan)} | ${figure(verdict, "baseline")} | ${figure(verdict, "candidate")} | ${ratio(verdict)} | ${pair("findings")} | ${pair("daemon_cpu_ms", " ms")} |`;
+    }),
+    "",
+  ];
+}
+
+function waitsSection(w: WaitsSection): string[] {
+  const plain = w.items.filter((i) => i.shape === null);
+  const shapes = [...new Set(w.items.map((i) => i.shape).filter((s) => s !== null))];
+  const lines = [
+    `## User waits: ${w.status}`,
+    "",
+    `${w.counts.failing} of ${w.items.filter((i) => i.gated).length} counted scenarios fail${w.counts.noisy > 0 ? `; ${w.counts.noisy} pass only after confirmation (≈)` : ""}. Single waits compare each side's median; distributions show p50 / p95, and fail only when the bootstrap 95% CI of the ratio lies above the bar.`,
+    "",
+    "| Scenario | Wait | Status | Baseline | Candidate | Ratio | Limit | Biggest contributor |",
+    "|---|---|---|---|---|---|---|---|",
+    ...plain.map(waitRow),
+    "",
+    ...(shapes.length > 0 ? ["The step benchmarks' edit sequence (cold, warm, then each edit over the ones before it), through the product on both sides: a repository scan after each step (W5) and the verdict on each edit made through the hooks (W1).", ""] : []),
+    ...shapes.flatMap((shape) => stepsTable(shape, w.items.filter((i) => i.shape === shape))),
+  ];
+  if (w.not_measured.length > 0) lines.push(`<details><summary>${w.not_measured.length} waits not measured</summary>`, "", ...w.not_measured.map((n) => `- \`${n.id}\`: ${n.reason}`), "", "</details>", "");
+  const groups = [
+    ...[...new Set(plain.map((i) => i.wait))].map((wait) => ({ label: `${wait}: ${plain.find((i) => i.wait === wait)!.title.replace(/[,:].*$/, "")}`, items: plain.filter((i) => i.wait === wait) })),
+    ...shapes.map((shape) => ({ label: `Step benchmark, ${shape}`, items: w.items.filter((i) => i.shape === shape) })),
+  ];
+  for (const { label, items } of groups) {
+    const open = items.some((i) => i.gated && (i.status === "fail" || i.status === "noisy"));
+    lines.push(`<details${open ? " open" : ""}><summary>${label} · ${items.map((i) => `${i.scenario} ${statusWord(i.status)}`).join(", ")}</summary>`, "", ...items.flatMap(waitDetails), "</details>", "");
+  }
+  const inputs = [
+    ...Object.entries(w.inputs.repos).map(([name, r]) => `- repository ${name}: corpus ${r.corpus}, ${r.files} files, \`${r.sha256.slice(0, 12)}\`; packs ${r.packs.join(", ")}`),
+    ...Object.entries(w.inputs.sessions).map(([name, s]) => `- session ${name}: ${s.edits} edits synthesized from ${s.source}, \`${s.sha256.slice(0, 12)}\``),
+    `- limits: ${Object.entries(w.limits).map(([name, value]) => `${name} ${value === null ? "not set" : value}`).join("; ")}`,
+    ...w.method.map((m) => `- ${m}`),
+  ];
+  lines.push("<details><summary>Waits: inputs and method</summary>", "", ...inputs, "", "</details>", "");
+  return lines;
+}
+
 export function renderReport(report: Report): string {
   const sha = report.baseline.sha.slice(0, 10);
   // A ref that is the commit itself (a sha given as --baseline) is not repeated beside it.
@@ -258,14 +386,16 @@ export function renderReport(report: Report): string {
     `# Ship / no-ship: ${report.verdict.status}`,
     "",
     ...report.candidates.map(headline),
+    ...(report.waits === null ? [] : [waitsHeadline(report.waits)]),
     "",
-    `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline ${baseline} · gate: ${report.verdict.gate.join(", ")} · bar: every metric ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline, findings no worse, every run completes.`,
+    `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline ${baseline} · gate: ${[...report.verdict.gate, ...(report.waits === null ? [] : ["waits"])].join(", ")} · bar: every metric ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline, findings no worse, every run completes.`,
     "",
     // Runs measured with less than Linux's pinning and kernel caps say so before any figure is read.
     ...report.bar.methods.filter((m) => m.gaps.length > 0).map((m) => `Measured on ${m.method.platform} (${m.runs} runs): ${m.gaps.map((gap) => gap.split(":")[0]).join("; ")}; details under "Run, inputs and method".`),
     ...(report.bar.methods.some((m) => m.gaps.length > 0) ? [""] : []),
   ];
   for (const c of report.candidates) lines.push(...candidateSection(c));
+  if (report.waits !== null) lines.push(...waitsSection(report.waits));
   lines.push(...runSection(report, baseline));
   return `${lines.join("\n")}\n`;
 }

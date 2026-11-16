@@ -24,6 +24,16 @@
 //   node --import tsx scripts/ship/shipbar.ts verdict --baseline <dir> --out <dir> [--candidate <dir>] [--corpora <dir>]
 //       [--packs a,b] [--candidates ships,rr] [--gate ships,rr]
 //       report.json and report.md from the runs under <out>/runs (several runs' directories merged, say).
+//   node --import tsx scripts/ship/shipbar.ts waits --prepare --out <dir> [--record]
+//       the replayed session (scripts/ship/waits.json) built from this checkout's git history into <out>/sessions/,
+//       checked against its pinned hash (--record pins it). Runs where the history is; copy <out>/sessions over.
+//   node --import tsx scripts/ship/shipbar.ts waits --baseline <dir> --candidate <dir> --out <dir> --corpora <dir>
+//       [--waits W1,W2,W5/scan-warm] [--shapes full,one-file,one-rule] [--wait-runs 5] [--replays 2] [--confirm 3]
+//       [--cpus 8-11] [--session <file>] [--work /tmp/shipbar-waits] [--repo <waits.json repo>]
+//       A --repo without a replayed session (waits.json) runs the step benchmarks only (--waits W1,W5).
+//       W1 and W5 include the step benchmarks' edit sequence (waits-steps.ts) in each of --shapes (default full).
+//       Linux only: the user waits W1–W8 (waits.ts), through each checkout's built hooks, CLI and daemon (both need
+//       `npm run build:js` beside the native engine), then the report with a waits section.
 //
 // Exit status of run and verdict: 0 only when every candidate in --gate (default: every one in --candidates) passes.
 //
@@ -53,9 +63,13 @@ import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { cachedWorkload, type CellCost, cellCost, engineBinary, type Phases, readPhases, readWorkload, ruleSet } from "./metric.js";
-import { cpuList, LINUX_METHOD, type MachineInfo, methodCounts, openPlatform, type Platform, type RunMethod } from "./platform.js";
+import { busiest, cpuList, LINUX_METHOD, type MachineInfo, methodCounts, openPlatform, parseProcStat, type Platform, type RunMethod } from "./platform.js";
 import { buildReport, type RunMeta } from "./report-model.js";
 import { renderReport } from "./report.js";
+import { SCENARIOS, scenarioId } from "./waits-model.js";
+import { loadSession, prepareSession, type WaitsManifest } from "./waits-session.js";
+import { SHAPES } from "./waits-steps.js";
+import { readWaitRuns, runWaits, waitsSection } from "./waits.js";
 import {
   agreement,
   compareCompletion,
@@ -78,6 +92,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 /** The checkout this script is in: the default candidate. */
 const SELF = resolve(HERE, "..", "..");
 const MANIFEST = join(HERE, "corpora.json");
+const WAITS_MANIFEST = join(HERE, "waits.json");
 
 export const CANDIDATES = { ships: "the candidate's packs as they ship, through the product's path", rr: "the hand-written .rr rewrites, through rerail-engine run-policies" } as const;
 export type Candidate = keyof typeof CANDIDATES;
@@ -1053,7 +1068,7 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
 
 /** report.json and report.md; the exit status: 0 only when every gated candidate passes. */
 function writeReport(verdict: Verdict, out: string, meta: RunMeta): number {
-  const report = buildReport(verdict, meta);
+  const report = buildReport(verdict, meta, waitsSection(out));
   writeFileSync(join(out, "report.json"), `${JSON.stringify(report, null, 1)}\n`);
   writeFileSync(join(out, "report.md"), renderReport(report));
   for (const c of report.candidates) console.log(`shipbar: ${c.candidate}: ${c.status} (${c.counts.failing_items} failing items, ${c.counts.noisy_items} noisy)`);
@@ -1068,7 +1083,8 @@ function writeReport(verdict: Verdict, out: string, meta: RunMeta): number {
 function runMeta(out: string, packs: readonly string[], corpusKinds: readonly Corpus[]): RunMeta {
   const settingsPath = join(out, "settings.json");
   const recorded = existsSync(settingsPath) ? readJson<{ invokedBy?: string | null; command?: string; confirm?: number; drill?: number }>(settingsPath) : {};
-  const starts = packs.flatMap((pack) => corpusKinds.flatMap((corpus) => ["runs.jsonl", "confirm.jsonl", "rules.jsonl"].flatMap((log) => readRows(join(out, "runs", pack, corpus, log)).map((row) => row.started)))).sort();
+  const packStarts = packs.flatMap((pack) => corpusKinds.flatMap((corpus) => ["runs.jsonl", "confirm.jsonl", "rules.jsonl"].flatMap((log) => readRows(join(out, "runs", pack, corpus, log)).map((row) => row.started))));
+  const starts = [...packStarts, ...readWaitRuns(out).map((row) => row.started)].sort();
   return {
     startedAt: starts[0] ?? null,
     finishedAt: new Date().toISOString(),
@@ -1104,13 +1120,37 @@ function main(): void {
       build: { type: "boolean", default: false },
       record: { type: "boolean", default: false },
       "pack-data-cache": { type: "string" },
+      waits: { type: "string", default: "W1,W2,W3,W4,W5,W6,W7,W8" },
+      "wait-runs": { type: "string", default: "5" },
+      replays: { type: "string", default: "2" },
+      session: { type: "string" },
+      work: { type: "string", default: "/tmp/shipbar-waits" },
+      prepare: { type: "boolean", default: false },
+      shapes: { type: "string", default: "full" },
+      repo: { type: "string" },
     },
   });
   const command = positionals[0];
-  if (command !== "prepare" && command !== "run" && command !== "verdict") fail("usage: shipbar.ts prepare|run|verdict --baseline <ref|dir> --out <dir> [options] (see the header of scripts/ship/shipbar.ts)");
-  if (values.baseline === undefined || values.out === undefined) fail("--baseline and --out are required");
+  if (command !== "prepare" && command !== "run" && command !== "verdict" && command !== "waits") fail("usage: shipbar.ts prepare|run|verdict|waits --baseline <ref|dir> --out <dir> [options] (see the header of scripts/ship/shipbar.ts)");
+  const preparingSession = command === "waits" && values.prepare;
+  if ((values.baseline === undefined && !preparingSession) || values.out === undefined) fail("--baseline and --out are required");
   const out = resolve(values.out);
   mkdirSync(out, { recursive: true });
+  const waitsManifest = readJson<WaitsManifest>(WAITS_MANIFEST);
+  const repoName = values.repo ?? Object.values(waitsManifest.sessions)[0]!.repo;
+  // The repository's replayed session, if it has one: a repository without one runs the step benchmarks only.
+  const [sessionName, sessionSpec] = Object.entries(waitsManifest.sessions).find(([, s]) => s.repo === repoName) ?? [null, null];
+  const sessionPath = sessionName === null ? null : resolve(values.session ?? join(out, "sessions", `${sessionName}.json`));
+  if (preparingSession) {
+    if (sessionName === null) fail(`waits.json declares no session of repo ${repoName}`);
+    try {
+      const session = prepareSession(WAITS_MANIFEST, sessionName, SELF, sessionPath!, values.record);
+      console.log(`shipbar: session ${sessionName}: ${session.turns.length} turns, ${session.turns.reduce((sum, t) => sum + t.edits.length, 0)} edits, ${sessionPath}`);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+    return;
+  }
   const candidates = values.candidates.split(",").map((c) => c.trim()) as Candidate[];
   for (const c of candidates) if (!(c in CANDIDATES)) fail(`--candidates: no candidate ${c} (ships, rr)`);
   const gate = (values.gate?.split(",").map((c) => c.trim()) ?? candidates) as Candidate[];
@@ -1126,9 +1166,11 @@ function main(): void {
   const drill = count("drill", values.drill, 0);
   const drillCandidates = values["drill-candidates"].split(",").map((c) => c.trim()).filter((c) => c !== "") as Candidate[];
   for (const c of drillCandidates) if (!(c in CANDIDATES)) fail(`--drill-candidates: no candidate ${c} (ships, rr)`);
-  const platform = command === "run" ? requirePlatform(out) : undefined;
+  // Pack runs measure on every platform (platform.ts); the waits pin with taskset and drop the page cache: Linux only.
+  if (command === "waits" && process.platform !== "linux") fail(`waits measure on Linux only (taskset, the page cache drop); this is ${process.platform}`);
+  const platform = command === "run" || command === "waits" ? requirePlatform(out) : undefined;
 
-  const baseline = resolveBaseline(values.baseline, out, values["pack-data-cache"]);
+  const baseline = resolveBaseline(values.baseline!, out, values["pack-data-cache"]);
   const candidate: Checkout = { dir: resolve(values.candidate), sha: checkoutSha(resolve(values.candidate)) };
   const discovered = discoverPacks(baseline.dir, candidate.dir);
   const requested = values.packs?.split(",").map((p) => p.trim());
@@ -1145,6 +1187,54 @@ function main(): void {
     return;
   }
   const settingsBase = { baseline, candidate, corpora, out, runs };
+  if (command === "waits") {
+    const repo = waitsManifest.repos[repoName] ?? fail(`waits.json declares no repo ${repoName}`);
+    const corpusDir = join(corpora, "real", repo.corpus);
+    const corpus = hashTree(corpusDir);
+    if (corpus.sha256 !== readJson<Manifest>(MANIFEST).corpora[repo.corpus]?.sha256) fail(`real-code corpus ${repo.corpus} at ${corpusDir} does not match corpora.json: run prepare`);
+    for (const dir of [baseline.dir, candidate.dir]) {
+      for (const entry of ["dist/cli/cli.js", "dist/hosts/claude/claude-hook.js", "dist/ui"]) if (!existsSync(join(dir, entry))) fail(`${dir} has no ${entry}; run there: ${PRODUCT_BUILD} && npm run build:js`);
+    }
+    const shapes = values.shapes.split(",").map((s) => s.trim());
+    for (const shape of shapes) if (!(shape in SHAPES)) fail(`--shapes: no shape ${shape} (${Object.keys(SHAPES).join(", ")})`);
+    const scenarios = values.waits.split(",").flatMap((token) => {
+      const named = SCENARIOS.filter((s) => `${s.wait}/${s.scenario}` === token.trim());
+      // A wait named whole takes its step scenarios in --shapes only.
+      const ids = (named.length > 0 ? named : SCENARIOS.filter((s) => s.wait === token.trim() && (s.shape === undefined || shapes.includes(s.shape)))).map(scenarioId);
+      return ids.length > 0 ? ids : fail(`--waits: no wait or scenario ${token} (W1…W8, or W5/scan-warm)`);
+    });
+    let session = null;
+    if (sessionSpec !== null) {
+      try {
+        session = loadSession(sessionSpec, sessionName!, sessionPath!);
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
+    } else if (scenarios.some((id) => !/\/steps-/.test(id))) {
+      console.log(`shipbar: repo ${repoName} has no replayed session in waits.json: it runs the step benchmarks only`);
+      scenarios.splice(0, scenarios.length, ...scenarios.filter((id) => /\/steps-/.test(id)));
+      if (scenarios.length === 0) fail(`--waits names no step benchmark scenario, the only ones repo ${repoName} runs`);
+    }
+    let cpus: number[] = [];
+    let siblings: number[] = [];
+    try {
+      cpus = cpuList(values.cpus);
+      siblings = platform!.siblings(cpus);
+    } catch (error) {
+      fail(`--cpus ${values.cpus}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    mkdirSync(join(out, "machines"), { recursive: true });
+    writeFileSync(join(out, "machines", `${hostname()}.json`), JSON.stringify(platform!.machine(), null, 1));
+    runWaits(
+      {
+        checkouts: { baseline: { dir: baseline.dir, sha: baseline.sha }, candidate: { dir: candidate.dir, sha: candidate.sha } },
+        out, repoName, repo, corpusDir, corpus, sessionName, session, sessionSha256: sessionSpec?.sha256 ?? null,
+        cpus, siblings, runs: count("wait-runs", values["wait-runs"], 1), replays: count("replays", values.replays, 1), confirm, scenarios,
+        work: resolve(values.work), limits: waitsManifest.limits, reportOnly: waitsManifest.reportOnly, command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
+      },
+      { cpuTimes: () => parseProcStat(readFileSync("/proc/stat", "utf8")), busiest },
+    );
+  }
   if (command === "run") {
     if (!existsSync(join(corpora, "corpora.lock.json"))) prepareCorpora(baseline, packs, corpora, values.record);
     const lock = verifyCorpora(corpora, packs, corpusKinds);
@@ -1187,7 +1277,10 @@ function main(): void {
       }
     }
   }
-  process.exitCode = writeReport(computeVerdict(settingsBase, packs, candidateOnly, corpusKinds, candidates, gate), out, runMeta(out, packs, corpusKinds));
+  // A directory with waits and no pack runs reports the waits alone.
+  const packsMeasured = command === "run" || existsSync(join(out, "runs"));
+  const reported = packsMeasured ? candidates : [];
+  process.exitCode = writeReport(computeVerdict(settingsBase, packsMeasured ? packs : [], packsMeasured ? candidateOnly : [], corpusKinds, reported, packsMeasured ? gate : []), out, runMeta(out, packsMeasured ? packs : [], corpusKinds));
 }
 
 main();

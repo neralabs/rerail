@@ -91,5 +91,12 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   compile / evaluate phases (compile per rule, evaluate per rule per syntax node), the corpus's files, bytes, lines,
   tokens and engine node counts (`<out>/workload/`), and in the drill-down each rule's multiple of the pack's median
   rule.
+  `waits` (`waits.ts`, Linux) measures the waits a user experiences (W1–W8) on both checkouts through their built
+  Claude Code hook, CLI and daemon, each side in its own fresh home: a session replayed from public git history
+  (`waits-session.ts`, pinned in `waits.json`; `waits --prepare` builds it where the history is), first sessions,
+  scans, daemon and CLI start-up, an upgrade's first session, status while an audit runs, and the step benchmarks'
+  edit sequence in three shapes (`waits-steps.ts`). `waits-model.ts` judges them (distributions by the bootstrap CI of
+  the p50 and p95 ratio, single waits by the median, absolute limits from `waits.json`) into the report's `waits`
+  section, ids `wait/<W>/<scenario>`.
 - `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,
   `npm run upstream:bump`) the upstream workflows run (docs/upstream.md).
