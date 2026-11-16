@@ -848,19 +848,30 @@ pass.
   derived columns (0299's line of work).
 - **Done when**: these strata's planned work is within 2× of their work.
 
-### Q46. Under load, a Metal run loses findings (Native-and-GPU-strata's)
+### Q46. Under load, a Metal run loses findings (Native-and-GPU-strata's) — done
 
 - **Found** (2026-11-16, the light run over PostHog's `posthog/hogql`, cold, `RERAIL_DEVICE=metal`, at load 65–85):
   1,629 findings in 6 runs, but 1,562, 1,626, 1,432, 1,432, 1,426 and 1,432 in the others, with the engines of
   0da96155f and before as with this branch's latest. Every lost finding is `probe-len`'s, `sym_of(f,
   "builtins.len")` (symbol resolution), in `printer/`. At load 30–60, earlier the same day, every run gave 1,629.
   On the CPU binding at the same load: 1,629 in 3 runs of 3.
-- **Not yet tied to one stratum**: no single difference marks the bad runs. `xk_fz286_fl279_violation_3` ran on the
-  GPU in four of them but also in two good runs; the device's head rows outnumber their distinct rows in some good
-  runs and some bad ones; the matcher wave's fallback to the CPU (`BackendCapacity`) is in only two.
-- **Next**: dump `sym_of` and the relations it reads at the end of a good and a bad run, find the first relation
-  that differs, and the chunk and placement that made it.
-- **Done when**: ten loaded Metal runs give the CPU binding's findings.
+- **Where it starts**: `wstart`, the first relation that differs from a run with device waves off
+  (`RERAIL_DEVICE_WAVES=off`: 236,533 rows in every run, as on the CPU). In a bad run a few chunks' `wstart` came out
+  at 132 to 220 rows instead of 13,000 to 16,000. The inputs were complete (the same sizes as in a good run), and the
+  device made the right rows from what it read (each waved stratum run again alone, with the resident copies
+  dropped, gave the same rows).
+- **Cause**: the bad chunks' `wstart` ran on the device in a batch of its own (`run_here`: its driver could not wait
+  for the wave) while the thread's wave was still open. The relations kept resident (`resident`, `verdicts`, the
+  texts) take their sorts, indexes and text verdicts from the batch that first asks for them, often the wave, and
+  the cache hands them out at once. The batch run apart was committed and waited for before the wave was, so it read
+  its inputs' sorts and verdicts still unwritten. Load made it likelier: more strata ran apart (a job off the run's
+  thread, the wave's budget spent).
+- **Fixed** (2026-11-16): a batch other than the wave's (`setfix::device::direct_batch`: one apart, a rerun after
+  the wave, a recursive stratum's rounds) commits the thread's open wave first (`Batch::commit_open`). The queue is
+  one, so the wave's work runs first. Ten runs at load 62–94: 236,533 `wstart` rows and 1,629 findings each.
+  Test: `device::tests::a_stratum_run_apart_beside_an_open_wave_reads_what_the_wave_made`.
+- **Done** (2026-11-16): ten loaded Metal runs give the CPU binding's findings. The test fails with the commit
+  taken out (the run apart reads its verdicts unwritten).
 
 ### Q47. `keeps::observed_selectivities_price_a_copy_that_never_ran` fails (cost-classifier's to take)
 
