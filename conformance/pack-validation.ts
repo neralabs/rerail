@@ -759,10 +759,11 @@ function manifestFailures(directory: string, packJson: unknown, listed: boolean)
 /** Records a failure under `check`, and under `rule` (a pack.json rule id) for that rule's status. */
 type Fail = (check: PackCheckName, text: string, rule?: string) => void;
 
-/** What every check reads: the pack's directory and id, and where a failure goes. */
+/** What every check reads: the pack's directory and id, the options validatePack was given, and where a failure goes. */
 interface Validation {
   directory: string;
   id: string;
+  options: ValidatePackOptions;
   fail: Fail;
 }
 
@@ -956,10 +957,10 @@ function portRules(directory: string, loaded: LoadedPack, { pack, compiled }: Re
 }
 
 /** Check 4's scoring: the conformance runner's fixture tier over the ports supported yet, and its capability coverage. */
-async function scorePorts({ fail }: Validation, loaded: LoadedPack, { ruleOfPort, notSupported }: PortRules, fixtures: boolean): Promise<void> {
+async function scorePorts({ options, fail }: Validation, loaded: LoadedPack, { ruleOfPort, notSupported }: PortRules): Promise<void> {
   const report = await runPack(loaded, {
     rules: loaded.pack.rules.filter(port => !notSupported.has(port.id)).map(port => port.id),
-    fixtures,
+    fixtures: options.fixtures ?? true,
     samples: false,
     date: new Date().toISOString().slice(0, 10),
   });
@@ -1033,10 +1034,10 @@ function checkPortSuppression({ directory, fail }: Validation, port: Port, exemp
  * Check 4: ports. The fixture tier of the conformance runner, with rules not supported yet skipped, plus capability
  * coverage and each port's suppression comments.
  */
-async function checkPorts(validation: Validation, read: ReadPack, loaded: LoadedPack | undefined, fixtures: boolean): Promise<void> {
+async function checkPorts(validation: Validation, read: ReadPack, loaded: LoadedPack | undefined): Promise<void> {
   if (loaded === undefined) return;
   const ports = portRules(validation.directory, loaded, read);
-  await scorePorts(validation, loaded, ports, fixtures);
+  await scorePorts(validation, loaded, ports);
   // A port of a tool that honours its own suppression comments names the upstream rule in that suppression on every
   // violation, unless conformance.json exempts it with a reason; an exemption the port does not need is stale. A
   // port that also honours Oxlint's comments does so on the same violations as ESLint's, and one whose ESLint rule
@@ -1172,7 +1173,8 @@ function checkLicences(validation: Validation, sources: Sources): void {
  * Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it unless it is
  * private (never published, so set-up must not fetch it from npm).
  */
-function checkManifest({ directory, fail }: Validation, packJson: unknown, listed: boolean): void {
+function checkManifest({ directory, options, fail }: Validation, packJson: unknown): void {
+  const listed = options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY;
   for (const failure of manifestFailures(directory, packJson, listed)) fail("manifest", failure);
 }
 
@@ -1213,18 +1215,18 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     checks[check].push(text);
     if (rule !== undefined) ruleFailures.set(rule, [...(ruleFailures.get(rule) ?? []), text]);
   };
-  const validation: Validation = { directory, id, fail };
+  const validation: Validation = { directory, id, options, fail };
   const read = checkRules(validation);
   const loaded = loadPorts(validation);
   // A rule's status names its first failure, and an own rule's example failures come before its check 2 suppression
   // failure, so check 3 records its failures first.
   checkExamples(validation, read, loaded);
   checkProof(validation, read.pack, loaded);
-  await checkPorts(validation, read, loaded, options.fixtures ?? true);
+  await checkPorts(validation, read, loaded);
   const sources = readSources(directory);
   checkPackage(validation, read.pack, sources);
   checkLicences(validation, sources);
-  checkManifest(validation, read.packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY);
+  checkManifest(validation, read.packJson);
   checkText(validation, read.pack);
   return { id, directory, checks, rules: ruleResults(read, ruleFailures), pass: Object.values(checks).every(failures => failures.length === 0) };
 }
