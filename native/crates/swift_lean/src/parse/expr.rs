@@ -61,12 +61,18 @@ enum Op {
 impl<'a> P<'a> {
     /// An expression (`_expression`), at the top context.
     pub(super) fn expression(&mut self) -> R<()> {
-        self.expr(TOP)
+        let calls = std::mem::take(&mut self.hack_calls);
+        let r = self.expr(TOP);
+        self.hack_calls = calls;
+        r
     }
 
     /// An expression, its nodes given `field`.
     pub(super) fn expression_f(&mut self, field: u8) -> R<()> {
-        self.expr_f(TOP, field)
+        let calls = std::mem::take(&mut self.hack_calls);
+        let r = self.expr_f(TOP, field);
+        self.hack_calls = calls;
+        r
     }
 
     pub(super) fn expr_f(&mut self, cx: Cx, field: u8) -> R<()> {
@@ -172,6 +178,13 @@ impl<'a> P<'a> {
                     let p = if cx.hack { 0 } else { -2 };
                     if !cx.shifts(p) {
                         return Ok(());
+                    }
+                    if cx.hack {
+                        // Seen: a chain of `&&` over nine calls nests right, then left.
+                        self.hack_calls += 1;
+                        if self.hack_calls > 6 {
+                            return self.refuse();
+                        }
                     }
                     let n = self.t.wrap(m, K::CallExpression, f::NONE);
                     self.call_suffix(true, cx.split)?;
@@ -490,12 +503,20 @@ impl<'a> P<'a> {
                         w::AWAIT => {
                             let n = self.open(K::AwaitExpression);
                             self.tk(K::TAwait)?;
-                            self.expr_f(AWAIT, f::EXPR)?;
+                            self.expr_f(Cx { split: cx.split, ..AWAIT }, f::EXPR)?;
                             self.close(n);
                             return Ok(());
                         }
                         w::CASE | w::DEFAULT | w::ELSE | w::IN | w::WHERE | w::CATCH | w::LET | w::VAR | w::FUNC | w::RETURN | w::IMPORT => {
                             return self.refuse();
+                        }
+                        w::UNSAFE if !self.peek_at(1).nl && matches!(self.kind_at(1), T::Name | T::LParen | T::Int | T::Str | T::LBracket) => {
+                            // `unsafe x`: its operand as `try`'s.
+                            let n = self.open(K::UnsafeExpression);
+                            self.tk(K::TUnsafe)?;
+                            self.expr_f(Cx { split: cx.split, ..TRY }, f::EXPR)?;
+                            self.close(n);
+                            return Ok(());
                         }
                         w::CONSUME | w::COPY | w::EACH | w::REPEAT | w::UNSAFE | w::DISCARD if self.kind_at(1) == T::Name && !self.peek_at(1).nl => {
                             return self.refuse();
@@ -515,16 +536,22 @@ impl<'a> P<'a> {
                             self.close(u);
                             return Ok(());
                         }
-                        if self.kind_at(close + 1) == T::LParen && self.adjacent(close) {
+                        let args = self.kind_at(close + 1) == T::LParen && self.adjacent(close);
+                        let lambda = self.kind_at(close + 1) == T::LBrace && !self.no_lambda;
+                        if args || lambda {
+                            // `Name<…>(…)`, `Name<…> { … }`: a constructor, its trailing closure in
+                            // its suffix.
                             let n = self.open(K::ConstructorExpression);
                             let u = self.open_field(K::UserType, f::CONSTRUCTED_TYPE);
                             self.ident_as(K::TypeIdentifier, f::NONE)?;
                             self.type_arguments()?;
                             self.close(u);
                             let s = self.open(K::ConstructorSuffix);
-                            self.value_arguments()?;
-                            if self.peek() == T::LBrace && !self.no_lambda {
-                                return self.refuse();
+                            if args {
+                                self.value_arguments()?;
+                            }
+                            if self.peek() == T::LBrace && !self.no_lambda && !(args && self.ends()) {
+                                self.lambda_literal()?;
                             }
                             self.close(s);
                             self.close(n);
@@ -1133,7 +1160,8 @@ impl<'a> P<'a> {
                         return None;
                     }
                 }
-                T::Name | T::Comma | T::Colon | T::Arrow | T::Dot | T::Question | T::Bang | T::Lt | T::Gt | T::At | T::Eq | T::Amp => {}
+                T::Name if !t.tick && matches!(t.word, w::LET | w::VAR | w::FOR | w::IF | w::RETURN | w::GUARD | w::SWITCH | w::WHILE) => return None,
+                T::Name | T::Comma | T::Colon | T::Arrow | T::Dot | T::Question | T::Bang | T::Lt | T::Gt | T::At | T::Amp => {}
                 _ => return None,
             }
             k += 1;

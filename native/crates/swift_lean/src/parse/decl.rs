@@ -124,8 +124,11 @@ impl<'a> P<'a> {
         }
         self.user_type()?;
         if self.peek() == T::LParen && !self.touching() && !matches!(self.t_text_last(), b"escaping" | b"Sendable" | b"autoclosure") {
-            // `@A (…)`: arguments or a function type's parameters, as the GLR decides (both seen).
-            return self.refuse();
+            // `@A (…)`: a function type's parameters where `->` follows them (seen), else
+            // arguments or parameters as the GLR decides (both seen with `async throws ->`).
+            if !self.arrow_after_parens(0) {
+                return self.refuse();
+            }
         }
         if self.peek() == T::LParen && self.touching() {
             self.tk(K::TLParen)?;
@@ -165,13 +168,14 @@ impl<'a> P<'a> {
             return self.expression();
         }
         if self.peek() == T::Name && matches!(self.kind_at(1), T::Name | T::Int | T::Real) && !self.peek_at(1).nl {
-            // Names, then a version.
+            // Names, then a version (none: tree-sitter puts a missing one there).
             while self.peek() == T::Name {
                 self.simple_identifier()?;
             }
-            if matches!(self.peek(), T::Int | T::Real) {
-                self.version_numbers()?;
+            if !matches!(self.peek(), T::Int | T::Real) {
+                return self.refuse();
             }
+            self.version_numbers()?;
             return Ok(());
         }
         if self.peek() == T::Star {
@@ -271,6 +275,7 @@ impl<'a> P<'a> {
             }
             Decl::Subscript => self.subscript_rest()?,
             Decl::Associatedtype => self.associatedtype_rest()?,
+            Decl::Operator => self.operator_rest()?,
             _ => return self.refuse(),
         }
         self.close(n);
@@ -359,6 +364,25 @@ impl<'a> P<'a> {
         }
         self.close(n);
         Ok(())
+    }
+
+    /// Whether `->` follows the parenthesized list opening `k` tokens ahead.
+    fn arrow_after_parens(&mut self, k: usize) -> bool {
+        let (mut d, mut j) = (0, k);
+        loop {
+            match self.kind_at(j) {
+                T::LParen | T::LBracket => d += 1,
+                T::RParen | T::RBracket => {
+                    d -= 1;
+                    if d == 0 {
+                        return self.kind_at(j + 1) == T::Arrow;
+                    }
+                }
+                T::Eof => return false,
+                _ => {}
+            }
+            j += 1;
+        }
     }
 
     /// The text of the last token read.
@@ -686,7 +710,7 @@ impl<'a> P<'a> {
             T::Custom => {
                 self.leaf(K::CustomOperator, f::NAME)?;
             }
-            t if super::punct(t).is_some() && !matches!(t, T::LParen | T::Lt) => {
+            t if super::punct(t).is_some() && (!matches!(t, T::LParen | T::Lt) || t == T::Lt && self.kind_at(1) == T::LParen) => {
                 let k = super::punct(t).expect("an operator");
                 if t == T::Bang {
                     self.leaf(K::Bang, f::NAME)?;
@@ -815,6 +839,39 @@ impl<'a> P<'a> {
         self.computed_property(f::NONE)
     }
 
+    /// `prefix|infix|postfix operator OP (: group)?`.
+    fn operator_rest(&mut self) -> R<()> {
+        let k = match self.word() {
+            w::PREFIX => K::TPrefix,
+            w::INFIX => K::TInfix,
+            _ => K::TPostfix,
+        };
+        self.tk(k)?;
+        self.kw(w::OPERATOR, K::TOperator)?;
+        match self.peek() {
+            T::Custom => {
+                self.leaf(K::CustomOperator, f::NONE)?;
+            }
+            T::Bang => {
+                self.leaf(K::Bang, f::NONE)?;
+            }
+            t => match super::punct(t) {
+                Some(k) if !matches!(t, T::LParen | T::LBrace | T::LBracket | T::Colon | T::Comma) => {
+                    self.tk(k)?;
+                }
+                _ => return self.refuse(),
+            },
+        }
+        if self.peek() == T::Colon {
+            self.tk(K::TColon)?;
+            self.simple_identifier()?;
+        }
+        if self.peek() == T::LBrace {
+            return self.refuse();
+        }
+        Ok(())
+    }
+
     fn typealias_rest(&mut self) -> R<()> {
         self.kw(w::TYPEALIAS, K::TTypealias)?;
         self.ident_as(K::TypeIdentifier, f::NAME)?;
@@ -922,6 +979,10 @@ impl<'a> P<'a> {
                     }
                     T::Hash if p.directive_next() => {
                         p.directive()?;
+                        continue;
+                    }
+                    T::Hash if p.diagnostic_next() => {
+                        p.diagnostic()?;
                         continue;
                     }
                     _ => {}
@@ -1165,7 +1226,8 @@ impl<'a> P<'a> {
                 self.ty_f(f::NONE)?;
             }
             T::Dot => self.case_pattern()?,
-            T::LParen if self.tuple_pattern_ahead() => self.tuple_pattern()?,
+            // `(…)`: a tuple pattern, whatever is in it (never a tuple expression, seen).
+            T::LParen => self.tuple_pattern()?,
             _ => {
                 let lambda = std::mem::replace(&mut self.no_lambda, true);
                 let r = self.expr(TOP);
@@ -1185,29 +1247,6 @@ impl<'a> P<'a> {
         }
         self.t.unmark(m);
         Ok(())
-    }
-
-    /// Whether the `(` next starts a tuple pattern: a binding (`let`, `var`) or `_` in it.
-    fn tuple_pattern_ahead(&mut self) -> bool {
-        let mut k = 1;
-        let mut d = 1;
-        loop {
-            let t = self.peek_at(k);
-            match t.kind {
-                T::LParen => d += 1,
-                T::RParen => {
-                    d -= 1;
-                    if d == 0 {
-                        return false;
-                    }
-                }
-                T::Eof => return false,
-                T::Name if !t.tick && matches!(t.word, w::LET | w::VAR | w::UNDERSCORE) => return true,
-                T::Dot if d == 1 && matches!(self.kind_at(k - 1), T::LParen | T::Comma) => return true,
-                _ => {}
-            }
-            k += 1;
-        }
     }
 
     /// `_case_pattern` (hidden): `.name` and a tuple pattern.
@@ -1232,13 +1271,23 @@ impl<'a> P<'a> {
         match self.peek() {
             T::Name if matches!(self.word(), w::LET | w::VAR) => {
                 self.value_binding_pattern(f::NONE)?;
-                self.no_expr_pattern(true)?;
+                // `case let .failure(e)`.
+                if self.peek() == T::Dot {
+                    self.case_pattern()?;
+                } else {
+                    self.no_expr_pattern(true)?;
+                }
             }
             T::Name if self.is_word(w::CASE) => {
                 self.tk(K::TCase)?;
                 if matches!(self.word(), w::LET | w::VAR) {
                     self.value_binding_pattern(f::NONE)?;
-                    self.no_expr_pattern(true)?;
+                    // `case let .failure(e)`.
+                    if self.peek() == T::Dot {
+                        self.case_pattern()?;
+                    } else {
+                        self.no_expr_pattern(true)?;
+                    }
                 } else {
                     self.case_pattern()?;
                 }

@@ -48,6 +48,9 @@ pub(crate) struct P<'a> {
     u_end: u32,
     /// A `!` right after `try`: its `bang` holds the `!` token.
     try_bang: bool,
+    /// Calls read as binary operators' right operands in the expression open: past a few, tree-sitter's
+    /// GLR versions are pruned and the nesting it keeps is not read.
+    hack_calls: u32,
     /// The last semicolon asked: (from, flags, answer, where the scanner was last asked).
     semi_memo: (u32, u8, Semi),
 }
@@ -78,6 +81,7 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             if_true: false,
             u_end: 0,
             try_bang: false,
+            hack_calls: 0,
             semi_memo: (u32::MAX, 0, Semi::No),
         };
         if let Err(r) = p.source_file() {
@@ -494,6 +498,21 @@ impl<'a> P<'a> {
         Ok(())
     }
 
+    /// Whether `#error`, `#warning` or `#sourceLocation` is next.
+    fn diagnostic_next(&mut self) -> bool {
+        self.peek() == T::Hash && self.adjacent(0) && matches!(self.word_at(1), w::ERROR | w::WARNING | w::SOURCELOCATION)
+    }
+
+    /// `diagnostic`: `#` and the rest of its line (the grammar's `/error([^\r\n]*)/`).
+    fn diagnostic(&mut self) -> R<()> {
+        let t = self.bump()?;
+        let e = self.lx.blocks.eol(t.end as usize);
+        self.t.leaf(K::Diagnostic, f::NONE, t.start, e as u32);
+        self.relex_at(e);
+        self.t.last_end = e as u32;
+        Ok(())
+    }
+
     /// Whether a directive (`#if`, …) is next: it needs no semicolon before it.
     fn directive_next(&mut self) -> bool {
         self.peek() == T::Hash && matches!(self.word_at(1), w::IF | w::ELSEIF | w::ELSE | w::ENDIF) && self.adjacent(0)
@@ -588,6 +607,9 @@ impl<'a> P<'a> {
 
     fn statement_inner(&mut self, top: bool) -> R<()> {
         let t = self.tok();
+        if self.diagnostic_next() {
+            return self.diagnostic();
+        }
         match t.kind {
             T::Hash if matches!(self.word_at(1), w::IF | w::ELSEIF | w::ELSE | w::ENDIF) && self.adjacent(0) => return self.directive(),
             T::Name if !t.tick => {
