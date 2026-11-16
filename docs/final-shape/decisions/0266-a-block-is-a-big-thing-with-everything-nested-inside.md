@@ -513,6 +513,130 @@ Four 256 MiB slabs recycled over 40 runs cost 2.2 ms a run, an 8 MiB write inclu
 never needs a fresh wrap. A block outlives its slab only by being frozen to a file (the journal) or copied into a
 new full block (a roll-up), both `memcpy`.
 
+### 13. What a frozen relation costs, and what was cut
+
+`paces` now packs every block of a cold run and breaks the in-place form's bytes down by part. At first, at 300
+documents, an in-place relation held 56.7 bytes a row of phase facts and 92 of chunk relations, against about
+3.3 and 13.3 packed. Three changes to the in-place form, each checked by every run against the oracle, the
+GPU join and the packed form:
+
+| Part (B/row, phase facts / chunk relations) | Before | After |
+|---|---|---|
+| Hash buckets: `{hash u64, start, len}` at up to 4 slots a key | 29.2 / 49.3 | 3.2 / 6.2: bucket offsets, 4 bytes a bucket, about one key a bucket; no hash kept (a reader checks the key) |
+| Order array | 4.0 / 4.0 | 0: freeze sorts the rows in place, so an own row's id is its place in the order |
+| Dead bits | 0.1 / 0.1 | 0 in a full relation: only a delta's kills of its base remain |
+| Index rows | 7.5 / 4.1 | 3.5 / 4.0: no index for a key that leads the order (a binary search finds its range) |
+| Total, in place | 56.7 / 92.0 | 22.6 / 44.5 |
+
+At 3,000 documents (8.1M nodes): phase facts are 19.2 B/row in place and 3.5 packed, chunk relations 43.7 and
+13.2, and document arrays 10.0 bytes a node plain and 2.7 packed. Sorting in place also made freeze cheaper (P1's
+first stratum: 4.58 G instructions to 2.66 G), and the cold run fell from 17.6 G to 14.9 G.
+
+Against setfix (§12's test, rerun): the block for 1M rows is 17.3 MB, where it was 28.4 MB and setfix's heap is
+about 34 MB. Its freeze is 1.66 G instructions, where it was 1.32 G and setfix's close is 0.74 G: sorting in
+place costs a pass over the columns, which the order array it replaces did not. An edit is 0.30 M instructions
+against setfix's 7.3 M.
+
+Sorting in place found a bug: the dead bits a delta keeps for its base end in a word whose high bits are its own
+rows' ids, and those ids moved. That word's own bits are now cleared.
+
+Left to cut, by size:
+
+- **Chunk room** (4.8 / 10.2 B/row): the unwritten part of the last doubling chunk. On the CPU it is address
+  space, resident only to the page. In a pinned slab it is held. Four chunks per doubling would bound it at an
+  eighth. Packing removes it.
+- **8-byte columns** (most of chunk relations' 23.4 B/row of values): names held as 64-bit values. As atoms they
+  are 4 bytes.
+- **A freeze's scratch** (about 45 MB of heap per 1M rows): from a scratch slab of the pool instead.
+- **`RUNS` columns read by position** pay a binary search a row. Scans use `for_each`; probes need a run cursor.
+- **Probe instructions.** A bucket now holds every key whose hash falls in it, so a probe checks more rows:
+  setfix's 1M probes cost 0.75 G instructions, a block's 0.90 G with the old buckets and 1.23 G with bucket
+  offsets. Twice the buckets cut that 12% for 1.1 B/row on phase facts, but 6 B/row on chunk relations, whose
+  keys are nearly unique. So it is one bucket a key, and the doubling is a setting per index, for one probed hot.
+  A probe of a leading key by binary search (1.77 G per 1M) costs a third more than a bucket's: the search reads
+  `Rows::get` per step. Searching each chunk's slice would cut that.
+
+### 14. Frozen in place, packed, or both
+
+**Packed** (`packed.rs`) uses MLDB's `RawMappedIntTable` choices, made once at freeze and by exact size. Each
+column is one of:
+
+- `CONST`: no bytes;
+- `PACK`: `v - min` in the bits it needs;
+- `RUNS`: run values and run starts, each packed;
+- `LINE`: residuals from a fitted line (MLDB's `Predictor`).
+
+The rows are in canonical order. A key that leads the order is a range found by binary search. Any other key has
+a permutation index: its sorted distinct values, where each value's positions start, and the positions, all
+packed. The block is made exactly its size. MLDB's factored packing (up to a third smaller at some widths) is not
+used here.
+
+On 1M rows (`examples/encodings.rs`, profiling build):
+
+| | In place (sorted) | Packed |
+|---|---|---|
+| Bytes | 19.0 B/row | 8.0 B/row (2.6 MB of it the index on column 1) |
+| Making it | freeze: 1.67 G insn | straight from open rows: 1.38 G; from the in-place form: 0.64 G more |
+| 1M probes, column 1 | 1.30 G insn | 1.51 G (+16%) |
+| 1M probes, column 0 (leading) | 1.76 G | 2.01 G (+14%) |
+| Scan of a column | 61 M | 33 M (`for_each`) |
+
+On the GPU (64M values under 2^18, buffers kept, warm):
+
+| | Plain (4 bytes) | Packed (18 bits) |
+|---|---|---|
+| Scan, a value a load | 0.74 ms | 1.00 ms |
+| Scan, bits compiled in, 32 values a thread from `bits` aligned words | | 0.77 ms |
+| Gather of 16M scattered values | 2.52 ms | 2.11 ms |
+
+- **Decoding is free on the GPU only when it is written for the GPU.** 64-bit shifts are emulated, so decoders
+  use 32-bit words. The bit width is a function constant, the shifts unroll, and each word is loaded once. A
+  column the GPU reads is laid out by groups at freeze, a target choice made by the compiler, as record layouts
+  are. Then a packed scan runs at the plain one's speed in 56% of the memory. A gather, bound by latency and cache,
+  is faster packed.
+- **On the CPU, packed costs about 15% more instructions to probe and less to scan.**
+
+**The two coexist, at no cost in ids.** A full relation frozen in place is sorted, so its row ids are the packed
+form's positions. `paces` checks this for every relation. A delta's kills name the same rows whichever form its
+base is in. So:
+
+- **In place, inside a run.** A stratum's relations freeze where they were written: in the run's slab, where the
+  GPU writes fixed-width slots. They are readable at once, with no copy and plain loads. A delta stays in place;
+  it is small.
+- **Packed, when a block leaves the run:** kept, journaled, rolled up, or put in a slab for many later reads. The
+  packing costs 0.64 G instructions per 1M rows from the in-place form. At 3,000 documents, packing every block
+  costs about a third of the cold run (4.6 G of 14.9 G), so it runs once the run's answer is out. A block known to
+  leave (a chunk's file-local facts, kept for the next run) packs straight from its open rows, skipping the
+  in-place freeze: 1.38 G against 1.67 G.
+- **Reading across forms** is next: a view over a packed base and an in-place delta. Liveness and kills work
+  unchanged by the ids above; get and probe dispatch on the base's form.
+
+### 15. The pool, generalized
+
+`accel::gpu::shared`'s pool now holds blocks:
+
+- **Size classes** are powers of two to 1 MiB, then four a doubling: at most a quarter wasted where it was half.
+- **Two idle allowances:** 32 MB for buffers under 16 MiB, and slabs (16 MiB and up) to a quarter of the Metal
+  budget. Past an allowance, the least recently returned buffer goes first. Before, a returned buffer past 32 MB
+  was released, so a large slab was never kept.
+- **`Pooled::after(cmd)`** returns a lease when its command buffer completes. **`Pooled::grow`** moves a lease's
+  contents into a larger one.
+- **`lease_block(kind, bytes)`** makes a block in a pooled slab (`Block::over`). It binds by the slab's own
+  buffer, which a command has used before once it is recycled, so no dispatch maps it again. A recycled slab
+  holds the last block's bytes, so the block zeroes each allocation as it makes it. Freezing does not protect a
+  slab's pages, since they are the pool's.
+- **`grow_block`** moves an open block into a larger slab by one copy; its references are self-relative.
+
+Any other block keeps the device buffer it was first bound with (`Block::gpu_buffer`). It remakes it, twice as
+long, only when the block outgrows it, so no block is wrapped afresh per dispatch. Tests: the classes; a slab
+recycled with its buffer and read fresh; a lease returned at its command's completion; and a block grown into a
+larger slab that reads the same.
+
+`rerail_metal::slabs`, the tapes' residency, is the third keeper of GPU memory: anonymous slabs, each with one
+kept no-copy buffer, retired least-recently-used under a share of the Metal budget. Its slabs are append-only and
+keyed by content, where the pool's are recycled whole. Moving it onto this pool would make one budget and one
+eviction order for all GPU memory. That is its own step.
+
 ## Path
 
 Each step leaves the engine working and is measured in retired instructions against the access it replaces:

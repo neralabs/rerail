@@ -5,11 +5,19 @@
 //!   (`metal_sort`, `metal_rows`) commit to the same queue, so their command buffers are ordered with each other.
 //! - **Pipelines** by a key the caller chooses (a kernel's name and its variant): compiled once, found without
 //!   hashing their source.
-//! - **A pool of shared buffers** by size class: powers of two from 16 KiB, as decision 0039's blocks. A buffer a
-//!   command has used is resident already, so a pooled one costs neither its creation nor its first mapping (about
-//!   6 µs against 0.1 µs, measured in 0095). At most `IDLE_LIMIT` bytes are kept idle. A lease goes back only when
-//!   it is dropped, and its holder drops it once every command buffer that reads it has completed: the host's next
-//!   write into it is not ordered after a GPU read.
+//! - **A pool of shared buffers** by size class: powers of two from 16 KiB to 1 MiB, then four classes a doubling
+//!   (1, 1¼, 1½, 1¾ of a power of two), so a large lease wastes at most a quarter. A buffer a command has used is
+//!   resident already, so a pooled one costs neither its creation nor its first mapping: about 6 µs against 0.1 µs
+//!   for a small one (0095), and about 20 ms a GiB for a large one (0266 §12), which is why large buffers are kept.
+//! - **Idle allowances.** Buffers under `SLAB_MIN` share `IDLE_LIMIT`; slabs (`SLAB_MIN` and up) share their own,
+//!   a quarter of the Metal budget unless set (`set_slab_idle_limit`). Past an allowance, the least recently
+//!   returned idle buffers are released first.
+//! - **Returning.** A lease goes back when it is dropped. Its holder drops it once every command buffer that reads
+//!   it has completed (the host's next write into it is not ordered after a GPU read), or hands it to a command
+//!   buffer (`Pooled::after`), which returns it when the command buffer completes.
+//! - **Blocks in slabs** (`lease_block`): a block (`rerail_blocks`) whose memory is a pooled buffer, bound to the
+//!   device by that buffer: pinned once, recycled run after run. A block that outgrows its slab moves to a larger
+//!   one by one copy (`grow_block`); its references are self-relative, so the copy is the move.
 //! - **The guard.** A function the engine sets to its launch budget. Every submission checks it first, on the
 //!   submitting thread, so relational work is refused by the same budget as the rest of the engine's GPU work.
 //!
@@ -22,8 +30,24 @@ use std::sync::{Mutex, OnceLock};
 
 /// The smallest size class.
 const SMALLEST: usize = 16 << 10;
-/// The most bytes the pool keeps idle (decision 0039).
+/// The most bytes of buffers under `SLAB_MIN` the pool keeps idle (decision 0039).
 const IDLE_LIMIT: usize = 32 << 20;
+/// The smallest buffer counted as a slab: kept idle under the slab allowance.
+pub const SLAB_MIN: usize = 16 << 20;
+/// The slab allowance when set (`set_slab_idle_limit`); 0: a quarter of the Metal budget.
+static SLAB_IDLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Sets how many bytes of idle slabs the pool keeps.
+pub fn set_slab_idle_limit(bytes: usize) {
+    SLAB_IDLE.store(bytes.max(1), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn slab_idle_limit() -> usize {
+    match SLAB_IDLE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => crate::budget::metal() / 4,
+        b => b,
+    }
+}
 /// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
 static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -103,9 +127,12 @@ pub fn pipeline<E>(key: &str, make: impl FnOnce() -> Result<ComputePipelineState
 
 #[derive(Default)]
 struct Pool {
-    idle: HashMap<usize, Vec<Buffer>>,
-    /// Bytes idle.
+    /// Idle buffers by class, each with when it came back (a count), the oldest first.
+    idle: HashMap<usize, Vec<(u64, Buffer)>>,
+    /// Bytes idle: all, and in slabs.
     held: usize,
+    held_slabs: usize,
+    returned: u64,
     /// Leases made and served from the pool, for the profile.
     made: u64,
     reused: u64,
@@ -117,7 +144,44 @@ fn pool() -> &'static Mutex<Pool> {
 }
 
 fn class(bytes: usize) -> usize {
-    bytes.max(SMALLEST).next_power_of_two()
+    let bytes = bytes.max(SMALLEST);
+    if bytes <= 1 << 20 {
+        return bytes.next_power_of_two();
+    }
+    // Four classes a doubling: p, 1¼p, 1½p, 1¾p (p a power of two), each a multiple of 16 KiB.
+    let p = 1usize << (usize::BITS - 1 - bytes.leading_zeros());
+    (4..=8).map(|q| p / 4 * q).find(|&c| c >= bytes).expect("2p covers it")
+}
+
+impl Pool {
+    /// Releases the least recently returned idle buffers until both allowances hold.
+    fn trim(&mut self) {
+        let slab_limit = slab_idle_limit();
+        while self.held - self.held_slabs > IDLE_LIMIT || self.held_slabs > slab_limit {
+            let slabs = self.held_slabs > slab_limit;
+            let oldest = self
+                .idle
+                .iter()
+                .filter(|(c, v)| !v.is_empty() && (**c >= SLAB_MIN) == slabs)
+                .min_by_key(|(_, v)| v[0].0)
+                .map(|(c, _)| *c);
+            let Some(c) = oldest else { break };
+            self.idle.get_mut(&c).unwrap().remove(0);
+            self.held -= c;
+            if c >= SLAB_MIN {
+                self.held_slabs -= c;
+            }
+        }
+    }
+
+    fn take(&mut self, class: usize) -> Option<Buffer> {
+        let b = self.idle.get_mut(&class).and_then(Vec::pop)?.1;
+        self.held -= class;
+        if class >= SLAB_MIN {
+            self.held_slabs -= class;
+        }
+        Some(b)
+    }
 }
 
 /// A shared buffer of the pool, returned to it when dropped.
@@ -142,6 +206,59 @@ impl Pooled {
     pub fn host(&self) -> *mut u8 {
         self.buffer().contents().cast()
     }
+
+    /// Hands the lease to `cmd`: it goes back to the pool when `cmd` completes, not before (a GPU read is never
+    /// overtaken by the next lease's host writes).
+    pub fn after(self, cmd: &metal::CommandBufferRef) {
+        let held = Mutex::new(Some(self));
+        let done = block::ConcreteBlock::new(move |_: &metal::CommandBufferRef| drop(held.lock().map(|mut h| h.take())));
+        cmd.add_completed_handler(&done.copy());
+    }
+
+    /// A lease of at least `bytes` holding this one's first `used` bytes: the move of something that outgrew its
+    /// buffer. This lease goes back to the pool; its holder made sure no command reads it still.
+    pub fn grow(self, bytes: usize, used: usize) -> Result<Pooled, String> {
+        assert!(used <= self.length() as usize && used <= bytes);
+        let next = lease(bytes)?;
+        // SAFETY: both leases are the caller's, each at least `used` bytes long, and no command uses either.
+        unsafe { std::ptr::copy_nonoverlapping(self.host(), next.host(), used) };
+        Ok(next)
+    }
+}
+
+/// A pooled buffer as a block's memory.
+impl rerail_blocks::block::Backing for Pooled {
+    fn base(&self) -> *mut u8 {
+        self.host()
+    }
+
+    fn len(&self) -> usize {
+        self.length() as usize
+    }
+
+    fn buffer(&self) -> Option<Buffer> {
+        self.buffer.clone()
+    }
+}
+
+/// A block of `kind` in a pooled slab of at least `bytes`: bound to the device by the slab's own buffer, which a
+/// command has used before when it is recycled, so no dispatch pays to map it.
+pub fn lease_block(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
+    let slab = lease(bytes.max(SLAB_MIN))?;
+    Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
+}
+
+/// `lease_block`, kept within the Metal budget (`lease_within`).
+pub fn lease_block_within(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
+    let slab = lease_within(bytes.max(SLAB_MIN))?;
+    Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
+}
+
+/// Moves an open block into a pooled slab of at least `bytes`: one copy of what it holds. No command may be
+/// reading the block (it is moved between passes, as its chunks are made).
+pub fn grow_block(b: rerail_blocks::Block, bytes: usize) -> Result<rerail_blocks::Block, String> {
+    let slab = lease(bytes.max(SLAB_MIN))?;
+    Ok(b.relocate(Box::new(slab)))
 }
 
 impl std::ops::Deref for Pooled {
@@ -163,10 +280,14 @@ impl Drop for Pooled {
         }
         let class = b.length() as usize;
         let mut p = pool().lock().expect("the pool");
-        if p.held + class <= IDLE_LIMIT {
-            p.held += class;
-            p.idle.entry(class).or_default().push(b);
+        p.returned += 1;
+        let at = p.returned;
+        p.held += class;
+        if class >= SLAB_MIN {
+            p.held_slabs += class;
         }
+        p.idle.entry(class).or_default().push((at, b));
+        p.trim();
     }
 }
 
@@ -183,8 +304,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
         return Ok(Pooled { buffer: Some(b), keep: false });
     }
     let mut p = pool().lock().expect("the pool");
-    if let Some(b) = p.idle.get_mut(&class).and_then(Vec::pop) {
-        p.held -= class;
+    if let Some(b) = p.take(class) {
         p.reused += 1;
         leased(&b);
         return Ok(Pooled { buffer: Some(b), keep: true });
@@ -281,6 +401,7 @@ pub fn drop_idle() {
     let mut p = pool().lock().expect("the pool");
     p.idle.clear();
     p.held = 0;
+    p.held_slabs = 0;
     drop(p);
     pipelines().lock().expect("the pipelines").clear();
 }
@@ -291,6 +412,7 @@ pub fn drop_free() {
     let mut p = pool().lock().expect("the pool");
     p.idle.clear();
     p.held = 0;
+    p.held_slabs = 0;
 }
 
 static GUARD: OnceLock<fn() -> Result<(), String>> = OnceLock::new();
@@ -309,6 +431,12 @@ pub fn guard() -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// Held by each test that leases tens of MB at once: the budget test counts every live lease in the process.
+    fn big_leases() -> std::sync::MutexGuard<'static, ()> {
+        static BIG: Mutex<()> = Mutex::new(());
+        BIG.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// A bounded lease is refused once relational work's leases would pass the Metal budget, and fits again once they
     /// are dropped.
     #[test]
@@ -316,6 +444,7 @@ mod tests {
         if get().is_none() {
             return;
         }
+        let _big = big_leases();
         let (live, _) = held_bytes();
         crate::budget::METAL_TEST.with(|m| m.set(live + (96 << 20)));
         let first = lease_within(64 << 20).expect("64 MB fits a budget of 96 MB more than is leased");
@@ -344,5 +473,101 @@ mod tests {
         assert!(unsafe { std::slice::from_raw_parts(b.host(), 30_000) }.iter().all(|&x| x == 0));
         let p = pipeline::<String>("test no-op", || Err("not made".into()));
         assert!(p.is_err());
+    }
+
+    #[test]
+    fn large_classes_are_quarter_steps() {
+        assert_eq!(class(1 << 20), 1 << 20);
+        assert_eq!(class((1 << 20) + 1), 5 << 18);
+        assert_eq!(class(5 << 20), 5 << 20);
+        assert_eq!(class((5 << 20) + 1), 6 << 20);
+        assert_eq!(class(9 << 20), 10 << 20);
+        assert_eq!(class(15 << 20), 16 << 20);
+        for b in [3 << 20, 7 << 20, 33 << 20, 300 << 20] {
+            let c = class(b);
+            assert!(c >= b && c * 4 <= b * 5 + (4 << 20), "{b}: class {c} wastes at most a quarter");
+            assert_eq!(c % SMALLEST, 0);
+        }
+    }
+
+    /// A block in a slab: recycled with its device buffer, and its memory zeroed as each part is made, though the
+    /// slab holds the last block's bytes.
+    #[test]
+    fn a_block_in_a_slab_is_recycled_and_reads_fresh() {
+        use rerail_blocks::block::kind;
+        use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
+        if get().is_none() {
+            return;
+        }
+        let _big = big_leases();
+        set_slab_idle_limit(1 << 30);
+        let spec = Spec { widths: vec![4, 4], order: vec![0, 1], indexes: vec![vec![1]], min_log: 10 };
+        let lock = Mutex::new(());
+        // 23 MiB: a class (24 MiB) no other test leases.
+        let b = lease_block(kind::FACTS, 23 << 20).unwrap();
+        let first = b.gpu_buffer(&get().unwrap().device).gpu_address();
+        let r = Relation::create(&b, &spec, None);
+        RelW { block: &b, rel: r, lock: &lock }.extend(&(0..20_000).flat_map(|i| [i % 300, i % 7]).collect::<Vec<_>>());
+        relation::freeze(&b, r, &spec, None);
+        assert_eq!(View::full(r).live_len(), 2_100);
+        drop(b);
+        let b = lease_block(kind::FACTS, 23 << 20).unwrap();
+        assert_eq!(b.gpu_buffer(&get().unwrap().device).gpu_address(), first, "the slab came back, with its buffer");
+        let r = Relation::create(&b, &spec, None);
+        assert_eq!(r.rows.len(), 0);
+        assert!(!r.is_frozen(), "a new relation in a recycled slab reads fresh");
+        let at = b.alloc(1 << 20, 64);
+        // SAFETY: the block's own allocation, 1 MiB long.
+        assert!(unsafe { std::slice::from_raw_parts(b.ptr::<u8>(at), 1 << 20) }.iter().all(|&x| x == 0));
+    }
+
+    /// A lease handed to a command buffer goes back to the pool when it completes.
+    #[test]
+    fn a_lease_after_a_command_returns_when_it_completes() {
+        let Some(sh) = get() else { return };
+        let _big = big_leases();
+        set_slab_idle_limit(1 << 30);
+        // 27 MiB: a class (28 MiB) no other test leases.
+        let l = lease(27 << 20).unwrap();
+        let addr = l.gpu_address();
+        let cmd = sh.queue.new_command_buffer();
+        l.after(cmd);
+        cmd.commit();
+        cmd.wait_until_completed();
+        let t = std::time::Instant::now();
+        loop {
+            let back = pool().lock().unwrap().idle.get(&class(27 << 20)).is_some_and(|v| v.iter().any(|(_, b)| b.gpu_address() == addr));
+            if back {
+                break;
+            }
+            assert!(t.elapsed().as_secs() < 2, "the lease came back when its command buffer completed");
+            std::thread::yield_now();
+        }
+    }
+
+    /// A block that outgrows its slab moves into a larger one by one copy, and reads the same.
+    #[test]
+    fn a_block_grows_into_a_larger_slab() {
+        use rerail_blocks::block::kind;
+        use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
+        if get().is_none() {
+            return;
+        }
+        let _big = big_leases();
+        let spec = Spec { widths: vec![4, 4], order: vec![0, 1], indexes: vec![vec![1]], min_log: 10 };
+        let lock = Mutex::new(());
+        let b = lease_block(kind::FACTS, 17 << 20).unwrap();
+        let off = {
+            let r = Relation::create(&b, &spec, None);
+            RelW { block: &b, rel: r, lock: &lock }.extend(&(0..100_000).flat_map(|i| [i % 1000, i % 13]).collect::<Vec<_>>());
+            b.offset_of(r)
+        };
+        let b = grow_block(b, 41 << 20).unwrap();
+        assert!(b.reserved() >= 41 << 20);
+        let r: &Relation = unsafe { &*b.ptr::<Relation>(off) };
+        RelW { block: &b, rel: r, lock: &lock }.extend(&(0..1_000_000).flat_map(|i| [1000 + i % 500, i % 11]).collect::<Vec<_>>());
+        relation::freeze(&b, r, &spec, None);
+        // (i % 1000, i % 13) repeats every 13,000 rows; (1000 + i % 500, i % 11) every 5,500.
+        assert_eq!(View::full(r).live_len(), 13_000 + 5_500);
     }
 }

@@ -5,11 +5,12 @@
 //!
 //! - **Set semantics.** It drops duplicate rows, and in a delta it also drops rows its base still holds live.
 //! - **The canonical order.** The live rows, sorted by the relation's order key (its declared columns first,
-//!   then the rest). This is a permutation; rows are not moved.
+//!   then the rest), moved into that order in place: an own row's id is then its place in the order, so there is
+//!   no order array, and no dead bits for its own rows (the duplicates are gone, not marked).
 //! - **Hash indexes** on the declared keys. Each key's rows are grouped in canonical order, so a probe's answer
 //!   comes in a fixed order too.
-//! - **Dead bits and statistics.** The dead bits are the kills, plus the duplicates freeze dropped; the
-//!   statistics are each column's minimum and maximum.
+//! - **Dead bits and statistics.** The dead bits are a delta's kills of its base's rows (none in a full
+//!   relation); the statistics are each column's minimum and maximum.
 //!
 //! **A delta** is a relation whose ids continue after its base's (`base_rows`). Its kills name base rows or its
 //! own. `View` reads a base and its delta as one relation: liveness from both, the merged canonical order, and
@@ -28,18 +29,17 @@ pub const DELTA: u32 = 2;
 pub const MAX_KEY: usize = 4;
 
 structure! {
-    /// A hash bucket: a key's hash and its rows' place in the index's `rows` (len 0: empty).
-    pub struct Bucket { pub hash: u64, pub start: u32, pub len: u32 }
-}
-
-structure! {
     pub struct Index {
         pub ncols: u32,
-        pub pad: u32,
+        /// 1 when the key is the order key's first columns: its rows are one range of the sorted rows, found by
+        /// binary search, and the index holds no buckets or rows.
+        pub ordered: u32,
         pub key: [u16; 4],
+        /// Buckets less one (a power of two less one).
         pub mask: u64,
-        pub buckets: Span<Bucket>,
-        /// Row ids, grouped by key and in canonical order within a key.
+        /// Bucket `b`'s rows are `rows[offs[b]..offs[b + 1]]`: every key whose hash falls in `b`, in canonical
+        /// order. A reader checks the key (4 bytes a bucket, about one key a bucket; no hash kept).
+        pub offs: Span<u32>,
         pub rows: Span<u32>,
     }
 }
@@ -64,8 +64,6 @@ structure! {
         /// Row ids killed: a delta's of its base, or of its own.
         pub killed: Rows,
         pub dead: Span<u64>,
-        /// Its own live rows in canonical order.
-        pub order: Span<u32>,
         pub indexes: Span<Index>,
         pub stats: Span<ColStats>,
         /// An open relation's set test (`insert_unique`): slots holding row id + 1.
@@ -137,32 +135,49 @@ impl Relation {
         &self.indexes.as_slice()[i]
     }
 
-    /// One relation's rows for `key` on index `i`, before liveness and key equality: a hash group.
+    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket.
     pub fn group(&self, i: usize, h: u64) -> &[u32] {
         let ix = self.index(i);
-        let b = ix.buckets.as_slice();
-        if b.is_empty() {
+        let o = ix.offs.as_slice();
+        if o.is_empty() {
             return &[];
         }
-        let mut s = (h & ix.mask) as usize;
-        for _ in 0..b.len() {
-            let x = &b[s];
-            if x.len == 0 {
-                return &[];
-            }
-            if x.hash == h {
-                return &ix.rows.as_slice()[x.start as usize..(x.start + x.len) as usize];
-            }
-            s = (s + 1) & ix.mask as usize;
-        }
-        &[]
+        let b = (h & ix.mask) as usize;
+        &ix.rows.as_slice()[o[b] as usize..o[b + 1] as usize]
+    }
+
+    /// `held_bytes` by part: values written, chunk room unwritten, order, index buckets, index rows, dead bits,
+    /// descriptors.
+    pub fn held_parts(&self) -> [usize; 7] {
+        let cap = crate::rows::capacity(self.rows.nchunks.load(Relaxed), self.rows.min_log) as usize;
+        let width: usize = (0..self.rows.ncols as usize).map(|c| self.rows.col(c).width as usize).sum();
+        let n = self.rows.len() as usize;
+        let ix = self.indexes.as_slice();
+        [
+            n * width,
+            (cap - n) * width,
+            0,
+            ix.iter().map(|i| i.offs.len() * 4).sum(),
+            ix.iter().map(|i| i.rows.len() * 4).sum(),
+            self.dead.len() * 8,
+            size_of::<Relation>() + self.rows.ncols as usize * size_of::<crate::rows::ColDir>() + size_of::<crate::rows::ColDir>(),
+        ]
+    }
+
+    /// Bytes its block holds for it: the chunks made (written or not), the order, the indexes and the bits.
+    pub fn held_bytes(&self) -> usize {
+        let cap = crate::rows::capacity(self.rows.nchunks.load(Relaxed), self.rows.min_log) as usize;
+        let width: usize = (0..self.rows.ncols as usize).map(|c| self.rows.col(c).width as usize).sum();
+        let ix: usize =
+            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4).sum();
+        cap * width + self.dead.len() * 8 + ix + size_of::<Relation>()
     }
 
     /// Bytes this relation's values, order, indexes and bits take (what a reader may touch).
     pub fn bytes(&self) -> usize {
         let ix: usize =
-            self.indexes.as_slice().iter().map(|i| i.buckets.len() * size_of::<Bucket>() + i.rows.len() * 4).sum();
-        self.rows.value_bytes() + self.order.len() * 4 + self.dead.len() * 8 + ix
+            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4).sum();
+        self.rows.value_bytes() + self.dead.len() * 8 + ix
     }
 }
 
@@ -271,8 +286,7 @@ pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation
 
     // Dead bits: its kills, over the base's rows and its own.
     let total = rel.base_rows as usize + n;
-    let words: *mut u64 = block.alloc_t(total.div_ceil(64).max(1));
-    let dead = unsafe { std::slice::from_raw_parts_mut(words, total.div_ceil(64).max(1)) };
+    let mut dead = vec![0u64; total.div_ceil(64).max(1)];
     for k in 0..rel.killed.len() {
         let id = rel.killed.get(k, 0) as usize;
         dead[id >> 6] |= 1 << (id & 63);
@@ -295,24 +309,23 @@ pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation
     let mut dropped = 0u64;
     let base_live = |r: &[i64]| -> bool {
         let Some(b) = base else { return false };
-        let bo = b.order.as_slice();
-        let found = bo.binary_search_by(|&bid| {
+        let (mut lo, mut hi) = (0u32, b.rows.len());
+        while lo < hi {
+            let m = (lo + hi) / 2;
             let mut o = Ordering::Equal;
             for (j, &c) in key.iter().enumerate() {
-                o = b.rows.get(bid, c).cmp(&r[j]);
+                o = b.rows.get(m, c).cmp(&r[j]);
                 if o != Ordering::Equal {
                     break;
                 }
             }
-            o
-        });
-        match found {
-            Ok(p) => {
-                let bid = bo[p];
-                !b.dead_bit(bid) && dead[bid as usize >> 6] >> (bid & 63) & 1 == 0
+            match o {
+                Ordering::Less => lo = m + 1,
+                Ordering::Greater => hi = m,
+                Ordering::Equal => return !b.dead_bit(m) && dead[m as usize >> 6] >> (m & 63) & 1 == 0,
             }
-            Err(_) => false,
         }
+        false
     };
     // Decided against the kills alone: a duplicate dropped here is one of its own rows, never a base row.
     let drops: Vec<bool> = ids
@@ -329,13 +342,42 @@ pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation
             order.push(rel.base_rows + i);
         }
     }
-    let op: *mut u32 = block.alloc_t(order.len().max(1));
-    unsafe { std::ptr::copy_nonoverlapping(order.as_ptr(), op, order.len()) };
+    // Sorted in place: the live rows moved into canonical order, so an own row's id is its place in that order.
+    // No order array, and no dead bits for its own rows (the dropped ones are gone).
+    let live = order.len();
+    for c in 0..a {
+        let moved: Vec<i64> = order.iter().map(|&id| rel.rows.get(id - rel.base_rows, c)).collect();
+        for (j, &v) in moved.iter().enumerate() {
+            unsafe { rel.rows.put(j as u32, c, v) };
+        }
+    }
+    rel.rows.len.store(live as u32, Release);
+    for (j, id) in order.iter_mut().enumerate() {
+        *id = rel.base_rows + j as u32;
+    }
+    // Dead bits: only the base's rows a delta killed.
+    let base_words = if (0..rel.killed.len()).any(|k| (rel.killed.get(k, 0) as u32) < rel.base_rows) {
+        (rel.base_rows as usize).div_ceil(64)
+    } else {
+        0
+    };
 
     // Indexes: each key's rows grouped, in canonical order within a group.
     let ixp: *mut crate::relation::Index = block.alloc_t(spec.indexes.len().max(1));
     for (x, cols) in spec.indexes.iter().enumerate() {
         assert!(cols.len() <= MAX_KEY);
+        let lead = &spec.order[..cols.len().min(spec.order.len())];
+        if cols.len() <= spec.order.len() && cols.iter().all(|c| lead.contains(c)) {
+            unsafe {
+                let ix = ixp.add(x);
+                (*ix).ncols = cols.len() as u32;
+                (*ix).ordered = 1;
+                for (j, &c) in cols.iter().enumerate() {
+                    (*ix).key[j] = c;
+                }
+            }
+            continue;
+        }
         let mut keyed: Vec<(u64, u32)> = order
             .iter()
             .map(|&id| {
@@ -346,24 +388,23 @@ pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation
                 (key_hash(&k[..cols.len()]), id)
             })
             .collect();
-        keyed.sort_by_key(|&(h, _)| h); // stable: canonical order within a key
-        let groups = keyed.chunk_by(|x, y| x.0 == y.0).count();
-        let cap = (groups * 2).next_power_of_two().max(2);
-        let bp: *mut Bucket = block.alloc_t(cap);
+        let mut hs: Vec<u64> = keyed.iter().map(|x| x.0).collect();
+        hs.sort_unstable();
+        hs.dedup();
+        let cap = hs.len().next_power_of_two().max(1);
+        let mask = (cap - 1) as u64;
+        keyed.sort_by_key(|&(h, _)| h & mask); // stable: canonical order within a bucket
+        let bp: *mut u32 = block.alloc_t(cap + 1);
         let rp: *mut u32 = block.alloc_t(keyed.len().max(1));
-        let buckets = unsafe { std::slice::from_raw_parts_mut(bp, cap) };
-        let mut start = 0usize;
-        for g in keyed.chunk_by(|x, y| x.0 == y.0) {
-            let h = g[0].0;
-            let mut s = (h as usize) & (cap - 1);
-            while buckets[s].len != 0 {
-                s = (s + 1) & (cap - 1);
-            }
-            buckets[s] = Bucket { hash: h, start: start as u32, len: g.len() as u32 };
-            for (j, &(_, id)) in g.iter().enumerate() {
-                unsafe { *rp.add(start + j) = id };
-            }
-            start += g.len();
+        let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };
+        for &(h, _) in &keyed {
+            offs[(h & mask) as usize + 1] += 1;
+        }
+        for b in 0..cap {
+            offs[b + 1] += offs[b];
+        }
+        for (j, &(_, id)) in keyed.iter().enumerate() {
+            unsafe { *rp.add(j) = id };
         }
         unsafe {
             let ix = ixp.add(x);
@@ -371,8 +412,8 @@ pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation
             for (j, &c) in cols.iter().enumerate() {
                 (*ix).key[j] = c;
             }
-            (*ix).mask = (cap - 1) as u64;
-            Span::set(&raw mut (*ix).buckets, bp, cap);
+            (*ix).mask = mask;
+            Span::set(&raw mut (*ix).offs, bp, cap + 1);
             Span::set(&raw mut (*ix).rows, rp, keyed.len());
         }
     }
@@ -390,8 +431,16 @@ pub fn freeze(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation
     }
 
     unsafe {
-        Span::set(&rel.dead, words, total.div_ceil(64).max(1));
-        Span::set(&rel.order, op, order.len());
+        if base_words > 0 {
+            // The last word's bits past the base are own ids, which moved: none of them is dead.
+            let tail = rel.base_rows as usize % 64;
+            if tail != 0 {
+                dead[base_words - 1] &= (1u64 << tail) - 1;
+            }
+            let words: *mut u64 = block.alloc_t(base_words);
+            std::ptr::copy_nonoverlapping(dead.as_ptr(), words, base_words);
+            Span::set(&rel.dead, words, base_words);
+        }
         Span::set(&rel.indexes, ixp, spec.indexes.len());
         Span::set(&rel.stats, sp, a);
     }
@@ -472,16 +521,16 @@ impl<'a> View<'a> {
     /// `ordered`, read in place: no allocation.
     pub fn ordered_iter(&self) -> impl Iterator<Item = u32> + '_ {
         assert!(self.top.is_frozen(), "an ordered read needs a frozen relation");
-        let own = self.top.order.as_slice();
-        let based: &[u32] = self.base.map_or(&[], |b| b.order.as_slice());
-        Merge::new(self, based.iter().copied().filter(|&id| self.live(id)), own.iter().copied())
+        let own = self.top.base_rows..self.top.base_rows + self.top.rows.len();
+        let based = 0..self.base.map_or(0, |b| b.rows.len());
+        Merge::new(self, based.filter(|&id| self.live(id)), own)
     }
 
     pub fn live_len(&self) -> usize {
-        let own = self.top.order.len();
+        let own = self.top.rows.len() as usize;
         match self.base {
             None => own,
-            Some(b) => own + b.order.as_slice().iter().filter(|&&id| self.live(id)).count(),
+            Some(b) => own + (0..b.rows.len()).filter(|&id| self.live(id)).count(),
         }
     }
 
@@ -496,9 +545,15 @@ impl<'a> View<'a> {
         let ix = self.top.index(i);
         let cols = &ix.key[..ix.ncols as usize];
         let matches = move |id: &u32| self.live(*id) && cols.iter().zip(key).all(|(&c, &k)| self.get(*id, c as usize) == k);
-        let own = self.top.group(i, h).iter().copied().filter(matches);
+        if ix.ordered == 1 {
+            let own = leading(self.top, cols, key);
+            let own = Ids::Range(self.top.base_rows + own.start..self.top.base_rows + own.end).filter(matches);
+            let based = self.base.map_or(0..0, |b| leading(b, cols, key));
+            return Merge::new(self, Ids::Range(based).filter(matches), own);
+        }
+        let own = Ids::Slice(self.top.group(i, h).iter()).filter(matches);
         let based: &[u32] = self.base.map_or(&[], |b| b.group(i, h));
-        Merge::new(self, based.iter().copied().filter(matches), own)
+        Merge::new(self, Ids::Slice(based.iter()).filter(matches), own)
     }
 
     /// A digest of the live rows in canonical order: the same for the same set, whatever wrote it, in any order.
@@ -513,6 +568,44 @@ impl<'a> View<'a> {
         }
         crate::mix(h, n as i64)
     }
+}
+
+/// Ids from a hash bucket, or a range of sorted rows.
+enum Ids<'a> {
+    Slice(std::slice::Iter<'a, u32>),
+    Range(std::ops::Range<u32>),
+}
+
+impl Iterator for Ids<'_> {
+    type Item = u32;
+
+    #[inline]
+    fn next(&mut self) -> Option<u32> {
+        match self {
+            Ids::Slice(s) => s.next().copied(),
+            Ids::Range(r) => r.next(),
+        }
+    }
+}
+
+/// The positions of `rel`'s own rows (sorted in place) whose columns `cols`, the order key's first ones, equal
+/// `key`: one range, by binary search on each leading column in turn.
+fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> std::ops::Range<u32> {
+    let (mut lo, mut hi) = (0u32, rel.rows.len());
+    for &oc in &rel.okey[..cols.len()] {
+        let k = key[cols.iter().position(|&c| c == oc).expect("a leading column")];
+        let lb = |mut a: u32, mut b: u32, k: i64| {
+            while a < b {
+                let m = (a + b) / 2;
+                if rel.rows.get(m, oc as usize) < k { a = m + 1 } else { b = m }
+            }
+            a
+        };
+        let a = lb(lo, hi, k);
+        hi = lb(a, hi, k.saturating_add(1));
+        lo = a;
+    }
+    lo..hi
 }
 
 /// Two id streams, each in canonical order, merged into one.

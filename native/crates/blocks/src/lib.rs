@@ -21,8 +21,10 @@
 
 pub mod block;
 pub mod chunk;
+pub mod col;
 pub mod facts;
 pub mod journal;
+pub mod packed;
 pub mod program;
 pub mod refs;
 pub mod relation;

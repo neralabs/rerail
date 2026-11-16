@@ -3154,6 +3154,7 @@ dependencies = [
  "metal",
  "objc",
  "rayon",
+ "rerail-blocks",
  "rerail-forest",
  "sha2 0.10.9",
 ]
