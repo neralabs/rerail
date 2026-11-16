@@ -310,7 +310,7 @@ impl Observer {
         // The journal's cookies in a directory of their own: a stream watches it with its roots, and is told every
         // event in it. Beside the store, it was told every write of the store, its outputs and logs (2,596 events in
         // one warm batch's first ask, all of them replayed and dropped).
-        let cookies = path.map(cookie_dir).filter(|d| std::fs::create_dir_all(d).is_ok());
+        let cookies = path.map(cookie_dir).filter(|d| private_dir(d).is_ok());
         let stored_roots: Vec<PathBuf> = db
             .as_ref()
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
@@ -1419,6 +1419,9 @@ impl Writer {
         let thread = rerail_accel::exec::service("rerail-observer-writer", None, move || {
                 super::hazards::behind_the_run();
                 let db = (|| {
+                    // The answers name the user's files, their stats and contents' digests: private to the user, as
+                    // the store is (docs/privacy.md). Made so before SQLite creates it, whose side files take its mode.
+                    super::private_files::prepare(&path).ok()?;
                     let db = Connection::open(&path).ok()?;
                     db.busy_timeout(std::time::Duration::from_secs(10)).ok()?;
                     db.execute_batch("PRAGMA journal_mode=WAL;").ok()?;
@@ -1527,6 +1530,15 @@ fn cursor_key(root: &Path, volume: [u8; 16]) -> String {
 }
 
 /// Where the observer of the store at `path` writes the journal's cookies: `<store>.cookies`, holding nothing else.
+/// A folder of the observer's, created private to the user (`0700`) where it is absent.
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)
+}
+
 fn cookie_dir(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".cookies");
@@ -2350,6 +2362,28 @@ mod tests {
         o.forget(root, &[], Some(volume), &(1000 + CURSOR_AGE + 5).to_string());
         o.written();
         assert_eq!(stored(), Some((1000 + CURSOR_AGE).to_string()), "stored again once, then aged from there");
+        drop(o);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The observer's database names the user's files, their stats and digests: private to the user, as the store
+    /// is (docs/privacy.md). It was made with the umask's mode (`0644`), readable by every user of the machine.
+    #[cfg(unix)]
+    #[test]
+    fn the_observers_database_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("rerail-observer-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let store = base.join("store.files");
+        let o = Observer::open(Some(&store));
+        o.written();
+        let mode = |p: &Path| std::fs::metadata(p).map(|m| m.permissions().mode() & 0o777).ok();
+        assert_eq!(mode(&store), Some(0o600));
+        let mut wal = store.as_os_str().to_owned();
+        wal.push("-wal");
+        assert!(matches!(mode(Path::new(&wal)), None | Some(0o600)), "its WAL takes its mode");
+        assert!(matches!(mode(&cookie_dir(&store)), None | Some(0o700)));
         drop(o);
         let _ = std::fs::remove_dir_all(&base);
     }
