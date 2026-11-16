@@ -1238,25 +1238,43 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
     }
 }
 
-/// Changes the plan kept for `key`, where one is: this thread's job's, else the run's entry's cell in place (its
-/// order stays: `f` changes what was learnt of it, `Priced` and `ran`).
-fn plans_update(key: &PlanKey, f: impl Fn(&mut Kept)) {
+/// Sets what a kept plan's runs taught of it (decision 0301): its last price (`Priced`, `Kept`'s 4th) or the work its
+/// line did (`ran`, its 5th), in this thread's job's plan where it holds `key`, else in the run's entry's cell for it.
+/// Each is a write of its own field, the last writer's: concurrent chunks run the same rules, and one cell for both,
+/// changed by compare-and-swap, retried and copied the entry under that contention (2,774 samples of a cold run).
+fn plans_learnt(key: &PlanKey, learnt: Learnt) {
     PLANS.with(|p| {
         let p = p.borrow();
         let Some(shared) = p.as_ref() else { return };
-        let mine = OWN_PLANS.with(|o| {
+        let learnt = OWN_PLANS.with(|o| {
             let mut o = o.borrow_mut();
-            let k = o.as_mut()?.get_mut(key)?;
-            f(k);
-            Some(())
+            let Some(k) = o.as_mut().and_then(|m| m.get_mut(key)) else { return Some(learnt) };
+            match learnt {
+                Learnt::Priced(priced) => k.4 = Some(priced),
+                Learnt::Ran(work) => k.5 = Some(work),
+            }
+            None
         });
-        if mine.is_none()
+        if let Some(learnt) = learnt
             && let Some(e) = shared.kept.load().get(key)
         {
-            e.update(&f);
+            match learnt {
+                Learnt::Priced(priced) => {
+                    let old = e.priced.lock().replace(priced);
+                    drop(old);
+                }
+                Learnt::Ran(work) => e.ran.store(work.to_bits(), std::sync::atomic::Ordering::Relaxed),
+            }
         }
     });
 }
+
+/// What a kept plan's run taught of it (`plans_learnt`).
+enum Learnt {
+    Priced(Arc<Priced>),
+    Ran(f64),
+}
+
 
 /// A kept plan's key: a digest of the rule, the delta and the component solved (`derived::digest`). Not the rule's
 /// address: each chunk's program is a new value (the demand split makes one per chunk), so no address is kept between
@@ -1294,62 +1312,53 @@ fn growth(then: &[f64], now: &[f64]) -> f64 {
 /// (`enter_plans`). Each stratum plans its own rules, so no two jobs write one key.
 type SharedPlans = Arc<RunPlans>;
 
-/// A kept plan as the run shares it (decision 0301): its order, fixed, and what was learnt of it (its work per node,
-/// EXPLAIN, gap, last price and the work its line did) in a cell, swapped whole. A run's plans are read 1.9 M times
-/// over PostHog and get a new order a few hundred times; what changes all the time is what is learnt, and that
-/// changes the cell, not the map.
+/// A kept plan as the run shares it (decision 0301): its order and what its search found of it (work per node,
+/// EXPLAIN, gap), fixed until a put replaces them, and what its runs taught (its last price, the work its line did),
+/// each a cell of its own written by the last writer. A run's plans are read 1.9 M times over PostHog and get a new
+/// order a few hundred times; what changes all the time is what is learnt, and that changes a cell, not the map.
 pub struct Entry {
     order: Arc<[Step]>,
-    rest: arc_swap::ArcSwap<Learnt>,
+    found: arc_swap::ArcSwap<Found>,
+    /// Behind a mutex held to swap a pointer: written at every planning hit (330,000 times over PostHog), where an
+    /// `ArcSwapOption`'s store settled every loading thread's debts (942 samples of a cold run).
+    priced: parking_lot::Mutex<Option<Arc<Priced>>>,
+    /// The work its line did, as f64 bits; `NOT_RAN` is none.
+    ran: std::sync::atomic::AtomicU64,
 }
 
-/// What a kept plan's runs taught of it (`Entry::rest`): `Kept` less its order.
-#[derive(Clone)]
-struct Learnt {
+/// `Entry::ran`'s none: a NaN's bits no run's work has.
+const NOT_RAN: u64 = u64::MAX;
+
+/// What a kept plan's search found of it (`Entry::found`).
+struct Found {
     per_node: f64,
     explain: Option<super::profile::RulePlan>,
     gap: f64,
-    priced: Option<Arc<Priced>>,
-    ran: Option<f64>,
-}
-
-impl Learnt {
-    fn of(k: &Kept) -> Learnt {
-        Learnt { per_node: k.1, explain: k.2.clone(), gap: k.3, priced: k.4.clone(), ran: k.5 }
-    }
 }
 
 impl Entry {
     fn of(k: Kept) -> Arc<Entry> {
-        let rest = arc_swap::ArcSwap::from_pointee(Learnt::of(&k));
-        Arc::new(Entry { order: k.0, rest })
+        let found = arc_swap::ArcSwap::from_pointee(Found { per_node: k.1, explain: k.2, gap: k.3 });
+        Arc::new(Entry { order: k.0, found, priced: parking_lot::Mutex::new(k.4), ran: std::sync::atomic::AtomicU64::new(k.5.map_or(NOT_RAN, f64::to_bits)) })
     }
 
     /// The plan as `Kept`.
     fn kept(&self) -> Kept {
-        Self::view(&self.order, &self.rest.load())
-    }
-
-    fn view(order: &Arc<[Step]>, r: &Learnt) -> Kept {
-        (Arc::clone(order), r.per_node, r.explain.clone(), r.gap, r.priced.clone(), r.ran)
+        let found = self.found.load();
+        let ran = self.ran.load(std::sync::atomic::Ordering::Relaxed);
+        (Arc::clone(&self.order), found.per_node, found.explain.clone(), found.gap, self.priced.lock().clone(), (ran != NOT_RAN).then(|| f64::from_bits(ran)))
     }
 
     /// Takes `k` as this plan's where its order is this one's (else false: a new order is a new entry).
     fn set(&self, k: &Kept) -> bool {
         let same = Arc::ptr_eq(&self.order, &k.0) || *self.order == *k.0;
         if same {
-            self.rest.store(Arc::new(Learnt::of(k)));
+            self.found.store(Arc::new(Found { per_node: k.1, explain: k.2.clone(), gap: k.3 }));
+            let old = std::mem::replace(&mut *self.priced.lock(), k.4.clone());
+            drop(old);
+            self.ran.store(k.5.map_or(NOT_RAN, f64::to_bits), std::sync::atomic::Ordering::Relaxed);
         }
         same
-    }
-
-    /// `f` applied to what was learnt (its order unchanged), against any other job's change at once (`rcu`).
-    fn update(&self, f: &impl Fn(&mut Kept)) {
-        self.rest.rcu(|r| {
-            let mut k = Self::view(&self.order, r);
-            f(&mut k);
-            Learnt::of(&k)
-        });
     }
 }
 
@@ -2248,7 +2257,7 @@ impl Model {
             note_planned(key);
         }
         let remember = |key: &PlanKey, got: &(Plan, Option<super::profile::RulePlan>)| {
-            plans_update(key, |k| k.4 = Some(Arc::new(Priced { sizes: sizes.clone(), got: got.clone() })));
+            plans_learnt(key, Learnt::Priced(Arc::new(Priced { sizes: sizes.clone(), got: got.clone() })));
         };
         // A rule whose line did less work than a search when it last ran (scaled by how much what it reads grew)
         // keeps its order as it is: neither searched nor priced (decision 0122).
@@ -2550,7 +2559,7 @@ impl Model {
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
     /// the next run's planning budget (decision 0122).
     pub(in crate::code_rule_dsl) fn ran(key: PlanKey, work: f64) {
-        plans_update(&key, |k| k.5 = Some(work));
+        plans_learnt(&key, Learnt::Ran(work));
     }
 
     /// Tests: `ran`, under the key `plan_rule_reused` keeps the rule's plan under now.
@@ -6633,6 +6642,7 @@ impl<'a> Run<'a, '_> {
         }
         let mut want: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
         let vs = Arc::clone(&self.versions);
+        let raised = joins::raised_all();
         for r in rules {
             let b = vs.at(r);
             let mut held: HashMap<VarSlot, Vec<(&str, usize)>> = HashMap::new();
@@ -6648,7 +6658,7 @@ impl<'a> Run<'a, '_> {
                     if self.model.stats.solving.contains(rel) || self.heavy_current(rel, c) {
                         continue;
                     }
-                    let wanted = joins::raised(rel, c) || raise && {
+                    let wanted = raised.iter().any(|(r, k)| r == rel && *k == c) || raise && {
                         let (rows, ndv) = (self.model.card(rel), self.model.ndv.at(rel, c).copied().unwrap_or(1.0));
                         let fan = self.model.stats.fan.at(rel, c).copied().unwrap_or(rows / ndv.max(1.0));
                         ndv > table::HEAVY as f64 && fan * ndv / rows.max(1.0) > 2.0
