@@ -929,6 +929,13 @@ pass.
 - **Done when**: the observer's functions take what they dereference safely, or are `unsafe` with their callers'
   contract written down, and `cargo clippy -p rerail-engine --lib --tests` runs to the end.
 
+### Q42. `a_second_corpus_run_deletes_and_creates_its_store_again` fails now and then beside the planner's tests
+
+- **Found** (2026-11-16, at the hub merge 8c8c832ac): one of three runs of `logic::plan::tests` (62 tests, nextest,
+  a farm host) failed it; it passes alone and in the other two runs. It runs `corpus_store_child` as a child
+  process of the test binary, whose output the failed run did not show.
+- **Done when**: the cause is found (the child's own output from a failing run) and fixed at its root, not retried.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
