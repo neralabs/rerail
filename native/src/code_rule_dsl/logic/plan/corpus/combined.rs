@@ -132,13 +132,9 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     };
     let set = plan();
     let entry = program_facts::encode(&facts);
-    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry and its program's image.
-    if std::env::var_os("RERAIL_EXPORT_IMAGES").is_some() {
-        rr::images::export(shipped_key(key), &entry);
-        if let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(program) {
-            rr::images::export(program_text::image_key(&digest), &bytes);
-        }
-    }
+    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry (its program's image ships with
+    // `program_text::store`).
+    rr::images::export(shipped_key(key), &entry);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
     // No manifest names the entry until the run that combined it records its own, and the run's hold comes after the
     // combine. Meanwhile a collection (a batch's earlier run's, started once that run's manifest was written) took it:

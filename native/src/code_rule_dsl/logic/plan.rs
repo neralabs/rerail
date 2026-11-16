@@ -147,6 +147,7 @@ pub enum Constant {
 pub fn constant(t: &Term) -> Option<Constant> {
     match t {
         Term::Int(i) => Some(Constant::Int(*i)),
+        Term::Branded(a) => Some(Constant::Int(a.value())),
         Term::Str(s) => Some(Constant::Str(s.to_string())),
         _ => None,
     }
@@ -1080,7 +1081,7 @@ fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) ->
     let Term::Var(y) = r else { return None };
     let ready = match l {
         Term::Var(x) => bound.contains(x.as_str()),
-        Term::Int(_) | Term::Str(_) => true,
+        Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
         _ => false,
     };
     (ready && !bound.contains(y.as_str())).then_some(y)
@@ -4483,8 +4484,8 @@ pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
             let [r] = rules.as_slice() else { return None };
             let [Literal::Atom(a)] = r.body.as_slice() else { return None };
             let vars: Vec<&crate::code_rule_dsl::logic::front::Name> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
-            let plain = !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild | Term::Int(_))) && vars.iter().collect::<HashSet<_>>().len() == vars.len();
-            let eqs = a.args.iter().enumerate().filter_map(|(c, t)| if let Term::Int(v) = t { Some((c, *v)) } else { None }).collect();
+            let plain = !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild | Term::Int(_) | Term::Branded(_))) && vars.iter().collect::<HashSet<_>>().len() == vars.len();
+            let eqs = a.args.iter().enumerate().filter_map(|(c, t)| match t { Term::Int(v) => Some((c, *v)), Term::Branded(a) => Some((c, a.value())), _ => None }).collect();
             plain.then(|| (rel.to_owned(), eqs))
         })
         .collect()
@@ -5556,6 +5557,11 @@ fn digest_term(d: &mut super::derived::Inputs, t: &Term) {
             d.u64(args.len() as u64);
             args.iter().for_each(|a| digest_term(d, a));
         }
+        Term::Branded(b) => {
+            d.u64(6);
+            d.u64(b.class as u64);
+            d.u64(u64::from(b.atom));
+        }
     }
 }
 
@@ -5621,6 +5627,7 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
 fn const_tok(t: &Term) -> Option<Tok> {
     match t {
         Term::Int(i) => Some(Tok::Int(*i)),
+        Term::Branded(a) => Some(Tok::Int(a.value())),
         Term::Str(s) => Some(Tok::Sym(s.to_string())),
         _ => None,
     }
@@ -7809,7 +7816,7 @@ impl<'a> Run<'a, '_> {
                         pat.push(match t {
                             Term::Wild => Tok::Wild,
                             Term::Var(v) => Tok::Slot(slot[v.as_str()]),
-                            Term::Int(_) | Term::Str(_) => const_tok(t).expect("a constant"),
+                            Term::Int(_) | Term::Branded(_) | Term::Str(_) => const_tok(t).expect("a constant"),
                             _ => return Ok(Err("pattern term".to_owned())),
                         });
                     }
@@ -7817,7 +7824,7 @@ impl<'a> Run<'a, '_> {
                     for t in &h.args {
                         head.push(match t {
                             Term::Var(v) => HeadTok::Tok(Tok::Slot(slot[v.as_str()])),
-                            Term::Int(_) | Term::Str(_) => HeadTok::Tok(const_tok(t).expect("a constant")),
+                            Term::Int(_) | Term::Branded(_) | Term::Str(_) => HeadTok::Tok(const_tok(t).expect("a constant")),
                             Term::Call(f, xs) if f == "cat" && xs.iter().all(|x| matches!(x, Term::Var(_))) => {
                                 let (Term::Var(x0), Term::Var(x1)) = (&xs[0], &xs[1]) else { unreachable!() };
                                 HeadTok::Cat(slot[x0.as_str()], slot[x1.as_str()])
@@ -9164,6 +9171,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     rows.push(match v {
                         super::program_image::Cell::Int(i) => *i,
                         super::program_image::Cell::Str(_) => ids.next().expect("one atom per text"),
+                        super::program_image::Cell::Branded(b) => b.value(),
                     });
                 }
             }
@@ -9200,6 +9208,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 row.map(|v| match v {
                     super::program_image::Cell::Int(i) => SqlValue::Integer(i),
                     super::program_image::Cell::Str(s) => SqlValue::Text(f0.text(s).to_string()),
+                    super::program_image::Cell::Branded(b) => SqlValue::Integer(b.value()),
                 })
                 .collect()
             })

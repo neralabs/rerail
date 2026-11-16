@@ -17,7 +17,9 @@
 //!
 //! A prepared program holds atoms of the store, which lowering interned. They are never given out again (decision
 //! 0049); `prepared_interned` lists every intern call, and the run asks them again before it uses the program, as it
-//! does of one kept in memory (decision 0060).
+//! does of one kept in memory (decision 0060). A program another store prepared (the engine ships them, decision
+//! 0264) has that store's atoms: the strings are interned here and its branded name atoms moved to these
+//! (`lower::relocate`, decision 0270).
 
 pub use super::Prepared;
 use super::lower;
@@ -202,6 +204,7 @@ fn int(v: &Value) -> Result<i64, String> {
     match v {
         Value::Int(i) => Ok(*i),
         Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
+        Value::Branded(b) => Err(bad(format!("the atom {b} where a number goes"))),
     }
 }
 
@@ -209,6 +212,7 @@ fn text(v: &Value) -> Result<String, String> {
     match v {
         Value::Str(x) => Ok(x.to_string()),
         Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
+        Value::Branded(b) => Err(bad(format!("the atom {b} where a string goes"))),
     }
 }
 
@@ -371,15 +375,44 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`; `None` when none
-/// did, or when what it stored no longer reads. With it, the sources of its programs' texts.
-pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
+/// What the engine ships the pointer of the program `key` names under (decision 0264): the pointer's plan names the
+/// engine build, so a bundle of another build is never read.
+fn shipped_key(key: &[u8; 32]) -> HashKey {
+    HashKey::sha256(&[format!("rerail prepared pointer {POINTER}\0").as_bytes(), pointer_plan(key).plans[0].as_slice()].concat())
+}
+
+/// Where a prepared program `lookup` found came from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Found {
+    /// The store's, with its atoms.
+    Kept,
+    /// Another store's (the engine's bundle, or the store's own of other atoms), its atoms moved to this store's:
+    /// the run keeps it in the store, so the next one reads it as `Kept`.
+    Moved,
+}
+
+/// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`, or else as the
+/// engine ships it; `None` when neither has it, or when what is kept no longer reads. With it, the sources of its
+/// programs' texts, and whether its atoms moved.
+pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
     super::memo::off();
     let start = std::time::Instant::now();
     let set = pointer_plan(key);
-    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
-    let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
-    let Ok(mut facts) = program_facts::decode(&result.entry) else { return Ok(None) };
+    let kept = match source {
+        Some(source) => store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?.results.remove(&set.plans[0]).map(|r| r.entry),
+        None => None,
+    };
+    let entry: std::borrow::Cow<'static, [u8]> = match kept {
+        Some(entry) => entry.into(),
+        None => match crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
+            Some(bytes) => {
+                crate::code_rule_dsl::prof::count("corpus.prepared_shipped", 1);
+                bytes.into()
+            }
+            None => return Ok(None),
+        },
+    };
+    let Ok(mut facts) = program_facts::decode(&entry) else { return Ok(None) };
     let mut texts: BTreeMap<String, [u8; 32]> = BTreeMap::new();
     for row in facts.remove(PROGRAM).unwrap_or_default() {
         let [Value::Str(name), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
@@ -398,15 +431,59 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     let read = start.elapsed();
     let at = std::time::Instant::now();
     // The lowered program's version, where it is kept as an image: the split's parts are views of it.
-    let (lowered, version) = programs.pop().expect("two");
+    let (mut lowered, mut version) = programs.pop().expect("two");
     let (front, _) = programs.pop().expect("two");
+    let found = match relocate(store, &mut facts, &mut lowered) {
+        Some(false) => Found::Kept,
+        Some(true) => {
+            // Its image made again of the moved program: the run reads it in place.
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the moved program's image".into());
+            let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(&lowered) else { return Ok(None) };
+            let Ok(v) = crate::code_rule_dsl::logic::program_image::Version::open(&bytes) else { return Ok(None) };
+            version = Some(v);
+            crate::code_rule_dsl::prof::count("corpus.prepared_moved", 1);
+            Found::Moved
+        }
+        None => return Ok(None),
+    };
     let got = prepared_of(&facts, front, lowered, version, dialect);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
-            super::phases::current().unwrap_or_else(|| "main".into()), result.entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
+            super::phases::current().unwrap_or_else(|| "main".into()), entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
             got.as_ref().err().map(|e| format!("; not read: {e}")).unwrap_or_default());
     }
-    Ok(got.ok().map(|p| (p, documents)))
+    Ok(got.ok().map(|p| (p, documents, found)))
+}
+
+/// Moves the lowered program's name atoms, and the pointer's (`prepared_op`, `prepared_interned_atom`), to `store`'s
+/// (decision 0270): its strings interned here in one call. `Some(false)` when they are already this store's,
+/// `Some(true)` when they moved; `None` when the program holds a name atom no intern call made, or the store refuses.
+fn relocate(store: &ContentStore, facts: &mut Facts, lowered: &mut crate::code_rule_dsl::logic::front::Program) -> Option<bool> {
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's atoms, in this store".into());
+    let rows = facts.get_mut("prepared_interned_atom")?;
+    let strings: Vec<&str> = rows.iter().map(|r| match r.get(2) { Some(Value::Str(x)) => Some(x.as_str()), _ => None }).collect::<Option<_>>()?;
+    let old: Vec<u32> = rows.iter().map(|r| r.get(3).and_then(Value::integer).and_then(|a| u32::try_from(a).ok())).collect::<Option<_>>()?;
+    let new: Vec<u32> = store.intern_atoms(&strings).ok()?.into_iter().map(u32::from).collect();
+    if new == old {
+        return Some(false);
+    }
+    let to: rustc_hash::FxHashMap<u32, u32> = old.iter().copied().zip(new.iter().copied()).collect();
+    if !lower::relocate(lowered, &to) {
+        return None;
+    }
+    crate::code_rule_dsl::logic::profile::decision("the prepared program's atoms (decision 0270)", || format!("prepared by another store: its {} names moved to this store's atoms", strings.len()));
+    for (row, &a) in rows.iter_mut().zip(&new) {
+        let mut cells: Vec<Value> = row.to_vec();
+        cells[3] = Value::Int(i64::from(a));
+        *row = cells.into();
+    }
+    for row in facts.get_mut("prepared_op")? {
+        let mut cells: Vec<Value> = row.to_vec();
+        let a = u32::try_from(cells.get(1)?.integer()?).ok()?;
+        cells[1] = Value::Int(i64::from(*to.get(&a)?));
+        *row = cells.into();
+    }
+    Some(true)
 }
 
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).
@@ -428,6 +505,9 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     }
     let entry = program_facts::encode(&facts);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
+    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships the pointer; its programs'
+    // images ship with `program_text::store`.
+    crate::code_rule_dsl::logic::rr::images::export(shipped_key(key), &entry);
     let set = pointer_plan(key);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
     Ok(Some(documents))

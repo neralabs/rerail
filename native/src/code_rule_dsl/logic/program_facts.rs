@@ -39,10 +39,25 @@ pub trait Cell {
     fn str(&self) -> Result<&str, String>;
 }
 
+/// A branded atom's class as the program's facts write it (`term`, `fact` rows of kind `atom`, decision 0270).
+fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
+    match b.tag() {
+        'n' => "n",
+        'k' => "k",
+        _ => "f",
+    }
+}
+
+fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::Branded, String> {
+    let atom = u32::try_from(atom).map_err(|e| bad(e))?;
+    tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
+}
+
 impl Cell for Value {
     fn int(&self) -> Result<i64, String> {
         match self {
             Value::Int(i) => Ok(*i),
+            Value::Branded(b) => Ok(b.value()),
             Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
         }
     }
@@ -50,6 +65,7 @@ impl Cell for Value {
         match self {
             Value::Str(x) => Ok(x),
             Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
+            Value::Branded(b) => Err(bad(format!("the atom {b} where a string goes"))),
         }
     }
 }
@@ -179,6 +195,7 @@ impl Writer<'_> {
             Term::Var(v) => ("var", 0, v.as_str()),
             Term::Wild => ("wild", 0, ""),
             Term::Int(i) => ("int", *i, ""),
+            Term::Branded(b) => ("atom", b.value(), brand_tag(*b)),
             Term::Str(x) => ("str", 0, x.as_str()),
             Term::Top => ("top", 0, ""),
             Term::Call(f, _) => ("call", 0, f.as_str()),
@@ -278,6 +295,7 @@ impl Writer<'_> {
                 for (i, v) in values.iter().enumerate() {
                     let (kind, num, text) = match v {
                         Value::Int(x) => ("int", *x, ""),
+                        Value::Branded(b) => ("atom", b.value(), brand_tag(*b)),
                         Value::Str(x) => ("str", 0, x.as_str()),
                     };
                     self.row("fact", vec![s(rel), n(row), n(i), s(kind), n(num), s(text)]);
@@ -576,6 +594,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             "var" => Term::Var(text(&row[3])?.into()),
             "wild" => Term::Wild,
             "int" => Term::Int(int(&row[2])?),
+            "atom" => Term::Branded(branded(text(&row[3])?.as_str(), int(&row[2])?)?),
             "str" => Term::Str(text(&row[3])?.into()),
             "top" => Term::Top,
             "call" => {
@@ -683,6 +702,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         for row in self.get("fact") {
             let v = match str_of(&row[3])? {
                 "int" => Value::Int(int(&row[4])?),
+                "atom" => Value::Branded(branded(text(&row[5])?.as_str(), int(&row[4])?)?),
                 _ => Value::Str(text(&row[5])?.into()),
             };
             values.entry((str_of(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
@@ -873,6 +893,10 @@ pub fn encode(facts: &Facts) -> Vec<u8> {
                         body.push(0);
                         body.extend_from_slice(&i.to_le_bytes());
                     }
+                    Value::Branded(b) => {
+                        body.push(2 + b.class as u8);
+                        body.extend_from_slice(&u64::from(b.atom).to_le_bytes());
+                    }
                     Value::Str(x) => {
                         let next = table.len() as u32;
                         let k = *strings.entry(x.as_str()).or_insert_with(|| {
@@ -932,6 +956,10 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
                 row.push(match at.take(1)?[0] {
                     0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
                     1 => Value::Str(string(at.u64()?)?.into()),
+                    tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::Branded {
+                        class: [crate::code_rule_dsl::logic::front::Class::Name, crate::code_rule_dsl::logic::front::Class::Kind, crate::code_rule_dsl::logic::front::Class::Field][usize::from(tag - 2)],
+                        atom: u32::try_from(at.u64()?).map_err(|e| bad(e))?,
+                    }),
                     tag => return Err(bad(format!("no value tag {tag}"))),
                 });
             }

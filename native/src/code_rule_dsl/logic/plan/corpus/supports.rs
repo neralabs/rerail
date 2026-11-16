@@ -92,7 +92,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
 fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<(front::Name, front::Name)>, Rule)> {
     let h = &rule.head.rel;
     let hdecl = prog.decls.get(h.as_str())?;
-    if !rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) {
+    if !rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Branded(_) | Term::Str(_))) {
         return None;
     }
     // Each variable's type, from the first positive atom column binding it; wildcards there become variables.

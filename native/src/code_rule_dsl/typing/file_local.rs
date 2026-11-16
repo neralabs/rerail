@@ -1008,7 +1008,7 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
             let reader = &prog.rules[ri];
             let Literal::Atom(a) = &reader.body[li] else { return false };
             a.args.iter().any(|t| match t {
-                Term::Int(_) | Term::Str(_) => true,
+                Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
                 Term::Var(v) => reader.body.iter().enumerate().any(|(j, l)| j != li && matches!(l, Literal::Atom(b) if !b.neg && b.vars().contains(v.as_str()))),
                 _ => false,
             })
@@ -1154,7 +1154,7 @@ fn determined(body: &[crate::code_rule_dsl::logic::front::Literal], mut known: s
                 Literal::Atom(a) if !a.neg => {
                     let fixed = |c: &usize| match a.args.get(*c) {
                         Some(Term::Var(v)) => known.contains(v.as_str()),
-                        Some(Term::Int(_) | Term::Str(_)) => true,
+                        Some(Term::Int(_) | Term::Branded(_) | Term::Str(_)) => true,
                         _ => false,
                     };
                     if keys.get(a.rel.as_str()).is_some_and(|ks| ks.iter().any(|k| k.iter().all(fixed))) {

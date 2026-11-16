@@ -230,6 +230,7 @@ impl<'v> Body<'v> {
     pub fn constant(&self, t: TermRef<'_>) -> Option<Constant> {
         match t {
             TermRef::Int(i) => Some(Constant::Int(i)),
+            TermRef::Branded(a) => Some(Constant::Int(a.value())),
             TermRef::Str(a) => Some(Constant::Str(self.v.text(a).to_owned())),
             _ => None,
         }
@@ -310,6 +311,11 @@ impl<'v> Body<'v> {
             TermRef::Int(i) => {
                 d.u64(2);
                 d.u64(i as u64);
+            }
+            TermRef::Branded(b) => {
+                d.u64(6);
+                d.u64(b.class as u64);
+                d.u64(u64::from(b.atom));
             }
             TermRef::Str(a) => {
                 d.u64(3);
@@ -412,7 +418,7 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
     let TermRef::Var(y) = r else { return None };
     let ready = match l {
         TermRef::Var(x) => bound.contains(x),
-        TermRef::Int(_) | TermRef::Str(_) => true,
+        TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
         _ => false,
     };
     (ready && !bound.contains(y)).then_some(y)

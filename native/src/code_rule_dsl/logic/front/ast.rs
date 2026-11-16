@@ -14,6 +14,58 @@ pub enum Term {
     Str(Name),
     Top,
     Call(Name, List<Term>),
+    /// An atom a string became when the program was lowered for a store (`plan::lower`, decision 0270): never an
+    /// integer, so no pass takes one for the other, and a program moved to another store finds every name it holds.
+    Branded(Branded),
+}
+
+/// What an atom names (decision 0270): a name is the store's (interned, numbered as the store met it); a kind or a
+/// field is the grammar's (`kind_atom`, `field_atom`), the same in every store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Class {
+    Name,
+    Kind,
+    Field,
+}
+
+/// An atom with what it names (decision 0270). Its value at run time is `atom`, as an integer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Branded {
+    pub class: Class,
+    pub atom: u32,
+}
+
+impl Branded {
+    pub fn name(atom: u32) -> Branded {
+        Branded { class: Class::Name, atom }
+    }
+    /// Its value as the run holds it.
+    pub fn value(self) -> i64 {
+        i64::from(self.atom)
+    }
+    /// Its printed tag (`#n12`, `#k1034`, `#f3`), which the rr parser reads back.
+    pub fn tag(self) -> char {
+        match self.class {
+            Class::Name => 'n',
+            Class::Kind => 'k',
+            Class::Field => 'f',
+        }
+    }
+    pub fn of_tag(tag: char, atom: u32) -> Option<Branded> {
+        let class = match tag {
+            'n' => Class::Name,
+            'k' => Class::Kind,
+            'f' => Class::Field,
+            _ => return None,
+        };
+        Some(Branded { class, atom })
+    }
+}
+
+impl fmt::Display for Branded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{}{}", self.tag(), self.atom)
+    }
 }
 
 impl Term {
@@ -24,6 +76,15 @@ impl Term {
             }
             Term::Call(_, args) => args.iter().for_each(|a| a.vars(out)),
             _ => {}
+        }
+    }
+
+    /// The integer the run holds for a constant: an integer's, or a branded atom's (decision 0270).
+    pub fn integer(&self) -> Option<i64> {
+        match self {
+            Term::Int(i) => Some(*i),
+            Term::Branded(a) => Some(a.value()),
+            _ => None,
         }
     }
 
@@ -142,6 +203,7 @@ impl fmt::Display for Term {
             Term::Str(s) => f.write_str(&serde_json::to_string(s).expect("a string serializes")),
             Term::Top => f.write_str("top"),
             Term::Call(name, args) => write!(f, "@{name}({})", join(args)),
+            Term::Branded(b) => write!(f, "{b}"),
         }
     }
 }
@@ -223,6 +285,8 @@ impl LatticeDecl {
 pub enum Value {
     Int(i64),
     Str(Name),
+    /// A string a fact held, lowered to its atom (decision 0270).
+    Branded(Branded),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -546,6 +610,11 @@ impl crate::code_rule_dsl::logic::front::name::Shallow for Term {
                 h.write_usize(f.address());
                 h.write_usize(args.address());
             }
+            Term::Branded(b) => {
+                h.write_u8(6);
+                h.write_u8(b.class as u8);
+                h.write_u32(b.atom);
+            }
         }
     }
     fn shallow_eq(&self, other: &Term) -> bool {
@@ -606,6 +675,17 @@ impl crate::code_rule_dsl::logic::front::name::Shallow for Literal {
     }
 }
 
+impl Value {
+    /// The integer the run holds for it: an integer's, or a branded atom's (decision 0270).
+    pub fn integer(&self) -> Option<i64> {
+        match self {
+            Value::Int(i) => Some(*i),
+            Value::Branded(a) => Some(a.value()),
+            Value::Str(_) => None,
+        }
+    }
+}
+
 /// A value by its name's address (`Shallow`).
 impl crate::code_rule_dsl::logic::front::name::Shallow for Value {
     fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
@@ -618,6 +698,11 @@ impl crate::code_rule_dsl::logic::front::name::Shallow for Value {
             Value::Str(s) => {
                 h.write_u8(1);
                 h.write_usize(s.address());
+            }
+            Value::Branded(b) => {
+                h.write_u8(2);
+                h.write_u8(b.class as u8);
+                h.write_u32(b.atom);
             }
         }
     }

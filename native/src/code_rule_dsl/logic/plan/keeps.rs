@@ -685,12 +685,12 @@ fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTr
                     }
                 }
                 for l in r.body() {
-                    if let Lit::Cmp { l: TermRef::Var(s), op: CmpOp::Eq, r: TermRef::Int(_) | TermRef::Str(_) } | Lit::Cmp { l: TermRef::Int(_) | TermRef::Str(_), op: CmpOp::Eq, r: TermRef::Var(s) } = l.view() {
+                    if let Lit::Cmp { l: TermRef::Var(s), op: CmpOp::Eq, r: TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) } | Lit::Cmp { l: TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_), op: CmpOp::Eq, r: TermRef::Var(s) } = l.view() {
                         var.insert(name(s), 1.0);
                     }
                 }
                 let head: Vec<f64> = r.head().args().map(|t| match t {
-                    TermRef::Int(_) | TermRef::Str(_) => 1.0,
+                    TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => 1.0,
                     TermRef::Var(s) => var.get(name(s)).copied().unwrap_or(f64::INFINITY),
                     _ => f64::INFINITY,
                 }).collect();

@@ -15,6 +15,7 @@ enum Term<'v> {
     Str(&'v str),
     Top,
     Call(&'v str, Vec<Term<'v>>),
+    Branded(crate::code_rule_dsl::logic::front::Branded),
 }
 
 #[derive(Debug)]
@@ -55,6 +56,7 @@ fn term<'v>(b: &Body<'v>, t: TermRef<'_>) -> Term<'v> {
         TermRef::Var(s) => Term::Var(b.var(s)),
         TermRef::Wild => Term::Wild,
         TermRef::Int(i) => Term::Int(i),
+        TermRef::Branded(x) => Term::Branded(x),
         TermRef::Str(a) => Term::Str(b.v.text(a)),
         TermRef::Top => Term::Top,
         TermRef::Call(f, args) => Term::Call(b.v.text(f), args.map(|a| term(b, a)).collect()),
@@ -100,6 +102,7 @@ pub fn rule(b: &Body<'_>) -> String {
 enum Value<'v> {
     Int(i64),
     Str(&'v str),
+    Branded(crate::code_rule_dsl::logic::front::Branded),
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -131,6 +134,7 @@ fn facts<'v>(f: &Fields<'v>, rel: &str) -> Option<Vec<Vec<Value<'v>>>> {
     f.facts(rel).map(|fs| fs.rows().map(|row| row.map(|c| match c {
         Cell::Int(i) => Value::Int(i),
         Cell::Str(a) => Value::Str(v.text(a)),
+        Cell::Branded(b) => Value::Branded(b),
     }).collect()).collect())
 }
 

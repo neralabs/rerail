@@ -238,6 +238,7 @@ pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
                     row.map(|v| match v {
                             super::super::program_image::Cell::Int(n) => n.to_string(),
                             super::super::program_image::Cell::Str(s) => format!("'{}'", pf.text(s).replace('\'', "''")),
+                            super::super::program_image::Cell::Branded(b) => b.value().to_string(),
                         })
                         .collect::<Vec<_>>()
                         .join(",")

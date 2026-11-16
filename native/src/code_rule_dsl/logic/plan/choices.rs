@@ -284,7 +284,7 @@ fn take_notes(facts: &Facts) {
         .get(NOTES_REL)
         .into_iter()
         .flatten()
-        .filter_map(|row| super::joins::of_note_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) => None }).collect::<Option<Vec<_>>>()?))
+        .filter_map(|row| super::joins::of_note_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) | Value::Branded(_) => None }).collect::<Option<Vec<_>>>()?))
         .collect();
     let exact = facts
         .get(EXACT_REL)
@@ -323,7 +323,7 @@ fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<super::S
         .get(PLANS_REL)
         .into_iter()
         .flatten()
-        .filter_map(|row| super::StoredPlan::of_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) => None }).collect::<Option<Vec<_>>>()?))
+        .filter_map(|row| super::StoredPlan::of_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) | Value::Branded(_) => None }).collect::<Option<Vec<_>>>()?))
         .collect())
 }
 

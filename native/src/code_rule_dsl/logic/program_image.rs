@@ -63,11 +63,12 @@ pub use strings::Strings;
 pub use tree::Tree;
 pub use version::{DeclRef, FactsRef, Made, Version};
 
-pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x04";
+pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
 /// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows
 /// name included (`about::RELATION_COLUMNS`), so a format-2 image is read again from its text.
 /// 4: a derivation's rules record their sources (`R::From`); the about rows hold no `fact_rel`.
-pub const FORMAT: u32 = 4;
+/// 5: a lowered program's atoms are branded leaves and cells, with what they name (decision 0270).
+pub const FORMAT: u32 = 5;
 /// The program the `.about` rows are written as (`program_facts`), as the text has them.
 const ABOUT: &str = "a";
 
@@ -196,6 +197,8 @@ pub(crate) mod kind {
     pub const WILD: u8 = 10;
     pub const TOP: u8 = 11;
     pub const CALL: u8 = 12;
+    /// A branded atom (decision 0270): `val` is the atom, the flags its class (`brand_flags`).
+    pub const BRANDED: u8 = 13;
     pub const MASK: u8 = 0x1f;
     /// An atom's flags.
     pub const NEG: u8 = 0x20;
@@ -467,7 +470,11 @@ impl Image {
     pub(crate) fn fact_rows(&self, k: usize) -> impl ExactSizeIterator<Item = impl ExactSizeIterator<Item = Cell> + '_> + '_ {
         let (rows, cells, kinds, vals) = (self.u32s(R::FactRows), self.u32s(R::RowCells), self.u8s(R::CellKind), self.u64s(R::CellVal));
         (rows[k]..rows[k + 1]).map(move |row| {
-            (cells[row as usize]..cells[row as usize + 1]).map(move |c| if kinds[c as usize] == 0 { Cell::Int(vals[c as usize] as i64) } else { Cell::Str(AtomId(vals[c as usize] as u32)) })
+            (cells[row as usize]..cells[row as usize + 1]).map(move |c| match kinds[c as usize] {
+                0 => Cell::Int(vals[c as usize] as i64),
+                1 => Cell::Str(AtomId(vals[c as usize] as u32)),
+                k => Cell::Branded(brand_of(k - 2, vals[c as usize] as u32)),
+            })
         })
     }
     pub(crate) fn inputs(&self) -> &[u32] {
@@ -549,7 +556,7 @@ impl Image {
             return Err(bad("facts"));
         }
         for (k, &v) in self.u8s(R::CellKind).iter().zip(self.u64s(R::CellVal)) {
-            if *k > 1 || (*k == 1 && v >= atom_end as u64) {
+            if *k > 4 || (*k == 1 && v >= atom_end as u64) || (*k >= 2 && v > u64::from(u32::MAX)) {
                 return Err(bad("a fact's cell"));
             }
         }
@@ -625,6 +632,27 @@ impl Image {
 pub enum Cell {
     Int(i64),
     Str(AtomId),
+    /// A branded atom (decision 0270).
+    Branded(crate::code_rule_dsl::logic::front::Branded),
+}
+
+/// A branded atom's class as a node's flags (`kind::BRANDED`) and a cell's kind (2 and up), and back.
+pub(crate) fn brand_code(class: crate::code_rule_dsl::logic::front::Class) -> u8 {
+    use crate::code_rule_dsl::logic::front::Class;
+    match class {
+        Class::Name => 0,
+        Class::Kind => 1,
+        Class::Field => 2,
+    }
+}
+pub(crate) fn brand_of(code: u8, atom: u32) -> crate::code_rule_dsl::logic::front::Branded {
+    use crate::code_rule_dsl::logic::front::{Branded, Class};
+    let class = match code {
+        0 => Class::Name,
+        1 => Class::Kind,
+        _ => Class::Field,
+    };
+    Branded { class, atom }
 }
 
 struct Check<'i> {
@@ -663,6 +691,7 @@ impl Check<'_> {
         match k {
             kind::VAR | kind::STR => self.leaf(at, end, k),
             kind::WILD | kind::TOP if size == 1 => Ok(at + 1),
+            kind::BRANDED if size == 1 && flags >> 5 <= 2 => Ok(at + 1),
             kind::INT if size == 1 => {
                 if flags & kind::BIG != 0 && val as usize >= self.im.u64s(R::Ints).len() {
                     return Err(bad(format!("node {at}: an int past the table")));

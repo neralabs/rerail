@@ -35,6 +35,8 @@ pub enum T<'a> {
     Wild,
     Top,
     Int(i64),
+    /// A branded atom (decision 0270).
+    Branded(crate::code_rule_dsl::logic::front::Branded),
     Str(&'a str),
     StrAtom(AtomId),
     Call(&'a str, Vec<T<'a>>),
@@ -260,12 +262,14 @@ impl<'p> Builder<'p> {
         rows.iter().map(|row| row.iter().map(|v| match v {
             Value::Int(i) => Cell::Int(*i),
             Value::Str(s) => Cell::Str(AtomId(self.enc.atom(s))),
+            Value::Branded(b) => Cell::Branded(*b),
         }).collect()).collect()
     }
     fn hash_rows(rel: &str, about: bool, rows: &[List<Value>]) -> u64 {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|v| match v {
             Value::Int(i) => CellText::Int(*i),
             Value::Str(s) => CellText::Str(s.as_str()),
+            Value::Branded(b) => CellText::Branded(*b),
         })))
     }
     /// States relation `rel`'s facts, replacing the parent's.
@@ -302,6 +306,7 @@ impl<'p> Builder<'p> {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|c| match *c {
             Cell::Int(i) => CellText::Int(i),
             Cell::Str(x) => CellText::Str(enc.text(x.0)),
+            Cell::Branded(b) => CellText::Branded(b),
         })))
     }
     /// The rows of about relation `name` this edit states, or its parent's (`about.rs` reads and writes them by type).
@@ -689,6 +694,7 @@ fn write_t(e: &mut Encoder<'_>, t: &T<'_>) {
         T::Wild => e.leaf(kind::WILD, 0),
         T::Top => e.leaf(kind::TOP, 0),
         T::Int(i) => e.int(*i),
+        T::Branded(b) => e.leaf(kind::BRANDED | super::brand_code(b.class) << 5, b.atom),
         T::Str(s) => {
             let a = e.atom(s);
             e.leaf(kind::STR, a);

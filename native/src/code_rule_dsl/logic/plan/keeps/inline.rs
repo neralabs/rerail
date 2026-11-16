@@ -272,7 +272,7 @@ fn negated<'v>(v: &'v Version, reader: RuleRef<'_>, read: AtomRef<'_>, defs: &[R
                 let Lit::Atom(a) = l.view() else { unreachable!() };
                 for t in a.args() {
                     if let TermRef::Var(s) = t {
-                        let free = !matches!(to.get(&s), Some(Sub::Read(TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))));
+                        let free = !matches!(to.get(&s), Some(Sub::Read(TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_))));
                         if free && count[&s] != 1 {
                             return None;
                         }
@@ -285,7 +285,7 @@ fn negated<'v>(v: &'v Version, reader: RuleRef<'_>, read: AtomRef<'_>, defs: &[R
                 alternatives.push(vec![Alt::Atom { rel: a.rel(), neg: true, args }]);
             }
             body => {
-                let bound = |s: Slot| matches!(to.get(&s), Some(Sub::Read(TermRef::Var(x))) if read_vars.contains(x)) || matches!(to.get(&s), Some(Sub::Read(TermRef::Int(_) | TermRef::Str(_))));
+                let bound = |s: Slot| matches!(to.get(&s), Some(Sub::Read(TermRef::Var(x))) if read_vars.contains(x)) || matches!(to.get(&s), Some(Sub::Read(TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_))));
                 let mut alts = Vec::new();
                 for l in body {
                     let mut vars = Vec::new();
@@ -372,6 +372,7 @@ fn term<'v>(v: &'v Version, t: TermRef<'_>, var: &dyn Fn(Slot) -> AtomId) -> T<'
         TermRef::Wild => T::Wild,
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::Str(v.text(a)),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| term(v, a, var)).collect()),
     }
