@@ -121,7 +121,8 @@ function rawSection(cell: CellItem): string[] {
       return `| ${metricLabel(m.metric)} | ${runs(m.baseline.runs, m.unit)} | ${runs(m.candidate.runs, m.unit)} | ${spread} | ${confirm} |`;
     }),
     "",
-    `Load (1-minute) at each run: baseline ${cell.load.baseline.join(", ") || "–"}; candidate ${cell.load.candidate.join(", ") || "–"}. Busiest idle sibling CPU: ${Math.round(cell.sibling_busy_max * 100)}%.`,
+    `Load (1-minute) at each run: baseline ${cell.load.baseline.map((l) => l ?? "–").join(", ") || "–"}; candidate ${cell.load.candidate.map((l) => l ?? "–").join(", ") || "–"}. Busiest idle sibling CPU: ${cell.sibling_busy_max === null ? "– (not pinned)" : `${Math.round(cell.sibling_busy_max * 100)}%`}.`,
+    ...(cell.method_gaps.length === 0 ? [] : ["", `Method gaps of these runs: ${cell.method_gaps.join("; ")}.`]),
   ];
   const samples = [...(cell.findings?.samples ?? []), ...(cell.agreement?.samples ?? [])];
   if (samples.length > 0) lines.push("", "Differing findings, samples:", "", ...samples.map((s) => `- \`${s}\``));
@@ -214,11 +215,21 @@ function runSection(report: Report, baseline: string): string[] {
     `- Command: \`${report.run.command ?? "–"}\`; harness at \`${short(report.run.harness_sha)}\`.`,
     `- Baseline ${baseline}; candidate \`${short(report.candidate.sha)}\`.`,
     `- Bar: each metric's median of ${report.bar.runs_per_side} runs at most ${report.bar.max_ratio.toFixed(2)}× the baseline's; ${report.bar.confirm_runs > 0 ? `a failing cell runs ${report.bar.confirm_runs} confirmation repetitions` : "no confirmation runs were recorded"}; ${report.bar.drill_reps > 0 ? `a confirmed slowdown is attributed to rules with ${report.bar.drill_reps} cold runs per rule and side` : "rule attribution, where shown, states its own runs"}.`,
-    `- Pinned CPUs ${report.bar.pinned_cpus.join(" / ") || "–"} (${report.bar.threads.join(", ") || "–"} threads, one per physical core, siblings idle); caps ${report.bar.caps.memory.join(", ") || "–"} memory, ${report.bar.caps.time_s.join(", ") || "–"} s.`,
+    `- CPUs ${report.bar.pinned_cpus.join(" / ") || "–"} (${report.bar.threads.join(", ") || "–"} threads, one per physical core, siblings idle where the platform pins); caps ${report.bar.caps.memory.join(", ") || "–"} memory, ${report.bar.caps.time_s.join(", ") || "–"} s.`,
     "",
   ];
   if (report.machines.length > 0) {
     lines.push("| Host | Instance | CPU | Logical CPUs | OS | Kernel |", "|---|---|---|---|---|---|", ...report.machines.map((m) => `| ${m.host} | ${m.instance_type ?? "–"} | ${m.cpu_model ?? "–"} | ${m.logical_cpus} | ${m.os ?? "–"} | ${m.kernel} |`), "");
+  }
+  if (report.bar.methods.length > 0) {
+    lines.push(
+      "| Platform | Runs | Pinning | Measured by | Peak memory | Memory cap | Time cap |",
+      "|---|---|---|---|---|---|---|",
+      ...report.bar.methods.map(({ method: m, runs }) => `| ${m.platform} | ${runs} | ${m.pinning} | ${m.measured} | ${m.peak} | ${m.memoryCap} | ${m.timeCap} |`),
+      "",
+      ...report.bar.methods.flatMap(({ method, runs, gaps }) => gaps.map((gap) => `- ${method.platform}, ${runs} runs: ${gap}.`)),
+      "",
+    );
   }
   lines.push(
     "Inputs, pinned by hash:",
@@ -250,6 +261,9 @@ export function renderReport(report: Report): string {
     "",
     `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline ${baseline} · gate: ${report.verdict.gate.join(", ")} · bar: every metric ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline, findings no worse, every run completes.`,
     "",
+    // Runs measured with less than Linux's pinning and kernel caps say so before any figure is read.
+    ...report.bar.methods.filter((m) => m.gaps.length > 0).map((m) => `Measured on ${m.method.platform} (${m.runs} runs): ${m.gaps.map((gap) => gap.split(":")[0]).join("; ")}; details under "Run, inputs and method".`),
+    ...(report.bar.methods.some((m) => m.gaps.length > 0) ? [""] : []),
   ];
   for (const c of report.candidates) lines.push(...candidateSection(c));
   lines.push(...runSection(report, baseline));

@@ -81,12 +81,15 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   the upstream recording, a run main completes that the candidate does not, and a rule main ships that the candidate
   cannot run. A cell failing at the median runs `--confirm` more repetitions (a metric passing them is noisy: reported,
   not counted), and a confirmed slowdown is attributed to rules by timing each rule alone (`--drill`). `prepare` exports
-  the baseline and the corpora anywhere; `run` measures on Linux only, signed in to AWS for the pack data; `run` and
-  `verdict` write `report.json` (`report-model.ts`, schema `ship-no-ship/report/v1`) and `report.md` (`report.ts`): one
-  row per pack naming its worst metric and the rule behind it, each pack's metrics, rules and raw runs behind
-  `<details>`. Beside the gross figures, and never judged (`metric.ts`, `metric-report.ts`): each side's start-up (its
-  empty rule set on the same corpus, `fixed.jsonl`), net time and net ratio, the product path's load / compile /
-  evaluate phases (compile per rule, evaluate per rule per syntax node), the corpus's files, bytes, lines, tokens and
-  engine node counts (`<out>/workload/`), and in the drill-down each rule's multiple of the pack's median rule.
+  the baseline and the corpora anywhere; `run` measures on Linux (taskset, GNU time, a cgroup), macOS (`time -l`, no
+  CPU affinity, a polled memory cap: `platform-watch.mjs`) or Windows (a job object: `platform-win.cs`), as
+  `platform.ts` sets out, each run row naming how it was pinned, capped and measured, signed in to AWS for the pack
+  data; `run` and `verdict` write `report.json` (`report-model.ts`, schema `ship-no-ship/report/v1`) and `report.md`
+  (`report.ts`): one row per pack naming its worst metric and the rule behind it, each pack's metrics, rules and raw
+  runs behind `<details>`. Beside the gross figures, and never judged (`metric.ts`, `metric-report.ts`): each side's
+  start-up (its empty rule set on the same corpus, `fixed.jsonl`), net time and net ratio, the product path's load /
+  compile / evaluate phases (compile per rule, evaluate per rule per syntax node), the corpus's files, bytes, lines,
+  tokens and engine node counts (`<out>/workload/`), and in the drill-down each rule's multiple of the pack's median
+  rule.
 - `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,
   `npm run upstream:bump`) the upstream workflows run (docs/upstream.md).

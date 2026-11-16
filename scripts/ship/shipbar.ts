@@ -18,8 +18,9 @@
 //   node --import tsx scripts/ship/shipbar.ts run --baseline <dir | ref> --out <dir> [--candidate <dir>] [--corpora <dir>]
 //       [--packs a,b] [--corpus fixtures|real|all] [--runs 3] [--cpus 8-11] [--mem-cap 24G] [--time-cap 2700]
 //       [--candidates ships,rr] [--gate ships,rr] [--confirm 3] [--drill 2] [--drill-candidates ships] [--build]
-//       Linux only (taskset, GNU time, a systemd user manager for the memory cap): prepares what is missing, measures
-//       every pack and corpus, then writes the report. Resumable: a run already in a cell's logs is not made again.
+//       Linux, macOS or Windows (platform.ts: how each pins, caps and measures, recorded in every run row): prepares what
+//       is missing, measures every pack and corpus, then writes the report. Resumable: a run already in a cell's logs is
+//       not made again.
 //   node --import tsx scripts/ship/shipbar.ts verdict --baseline <dir> --out <dir> [--candidate <dir>] [--corpora <dir>]
 //       [--packs a,b] [--candidates ships,rr] [--gate ships,rr]
 //       report.json and report.md from the runs under <out>/runs (several runs' directories merged, say).
@@ -27,9 +28,10 @@
 // Exit status of run and verdict: 0 only when every candidate in --gate (default: every one in --candidates) passes.
 //
 // Method. Per pack and corpus, each side runs N times, interleaved (the side order rotates each repetition), all on
-// the same --cpus (one hardware thread per physical core, the cores' other threads left idle and their load recorded),
-// each process under the same memory cgroup cap and time cap. Cold: a fresh, empty RERAIL_TAPE_CACHE store and engine
-// TMPDIR; warm: a second process on that store right after. A side that fails a cold run makes no further run of that
+// the same --cpus (one hardware thread per physical core, the cores' other threads left idle and their load recorded;
+// macOS cannot pin, and its runs say so), each process under the same memory cap and time cap, with RERAIL_THREADS the
+// number of --cpus. Cold: a fresh, empty RERAIL_TAPE_CACHE store and engine temporary directory; warm: a second process
+// on that store right after. A side that fails a cold run makes no further run of that
 // pack and corpus. Each metric is the median of the side's completed runs: wall, CPU (user + sys) and peak RSS, cold
 // and warm, each failing above 1.10 times main's. A cell whose median fails runs --confirm more repetitions of main and
 // that candidate (confirm.jsonl): a metric failing again is confirmed, one passing is noisy, reported and not counted.
@@ -46,11 +48,12 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { cpus as logicalCpus, hostname, release } from "node:os";
-import { dirname, join, matchesGlob, relative, resolve } from "node:path";
+import { hostname } from "node:os";
+import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { cachedWorkload, type CellCost, cellCost, engineBinary, type Phases, readPhases, readWorkload, ruleSet } from "./metric.js";
+import { cpuList, LINUX_METHOD, type MachineInfo, methodCounts, openPlatform, type Platform, type RunMethod } from "./platform.js";
 import { buildReport, type RunMeta } from "./report-model.js";
 import { renderReport } from "./report.js";
 import {
@@ -114,7 +117,7 @@ function listFiles(root: string): string[] {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const full = join(directory, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.isFile()) out.push(relative(root, full));
+      else if (entry.isFile()) out.push(relative(root, full).split(sep).join("/"));
     }
   };
   if (existsSync(root)) walk(root);
@@ -366,62 +369,13 @@ function corpusDirectory(corpora: string, pack: string, corpus: Corpus): string 
 
 // ---------------------------------------------------------------- the machine
 
-function cpuList(spec: string): number[] {
-  const cpus = new Set<number>();
-  for (const part of spec.split(",")) {
-    const [from, to] = part.split("-").map(Number);
-    if (from === undefined || Number.isNaN(from) || (to !== undefined && Number.isNaN(to))) fail(`--cpus ${spec} is not a CPU list`);
-    for (let cpu = from; cpu <= (to ?? from); cpu += 1) cpus.add(cpu);
+/** This machine's way to pin, cap and measure a run (platform.ts), or why it has none. */
+function requirePlatform(out: string): Platform {
+  try {
+    return openPlatform(join(out, "platform"));
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
   }
-  return [...cpus].sort((a, b) => a - b);
-}
-
-/** The pinned CPUs' hyperthread siblings, which must stay idle; refuses a set holding two threads of one core. */
-function idleSiblings(cpus: readonly number[]): number[] {
-  const siblings = new Set<number>();
-  for (const cpu of cpus) {
-    const path = `/sys/devices/system/cpu/cpu${cpu}/topology/thread_siblings_list`;
-    if (!existsSync(path)) fail(`no CPU ${cpu} (${path})`);
-    for (const sibling of cpuList(readFileSync(path, "utf8").trim())) {
-      if (sibling === cpu) continue;
-      if (cpus.includes(sibling)) fail(`--cpus holds CPUs ${cpu} and ${sibling}, two threads of one core; pin one thread per physical core`);
-      siblings.add(sibling);
-    }
-  }
-  return [...siblings].sort((a, b) => a - b);
-}
-
-/** Per CPU, busy and total jiffies from /proc/stat. */
-function cpuTimes(): Map<number, { busy: number; total: number }> {
-  const times = new Map<number, { busy: number; total: number }>();
-  for (const line of readFileSync("/proc/stat", "utf8").split("\n")) {
-    const match = /^cpu(\d+)\s+(.*)$/.exec(line);
-    if (match === null) continue;
-    const fields = match[2]!.split(/\s+/).map(Number);
-    const total = fields.slice(0, 8).reduce((a, b) => a + b, 0);
-    times.set(Number(match[1]), { busy: total - (fields[3] ?? 0) - (fields[4] ?? 0), total });
-  }
-  return times;
-}
-
-function busiest(before: Map<number, { busy: number; total: number }>, after: Map<number, { busy: number; total: number }>, cpus: readonly number[]): number {
-  let most = 0;
-  for (const cpu of cpus) {
-    const a = before.get(cpu);
-    const b = after.get(cpu);
-    if (a === undefined || b === undefined || b.total === a.total) continue;
-    most = Math.max(most, (b.busy - a.busy) / (b.total - a.total));
-  }
-  return Math.round(most * 1000) / 1000;
-}
-
-/** Linux, taskset, GNU time, and a systemd user manager to cap memory: refuses rather than measure unpinned. */
-function requirePlatform(): void {
-  if (process.platform !== "linux") fail(`run measures on Linux only (taskset, GNU time, cgroups); this is ${process.platform}. Run \`prepare\` here and \`run\` on a Linux machine.`);
-  if (run("taskset", ["-c", "0", "true"]).status !== 0) fail("taskset (util-linux) is missing");
-  const time = run("/usr/bin/time", ["--version"]);
-  if (!/GNU/.test(time.stdout + time.stderr)) fail("/usr/bin/time is not GNU time");
-  if (run("systemd-run", ["--user", "--scope", "--quiet", "-p", "MemoryMax=1G", "true"]).status !== 0) fail("systemd-run --user --scope does not work here (no user manager?); it caps each run's memory");
 }
 
 // ---------------------------------------------------------------- builds
@@ -429,7 +383,7 @@ function requirePlatform(): void {
 function requireBuilt(checkout: string, needs: { product: boolean; engine: boolean }, build: boolean): { engine: string | undefined } {
   const addon = (): boolean => existsSync(join(checkout, "native")) && readdirSync(join(checkout, "native")).some((name) => /^rerail_engine\..+\.node$/.test(name));
   const tsx = (): boolean => existsSync(join(checkout, "node_modules", "tsx"));
-  const engine = (): string | undefined => [join(checkout, "target", "release", "rerail-engine"), join(checkout, "native", "target", "release", "rerail-engine")].find((path) => existsSync(path));
+  const engine = (): string | undefined => engineBinary(checkout);
   const steps: string[] = [];
   if (needs.product && (!addon() || !tsx())) steps.push(PRODUCT_BUILD);
   if (needs.engine && engine() === undefined) steps.push(ENGINE_BUILD);
@@ -503,11 +457,13 @@ interface RunRow {
   wallMs: number;
   cpuMs: number;
   rssKB: number;
-  /** /proc/loadavg's one-minute figure as the run started. */
-  load: number;
-  /** The busiest pinned CPU and the busiest idle sibling over the run (fraction busy). */
-  pinnedBusy: number;
-  siblingBusy: number;
+  /** The one-minute load average as the run started; null where the platform keeps none (Windows). */
+  load: number | null;
+  /** The busiest pinned CPU and the busiest idle sibling over the run (fraction busy); null where runs are not pinned. */
+  pinnedBusy: number | null;
+  siblingBusy: number | null;
+  /** How the run was pinned, capped and measured (rows from before it was recorded: Linux's). */
+  method: RunMethod;
   cpus: string;
   threads: number;
   host: string;
@@ -532,6 +488,7 @@ interface Settings {
   runs: number;
   cpus: number[];
   siblings: number[];
+  platform: Platform;
   memCap: string;
   timeCapS: number;
   /** Confirmation repetitions of a cell whose median fails (0: none). */
@@ -542,7 +499,7 @@ interface Settings {
 }
 
 function readRows(path: string): RunRow[] {
-  return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter((line) => line !== "").map((line) => JSON.parse(line) as RunRow) : [];
+  return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter((line) => line !== "").map((line) => ({ method: LINUX_METHOD, ...(JSON.parse(line) as Omit<RunRow, "method">) })) : [];
 }
 
 /** <cell>/rr-excluded.json: the `.rr` rules that failed alone on this corpus, each with why, left out of its runs. */
@@ -581,7 +538,7 @@ interface Process {
   drillRule?: string;
 }
 
-/** One process of one side, pinned and capped, measured by GNU time; its row is appended to the cell's log. */
+/** One process of one side, pinned, capped and measured as the platform can; its row is appended to the cell's log. */
 function measure(settings: Settings, cell: string, p: Process, pack: string, corpus: string, rr: RrRules | undefined): RunRow {
   const { side, mode, rep, tag, store } = p;
   if (mode === "cold") {
@@ -595,30 +552,20 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !key.startsWith("RERAIL_") && !key.startsWith("SHIPBAR_")) env[key] = value;
   env.RERAIL_TAPE_CACHE = join(store, "store.sqlite");
-  if (side === "rr") env.TMPDIR = join(store, "tmp");
+  // Windows's programs take their temporary directory from TMP and TEMP.
+  if (side === "rr") for (const key of process.platform === "win32" ? ["TMPDIR", "TMP", "TEMP"] : ["TMPDIR"]) env[key] = join(store, "tmp");
   else env.SHIPBAR_ENGINE_TMPDIR = join(store, "tmp");
-  const timeFile = join(cell, `${tag}.time`);
+  // The engine's thread count: what taskset already gives it on Linux, and what pins nothing on macOS.
+  env.RERAIL_THREADS = String(settings.cpus.length);
   const stderrFile = join(cell, `${tag}.stderr`);
-  const full = [
-    "-c", settings.cpus.join(","),
-    "/usr/bin/time", "-f", "%e %U %S %M", "-o", timeFile,
-    // GNU time stays outside the cgroup, so a run the cap kills is still measured (time to the kill, peak RSS).
-    "systemd-run", "--user", "--scope", "--quiet", "-p", `MemoryMax=${settings.memCap}`, "-p", "MemorySwapMax=0",
-    "timeout", "-s", "KILL", String(settings.timeCapS),
-    ...command,
-  ];
-  const load = Number(readFileSync("/proc/loadavg", "utf8").split(" ")[0]);
-  const before = cpuTimes();
   const started = new Date().toISOString();
   const stdout = openSync(side === "rr" ? result : join(cell, `${tag}.stdout`), "w");
   const stderr = openSync(stderrFile, "w");
-  const child = spawnSync("taskset", full, { cwd, env, stdio: ["ignore", stdout, stderr] });
+  const measured = settings.platform.measure({ command, cwd, env, cpus: settings.cpus, siblings: settings.siblings, memCap: settings.memCap, timeCapS: settings.timeCapS, stdout, stderr, scratch: join(cell, tag) });
   closeSync(stdout);
   closeSync(stderr);
-  const after = cpuTimes();
-  const timeLine = lastLine(existsSync(timeFile) ? readFileSync(timeFile, "utf8") : "0 0 0 0");
-  const [wall = 0, user = 0, sys = 0, rss = 0] = timeLine.split(/\s+/).map(Number);
-  const exit = child.status ?? 128 + 9;
+  const { exit, wallS: wall, peakKB: rss } = measured;
+  const cpuS = measured.userS + measured.sysS;
   const errorText = readFileSync(stderrFile, "utf8");
   let completed = exit === 0;
   let reason: string | null = null;
@@ -639,11 +586,11 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   if (exit !== 0) {
     reason =
       exit === 137 || exit === 128 + 9
-        ? `killed at ${wall.toFixed(0)} s, ${(rss / 1048576).toFixed(1)} GiB peak RSS (${wall >= settings.timeCapS - 1 ? `time cap ${settings.timeCapS} s` : `memory cap ${settings.memCap}`})`
+        ? `killed at ${wall.toFixed(0)} s, ${(rss / 1048576).toFixed(1)} GiB peak memory (${(measured.killedBy ?? (wall >= settings.timeCapS - 1 ? "time" : "memory")) === "time" ? `time cap ${settings.timeCapS} s` : `memory cap ${settings.memCap}`})`
         : `exit ${exit}: ${lastLine(errorText)}`;
     if (side === "rr") {
       const started = existsSync(rundir) ? readdirSync(rundir).filter((name) => /^\d+$/.test(name)).length : 0;
-      const named = /\/([^/]+)\.rr: /.exec(errorText)?.[1];
+      const named = /[\\/]([^\\/]+)\.rr: /.exec(errorText)?.[1];
       culprit = named !== undefined && p.rules.includes(named) ? named : (p.rules[started - 1] ?? null);
       stoppedOn = `${culprit ?? "before the first policy"} (policy ${started} of ${p.rules.length})`;
     } else {
@@ -652,20 +599,19 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   }
   const row: RunRow = {
     tag, side, mode, rep, completed, reason, stoppedOn, culprit, rules: side === "rr" ? p.rules.length : null, exit,
-    wallMs: Math.round(wall * 1000), cpuMs: Math.round((user + sys) * 1000), rssKB: rss,
-    load, pinnedBusy: busiest(before, after, settings.cpus), siblingBusy: busiest(before, after, settings.siblings),
+    wallMs: Math.round(wall * 1000), cpuMs: Math.round(cpuS * 1000), rssKB: rss,
+    load: measured.load, pinnedBusy: measured.pinnedBusy, siblingBusy: measured.siblingBusy, method: settings.platform.method,
     cpus: settings.cpus.join(","), threads: settings.cpus.length, host: hostname(),
     memCap: settings.memCap, timeCapS: settings.timeCapS, command: command.join(" "), started, evaluateMs, phases, drillRule: p.drillRule ?? null,
   };
   appendFileSync(join(cell, p.log), `${JSON.stringify(row)}\n`);
   // Kept: the first cold run's findings (and every failure's stderr). The rest is scratch.
   rmSync(rundir, { recursive: true, force: true });
-  rmSync(timeFile, { force: true });
   rmSync(join(cell, `${tag}.stdout`), { force: true });
   if (tag === `${side}.cold1` && p.log === "runs.jsonl" && completed) renameSync(result, join(cell, `${side}.findings.json`));
   else rmSync(result, { force: true });
   if (completed) rmSync(stderrFile, { force: true });
-  console.log(`shipbar: ${pack} ${relative(settings.corpora, corpus)} ${tag}: ${completed ? "ok" : `FAILED (${reason})`} wall ${wall}s cpu ${(user + sys).toFixed(2)}s rss ${(rss / 1024).toFixed(0)}MB`);
+  console.log(`shipbar: ${pack} ${relative(settings.corpora, corpus)} ${tag}: ${completed ? "ok" : `FAILED (${reason})`} wall ${wall}s cpu ${cpuS.toFixed(2)}s rss ${(rss / 1024).toFixed(0)}MB`);
   return row;
 }
 
@@ -845,8 +791,11 @@ export interface CellVerdict {
   /** fixtures: the set-wise findings bar, with each side's TP/FP/FN; real: agreement only. */
   findings: (Omit<FindingsVerdict, "lostTp" | "newFp"> & { lostTp: number; newFp: number; samples: string[]; main: Counts; candidate: Counts }) | null;
   agreement: { both: number; mainOnly: number; candidateOnly: number; samples: string[] } | null;
-  load: { main: number[]; candidate: number[] };
-  siblingBusyMax: number;
+  load: { main: (number | null)[]; candidate: (number | null)[] };
+  /** The busiest idle sibling CPU over the cell's runs; null when none of them was pinned. */
+  siblingBusyMax: number | null;
+  /** How the cell's runs were pinned, capped and measured, each method once. */
+  methods: RunMethod[];
   runs: { main: number; candidate: number };
   /** How many rules each side ran: main's shipped rules; the candidate's shipped rules, or the `.rr` rules that run. */
   rules: { main: number; candidate: number };
@@ -879,24 +828,14 @@ export interface CandidateVerdict {
   packs: PackVerdict[];
 }
 
-/** A host the runs were made on, as `run` found it (<out>/machines/<host>.json). */
-export interface MachineInfo {
-  host: string;
-  cpu_model: string | null;
-  logical_cpus: number;
-  kernel: string;
-  os: string | null;
-  /** The EC2 instance type, when the instance metadata service answers. */
-  instance_type: string | null;
-}
-
 export interface Verdict {
   tolerancePercent: number;
   runs: number;
   baseline: Checkout;
   candidate: Checkout;
   corpora: CorporaLock;
-  machine: { hosts: string[]; cpus: string[]; threads: number[]; memCap: string[]; timeCapS: number[] };
+  /** Each way runs were pinned, capped and measured, with how many runs it measured. */
+  machine: { hosts: string[]; cpus: string[]; threads: number[]; memCap: string[]; timeCapS: number[]; methods: { method: RunMethod; runs: number }[] };
   machines: MachineInfo[];
   candidates: CandidateVerdict[];
   gate: Candidate[];
@@ -1004,7 +943,7 @@ function drillOf(cell: string, candidate: Candidate): CellVerdict["drill"] {
 }
 
 function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, lock: CorporaLock, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): CellVerdict {
-  const empty: CellVerdict = { corpus, note: "", blocked: null, completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 }, drill: null, cost: null };
+  const empty: CellVerdict = { corpus, note: "", blocked: null, completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: null, methods: [], runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 }, drill: null, cost: null };
   const fixtures = lock.fixtures[pack];
   if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) return { ...empty, note: `no fixtures corpus: ${fixtures.absent}` };
   const cell = join(settings.out, "runs", pack, corpus);
@@ -1052,7 +991,8 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     findings,
     agreement: agree,
     load: { main: main.map((row) => row.load), candidate: mine.map((row) => row.load) },
-    siblingBusyMax: Math.max(0, ...all.map((row) => row.siblingBusy)),
+    siblingBusyMax: all.some((row) => row.siblingBusy !== null) ? Math.max(0, ...all.map((row) => row.siblingBusy ?? 0)) : null,
+    methods: methodCounts(all).map((m) => m.method),
     runs: { main: main.length, candidate: mine.length },
     rules: { main: mainRules.length, candidate: candidate === "rr" && rr !== undefined ? rrIds(rr, cell).length : shippedRules(settings.candidate.dir, pack).length },
     drill: drillOf(cell, candidate),
@@ -1104,6 +1044,7 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
       threads: distinct(rows.map((row) => row.threads)),
       memCap: distinct(rows.map((row) => row.memCap)),
       timeCapS: distinct(rows.map((row) => row.timeCapS)),
+      methods: methodCounts(rows),
     },
     machines: existsSync(machinesDir) ? readdirSync(machinesDir).filter((name) => name.endsWith(".json")).sort().map((name) => readJson<MachineInfo>(join(machinesDir, name))) : [],
     candidates: verdicts,
@@ -1119,15 +1060,6 @@ function writeReport(verdict: Verdict, out: string, meta: RunMeta): number {
   for (const c of report.candidates) console.log(`shipbar: ${c.candidate}: ${c.status} (${c.counts.failing_items} failing items, ${c.counts.noisy_items} noisy)`);
   console.log(`shipbar: ${join(out, "report.json")}, ${join(out, "report.md")}`);
   return report.verdict.status === "PASS" ? 0 : 1;
-}
-
-/** This host as the report names it: CPU model, kernel, OS, and its EC2 instance type when the metadata service answers. */
-function machineInfo(): MachineInfo {
-  const cpuModel = existsSync("/proc/cpuinfo") ? (/^model name\s*:\s*(.+)$/m.exec(readFileSync("/proc/cpuinfo", "utf8"))?.[1] ?? null) : null;
-  const os = existsSync("/etc/os-release") ? (/^PRETTY_NAME="?([^"\n]+)"?$/m.exec(readFileSync("/etc/os-release", "utf8"))?.[1] ?? null) : null;
-  const token = run("curl", ["-s", "-m", "1", "-X", "PUT", "http://169.254.169.254/latest/api/token", "-H", "X-aws-ec2-metadata-token-ttl-seconds: 60"]);
-  const type = token.status === 0 && token.stdout !== "" ? run("curl", ["-s", "-m", "1", "-H", `X-aws-ec2-metadata-token: ${token.stdout}`, "http://169.254.169.254/latest/meta-data/instance-type"]).stdout.trim() : "";
-  return { host: hostname(), cpu_model: cpuModel, logical_cpus: logicalCpus().length, kernel: release(), os, instance_type: /^[a-z0-9-]+\.[a-z0-9-]+$/.test(type) ? type : null };
 }
 
 /**
@@ -1195,7 +1127,7 @@ function main(): void {
   const drill = count("drill", values.drill, 0);
   const drillCandidates = values["drill-candidates"].split(",").map((c) => c.trim()).filter((c) => c !== "") as Candidate[];
   for (const c of drillCandidates) if (!(c in CANDIDATES)) fail(`--drill-candidates: no candidate ${c} (ships, rr)`);
-  if (command === "run") requirePlatform();
+  const platform = command === "run" ? requirePlatform(out) : undefined;
 
   const baseline = resolveBaseline(values.baseline, out, values["pack-data-cache"]);
   const candidate: Checkout = { dir: resolve(values.candidate), sha: checkoutSha(resolve(values.candidate)) };
@@ -1219,15 +1151,22 @@ function main(): void {
     const lock = verifyCorpora(corpora, packs, corpusKinds);
     requireBuilt(baseline.dir, { product: true, engine: false }, values.build);
     const { engine } = requireBuilt(candidate.dir, { product: candidates.includes("ships"), engine: candidates.includes("rr") }, values.build);
-    const cpus = cpuList(values.cpus);
-    const settings: Settings = { ...settingsBase, engine, cpus, siblings: idleSiblings(cpus), memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), confirm, drill, drillCandidates };
+    let cpus: number[] = [];
+    let siblings: number[] = [];
+    try {
+      cpus = cpuList(values.cpus);
+      siblings = platform!.siblings(cpus);
+    } catch (error) {
+      fail(`--cpus ${values.cpus}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const settings: Settings = { ...settingsBase, engine, cpus, siblings, platform: platform!, memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), confirm, drill, drillCandidates };
     // Who runs it: the AWS identity this shell is signed in as, the one the pack data pull reads with.
     const caller = run("aws", ["sts", "get-caller-identity", "--query", "Arn", "--output", "text"]);
     const invokedBy = caller.status === 0 && caller.stdout.trim() !== "" ? caller.stdout.trim() : null;
     const command = ["npm run bench:ship --", ...process.argv.slice(2)].join(" ");
     writeFileSync(join(out, "settings.json"), JSON.stringify({ ...settings, candidates, corpusKinds, packs, productBuild: PRODUCT_BUILD, engineBuild: ENGINE_BUILD, invokedBy, command }, null, 1));
     mkdirSync(join(out, "machines"), { recursive: true });
-    writeFileSync(join(out, "machines", `${hostname()}.json`), JSON.stringify(machineInfo(), null, 1));
+    writeFileSync(join(out, "machines", `${hostname()}.json`), JSON.stringify(platform!.machine(), null, 1));
     const sides: Side[] = ["main", ...candidates];
     for (const pack of packs) {
       let rr: RrRules | undefined;
@@ -1241,7 +1180,7 @@ function main(): void {
         const fixtures = lock.fixtures[pack];
         if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) continue;
         const dir = corpusDirectory(corpora, pack, corpus);
-        cachedWorkload(out, relative(corpora, dir), dir, engine ?? engineBinary(candidate.dir), cpus);
+        cachedWorkload(out, relative(corpora, dir), dir, engine ?? engineBinary(candidate.dir));
         measureCell(settings, pack, corpus, sides, rr);
         measureFixed(settings, pack, corpus, sides);
         confirmCell(settings, pack, corpus, candidates, rr);

@@ -4,6 +4,7 @@
 // stop at the pack table. A metric that fails at the median and passes its confirmation runs is noisy: reported, not
 // counted. Pure functions; report.ts renders the Markdown.
 
+import { methodGaps, type RunMethod } from "./platform.js";
 import type { Candidate, CellVerdict, Corpus, MeasuredMetric, PackVerdict, RuleTiming, Verdict } from "./shipbar.js";
 import { type CellCost, KNOWN_GAPS, type RuleMultiple, ruleMultiples } from "./metric.js";
 import { median, spread, TOLERANCE_PERCENT } from "./verdict.js";
@@ -78,8 +79,11 @@ export interface CellItem {
   drill: DrillItem | null;
   /** The biggest contributor one level down: the rule behind a slowdown, where a run stopped, a differing finding. */
   hint: string | null;
-  load: { baseline: number[]; candidate: number[] };
-  sibling_busy_max: number;
+  load: { baseline: (number | null)[]; candidate: (number | null)[] };
+  /** The busiest idle sibling CPU over the cell's runs; null when none was pinned. */
+  sibling_busy_max: number | null;
+  /** What the cell's runs lacked against pinned, kernel-capped runs (platform.ts methodGaps); empty on Linux. */
+  method_gaps: string[];
   reproduce: string;
   /** metric.ts: start-up, net times, phases and workload; reported beside the gross metrics, never a status. */
   cost: CellCost | null;
@@ -132,7 +136,17 @@ export interface Report {
   baseline: { ref: string | null; sha: string };
   candidate: { ref: string | null; sha: string };
   inputs: Verdict["corpora"];
-  bar: { max_ratio: number; runs_per_side: number; confirm_runs: number; drill_reps: number; caps: { memory: string[]; time_s: number[] }; pinned_cpus: string[]; threads: number[] };
+  bar: {
+    max_ratio: number;
+    runs_per_side: number;
+    confirm_runs: number;
+    drill_reps: number;
+    caps: { memory: string[]; time_s: number[] };
+    pinned_cpus: string[];
+    threads: number[];
+    /** Each way runs were pinned, capped and measured, how many runs it measured, and what it lacks. */
+    methods: { method: RunMethod; runs: number; gaps: string[] }[];
+  };
   verdict: { status: "PASS" | "FAIL" | "INCOMPLETE"; gate: Candidate[]; candidates: Partial<Record<Candidate, { status: CandidateItem["status"]; failing_packs: number; failing_items: number }>> };
   candidates: CandidateItem[];
   scope: { measured: string[]; not_measured: string[]; known_gaps: string[] };
@@ -277,6 +291,7 @@ function cellItem(candidate: Candidate, pack: string, cell: CellVerdict, reprodu
     hint,
     load: { baseline: cell.load.main, candidate: cell.load.candidate },
     sibling_busy_max: cell.siblingBusyMax,
+    method_gaps: [...new Set(cell.methods.flatMap(methodGaps))],
     reproduce: `npm run bench:ship -- run --baseline ${reproduce.baseline} --packs ${pack} --corpus ${cell.corpus} --candidates ${candidate} --runs ${reproduce.runs} --out <dir>`,
     cost: cell.cost,
   };
@@ -382,12 +397,21 @@ export function buildReport(verdict: Verdict, meta: RunMeta): Report {
     baseline: { ref: verdict.baseline.ref ?? null, sha: verdict.baseline.sha },
     candidate: { ref: verdict.candidate.ref ?? null, sha: verdict.candidate.sha },
     inputs: verdict.corpora,
-    bar: { max_ratio: 1 + TOLERANCE_PERCENT / 100, runs_per_side: verdict.runs, confirm_runs: meta.confirmRuns, drill_reps: meta.drillReps, caps: { memory: verdict.machine.memCap, time_s: verdict.machine.timeCapS }, pinned_cpus: verdict.machine.cpus, threads: verdict.machine.threads },
+    bar: {
+      max_ratio: 1 + TOLERANCE_PERCENT / 100,
+      runs_per_side: verdict.runs,
+      confirm_runs: meta.confirmRuns,
+      drill_reps: meta.drillReps,
+      caps: { memory: verdict.machine.memCap, time_s: verdict.machine.timeCapS },
+      pinned_cpus: verdict.machine.cpus,
+      threads: verdict.machine.threads,
+      methods: verdict.machine.methods.map((m) => ({ ...m, gaps: methodGaps(m.method) })),
+    },
     verdict: { status: overallStatus, gate: verdict.gate, candidates: Object.fromEntries(candidates.map((c) => [c.candidate, { status: c.status, failing_packs: c.counts.failing_packs, failing_items: c.counts.failing_items }])) },
     candidates,
     scope: {
       measured: ["every pack the baseline ships, all of its rules enabled together, on its upstream fixtures and one pinned real-code corpus: wall, CPU and peak RSS, cold and warm; findings; completion; coverage"],
-      not_measured: ["user waits through hooks, daemon and CLI (W1–W8)", "a repository's whole enabled rule set across packs, and the rule work budget", "macOS and Windows"],
+      not_measured: ["user waits through hooks, daemon and CLI (W1–W8)", "a repository's whole enabled rule set across packs, and the rule work budget"],
       known_gaps: KNOWN_GAPS,
     },
   };

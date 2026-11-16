@@ -4,6 +4,7 @@
 // metric's cause.
 
 import { describe, expect, it } from "vitest";
+import { LINUX_METHOD } from "../../../scripts/ship/platform.js";
 import { attribute, buildReport, drillHint, metricStatus, type RunMeta } from "../../../scripts/ship/report-model.js";
 import type { CellVerdict, MeasuredMetric, RuleTiming, Verdict } from "../../../scripts/ship/shipbar.js";
 import { compareMetric } from "../../../scripts/ship/verdict.js";
@@ -73,6 +74,7 @@ describe("the report", () => {
     agreement: { both: 10, mainOnly: 0, candidateOnly: 0, samples: [] },
     load: { main: [0.1], candidate: [0.1] },
     siblingBusyMax: 0,
+    methods: [LINUX_METHOD],
     runs: { main: 6, candidate: 6 },
     rules: { main: 3, candidate: 3 },
     drill,
@@ -84,7 +86,7 @@ describe("the report", () => {
     baseline: { dir: "/b", sha: "b".repeat(40), ref: "v0.1.4" },
     candidate: { dir: "/c", sha: "c".repeat(40) },
     corpora: { baseline: "b".repeat(40), fixtures: {}, real: {} },
-    machine: { hosts: ["h"], cpus: ["8,9,10,11"], threads: [4], memCap: ["24G"], timeCapS: [2700] },
+    machine: { hosts: ["h"], cpus: ["8,9,10,11"], threads: [4], memCap: ["24G"], timeCapS: [2700], methods: [{ method: LINUX_METHOD, runs: 12 }] },
     machines: [],
     candidates: [{ candidate: "ships", description: "as it ships", packs }],
     gate: ["ships"],

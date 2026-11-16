@@ -100,16 +100,20 @@ function walk(root: string, visit: (path: string) => void): void {
   }
 }
 
-/** A built rerail-engine binary in a checkout, if any: counting nodes never builds one. */
+/** A built rerail-engine binary in a checkout, if any (`.exe` on Windows): the harness's one way to find it. */
 export function engineBinary(checkout: string): string | undefined {
-  const candidates = [join(checkout, "target", "release", "rerail-engine"), join(checkout, "native", "target", "release", "rerail-engine")];
+  const name = process.platform === "win32" ? "rerail-engine.exe" : "rerail-engine";
+  const candidates = [join(checkout, "target", "release", name), join(checkout, "native", "target", "release", name)];
   const target = join(checkout, "target");
-  if (existsSync(target)) for (const triple of readdirSync(target)) candidates.push(join(target, triple, "release", "rerail-engine"));
+  if (existsSync(target)) for (const triple of readdirSync(target)) candidates.push(join(target, triple, "release", name));
   return candidates.find((path) => existsSync(path));
 }
 
-/** The engine's node count of a corpus's files of one family: its run's `nodes` (null when the run fails). */
-function countNodes(engine: string, cpus: readonly number[], corpus: string, family: string): number | null {
+/**
+ * The engine's node count of a corpus's files of one family: its run's `nodes` (null when the run fails). A count, not
+ * a timing, so the run is not pinned: it runs alike on every platform.
+ */
+function countNodes(engine: string, corpus: string, family: string): number | null {
   const scratch = mkdtempSync(join(tmpdir(), "shipbar-nodes-"));
   try {
     const rule = join(scratch, `nodes-${family}.rr`);
@@ -129,7 +133,7 @@ function countNodes(engine: string, cpus: readonly number[], corpus: string, fam
     );
     mkdirSync(join(scratch, "tmp"));
     const env = { ...process.env, RERAIL_TAPE_CACHE: join(scratch, "store.sqlite"), TMPDIR: join(scratch, "tmp") };
-    const r = spawnSync("taskset", ["-c", cpus.join(","), engine, "run-rr", rule, corpus, join(scratch, "out")], { env, encoding: "utf8", maxBuffer: 1 << 30 });
+    const r = spawnSync(engine, ["run-rr", rule, corpus, join(scratch, "out")], { env, encoding: "utf8", maxBuffer: 1 << 30 });
     if (r.status !== 0) return null;
     const result: unknown = JSON.parse(r.stdout);
     return result !== null && typeof result === "object" && "nodes" in result && typeof result.nodes === "number" ? result.nodes : null;
@@ -139,7 +143,7 @@ function countNodes(engine: string, cpus: readonly number[], corpus: string, fam
 }
 
 /** A corpus's workload; node counts need `engine` (left null without one). */
-export function measureWorkload(corpus: string, engine: string | undefined, cpus: readonly number[]): Workload {
+export function measureWorkload(corpus: string, engine: string | undefined): Workload {
   const by: Record<string, LanguageWorkload> = {};
   walk(corpus, (path) => {
     const language = languageOf(path);
@@ -152,7 +156,7 @@ export function measureWorkload(corpus: string, engine: string | undefined, cpus
     w.lines += counts.lines;
     w.tokens += counts.tokens;
   });
-  if (engine !== undefined) for (const [language, w] of Object.entries(by)) if (PARSED.has(language)) w.nodes = countNodes(engine, cpus, corpus, language);
+  if (engine !== undefined) for (const [language, w] of Object.entries(by)) if (PARSED.has(language)) w.nodes = countNodes(engine, corpus, language);
   const all = Object.values(by);
   const parsed = Object.entries(by).filter(([language]) => PARSED.has(language)).map(([, w]) => w.nodes);
   const sum = (key: "files" | "bytes" | "lines" | "tokens"): number => all.reduce((s, w) => s + w[key], 0);
@@ -167,18 +171,23 @@ export function measureWorkload(corpus: string, engine: string | undefined, cpus
   };
 }
 
+/** The file a corpus's workload is cached in: its key's path parts joined, alike for `/` and Windows' `\`. */
+function workloadFile(out: string, key: string): string {
+  return join(out, "workload", `${key.split(/[\\/]/).join("_")}.json`);
+}
+
 /** A corpus's workload, counted once per run directory (<out>/workload/<key>.json) and read back after. */
-export function cachedWorkload(out: string, key: string, corpus: string, engine: string | undefined, cpus: readonly number[]): Workload {
-  const path = join(out, "workload", `${key.replaceAll("/", "_")}.json`);
+export function cachedWorkload(out: string, key: string, corpus: string, engine: string | undefined): Workload {
+  const path = workloadFile(out, key);
   if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as Workload;
-  const workload = measureWorkload(corpus, engine, cpus);
+  const workload = measureWorkload(corpus, engine);
   mkdirSync(join(out, "workload"), { recursive: true });
   writeFileSync(path, JSON.stringify(workload, null, 1));
   return workload;
 }
 
 export function readWorkload(out: string, key: string): Workload | null {
-  const path = join(out, "workload", `${key.replaceAll("/", "_")}.json`);
+  const path = workloadFile(out, key);
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Workload) : null;
 }
 
