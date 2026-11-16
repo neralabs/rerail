@@ -79,10 +79,23 @@ pub(super) fn trials_on() -> bool {
     on() && *ON
 }
 
-/// Whether line `key`'s orders are trialled at this check: the first time in this process, and once after it was
-/// flagged slow.
+/// Decision 0274: whether line `key` was observed on a run's critical path: its note's share of the measured path
+/// (0208), a moving average over runs, is at least `critical_share`. A line that leaves the path halves its share
+/// each run, and drops below in a few: the next path's lines are found as each is made faster.
+pub(super) fn on_critical_path(key: &PlanKey) -> bool {
+    NOTED.load(Relaxed) && MEMO.read().notes.get(key).is_some_and(|n| n.critical >= critical_share())
+}
+
+/// Decision 0274: whether line `key`'s orders would be trialled at this check (`take_trial`), without taking it.
+pub(super) fn trial_due(key: &PlanKey) -> bool {
+    trials_on() && on_critical_path(key) && !MEMO.read().trialled.contains(key)
+}
+
+/// Whether line `key`'s orders are trialled at this check: decision 0274, only a line observed on a run's critical
+/// path, and as 0207, once in this process and once more after it was flagged slow. A slow line off the path is
+/// planned again instead, under the handoff's limit (decision 0271).
 pub(super) fn take_trial(key: PlanKey) -> bool {
-    MEMO.write().trialled.insert(key)
+    on_critical_path(&key) && MEMO.write().trialled.insert(key)
 }
 
 /// A trial measured `ratio` (work over price) for `order` of line `key`: kept as a run's is (`critical`).
@@ -405,8 +418,9 @@ pub(super) fn next_due(key: PlanKey) -> Option<f64> {
 /// `limit`, the work its replacement may do over the rows left before the two are compared.
 pub(in crate::code_rule_dsl::logic) struct Handoff { pub old: Vec<Step>, pub per_row: f64, pub limit: f64 }
 
-/// Decision 0271: whether a slow seed's or whole plan's orders are measured after its check, by a trial (its sample has
-/// `TRIAL_LEAST` rows: `sampled`) or by the handoff it is in. Where not, it is planned again at the check.
+/// Decision 0271: whether a slow seed's or whole plan's orders are measured after its check, by a trial (`sampled`: its
+/// sample has `TRIAL_LEAST` rows, and decision 0274's trial is due) or by the handoff it is in. Where not, it is
+/// planned again at the check.
 pub(super) fn measured_below(sampled: bool, in_handoff: bool) -> bool {
     trials_on() && (sampled || in_handoff)
 }

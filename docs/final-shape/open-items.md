@@ -5289,7 +5289,7 @@ And decide whether a replacement cut twice keeps a limit.
 
 ## O-post-merge-cpu. Where the hub merge's extra CPU came from (2026-11-15)
 
-Status: measured, and two items follow. The merge of the hub (713beb9f7) and of the cost-classifier work (46740959f)
+Status: measured; the trials' part decided by 0274, the stored keys' part open. The merge of the hub (713beb9f7) and of the cost-classifier work (46740959f)
 added 7–9% to the python pack's cold run over 50 files of corpus0, with the same 63 rows. Instructions retired, in
 billions; two or three runs each, strict, node attributes eager, under load (load average 35–55):
 
@@ -5315,7 +5315,8 @@ The profiles' spans say the same (the profiled runs: own CPU 14.9 → 15.7 s):
   not it is slow, and the hub's trials walk each candidate (0233, 0236, 0245). On the python pack over 50
   files, 119 lines were trialled or walked. 11 of them were slow, and one trial won: `rr_agg287`, 11,096 rows of
   work against 15,461. The trials' cost shows as the strata's own CPU (0.47 → 1.03 s; 0.29 s with trials off).
-  `ruff_safe_operand` alone went from 0.12 to 0.26 s, with the same plan. **Open, for the user:** trialling only
+  `ruff_safe_operand` alone went from 0.12 to 0.26 s, with the same plan. **Decided (0274):** trials follow the
+  observed critical path; the python pack's first run takes 166.7 G. As first written: trialling only
   lines flagged slow would fit the planner's aim (bounding the worst case), and would save most of this. But 0207 was
   asked for so that proposed orders are "actually tested ... in order to properly price them" (2026-11-14), and
   that would then hold for slow lines only.

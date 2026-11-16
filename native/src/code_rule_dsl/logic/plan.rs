@@ -7828,7 +7828,8 @@ impl<'a> Run<'a, '_> {
                 // The line's work: its counts, and a whole plan's work as its cut reported it.
                 let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64 + if whole { c.work as f64 } else { 0.0 };
                 // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
-                // orders run over a sample of the rows left, each cut at `trial_cutoff` times the least work measured
+                // orders run over a sample of the rows left (decision 0274: only a line observed on a run's critical
+                // path, `joins::take_trial`), each cut at `trial_cutoff` times the least work measured
                 // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
                 // order tried; the least measured goes on where it beats the running order by `trial_margin`.
                 // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
@@ -7846,7 +7847,7 @@ impl<'a> Run<'a, '_> {
                         joins::flag_slow(key, rule, est, work);
                         super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
                         let exact = self.exact_statistics(&name, line, &b, &running);
-                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len()));
+                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
                         joins::put_exact(key, rule, exact);
                         self.heavy_for([r], true, Some(key));
                         joins::take_forced(&key);
@@ -7856,7 +7857,7 @@ impl<'a> Run<'a, '_> {
                         // and its replacement runs under the handoff's limit. That is a line whose sample is under
                         // `TRIAL_LEAST` (its few lead rows each cost more than its check's budget: `pre_570` did 0 of
                         // 423 in 201,431 rows of work, then ran 22 s unbounded). A line in a handoff is judged by it.
-                        if !joins::measured_below(sample >= TRIAL_LEAST, handoff[line].is_some()) && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                        if !joins::measured_below(sample >= TRIAL_LEAST && joined && joins::trial_due(&key), handoff[line].is_some()) && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
                             if joins::trials_on() {
                                 joins::log(|| format!("slow {}: {} of its lead rows done, under a trial's {TRIAL_LEAST}: planned again now", b.head_text(), c.done));
                             }

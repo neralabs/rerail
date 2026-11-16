@@ -258,6 +258,8 @@ fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
 fn trials_are_taken_once_and_their_ratios_kept() {
     let _serial = SERIAL.lock();
     clear();
+    assert!(!take_trial(500), "decision 0274: a line not seen on a critical path is not trialled");
+    noted_mut(&mut MEMO.write(), 500, 1).critical = 0.5;
     assert!(take_trial(500) && !take_trial(500), "once");
     flag_slow(500, 1, 10.0, 1e6);
     assert!(take_trial(500), "again after a flag");
@@ -269,6 +271,34 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     // Decision 0247: a trial moves the ratio a quarter of the way (in logs), as a run would half of it.
     let quarter = 4f64.powf(0.75) * 16f64.powf(0.25);
     assert!((t.ratio - quarter).abs() < 1e-9 && t.runs == 2, "a trial weighs a quarter: {t:?}");
+    clear();
+}
+
+/// Decision 0274: trials follow the critical path as runs observe it. A line with a share of the measured path is
+/// trialled (once a process); a line off it is not, and one that leaves it stops being trialled within a few runs,
+/// as its moving share halves each run.
+#[test]
+fn trials_are_for_lines_observed_on_the_critical_path() {
+    let _serial = SERIAL.lock();
+    clear();
+    let order = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+    let run = |key: PlanKey, work: f64| LineRun { stratum: "s".into(), key, rule: 1, order: steps(&order), work, est: 0.0, wall: 0.0 };
+    let strata = ["s".to_owned()];
+    // A first run: no line has been seen on a path, so none is trialled.
+    assert!(!trial_due(&600) && !take_trial(600));
+    // The run's path is its one stratum: line 600 holds nearly all of it, 601 under `critical_share`.
+    critical(&strata, &[vec![]], &[run(600, 1e6), run(601, 1e3)]);
+    assert!(on_critical_path(&600) && !on_critical_path(&601));
+    assert!(trial_due(&600) && take_trial(600) && !trial_due(&600), "trialled once in a process");
+    assert!(!take_trial(601));
+    // 600 is made faster and 602 is now the path: 600's share halves each run, and it leaves within five.
+    let mut runs = 0;
+    while on_critical_path(&600) {
+        critical(&strata, &[vec![]], &[run(600, 1e2), run(602, 1e6)]);
+        runs += 1;
+        assert!(runs <= 5, "a line off the path stops being trialled");
+    }
+    assert!(on_critical_path(&602) && trial_due(&602), "the new path's line is trialled");
     clear();
 }
 
