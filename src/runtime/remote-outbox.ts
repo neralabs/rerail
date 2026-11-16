@@ -26,6 +26,7 @@ import { parseRuleDocument } from "../engine/catalog/rule-documents.js";
 import { worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
+import { violationCopiesSql } from "../engine/storage/audit-history.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { keepFilesPrivate } from "../engine/storage/private-files.js";
 import { defaultRerailHome, REMOTE_OUTBOX_FILE } from "../engine/storage/rerail-home.js";
@@ -614,6 +615,7 @@ export class RemoteOutbox {
     }
   }
 
+  /** Each finished audit the remote does not hold as it is, with the rules it ran and its violations; false once the batch is full. */
   #collectAudits(
     rerail: Database.Database,
     rules: RuleDocuments,
@@ -622,34 +624,29 @@ export class RemoteOutbox {
     addSnapshot: (item: OutboxRecord) => boolean,
     unsent: (item: OutboxRecord) => boolean,
   ): boolean {
-    const rows = rerail.prepare("SELECT audit_id, session_id, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as Array<{ audit_id: string; session_id: string; status: string; started_at: number; finished_at: number; size: number }>;
-    let reader: SqliteAuditReader | undefined;
+    const rows = rerail.prepare("SELECT audit_id, session_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
+    const pending = rows.flatMap(row => {
+      const hash = auditHash(row);
+      return isExcluded(row.session_id, row.started_at) || !unsent({ line: "", stream: "audit", id: row.audit_id, hash }) ? [] : [{ auditId: row.audit_id, hash }];
+    });
+    if (pending.length === 0) return true;
+    const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent };
+    const reader = new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
     try {
-      for (const row of rows) {
-        if (isExcluded(row.session_id, row.started_at)) continue;
-        const hash = hashOf([row.status, row.finished_at, row.size]);
-        if (!unsent({ line: "", stream: "audit", id: row.audit_id, hash })) continue;
-        reader ??= new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
-        const audit = reader.get(row.audit_id);
-        if (audit === undefined) continue;
-        for (const provenance of audit.ruleProvenance) {
-          const checkoutPath = "checkoutPath" in provenance ? provenance.checkoutPath : audit.workspaceRoot;
-          const payloadHash = "payloadHash" in provenance ? provenance.payloadHash : undefined;
-          if (payloadHash === undefined) continue;
-          if (!this.#addRule(rules, { ruleId: provenance.ruleId, payloadHash, checkoutPath }, batch, unsent)) return false;
-        }
-        const keys = new Map((rerail.prepare("SELECT ordinal, violation_key, logged FROM audit_violations WHERE audit_id = ?").all(row.audit_id) as Array<{ ordinal: number; violation_key: string; logged: number }>)
-          .map(entry => [entry.ordinal, entry]));
-        // The audit and its violations go in one batch, or the audit waits for the next.
-        const items = [auditRecord(audit, hash), ...violationRecords(audit, keys)];
-        const size = items.reduce((total, item) => total + Buffer.byteLength(item.line) + 1, 0);
-        if (batch.records.length > 0 && batch.bytes + size > batch.budget) return false;
-        for (const item of items) if (!addSnapshot(item)) return false;
-      }
-      return true;
+      return pending.every(({ auditId, hash }) => this.#addAudit(sink, reader.get(auditId), hash));
     } finally {
-      reader?.close();
+      reader.close();
     }
+  }
+
+  /** One audit with the rules it ran and its violations, all in one batch or the audit waits for the next; false once the batch is full. */
+  #addAudit(sink: AuditSink, audit: AuditRecord | undefined, hash: string): boolean {
+    if (audit === undefined) return true;
+    for (const provenance of audit.ruleProvenance) {
+      const rule = provenanceRule(provenance, audit.workspaceRoot);
+      if (rule !== undefined && !this.#addRule(sink.rules, rule, sink.batch, sink.unsent)) return false;
+    }
+    return addTogether(sink, [auditRecord(audit, hash), ...violationRecords(audit, violationKeysOf(sink.rerail, audit))]);
   }
 
   #addRule(
@@ -787,12 +784,62 @@ function rerailVersion(): string {
   return version;
 }
 
+/** An ongoing audit's violations as its history holds them: the first copy of each, and whether it was logged. */
+const ONGOING_VIOLATION_KEYS = "SELECT ordinal, violation_key, logged FROM audit_violations WHERE audit_id = ?";
+
+/** A scan's, which its history leaves out (`audit-history.ts`), derived by the same rows the history triggers keep. */
+const SCAN_VIOLATION_KEYS = `SELECT ordinal, violation_key, logged FROM (
+    ${violationCopiesSql("audit", "audits audit, json_each(audit.violations_json) violation", "audit.audit_id = ?")}
+  ) WHERE copy = 1`;
+
+/** `audit`'s violations by ordinal: the first copy of each, its key and whether it was logged. */
+function violationKeysOf(rerail: Database.Database, audit: AuditRecord): ReadonlyMap<number, { violation_key: string; logged: number }> {
+  const rows = rerail.prepare(audit.origin === "scan" ? SCAN_VIOLATION_KEYS : ONGOING_VIOLATION_KEYS).all(audit.auditId) as Array<{ ordinal: number; violation_key: string; logged: number }>;
+  return new Map(rows.map(entry => [entry.ordinal, entry]));
+}
+
+/** A finished audit as `#collectAudits` lists it. */
+interface FinishedAuditRow { audit_id: string; session_id: string; origin: string; status: string; started_at: number; finished_at: number; size: number }
+
+/**
+ * What decides whether an audit is sent again: a change to its status, end or violations, or its marking as a scan.
+ * An ongoing audit's hash leaves `origin` out, so the update that added it resends none of them; a scan sent before
+ * then goes again, with `origin: "scan"`.
+ */
+function auditHash(row: FinishedAuditRow): string {
+  return hashOf([row.status, row.finished_at, row.size, ...(row.origin === "scan" ? ["scan"] : [])]);
+}
+
+/** The rule document a provenance names, for `#addRule`; undefined for one stored without a payload hash. */
+function provenanceRule(provenance: AuditRuleProvenance, workspaceRoot: string): { ruleId: string; payloadHash: string; checkoutPath: string } | undefined {
+  if (!("payloadHash" in provenance)) return undefined;
+  const checkoutPath = "checkoutPath" in provenance ? provenance.checkoutPath : workspaceRoot;
+  return { ruleId: provenance.ruleId, payloadHash: provenance.payloadHash, checkoutPath };
+}
+
+/** Where `#collectAudits` puts what it reads, and how it tells what the remote already holds. */
+interface AuditSink {
+  readonly rerail: Database.Database;
+  readonly rules: RuleDocuments;
+  readonly batch: BatchBuilder;
+  readonly addSnapshot: (item: OutboxRecord) => boolean;
+  readonly unsent: (item: OutboxRecord) => boolean;
+}
+
+/** `items` into the batch together, or none of them while the batch has records and no room for all; false then. */
+function addTogether(sink: AuditSink, items: readonly OutboxRecord[]): boolean {
+  const size = items.reduce((total, item) => total + Buffer.byteLength(item.line) + 1, 0);
+  if (sink.batch.records.length > 0 && sink.batch.bytes + size > sink.batch.budget) return false;
+  return items.every(item => sink.addSnapshot(item));
+}
+
 function auditRecord(audit: AuditRecord, hash: string): OutboxRecord {
   return record("audit", audit.auditId, {
     sessionId: audit.sessionId,
     workspaceRoot: audit.workspaceRoot,
     scope: audit.scope,
     mode: audit.mode,
+    origin: audit.origin,
     status: audit.status,
     startedAt: audit.startedAt,
     finishedAt: audit.finishedAt,

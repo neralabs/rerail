@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "Ruff and Bandit rules for correct, clean and secure Python.",
+  "covers": "Linter-equivalent to Ruff 0.16.9 and Bandit 1.9.4, for correct, clean and secure Python.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -132,14 +132,16 @@
       "document": "rules/ruff-b009-get-attr-with-constant.json",
       "title": "Ruff B009: Get attr with constant",
       "group": "Ruff",
-      "on": false
+      "on": false,
+      "heldOff": "it cannot see types: under mypy or pyright, getattr() is the usual way to read an attribute the type does not declare, and obj.name there fails type checking"
     },
     {
       "id": "ruff-b010-set-attr-with-constant",
       "document": "rules/ruff-b010-set-attr-with-constant.json",
       "title": "Ruff B010: Set attr with constant",
       "group": "Ruff",
-      "on": false
+      "on": false,
+      "heldOff": "it cannot see types: under mypy or pyright, setattr() is the usual way to set an attribute the type does not declare, and agents told to swap it for an assignment added # type: ignore[attr-defined]"
     },
     {
       "id": "ruff-b011-assert-false",

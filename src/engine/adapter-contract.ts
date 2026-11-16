@@ -403,12 +403,13 @@ type NativeRuleMessage = {
   customType: typeof RULE_MESSAGE_TYPE;
   content: string;
   display: true;
-  details: Pick<AdapterDelivery, "requested" | "mechanism" | "sessionId" | "rules">;
+  details: Pick<AdapterDelivery, "requested" | "mechanism" | "sessionId" | "rules" | "conflict">;
 };
 
 /**
- * Sends each steer as a `rerail.rule` message and records its receipt. A steer for a tool call (`toolCallId`) that
- * `place` claims goes into that call's result instead, and is recorded the same way; one it does not claim is sent.
+ * Sends each steer as a `rerail.rule` message, with the conflict a Merge Assist note surfaces for the person's line, and
+ * records its receipt. A steer for a tool call (`toolCallId`) that `place` claims goes into that call's result
+ * instead, and is recorded the same way; one it does not claim is sent.
  */
 export async function sendNativeDeliveries(
   deliveries: readonly AdapterDelivery[],
@@ -430,6 +431,7 @@ export async function sendNativeDeliveries(
             mechanism: delivery.mechanism,
             sessionId: delivery.sessionId,
             rules: delivery.rules,
+            ...(delivery.conflict === undefined ? {} : { conflict: delivery.conflict }),
           },
         },
         { deliverAs: "steer" },

@@ -440,7 +440,13 @@ describe("dashboard links", () => {
     expect(linked).toEqual({ ...steer, rules: [{ id: "a:b", state: "steered", url: "http://127.0.0.1:4737/#rule/a%3Ab" }] });
   });
 
-  it("asks the daemon nothing when no delivery has a rule to link, as on most events", async () => {
+  it("links a Merge Assist note's conflict to its card, though the note names no rule", async () => {
+    const note = { ...steer, ruleIds: [], rules: [], conflict: { id: "conflict:src/x.ts:1-4:ab12", text: "your edit overlaps PR #398 (Tim): x.ts" } };
+    const [linked] = await linkDeliveries([note], cwd);
+    expect(linked).toEqual({ ...note, conflict: { ...note.conflict, url: "http://127.0.0.1:4737/#merge?conflict=conflict:src%2Fx.ts:1-4:ab12" } });
+  });
+
+  it("asks the daemon nothing when no delivery has a rule or a conflict to link, as on most events", async () => {
     expect(await linkDeliveries([], cwd)).toEqual([]);
     const note = { ...steer, ruleIds: [], rules: [] };
     expect(await linkDeliveries([note], cwd)).toEqual([note]);

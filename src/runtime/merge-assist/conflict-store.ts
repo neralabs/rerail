@@ -2,8 +2,9 @@
  * The checkout's in-flight conflicts in `merge_assist_state` under `conflicts:<checkout path>`: each as the status
  * shows it, with its file and the content anchor its question is built on. A dismissal holds for its id (its question
  * and their ref) until Merge Assist is turned off for the repository, which clears them all. An entry this build cannot
- * read is left out on its own; the others stand. A dismissed conflict is kept without its hunks and evidence, which
- * only an open conflict shows, so dismissals stay small however many accumulate.
+ * read (a newer build's) is left out on its own when read, the others standing, and kept as it is when the store is
+ * written. A dismissed conflict is kept without its hunks and evidence, which only an open conflict shows, so
+ * dismissals stay small however many accumulate.
  */
 import { z } from "zod";
 import { conflictSchema, type Conflict } from "../../engine/merge-assist/model.js";
@@ -29,6 +30,11 @@ export function readConflicts(db: StateQueries, checkoutPath: string): StoredCon
   });
 }
 
+/** The stored entries this build cannot read, as they are. */
+function unreadable(db: StateQueries, checkoutPath: string): unknown[] {
+  return (readState(db, STATE_KEYS.conflicts(checkoutPath), storeSchema) ?? []).filter(entry => !storedConflictSchema.safeParse(entry).success);
+}
+
 /** A conflict as the store keeps it: a dismissed one without the hunks and evidence only an open one shows. */
 function kept(entry: StoredConflict): StoredConflict {
   if (entry.conflict.status === "open") return entry;
@@ -39,8 +45,9 @@ function kept(entry: StoredConflict): StoredConflict {
   };
 }
 
+/** `conflicts` as the checkout's store; the entries this build cannot read stay as they are, a newer build's to read. */
 export function writeConflicts(db: StateQueries, checkoutPath: string, conflicts: readonly StoredConflict[], now: number): void {
-  writeState(db, STATE_KEYS.conflicts(checkoutPath), conflicts.map(kept), now);
+  writeState(db, STATE_KEYS.conflicts(checkoutPath), [...conflicts.map(kept), ...unreadable(db, checkoutPath)], now);
 }
 
 /**

@@ -4,6 +4,10 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
+## Unreleased
+
+Before you update: every internal-testing feature, `rerail scan` included, is now off until its `RERAIL_EXPERIMENTAL_<FEATURE>` variable is set, or `RERAIL_EXPERIMENTAL=1` for all of them. A CI job that runs `rerail scan` sets `RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1`; [Internal testing](docs/internal-testing.md) lists each feature and its variable.
+
 ## 0.1.4 (2026-11-12)
 
 0.1.4 stops steering an agent for changes it did not make: a file changed by another session, your editor or a background process no longer counts as its edit. A steer found as a turn ends now reaches Claude Code then, not at your next prompt. The dashboard shows each violation under the tool call it followed, and set-up works on Linux images with no compiler. Before you update: Claude Code 2.1.196 or newer is required.

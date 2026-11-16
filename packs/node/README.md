@@ -1,5 +1,7 @@
 # Rerail rule pack: Node.js
 
+**Linter-equivalent to eslint-plugin-n 18.4.1.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 42 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
 the pack's conformance check, gates included (`upstream/eslint-plugin-n/gates.yaml`), and in `candidates/rules/`
 until then ([conformance/README.md](../../conformance/README.md)). Each port is scored through the engine's production workspace

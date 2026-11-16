@@ -5,6 +5,7 @@
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
 export {
+  AUTOSTART_CLAIM_FILE,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
@@ -63,7 +64,8 @@ export {
   SqliteSessionStore,
 } from "./session-store.js";
 export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, onRuleCount } from "./repository-start.js";
-export { type NpmRunner, runNpm } from "./npm.js";
+export { CommandTimeoutError, type NpmRunner, runNpm } from "./npm.js";
+export { type Progress } from "./progress.js";
 export {
   addRemote,
   machineId,

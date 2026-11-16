@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "eslint-plugin-n rules for sound, modern use of Node.js modules and APIs.",
+  "covers": "Linter-equivalent to eslint-plugin-n 18.4.1, for sound, modern use of Node.js modules and APIs.",
   "reason": "matches Node.js",
   "match": {
     "any": [

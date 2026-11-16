@@ -1,13 +1,13 @@
-# Rerail rule pack: Cyclomatic complexity
+# Rerail rule pack: Function complexity
 
-Cyclomatic complexity rules for Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue, with the decision points of
-[lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. A `switch` or `match` counts once
+Cyclomatic complexity rules for Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java, with the decision points
+of [lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. A `switch` or `match` counts once
 however many cases it has, as slapkit scores a function with the lower of lizard's standard count and its modified count
 (`-m`), so a flat dispatch table is not a reason to split a function. The rule decides per switch, so a default-only
 switch beside a cased one counts 0 where slapkit's whole-function minimum gives it 1 (see "Deviations"). One document per language, rule id
 `complexity-cyclomatic-<language>`. They form the `complexity` rule pack, which set-up offers for a repository with
-Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests and build output; once a repository adds
-it, its rules are on (see `docs/rule-packs.md`). SQL has no rule (see "SQL").
+Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source outside tests and build output; once a repository
+adds it, its rules are on (see `docs/rule-packs.md`). SQL has no rule (see "SQL").
 Every document has `mode: "steer"`: a rule that runs steers the agent and never blocks.
 
 | Rule | Files |
@@ -19,22 +19,27 @@ Every document has `mode: "steer"`: a rule that runs steers the agent and never 
 | `complexity-cyclomatic-blade` | `.blade.php` |
 | `complexity-cyclomatic-rust` | `.rs` |
 | `complexity-cyclomatic-vue` | `.vue` |
+| `complexity-cyclomatic-java` | `.java` |
 
 A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds 6, so 7 or more.
 The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported. The
 message names the function and its number, as slapkit's advisory does: `` `grade` has cyclomatic complexity 7, over the
 ceiling of 6. Decompose it into smaller functions. `` (code `CYCLOMATIC_COMPLEXITY`). A TypeScript, JavaScript or Vue function with no name of its own takes the variable, class field or object key it is assigned
 to, and a PHP or Blade closure the variable it is assigned to (`` `$format` ``); a callback with none of those is "This
-function" (the `too-complex-anonymous` clause). Every Python and Rust function has a name. The number comes from the
+function" (the `too-complex-anonymous` clause). Every Python and Rust function has a name, and so has every Java
+method; a Java constructor takes its class's name. The number comes from the
 count's `as`/`offset` binding: the rule counts decision points with `count.has` (`stopBy` the function boundary, so a
 nested function is not entered), binds the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
 
 Test files are out of scope: Python `**/test_*.py`, `**/*_test.py`, `**/tests/**`, `**/conftest.py`; TypeScript,
 JavaScript and Vue `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`; PHP `**/test/**`, `**/tests/**`, `**/Test/**`,
 `**/Tests/**`, `**/spec/**`, `**/*Test.php`, `**/*TestCase.php`; Blade `**/tests/**`, `**/Tests/**`; Rust `**/tests/**`,
-`**/tests.rs`, `**/*_test.rs`, `**/*_tests.rs` (a `#[cfg(test)]` module inside a source file is scored). So are
-dependency, virtual-environment, build-output and generated directories (`node_modules`, `vendor`, `.venv`, `target`,
-`dist`, `build`, `.nuxt`, `generated`, ...).
+`**/tests.rs`, `**/*_test.rs`, `**/*_tests.rs` (a `#[cfg(test)]` module inside a source file is scored); Java
+`**/src/test/**`, `**/src/*Test/**`, `**/src/testFixtures/**`, `**/*Test.java`, `**/*Tests.java`, `**/*TestCase.java`,
+`**/*IT.java`, `**/*ITCase.java`. So are dependency, virtual-environment, build-output and generated directories
+(`node_modules`, `vendor`, `.venv`, `target`, `dist`, `build`, `.nuxt`, `generated`, ...). The Java rule leaves out
+generated-source directories and no directory by a bare name: `build` and `target` are package names there (see its
+rule details).
 
 ## What counts
 
@@ -87,6 +92,10 @@ Vue: the functions of a component's `<script>` and `<script setup>` blocks, coun
 functions are. The template's expressions and directives (`v-if`, `v-for`, `@click` handlers) run in no function of
 the scripts, so they are never scored.
 
+Java, per method with a body, constructor and record compact constructor: what counts, the node kinds, the scope, the
+deviations from lizard and the real code it was checked on are together under
+[`complexity-cyclomatic-java`](#complexity-cyclomatic-java) in "Rule details".
+
 Tree-sitter node kinds, from the grammars' `node-types.json` (tree-sitter-python, tree-sitter-typescript and
 tree-sitter-javascript as vendored under `native/grammars/`; tree-sitter-php 0.24.2 and tree-sitter-rust 0.24.2
 through ast-grep-language 0.50.0):
@@ -112,7 +121,8 @@ for. A routine's complexity can be measured once the grammar reads procedural bo
 ## Deviations from lizard 1.24.0
 
 Each is a lizard defect, found on real code (see "Checked on real code") or in its readers' source, except the last,
-which is a choice in how a switch counts. Each in bold has a corpus case.
+which is a choice in how a switch counts. Each in bold has a corpus case. The Java rule's deviations are under its rule
+details.
 
 - **`??` and `??=` count 0.** lizard's tokenizer reads each as two `?` and counts 2.
 - **A `?` inside a regex literal counts 0**, and so does **`?.` right after `)` or `]`** (`f()?.x`, `a[0]?.x`). lizard
@@ -175,14 +185,15 @@ function inside an array literal), or to lizard reading a type as a function; no
 difference was inspected one by one. On element-plus's components, the Vue rule gives every function of a
 component's script the number the TypeScript or JavaScript rule gives the script on its own (1,562 functions in 159
 files). laravel/framework 11.31.0's 52 templates (`src`) define no function: lizard and the Blade rule score none, and
-the Blade rule reads them all without a failure.
+the Blade rule reads them all without a failure. The Java rule was compared the same way on five code bases; its table
+is under its rule details.
 
 Every file of hono 4.6.3's `src` parses. Where a file has syntax errors, the functions outside the error regions are
 scored and the rest are left unknown, so they never report a guessed number.
 
 ## Parity corpus
 
-`upstream/lizard/fixtures/{python,typescript,javascript,php,blade,rust,vue}/` holds small source files that cover every
+`upstream/lizard/fixtures/{python,typescript,javascript,php,blade,rust,vue,java}/` holds small source files that cover every
 counted decision, a function at exactly 6 and one at 7 for several kinds, nested functions, Python lambdas and
 comprehensions, PHP and Rust closures, `match`/`case` and `switch`/`case`, TypeScript optional parameters and
 properties, PHP alternative syntax, Rust let chains and `?`, every deviation above in bold, a Blade template's
@@ -195,7 +206,7 @@ name as lizard prints it, start line, CCN), and `upstream/lizard/fixtures.expect
 script block, before its template, where lizard's line is the file's. The Rust corpus has no char or byte literal
 outside its deviation case, as lizard misreads them.
 
-`test/engine/code-rule/complexity-rules.test.ts` evaluates the seven rules over the corpus through the native runtime and checks
+`test/engine/code-rule/complexity-rules.test.ts` evaluates the eight rules over the corpus through the native runtime and checks
 that:
 
 - each rule reports exactly the in-scope functions lizard scores above 6, with the recorded number in the message;
@@ -207,7 +218,8 @@ lizard is also a gated tool-pack (`upstream/lizard/gates.yaml`, `conformance.jso
 (`npm run test:conformance`, [conformance/README.md](../../conformance/README.md#the-gate)) judges each rule on
 `fixtures.expected.json` like any other port, one port per language (its `fixtures` and `lints`). A deviation that puts
 one side over the limit and the other not is a disagreement there, declared with its evidence in `divergences.json`:
-`??`, the Python signatures, the PHP closure inside a function and the Blade `@php` block.
+`??`, the Python signatures, the PHP closure inside a function and the Blade `@php` block. The Java rule's one
+declared divergence is a line, not a number: an annotated method the two list one line apart (its rule details).
 
 lizard is never a runtime dependency; it runs only to derive the scores. The corpus and what is derived from it are pack
 test data, not in git ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)): the corpus is authored and the rest
@@ -271,3 +283,87 @@ Reads the program a component's scripts and template make (`ast.embedded: "scrip
 `statement_block` whose host is the `template_element`, and its `v-for` and slot bodies and inline handlers are
 arrow functions there; the boundary excludes every function inside that block, so only the scripts' functions are
 scored. The program is TypeScript for `lang="ts"`, TSX for `lang="tsx"` and JavaScript otherwise.
+
+### `complexity-cyclomatic-java`
+
+The pack's rule for Java (`.java`), with the other rules' limit, message and counting: a method fails above 6, the
+finding spans the whole method and names it (a constructor takes its class's name), and a `switch` counts once however
+many cases it has. It reads syntax only, so it needs none of the capabilities Java does not have yet.
+
+**What counts.** Per method with a body, constructor and record compact constructor, in classes, interfaces (`default`
+and `static` methods), enums, records, and local and anonymous classes:
+
+- `if` (`else if` included), `for` and the enhanced `for`, `while`, `do...while`, `catch`, each `switch` statement or
+  expression once however many `case`s it has (a `switch` with only `default` counts 0), `&&`, `||` and the `?:`
+  conditional;
+- not `else`, `finally`, `try` (with resources or not), `assert`, `synchronized`, `instanceof`, a `case`'s `when`
+  keyword, or the `?` of a generic wildcard (`List<?>`, `<? extends T>`).
+
+A method of a local or anonymous class is scored on its own. A lambda is not a function here: its conditions count
+toward the method around it, as lizard counts them; a lambda in a field's initializer is in no method and is not
+scored. Neither is an initializer block (`static { }`, `{ }`), which is no method, or a method without a body
+(`abstract`, or an interface's).
+
+Tree-sitter node kinds, from tree-sitter-java 0.23.5's `node-types.json` (through ast-grep-language 0.51.0):
+
+| Function boundary | Decision |
+|---|---|
+| `method_declaration` with a `body`, `constructor_declaration`, `compact_constructor_declaration` | `if_statement`, `for_statement`, `enhanced_for_statement`, `while_statement`, `do_statement`, `catch_clause`, `switch_expression` (a statement or an expression) with a `case` label in its `switch_block`, `ternary_expression`, `binary_expression` whose `operator` is `&&` or `\|\|` |
+
+A `switch` statement and a `switch` expression are both `switch_expression` nodes; one counts when its block holds a
+`case` label, in colon (`case 1:`) or arrow (`case 1 ->`) form.
+
+**Scope.** A Java directory is a package name, so the rule leaves out no directory by a bare name: `build`, `target`,
+`test` and `out` are packages of real code bases (`com/example/build/`, a hexagonal `port/out/`). Test sources are
+out by Maven's and Gradle's source-set layout (`**/src/test/**`, `**/src/*Test/**` such as `src/integrationTest/`,
+`**/src/testFixtures/**`) and by class name (`**/*Test.java`, `**/*Tests.java`, `**/*TestCase.java`, `**/*IT.java`,
+`**/*ITCase.java`); generated sources by `**/generated/**`, `**/generated-sources/**`,
+`**/generated-test-sources/**` and `**/generated-src/**`, which is where Maven (`target/generated-sources/`) and
+Gradle (`build/generated/`) write them.
+
+Rerail's repository walk is narrower than the rule here. For every language it enters no folder named `build`,
+`target`, `dist`, `vendor` or `coverage`, so an audit does not read a Java package of one of those names, and set-up
+does not count its files when it recommends the pack.
+
+**Deviations from lizard 1.24.0.** Each in bold has a corpus case, listed with lizard's number and Rerail's in
+`test/engine/code-rule/complexity-rules.test.ts` (`DEVIATIONS`).
+
+- **A record's compact constructor is scored**, as the same constructor written in full is. lizard's Java reader skips
+  it and lists no function for it.
+- **An initializer block is no function.** lizard reads a call followed by `{` inside one (`isEmpty()) {` in a
+  `static { }` block) as a method of that name.
+- **A wildcard bounded by a wildcard type counts 0** (`List<? extends Comparable<?>>` in a body). lizard reads its
+  first `?` as a conditional; it reads a lone `<?>` and `<? extends T>` correctly.
+- **A method with an annotation on a line of its own starts on that line**, where its declaration starts. lizard lists
+  it on its name's line, with the same number. Where the method is over the limit the two findings are one line
+  apart, which `divergences.json` declares (`java/Nesting.java`, lines 46 and 47).
+- **A default-only switch counts 0 around a cased one**, as beside one in the TypeScript and JavaScript corpus
+  ("Deviations from lizard 1.24.0" above).
+- lizard's Java reader lists no function, or only some, in some files (none in a class declared under `@Entity` and
+  `@Table(name = "owners")`), and reads some annotations with arguments, annotation type elements
+  (`String[] names() default {};`) and enum constants with a body as functions. The corpus has none of these.
+
+**Checked on real code.** Compared with lizard 1.24.0 function by function (2026-11-12, at the commits named), pairing
+each lizard function with the Rerail function that starts within two lines of it:
+
+| Repository | Paired | Same number | The rest |
+|---|--:|--:|---|
+| gson `65df6e5` `gson/src/main/java` | 704 | 704 | |
+| commons-lang `5d2715b` `src/main/java` | 4,031 | 4,031 | |
+| spring-petclinic `500158f` `src/main/java` | 43 | 43 | |
+| jackson-databind `0736200` `src/main/java` | 8,347 | 8,343 | 4 methods with a wildcard bounded by a wildcard type in the body |
+| kafka `151dea7` `clients/src/main/java` | 11,588 | 11,588 | |
+
+Every one of the 2,315 files parses without a syntax error. Outside the pairs, lizard lists 21 functions: annotations
+with arguments, annotation type elements and enum constants with a body, which are not methods, and methods under
+three or more annotation lines, which the rule starts more than two lines earlier. The rule scores 1,373 methods
+outside the pairs: those under several annotation lines, and methods lizard does not list (spring-petclinic's annotated
+entity and controller classes among them, where lizard lists 44 functions and the rule 88). Those were sampled, not
+inspected one by one.
+
+**Corpus.** `upstream/lizard/fixtures/java/` (written by Rerail, `upstream/lizard/UPSTREAM.md`): every counted
+decision, a method at exactly 6 and ones over it, switch statements and expressions in colon and arrow form, records,
+lambdas, local and anonymous classes, enum constants with a body, text that looks like a decision and is not one
+(wildcards, strings, text blocks, comments, annotations), each deviation above in bold, and two test sources lizard
+scores over the limit, one out of scope by its path and one by its name.
+`test/engine/code-rule/complexity-rules.test.ts` holds the rule to the same parity as the other rules.

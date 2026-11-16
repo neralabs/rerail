@@ -26,6 +26,7 @@ import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
+  AUTOSTART_CLAIM_FILE,
   autostartOff,
   browserOff,
   DAEMON_ACCESS_TOKEN_FILE,
@@ -68,6 +69,7 @@ import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
 import { requireLfsContent } from "../setup/lfs-pointers.js";
+import { streamProgress } from "../runtime/progress.js";
 import { SCRUB_HINT_FILE, scrubHintOnce } from "./scrub-cli.js";
 import { HOOK_FAILURES_FILE } from "../harness/hook-failures.js";
 import { runRegisteredClaudeHook } from "../setup/registered-hooks.js";
@@ -452,6 +454,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   DAEMON_ACCESS_TOKEN_FILE,
   LOCKS_DIR,
   START_LOCK_DIR,
+  AUTOSTART_CLAIM_FILE,
   RULES_DUMP_FILE,
   PROFILES_DIR,
   ACTIVE_PROFILE_FILE,
@@ -924,7 +927,9 @@ export function setupIo(args: readonly string[] = []): SetupIo {
   const say = (text: string): void => {
     process.stdout.write(`${text}\n`);
   };
-  if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) return { lane: "agent", say, close: () => {} };
+  if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) {
+    return { lane: "agent", relayed: args.includes(SETUP_FLAGS.relay), say, close: () => {} };
+  }
   // One reader for the run: lines for the folder and pack prompts, keys for each question's menu. Each question drops
   // what was typed before it was on screen.
   const input = new TerminalInput(process.stdin, text => process.stdout.write(text), undefined, () => process.stdout.columns);
@@ -1218,10 +1223,16 @@ async function install(context: SetupContext, parsed: SetupArguments, cwd: strin
   ]);
   if (active === running) return undefined;
   const answering = parsed.answer !== undefined || parsed.repo !== undefined;
-  if (active !== undefined && (answering || origin === "start")) return undefined;
-  await context.updater.install();
+  if (keepsActiveInstall(active, answering, origin)) return undefined;
+  // A line per install step, never redrawn in place: set-up's questions share the terminal.
+  await context.updater.install(undefined, streamProgress({ write: text => process.stderr.write(text) }));
   if (answering || workspaceStartState(cwd, parsed.databasePath) === "started") return undefined;
   return renderInstalled(lane).replace(/\n$/u, "");
+}
+
+/** Whether a run leaves the active install as it is: an answer, or a step `rerail start --json` began, once one is in. */
+function keepsActiveInstall(active: string | undefined, answering: boolean, origin: SetupOrigin): boolean {
+  return active !== undefined && (answering || origin === "start");
 }
 
 /** The run's carry: its own arguments, with the place's configured database when it names none. */

@@ -1,5 +1,7 @@
 # Rerail rule pack: SQL
 
+**Linter-equivalent to SQLFluff 4.4.0.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 21 code rules for SQL, ported from SQLFluff 4.4.0, each passing the [conformance
 check](../../conformance/README.md#the-gate): they live in `rules/` and `pack.json` lists them, 19 on and PG01 and PG02
 off. 1 more port (AM02) is a candidate: it lives in `candidates/rules/` and moves to `rules/` and `pack.json` once it

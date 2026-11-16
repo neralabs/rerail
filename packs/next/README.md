@@ -1,5 +1,7 @@
 # Rerail rule pack: Next.js
 
+**Linter-equivalent to @next/eslint-plugin-next 16.3.8.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 21 code rules for Next.js projects, ported from `@next/eslint-plugin-next` 16.3.8. Each is scored against the
 plugin's own findings on the plugin's rule tests and on their rename variants (`holds-under-rename`), and against the
 labelled lines of real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's
