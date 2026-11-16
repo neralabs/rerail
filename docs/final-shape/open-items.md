@@ -5291,3 +5291,12 @@ file edit 2,335 MB, a message edit 1,602 MB, a rule-body edit 2,128 MB, all over
 (2ff9ffe8e). The sections' peak RSS says where: `parse (worker)` and `batch (worker)` 2.7–2.9 GB, `cross` 2.7 GB,
 `local` 2.1 GB. Not yet traced: which relation or buffer holds it, and whether a chunk's rows are held past the
 chunk.
+
+## O-kept-route-after-quiet-cold. An edit after a quiet cold run skips the kept route (2026-11-16, decision 0117)
+
+After a cold run of the Python pack on a quiet machine, the next edit makes no kept-inputs decision. It decodes its
+memo hits whole and reads about 18 M kept rows more in the cross part (about 1 s). After a cold run under load, the
+same edit takes the kept route. The kept route is open (no "not taken" reason is printed), so either `kept_route` is
+closed by an earlier condition or no hit counts as unchanged (`keptstats::same` of the keeper's counted content and
+key). Since the kept route's fix (decision 0117, "An outputs-only hit read its whole entry again") it is the cheaper
+route: 6.4 s CPU against 7.0 s. Next: print which condition closes it under `RERAIL_STATS_KEEP_TRACE`.

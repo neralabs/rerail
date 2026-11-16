@@ -4563,7 +4563,10 @@ fn run_observed(
                 // An unchanged file on the kept route: its outputs, its rows the kept inputs' (decision 0117 step 1).
                 if let (true, true, Some(found), Some(content)) = (memoised, b.outputs, b.found.as_ref(), b.content) {
                     let _decode = crate::code_rule_dsl::logic::profile::span(|| "memo decode: the outputs".into());
-                    if let Some(entry) = found.entry(*d).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| missing_of(e).is_empty()) {
+                    // Its `own:` rows alone (tree counts, documents, identities covered) and its outputs: since an
+                    // entry is one image (0240 §4), `entry` would decode its export and base rows too, and the replay
+                    // would hand them on as this run's, so the kept inputs' patch read every owner again.
+                    if let Some(entry) = found.projected(*d, &|r| r.starts_with("own:")).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| missing_of(e).is_empty()) {
                         kept_hits.lock().insert(path.clone(), (content, *d, found.clone()));
                         return Ok(Some((b.content, Ok(entry))));
                     }
@@ -6968,6 +6971,8 @@ fn run_observed(
                     .flat_map(|(_, g, _, _, old, new)| old.iter().flatten().chain(new.iter()).map(move |r| retain::owner_of(r, *g)))
                     .filter(|o| *o < values)
                     .collect();
+                // `RERAIL_STATS_KEEP_TRACE`: what the patches read, by input.
+                let mut read_trace: Option<Vec<(usize, usize, usize, String)>> = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some().then(Vec::new);
                 for (rel, g, base, names, old, new) in staged {
                     let k = &kept[rel];
                     let width = fields.width(rel);
@@ -6977,6 +6982,9 @@ fn run_observed(
                     let atoms = store.atoms_handle();
                     let cells = retain::cells_of(&atoms, prog, &maintained.0.domains, rel, width);
                     let mut patch = patch_owners(rel, k, g, holders, &evaluated, &old, new, &cells)?;
+                    if let Some(t) = read_trace.as_mut() {
+                        t.push((patch.read.1, patch.read.0, patch.read.2, rel.clone()));
+                    }
                     if let Some((o, n)) = trace_rows.filter(|(o, n)| !o.iter().all(Vec::is_empty) || !n.is_empty() || !patch.changed.is_empty()) {
                         eprintln!("rerail: kept input {rel} (owner column {g}, {} kept rows): old {o:?}; new {n:?}; owners changed {:?}; minus {:?}; plus {:?}", k.source.len(), patch.changed.iter().map(|(o, r)| (*o, r.len())).collect::<Vec<_>>(), patch.minus, patch.plus);
                     }
@@ -6991,6 +6999,12 @@ fn run_observed(
                         Arc::new(retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(&k.ranges), std::mem::take(&mut patch.changed)))
                     };
                     results.push((rel.clone(), width, base.is_some(), bound, source, patch));
+                }
+                if let Some(mut t) = read_trace {
+                    let real = evaluated.len();
+                    t.sort_unstable_by(|a, b| b.cmp(a));
+                    let (rows, owners, same) = t.iter().fold((0, 0, 0), |(r, o, s), x| (r + x.0, o + x.1, s + x.2));
+                    eprintln!("rerail: kept inputs patched: {real} documents evaluated; {owners} owners read ({same} unchanged), {rows} kept rows read; most: {:?}", &t[..t.len().min(6)]);
                 }
                 // Every input made: only now are they the run's, so a failure above leaves the run as it was.
                 let mut adopted: HashMap<String, retain::KeptInput> = HashMap::new();
@@ -10946,6 +10960,8 @@ struct OwnerPatch {
     minus: Vec<Vec<i64>>,
     docs: Option<retain::DocDigests>,
     digest: u64,
+    /// Measured (`RERAIL_STATS_KEEP_TRACE`): the owners read, the kept rows read, the owners found unchanged.
+    read: (usize, usize, usize),
 }
 
 /// Decision 0117 step 2: input `rel` after an edit, from its kept rows `kept` (each owner's a range, owner by
@@ -10966,7 +10982,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     let text = matches!(memo::owner(rel), memo::Owner::Text(_));
     if width == 0 {
         // A relation of no columns is its rows' count (`write_frames`): none of its rows names an owner.
-        return if old.iter().all(Vec::is_empty) && new.is_empty() { Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest }) } else { Err(format!("{rel}: a relation of no columns changed")) };
+        return if old.iter().all(Vec::is_empty) && new.is_empty() { Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest, read: (0, 0, 0) }) } else { Err(format!("{rel}: a relation of no columns changed")) };
     }
     let mut by_old: BTreeMap<i64, Vec<Vec<Vec<i64>>>> = BTreeMap::new();
     for rows in old {
@@ -10993,7 +11009,10 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         rows
     };
     let set = |rows: &[Vec<i64>]| rows.iter().cloned().collect::<BTreeSet<Vec<i64>>>();
+    let mut read = (0usize, 0usize, 0usize);
     for o in touched {
+        read.0 += 1;
+        read.1 += kept.ranges.get(&o).map_or(0, |r| r.1 as usize);
         // The owner's kept rows, checked against its digest: the only kept rows the edit reads.
         let was: Vec<Vec<i64>> = match kept.ranges.get(&o) {
             Some(&(start, n)) => {
@@ -11066,6 +11085,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
             }
         };
         if now == sorted(was.clone()) {
+            read.2 += 1;
             continue;
         }
         let (a, b) = (set(&was), set(&now));
@@ -11080,5 +11100,5 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         changed.push((o, now));
     }
     let digest = docs.as_ref().map_or(kept.digest, retain::digest_of_docs);
-    Ok(OwnerPatch { changed, plus, minus, docs, digest })
+    Ok(OwnerPatch { changed, plus, minus, docs, digest, read })
 }
