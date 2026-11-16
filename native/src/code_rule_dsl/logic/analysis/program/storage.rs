@@ -21,6 +21,7 @@ pub(super) fn analyze(rule: &front::Rule) -> storage::Projection {
             .get(v)
             .map_or_else(|| E::Opaque(format!("unbound {v}")), |&c| E::Column(c)),
         Term::Int(n) => E::Integer(*n),
+        Term::Branded(a) => E::Integer(a.value()),
         Term::Str(s) => E::Text(s.to_string()),
         _ => E::Opaque(format!("{t:?}")),
     };

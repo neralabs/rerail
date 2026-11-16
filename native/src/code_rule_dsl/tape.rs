@@ -44,6 +44,7 @@ pub mod navigation;
 pub use index::IndexImage;
 pub mod wire;
 pub mod tokens;
+mod token_automata;
 // tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `token_readers` is rerail-w's (it mounts it)
 pub mod resident;

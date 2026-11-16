@@ -184,6 +184,7 @@ impl<'v> Body<'v> {
             (TermRef::Var(a), TermRef::Var(b)) => self.var(a) == o.var(b),
             (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
             (TermRef::Int(a), TermRef::Int(b)) => a == b,
+            (TermRef::Branded(a), TermRef::Branded(b)) => a == b,
             (TermRef::Str(a), TermRef::Str(b)) => self.v.text(a) == o.v.text(b),
             (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
                 self.v.text(f) == o.v.text(g) && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
@@ -221,7 +222,8 @@ impl<'v> Body<'v> {
                 let joined = |t: TermRef<'_>| t.var().is_some_and(|v| (0..self.len()).any(|j| self.is_join(j) && self.vars(j).contains(v)));
                 let free = |t: TermRef<'_>| t.var().is_some() && !joined(t);
                 let call = matches!(l, TermRef::Call(..)) || matches!(r, TermRef::Call(..));
-                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Str(_));
+                // A kind, field or name is branded (decision 0270): a constant like any other.
+                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_));
                 match op {
                     CmpOp::Eq if free(l) || free(r) => 1.0,
                     CmpOp::Eq if call => 0.4,
@@ -317,6 +319,7 @@ impl<'v> Body<'v> {
     pub fn constant(&self, t: TermRef<'_>) -> Option<Constant> {
         match t {
             TermRef::Int(i) => Some(Constant::Int(i)),
+            TermRef::Branded(a) => Some(Constant::Int(a.value())),
             TermRef::Str(a) => Some(Constant::Str(self.v.text(a).to_owned())),
             _ => None,
         }
@@ -402,6 +405,11 @@ impl<'v> Body<'v> {
             TermRef::Int(i) => {
                 d.u64(2);
                 d.u64(i as u64);
+            }
+            TermRef::Branded(b) => {
+                d.u64(6);
+                d.u64(b.class as u64);
+                d.u64(u64::from(b.atom));
             }
             TermRef::Str(a) => {
                 d.u64(3);
@@ -504,7 +512,7 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
     let TermRef::Var(y) = r else { return None };
     let ready = match l {
         TermRef::Var(x) => bound.contains(x),
-        TermRef::Int(_) | TermRef::Str(_) => true,
+        TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
         _ => false,
     };
     (ready && !bound.contains(y)).then_some(y)
@@ -760,9 +768,15 @@ impl Placed {
     }
     /// Its components, dependencies first, in the tree's order (`front::components_of`), its maintained program's
     /// sets run together.
-    pub fn components(&self) -> Result<Vec<std::collections::BTreeSet<String>>> {
+    pub fn components(&self) -> Result<Arc<super::super::program_image::analyses::Components>> {
+        use super::super::program_image::analyses::Components;
         let f = super::fields::Fields::of(self).ok_or_else(|| Error::Plan("the components of a version of rules alone".into()))?;
-        Ok(super::super::program_image::analyses::components_by_name(f.v, f.about, &self.together())?)
+        let together = self.together();
+        if together.is_empty() {
+            // Held by the version (decision 0281 §2): computed once however many readers and `Placed`s ask.
+            return super::super::program_image::manager::analysis::<Components>(&self.v).map_err(Error::Plan);
+        }
+        Ok(Arc::new(Components(super::super::program_image::analyses::components_by_name(f.v, f.about, &together)?)))
     }
     /// The sets its maintained program runs as one component (`Program::together`, `Maint`), by name.
     pub fn together(&self) -> Vec<std::collections::BTreeSet<String>> {
@@ -806,6 +820,14 @@ impl Placed {
         match &self.ids {
             Some(ids) => ids.to_vec(),
             None => self.v.rules().map(|r| r.id()).collect(),
+        }
+    }
+    /// The program's rules, in its order: its version's (whose ids are ranges where it is a view, not `0..len`), or
+    /// those `ids` names.
+    pub fn rules(&self) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
+        match &self.ids {
+            None => self.v.rules(),
+            Some(ids) => Box::new(ids.iter().map(|&id| self.v.rule(id).expect("a rule of its version"))),
         }
     }
     /// The program's rule `k`.

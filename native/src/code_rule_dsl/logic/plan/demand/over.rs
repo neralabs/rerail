@@ -68,6 +68,7 @@ fn base_rows(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<
         .filter_map(|(c, t)| {
             let v = match t {
                 TermRef::Int(i) => super::super::Constant::Int(i),
+                TermRef::Branded(a) => super::super::Constant::Int(a.value()),
                 _ => return None,
             };
             let name = *names.as_ref()?.get(c)?;
@@ -161,7 +162,7 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
     for r in &rules {
         for i in 0..r.lits.len() {
             match r.lits[i].view() {
-                Lit::Atom(a) if a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))) => {}
+                Lit::Atom(a) if a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_))) => {}
                 Lit::Atom(a) | Lit::Agg { atom: a, .. } => {
                     candidates.remove(r.rel(a));
                 }

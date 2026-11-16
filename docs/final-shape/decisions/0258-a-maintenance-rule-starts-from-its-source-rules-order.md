@@ -1,6 +1,6 @@
 # 0258: A maintenance rule starts from its source rule's order
 
-Status: built (2026-11-15), off by default (`RERAIL_SOURCE_ORDERS=on` turns it on); kept by the user as an escape hatch from inefficient rules. It was withdrawn and removed on cost-classifier the same day (49297f11e, see "Removed"); the hub merge into cost-classifier restored efcbd0717's form. Takes up decision 0230's first open item: a session's first-sight plans. Option one of
+Status: built (2026-11-15); off by default since the same day: a net cost in planning (see "Re-validated" and "The start inside the search"); `RERAIL_SOURCE_ORDERS=on` turns it on. Kept by the user as an escape hatch from inefficient rules. It was withdrawn and removed on cost-classifier the same day (49297f11e, see "Removed"); the hub merge into cost-classifier restored efcbd0717's form. Takes up decision 0230's first open item: a session's first-sight plans. Option one of
 0123 §5 ("carry the cold run's plans into the session"). `plan.rs` (`Model::started`, `source_order`,
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).

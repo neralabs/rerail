@@ -59,7 +59,14 @@ scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds mis
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
+scripts/dev/quiet-run [--minutes N] -- COMMAND        # a benchmark on an idle host, 10 min at most
 ```
+
+Benchmark only through `quiet-run` (README, "Quiet runs"). It waits its turn, keeps the farm's work
+off a host, and runs COMMAND there for 10 minutes at most. When a build prints that this machine
+is leased for a benchmark, its compiles wait. Don't start tests, Relax or other heavy work here
+until the lease ends: send them with `test-remote`. Doing so is unfair to the benchmark, and the
+checkout is told so at its next builds.
 
 `test-remote` sends this checkout's changes to a usable host and runs the command there, from
 `native/` (or `--dir`), in a warm target directory of its own on that host. A host can be asleep, gone,
@@ -82,7 +89,7 @@ compile ran.
 
 ### Relax: the live test loop
 
-[Relax](https://github.com/makepad/relax) runs the engine's tests from source and patches each
+[Relax](https://github.com/makepad/relax) (our fork and its setup: `scripts/dev/relax/README.md`) runs the engine's tests from source and patches each
 saved function body into the running tests: a body edit reaches a verdict in 2–9 s, against
 about 48 s for a cargo rebuild (t37, §3). Use it for the inner loop of one area's tests. Keep
 cargo for everything else: builds, the quick tier, the gate, wasm, release and CI. Commit only
@@ -90,7 +97,7 @@ after the same tests pass under cargo, because Relax's std is its own.
 
 ```
 scripts/dev/relax/build        # once, and after it changes: the pinned, patched Relax, into ~/.local/share/rerail-relax
-cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
+cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_CACHE_MAX=8192 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
 scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
 ```
@@ -100,10 +107,15 @@ and the build script applies it. When a Relax run stops on a missing std item, a
 the patch, not to the engine. `scripts/dev/relax/rerail.patch` lets a run share registry crates'
 compiled code with every worktree's runs (`RELAX_SHARED_OPEN=1`, in `~/.relax/code`), and makes
 build-script stubs plain scripts: as hard links of Relax's binary, cargo's replacing them got
-Relax killed by macOS ("Malware rejection"). The workspace's own crates are not shared between
-worktrees (Relax keys them by the worktree's path), so a worktree's first run is cold. The build
-script does not switch versions while a Relax session runs. A live session holds about 6 GB, and `target/relax` grows to
-about 13 GB per worktree, so run `relax clean` when a worktree's work ends.
+Relax killed by macOS ("Malware rejection"). `RELAX_SHARE=rerail` mounts the worktree at one
+path, `~/.relax/vfs/share/rerail`, so every worktree's runs share the workspace's crates too: a
+worktree's first run of code another has run takes about 15 s, and runs in two worktrees
+whose code differs take turns at 25–40 s. Without it a worktree's first run is cold (5–10 min). The patch
+keys a build script's rerun on the native outputs it reaches, not the whole native receipt, so
+an engine edit no longer reruns every script and drops the stores of every crate above them. The build
+script does not switch versions while a Relax session runs. A live session holds about 6 GB. The shared run dir's stores
+stay under `RELAX_CACHE_MAX` (8 GB), and `clean-target` removes a run dir no run has used for 6
+hours (scripts/dev/relax/README.md, "How the caches stay bounded").
 
 ### Special builds
 

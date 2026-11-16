@@ -46,6 +46,7 @@ use Class::*;
 /// Every thread-local outside the tests: `(file under native/, name, class, why)` (Carried ones need no why: they
 /// are carried).
 pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
+    ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
     ("crates/compiler/src/clif_rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
@@ -71,6 +72,8 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "KEPT", Thread, "dialects by grammar: any thread's gives the same"),
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "LOCATED", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/import_target/mod.rs", "VIEW", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE", Thread, "the rule files' entries read on this thread before its run, which the outermost run names"),
+    ("src/code_rule_dsl/logic/costs.rs", "READING", Thread, "the cost statistics' read runs on this thread: it never waits for itself"),
     ("src/code_rule_dsl/logic/derived.rs", "MEMO", Carried, ""),
     ("src/code_rule_dsl/logic/derived.rs", "SESSION_MEMO", Outermost, "a session's derived values between its runs: taken and put back by the outermost run"),
     ("src/code_rule_dsl/logic/lanes.rs", "DEFERRED", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
@@ -130,6 +133,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED", Carried, ""),
     ("src/code_rule_dsl/logic/plan/lower.rs", "TREE_READS", Thread, "this thread's counts of trees decoded and copied, and of reads of a version's tree"),
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
+    ("src/code_rule_dsl/logic/profile.rs", "DECIDING", Call, "the decisions of the step open on this thread (decision 0269): a pool job's are the profile's alone"),
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
     ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's profile records, merged into the run's as they are read"),
@@ -193,6 +197,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/content_store/atoms/map.rs", "MAPPED", Call, "a write in progress whose symbols are mapped (`atoms::map::mapped`)"),
     ("src/content_store/compression.rs", "DECODERS", Thread, "this thread's codecs"),
     ("src/content_store/compression.rs", "DICT_ENCODERS", Thread, "this thread's codecs"),
+    ("src/content_store/compression.rs", "ENCODED", Thread, "the bytes of frames this thread made, read around a writer's job"),
     ("src/content_store/compression.rs", "ENCODER", Thread, "this thread's codecs"),
     ("src/content_store/connection.rs", "ATTEMPT_WAITED", Thread, "this thread's SQLite connections and their waits"),
     ("src/content_store/connection.rs", "BATCH", Thread, "this thread's SQLite connections and their waits"),

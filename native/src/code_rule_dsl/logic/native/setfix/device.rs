@@ -31,6 +31,8 @@
 use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_dead, rowcode, thread_cpu};
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
 use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
+use crate::code_rule_dsl::logic::device::caps;
+use crate::code_rule_dsl::logic::profile;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -133,21 +135,23 @@ fn is_arena(x: usize) -> bool {
     ARENA.with_borrow(|a| a.contains(&x))
 }
 
-/// A text function the device makes (`mj::TEXTFN_*`), its text arguments then its numbers.
+/// A text function the device makes (`mj::TEXTFN_*`), its text arguments then its numbers (`caps`' table).
 fn text_function(name: &str) -> Option<(u32, usize, usize)> {
-    Some(match name {
-        "lower" => (mj::TEXTFN_LOWER, 1, 0),
-        "sql_lower" => (mj::TEXTFN_ASCII_LOWER, 1, 0),
-        "sql_upper" => (mj::TEXTFN_ASCII_UPPER, 1, 0),
-        "head" => (mj::TEXTFN_HEAD, 1, 0),
-        "dir" => (mj::TEXTFN_DIR, 1, 0),
-        "rr_substr" => (mj::TEXTFN_SUBSTR, 1, 2),
-        "sql_substr" => (mj::TEXTFN_SQL_SUBSTR, 1, 2),
-        "slice" => (mj::TEXTFN_SLICE, 1, 2),
-        "rr_to_string" => (mj::TEXTFN_TO_STRING, 0, 1),
-        "sql_replace" => (mj::TEXTFN_REPLACE, 3, 0),
-        _ => return None,
-    })
+    use caps::TextFn::*;
+    let caps::DeviceFn::Text { f, texts, nums } = caps::device_fn(name)? else { return None };
+    let f = match f {
+        Lower => mj::TEXTFN_LOWER,
+        AsciiLower => mj::TEXTFN_ASCII_LOWER,
+        AsciiUpper => mj::TEXTFN_ASCII_UPPER,
+        Head => mj::TEXTFN_HEAD,
+        Dir => mj::TEXTFN_DIR,
+        Substr => mj::TEXTFN_SUBSTR,
+        SqlSubstr => mj::TEXTFN_SQL_SUBSTR,
+        Slice => mj::TEXTFN_SLICE,
+        ToString => mj::TEXTFN_TO_STRING,
+        Replace => mj::TEXTFN_REPLACE,
+    };
+    Some((f, texts, nums))
 }
 
 /// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
@@ -234,15 +238,16 @@ fn step_name(s: &Step) -> &'static str {
 
 /// The device's operation for an integer function the native engine computes (`strings::functions`' names).
 pub(in crate::code_rule_dsl) fn arith_op(name: &str) -> Option<u32> {
-    Some(match name {
-        "rr_add" => mj::ARITH_ADD,
-        "rr_sub" => mj::ARITH_SUB,
-        "rr_mul" => mj::ARITH_MUL,
-        "rr_div" => mj::ARITH_DIV,
-        "mod" => mj::ARITH_MOD,
-        "rr_max" | "max" => mj::ARITH_MAX,
-        "rr_min" | "min" => mj::ARITH_MIN,
-        _ => return None,
+    use caps::Arith::*;
+    let caps::DeviceFn::Arith(op) = caps::device_fn(name)? else { return None };
+    Some(match op {
+        Add => mj::ARITH_ADD,
+        Sub => mj::ARITH_SUB,
+        Mul => mj::ARITH_MUL,
+        Div => mj::ARITH_DIV,
+        Mod => mj::ARITH_MOD,
+        Max => mj::ARITH_MAX,
+        Min => mj::ARITH_MIN,
     })
 }
 
@@ -710,10 +715,11 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(PStage { first: i, span: f.steps, kind: Kind::Filter, desc: d, npassed: f.steps });
                 i += f.steps;
             }
-            Step::Func { name: name @ ("str_cmp" | "rr_strlen"), args, out, bind: true, .. } => {
+            Step::Func { name, args, out, bind: true, .. } if matches!(caps::device_fn(name), Some(caps::DeviceFn::Names { .. })) => {
                 // A function of names: the order of two (compared a word of eight bytes at a time) or one's
                 // characters, their texts those of the columns that bound the slots (and the constants').
-                let f = if *name == "str_cmp" { mj::NAMES_CMP } else { mj::NAMES_LEN };
+                let Some(caps::DeviceFn::Names { f, .. }) = caps::device_fn(name) else { unreachable!("a function of names") };
+                let f = match f { caps::Names::Cmp => mj::NAMES_CMP, caps::Names::Len => mj::NAMES_LEN };
                 let y = args.get(1).copied().unwrap_or(args[0]);
                 let mut st = text_stage(mj::STRCMP, i, f, args[0], y, &deferred, &origin, &known)?;
                 st.desc.bind_slot[0] = *out as u32;
@@ -1012,10 +1018,11 @@ fn joined(step: &Step) -> Option<(usize, Key, Key, bool, u32)> {
 fn arena_reader(step: &Step, x: usize) -> bool {
     let me = |k: &Key| matches!(k, Key::Slot(s) if *s == x);
     match step {
-        Step::Eq { .. } | Step::Ne { .. } | Step::Func { name: "str_cmp" | "rr_strlen", bind: true, .. } | Step::Let { .. } => true,
+        Step::Eq { .. } | Step::Ne { .. } | Step::Let { .. } => true,
+        Step::Func { name, bind: true, .. } if matches!(caps::device_fn(name), Some(caps::DeviceFn::Names { .. })) => true,
         Step::Test { op, p, matcher, .. } => (literal_test(op).is_some() || matcher.is_some()) && !me(p),
         Step::Cat { bind: true, .. } | Step::Func { name: "str_concat", bind: true, .. } => true,
-        Step::Func { name: "replace_all" | "rx_replace", args, bind: true, .. } => args.len() == 3 && me(&args[0]) && !args[1..].iter().any(me),
+        Step::Func { name, args, bind: true, .. } if caps::device_fn(name) == Some(caps::DeviceFn::RegexReplace) => args.len() == 3 && me(&args[0]) && !args[1..].iter().any(me),
         Step::Func { name, args, bind: true, .. } => text_function(name).is_some_and(|(_, nt, _)| nt > 0) && me(&args[0]) && !args[1..].iter().any(me),
         _ => false,
     }
@@ -1274,6 +1281,27 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     res.bytes = 0;
                     mj::give_back();
                 }
+                // A whole view its batch's chunk block makes (decision 0289 §2): its columns made on the device.
+                let made = match (&owner, &rel.view) {
+                    (Owner::Src(_), Some(view)) if ids.is_none() && view.whole() => view.src.device_view().filter(|d| d.rows == n),
+                    _ => None,
+                };
+                if let Some(d) = made {
+                    let device = rerail_accel::gpu::join::device()?;
+                    let block = d.block.gpu_buffer(device);
+                    let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
+                    batch.expand_view(&block, d.root, d.view, d.pairs, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
+                    rep.uploads += 1;
+                    rep.upload_cpu += thread_cpu() - c0;
+                    let by = &mut rep.upload_by[profile::UPLOAD_MADE];
+                    by.0 += dev.bytes() as u64;
+                    by.1 += thread_cpu() - c0;
+                    let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                    res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.bytes = res.bytes();
+                    res.entries.len() - 1
+                } else {
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
                     match (&owner, &rel.view) {
@@ -1309,11 +1337,15 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 rep.uploads += 1;
                 rep.upload_bytes += dev.bytes() as u64;
                 rep.upload_cpu += thread_cpu() - c0;
+                let by = &mut rep.upload_by[if rel.view.is_some() { profile::UPLOAD_VIEW } else { profile::UPLOAD_FLAT }];
+                by.0 += dev.bytes() as u64;
+                by.1 += thread_cpu() - c0;
                 let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                 let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
                 res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
                 res.bytes = res.bytes();
                 res.entries.len() - 1
+                }
             }
         };
         let e = &mut res.entries[at];
@@ -1402,6 +1434,8 @@ fn column_text(e: &mut Entry, rel: &InRel, col: usize, rep: &mut Report, names: 
     rep.uploads += 1;
     rep.upload_bytes += t.bytes() as u64;
     rep.upload_cpu += thread_cpu() - c0;
+    rep.upload_by[profile::UPLOAD_NAMES].0 += t.bytes() as u64;
+    rep.upload_by[profile::UPLOAD_NAMES].1 += thread_cpu() - c0;
     e.bytes += t.bytes();
     e.texts.push((oc, t.clone()));
     Ok(t)
@@ -1576,6 +1610,8 @@ fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: 
         rep.uploads += 1;
         rep.upload_bytes += t.bytes() as u64;
         rep.upload_cpu += thread_cpu() - c0;
+        rep.upload_by[profile::UPLOAD_NAMES].0 += t.bytes() as u64;
+        rep.upload_by[profile::UPLOAD_NAMES].1 += thread_cpu() - c0;
         res.trim(t.bytes());
         res.unions.push((cols.iter().map(|(r, c)| (Arc::downgrade(r), *c)).collect(), consts.to_vec(), t.clone()));
         res.bytes = res.bytes();

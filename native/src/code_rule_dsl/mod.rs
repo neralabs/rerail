@@ -3126,10 +3126,6 @@ pub mod sql_admission {
 #[cfg_attr(any(test, feature = "test-hooks"), path = "query")]
 mod query {
     pub use rerail_w::code_rule_dsl::query::*;
-    // The async-call family's reference (`plan::async_reference`) is read by the p-anchor-corpus tests alone.
-    #[cfg(test)]
-    #[cfg_attr(not(feature = "p-anchor-corpus"), allow(dead_code))]
-    pub mod plan;
     #[cfg(test)]
     pub mod tests;
     #[allow(unused_imports)]
@@ -4763,7 +4759,7 @@ pub(crate) fn install_languages() {
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
     // `core.rr`'s names, as the rule language reads them.
-    facts::core::install_core_names(logic::rr::core_names);
+    facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
     // core.rr's functors whose meaning is W's or a language's.

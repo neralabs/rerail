@@ -91,6 +91,9 @@ rerail-rr = { path = "../rr", default-features = false }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
+# Blocks (decision 0266): the outputs file's images are frozen blocks (0295 step 3); setfix's relations are measured
+# against blocks' (`setfix::blocks_compare_tests`).
+rerail-blocks = { path = "../blocks" }
 rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 
@@ -116,10 +119,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"
 metal = "0.33.0"
-
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-# The blocks spike, measured against setfix's relations (`setfix::blocks_compare_tests`).
-rerail-blocks = { path = "../blocks" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

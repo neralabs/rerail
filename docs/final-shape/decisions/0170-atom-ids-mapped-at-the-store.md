@@ -310,6 +310,16 @@ callers wrap the values in the brand at the call, so the claim is made where the
   no atoms, and is written on its own connection.
 - Still behind `RERAIL_ATOMS_PROVISIONAL=1` (0160).
 
+## Amendment (2026-11-15): no flush for a forked process
+
+A forked process, including a run mapped from its end (`map_from_end`, a store past `READ_WHOLE`), stores its
+pending atoms only through the writes whose rows name them (`to_store`). Nothing else queues a write for them: not
+the run's end, not a due flush, and not a store's or an arena's close (`Atoms::flush_wanted`). Before this, the run's
+end queued a writer job that found the store's strings by key and wrote nothing, and the close stored strings no row
+names. An explicit `flush_atoms` still maps them.
+
+Test: `a_forked_processs_unnamed_atoms_queue_no_write` (store).
+
 ## Prior work consulted
 
 - 0049 (the lease), 0104 (no SQL inside the waves), 0111 (atoms found by key), 0146 (the memo), 0160 (provisional

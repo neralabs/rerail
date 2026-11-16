@@ -6,7 +6,6 @@
 //! columns by a count (decision 0210 §9). Readers that hold numbers (`Model`'s prepared atoms) read by number; readers
 //! by name pay one lookup of the name, not a string built per key.
 
-use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, LazyLock};
 
@@ -19,7 +18,9 @@ struct Names {
     names: Vec<Arc<str>>,
 }
 
-static NAMES: LazyLock<RwLock<Names>> = LazyLock::new(Default::default);
+/// Read on every lookup of a relation by name, on every thread of the pool, and written only for a new name: sharded
+/// by reader, so lookups on different threads write no shared lock word (decision 0279 §7).
+static NAMES: LazyLock<rerail_accel::sharded::Sharded<Names>> = LazyLock::new(|| rerail_accel::sharded::Sharded::new(Names::default()));
 
 /// `name`'s number, given it on first sight.
 pub fn rel_id(name: &str) -> RelId {

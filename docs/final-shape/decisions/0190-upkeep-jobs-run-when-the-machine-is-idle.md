@@ -243,12 +243,35 @@ Where each job stops:
 `Slice::stopper()` is the check a step hands to work it does not run itself: a progress handler, or the training.
 It is the stop flag or a run, without the slice's time bound.
 
-**What this gives up.** On a machine that always has a run under way, upkeep over a shared file (the cost model
-is shared by every worktree) waits until one is not. Each job's `starve` bound no longer forces it through a run.
-That is the user's choice: a run is never slowed by upkeep.
+**What this gives up.** A run is not slowed by upkeep that can still wait. On a machine that always has a run under
+way, upkeep over a shared file (the cost model is shared by every worktree) would never run; §9 bounds that wait.
 
 Tests: `a_run_in_another_process_is_seen_through_its_lock` (accel; `finish_soon` does nothing under a guard), the
 store's `a_sweep_yields_to_a_run_over_its_store`.
+
+### 9. Upkeep has a deadline (amendment, 2026-11-15)
+
+§8 alone starves upkeep on a busy machine: here a run is under way nearly all the time, and the cost model's file
+is shared by every worktree. The user asked for some upkeep on a deadline (2026-11-15). So due work yields to runs
+only until its deadline; past it, its steps run through the runs, at their own priority and within the CPU share,
+and a run does not stop them (`Slice::over` and `Slice::stopper` leave runs out).
+
+| Work | Its deadline |
+|---|---|
+| `Due::Urgent` (a store past its soft limit, the frames sweep) | `RERAIL_UPKEEP_DEADLINE` (600 s) |
+| `Due::Idle { starve }` | the longer of `starve` and that |
+| A whole `VACUUM` (`starve` unbounded) | none: it holds the file's writers for its length, so it never runs through a run |
+
+The deadline is counted from the job's **last finish**, not from when this process first saw the work. A CLI
+process lives for one run, so a wait counted inside it would never reach any deadline. Each job over a file records
+its finish in `<file>.upkeep` (`name<TAB>unix seconds`, rewritten whole and renamed into place) when a step answers
+`Done`; a job that never finished counts from the file's creation. A job with no file counts from when its process
+first saw it due.
+
+A warm run finishes no job, so it writes no record (measured on dl10: a warm run left `.upkeep` as it was).
+
+Test: `jobs_step_to_the_end_within_the_cpu_share` (accel): work over a file another process's run holds waits for
+the run while the file is new, runs through it once its last finish is past the deadline, and records that finish.
 
 ## Measured (2026-11-13, debug build, load 45–50 on 18 cores)
 

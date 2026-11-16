@@ -3153,7 +3153,9 @@ dependencies = [
  "libc",
  "metal",
  "objc",
+ "parking_lot",
  "rayon",
+ "rerail-blocks",
  "rerail-forest",
  "sha2 0.10.9",
 ]
@@ -3162,8 +3164,10 @@ dependencies = [
 name = "rerail-blocks"
 version = "0.1.0"
 dependencies = [
+ "block",
  "libc",
  "metal",
+ "rayon",
 ]
 
 [[package]]
@@ -3238,10 +3242,12 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-lang",
+ "rerail-lang-python",
  "rerail-logic",
  "rerail-metal",
  "rerail-prof",
@@ -3421,6 +3427,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -4458,6 +4465,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-prof",
  "rerail-store",
  "rusqlite",

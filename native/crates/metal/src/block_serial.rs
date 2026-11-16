@@ -2103,7 +2103,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let records_pass = kernel(source_key, source, "serial_records")?;
     let mut common: Vec<(u64, &metal::BufferRef, u64)> = vec![(1, out.buffer(), 0), (2, table.buffer(), 0), (3, seg_table.buffer(), 0)];
     for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
-        common.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
+        common.push((at, slabs.get(k).unwrap_or(&slabs[0]).buffer(), 0));
     }
     let with = |extra: &[(u64, &'static str)]| -> Vec<(u64, &metal::BufferRef, u64)> {
         let mut b = common.clone();

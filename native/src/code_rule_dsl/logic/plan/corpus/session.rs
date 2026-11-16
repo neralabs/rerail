@@ -27,7 +27,8 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) store: ContentStore,
     pub(super) memo: memo::Held,
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
-    /// per cross program (`retain::key`): a run's passes are different programs, and one would take the other's place.
+    /// per cross program (`retain::keys`' second, of the cross program alone, which a file-local rule's edit leaves):
+    /// a run's passes are different programs, and one would take the other's place.
     pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
     /// Each output a run of the session wrote (`out/<rel>`): the program's cross-file key and its rows. A later run of
     /// that program whose output stratum is clean leaves it in the stack as it is.
@@ -41,8 +42,6 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], ([u8; 32], super::keptstats::Keeper)>>,
     /// Its runs' connections and stores, kept from run to run (`connections`): an edit's run opens none.
     pub(super) connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
-    /// Its runs' chunk mixes' tree counts (`own_counts`), read from memory as they are written behind the runs.
-    pub(super) own: super::OwnKept,
 }
 
 
@@ -74,7 +73,6 @@ impl Handle {
             stacks: Mutex::new(Default::default()),
             stats: Mutex::new(Default::default()),
             connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
-            own: Default::default(),
         };
         Ok(Handle { generation, session: Arc::new(parking_lot::Mutex::new(session)) })
     }

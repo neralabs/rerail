@@ -15,6 +15,8 @@ pub(crate) static METAL: Metal = Metal;
 pub fn register() {
     crate::code_rule_dsl::logic::device::register(&METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
+    // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
+    crate::code_rule_dsl::facts::nearest::install_chunk_axis(packed::metal_join::axis_in_chunk);
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 

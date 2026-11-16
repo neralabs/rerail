@@ -117,33 +117,33 @@ fn check_names_table(manifest: &Path) {
 /// to the repository root), else the repository's `fixtures/` directory. Only tests read them, so a
 /// build without them (a sparse checkout) goes on; the tests that need them then fail to compile,
 /// naming the fix.
+///
+/// Without the override the script sets nothing: `.cargo/config.toml` gives every crate
+/// `RERAIL_FIXTURES_DIR` (the same `fixtures/`, relative to the workspace). Setting it here too, as
+/// the canonical path on disk, made the engine crate's `env!` input differ per checkout, so a Relax
+/// run in one worktree made the engine's stores stale for every other worktree's runs, which share
+/// them under `RELAX_SHARE` (scripts/dev/relax/README.md, invariant 5).
 fn configure_fixtures() {
     println!("cargo:rerun-if-env-changed=RERAIL_ORACLES_DIR");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let root = manifest.parent().expect("repository root");
-    let directory = match std::env::var_os("RERAIL_ORACLES_DIR") {
-        Some(directory) => {
-            let directory = root.join(directory);
-            assert!(
-                is_checkout(&directory),
-                "RERAIL_ORACLES_DIR={} is not a fixtures directory",
-                directory.display()
+    let Some(directory) = std::env::var_os("RERAIL_ORACLES_DIR") else {
+        let fixtures = root.join("fixtures");
+        println!("cargo:rerun-if-changed={}", fixtures.display());
+        if !is_checkout(&fixtures) {
+            println!(
+                "cargo:warning=Rerail fixtures not found in {}: check out the repository's fixtures/ directory, or set RERAIL_ORACLES_DIR; the engine's tests need them",
+                fixtures.display()
             );
-            directory
         }
-        None => {
-            let fixtures = root.join("fixtures");
-            println!("cargo:rerun-if-changed={}", fixtures.display());
-            if !is_checkout(&fixtures) {
-                println!(
-                    "cargo:warning=Rerail fixtures not found in {}: check out the repository's fixtures/ directory, or set RERAIL_ORACLES_DIR; the engine's tests need them",
-                    fixtures.display()
-                );
-                return;
-            }
-            fixtures
-        }
+        return;
     };
+    let directory = root.join(directory);
+    assert!(
+        is_checkout(&directory),
+        "RERAIL_ORACLES_DIR={} is not a fixtures directory",
+        directory.display()
+    );
     let directory = directory
         .canonicalize()
         .expect("fixtures directory is readable");

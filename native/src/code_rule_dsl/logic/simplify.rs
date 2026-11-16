@@ -1648,7 +1648,7 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
 /// of first appearance in every position (atoms, comparisons, aggregates' `over` and `by`, `nearest`, AST matches),
 /// its head `@`. For a check of what `merge_identical` left (the dropping test's widened copies).
 pub fn canonical_rule(rule: &Rule, label: &dyn Fn(&str) -> Name) -> String {
-    canonical(rule, label, &CanonicalNames::new())
+    crate::code_rule_dsl::logic::front::template::canonical(rule, label, &crate::code_rule_dsl::logic::front::template::CanonicalNames::new())
 }
 
 /// The coarsest partition of the mergeable relations in which every two of a class have the same column types and

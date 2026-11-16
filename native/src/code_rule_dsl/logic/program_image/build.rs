@@ -35,6 +35,8 @@ pub enum T<'a> {
     Wild,
     Top,
     Int(i64),
+    /// A branded atom (decision 0270).
+    Branded(crate::code_rule_dsl::logic::front::Branded),
     Str(&'a str),
     StrAtom(AtomId),
     Call(&'a str, Vec<T<'a>>),
@@ -149,6 +151,11 @@ impl<'p> Builder<'p> {
         self.removed.len() + self.enc.rules() as usize + self.parts.decls.len() + self.parts.decls_gone.len() + self.rows + self.parts.facts_gone.len()
     }
 
+    /// Whether the edit states nothing: no rule removed or added, no part stated.
+    pub fn is_empty(&self) -> bool {
+        self.removed.is_empty() && self.enc.rules() == 0 && !self.parts_changed
+    }
+
     // -- names --
 
     /// The atom of `text`: the parent's, or a new one.
@@ -207,6 +214,15 @@ impl<'p> Builder<'p> {
         self.enc.end_rule(at);
         id
     }
+    /// Adds a copy of `rule`, one of a derivation's input's, recording it as the copy's source (§9): a rule a pass
+    /// kept as it was (`manager`'s derivations).
+    pub fn keep(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+        let id = self.copy(from, rule);
+        if self.parent.is_none() {
+            self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
+        }
+        id
+    }
     fn same(&self, rule: RuleRef<'_>) -> bool {
         self.ids.is_some_and(|v| v.holds_image(rule.image()))
     }
@@ -260,12 +276,14 @@ impl<'p> Builder<'p> {
         rows.iter().map(|row| row.iter().map(|v| match v {
             Value::Int(i) => Cell::Int(*i),
             Value::Str(s) => Cell::Str(AtomId(self.enc.atom(s))),
+            Value::Branded(b) => Cell::Branded(*b),
         }).collect()).collect()
     }
     fn hash_rows(rel: &str, about: bool, rows: &[List<Value>]) -> u64 {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|v| match v {
             Value::Int(i) => CellText::Int(*i),
             Value::Str(s) => CellText::Str(s.as_str()),
+            Value::Branded(b) => CellText::Branded(*b),
         })))
     }
     /// States relation `rel`'s facts, replacing the parent's.
@@ -302,6 +320,7 @@ impl<'p> Builder<'p> {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|c| match *c {
             Cell::Int(i) => CellText::Int(i),
             Cell::Str(x) => CellText::Str(enc.text(x.0)),
+            Cell::Branded(b) => CellText::Branded(b),
         })))
     }
     /// The rows of about relation `name` this edit states, or its parent's (`about.rs` reads and writes them by type).
@@ -608,14 +627,11 @@ impl Version {
     /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
     /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
     pub fn part<S: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
-        let mut b = Builder::on(self);
-        b.retain(|r| rules(self.rel_name(r.head().rel())));
-        let (rules, _) = b.finish()?;
-        let mut b = Builder::on(&rules);
-        b.set_inputs(inputs);
-        b.set_outputs(outputs);
-        b.keep_relation_fields(fields.natives, fields.lattice, fields.gates);
-        b.finish_overlay()
+        use super::manager::Pipeline;
+        use super::passes::{PartOf, Retain};
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut Retain(rules)).program(&mut PartOf { inputs, outputs, fields });
+        Ok(p.finish()?.0)
     }
 
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
@@ -695,6 +711,7 @@ fn write_t(e: &mut Encoder<'_>, t: &T<'_>) {
         T::Wild => e.leaf(kind::WILD, 0),
         T::Top => e.leaf(kind::TOP, 0),
         T::Int(i) => e.int(*i),
+        T::Branded(b) => e.leaf(kind::BRANDED | super::brand_code(b.class) << 5, b.atom),
         T::Str(s) => {
             let a = e.atom(s);
             e.leaf(kind::STR, a);

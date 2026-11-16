@@ -1,5 +1,4 @@
-mod sql_ast;
-mod typed_boundary;
+use crate::code_rule_dsl::logic::sql::{sql_ast, typed_boundary};
 mod workspace;
 
 pub(in crate::code_rule_dsl::demand::driver::catalog) use sql_ast::ClauseMergeAst;

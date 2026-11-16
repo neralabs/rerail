@@ -727,17 +727,20 @@ CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL,
 -- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
 CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
     rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
--- The per-file memo's entries (decision 0240 §4): where each one's bytes are in the packs beside the store
--- (`<store>.memo/<pack>.pack`), by its plan's space and its part (its content's and path's), with its path, its
--- content's SHA-256 and its document key. A path's contents are ordered by where they were appended. `over_*`: what a
--- later run kept over the entry, its identities (decision 0280), in the packs too; `over_len` 0 is nothing
--- (`ADDED_COLUMNS` adds them to an older store; an older binary ignores them and reads the entry as it was made).
+-- The per-file memo's entries (decision 0240 §4, 0295 §4): where each one's image is in the segments beside the
+-- store (`<store>.memo/<pack>.seg`, `framed` 1: offset and length in the segment's block), by its plan's space and
+-- its part (its content's and path's), with its path, its content's SHA-256 and its document key. A path's contents
+-- are ordered by where they were written. `over_*`: what a later run kept over the entry, its identities (decision
+-- 0280), in a segment too; `over_len` 0 is nothing. `framed` 0: an entry of the packs before (`<pack>.pack`,
+-- compressed), not read (`ADDED_COLUMNS` adds these columns to an older store; an older binary reads a segment's row
+-- as a pack's that is not there, a miss).
 CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NULL, path TEXT NOT NULL,
     digest BLOB NOT NULL, doc INTEGER NOT NULL, pack INTEGER NOT NULL, at INTEGER NOT NULL, len INTEGER NOT NULL,
     raw INTEGER NOT NULL, over_pack INTEGER NOT NULL DEFAULT 0, over_at INTEGER NOT NULL DEFAULT 0,
-    over_len INTEGER NOT NULL DEFAULT 0, over_raw INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, part)) WITHOUT ROWID;
+    over_len INTEGER NOT NULL DEFAULT 0, over_raw INTEGER NOT NULL DEFAULT 0, framed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (space, part)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
--- The packs the entries are in: the newest is appended to.
+-- The segments (and packs before) the entries are in.
 CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
 "#;
 
@@ -839,6 +842,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_len", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_raw", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "framed", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).

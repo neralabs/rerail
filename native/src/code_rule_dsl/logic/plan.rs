@@ -148,6 +148,7 @@ pub enum Constant {
 pub fn constant(t: &Term) -> Option<Constant> {
     match t {
         Term::Int(i) => Some(Constant::Int(*i)),
+        Term::Branded(a) => Some(Constant::Int(a.value())),
         Term::Str(s) => Some(Constant::Str(s.to_string())),
         _ => None,
     }
@@ -624,11 +625,13 @@ impl Stats {
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
+        // Positional names of a relation named like a base one are its base names (`input_column_name`).
+        let named = |col: String| crate::code_rule_dsl::facts::core::input_column_name(rel, &col).map_or(col, str::to_owned);
         for (col, m) in cols {
-            self.col.insert((rel.to_owned(), col), m);
+            self.col.insert((rel.to_owned(), named(col)), m);
         }
         for (col, v, n) in vals {
-            self.memo.entry(rel.to_owned()).or_default().insert((col, Constant::Int(v)), n);
+            self.memo.entry(rel.to_owned()).or_default().insert((named(col), Constant::Int(v)), n);
         }
     }
 
@@ -1079,7 +1082,7 @@ fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) ->
     let Term::Var(y) = r else { return None };
     let ready = match l {
         Term::Var(x) => bound.contains(x.as_str()),
-        Term::Int(_) | Term::Str(_) => true,
+        Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
         _ => false,
     };
     (ready && !bound.contains(y.as_str())).then_some(y)
@@ -4271,6 +4274,8 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
             .map(|r| r.map(|c| match c {
                 super::program_image::Cell::Int(i) => Constant::Int(i),
                 super::program_image::Cell::Str(a) => Constant::Str(f.text(a).to_owned()),
+                // A kind, field or name (decision 0270): its atom, as `constant` reads a branded term.
+                super::program_image::Cell::Branded(a) => Constant::Int(a.value()),
             }).collect())
             .collect();
         let n = rows.len() as f64;
@@ -4871,8 +4876,8 @@ pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
             let [r] = rules.as_slice() else { return None };
             let [Literal::Atom(a)] = r.body.as_slice() else { return None };
             let vars: Vec<&crate::code_rule_dsl::logic::front::Name> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
-            let plain = !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild | Term::Int(_))) && vars.iter().collect::<HashSet<_>>().len() == vars.len();
-            let eqs = a.args.iter().enumerate().filter_map(|(c, t)| if let Term::Int(v) = t { Some((c, *v)) } else { None }).collect();
+            let plain = !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild | Term::Int(_) | Term::Branded(_))) && vars.iter().collect::<HashSet<_>>().len() == vars.len();
+            let eqs = a.args.iter().enumerate().filter_map(|(c, t)| match t { Term::Int(v) => Some((c, *v)), Term::Branded(a) => Some((c, a.value())), _ => None }).collect();
             plain.then(|| (rel.to_owned(), eqs))
         })
         .collect()
@@ -6217,6 +6222,11 @@ fn digest_term(d: &mut super::derived::Inputs, t: &Term) {
             d.u64(args.len() as u64);
             args.iter().for_each(|a| digest_term(d, a));
         }
+        Term::Branded(b) => {
+            d.u64(6);
+            d.u64(b.class as u64);
+            d.u64(u64::from(b.atom));
+        }
     }
 }
 
@@ -6282,6 +6292,7 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
 fn const_tok(t: &Term) -> Option<Tok> {
     match t {
         Term::Int(i) => Some(Tok::Int(*i)),
+        Term::Branded(a) => Some(Tok::Int(a.value())),
         Term::Str(s) => Some(Tok::Sym(s.to_string())),
         _ => None,
     }
@@ -8091,6 +8102,17 @@ impl<'a> Run<'a, '_> {
                 }
                 // The line's work: its counts, and a whole plan's work as its cut reported it.
                 let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64 + if whole { c.work as f64 } else { 0.0 };
+                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
+                // orders run over a sample of the rows left (decision 0274: only a line observed on a run's critical
+                // path, `joins::take_trial`), each cut at `trial_cutoff` times the least work measured
+                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
+                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
+                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
+                // under `TRIAL_LEAST` rows, the trials wait for a later check.
+                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
+                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
+                const TRIAL_LEAST: usize = 8;
+                let joined = positive_atoms(&b) >= 2;
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
@@ -8100,27 +8122,24 @@ impl<'a> Run<'a, '_> {
                         joins::flag_slow(key, rule, est, work);
                         super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
                         let exact = self.exact_statistics(&name, line, &b, &running);
-                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len()));
+                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
                         joins::put_exact(key, rule, exact);
                         self.heavy_for([r], true, Some(key));
                         joins::take_forced(&key);
                         self.request_search(r, None, rule, key, work, Some((&name, line, &running)))?;
-                        // With trials (decision 0207) the orders are measured below instead.
-                        if !joins::trials_on() && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                        // With trials (decision 0207) the orders are measured below instead, where they can be. Decision
+                        // 0271: a line no trial measures is planned again now, with the exact statistics just taken,
+                        // and its replacement runs under the handoff's limit. That is a line whose sample is under
+                        // `TRIAL_LEAST` (its few lead rows each cost more than its check's budget: `pre_570` did 0 of
+                        // 423 in 201,431 rows of work, then ran 22 s unbounded). A line in a handoff is judged by it.
+                        if !joins::measured_below(sample >= TRIAL_LEAST && joined && joins::trial_due(&key), handoff[line].is_some()) && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                            if joins::trials_on() {
+                                joins::log(|| format!("slow {}: {} of its lead rows done, under a trial's {TRIAL_LEAST}: planned again now", b.head_text(), c.done));
+                            }
                             place!(new);
                         }
                     }
                 }
-                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
-                // orders run over a sample of the rows left, each cut at `trial_cutoff` times the least work measured
-                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
-                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
-                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
-                // under `TRIAL_LEAST` rows, the trials wait for a later check.
-                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
-                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
-                const TRIAL_LEAST: usize = 8;
-                let joined = positive_atoms(&b) >= 2;
                 if let Some(key) = keys.get(line).copied().flatten() && joins::trials_on() && joined && sample >= TRIAL_LEAST && handoff[line].is_none() && joins::take_trial(key) {
                     // Decision 0209: the candidates are priced with the line's skewed join columns' heavy values.
                     self.heavy_for([r], true, Some(key));
@@ -8302,6 +8321,7 @@ impl<'a> Run<'a, '_> {
                                     let largs = b.args(lead_at);
                                     let consts: Vec<(usize, Option<i64>)> = largs.iter().enumerate().filter_map(|(c, t)| match *t {
                                         TermRef::Int(i) => Some((c, Some(i))),
+                                        TermRef::Branded(a) => Some((c, Some(a.value()))),
                                         TermRef::Str(x) => Some((c, super::native::component::symbol_id(db, b.v.text(x)).ok().flatten())),
                                         _ => None,
                                     }).collect();
@@ -8424,11 +8444,16 @@ impl<'a> Run<'a, '_> {
                     Some(h) => {
                         let ran = per_row(c.work, c.done);
                         let back = ran > h.per_row;
-                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
                         joins::count_handoff(back);
+                        let (other, other_rate) = if back { (now.clone(), ran) } else { (h.old.clone(), h.per_row) };
                         if back && !place!(h.old) {
                             return Err(Error::Plan(format!("a join of {} has no native step", b.head_text())));
                         }
+                        // Decision 0271: the order that goes on keeps a limit, and the two are compared again at it.
+                        let base = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
+                        let limit = joins::limit_again(if back { h.per_row } else { ran }, base, c.left as f64, c.work as f64);
+                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on, limit {limit:.0}", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
+                        handoff[line] = Some(joins::Handoff { old: other, per_row: other_rate, limit });
                     }
                 }
             }
@@ -8788,7 +8813,7 @@ impl<'a> Run<'a, '_> {
                         pat.push(match t {
                             Term::Wild => Tok::Wild,
                             Term::Var(v) => Tok::Slot(slot[v.as_str()]),
-                            Term::Int(_) | Term::Str(_) => const_tok(t).expect("a constant"),
+                            Term::Int(_) | Term::Branded(_) | Term::Str(_) => const_tok(t).expect("a constant"),
                             _ => return Ok(Err("pattern term".to_owned())),
                         });
                     }
@@ -8796,7 +8821,7 @@ impl<'a> Run<'a, '_> {
                     for t in &h.args {
                         head.push(match t {
                             Term::Var(v) => HeadTok::Tok(Tok::Slot(slot[v.as_str()])),
-                            Term::Int(_) | Term::Str(_) => HeadTok::Tok(const_tok(t).expect("a constant")),
+                            Term::Int(_) | Term::Branded(_) | Term::Str(_) => HeadTok::Tok(const_tok(t).expect("a constant")),
                             Term::Call(f, xs) if f == "cat" && xs.iter().all(|x| matches!(x, Term::Var(_))) => {
                                 let (Term::Var(x0), Term::Var(x1)) = (&xs[0], &xs[1]) else { unreachable!() };
                                 HeadTok::Cat(slot[x0.as_str()], slot[x1.as_str()])
@@ -9928,7 +9953,9 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     let corpus = PLANS.with(|p| p.borrow().is_some());
     // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
-    let chosen_key = if corpus { Some(choices::key(&normal_v)) } else { None };
+    // A program of no rules (a cross part whose every stratum is kept) has no choice to make, so none is kept for it:
+    // keeping one wrote to the store in the run after a cold one, for a program no other run plans (decision 0250).
+    let chosen_key = (corpus && program.len() > 0).then(|| choices::key(&normal_v));
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     // The program's version as the passes chose it (t36 item 6): their overlay, or the kept choice's, which the run
     // reads its rules from as it is; the program's own where nothing was rewritten.
@@ -10039,7 +10066,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let prog = p0.program(&lists)?;
             let _ = writeln!(f, "== run of {} rules", prog.rules.len());
-            for scc in &sccs {
+            for scc in sccs.iter() {
                 let _ = writeln!(f, "-- stratum {scc:?}");
                 for r in prog.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())) {
                     let _ = writeln!(f, "{r}");
@@ -10052,7 +10079,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // level's strata are adjacent: a level is a device wave. The sort is stable, so within a level the strata keep
     // the dependency order's. Only strata run natively make waves (SQL launches nothing), so a run all in SQL keeps
     // the dependency order, and T's plans in it.
-    let (sccs, level_of) = by_level(sccs, &deps, model.inputs.native.contains("program"));
+    // `by_level` reorders them: its own copy, the version's kept as it is.
+    let (sccs, level_of) = by_level(sccs.to_vec(), &deps, model.inputs.native.contains("program"));
     // Each relation's rules, as keys of the program's version (its rule `k` is the program's rule `k`), in the
     // program's order.
     let mut rules_by: IndexMap<&str, Vec<RuleKey>> = IndexMap::new();
@@ -10160,6 +10188,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     rows.push(match v {
                         super::program_image::Cell::Int(i) => *i,
                         super::program_image::Cell::Str(_) => ids.next().expect("one atom per text"),
+                        super::program_image::Cell::Branded(b) => b.value(),
                     });
                 }
             }
@@ -10196,6 +10225,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 row.map(|v| match v {
                     super::program_image::Cell::Int(i) => SqlValue::Integer(i),
                     super::program_image::Cell::Str(s) => SqlValue::Text(f0.text(s).to_string()),
+                    super::program_image::Cell::Branded(b) => SqlValue::Integer(b.value()),
                 })
                 .collect()
             })
@@ -10670,7 +10700,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         by_head.entry(form_v.v.rel_name(form_v.rule(i).head().rel())).or_default().push(RuleKey::new(k, i));
                     }
                     let mut pieces: Vec<(BTreeSet<String>, Vec<RuleKey>)> = form_sccs
-                        .into_iter()
+                        .iter()
+                        .cloned()
                         .map(|piece| {
                             let rules: Vec<RuleKey> = piece.iter().flat_map(|r| by_head.get(r.as_str()).into_iter().flatten().copied()).collect();
                             (piece, rules)
@@ -11042,6 +11073,11 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             }
             // The stratum's own requests, answered again from its kept rows: a native step's answers are a function of
             // its requests, so they are as they were exactly when the step's leaves (the files it read) are.
+            // A request below the stratum that no stratum derives is the program's own facts (a constant world
+            // request, `rr_dir_req("sub")`): not kept, so its answers cannot be replayed, and the stratum runs.
+            if clean && answering && above.iter().any(|(p, q)| !ks.has_rows(q) && !run.answered.contains_key(p.as_str())) {
+                clean = false;
+            }
             let mut replayed: BTreeMap<String, BTreeSet<Vec<i64>>> = BTreeMap::new();
             if clean && answering {
                 let _span = super::profile::span(|| "the stratum's requests answered again".into());
@@ -11849,8 +11885,14 @@ pub fn decode_kept(
     for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
         super::native::component::hold_as(db, &rel, held);
     }
-    let prog = &lowered.program;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
+    // The inputs and the outputs' column types from the program's version where it has one (t36 item 7: a maintained
+    // run decodes no tree, `a_maintained_run_decodes_and_copies_no_tree`); else from its tree, which is then held.
+    let placed = lowered.version.as_ref().map(|_| lowered.placed()).transpose()?;
+    if let Some(f) = placed.as_ref().and_then(Fields::of) {
+        return decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names);
+    }
+    let prog = &lowered.program;
     decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
@@ -12398,6 +12440,7 @@ impl WalkSnap {
         let value = |t: TermRef<'_>, row: &[i64]| -> Option<Option<i64>> {
             match t {
                 TermRef::Int(i) => Some(Some(i)),
+                TermRef::Branded(a) => Some(Some(a.value())),
                 TermRef::Str(x) => self.syms.get(b.v.text(x)).copied().map(Some),
                 TermRef::Var(v) => largs.iter().position(|u| u.var() == Some(v)).map(|c| Some(row[c])),
                 TermRef::Wild => Some(None),
@@ -12409,6 +12452,7 @@ impl WalkSnap {
         for (c, t) in largs.iter().enumerate() {
             match *t {
                 TermRef::Int(i) => { cols.push(c); key.push(i) }
+                TermRef::Branded(a) => { cols.push(c); key.push(a.value()) }
                 TermRef::Str(x) => { cols.push(c); key.push(*self.syms.get(b.v.text(x))?) }
                 _ => {}
             }
@@ -12480,6 +12524,7 @@ impl WalkSnap {
                 for (i, t) in cargs.iter().enumerate() {
                     match *t {
                         TermRef::Int(v) => { ccols.push(i); ckey.push(v) }
+                        TermRef::Branded(a) => { ccols.push(i); ckey.push(a.value()) }
                         TermRef::Str(x) => match self.syms.get(b.v.text(x)) { Some(&v) => { ccols.push(i); ckey.push(v) } None => known = false },
                         _ => {}
                     }
@@ -12803,6 +12848,7 @@ impl<'a, 'v> Walker<'a, 'v> {
             rels.push(rel(b.rel(a)));
             consts.push(b.args(i).iter().enumerate().filter_map(|(c, t)| match *t {
                 TermRef::Int(i) => Some((c, Some(i))),
+                TermRef::Branded(a) => Some((c, Some(a.value()))),
                 TermRef::Str(x) => Some((c, sym(b.v.text(x)))),
                 _ => None,
             }).collect());
@@ -12955,7 +13001,11 @@ impl<'a, 'v> Walker<'a, 'v> {
             }
             sample = next;
         }
-        work
+        // Decision 0273: the rows the last step makes are work too, as the engine counts a line's work
+        // (`profile::plan_work`: each step's rows in, and the last step's rows out). Without them, a walk exact by its
+        // own count read 0.87 of the engine's work on the heavy lines of both packs, and a common term of every
+        // order's walk was missing from their ratios.
+        work + sample.iter().map(|x| x.0).sum::<f64>()
     }
 }
 

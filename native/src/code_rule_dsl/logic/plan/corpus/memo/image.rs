@@ -7,25 +7,33 @@
 //! `#nodes` the document's nodes. A symbol is held as its string, so an entry reads the same in every process: a process that
 //! numbered the store's atoms otherwise (a fork, decision 0170) reads it as any other. Before, the entry held the
 //! store's ids, and each read and write mapped them (`numbering`: `to_store`, `to_process`, and every entry's ids
-//! held before the waves).
+//! held before the waves). The image is stored as made, not compressed (decision 0295 §2), and read where it is in
+//! its segment (`MemoBytes`).
 
 use super::{Entry, Syms};
-use crate::code_rule_dsl::logic::plan::output::{Builder, Image, Rows, col};
+use crate::code_rule_dsl::logic::plan::output::{Builder, Finished, Image, Rows, col};
 use crate::content_store::atoms::{Atoms, Sym};
-use crate::content_store::{StoreError, StoreResult};
+use crate::content_store::{MemoBytes, StoreError, StoreResult};
 use std::collections::HashMap;
 
-/// zstd's level: the entry is written by the store's writer, behind the run, and read in the waves.
-const LEVEL: i32 = 1;
 const NODES: &str = "#nodes";
 
 fn bad(what: impl std::fmt::Display) -> StoreError {
     StoreError::Invalid(format!("a corpus memo entry {what}"))
 }
 
-/// The entry's image, compressed, and the image's length: its symbols' strings read from `atoms`, the table its
-/// rows were made under.
-pub(super) fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<(Vec<u8>, usize)> {
+/// The entry's image (`encode_parts`), as bytes.
+#[cfg(test)]
+pub(super) fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Vec<u8>> {
+    let made = encode_parts(entry, syms, atoms)?;
+    let mut out = vec![0u8; made.len()];
+    made.write(&mut out);
+    Ok(out)
+}
+
+/// The entry's image, made and not yet written (`Finished::write`: into its segment): its symbols' strings read from
+/// `atoms`, the table its rows were made under.
+pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Finished> {
     let mut b = Builder::new(0, false);
     b.rows_as_is(NODES, &[col::INT], vec![entry.nodes as i64]);
     let mut shown: HashMap<i64, i64> = HashMap::new();
@@ -73,18 +81,13 @@ pub(super) fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<(
         }
         b.rows_as_is(&format!("o:{name}"), types, values);
     }
-    let image = b.finish();
-    let raw = image.len();
-    Ok((crate::content_store::compress(&image, LEVEL)?, raw))
+    Ok(b.finish_parts())
 }
 
-/// The image of `bytes` (`encode`'s, `raw` long), checked.
-fn image(bytes: &[u8], raw: usize) -> StoreResult<Image> {
-    let mut words = vec![0u128; raw.div_ceil(16)];
-    // SAFETY: `words` holds at least `raw` bytes, and any byte is a valid `u8`.
-    let out = unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), raw) };
-    crate::content_store::decompress_into(bytes, out).map_err(|e| bad(format!("does not decompress: {e}")))?;
-    Image::own(words, raw).map_err(bad)
+/// The image of `bytes` (`encode`'s), checked, read where it is.
+fn image(bytes: &MemoBytes) -> StoreResult<Image> {
+    let (block, at) = bytes.block();
+    Image::in_block(block, at, bytes.len()).map_err(bad)
 }
 
 /// Each string the symbol columns of the relations `keep` takes hold (by the image's index), as this process's atom.
@@ -110,14 +113,14 @@ fn atoms_of(image: &Image, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreR
 
 /// Holds the atoms of the entry's symbols in this process (interned, or found where the store holds them), before a
 /// run's waves: so a wave decoding the entry finds each in memory.
-pub(super) fn hold(bytes: &[u8], raw: usize, atoms: &Atoms) -> StoreResult<()> {
-    atoms_of(&image(bytes, raw)?, &|_| true, atoms).map(drop)
+pub(super) fn hold(bytes: &MemoBytes, atoms: &Atoms) -> StoreResult<()> {
+    atoms_of(&image(bytes)?, &|_| true, atoms).map(drop)
 }
 
 /// The entry of `bytes` (`encode`'s; its key is its row's), keeping only the relations `keep` takes: the others are
 /// checked with the image, not read. Its symbols are this process's atoms of their strings.
-pub(super) fn decode(bytes: &[u8], raw: usize, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreResult<Entry> {
-    let image = image(bytes, raw)?;
+pub(super) fn decode(bytes: &MemoBytes, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreResult<Entry> {
+    let image = image(bytes)?;
     let ids = atoms_of(&image, keep, atoms)?;
     let mut entry = Entry::default();
     let mut columns: HashMap<&str, Vec<usize>> = HashMap::new();
@@ -194,16 +197,17 @@ mod tests {
         entry.outputs.insert("violation".into(), (vec![1], rows_of(&[col::TEXT, col::NODE, col::TEXT], &[&[Cell::Text("r"), Cell::Int(21474836480), Cell::Text("x")], &[Cell::Text("a"), Cell::Int(3), Cell::Text("r")]])));
         entry.outputs.insert("a name longer than one row of text holds, which is fifty-six bytes".into(), (vec![], rows_of(&[col::TEXT, col::INT], &[&[Cell::Text(""), Cell::Int(-3)], &[Cell::Text("ünïcode"), Cell::Int(i64::MAX)]])));
         entry.outputs.insert("bare".into(), (vec![], rows_of(&[], &[&[], &[]])));
-        let (bytes, raw) = encode(&entry, &syms, &atoms).unwrap();
-        assert_eq!(decode(&bytes, raw, &|_| true, &atoms).map(|e| Entry { key: 5, ..e }).unwrap(), entry);
-        let some = decode(&bytes, raw, &|k| k == "named", &atoms).unwrap();
+        let made = encode(&entry, &syms, &atoms).unwrap();
+        let bytes = MemoBytes::of(&made);
+        assert_eq!(decode(&bytes, &|_| true, &atoms).map(|e| Entry { key: 5, ..e }).unwrap(), entry);
+        let some = decode(&bytes, &|k| k == "named", &atoms).unwrap();
         assert_eq!(some.rows.keys().collect::<Vec<_>>(), ["named"]);
         assert_eq!(some.outputs, entry.outputs, "outputs are read whatever relations are taken");
-        assert!(decode(&bytes[..bytes.len() - 1], raw, &|_| true, &atoms).is_err(), "cut short");
+        assert!(decode(&MemoBytes::of(&made[..made.len() - 1]), &|_| true, &atoms).is_err(), "cut short");
         let other = Atoms::for_connection(&db2);
         other.intern("w").unwrap();
         let z = other.intern("z").unwrap();
-        let back = decode(&bytes, raw, &|_| true, &other).unwrap();
+        let back = decode(&bytes, &|_| true, &other).unwrap();
         let named = &back.rows["named"].1;
         assert_eq!(other.with_str(named[1] as Sym, str::to_owned).as_deref(), Some("ünï"), "another table reads the strings");
         assert_ne!(named[3], i64::from(z));
