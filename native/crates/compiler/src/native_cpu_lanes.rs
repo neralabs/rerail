@@ -793,6 +793,10 @@ pub struct Lanes<'a> {
     packed: Vec<Option<(Value, Value)>>,
     packed_lookups: HashMap<(usize, usize, u8), Value>,
     tests: HashMap<(usize, usize, u8), Lane>,
+    /// Values known all through the window (`assuming`): at lag 0, its own bytes.
+    assume: Option<Rc<HashMap<usize, bool>>>,
+    /// Each range compare (`range`): its low byte, span, chunk and lag.
+    ranges: HashMap<(u8, u8, usize, u8), Value>,
 }
 
 impl<'a> Lanes<'a> {
@@ -826,6 +830,8 @@ impl<'a> Lanes<'a> {
             packed: Vec::new(),
             packed_lookups: HashMap::new(),
             tests: HashMap::new(),
+            assume: None,
+            ranges: HashMap::new(),
         }
     }
 
@@ -853,6 +859,8 @@ impl<'a> Lanes<'a> {
             packed: Vec::new(),
             packed_lookups: HashMap::new(),
             tests: HashMap::new(),
+            assume: None,
+            ranges: HashMap::new(),
         }
     }
 
@@ -937,23 +945,18 @@ impl<'a> Lanes<'a> {
         let mut acc = Lane::Known(false);
         let or = |f: &mut FunctionBuilder<'_>, a: Lane, b: Lane| Lane::and(f, a.not(), b.not()).not();
         if let Some((lo, span)) = t.range {
-            let lane = if span == 255 {
-                Lane::Known(true)
-            } else {
-                let b = self.bytes(f, c, lag);
-                if span == 0 {
-                    let s = self.splat(f, lo);
-                    Lane::V(f.ins().icmp(IntCC::Equal, b, s), false)
-                } else {
-                    let from = self.splat(f, lo);
-                    let d = f.ins().isub(b, from);
-                    let sp = self.splat(f, span);
-                    Lane::V(f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d, sp), false)
-                }
-            };
+            let lane = self.range(f, lo, span, c, lag);
             acc = or(f, acc, lane);
         }
+        // A table's bits tested once, however many of its parts the set takes.
+        let mut tables: Vec<(u16, u8)> = Vec::new();
         for &(tb, bits) in &t.tables {
+            match tables.iter_mut().find(|x| x.0 == tb) {
+                Some(x) => x.1 |= bits,
+                None => tables.push((tb, bits)),
+            }
+        }
+        for (tb, bits) in tables {
             let v = self.packed_lookup(f, usize::from(tb), c, lag);
             // `none_of` is the class, complemented: its compare is the bytes outside it.
             let lane = self.none_of(f, v, bits);
@@ -962,6 +965,33 @@ impl<'a> Lanes<'a> {
         let lane = if t.negated { acc.not() } else { acc };
         self.tests.insert((k, c, lag), lane);
         lane
+    }
+
+    /// The bytes `lo ..= lo + span` (wrapping) at chunk `c`, lag `lag`: one compare where `lo`
+    /// is zero or `span` is, else a subtract and a compare; made once.
+    fn range(&mut self, f: &mut FunctionBuilder<'_>, lo: u8, span: u8, c: usize, lag: u8) -> Lane {
+        if span == 255 {
+            return Lane::Known(true);
+        }
+        if let Some(&v) = self.ranges.get(&(lo, span, c, lag)) {
+            return Lane::V(v, false);
+        }
+        let b = self.bytes(f, c, lag);
+        let v = if span == 0 {
+            let s = self.splat(f, lo);
+            f.ins().icmp(IntCC::Equal, b, s)
+        } else {
+            let d = if lo == 0 {
+                b
+            } else {
+                let from = self.splat(f, lo);
+                f.ins().isub(b, from)
+            };
+            let sp = self.splat(f, span);
+            f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d, sp)
+        };
+        self.ranges.insert((lo, span, c, lag), v);
+        Lane::V(v, false)
     }
 
     /// The pack's extra set `k` (`body_pack`'s `extras`) at chunk `c`.
@@ -1034,8 +1064,30 @@ impl<'a> Lanes<'a> {
         self.get_at(f, at, c, lag)
     }
 
+    /// These values, with values `known` (`native_cpu_bytes::known_if_zero`) what they are
+    /// at every byte of the window: its own bytes, lag 0, not those a `prev` reads before it.
+    /// Its loads and lookups made already are kept, the values made from them made again.
+    pub fn assuming(mut self, known: Rc<HashMap<usize, bool>>) -> Self {
+        self.memo.clear();
+        self.assume = Some(known);
+        self
+    }
+
+    /// These values with nothing assumed again: what was made from values the assumption may
+    /// change (`changed`) at lag 0 dropped, the rest kept.
+    pub fn unassuming(mut self, changed: &[bool]) -> Self {
+        self.assume = None;
+        self.memo.retain(|&(at, _, lag), _| lag != 0 || !changed[at]);
+        self
+    }
+
     /// Instruction `at`'s chunk `c`, `lag` bytes back.
     fn get_at(&mut self, f: &mut FunctionBuilder<'_>, at: usize, c: usize, lag: u8) -> Lane {
+        if lag == 0
+            && let Some(&b) = self.assume.as_ref().and_then(|k| k.get(&at))
+        {
+            return Lane::Known(b);
+        }
         if let Some(&l) = self.memo.get(&(at, c, lag)) {
             return l;
         }
@@ -1066,15 +1118,7 @@ impl<'a> Lanes<'a> {
             // and a compare, as a compiler lowers a range test (a digit's `b - '0' <= 9`).
             BlockInst::Class { table, bits } if !self.lookups.contains_key(&(usize::from(table), c, lag)) && byte_range(&self.native.tables[usize::from(table)], bits).is_some() => {
                 let (lo, hi) = byte_range(&self.native.tables[usize::from(table)], bits).expect("a range");
-                let b = self.bytes(f, c, lag);
-                if lo == hi {
-                    let s = self.splat(f, lo);
-                    return Lane::V(f.ins().icmp(IntCC::Equal, b, s), false);
-                }
-                let from = self.splat(f, lo);
-                let d = f.ins().isub(b, from);
-                let span = self.splat(f, hi - lo);
-                Lane::V(f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d, span), false)
+                self.range(f, lo, hi.wrapping_sub(lo), c, lag)
             }
             BlockInst::Class { table, bits } => {
                 let v = self.lookup(f, usize::from(table), c, lag);

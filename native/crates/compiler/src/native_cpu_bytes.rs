@@ -55,6 +55,9 @@ struct Carry {
     short: bool,
     /// The body's classes packed: its windows' lookups.
     pack: Option<Rc<BodyPack>>,
+    /// Values known all through the window at the start (`known_if_zero`), on a gate's quick
+    /// path (`words_gated`).
+    known: Rc<HashMap<usize, bool>>,
 }
 
 /// Where the reads are: the file's first byte and length, and the body's constants.
@@ -201,12 +204,8 @@ impl<'a> Bytewise<'a> {
         });
         let more: Vec<Value> = (0..extras.len()).map(|k| {
             let parts: Vec<_> = (1..=4).map(|c| lanes.extra(f, k, c)).collect();
-            let m = match lanes.mask(f, &parts, at.weights) {
-                Sym::Known(k) => f.ins().iconst(types::I64, k as i64),
-                Sym::Value(v, false) => v,
-                Sym::Value(v, true) => f.ins().bnot(v),
-                Sym::Slot(..) => unreachable!("a window's mask is a value"),
-            };
+            let m = lanes.mask(f, &parts, at.weights);
+            let m = sym_value(f, m);
             f.ins().band(m, cut)
         }).collect();
         (words, more)
@@ -231,31 +230,218 @@ impl<'a> Bytewise<'a> {
     /// the bytes; and each one's carry out, at `p + 64` (simdjson's add overflow), in `cins`'
     /// order: a loop of windows 64 bytes apart passes it on, as the lean lexer's reader does.
     pub fn words_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, Vec<Value>) {
-        let mut carry = Carry { ins: cins.to_vec(), outs: Vec::new(), short: false, pack: Some(self.pack_for(&self.roots(os), &[])) };
+        let cut = self.cut64(f, at, p);
+        let carry = Carry { ins: cins.to_vec(), pack: Some(self.pack_for(&self.roots(os), &[])), ..Carry::default() };
+        self.words_in(f, at, os, p, carry, None, cut, heads)
+    }
+
+    /// `words_carried`'s words and carries out, with `carry` given, the window at `p` the one
+    /// given where it is (its loads and lookups made), and the file's cut `cut`.
+    #[allow(clippy::too_many_arguments)]
+    fn words_in<'s>(&'s self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, mut carry: Carry, window: Option<Lanes<'s>>, cut: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, Vec<Value>) {
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
-        let mut memo = HashMap::new();
-        let rem = f.ins().isub(at.len, p);
-        let zero = f.ins().iconst(types::I64, 0);
-        let sixty_four = f.ins().iconst(types::I64, 64);
-        let rem = f.ins().smax(rem, zero);
-        let full = f.ins().icmp(IntCC::SignedGreaterThanOrEqual, rem, sixty_four);
-        let one = f.ins().iconst(types::I64, 1);
-        let low = f.ins().ishl(one, rem);
-        let low = f.ins().iadd_imm(low, -1);
-        let ones = f.ins().iconst(types::I64, -1);
-        let cut = f.ins().select(full, ones, low);
+        if let Some(w) = window {
+            windows.insert(0, w);
+        }
+        self.words_from(f, at, os, p, &mut carry, &mut windows, &mut HashMap::new(), cut, heads)
+    }
+
+    /// `words_in`, its windows and words made so far given.
+    #[allow(clippy::too_many_arguments)]
+    fn words_from<'s>(&'s self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, carry: &mut Carry, windows: &mut HashMap<i64, Lanes<'s>>, memo: &mut HashMap<(usize, i64), Value>, cut: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, Vec<Value>) {
         let words = os
             .iter()
             .map(|&o| {
                 let x = usize::from(self.native.outputs[usize::from(o)]);
                 // A delay `d` reads from `p + d`: `d` bytes ahead of the shared start.
                 let d = i64::from(self.native.output_delays[usize::from(o)]);
-                let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, &mut carry, heads);
+                let m = self.mask_at(f, at, x, p, -d, windows, memo, carry, heads);
                 f.ins().band(m, cut)
             })
             .collect();
-        let outs = cins.iter().map(|&(a, _)| carry.outs.iter().find(|o| o.0 == a).expect("a carried run's carry out (`carried_runs`)").1).collect();
+        let outs = carry.ins.iter().map(|&(a, _)| match carry.outs.iter().find(|o| o.0 == a) {
+            Some(o) => o.1,
+            // A run none and its carry in none, its escapes known so (`known_if_zero`) and
+            // not made: none out.
+            None => {
+                assert!(self.native.insts.iter().enumerate().any(|(x, i)| *i == BlockInst::Escaped(a as u16) && carry.known.get(&x) == Some(&false)), "a carried run's carry out (`carried_runs`)");
+                f.ins().iconst(types::I64, 0)
+            }
+        }).collect();
         (words, outs)
+    }
+
+    /// Each value that a gate's zeros (`gate`) or a given carry in (`given`) may change: a
+    /// gate's value, an escape of a given run, and what reads them. The others are the same
+    /// on either path of `words_gated`.
+    fn gated_by(&self, gate: &[usize], given: &[usize]) -> Vec<bool> {
+        let mut d = vec![false; self.native.insts.len()];
+        for (x, inst) in self.native.insts.iter().enumerate() {
+            let o = |a: u16| d[usize::from(a)];
+            d[x] = gate.contains(&x)
+                || match *inst {
+                    BlockInst::Escaped(a) => given.contains(&usize::from(a)) || o(a),
+                    BlockInst::Not(a) | BlockInst::Prev(a, _) => o(a),
+                    BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => o(a) || o(b),
+                    _ => false,
+                };
+        }
+        d
+    }
+
+    /// The values a gate of outputs `os`' window tests (`words_gated`): byte-local values whose
+    /// zero at every byte of the window makes each output after the first, `os[1..]`, none
+    /// there, and each `escaped` they read at its start whose run's carry in is given
+    /// (`given`), and leaves the first (a reader's closer) not known. For each, its own value
+    /// where it is byte-local (its bytes the fewest), else an `and`'s side, an `or`'s both,
+    /// an escape's run. `None` where one is made none by none of them, or nothing is gated.
+    pub fn zero_gate(&self, os: &[u16], given: &[usize]) -> Option<Vec<usize>> {
+        fn escapes(n: &BlockNative, x: usize, out: &mut Vec<usize>) {
+            match n.insts[x] {
+                BlockInst::Not(a) => escapes(n, usize::from(a), out),
+                BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => {
+                    escapes(n, usize::from(a), out);
+                    escapes(n, usize::from(b), out);
+                }
+                BlockInst::Escaped(a) => {
+                    out.push(x);
+                    escapes(n, usize::from(a), out);
+                }
+                _ => {}
+            }
+        }
+        let (&first, rest) = os.split_first()?;
+        if os.iter().any(|&o| self.native.output_delays[usize::from(o)] != 0) {
+            return None;
+        }
+        let closer = usize::from(self.native.outputs[usize::from(first)]);
+        let mut targets = self.roots(rest);
+        for x in self.roots(os) {
+            escapes(self.native, x, &mut targets);
+        }
+        targets.retain(|&x| !matches!(self.native.insts[x], BlockInst::Escaped(a) if !given.contains(&usize::from(a))));
+        targets.sort_unstable();
+        targets.dedup();
+        if targets.is_empty() {
+            return None;
+        }
+        let kills = |x: usize| known_if_zero(self.native, &[x], given).get(&closer) == Some(&false);
+        let bytes = |xs: &[usize]| xs.iter().map(|&x| crate::native_cpu_lanes::byte_set(self.native, x).map_or(256, |s| s.iter().map(|w| w.count_ones()).sum())).sum::<u32>();
+        // The values that make `x` none, fewest new to `have` (then fewest bytes).
+        fn cover(b: &Bytewise<'_>, x: usize, given: &[usize], have: &[usize], kills: &dyn Fn(usize) -> bool, bytes: &dyn Fn(&[usize]) -> u32) -> Option<Vec<usize>> {
+            if have.contains(&x) {
+                return Some(Vec::new());
+            }
+            let leaf = !matches!(b.native.insts[x], BlockInst::Const(_)) && crate::native_cpu_lanes::byte_set(b.native, x).is_some();
+            if leaf && !kills(x) {
+                return Some(vec![x]);
+            }
+            let go = |a: u16| cover(b, usize::from(a), given, have, kills, bytes);
+            match b.native.insts[x] {
+                BlockInst::Const(0) => Some(Vec::new()),
+                BlockInst::And(p, q) => match (go(p), go(q)) {
+                    (Some(u), Some(v)) => Some(if (u.len(), bytes(&u)) <= (v.len(), bytes(&v)) { u } else { v }),
+                    (u, v) => u.or(v),
+                },
+                BlockInst::AndNot(p, _) => go(p),
+                BlockInst::Or(p, q) | BlockInst::Xor(p, q) => {
+                    let (mut u, v) = (go(p)?, go(q)?);
+                    u.extend(v.into_iter().filter(|y| !u.contains(y)).collect::<Vec<_>>());
+                    Some(u)
+                }
+                BlockInst::Escaped(a) if given.contains(&usize::from(a)) => go(a),
+                _ => None,
+            }
+        }
+        let mut gate: Vec<usize> = Vec::new();
+        for &t in &targets {
+            let more = cover(self, t, given, &gate, &kills, &bytes)?;
+            gate.extend(more);
+        }
+        gate.sort_unstable();
+        gate.dedup();
+        let k = known_if_zero(self.native, &gate, given);
+        (targets.iter().all(|t| k.get(t) == Some(&false)) && k.get(&closer) != Some(&false)).then_some(gate)
+    }
+
+    /// `words_carried`, gated on the window's rare bytes (`zero_gate`): one test of them all,
+    /// their bytes one set packed with the outputs' classes (`class_pack`), and of the
+    /// carries in. Where none holds, the outputs are made with those values zero: an escape's
+    /// math and the tests they make none fold away, as a lexer's string loop tests a chunk for
+    /// a `\` or a control byte once and copies on. `then` is given each path's words and
+    /// carries out, and ends its block: the code after runs on each path, its zeros constants
+    /// there. With nothing to gate, `then` once, on `words_carried`'s.
+    ///
+    /// `prefix`: the code after reads the words only up to the first output's first bit, and
+    /// no carry out. A bit at a byte is made from that byte and those before it, so the gate
+    /// need hold only up to there: the first output is made assuming the gate's zeros, and
+    /// the gate is tested at and below its first bit, as the lean lexer tests for a `\\` or
+    /// a control byte below the quote. The quick path's words past that bit, and its carries
+    /// out, are not given (`then` is given none); the whole path shares what the gate does
+    /// not change.
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+    pub fn words_gated(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, cins: &[(usize, Value)], prefix: bool, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>, then: &mut dyn FnMut(&mut FunctionBuilder<'_>, &[Value], &[Value], &mut Vec<(cranelift_codegen::ir::Block, Step)>)) {
+        let given: Vec<usize> = cins.iter().map(|c| c.0).collect();
+        let Some(gate) = self.zero_gate(os, &given) else {
+            let (w, o) = self.words_carried(f, at, os, p, cins, heads);
+            return then(f, &w, &o, heads);
+        };
+        let mut set = [0u64; 4];
+        for &g in &gate {
+            let s = crate::native_cpu_lanes::byte_set(self.native, g).expect("a gate's values are byte-local");
+            for (w, v) in set.iter_mut().zip(s) {
+                *w |= v;
+            }
+        }
+        let pack = self.pack_for(&self.roots(os), &[crate::class_pack::Need { set, care: [u64::MAX; 4] }]);
+        let cut = self.cut64(f, at, p);
+        let base = f.ins().iadd(at.bytes, p);
+        let mut lanes = Lanes::window(f, self.native, &self.plan, base, p, at.len, at.nibble).packed(Some(pack.clone()));
+        let parts: Vec<_> = (1..=4).map(|c| lanes.extra(f, 0, c)).collect();
+        let m = lanes.mask(f, &parts, at.weights);
+        let m = sym_value(f, m);
+        let mut any = f.ins().band(m, cut);
+        let known = Rc::new(known_if_zero(self.native, &gate, &given));
+        let quick_carry = |f: &mut FunctionBuilder<'_>| {
+            let zero = f.ins().iconst(types::I64, 0);
+            Carry { ins: cins.iter().map(|&(a, _)| (a, zero)).collect(), pack: Some(pack.clone()), known: known.clone(), ..Carry::default() }
+        };
+        let (quick, whole) = (f.create_block(), f.create_block());
+        if prefix {
+            // The quick words first, the gate below the first output's first bit.
+            let mut carry = quick_carry(f);
+            let mut windows: HashMap<i64, Lanes<'_>> = HashMap::from([(0, lanes.clone().assuming(known.clone()))]);
+            let mut memo = HashMap::new();
+            let (w, _) = self.words_from(f, at, os, p, &mut carry, &mut windows, &mut memo, cut, heads);
+            let w1 = f.ins().iadd_imm(w[0], -1);
+            let below = f.ins().bxor(w[0], w1);
+            any = f.ins().band(any, below);
+            for &(_, c) in cins {
+                any = f.ins().bor(any, c);
+            }
+            f.ins().brif(any, whole, &[], quick, &[]);
+            f.switch_to_block(quick);
+            then(f, &w, &[], heads);
+            f.switch_to_block(whole);
+            let by = self.gated_by(&gate, &given);
+            let mut windows: HashMap<i64, Lanes<'_>> = windows.into_iter().map(|(back, l)| (back, if back == 0 { l.unassuming(&by) } else { l })).collect();
+            memo.retain(|&(x, back), _| back != 0 || !by[x]);
+            let mut carry = Carry { ins: cins.to_vec(), pack: Some(pack), ..Carry::default() };
+            let (w, o) = self.words_from(f, at, os, p, &mut carry, &mut windows, &mut memo, cut, heads);
+            return then(f, &w, &o, heads);
+        }
+        for &(_, c) in cins {
+            any = f.ins().bor(any, c);
+        }
+        f.ins().brif(any, whole, &[], quick, &[]);
+        f.switch_to_block(quick);
+        let carry = quick_carry(f);
+        let (w, o) = self.words_in(f, at, os, p, carry, Some(lanes.clone().assuming(known)), cut, heads);
+        then(f, &w, &o, heads);
+        f.switch_to_block(whole);
+        let carry = Carry { ins: cins.to_vec(), pack: Some(pack), ..Carry::default() };
+        let (w, o) = self.words_in(f, at, os, p, carry, Some(lanes), cut, heads);
+        then(f, &w, &o, heads);
     }
 
     /// Output `o`'s bits for the file's bytes `p .. p + 16` (`p` at least 0), none past its end:
@@ -412,6 +598,20 @@ impl<'a> Bytewise<'a> {
         if let Some(&v) = memo.get(&(x, back)) {
             return v;
         }
+        // Known all through the window (a gate's quick path): an escape so has none out.
+        if back == 0
+            && let Some(&k) = carry.known.get(&x)
+        {
+            if let BlockInst::Escaped(a) = self.native.insts[x]
+                && carry.ins.iter().any(|c| c.0 == usize::from(a))
+            {
+                let none = f.ins().iconst(types::I64, 0);
+                carry.outs.push((usize::from(a), none));
+            }
+            let v = f.ins().iconst(types::I64, if k { -1 } else { 0 });
+            memo.insert((x, back), v);
+            return v;
+        }
         let here = |f: &mut FunctionBuilder<'_>| if back == 0 { start } else { f.ins().iadd_imm(start, -back) };
         let v = if self.plan.lanes[x] {
             let pos = here(f);
@@ -420,12 +620,8 @@ impl<'a> Bytewise<'a> {
                 Lanes::window(f, self.native, &self.plan, base, pos, at.len, at.nibble).packed(carry.pack.clone())
             });
             let parts: Vec<_> = (1..=if carry.short { 1 } else { 4 }).map(|c| lanes.get(f, x, c)).collect();
-            match lanes.mask(f, &parts, at.weights) {
-                Sym::Known(k) => f.ins().iconst(types::I64, k as i64),
-                Sym::Value(v, false) => v,
-                Sym::Value(v, true) => f.ins().bnot(v),
-                Sym::Slot(..) => unreachable!("a window's mask is a value"),
-            }
+            let m = lanes.mask(f, &parts, at.weights);
+            sym_value(f, m)
         } else {
             match self.native.insts[x] {
                 BlockInst::Const(c) => {
@@ -795,6 +991,58 @@ impl Bytewise<'_> {
             }
             _ => None,
         }
+    }
+}
+
+/// Each value known at every byte of a window where values `zero` are false at every one
+/// of them and the carries in of the runs `given` are none: an escape of a run that is none,
+/// an `and` with a side none, and the logic of those. A `prev` reads bytes before the window:
+/// not known.
+pub fn known_if_zero(native: &BlockNative, zero: &[usize], given: &[usize]) -> HashMap<usize, bool> {
+    let mut k: HashMap<usize, bool> = HashMap::new();
+    for (x, inst) in native.insts.iter().enumerate() {
+        let g = |a: u16| k.get(&usize::from(a)).copied();
+        let v = if zero.contains(&x) {
+            Some(false)
+        } else {
+            match *inst {
+                BlockInst::Const(0) => Some(false),
+                BlockInst::Const(u64::MAX) => Some(true),
+                BlockInst::Not(a) => g(a).map(|b| !b),
+                BlockInst::And(a, b) => match (g(a), g(b)) {
+                    (Some(false), _) | (_, Some(false)) => Some(false),
+                    (Some(true), Some(true)) => Some(true),
+                    _ => None,
+                },
+                BlockInst::AndNot(a, b) => match (g(a), g(b)) {
+                    (Some(false), _) | (_, Some(true)) => Some(false),
+                    (Some(true), Some(false)) => Some(true),
+                    _ => None,
+                },
+                BlockInst::Or(a, b) => match (g(a), g(b)) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
+                    (Some(false), Some(false)) => Some(false),
+                    _ => None,
+                },
+                BlockInst::Xor(a, b) => g(a).zip(g(b)).map(|(p, q)| p != q),
+                BlockInst::Escaped(a) if given.contains(&usize::from(a)) && g(a) == Some(false) => Some(false),
+                _ => None,
+            }
+        };
+        if let Some(v) = v {
+            k.insert(x, v);
+        }
+    }
+    k
+}
+
+/// A window's mask, its value.
+fn sym_value(f: &mut FunctionBuilder<'_>, s: Sym) -> Value {
+    match s {
+        Sym::Known(k) => f.ins().iconst(types::I64, k as i64),
+        Sym::Value(v, false) => v,
+        Sym::Value(v, true) => f.ins().bnot(v),
+        Sym::Slot(..) => unreachable!("a window's mask is a value"),
     }
 }
 
@@ -1228,7 +1476,7 @@ mod tests {
         use cranelift_module::{Linkage, Module};
         let mut t0 = ClassTable::default();
         let mut t1 = ClassTable::default();
-        let mut put = |t: &mut ClassTable, bit: u8, hi: &[usize], lo: std::ops::RangeInclusive<usize>, also: &[usize]| {
+        let put = |t: &mut ClassTable, bit: u8, hi: &[usize], lo: std::ops::RangeInclusive<usize>, also: &[usize]| {
             for &h in hi {
                 t.hi[h] |= 1 << bit;
             }
@@ -1324,5 +1572,150 @@ mod tests {
             }
             assert_eq!(out.iter().map(|w| if n - p >= 64 { 0 } else { w >> (n - p) }).fold(0, |a, w| a | w), 0, "none past the file");
         }
+    }
+
+    /// A program of a closer `|` that `^` escapes, and tests besides it: a digit, a `~` after an
+    /// `@`, and (`blocked`) a `|` after a `#`.
+    fn gated_program() -> BlockNative {
+        let mut digits = crate::block::ClassTable::default();
+        digits.hi[3] = 1;
+        for l in 0..=9 {
+            digits.lo[l] = 1;
+        }
+        BlockNative {
+            tables: vec![digits],
+            // 0 `|`, 1 `^`, 2 escaped by `^`, 3 the closer, 4 a digit, 5 `@`, 6 `~`,
+            // 7 `@` one back, 8 `~` after `@`, 9 `#`, 10 `#` one back, 11 `|` after `#`.
+            insts: vec![
+                BlockInst::EqByte(b'|'),
+                BlockInst::EqByte(b'^'),
+                BlockInst::Escaped(1),
+                BlockInst::AndNot(0, 2),
+                BlockInst::Class { table: 0, bits: 1 },
+                BlockInst::EqByte(b'@'),
+                BlockInst::EqByte(b'~'),
+                BlockInst::Prev(5, 1),
+                BlockInst::And(7, 6),
+                BlockInst::EqByte(b'#'),
+                BlockInst::Prev(9, 1),
+                BlockInst::And(10, 0),
+            ],
+            outputs: vec![3, 4, 8, 11],
+            extracts: Vec::new(),
+            totals: Vec::new(),
+            masks: Vec::new(),
+            delay: 0,
+            output_delays: vec![0; 4],
+            groups: Vec::new(),
+            records: None,
+            walks: Vec::new(),
+        }
+    }
+
+    /// Where a window's rare bytes are none, its tests and its escapes are known zero: the gate
+    /// is those bytes' values (an escape's run, a test's byte, the byte a test needs besides a
+    /// byte before), never one whose zero would make the closer none, and none where a test
+    /// is not made zero by any.
+    #[test]
+    fn a_gate_is_the_rare_bytes_the_tests_read() {
+        let native = gated_program();
+        let b = Bytewise::of(&native);
+        assert_eq!(b.zero_gate(&[0, 1, 2], &[1]), Some(vec![1, 4, 6]), "`^`, a digit, `~`");
+        assert_eq!(b.zero_gate(&[0], &[1]), Some(vec![1]), "the escapes alone: `^`");
+        assert_eq!(b.zero_gate(&[0], &[]), None, "the escape's carry not given: nothing to gate");
+        assert_eq!(b.zero_gate(&[0, 3], &[1]), None, "a `|` after `#`: only `|`'s zero, the closer's, makes it none");
+        assert_eq!(b.zero_gate(&[2, 1], &[]), Some(vec![4]), "a digit, the closer `~` after `@`");
+        let k = known_if_zero(&native, &[1, 4, 6], &[1]);
+        assert_eq!((k.get(&2), k.get(&4), k.get(&8)), (Some(&false), Some(&false), Some(&false)));
+        assert_eq!(k.get(&3), None, "the closer, `|` where it is: not known");
+        assert_eq!(known_if_zero(&native, &[1], &[]).get(&2), None, "an escape whose carry in may be one");
+    }
+
+    /// A window's words gated on its rare bytes (`words_gated`) are its words: on each path,
+    /// with the carries out, on bytes where the rare ones are some and where they are none.
+    #[test]
+    fn the_gated_words_are_the_words() {
+        gated_words(false);
+        gated_words(true);
+    }
+
+    /// `the_gated_words_are_the_words` with or without `prefix`.
+    fn gated_words(prefix: bool) {
+        use cranelift_codegen::ir::AbiParam;
+        use cranelift_module::{Linkage, Module};
+        let native = gated_program();
+        let b = Bytewise::of(&native);
+        let os = [0u16, 1, 2];
+        assert_eq!(b.carried_runs(&os), vec![1]);
+        let mut module = cranelift_jit::JITModule::new(crate::native_cpu_codegen::tier1_builder().expect("a JIT"));
+        let mut sig = module.make_signature();
+        sig.params.extend([AbiParam::new(types::I64); 5]);
+        let id = module.declare_function("gated", Linkage::Local, &sig).expect("declared");
+        let mut ctx = module.make_context();
+        ctx.func.signature = sig;
+        let mut fctx = cranelift_frontend::FunctionBuilderContext::new();
+        {
+            let mut f = FunctionBuilder::new(&mut ctx.func, &mut fctx);
+            let entry = f.create_block();
+            f.append_block_params_for_function_params(entry);
+            f.switch_to_block(entry);
+            let p = f.block_params(entry).to_vec();
+            let k = crate::native_cpu_block::Consts::make(&mut f);
+            let file = File { bytes: p[0], len: p[1], nibble: k.nibble, weights: k.weights, even: k.even };
+            let mut heads = Vec::new();
+            let (out, cin) = (p[3], p[4]);
+            let (w, o) = b.words_carried(&mut f, &file, &os, p[2], &[(1, cin)], &mut heads);
+            for (i, v) in w.iter().chain(&o).enumerate() {
+                f.ins().store(MemFlags::trusted(), *v, out, 8 * i as i32);
+            }
+            let mut path = 0i64;
+            b.words_gated(&mut f, &file, &os, p[2], &[(1, cin)], prefix, &mut heads, &mut |f, w, o, _| {
+                path += 1;
+                for (i, v) in w.iter().chain(o).enumerate() {
+                    f.ins().store(MemFlags::trusted(), *v, out, 8 * (4 + i) as i32);
+                }
+                let n = f.ins().iconst(types::I64, path);
+                f.ins().store(MemFlags::trusted(), n, out, 64);
+                f.ins().return_(&[]);
+            });
+            assert_eq!(path, 2, "a quick path and a whole one");
+            f.seal_all_blocks();
+            f.finalize();
+        }
+        // The escape's carry out (its add's overflow, `icmp ult`): made on the whole path and
+        // by the words not gated, not on the quick one.
+        let overflows = ctx.func.layout.blocks().flat_map(|bk| ctx.func.layout.block_insts(bk)).filter(|&i| matches!(ctx.func.dfg.insts[i], cranelift_codegen::ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThan, .. })).count();
+        assert_eq!(overflows, 2, "prefix {prefix}: {}", ctx.func.display());
+        module.define_function(id, &mut ctx).expect("defined");
+        module.finalize_definitions().expect("finalized");
+        let run: extern "C" fn(*const u8, i64, i64, *mut u64, i64) = unsafe { std::mem::transmute(module.get_finalized_function(id)) };
+        let (common, rare) = (b"ab |c ".as_slice(), b"^5~@#".as_slice());
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut paths = [0usize; 3];
+        for round in 0..400 {
+            let n = 1 + (round % 120);
+            let mut buf = vec![0u8; 16 + n + 80];
+            for byte in &mut buf[16..16 + n] {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                // Rare bytes in a round in four, one a 16 there.
+                *byte = if round % 4 == 0 && x % 16 == 0 { rare[(x >> 8) as usize % rare.len()] } else { common[(x >> 8) as usize % common.len()] };
+            }
+            let p = (round % 5).min(n - 1);
+            let mut out = [0u64; 9];
+            run(buf[16..].as_ptr(), n as i64, p as i64, out.as_mut_ptr(), (round / 7 % 2) as i64);
+            if prefix && out[8] == 1 {
+                // The quick path: the words up to the closer's first bit, no carry out.
+                let below = out[0] ^ out[0].wrapping_sub(1);
+                let cut: Vec<u64> = out[..3].iter().map(|w| w & below).collect();
+                let quick: Vec<u64> = out[4..7].iter().map(|w| w & below).collect();
+                assert_eq!(cut, quick, "round {round}: the words up to the closer, gated and not");
+            } else {
+                assert_eq!(out[..4], out[4..8], "round {round}: words and carry out, gated and not (prefix {prefix})");
+            }
+            paths[out[8] as usize] += 1;
+        }
+        assert!(paths[1] > 0 && paths[2] > 0, "both paths taken: {paths:?}");
     }
 }

@@ -1558,7 +1558,9 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     }
     let merged = tables.is_some() && matches!(passes.passes.last(), Some(Pass::Forward { .. }));
     let mut ir = Vec::new();
-    let keep = |ir: &mut Vec<(u32, cranelift_codegen::ir::Function)>, id: cranelift_module::FuncId, func: &cranelift_codegen::ir::Function| {
+    // Each function's constants folded (`clif_fold`) before either backend is given it.
+    let keep = |ir: &mut Vec<(u32, cranelift_codegen::ir::Function)>, id: cranelift_module::FuncId, func: &mut cranelift_codegen::ir::Function| {
+        crate::clif_fold::fold(func);
         if crate::native_cpu_stream::KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) {
             ir.push((id.as_u32(), func.clone()));
         }
@@ -1590,7 +1592,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 let clif = general_context.func.display().to_string();
                 // The general body where the pass still calls it (none without a block loop).
                 if calls_of(&context.func).contains(&general_id.as_u32()) {
-                    { keep(&mut ir, general_id, &general_context.func); crate::native_cpu_codegen::define_function(&mut module, general_id, &mut general_context) }.map_err(|_| Error::BackendFailure)?;
+                    { keep(&mut ir, general_id, &mut general_context.func); crate::native_cpu_codegen::define_function(&mut module, general_id, &mut general_context) }.map_err(|_| Error::BackendFailure)?;
                     let code = general_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
                     shape.outlined.push(Outlined { clif, disassembly: code });
                 }
@@ -1601,7 +1603,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     region_context.set_disasm(true);
                     region_context.func.srclocs.clear();
                     let clif = region_context.func.display().to_string();
-                    { keep(&mut ir, id, &region_context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut region_context) }.map_err(|_| Error::BackendFailure)?;
+                    { keep(&mut ir, id, &mut region_context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut region_context) }.map_err(|_| Error::BackendFailure)?;
                     let code = region_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
                     shape.outlined.push(Outlined { clif, disassembly: code });
                     module.clear_context(&mut region_context);
@@ -1617,7 +1619,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         shape.pressure = crate::native_cpu_pressure::measure(&context.func, &passes.origins[k], &hot);
         context.func.srclocs.clear();
         shape.clif = context.func.display().to_string();
-        { keep(&mut ir, id, &context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
+        { keep(&mut ir, id, &mut context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
         shape.disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
         disassembly.push_str(&shape.disassembly);
         for o in &shape.outlined {
@@ -1636,7 +1638,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             context.func.signature = signature.clone();
             context.set_disasm(true);
             record_pass(&mut context, r, &t, native.extracts.len(), native.outputs.len())?;
-            { keep(&mut ir, id, &context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
+            { keep(&mut ir, id, &mut context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
             disassembly.push_str(&context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
             module.clear_context(&mut context);
             ids.push(id);
@@ -3341,46 +3343,50 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         let zero = f.ins().iconst(types::I64, 0);
                         let p0 = f.ins().iadd_imm(s, 1);
                         let cins: Vec<(usize, Value)> = runs.iter().map(|&r| (r, if b.apart(a.opener, r) { zero } else { b.carry_at(f, &file, r, p0, heads) })).collect();
-                        let (ws, _) = b.words_carried(f, &file, &os, p0, &cins, heads);
-                        let found = f.create_block();
-                        f.ins().brif(ws[0], found, &[], long, &[]);
-                        f.switch_to_block(found);
-                        let tz = f.ins().ctz(ws[0]);
-                        let close = f.ins().iadd(p0, tz);
-                        let l = f.ins().iadd_imm(close, i64::from(a.off));
-                        let (refuse0, hits0) = always_hits(counts.iter().chain(tests.iter().map(|(t, _)| t).filter(|t| t.always())));
-                        let gate = if inloop { None } else { counts_need_by_offset(b.native, &counts) };
-                        if inloop {
-                            let x1 = f.ins().iadd_imm(ws[0], -1);
-                            let upto = f.ins().bxor(ws[0], x1);
-                            let fin: Vec<Value> = touts.iter().zip(&ws[1..]).map(|(&(_, n), &w)| {
-                                let w = f.ins().band(w, upto);
-                                read_test_acc(f, n, zero, w)
-                            }).collect();
-                            let got = read_test_hits(f, &counts, &touts, &fin);
-                            let no = f.ins().sshr_imm(got, 63);
-                            let r = if refuse0 == 0 { no } else { f.ins().bor_imm(no, refuse0) };
-                            let marks = f.ins().band_imm(got, i64::MAX);
-                            let h = if hits0 == 0 { marks } else { f.ins().bor_imm(marks, hits0) };
-                            f.ins().jump(rest, &[l.into(), tag.into(), r.into(), h.into()]);
-                        } else { match gate {
-                            Some(ns) => {
-                                let (vec, quiet) = (f.create_block(), f.create_block());
-                                let n1 = f.ins().isub(l, s);
-                                let span = f.ins().iadd_imm(n1, 1);
-                                let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 64);
-                                f.ins().brif(fits, vec, &[], long, &[]);
-                                f.switch_to_block(vec);
-                                let some = needs_spans(f, &ns, c.bytes, s, span);
-                                f.ins().brif(some, long, &[], quiet, &[]);
-                                f.switch_to_block(quiet);
-                                let (r0, h0) = (f.ins().iconst(types::I64, refuse0), f.ins().iconst(types::I64, hits0));
-                                f.ins().jump(rest, &[l.into(), tag.into(), r0.into(), h0.into()]);
-                            }
-                            None => {
-                                f.ins().jump(long, &[]);
-                            }
-                        } }
+                        // The window gated on its rare bytes (`words_gated`): where none up to
+                        // the closer, the escapes and the tests they make none known, the code
+                        // after on each path. It reads the words up to the closer only.
+                        b.words_gated(f, &file, &os, p0, &cins, true, heads, &mut |f, ws, _, _| {
+                            let found = f.create_block();
+                            f.ins().brif(ws[0], found, &[], long, &[]);
+                            f.switch_to_block(found);
+                            let tz = f.ins().ctz(ws[0]);
+                            let close = f.ins().iadd(p0, tz);
+                            let l = f.ins().iadd_imm(close, i64::from(a.off));
+                            let (refuse0, hits0) = always_hits(counts.iter().chain(tests.iter().map(|(t, _)| t).filter(|t| t.always())));
+                            let gate = if inloop { None } else { counts_need_by_offset(b.native, &counts) };
+                            if inloop {
+                                let x1 = f.ins().iadd_imm(ws[0], -1);
+                                let upto = f.ins().bxor(ws[0], x1);
+                                let fin: Vec<Value> = touts.iter().zip(&ws[1..]).map(|(&(_, n), &w)| {
+                                    let w = f.ins().band(w, upto);
+                                    read_test_acc(f, n, zero, w)
+                                }).collect();
+                                let got = read_test_hits(f, &counts, &touts, &fin);
+                                let no = f.ins().sshr_imm(got, 63);
+                                let r = if refuse0 == 0 { no } else { f.ins().bor_imm(no, refuse0) };
+                                let marks = f.ins().band_imm(got, i64::MAX);
+                                let h = if hits0 == 0 { marks } else { f.ins().bor_imm(marks, hits0) };
+                                f.ins().jump(rest, &[l.into(), tag.into(), r.into(), h.into()]);
+                            } else { match gate {
+                                Some(ns) => {
+                                    let (vec, quiet) = (f.create_block(), f.create_block());
+                                    let n1 = f.ins().isub(l, s);
+                                    let span = f.ins().iadd_imm(n1, 1);
+                                    let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 64);
+                                    f.ins().brif(fits, vec, &[], long, &[]);
+                                    f.switch_to_block(vec);
+                                    let some = needs_spans(f, &ns, c.bytes, s, span);
+                                    f.ins().brif(some, long, &[], quiet, &[]);
+                                    f.switch_to_block(quiet);
+                                    let (r0, h0) = (f.ins().iconst(types::I64, refuse0), f.ins().iconst(types::I64, hits0));
+                                    f.ins().jump(rest, &[l.into(), tag.into(), r0.into(), h0.into()]);
+                                }
+                                None => {
+                                    f.ins().jump(long, &[]);
+                                }
+                            } }
+                        });
                         // No closer in the file: the whole function's, as any other long read.
                         f.switch_to_block(none);
                         f.ins().jump(long, &[]);

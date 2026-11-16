@@ -2423,3 +2423,74 @@ block. Its inputs are tested by `the_cpus_records_are_the_interpreters`
 
 Counts, reported: words 99.0, punctuation 54.4, mixed 55.8,
 strings 313.4, numbers 153.3, comments 234.4.
+
+## A string's window is gated on its rare bytes
+
+Most strings have no `\` and no control byte. The lean lexer finds
+the quote first, then asks one question: is there a `\` or a control
+byte below it? If not, the string ends at the quote, with no escape
+math and no tests. Our reader always did all of it: the escape's
+run math, a movemask for each test, and the counts after.
+
+**The gate** (`Bytewise::zero_gate`). For the outputs a read makes
+(its closer first, then its tests), the compiler picks byte tests
+whose being false at every byte makes each test false and each
+escape none. A test that is a byte test is taken whole, because its
+own set is the narrowest. For an `and` it takes the cheaper side,
+for an `or` both sides, and for an escape its run. It never picks a
+test whose zero would make the closer none, and it gives up where a
+test reads a byte before the window (a `prev`). `known_if_zero` says
+what is then known.
+
+```text
+closer = '|' and not escaped('^')     gate: '^', digit, '~'
+tests  = digit, '@' then '~'          ('@' then '~': '~' alone)
+```
+
+**The paths** (`Bytewise::words_gated`). The gate's bytes are one
+set, packed with the read's classes (`class_pack`), so one test and
+one movemask cover them. The quick path makes the outputs with the
+gate's values assumed false (`Lanes::assuming`), so they become
+constants. The whole path makes them as before. The code after the
+read is built once on each path, with no join.
+
+**Prefix.** An output's bit at a byte depends only on that byte and
+those before it. A reader looks at its words only up to the closer.
+So the gate needs to hold only up to there: the closer is made
+assuming the gate's zeros, and the gate is tested at and below its
+first bit. Testing the whole window took the slow path on almost
+every string, because the bytes after a string usually include a
+newline.
+
+**Folding** (`clif_fold`). The quick path's constants still flowed
+into an `and`, a count and a compare. Neither the JIT (Cranelift
+runs without its optimizer here) nor the printed Rust folded them.
+`clif_fold::fold` runs on every function before either backend:
+
+- operations with constant operands become constants, at their
+  width;
+- an operation one constant operand decides becomes that constant
+  or the other operand (`x & 0`, `x | 0`, a `select`);
+- a branch on a constant becomes a jump;
+- blocks no longer reached and pure operations no longer read are
+  removed.
+
+Also in this step:
+
+- a range test with low byte 0 is one compare;
+- a range is compared once per chunk;
+- a set's parts in one table are one bit test;
+- `clif_rust` no longer prints the `and` that a `vtstq_u8` absorbs.
+
+Tests: `a_gate_is_the_rare_bytes_the_tests_read` (a made-up grammar,
+`|` escaped by `^`, with digit and `@`-then-`~` tests; no gate where
+a test needs the closer's byte); `the_gated_words_are_the_words`
+(JIT, random bytes, both modes: the same words and carries as
+ungated, both paths taken, no escape overflow on the quick path);
+`clif_fold`'s four (a count of none folds through its branch,
+widths, a deciding constant, effects and reached blocks kept);
+`bits_against_zero_are_one_test` (no `and` printed).
+
+Counts, reported: words 99.0, punctuation 54.4, mixed 55.8,
+strings 268.4, numbers 153.3, comments 234.4. With the gate tested
+over the whole window, strings were 344.4.

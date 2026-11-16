@@ -4720,6 +4720,10 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     for (fid, _, func) in own {
         items.push((fid, context_of(&module, func)));
     }
+    // Each function's constants folded (`clif_fold`) before either backend is given it.
+    for (_, c) in &mut items {
+        crate::clif_fold::fold(&mut c.func);
+    }
     let mut clif = String::new();
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());

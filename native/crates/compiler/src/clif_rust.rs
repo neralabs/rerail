@@ -122,13 +122,14 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("a{}: {}", v.as_u32(), local(dfg.value_type(v))?.0))).collect::<Result<_, String>>()?;
     writeln!(out, "#[inline(never)]\nunsafe fn f{id}(pin: u64{}{}) -> {ret_ty} {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
     out.push_str("    let mut pin = pin;\n");
+    let absorbed = absorbed(f);
     // Every value a local, declared once.
     let mut declared = std::collections::BTreeMap::new();
     for b in f.layout.blocks() {
         for &v in dfg.block_params(b) {
             declared.insert(v.as_u32(), local(dfg.value_type(v))?);
         }
-        for inst in f.layout.block_insts(b) {
+        for inst in f.layout.block_insts(b).filter(|i| !absorbed.contains(i)) {
             for &v in dfg.inst_results(inst) {
                 declared.insert(v.as_u32(), local(dfg.value_type(v))?);
             }
@@ -158,7 +159,7 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
             if f.layout.is_cold(blocks[node]) {
                 s.push_str("core::hint::cold_path();\n");
             }
-            for inst in f.layout.block_insts(blocks[node]) {
+            for inst in f.layout.block_insts(blocks[node]).filter(|i| !absorbed.contains(i)) {
                 s.push_str(&instruction(f, inst, &name, &|k, _| jump(k))?);
                 s.push('\n');
             }
@@ -176,7 +177,7 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
         if f.layout.is_cold(blk) {
             out.push_str("                core::hint::cold_path();\n");
         }
-        for inst in f.layout.block_insts(blk) {
+        for inst in f.layout.block_insts(blk).filter(|i| !absorbed.contains(i)) {
             let s = instruction(f, inst, &name, &|_, to: ir::Block| Ok(format!("b = {}; continue;", to.as_u32())))?;
             for line in s.lines() {
                 writeln!(out, "                {line}").unwrap();
@@ -759,6 +760,31 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
     })
 }
 
+/// The `band`s each read only by compares that print as a bit test (`tested_bits`): the
+/// test is the `and` too, so they are not printed.
+fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
+    let dfg = &f.dfg;
+    let insts: Vec<ir::Inst> = f.layout.blocks().flat_map(|b| f.layout.block_insts(b)).collect();
+    let mut tested = std::collections::HashSet::new();
+    let mut other = std::collections::HashSet::new();
+    for &inst in &insts {
+        let in_test = matches!(dfg.insts[inst], ir::InstructionData::IntCompare { cond: IntCC::NotEqual, .. }) && dfg.value_type(dfg.inst_results(inst)[0]).is_vector() && tested_bits(f, inst).is_some();
+        let mut reads: Vec<ir::Value> = dfg.inst_args(inst).iter().map(|&v| dfg.resolve_aliases(v)).collect();
+        for c in dfg.insts[inst].branch_destination(&dfg.jump_tables, &dfg.exception_tables) {
+            reads.extend(c.args(&dfg.value_lists).filter_map(|a| a.as_value()).map(|v| dfg.resolve_aliases(v)));
+        }
+        for v in reads {
+            let ir::ValueDef::Result(d, _) = dfg.value_def(v) else { continue };
+            if !matches!(dfg.insts[d], ir::InstructionData::Binary { opcode: Opcode::Band, .. }) {
+                continue;
+            }
+            if in_test { tested.insert(d) } else { other.insert(d) };
+        }
+    }
+    tested.retain(|d| !other.contains(d));
+    tested
+}
+
 /// A vector compare `band(x, y) != 0` (either side the zero): `x` and `y`, for NEON's `vtst`.
 fn tested_bits(f: &ir::Function, inst: ir::Inst) -> Option<(ir::Value, ir::Value)> {
     let dfg = &f.dfg;
@@ -915,7 +941,8 @@ mod tests {
     }
 
     /// A vector's bits against a mask, compared with zero for any set (`(x & m) != 0`), is
-    /// one bit test (`vtstq_u8`), either operand order; a compare with zero for none is not.
+    /// one bit test (`vtstq_u8`), either operand order, and its `and` is not printed besides;
+    /// a compare with zero for none is not.
     #[test]
     fn bits_against_zero_are_one_test() {
         use cranelift_codegen::ir::condcodes::IntCC;
@@ -944,6 +971,8 @@ mod tests {
             b.finalize();
             let src = super::translate(&[(0, f)], &[(0, "entry")], &[]).expect("translates");
             assert_eq!(src.contains("vtstq_u8"), cc == IntCC::NotEqual, "{cc:?}, zero first {zero_first}: {src}");
+            // The test is the `and` too: it is not printed besides.
+            assert_eq!(src.contains("vandq_u8"), cc != IntCC::NotEqual, "{cc:?}, zero first {zero_first}: {src}");
         }
     }
 }
