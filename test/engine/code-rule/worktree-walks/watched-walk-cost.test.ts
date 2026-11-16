@@ -83,7 +83,9 @@ describe("the engine service's walk of the other worktrees, with the engine's tr
         [name, listed.paths.filter(path => path === worktree || path.startsWith(`${worktree}${sep}`)).length]));
 
       const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
-      const service = await startEngineService({ socketPath: join(root, "engine.sock"), storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
+      // A Windows engine service listens on a named pipe, elsewhere on a socket file.
+      const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-watched-walk-${process.pid}` : join(root, "engine.sock");
+      const service = await startEngineService({ socketPath, storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
       try {
         await service.ingest({ kind: "session-start", eventId: "s:start", session: { host: "claude-code", sessionId: "s", cwd: w0 } });
         await vi.waitFor(() => expect(opens.mock.results).toHaveLength(1), { timeout: 60_000, interval: 50 });

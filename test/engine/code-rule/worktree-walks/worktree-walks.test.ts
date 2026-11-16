@@ -491,7 +491,7 @@ describe("a walk of the other worktrees with change notices", () => {
     await writeFile(generated, "x = 1\n");
     // Git ignores it, by a rule of its own: the index tracking it is what tells a walk it counts.
     await writeFile(join(w3, ".gitignore"), "src/gen.py\n");
-    await awaitClockAfter(generated);
+    await awaitClockAfter(join(w3, ".gitignore"));
     // As Git answers: a path the index tracks is never ignored.
     let tracked = false;
     const ignores = (path: string): boolean => path.endsWith("gen.py") && !tracked;
