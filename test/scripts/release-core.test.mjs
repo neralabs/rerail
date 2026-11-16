@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { afterEach, describe, expect, it } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
+import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
@@ -560,6 +560,23 @@ describe("coreBeforeFloor", () => {
     expect(coreBeforeFloor("0.1.5-next.0", "0.1.5")).toBe(false);
     expect(coreBeforeFloor("0.1.5", "0.1.5")).toBe(false);
     expect(coreBeforeFloor("0.1.4", undefined)).toBe(false);
+  });
+});
+
+describe("isOpenRange", () => {
+  it.each([
+    [">=0.1.0-0", true],
+    [">=0.1.5", true],
+    [">= 1.2.3", true],
+    [">=0.1.0-0 <0.2.0", false],
+    [">=0.1.0-0||>=2.0.0", false],
+    [">=0.1.0-0 || >=2.0.0", false],
+    ["^0.1.0", false],
+    ["0.1.x", false],
+    ["*", false],
+    [">0.1.0", false],
+  ])("%s: %s", (range, open) => {
+    expect(isOpenRange(range)).toBe(open);
   });
 });
 

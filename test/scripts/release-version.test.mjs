@@ -192,7 +192,7 @@ describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", ()
     expect(readFileSync(join(repo.root, "body.md"), "utf8")).not.toContain("Core range raised");
   });
 
-  it("refuses to rewrite a range that is not a plain >=<version>, and edits nothing", () => {
+  it("stops at a released pack whose range is not a plain >=<version>, and leaves the range as it is", () => {
     const repo = repository();
     writeRangedPack(repo, "capped", ">=0.1.0-0 <0.2.0", { "capped-one": java });
     commit(repo, "the pack");
@@ -202,8 +202,22 @@ describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", ()
     } catch (error) {
       stderr = String(error.stderr);
     }
-    expect(stderr).toContain("packs/capped/package.json: its core range >=0.1.0-0 <0.2.0 admits Rerail older than 0.1.5 and is not a plain >=<version>; raise it by hand");
+    expect(stderr).toContain("packs/capped/package.json: its core range >=0.1.0-0 <0.2.0 admits Rerail older than this release needs and is not a plain >=<version>; raise it by hand to >=0.1.5-0 or stricter");
     expect(rangeOf(repo, "capped")).toBe(">=0.1.0-0 <0.2.0");
+  });
+
+  it("releases the others when a pack it does not release has such a range, and says to raise that one by hand", () => {
+    const repo = repository();
+    repo.write("bump.mjs", BUMP.replace('for (const id of readdirSync("packs")) {', 'for (const id of ["moving"]) {'));
+    writeRangedPack(repo, "moving", ">=0.1.0-0", { "moving-one": java });
+    writeRangedPack(repo, "idle", ">=0.1.0-0||>=2.0.0", { "idle-one": java });
+    commit(repo, "the packs");
+    releaseVersion(repo);
+    expect(rangeOf(repo, "moving")).toBe(">=0.1.5-0");
+    expect(rangeOf(repo, "idle")).toBe(">=0.1.0-0||>=2.0.0");
+    expect(readFileSync(join(repo.root, "body.md"), "utf8")).toContain(
+      `\`${packName("idle")}\` (\`>=0.1.0-0||>=2.0.0\`, needs \`>=0.1.5-0\`, raised by hand: it is not a plain \`>=<version>\`)`,
+    );
   });
 
   it("warns of a pack that needs it and is not released, and does not edit it", () => {

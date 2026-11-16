@@ -14,7 +14,8 @@
 //   - Core ranges: a pack this run releases that an older core cannot load (core.mjs: a rule held off, a rule in a
 //     language added since) has its core range raised to leave those cores out, in its package.json and in
 //     package-lock.json, once core is at the release that first loads it. The description lists each; a pack that needs
-//     it and is not released here is named in a warning, since nothing publishes its package.json. A pack released here
+//     it and is not released here is named in a warning, since nothing publishes its package.json. Only a plain
+//     >=<version> range is rewritten: a released pack with any other stops the run, to be raised by hand. A pack released here
 //     while core stays older than the release that first loads it (core left out of this pull request, say) is named
 //     in a warning not to merge: published so, no Rerail could load it.
 // The description ends with the checklist whoever merges it ticks first (BEFORE_MERGING; docs/release.md, "Before
@@ -26,7 +27,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages } from "./core.mjs";
+import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
@@ -182,7 +183,8 @@ function packFloor(id) {
 
 /**
  * The packs an older core cannot load whose core range still admits one, now that core is `coreVersion` (core.mjs):
- * `{ id, name, from, to }`, the range each has and the one it needs.
+ * `{ id, name, from, to, open }`, the range each has, the one it needs, and whether the range is one open lower bound
+ * (isOpenRange), the only kind this script rewrites.
  */
 function dueCoreRanges(coreVersion) {
   return listPacks()
@@ -192,9 +194,7 @@ function dueCoreRanges(coreVersion) {
       const range = JSON.parse(readText(`${directory}/package.json`)).peerDependencies?.[CORE_NAME];
       const floor = packFloor(pack.id);
       if (range === undefined || !admitsRefusingCore(range, floor, coreVersion)) return [];
-      // Only an open range is raised: one with an upper bound or alternatives would lose them, so a person decides.
-      if (!/^>=\S+$/u.test(range)) throw new Error(`${directory}/package.json: its core range ${range} admits Rerail older than ${floor} and is not a plain >=<version>; raise it by hand to leave those out`);
-      return [{ id: pack.id, name: pack.name, from: range, to: raisedCoreRange(floor) }];
+      return [{ id: pack.id, name: pack.name, from: range, to: raisedCoreRange(floor), open: isOpenRange(range) }];
     });
 }
 
@@ -223,13 +223,17 @@ function lockCoreRanges(raised) {
 
 /**
  * Raises the core range of each released pack an older core cannot load, now that core is at the release that first
- * loads it, in its package.json and package-lock.json. Returns `{ raised, waiting }`, each `{ name, from, to }`:
- * `waiting` are packs that need it and are not released by this run, left as they are.
+ * loads it, in its package.json and package-lock.json. Returns `{ raised, waiting }`, each `{ name, from, to, open }`:
+ * `waiting` are packs that need it and are not released by this run, left as they are, whatever their range.
  */
 function raiseCoreRanges() {
   const due = dueCoreRanges(JSON.parse(readText("package.json")).version);
   const released = new Set(packs.map((pack) => pack.id));
   const raised = due.filter(({ id }) => released.has(id));
+  // A released pack is published with the range it has here. One that is not an open range is not rewritten, since
+  // its upper bound or alternatives would be lost, so the run stops for a person to raise it.
+  const closed = raised.find(({ open }) => !open);
+  if (closed !== undefined) throw new Error(`packs/${closed.id}/package.json: its core range ${closed.from} admits Rerail older than this release needs and is not a plain >=<version>; raise it by hand to ${closed.to} or stricter`);
   raised.forEach(writeCoreRange);
   lockCoreRanges(raised);
   return { raised, waiting: due.filter(({ id }) => !released.has(id)) };
@@ -278,7 +282,7 @@ if (aheadOfCore.length > 0) {
   console.log(`::warning title=Pack ahead of core::${aheadOfCore.map(({ name }) => name).join(", ")} need a newer core than ${coreVersion}`);
 }
 if (coreRanges.waiting.length > 0) {
-  const named = coreRanges.waiting.map(({ name, from, to }) => `\`${name}\` (\`${from}\`, needs \`${to}\`)`).join(", ");
+  const named = coreRanges.waiting.map(({ name, from, to, open }) => `\`${name}\` (\`${from}\`, needs \`${to}\`${open ? "" : ", raised by hand: it is not a plain `>=<version>`"})`).join(", ");
   lines.push("> [!WARNING]", `> Not released by this pull request, and an older Rerail cannot load it: ${named}. Pack validation fails until its core range is raised, and only a release publishes that: add a changeset for it on \`main\`.`, "");
 }
 if (rows.length === 0) {

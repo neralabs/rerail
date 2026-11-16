@@ -46,7 +46,9 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
   the unreleased lead and pending `.changelog/` entries.
 - The core range is raised in the pack's `package.json` and in `package-lock.json`, by the rule the pack validation
   judges it by (`scripts/release/core.mjs`). A pack that needs it and has no changeset is not released, so it is
-  named in a warning and left alone: add a changeset for it.
+  named in a warning and left alone: add a changeset for it. Only a plain `>=<version>` range is rewritten, since a
+  raise replaces the whole range: a released pack with an upper bound or alternatives in its range stops the run, to be
+  raised by hand, and one that is not released is named in the same warning.
 - A pack released while core stays older than the release that first loads it, because core is left out of the pull
   request, is named in a warning not to merge: published so, no released Rerail could load it.
 - The tag is pushed with the `neralabs-ci` app's token.

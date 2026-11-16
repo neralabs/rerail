@@ -314,5 +314,15 @@ export function coreBeforeFloor(coreVersion, floor) {
   return floor !== undefined && semver.lt(coreVersion, `${floor}-0`);
 }
 
+/**
+ * Whether `range` is one open lower bound, `>=<version>`: the only kind the Release pull request rewrites, since a
+ * raise replaces the whole range and any upper bound or alternative (`||`) in it would be lost. Read as semver parses
+ * it, so `>=0.1.0-0||>=2.0.0`, which has no space to tell by, is two alternatives and not open.
+ */
+export function isOpenRange(range) {
+  const alternatives = new semver.Range(range, { includePrerelease: true }).set;
+  return alternatives.length === 1 && alternatives[0].length === 1 && alternatives[0][0].operator === ">=";
+}
+
 /** The core range that leaves out every core older than `floor`: what the Release pull request writes. */
 export const raisedCoreRange = (floor) => `>=${floor}-0`;
