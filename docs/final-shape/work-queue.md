@@ -935,6 +935,13 @@ pass.
   a farm host) failed it; it passes alone and in the other two runs. It runs `corpus_store_child` as a child
   process of the test binary, whose output the failed run did not show.
 - **Done when**: the cause is found (the child's own output from a failing run) and fixed at its root, not retried.
+- **Record** (2026-11-16): the child's output, now shown on failure, said "run 0 left its store open:
+  `store.sqlite-atoms.lock`". The atoms lease is given back in `committed` only when no run is going; a run's last
+  atoms commit can land before its `run_over`, and then no commit came after to give it back, so the process held the
+  lock file past its last run. `run_over` now gives the lease back itself when the last run ends with nothing
+  pending. 10 of 10 runs of `logic::plan::tests` pass on a farm host (1 in 3 to 8 failed before). Found beside it:
+  `atoms::tests::every_stored_column_is_classified` refused six columns the hub's 0295 steps 4-5 and 0301 added
+  (pointers, a flag, a digest): classified as not atoms.
 
 ## Questions for the user
 
