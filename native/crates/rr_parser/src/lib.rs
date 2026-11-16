@@ -1777,6 +1777,13 @@ pub mod tests {
             inputs.push(format!("a(\"{}\"\t, 1).\n", "s".repeat(at)).into_bytes());
             inputs.push(format!("a(\"{}\", \"\\u12\").\n", "s".repeat(at)).into_bytes());
         }
+        // A `/` alone, the comment reader's other rule: its code is its kind, no word looked up
+        // (no word starts with `/`), and a comment's tail is its own (`known_tail`).
+        for pad in [0usize, 1, 62, 63] {
+            for t in ["a(x) :- x = 4 / 2.", "x/y", "/", "a / // c\nb", "/ /* c */ /"] {
+                inputs.push(format!("{}{t}", " ".repeat(pad)).into_bytes());
+            }
+        }
         // A token alone in its block, then spaces to and past the block's end (a spent block:
         // the refill reads the next one), after a word, a string, a comment and pairs.
         for gap in [1usize, 30, 61, 62, 63, 64, 65, 126, 127, 128] {

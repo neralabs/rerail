@@ -1787,8 +1787,12 @@ impl RecordTables {
 
     /// How first byte `b`'s tokens end (`TokenEnd`), by its entry's rule.
     pub fn end_at(&self, b: u8) -> TokenEnd {
-        let rule = (self.words[self.token / 8 + usize::from(b)] >> TOKEN_RULE & 0xff) as usize;
-        self.ends.get(rule).copied().unwrap_or(TokenEnd::Any)
+        self.ends.get(self.rule_at(b)).copied().unwrap_or(TokenEnd::Any)
+    }
+
+    /// First byte `b`'s rule, its entry's (`TOKEN_RULE`).
+    pub fn rule_at(&self, b: u8) -> usize {
+        (self.words[self.token / 8 + usize::from(b)] >> TOKEN_RULE & 0xff) as usize
     }
 
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
@@ -1865,26 +1869,36 @@ impl RecordTables {
         };
         let read_marks = r.marks.iter().any(|&(o, wc)| o != crate::records::WORD_ALONE && wc != 0);
         let mut punct_codes = [(0u64, 0u64, false); 256];
-        if let Some((kn, _)) = fused.filter(|_| !read_marks) {
-            if let crate::records::EndRule::Next(i) = r.rules[kn] {
-                let pt = &r.nexts[usize::from(i)];
-                for (b, e) in punct_codes.iter_mut().enumerate() {
-                    if r.ends.get(b).is_none_or(|&x| usize::from(x) != kn) {
-                        continue;
-                    }
-                    let one = lookup(&[b as u8]);
-                    let twos: Vec<u64> = (0..=255u8).filter(|&c| pt.holds(b as u8, c)).map(|c| lookup(&[b as u8, c])).collect();
-                    let two = twos.first().copied().unwrap_or(0);
-                    if one >> 32 == 0 && two >> 32 == 0 && twos.iter().all(|&x| x == two) {
-                        *e = (one, two, true);
-                    }
+        if fused.is_some() && !read_marks {
+            // A byte's pair rule (`EndRule::Next`): its own rule, or the other rule of its
+            // reader (`/` alone, of the comment's reader), whose tokens not the reader's are
+            // that rule's.
+            let pair_of = |x: u8| -> Option<&crate::records::PairTable> {
+                let next = |k: usize| match r.rules.get(k) {
+                    Some(&crate::records::EndRule::Next(i)) => r.nexts.get(usize::from(i)),
+                    _ => None,
+                };
+                next(usize::from(x)).or_else(|| match r.rules.get(usize::from(x)) {
+                    Some(&crate::records::EndRule::Read(i)) => r.readers.get(usize::from(i)).and_then(|rd| next(usize::from(rd.other))),
+                    _ => None,
+                })
+            };
+            for (b, e) in punct_codes.iter_mut().enumerate() {
+                let Some(pt) = r.ends.get(b).and_then(|&x| pair_of(x)) else { continue };
+                let one = lookup(&[b as u8]);
+                let twos: Vec<u64> = (0..=255u8).filter(|&c| pt.holds(b as u8, c)).map(|c| lookup(&[b as u8, c])).collect();
+                let two = twos.first().copied().unwrap_or(0);
+                if one >> 32 == 0 && two >> 32 == 0 && twos.iter().all(|&x| x == two) {
+                    *e = (one, two, true);
                 }
             }
         }
         let kb = crate::records::KIND_BITS;
         let width = |x: u64| 64 - (x >> kb).leading_zeros();
-        let low = punct_codes.iter().all(|&(one, two, _)| (one | two) & ((1 << kb) - 1) == 0);
-        let w = punct_codes.iter().fold(0, |a, &(one, two, _)| a.max(width(one)).max(width(two)));
+        // The codes in the entries are the fused pair rule's (`by_pair`): its bytes' alone.
+        let of_fused: Vec<(u64, u64, bool)> = (0..256).filter(|&b| fused.is_some_and(|(kn, _)| r.ends.get(b).is_some_and(|&x| usize::from(x) == kn))).map(|b| punct_codes[b]).collect();
+        let low = of_fused.iter().all(|&(one, two, _)| (one | two) & ((1 << kb) - 1) == 0);
+        let w = of_fused.iter().fold(0, |a, &(one, two, _)| a.max(width(one)).max(width(two)));
         // The pair's entry by the pair rule's word (`pair_nibbles`), as the loop has it.
         let paired = fused.is_some_and(|(kn, _)| match r.rules[kn] {
             crate::records::EndRule::Next(i) => r.nexts.get(usize::from(i)).is_some_and(|pt| pair_nibbles(r, pt, kn).is_some()),
@@ -1940,7 +1954,7 @@ impl RecordTables {
             let (fp, fr) = fused.map_or((false, false), |(kn, kr)| (usize::from(rule) == kn, usize::from(rule) == kr));
             let fr = fr && (lean.is_none() || run_word.is_some_and(|o| run_fused(made, o, b as u8)));
             *e = u64::from(r.kinds[b]) | u64::from(rule) << TOKEN_RULE | u64::from(wordy) << TOKEN_WORDY | u64::from(tests) | u64::from(row) << TOKEN_PAIR_ROW | u64::from(fp) << TOKEN_FUSED_PAIR | u64::from(fr) << TOKEN_FUSED_RUN | u64::from(punct_codes[b].2) << TOKEN_PUNCT;
-            if let (Some(_), true) = (punct_in_entry, punct_codes[b].2) {
+            if let (Some(_), true, true) = (punct_in_entry, punct_codes[b].2, fp) {
                 *e |= (if two { punct_codes[b].1 } else { punct_codes[b].0 } >> kb) << TOKEN_PUNCT_ONE;
             }
         }
@@ -4980,25 +4994,64 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     }
     // A token a reader says (`Reader::retag`, a comment): its tag is its code, its kind and
     // marks, and it is no word (`records::pass`), as the lean lexer's comment branch.
+    let mut known_tail: Option<(cranelift_codegen::ir::Block, (i64, i64))> = None;
     if let Some(tag) = retag {
         let rest = f.create_block();
         let has = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, tag, 0);
         // A rare class whose tagging rules give one tag, and tests that hold at each of their
         // tokens (`tag_known`): a token tagged is one of theirs, its tag and hits the
-        // compiler's, as the lean lexer's comment arm knows what it read.
-        let (tag, hits) = match side {
+        // compiler's, as the lean lexer's comment arm knows what it read. Its tail its own
+        // (`known_tail`), as that arm writes its own token: the constants reach the marks'
+        // merge and the code's store, not a join with the class's other tokens.
+        let fixed = match side {
             Side::Rare(Some((e, true))) => {
                 let known: Vec<Option<(i64, u32)>> = (0..r.rules.len()).filter(|&j| tagged(r, j) && t.ends.get(j) == Some(&e)).map(|j| tag_known(r, j)).collect();
                 match known.first() {
-                    Some(&Some((tc, hc))) if known.iter().all(|&x| x == Some((tc, hc))) => (f.ins().iconst(types::I64, tc), f.ins().iconst(types::I64, i64::from(hc))),
-                    _ => (tag, hits),
+                    Some(&Some((tc, hc))) if known.iter().all(|&x| x == Some((tc, hc))) => Some((tc, i64::from(hc))),
+                    _ => None,
                 }
             }
-            _ => (tag, hits),
+            _ => None,
         };
-        f.ins().brif(has, coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), tag.into(), hits.into()], rest, &[]);
+        let target = match fixed {
+            Some(v) => {
+                let own = f.create_block();
+                for _ in 0..STATE_WORDS + 2 {
+                    f.append_block_param(own, types::I64);
+                }
+                known_tail = Some((own, v));
+                own
+            }
+            None => coded,
+        };
+        f.ins().brif(has, target, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), tag.into(), hits.into()], rest, &[]);
         f.switch_to_block(rest);
     }
+    // A rare class none of whose first bytes starts a word (`TOKEN_WORDY`, by the bytes the
+    // rare table sends to its rules): no word to look up, its code the kind, as the lean
+    // lexer's `/` arm writes its punctuation.
+    let class_bytes: Vec<u8> = match side {
+        Side::Rare(Some((e, tg))) => (0..=255u8).filter(|&b| t.is_rare(b) && t.end_at(b) == e && tagged(r, t.rule_at(b)) == tg).collect(),
+        _ => Vec::new(),
+    };
+    let entry_of = |b: u8| t.words[t.token / 8 + usize::from(b)];
+    let no_words = !class_bytes.is_empty() && class_bytes.iter().all(|&b| entry_of(b) >> TOKEN_WORDY & 1 == 0);
+    // A rare class whose tokens not a reader's are the fused pair rule's (`TOKEN_PUNCT`: `/`
+    // alone, the comment reader's other): their code bits by the first byte and the length,
+    // no word looked up, as the lean lexer's `/` arm writes its punctuation. A tagged class's
+    // alone, where a token not tagged is its reader's other rule's.
+    let punct = matches!(side, Side::Rare(Some((_, true)))) && !class_bytes.is_empty() && class_bytes.iter().all(|&b| entry_of(b) >> TOKEN_PUNCT & 1 == 1);
+    if punct {
+        let two = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
+        let pc = f.ins().load(types::I64, ro, ea, t.punct as i32);
+        let hi = f.ins().ushr_imm(pc, 32);
+        let lo = f.ins().band_imm(pc, 0xffff_ffff);
+        let bits = f.ins().select(two, hi, lo);
+        let code = f.ins().bor(kind, bits);
+        f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
+    } else if no_words {
+        f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), kind.into(), hits.into()]);
+    } else {
     // A first byte no word starts: no word to look up, its code the kind.
     let looked = f.create_block();
     let wordy = f.ins().band_imm(entry, 1 << TOKEN_WORDY);
@@ -5115,9 +5168,17 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let code2 = f.ins().select(all, code, no_word);
         f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code2.into(), hits.into()]);
     }
+    }
 
-    f.switch_to_block(coded);
-    let cv = f.block_params(coded).to_vec();
+    // The token's tail: the class's (`coded`), and a known tag's own (`known_tail`), its code
+    // and hits the compiler's.
+    for (tail, fixed) in std::iter::once((coded, None)).chain(known_tail.map(|(b, v)| (b, Some(v)))) {
+    f.switch_to_block(tail);
+    let mut cv = f.block_params(tail).to_vec();
+    if let Some((tc, hc)) = fixed {
+        cv[STATE_WORDS] = f.ins().iconst(types::I64, tc);
+        cv[STATE_WORDS + 1] = f.ins().iconst(types::I64, hc);
+    }
     let (mut code, mut pending) = (cv[STATE_WORDS], cv[3]);
     let (mut from, mut word_before) = (cv[4], cv[5]);
     let base = f.ins().band_imm(s, !63);
@@ -5342,6 +5403,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
     } else {
         f.ins().jump(head, &back);
+    }
     }
     }
     }

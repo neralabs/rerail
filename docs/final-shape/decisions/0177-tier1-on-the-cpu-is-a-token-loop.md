@@ -1968,12 +1968,12 @@ after comment when count(line_open | block_open) at least 1
 // always: the comment's first byte is its opener
 ```
 
-**What is left.** The marks' merge after a comment (13 instructions)
-is the grammar's: the mark goes to the token after it (`json_bad`),
-into the loop's `pending`. Lean has no such mark. The comment's
-function also reads `/` alone (`Reader::other`), whose code and hits
-are the bytes', so the two meet at the tail's `coded` and the
-constants do not reach the merge.
+**What is left.** The marks' merge after a comment is the grammar's:
+the mark goes to the token after it (`json_bad`), into the loop's
+`pending`. Lean has no such mark. The comment's function also reads
+`/` alone (`Reader::other`), so the two met at the tail's `coded`, and
+the constants did not reach the merge. That is undone in "Each arm
+writes its own token" below.
 
 Tried and dropped: the last and the tag as signed halves of the
 returned word, to take each out by one sign extension. A comment's
@@ -2082,3 +2082,54 @@ Tests: `a_numbers_checks_are_at_its_token` and
 
 Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
 strings 323.2, numbers 160.6, comments 267.2.
+
+## Each arm writes its own token
+
+**Intro.** Lean's `/` arm has three outcomes: a line comment, a
+block comment, or the `/` punctuation. Each one writes its own token,
+with its kind known in that branch. Ours had one function for the
+class (the comment's reader, and `/` alone as its `other` rule), and
+one tail after it. The comment's tag and hits were constants
+(`tag_known`), but they were passed into the tail's `coded` block
+with the `/`-alone token's run-time values. The marks' merge then
+worked on the joined values, and the `/` alone looked itself up in
+the word table.
+
+**The change.**
+
+- **A known tag's own tail (`known_tail`).** Where a tagged class's
+  tag and hits are the compiler's, its tagged tokens go to a block of
+  their own. The tail is built again for that block, with the code
+  and the hits as constants made in it. The merge's test
+  (`pending | hits`) and the extra's selects then fold.
+- **A punctuation's code by its byte, in a rare class.** The lone `/`
+  is a pair rule's token (`EndRule::Next`): its code bits are given
+  by its first byte and its length, which is how the fused pair
+  rule's tokens get theirs (`TOKEN_PUNCT`). `punct_codes` now covers a
+  byte whose rule is a pair rule, or whose reader's `other` is one.
+  In a tagged rare class whose bytes all have such codes, the token
+  that is not tagged takes them: one load and a select, no word
+  probe. The codes in the entries (`punct_in_entry`) stay the fused
+  rule's alone.
+- **No word to look up.** A rare class none of whose first bytes
+  starts a word (`TOKEN_WORDY`, by the bytes the rare table sends to
+  its rules) gives its code as the kind. That is the string class
+  (`"`, `` ` ``).
+
+```rust
+// generated (tier1_aot.rs), the `/` arm after its call:
+if tag >= 0 {                  // a comment: its own tail
+    v1365 = 2147483648;        // its code, the compiler's
+    v1366 = 268435456;         // its hits (`json_bad` after it)
+    if (pending | v1366) != 0 { /* the merge, its constants folded */ }
+} else {                       // `/` alone: its code by byte and length
+    v1307 = load(entry + punct);
+    v1310 = if len > 1 { v1307 >> 32 } else { v1307 & 0xffff_ffff };
+}
+```
+
+Tests: `the_cpus_records_are_the_interpreters` gains a `/` alone at
+a block's edges, at the file's end, and beside both comments.
+
+Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 325.2, numbers 161.0, comments 253.2.
