@@ -383,16 +383,15 @@ function requirePlatform(out: string): Platform {
 function requireBuilt(checkout: string, needs: { product: boolean; engine: boolean }, build: boolean): { engine: string | undefined } {
   const addon = (): boolean => existsSync(join(checkout, "native")) && readdirSync(join(checkout, "native")).some((name) => /^rerail_engine\..+\.node$/.test(name));
   const tsx = (): boolean => existsSync(join(checkout, "node_modules", "tsx"));
-  const engine = (): string | undefined => engineBinary(checkout);
   const steps: string[] = [];
   if (needs.product && (!addon() || !tsx())) steps.push(PRODUCT_BUILD);
-  if (needs.engine && engine() === undefined) steps.push(ENGINE_BUILD);
+  if (needs.engine && engineBinary(checkout) === undefined) steps.push(ENGINE_BUILD);
   if (steps.length > 0 && !build) fail(`${checkout} is not built; run there (both release profile): ${steps.join(" && ")}\n  or pass --build`);
   for (const step of steps) {
     console.log(`shipbar: building ${checkout}: ${step}`);
     if (spawnSync("bash", ["-c", step], { cwd: checkout, stdio: "inherit" }).status !== 0) fail(`build failed in ${checkout}: ${step}`);
   }
-  return { engine: needs.engine ? engine() : undefined };
+  return { engine: needs.engine ? engineBinary(checkout) : undefined };
 }
 
 // ---------------------------------------------------------------- the .rr side's rules
