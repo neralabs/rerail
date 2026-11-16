@@ -12,7 +12,7 @@
 use super::{SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage};
 use rerail_tape_format::f16::{self, Lang, Tape16, Tape16Z};
 use rerail_tape_format::tape::{AnyTape, CodeTable, Entry, F15, F15Columns};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The format a run reads its documents' tapes in.
@@ -39,10 +39,11 @@ impl Format {
     }
 }
 
-/// An image's tape in each format a run asks for, made once an image: its code table as the API's, and format 16
-/// as written (none where it is read as format 15).
-#[derive(Default)]
-pub(super) struct Formats {
+/// A document's tape where its image is held: format 15's columns, and each format a run asks for made from them
+/// once (the image's code table as the API's, and format 16 as written; none where it is read as format 15). The
+/// document (`TapeDoc`) and its facts (`Facts::tape`) hold the same one.
+pub struct DocTape {
+    image: Arc<TapeImage>,
     table: OnceLock<CodeTable>,
     f16: OnceLock<Option<(&'static Lang, Tape16)>>,
     f16z: OnceLock<Option<(&'static Lang, Tape16Z)>>,
@@ -98,26 +99,59 @@ fn written(image: &TapeImage, table: &CodeTable) -> Option<(&'static Lang, Tape1
     None
 }
 
-impl TapeDoc {
-    /// This document's tape, read in place in the run's format (`RERAIL_TAPE`, decision 0293). One a pass: a
-    /// 16z tape keeps the blocks it decoded.
+impl DocTape {
+    pub fn new(image: Arc<TapeImage>) -> Self {
+        DocTape { image, table: OnceLock::new(), f16: OnceLock::new(), f16z: OnceLock::new() }
+    }
+
+    pub fn image(&self) -> &TapeImage {
+        &self.image
+    }
+
+    /// The bytes it holds: the image's columns and code table, and each format made from them.
+    pub fn bytes(&self) -> usize {
+        let image = &*self.image;
+        let columns = [&image.code, &image.size, &image.base, &image.off, &image.tail].iter().map(|c| c.len()).sum::<usize>();
+        let made = self.f16.get().and_then(Option::as_ref).map_or(0, |(_, t)| t.bytes()) + self.f16z.get().and_then(Option::as_ref).map_or(0, |(_, t)| t.bytes());
+        columns + image.codes.len() * std::mem::size_of::<super::Code>() + made
+    }
+
+    /// The tape, read in place in the run's format (`RERAIL_TAPE`, decision 0293). One a pass: a 16z tape keeps the
+    /// blocks it decoded.
     pub fn tape(&self) -> AnyTape<'_> {
         self.tape_in(Format::of_run())
     }
 
-    /// This document's tape in `format`, or format 15 where the language has no format 16.
+    /// The tape in `format`, or format 15 where the language has no format 16.
     pub fn tape_in(&self, format: Format) -> AnyTape<'_> {
-        let (f, image) = (&*self.formats, &*self.image);
-        let table = f.table.get_or_init(|| image.code_table());
+        let image = &*self.image;
+        let table = self.table.get_or_init(|| image.code_table());
         let held = match format {
             Format::F15 => None,
-            Format::F16 => f.f16.get_or_init(|| written(image, table)).as_ref().map(|(lang, t)| AnyTape::F16(t.reader(lang).expect("written with its language"))),
-            Format::F16Z => f
+            Format::F16 => self.f16.get_or_init(|| written(image, table)).as_ref().map(|(lang, t)| AnyTape::F16(t.reader(lang).expect("written with its language"))),
+            Format::F16Z => self
                 .f16z
                 .get_or_init(|| written(image, table).map(|(lang, t)| (lang, t.blocks(lang))))
                 .as_ref()
                 .map(|(lang, t)| AnyTape::F16Z(t.reader(lang).expect("written with its language"))),
         };
         held.unwrap_or_else(|| AnyTape::F15(F15::over(image.columns(), table)))
+    }
+}
+
+impl TapeDoc {
+    /// This document's tape, read in place in the run's format (`DocTape::tape`).
+    pub fn tape(&self) -> AnyTape<'_> {
+        self.held.tape()
+    }
+
+    /// This document's tape in `format` (`DocTape::tape_in`).
+    pub fn tape_in(&self, format: Format) -> AnyTape<'_> {
+        self.held.tape_in(format)
+    }
+
+    /// The tape it holds, shared with the facts read off it.
+    pub fn doc_tape(&self) -> &Arc<DocTape> {
+        &self.held
     }
 }

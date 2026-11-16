@@ -59,10 +59,17 @@ This record is steps 2 and 3, and the API they need.
    without a table, or an image with a code its table lacks, is read as format 15, and the run says so once a
    language.
 
-5. **The axes read the tape** (step 3). `within.rs`'s kind-set axes (`nearest`, `inside`, `has`) take membership
+5. **The axes read the tape** (step 3; built). A document's facts hold the tape they were read off (`Facts::tape`,
+   the image moved in, not copied; the same `DocTape` its `TapeDoc` holds), and its bytes count in a chunk's
+   resident cost. `within.rs`'s kind-set axes (`nearest`, `inside`, `has`) take membership
    from the code, and climbs, subtrees and the batch's solve from the tape's structure (the lab's `prim`: nearest
    by a bounded climb, outermost by a prefix max, has from the subtree). Answers are mapped to `Projected`'s
-   locals, which are a subset of the preorder ids in order.
+   locals, which are a subset of the preorder ids in order: a node the projection leaves out is skipped on a climb
+   and in a subtree, and is never a member. `within`'s tree containment reads the tape the same way (every code
+   is in its set). The batch's CPU solve is one pass of the set's matches, 64 codes at a time, reading only a
+   match's subtree end (`tape::nearest_all`, the lab's `axis_groups`): no parent is read. A climb per looked-up
+   node reads the format's parent: a few sibling steps on format 16, a search back over the nodes before on format
+   15 (the cost 0156 §1.7 names), which is what the lab weighs.
 
 ## Interim, until steps 4 and 5
 
@@ -74,8 +81,12 @@ This record is steps 2 and 3, and the API they need.
   load. Until the store keeps it, a document's format 16 (or 16z) is written from format 15 once an image, the
   first time the run reads it in that format (`tape/formats.rs`). The store must keep it before anything is
   measured: a load-time write would be counted as a read.
-- **The axes' Metal solve** still climbs a parent array on the device (`facts::nearest`). The lab's format-16
-  kernels (E30, E31) replace it in step 5.
+- **The axes' Metal solve** still climbs a parent array on the device (`facts::nearest`), the projection's parents
+  (from `Facts`), with membership off the tape. The lab's format-16 kernels (E30, E31) replace it in step 5.
+- **What the axes still read off the facts:** spans (`span_within`), the planner's statistics (the projection's
+  subtree sizes and depths), and every document whose facts hold no tape. Step 4 moves them.
+- **A 16z reader is made per lookup**, so a lookup decodes the blocks it reads afresh; a reader kept per document
+  and thread is a choice for the lab's measurements.
 
 ## Not done
 

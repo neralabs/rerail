@@ -825,15 +825,21 @@ impl Tape for F16Z<'_> {
     fn end_with_start(&self, i: usize, start: u64) -> u64 {
         start + self.with(i / Z, |v| v.get(self.lang, 2, i % Z))
     }
-    /// A block at a time: each decoded once, its code bytes read as format 16's are.
+    /// A block at a time: each decoded once, its code bytes read as format 16's are. The block's groups are taken
+    /// before `f` is called, so `f` may read the tape.
     fn match_groups(&self, set: &CodeSet, mut f: impl FnMut(usize, u64)) {
         let (byte, tail) = byte_table(self.lang, set);
+        let mut groups = [0u64; Z / 64];
         for b in 0..self.t.n.div_ceil(Z) {
-            self.with(b, |v| {
-                for base in (0..v.n).step_by(64) {
-                    f(b * Z + base, v.group(self.lang, set, &byte, tail, base));
+            let count = self.with(b, |v| {
+                for (g, base) in groups.iter_mut().zip((0..v.n).step_by(64)) {
+                    *g = v.group(self.lang, set, &byte, tail, base);
                 }
+                v.n.div_ceil(64)
             });
+            for (g, &m) in groups[..count].iter().enumerate() {
+                f(b * Z + 64 * g, m);
+            }
         }
     }
 }
@@ -970,6 +976,11 @@ mod tests {
         let mut c = Vec::new();
         z.reader(&lang).unwrap().match_groups(&set, |base, m| c.push((base, m)));
         assert_eq!(a, c, "a set past the cutoff, in blocks");
+        // A bulk answer that reads the tape inside the matches' callback.
+        let (mut near, mut near_z) = (Vec::new(), Vec::new());
+        crate::tape::nearest_all(&t.reader(&lang).unwrap(), &set, |_| true, &mut near);
+        crate::tape::nearest_all(&z.reader(&lang).unwrap(), &set, |_| true, &mut near_z);
+        assert_eq!(near, near_z, "nearest in blocks");
     }
 
     /// Every shipped table loads, and its text reads back to the same choices.

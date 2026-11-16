@@ -22,16 +22,27 @@
 //!   FIX (`typing::file_local::nearest`: pointer jumping on Metal, one pass in preorder on the CPU). Its rows are ids
 //!   `0..`; the rows made per looked-up `n` are then ids from `LOOKED_UP` on. A scan of these axes solves.
 //!
+//! - **On the tape** (decision 0293, step 3): where a document's facts hold the tape they were read off
+//!   (`Facts::tape`), the kind-set axes and the tree's containment read it in place, in the run's format
+//!   (`RERAIL_TAPE`): membership is the code's (the set as the tape's code numbers, made once a document), climbs are
+//!   the tape's parents, subtrees its intervals, and the batch's CPU solve one pass of the set's matches (`nearest_all`:
+//!   no parent read). The projection's nodes are the tape's, kept where `Projected::local` has them. Spans, the
+//!   statistics' sizes and depths, and the solve on Metal read the facts until steps 4 and 5.
+//!
 //! Rows are made per node a join looks up (nothing for a node never bound), kept for the batch, and
 //! never moved: a row's id is stable, and reading it takes no lock. The two sides keep their rows apart:
 //! rows made from `inner` are ids `0..`, rows made from `outer` ids from `OUTER` on. A scan makes every
 //! node's containers and reads ids `0..len`, so it sees each pair once. The planner's statistics come from the tree (depths and subtree sizes), not the rows.
-use super::{Batch, NONE};
+use super::{Batch, NONE, Projected};
 use crate::code_rule_dsl::facts::vtab::Source;
+use crate::code_rule_dsl::tape::formats::{DocTape, Format};
+use rerail_tape_format::tape::{CodeSet, Tape, nearest_all};
+use rerail_tape_format::with_tape;
 use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
+use crate::code_rule_dsl::facts::nearest::Binding;
 
 /// Which containment the rows are.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -92,6 +103,10 @@ pub struct Within {
     chosen: std::sync::atomic::AtomicBool,
     /// The `n` side of every node, made once (`solved`).
     solved: OnceLock<Solved>,
+    /// The format the documents' tapes are read in (`RERAIL_TAPE`).
+    format: Format,
+    /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
+    sets: Box<[OnceLock<CodeSet>]>,
 }
 
 /// An axis's `n` side for every node of the batch: per node row its run in `pairs` (`start[row]..start[row + 1]`),
@@ -119,7 +134,6 @@ fn slot(row: usize) -> (usize, usize) {
 impl Within {
     pub fn new(batch: Arc<Batch>, mode: Mode) -> Self {
         Within {
-            batch,
             mode,
             chunks: std::array::from_fn(|_| std::array::from_fn(|_| OnceLock::new())),
             made: Mutex::new(([0, 0], [FxHashMap::default(), FxHashMap::default()])),
@@ -132,7 +146,110 @@ impl Within {
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
             solved: OnceLock::new(),
+            format: Format::of_run(),
+            sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
+            batch,
         }
+    }
+
+    /// The same, reading the documents' tapes in `format` rather than the run's.
+    pub fn reading(self, format: Format) -> Self {
+        Within { format, ..self }
+    }
+
+    /// Document `doc`'s tape, which the tree's containment and the kind-set axes read (not spans).
+    fn doc_tape(&self, doc: usize) -> Option<&DocTape> {
+        if self.mode == Mode::Span {
+            return None;
+        }
+        self.batch.docs[doc].facts.tape.as_deref()
+    }
+
+    /// The axis's set as the code numbers of `t`, document `doc`'s tape: the codes of a kind in it (every code for the
+    /// tree's containment).
+    fn set<T: Tape>(&self, doc: usize, t: &T) -> &CodeSet {
+        self.sets[doc].get_or_init(|| {
+            if self.mode == Mode::Tree {
+                return t.table().set(|_| true);
+            }
+            let members = self.members.get(&self.batch.docs[doc].tag);
+            t.table().set(|e| members.is_some_and(|m| m.get(usize::from(e.kind)).is_some_and(|&x| x)))
+        })
+    }
+
+    /// Each node of document `doc`, in order, and whether it is in the set: off its tape, opened once.
+    fn each_member(&self, doc: usize, mut f: impl FnMut(u32, bool)) {
+        let p = &self.batch.docs[doc];
+        match self.doc_tape(doc) {
+            Some(dt) => with_tape!(dt.tape_in(self.format), |t| {
+                let set = self.set(doc, &t);
+                for (l, &id) in p.core.iter().enumerate() {
+                    f(l as u32, set.contains(t.code(id as usize)));
+                }
+            }),
+            None => (0..p.len()).for_each(|l| f(l, self.member(doc, l))),
+        }
+    }
+
+    /// `containers` on document `doc`'s tape `t`: the climb is the tape's parents, kept where the projection has them.
+    fn containers_on<T: Tape>(&self, t: &T, doc: usize, p: &Projected, local: u32) -> Vec<u32> {
+        let set = self.set(doc, t);
+        let axis = match self.mode {
+            Mode::Axis(axis) => Some(axis),
+            _ => None,
+        };
+        let id = p.core[local as usize] as usize;
+        let mut out = Vec::new();
+        if axis == Some(Axis::Has) && !set.contains(t.code(id)) {
+            return out;
+        }
+        let mut up = t.parent(id);
+        while let Some(a) = up {
+            let l = p.local[a];
+            if l != NONE && (matches!(axis, None | Some(Axis::Has)) || set.contains(t.code(a))) {
+                out.push(l);
+                if axis == Some(Axis::Nearest) {
+                    break;
+                }
+            }
+            up = t.parent(a);
+        }
+        out
+    }
+
+    /// `contained` on document `doc`'s tape `t`: the subtree is the tape's interval, kept where the projection has it.
+    fn contained_on<T: Tape>(&self, t: &T, doc: usize, p: &Projected, local: u32) -> Vec<u32> {
+        let set = self.set(doc, t);
+        let axis = match self.mode {
+            Mode::Axis(axis) => Some(axis),
+            _ => None,
+        };
+        let id = p.core[local as usize] as usize;
+        let mut out = Vec::new();
+        if matches!(axis, Some(Axis::Nearest | Axis::Inside)) && !set.contains(t.code(id)) {
+            return out;
+        }
+        let (mut n, end) = (id + 1, t.subtree_end(id));
+        while n < end {
+            let l = p.local[n];
+            if l != NONE {
+                match axis {
+                    None | Some(Axis::Inside) => out.push(l),
+                    Some(Axis::Has) if set.contains(t.code(n)) => out.push(l),
+                    Some(Axis::Has) => {}
+                    // The subtree, less what lies below a nearer member: its nearest is that member or lower.
+                    Some(Axis::Nearest) => {
+                        out.push(l);
+                        if set.contains(t.code(n)) {
+                            n = t.subtree_end(n);
+                            continue;
+                        }
+                    }
+                }
+            }
+            n += 1;
+        }
+        out
     }
 
     /// The axis `axis` over the set of kind atoms `kinds`, its batch's solve run on `binding`. Nothing is made until
@@ -169,17 +286,22 @@ impl Within {
     fn solved(&self) -> &Solved {
         self.solved.get_or_init(|| {
             use crate::code_rule_dsl::logic::profile;
-            use crate::code_rule_dsl::facts::nearest::{self as file_local, Binding, Trees};
+            use crate::code_rule_dsl::facts::nearest::{self as file_local, Trees};
             let _span = profile::span(|| "kind-set axis solved for the batch".into());
             let n = self.batch.nodes.last().copied().unwrap_or(0);
+            let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
+            if self.binding == Binding::Cpu && (0..self.batch.docs.len()).all(|doc| self.doc_tape(doc).is_some()) {
+                profile::work(profile::Unit::Node, n as u64);
+                return self.solved_on_tapes(n, inside);
+            }
             let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
             for (doc, p) in self.batch.docs.iter().enumerate() {
                 let base = self.batch.nodes[doc] as u32;
                 for l in 0..p.len() {
                     let up = p.parent(l as usize);
                     parent.push(if up == NONE { file_local::NONE } else { base + up });
-                    kind.push(i64::from(self.member(doc, l)));
                 }
+                self.each_member(doc, |_, m| kind.push(i64::from(m)));
             }
             profile::work(profile::Unit::Node, n as u64);
             // Membership is the kind: the set is `{1}`.
@@ -189,19 +311,45 @@ impl Within {
                 .expect("the CPU's nearest pass")
                 .pop()
                 .unwrap_or_default();
-            let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
-            let (mut start, mut pairs) = (Vec::with_capacity(n + 1), Vec::with_capacity(n));
-            for v in 0..found.len() {
-                start.push(pairs.len() as u32);
-                let mut a = found[v];
-                while a != file_local::NONE {
-                    pairs.push((v as u64) << 32 | u64::from(a));
-                    a = if inside { found[a as usize] } else { file_local::NONE };
-                }
-            }
-            start.push(pairs.len() as u32);
-            Solved { start, pairs }
+            Self::pairs(&found, inside)
         })
+    }
+
+    /// Per node row its rows: its nearest member ancestor (`found`, a node row), or for `inside` the chain of them.
+    fn pairs(found: &[u32], inside: bool) -> Solved {
+        use crate::code_rule_dsl::facts::nearest as file_local;
+        let n = found.len();
+        let (mut start, mut pairs) = (Vec::with_capacity(n + 1), Vec::with_capacity(n));
+        for (v, &first) in found.iter().enumerate() {
+            start.push(pairs.len() as u32);
+            let mut a = first;
+            while a != file_local::NONE {
+                pairs.push((v as u64) << 32 | u64::from(a));
+                a = if inside { found[a as usize] } else { file_local::NONE };
+            }
+        }
+        start.push(pairs.len() as u32);
+        Solved { start, pairs }
+    }
+
+    /// The batch's solve on each document's tape: one pass of the set's matches (`nearest_all`), kept where the
+    /// projection has them, mapped to node rows.
+    fn solved_on_tapes(&self, n: usize, inside: bool) -> Solved {
+        use crate::code_rule_dsl::facts::nearest as file_local;
+        let mut found = Vec::with_capacity(n);
+        let mut near = Vec::new();
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = self.batch.nodes[doc] as u32;
+            let dt = self.doc_tape(doc).expect("every document holds its tape");
+            with_tape!(dt.tape_in(self.format), |t| {
+                nearest_all(&t, self.set(doc, &t), |id| p.local[id] != NONE, &mut near);
+            });
+            found.extend(p.core.iter().map(|&id| match near[id as usize] {
+                rerail_tape_format::tape::NONE => file_local::NONE,
+                a => base + p.local[a as usize],
+            }));
+        }
+        Self::pairs(&found, inside)
     }
 
     /// The planner expects `keys` more lookups of `n`: the batch's solve is chosen once they cost more than it.
@@ -262,6 +410,9 @@ impl Within {
     /// The nodes (locals) that hold `local`.
     fn containers(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
+        if let Some(dt) = self.doc_tape(doc) {
+            return with_tape!(dt.tape_in(self.format), |t| self.containers_on(&t, doc, p, local));
+        }
         if let Mode::Axis(axis) = self.mode {
             let mut out = Vec::new();
             if axis == Axis::Has && !self.member(doc, local) {
@@ -320,6 +471,9 @@ impl Within {
     /// The nodes (locals) that `local` holds.
     fn contained(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
+        if let Some(dt) = self.doc_tape(doc) {
+            return with_tape!(dt.tape_in(self.format), |t| self.contained_on(&t, doc, p, local));
+        }
         let sizes = p.sizes();
         if let Mode::Axis(axis) = self.mode {
             let end = local + sizes[local as usize];
@@ -443,13 +597,13 @@ impl Within {
             let mut columns = None;
             // The end of the outermost member's subtree the walk is in.
             let mut until: Option<u32> = None;
-            for l in 0..p.len() {
+            self.each_member(doc, |l, member| {
                 nodes += 1;
                 if until.is_some_and(|u| l <= u) {
                     covered += 1;
                 }
-                if !self.member(doc, l) {
-                    continue;
+                if !member {
+                    return;
                 }
                 let (sizes, depths) = *columns.get_or_insert_with(|| (p.sizes(), p.depths()));
                 if !until.is_some_and(|u| l <= u) {
@@ -461,7 +615,7 @@ impl Within {
                 below_sq += s * s;
                 above += d;
                 above_sq += d * d;
-            }
+            });
         }
         let spread = |rows: i64, ndv: i64| rows * rows / ndv.max(1);
         match axis {

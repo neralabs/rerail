@@ -304,6 +304,45 @@ pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> 
     Ok((F15Columns { code, size, base, off, tail, widths, from_start }, CodeTable::new(entries)))
 }
 
+// ---- bulk answers ------------------------------------------------------------------------------------------
+
+/// No node: `nearest_all`'s answer for a node with no ancestor in the set.
+pub const NONE: u32 = u32::MAX;
+
+/// Every node's nearest strict ancestor among the set's nodes that `keep` keeps (`NONE`: none), by preorder id: the
+/// lab's `prim::axis_groups` (E12). The codes are matched 64 at a time and only a match's subtree end is read; between
+/// two events (a match, the end of an open one) the answer is one value, written as a run. No parent is read.
+pub fn nearest_all<T: Tape>(t: &T, set: &CodeSet, keep: impl Fn(usize) -> bool, out: &mut Vec<u32>) {
+    let n = t.len();
+    out.clear();
+    out.reserve(n);
+    let mut stack: Vec<(u32, usize)> = Vec::with_capacity(32);
+    // Every node's answer before `upto`.
+    let fill = |out: &mut Vec<u32>, stack: &mut Vec<(u32, usize)>, upto: usize| {
+        while out.len() < upto {
+            while stack.last().is_some_and(|&(_, end)| end <= out.len()) {
+                stack.pop();
+            }
+            let (v, lim) = match stack.last() {
+                Some(&(a, end)) => (a, end.min(upto)),
+                None => (NONE, upto),
+            };
+            out.resize(lim, v);
+        }
+    };
+    t.match_groups(set, |base, mut m| {
+        while m != 0 {
+            let s = base + m.trailing_zeros() as usize;
+            m &= m - 1;
+            if keep(s) {
+                fill(out, &mut stack, s + 1);
+                stack.push((s as u32, t.subtree_end(s)));
+            }
+        }
+    });
+    fill(out, &mut stack, n);
+}
+
 // ---- every format ------------------------------------------------------------------------------------------
 
 /// A document's tape in whichever format it is held. A 16z reader keeps the blocks it decoded, so it is one
@@ -361,6 +400,27 @@ pub(crate) mod tests {
     }
 
     /// Every question format 15 answers in place equals the tree it was written from.
+    /// `nearest_all` gives each node's nearest kept ancestor in the set, as climbing its parents does.
+    #[test]
+    fn nearest_all_is_the_climb() {
+        let (image, _) = sample();
+        let (columns, table) = f15_columns(&image).unwrap();
+        let t = F15::new(columns, &table).unwrap();
+        for k in 0..table.len() as u32 {
+            let set = table.set(|e| *e == *table.entry(k) || e.kind % 3 == 0);
+            let keep = |i: usize| i % 5 != 2;
+            let mut out = Vec::new();
+            nearest_all(&t, &set, keep, &mut out);
+            for i in 0..t.len() {
+                let mut q = t.parent(i);
+                while let Some(a) = q.filter(|&a| !(set.contains(t.code(a)) && keep(a))) {
+                    q = t.parent(a);
+                }
+                assert_eq!(out[i], q.map_or(NONE, |a| a as u32), "node {i}, set {k}");
+            }
+        }
+    }
+
     #[test]
     fn format_15_in_place_answers_as_its_tree() {
         let (image, nodes) = sample();
