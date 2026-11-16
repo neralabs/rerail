@@ -6267,6 +6267,11 @@ fn run_observed(
             let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
             if !wanted.is_empty() {
                 for (rel, source) in &text_sources {
+                    // A string's own rows (`value_type`, `memo::Owner::Text`) are no file's text: their first column
+                    // is the string, not a document, so it names no owner.
+                    if matches!(memo::owner(rel), memo::Owner::Text(_)) {
+                        continue;
+                    }
                     let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
                     let have = source.columns();
                     let at = |name: &str| have.iter().position(|h| h == name);
