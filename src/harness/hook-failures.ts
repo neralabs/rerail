@@ -207,14 +207,17 @@ function putBackLink(taken: string, path: string, movedAside: string): true {
 }
 
 /**
- * Throws when the name `path` is a link: a give-back holds only a regular file a hook took ({@link moveTaken}), and
- * writes only into a live log Rerail began. A link here would have the give-back read a person's file through it, copy
- * it and remove it, or write the log into it. The hook then writes nothing, and the log it took stays under its own
- * name, where status counts it.
+ * Throws {@link LinkInTheWay} when the name `path` is a link: a give-back holds only a regular file a hook took
+ * ({@link moveTaken}), and writes only into a live log Rerail began. A link here would have the give-back read a
+ * person's file through it, copy it and remove it, or write the log into it. The hook then writes nothing, and the log
+ * it took stays under its own name, where status counts it.
  */
 function assertNoLink(path: string): void {
-  if (isLink(path)) throw new Error(`${path} is a link, which a hook never gives a log back through`);
+  if (isLink(path)) throw new LinkInTheWay(`${path} is a link, which a hook never gives a log back through`);
 }
+
+/** A link where a give-back would read or write ({@link assertNoLink}): it ends the hook's record. */
+class LinkInTheWay extends Error {}
 
 /**
  * Puts the log taken as `taken` back at the live name `path`. A hook that opened the log to append before this one took
@@ -242,11 +245,11 @@ function giveBack(taken: string, path: string): void {
 
 /**
  * Appends the lines of the log taken as `taken` to the live log at `path`, and removes it. The live name is a link only
- * when a person made it one while this hook held the log: the lines then stay under the hook's name.
+ * when a person made it one while this hook held the log: the lines then stay under the hook's name, and the hook
+ * writes nothing ({@link copyLines}).
  */
 function copyBack(taken: string, path: string): void {
   assertNoLink(taken);
-  assertNoLink(path);
   let descriptor: number;
   try {
     descriptor = openSync(taken, "r");
@@ -256,11 +259,13 @@ function copyBack(taken: string, path: string): void {
   const lock = copyLock(dirname(path));
   try {
     copyLines(descriptor, taken, path);
-  } catch {
-    // Gone from its name: another hook moved it on, and gives it back or moves it aside. A read or removal refused for
-    // any other reason leaves the lines under this hook's name, where status still counts them until a later move
-    // removes the file. An append that fails after the removal loses the lines, as the same failure loses this hook's
-    // own line, and a second read that fails loses those written since the first.
+  } catch (error) {
+    // A person's link at the live name ends the hook's record. Gone from its name: another hook moved it on, and gives
+    // it back or moves it aside. A read or removal refused for any other reason leaves the lines under this hook's name,
+    // where status still counts them until a later move removes the file. An append that fails after the removal loses
+    // the lines, as the same failure loses this hook's own line, and a second read that fails loses those written since
+    // the first.
+    if (error instanceof LinkInTheWay) throw error;
   } finally {
     if (lock !== null) lock.release();
     closeSync(descriptor);
@@ -311,6 +316,9 @@ function copyLines(descriptor: number, taken: string, path: string): void {
   // Read while the log still has its name: a read that fails leaves the lines there, where status counts them.
   const id = fileId(fstatSync(descriptor, { bigint: true }), taken);
   const lines = readFrom(descriptor, 0);
+  // Looked at under the lock, right before the lines leave this hook's name: a person can make the live name a link
+  // while this hook waits for the lock or reads.
+  assertNoLink(path);
   // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
   unlinkSync(taken);
   // Still under another name, as when another hook gave it back while this one moved it on, or a hook's removal of its

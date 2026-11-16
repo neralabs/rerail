@@ -603,6 +603,36 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
   });
 
+  // As above, but the person makes the link once a give-back by copy has begun, as it waits for the copy lock or reads
+  // the log it took: here another hook began a live log as the move to `.1` was refused, and the person's link replaces
+  // that log as the give-back reads. The give-back looks at the live name again under its lock, right before the lines
+  // leave the hook's name: it copies nothing into the person's file, and the hook writes nothing through the link.
+  it("copies nothing through a link a person makes at the live name once a give-back by copy has begun", async context => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFullLog(rerailHome);
+    const { elsewhere, text, made } = await linkMadeLater(context, rerailHome, 3);
+    const opened = await recordWithWrapped(rerailHome, 2, {
+      ...refusedThrough(elsewhere),
+      renameSync: `rename => (from, to) => {
+        if (!to.endsWith(".1")) return rename(from, to);
+        fs.appendFileSync(${JSON.stringify(live)}, ${lineSource(3, "began a live log")});
+        throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+      }`,
+      fstatSync: `fstat => (...args) => {
+        if (!globalThis.made) {
+          globalThis.made = true;
+          fs.renameSync(${JSON.stringify(made)}, ${JSON.stringify(live)});
+        }
+        return fstat(...args);
+      }`,
+    });
+    expect({ opened, ...leftInPlace(rerailHome, elsewhere, text) }).toEqual({
+      opened: "", live: "link", leadsTo: elsewhere, files: [HOOK_FAILURES_FILE, expect.stringMatching(/^hook-failures\.jsonl\.\d+\.[0-9a-f-]+\.old$/u)],
+      counted: full + 3, leftAsItWas: true,
+    });
+  });
+
   // Another hook moves a full log a person linked at the live name and begins a new log there in the moment between this
   // hook's look, which found the link, and its rename, as `main`'s hooks can. This hook's rename then moves that new log,
   // a regular file of the Rerail home, over the link at `.1`, as `main`'s does, and status counts it there.
