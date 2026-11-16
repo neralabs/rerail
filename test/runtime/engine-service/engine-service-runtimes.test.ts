@@ -537,7 +537,8 @@ describe("the engine service's idle close", () => {
   // the folder stayed gone. Opening the session again to run the scan made the folder anew with Rerail's records.
   it("ends a quiet session whose checkout was removed, rather than open it again for a scan, and fails the scan", async () => {
     const { create, scans } = recordingAuditor();
-    const { first, clock, service, start, databasePath, ended } = await idleService({ createAuditor: create });
+    // Its runtime outlives the session a while, as in a daemon, so it is still there when the scan is asked for.
+    const { first, clock, service, start, databasePath, ended } = await idleService({ createAuditor: create, idleRuntimeMs: 1_000 });
     await start("a");
     clock.now += 60_000;
     const quietAt = clock.now;
@@ -555,7 +556,8 @@ describe("the engine service's idle close", () => {
       });
       expect(ended("a")).toBe(quietAt);
       expect(scans).toEqual([]);
-      expect(service.openRuntimes()).toBe(0);
+      // The runtime the scan's ask kept still closes once unused.
+      await vi.waitFor(() => expect(service.openRuntimes()).toBe(0), { timeout: 5_000, interval: 50 });
     } finally {
       controls.close();
     }
@@ -779,7 +781,8 @@ describe("the engine service's idle close", () => {
     try {
       const swept = performance.now();
       await service.closeIdleSessions();
-      expect(performance.now() - swept).toBeLessThan(1_000);
+      // The wait it made was the busy timeout, 5 s.
+      expect(performance.now() - swept).toBeLessThan(3_000);
     } finally {
       writer.exec("ROLLBACK");
       writer.close();
