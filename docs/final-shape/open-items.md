@@ -1307,8 +1307,8 @@ are missing, checked in this order by `device::fixpoint`:
 
 1. **A made text across rounds.** Each rule makes its route each round (`@concat(r0, ...)`). The device refuses a
    recursive component that makes text, since each round's batch has its own text arena: a route made in one round
-   is not a symbol the next round can read. This is a design choice (one arena kept for the component and its
-   texts interned at its end, or texts interned on the device each round), asked of the user.
+   is not a symbol the next round can read. Decided (0307): one arena kept for the component's rounds, its texts
+   interned at its end.
 2. **`@printf`** (hierarchy's `"%012d."`) is no device text function; `@id` (the sinks') is to be checked.
 3. **The fold**: `lat_best` and `lat_merge` compare values as numbers. `shortlex_min` needs each value's text, a
    symbol's or an arena's, compared by (characters, bytes) a word at a time.
