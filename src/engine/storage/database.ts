@@ -1,4 +1,4 @@
-import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync } from "node:fs";
 import Database from "better-sqlite3";
 import { basename, dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
@@ -243,16 +243,26 @@ export function openRerailDatabaseAsIs(path: string, options: AsIsOpenOptions = 
  * Throws at once where the database at `path` cannot be read whole and at once beside a running daemon. The daemon's
  * open connection keeps the WAL and the WAL's index (`-wal`, `-shm`) beside the file, so a missing one was removed from
  * under it: SQLite would make new empty ones and read the file alone, without what the daemon wrote since its last
- * checkpoint. On Windows each of the three must also open now: another program may hold one without sharing, or this
- * user may not read it, and SQLite's own open retries such a refusal for about 1.4 s, which no busy timeout bounds.
- * Elsewhere SQLite's open fails at once, and on POSIX closing a descriptor of a database file would drop every lock
- * SQLite holds on it in this process.
+ * checkpoint. Each of the three must be a plain file, looked at without following a link: SQLite's open waits for a
+ * writer on a named pipe, and follows a link to another file than the one the daemon holds. On Windows each must also
+ * open now: another program may hold one without sharing, or this user may not read it, and SQLite's own open retries
+ * such a refusal for about 1.4 s, which no busy timeout bounds. Elsewhere SQLite's open of a plain file fails at once,
+ * and on POSIX closing a descriptor of a database file would drop every lock SQLite holds on it in this process.
  */
 function wholeNow(path: string): void {
   const companions = [`${path}-wal`, `${path}-shm`];
-  const missing = companions.find(file => !existsSync(file));
+  const missing = companions.find(file => fileKind(file) === "none");
   if (missing !== undefined) throw new Error(`${missing} is missing beside the database a daemon holds open`);
+  const odd = [path, ...companions].find(file => fileKind(file) === "other");
+  if (odd !== undefined) throw new Error(`${odd} is not a plain file, which SQLite could wait on or read elsewhere`);
   if (process.platform === "win32") for (const file of [path, ...companions]) closeSync(openSync(file, "r"));
+}
+
+/** What is at `path`, not followed through a link: a plain file, nothing, or anything else (a link, a folder, a pipe, a device). */
+function fileKind(path: string): "file" | "none" | "other" {
+  const stats = lstatSync(path, { throwIfNoEntry: false });
+  if (stats === undefined) return "none";
+  return stats.isFile() ? "file" : "other";
 }
 
 /**
