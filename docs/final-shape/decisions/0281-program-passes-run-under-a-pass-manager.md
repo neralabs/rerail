@@ -439,6 +439,18 @@ step 3 replaces what is under the writer.
      the rules and declarations its earlier rules made, as the tree does. Each round's program is a version split
      through `FileLocal`. A debug build checks the lines and the digest against the tree's pass. On the 317 B-now
      rules it factorizes 66 exports, as the tree does. Test: `exports_are_factorized_on_a_version_as_on_the_tree`.
+   - Done (b), sixth slice (2026-11-16): `push_local_joins` is a manager pass (`file_local::PushLocalJoins`,
+     `passes/push.rs`). With it, every pass after `bound` runs on the manager, and the image is made straight after
+     lowering. It follows `push_with`'s steps: the components, the narrowing tests (`independent_node_groups`,
+     `unrestricted`, `descends`, the t31 A1 composition filtered from outside) and the interfaces. Helpers are named
+     `fl<k>_<head>`, from the tree's counter and kept per (rule, component) from round to round. A rule's level rises
+     for each helper the round's split does not find file-local, and a second whole push leaves the unrestricted
+     components when the cross part reads base relations anyway. The rule-building parts the factorized store and
+     this pass share (`Made`, `BodyItem`, `Round`, `write`) are in `passes.rs`. A debug build checks the helpers
+     made and, through the passes after it, the digest against the tree's `push_local_joins`, and on the 317 B-now
+     rules they agree. Test: `local_joins_are_pushed_on_a_version_as_on_the_tree`. Next in (b): the helpers named
+     from their content (`fl<k>_`, `fz<k>_` counters renumber every helper after an edited rule), checked against
+     the exact ports up to the names.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

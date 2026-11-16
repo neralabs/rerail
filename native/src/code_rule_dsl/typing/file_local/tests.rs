@@ -581,3 +581,46 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     assert!(!out.rules().any(|r| out.rel_name(r.head().rel()) == "fl_outer"), "the product is gone:\n{}", out.show());
     assert!(out.show().contains("fz10_fl_outer(") && out.show().contains("fzk13_fl_outer("), "{}", out.show());
 }
+
+/// The file-local joins of cross-file rules are pushed on a version as the tree pushes them: the same helpers
+/// (`fl<k>_<head>`, numbered as the tree numbers them), the same program.
+#[test]
+fn local_joins_are_pushed_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl line(n: node, l: number)
+.input node, child, text, docof, line
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
+.decl named(f: node, s: symbol)
+.output named
+named(f, s) :- uses(f, _), child(p, f, _), text(p, s), !bound(p, s).
+.decl at(f: node, l: number)
+.output at
+at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
+"#;
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = PushLocalJoins::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = push_local_joins(&mut tree);
+    assert!(!want.is_empty(), "{want:?}");
+    assert_eq!(pass.made, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}

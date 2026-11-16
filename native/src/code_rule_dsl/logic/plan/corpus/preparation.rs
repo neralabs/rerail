@@ -64,6 +64,8 @@ impl ProgramPass for RuleOrder {
 /// rules dropped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
+    /// The relations the file-local joins were pushed into (`file_local::PushLocalJoins`).
+    pub pushed: Vec<String>,
     /// What the factorized store handed on as parts (`file_local::FactorizeExports`): a line per relation.
     pub factorized: Vec<String>,
     /// What the export demand cut (`file_local::DemandExports`): a line per export, or why it cut none.
@@ -82,6 +84,9 @@ pub struct Found {
 /// runs them, or the merge alone with `RERAIL_SAME=off`.
 pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Found), String> {
     let mut p = Pipeline::new("preparation", version);
+    // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
+    let mut pushed = crate::code_rule_dsl::typing::file_local::PushLocalJoins::default();
+    p.program(&mut pushed);
     // An export that is a join of parts meeting at a key it projects away is handed on as its parts (decision 0099).
     let mut factorized = crate::code_rule_dsl::typing::file_local::FactorizeExports::new(factorize);
     p.program(&mut factorized);
@@ -103,7 +108,7 @@ pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Foun
         p.program(&mut merge);
         p.program(&mut repeats);
     }
-    let found = Found { factorized: factorized.lines, demand: demand.lines, located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
+    let found = Found { pushed: pushed.made, factorized: factorized.lines, demand: demand.lines, located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
     p.program(&mut InputsRead);
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));

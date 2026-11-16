@@ -3152,18 +3152,16 @@ fn run_observed(
             let mut program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
             drop(_step);
-            // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "push the file-local joins into the chunks".into());
-            let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program);
-            drop(_step);
             // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
-            // the tree; the passes after it run on the manager over the version (step 5: the exports factorized and cut to their demand, the rows located, the
-            // merges, the inputs the rules read, the rule order), and the run's readers read the version (`Lowered::placed`), the split's
-            // parts views of it. A program the image cannot hold is an error, not a run read from the tree.
+            // the tree; the passes after it run on the manager over the version (step 5: the file-local joins pushed,
+            // the exports factorized and cut to their demand, the rows located, the merges, the inputs the rules read,
+            // the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views of
+            // it. A program the image cannot hold is an error, not a run read from the tree.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's image and the passes on it".into());
             let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
             let (version, found) = preparation::run(version, factorizing).map_err(Error::Plan)?;
             let factorized = found.factorized.clone();
+            let pushed = found.pushed.clone();
             let merged = (found.merged, found.shared);
             let located = found.located.clone();
             drop(_step);
@@ -3178,6 +3176,7 @@ fn run_observed(
             // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
             #[cfg(debug_assertions)]
             if std::env::var_os("RERAIL_RULE_ORDER").is_none() {
+                assert_eq!(crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program), pushed, "the version's joins are pushed as the tree's");
                 let tree_factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut program) } else { Vec::new() };
                 assert_eq!(tree_factorized, factorized, "the version's exports are factorized as the tree's");
                 assert_eq!(crate::code_rule_dsl::typing::file_local::demand_exports(&mut program), found.demand, "the version's exports are cut as the tree's");

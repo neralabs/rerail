@@ -4,11 +4,10 @@
 //! parts stay file-local.
 
 use super::super::FileLocal;
-use super::t_of;
+use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
 use crate::code_rule_dsl::logic::plan::body;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::Builder;
-use crate::code_rule_dsl::logic::program_image::build::T;
 use crate::code_rule_dsl::logic::program_image::manager::{self, Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, LitRef, RuleRef, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -24,20 +23,6 @@ impl FactorizeExports {
     pub fn new(on: bool) -> FactorizeExports {
         FactorizeExports { on, lines: Vec::new() }
     }
-}
-
-fn name(v: &Version, rule: RuleRef<'_>, s: crate::code_rule_dsl::logic::program_image::Slot) -> String {
-    v.text(rule.var(s)).to_owned()
-}
-
-fn lit_vars(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> BTreeSet<String> {
-    body::lit_vars(l).iter().map(|s| name(v, rule, s)).collect()
-}
-
-fn term_vars(v: &Version, rule: RuleRef<'_>, t: TermRef<'_>) -> BTreeSet<String> {
-    let mut out = body::VarSet::new();
-    body::term_vars(t, &mut out);
-    out.iter().map(|s| name(v, rule, s)).collect()
 }
 
 type Keys = BTreeMap<String, Vec<Vec<usize>>>;
@@ -161,85 +146,6 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
     keys
 }
 
-/// A body item: a literal of the source rule, or an atom made (`rel`, args).
-#[derive(Clone)]
-enum Item<'v> {
-    Orig(LitRef<'v>),
-    New(String, Vec<NOwned<'v>>),
-}
-
-/// A term of a rule being made: one of its source rule's, or a variable by name.
-#[derive(Clone)]
-enum NOwned<'v> {
-    T(TermRef<'v>),
-    V(String),
-}
-
-/// A rule of the round's program: its source rule, its head (the source's, or one made), its body.
-#[derive(Clone)]
-struct Made<'v> {
-    src: RuleRef<'v>,
-    /// `None`: the source's own head.
-    head: Option<(String, Vec<NOwned<'v>>)>,
-    body: Vec<Item<'v>>,
-    /// Unchanged from its source (kept as it is).
-    kept: bool,
-}
-
-fn t_from<'b>(input: &'b Version, src: RuleRef<'b>, n: &'b NOwned<'b>) -> T<'b> {
-    match n {
-        NOwned::T(t) => t_of(input, src, *t),
-        NOwned::V(s) => T::Var(s.as_str()),
-    }
-}
-
-/// The round's program written: the declarations it states and drops, its rules, its keys' qualifiers.
-struct Round<'v> {
-    decls: Vec<(String, Vec<(String, String)>)>,
-    undeclared: Vec<String>,
-    rules: Vec<Made<'v>>,
-    no_inline: Vec<String>,
-}
-
-fn write(b: &mut Builder<'_>, input: &Version, round: &Round<'_>) -> Result<(), String> {
-    for (rel, cols) in &round.decls {
-        let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(rel, &cols);
-    }
-    for rel in &round.undeclared {
-        b.undeclare(rel);
-    }
-    for m in &round.rules {
-        if m.kept {
-            b.keep(input, m.src);
-            continue;
-        }
-        let mut rb = b.rule().source(m.src.id());
-        rb = match &m.head {
-            None => rb.head_from(input, m.src, m.src.head()),
-            Some((rel, args)) => {
-                let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
-                rb.head(rel.as_str(), &args)
-            }
-        };
-        for it in &m.body {
-            rb = match it {
-                Item::Orig(l) => rb.lit(input, m.src, *l),
-                Item::New(rel, args) => {
-                    let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
-                    rb.atom(rel.as_str(), &args)
-                }
-            };
-        }
-        rb.finish()?;
-    }
-    if !round.no_inline.is_empty() {
-        let words: Vec<(&str, &str)> = round.no_inline.iter().map(|k| (k.as_str(), "no_inline")).collect();
-        b.add_qualifiers(&words);
-    }
-    Ok(())
-}
-
 impl ProgramPass for FactorizeExports {
     const NAME: &'static str = "factorize the exports";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
@@ -352,7 +258,7 @@ impl ProgramPass for FactorizeExports {
             let mut no_inline: Vec<String> = Vec::new();
             let mut lines = Vec::new();
             let mut made: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            let mut program: Vec<Made<'_>> = rules.iter().map(|&r| Made { src: r, head: None, body: r.body().map(Item::Orig).collect(), kept: true }).collect();
+            let mut program: Vec<Made<'_>> = rules.iter().map(|&r| Made { src: r, head: None, body: r.body().map(BodyItem::Orig).collect(), kept: true }).collect();
             // Per relation, per rule: the head's variables and the parts' atoms (relation, interface).
             let mut stands: BTreeMap<String, Vec<(Vec<String>, Vec<(String, Vec<String>)>)>> = BTreeMap::new();
             for (rel, plan) in &chosen {
@@ -402,10 +308,10 @@ impl ProgramPass for FactorizeExports {
                     }
                     let var = |x: &String| NOwned::V(x.clone());
                     for (i, ((pname, iface), body)) in atoms.iter().zip(&bodies).enumerate() {
-                        let orig: Vec<Item<'_>> = body.iter().map(|l| Item::Orig(*l)).collect();
+                        let orig: Vec<BodyItem<'_>> = body.iter().map(|l| BodyItem::Orig(*l)).collect();
                         program.push(Made { src: rule, head: Some((knames[i].clone(), vec![var(key)])), body: orig.clone(), kept: false });
                         let mut reduced = orig;
-                        reduced.extend(knames.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, k)| Item::New(k.clone(), vec![var(key)])));
+                        reduced.extend(knames.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, k)| BodyItem::New(k.clone(), vec![var(key)])));
                         program.push(Made { src: rule, head: Some((pname.clone(), iface.iter().map(var).collect())), body: reduced, kept: false });
                         made.entry(rel.clone()).or_default().extend([pname.clone(), knames[i].clone()]);
                     }
@@ -445,19 +351,19 @@ impl ProgramPass for FactorizeExports {
                 let mut work = vec![m];
                 while let Some(m) = work.pop() {
                     let read_at = m.body.iter().position(|it| match it {
-                        Item::Orig(l) => matches!(l.view(), L::Atom(a) if !a.neg() && stands.contains_key(v.rel_name(a.rel()))),
-                        Item::New(rel, _) => stands.contains_key(rel),
+                        BodyItem::Orig(l) => matches!(l.view(), L::Atom(a) if !a.neg() && stands.contains_key(v.rel_name(a.rel()))),
+                        BodyItem::New(rel, _) => stands.contains_key(rel),
                     });
                     let Some(at) = read_at else {
                         out.push(m);
                         continue;
                     };
                     let (rel, args): (String, Vec<NOwned<'_>>) = match &m.body[at] {
-                        Item::Orig(l) => {
+                        BodyItem::Orig(l) => {
                             let L::Atom(a) = l.view() else { unreachable!() };
                             (v.rel_name(a.rel()).to_owned(), a.args().map(NOwned::T).collect())
                         }
-                        Item::New(rel, args) => (rel.clone(), args.clone()),
+                        BodyItem::New(rel, args) => (rel.clone(), args.clone()),
                     };
                     for (head, atoms) in &stands[rel.as_str()] {
                         fresh += 1;
@@ -467,7 +373,7 @@ impl ProgramPass for FactorizeExports {
                                 None => NOwned::V(format!("fz{fresh}_{x}")),
                             }
                         };
-                        let parts = atoms.iter().map(|(p, iface)| Item::New(p.clone(), iface.iter().map(|x| to(x)).collect()));
+                        let parts = atoms.iter().map(|(p, iface)| BodyItem::New(p.clone(), iface.iter().map(|x| to(x)).collect()));
                         let mut copy = m.clone();
                         copy.kept = false;
                         copy.body.splice(at..=at, parts);

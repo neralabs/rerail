@@ -3,13 +3,17 @@
 
 use super::FileLocal;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
+use crate::code_rule_dsl::logic::program_image::Builder;
 use crate::code_rule_dsl::logic::program_image::build::T;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{Lit as L, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::plan::body;
+use crate::code_rule_dsl::logic::program_image::{Lit as L, LitRef, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod factorize;
+mod push;
 pub use factorize::FactorizeExports;
+pub use push::PushLocalJoins;
 
 /// A term of `v`'s rule as a builder's term: a variable by the atom naming it (a derivation's ids are its input's).
 pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'a> {
@@ -200,4 +204,100 @@ impl ProgramPass for Locate {
         }
         Ok(())
     }
+}
+
+// ---- rules a pass makes from its input's, written into a derivation (`FactorizeExports`, `PushLocalJoins`) ----
+
+/// A body item: a literal of the source rule, or an atom made (`rel`, args).
+#[derive(Clone)]
+pub(super) enum BodyItem<'v> {
+    Orig(LitRef<'v>),
+    New(String, Vec<NOwned<'v>>),
+}
+
+/// A term of a rule being made: one of its source rule's, or a variable by name.
+#[derive(Clone)]
+pub(super) enum NOwned<'v> {
+    T(TermRef<'v>),
+    V(String),
+}
+
+/// A rule of the round's program: its source rule, its head (the source's, or one made), its body.
+#[derive(Clone)]
+pub(super) struct Made<'v> {
+    pub(super) src: RuleRef<'v>,
+    /// `None`: the source's own head.
+    pub(super) head: Option<(String, Vec<NOwned<'v>>)>,
+    pub(super) body: Vec<BodyItem<'v>>,
+    /// Unchanged from its source (kept as it is).
+    pub(super) kept: bool,
+}
+
+fn t_from<'b>(input: &'b Version, src: RuleRef<'b>, n: &'b NOwned<'b>) -> T<'b> {
+    match n {
+        NOwned::T(t) => t_of(input, src, *t),
+        NOwned::V(s) => T::Var(s.as_str()),
+    }
+}
+
+/// The round's program written: the declarations it states and drops, its rules, its keys' qualifiers.
+pub(super) struct Round<'v> {
+    pub(super) decls: Vec<(String, Vec<(String, String)>)>,
+    pub(super) undeclared: Vec<String>,
+    pub(super) rules: Vec<Made<'v>>,
+    pub(super) no_inline: Vec<String>,
+}
+
+pub(super) fn write(b: &mut Builder<'_>, input: &Version, round: &Round<'_>) -> Result<(), String> {
+    for (rel, cols) in &round.decls {
+        let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        b.declare(rel, &cols);
+    }
+    for rel in &round.undeclared {
+        b.undeclare(rel);
+    }
+    for m in &round.rules {
+        if m.kept {
+            b.keep(input, m.src);
+            continue;
+        }
+        let mut rb = b.rule().source(m.src.id());
+        rb = match &m.head {
+            None => rb.head_from(input, m.src, m.src.head()),
+            Some((rel, args)) => {
+                let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
+                rb.head(rel.as_str(), &args)
+            }
+        };
+        for it in &m.body {
+            rb = match it {
+                BodyItem::Orig(l) => rb.lit(input, m.src, *l),
+                BodyItem::New(rel, args) => {
+                    let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
+                    rb.atom(rel.as_str(), &args)
+                }
+            };
+        }
+        rb.finish()?;
+    }
+    if !round.no_inline.is_empty() {
+        let words: Vec<(&str, &str)> = round.no_inline.iter().map(|k| (k.as_str(), "no_inline")).collect();
+        b.add_qualifiers(&words);
+    }
+    Ok(())
+}
+
+/// A variable of `rule` by its name (the passes ported from the tree read variables as it does).
+pub(super) fn name(v: &Version, rule: RuleRef<'_>, s: crate::code_rule_dsl::logic::program_image::Slot) -> String {
+    v.text(rule.var(s)).to_owned()
+}
+
+pub(super) fn lit_vars(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> BTreeSet<String> {
+    body::lit_vars(l).iter().map(|s| name(v, rule, s)).collect()
+}
+
+pub(super) fn term_vars(v: &Version, rule: RuleRef<'_>, t: TermRef<'_>) -> BTreeSet<String> {
+    let mut out = body::VarSet::new();
+    body::term_vars(t, &mut out);
+    out.iter().map(|s| name(v, rule, s)).collect()
 }
