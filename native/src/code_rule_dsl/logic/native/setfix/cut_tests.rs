@@ -280,8 +280,19 @@ fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
     assert!(morsels_walked() > before, "the cut walk ran in morsels");
     let cut = take_cut(&db, "mors").unwrap().expect("a cut");
     assert!(cut.led && cut.done > 0 && cut.left > 0 && cut.done + cut.left == 40_000, "{cut:?}");
+    // The walk's work is what the planner counts of it, and its counts reach the budget (decision 0294), as one
+    // walk's: each morsel's own entry into the first step counted once for the walk, and the one step a cut walk is
+    // refused once. Short of it, the planner gave the line a budget of a few rows more, and judged its work so far
+    // by the few rows that walk read.
+    let counted = crate::code_rule_dsl::logic::profile::plan_work(&step_counts(&db, "mors").unwrap()[0].iter().map(|&(a, b)| (a as u64, b as u64)).collect::<Vec<_>>());
+    assert_eq!(cut.work, counted + 1, "{cut:?}");
+    assert!(counted >= 30_000, "{cut:?}: {counted}");
     set_budgets(&db, "mors", &[(0, None)]).unwrap();
+    // The walk going on reads the rows left in the order the cut walk was to read them, which is its scan's key
+    // order: none sorted again (decision 0294).
+    let in_order = left_read_in_order();
     assert_eq!(run(&db, "mors", 0).unwrap().split_whitespace().last(), Some("1"));
+    assert_eq!(left_read_in_order() - in_order, cut.left, "{cut:?}");
     close(&db, "mors").unwrap();
     assert_eq!(rows(&db), one, "the fixpoint is the unlimited run's");
     closure::semi_naive_here(false);
