@@ -1399,17 +1399,12 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_COSTS",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
-        // Where rule images are read from and kept (decision 0264): the shipped bundle, the images' store, the
-        // export of what a bundle is packed from, and the store turned off. An image is found by the digest of
-        // what it was made from, so each place gives the same program or none.
-        "RERAIL_SHIPPED_IMAGES",
-        "RERAIL_IMAGE_STORE",
-        "RERAIL_EXPORT_IMAGES",
-        "RERAIL_MODULE_IMAGES",
     ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
+    // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
+    let test_module = regex::Regex::new(r"\n#\[cfg\([^\]]*\btest\b[^\]]*\)\]\n(?:pub(?:\([^)]*\))? )?mod tests\b").unwrap();
     let sources = |places: &[&str]| -> Vec<(String, String)> {
         let mut files = Vec::new();
         let mut pending: Vec<std::path::PathBuf> = places.iter().map(|p| root.join(p)).collect();
@@ -1419,7 +1414,13 @@ fn every_switch_lowering_reads_is_classified() {
             if p.is_dir() {
                 pending.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
             } else if p.extension().is_some_and(|e| e == "rs") && !p.file_name().unwrap().to_string_lossy().contains("tests") {
-                files.push((p.strip_prefix(&root).unwrap().display().to_string(), std::fs::read_to_string(&p).unwrap()));
+                // Up to its own test module, as a test file is left out: a test's switches (a child process's) key
+                // no program.
+                let mut text = std::fs::read_to_string(&p).unwrap();
+                if let Some(m) = test_module.find(&text) {
+                    text.truncate(m.start());
+                }
+                files.push((p.strip_prefix(&root).unwrap().display().to_string(), text));
             }
         }
         files
