@@ -455,6 +455,32 @@ pass.
   both. One program changed; the other 316 are combined again from their texts.
 - **Done when**: an edit's combine and prepare work is in proportion to the programs it changed (decision 0225 §7:
   a prepared program kept per module), measured on ep2.
+- **Measured** (2026-11-15, after the hub's t36 item 7 and Q17's fix; ep2, one rule's body edited, a new process,
+  profiled): the 317 programs' own part is small now. Each is read from its image, and reading and lowering all
+  of them takes 0.03 s (`parse each program`), plus 0.13 s in 317 lowerings in scope. What remains is passes over
+  the whole combined program (10,527 rules), each run again from scratch:
+  - `merge the programs`, 0.47 s: bounding to the shown documents (hiding's 17 rounds) 0.20 s, the fact spaces
+    0.13 s, merging equal relations 0.07 s;
+  - `prepare`, 0.59 s: pushing the file-local joins 0.14 s, prune, simplify and demand 0.10 s, the memo's program
+    0.04 s, and nine passes of 0.02–0.04 s each.
+
+  Unprofiled, these are `combine` 13.0 G and `prepare` 9.8 G of the edit's 82.9 G. `stats` is 8.2 G, mostly
+  reading the kept inputs from the frames (0.30 s). Making each pass cost the size of its change is 0225 §5–§7
+  (analyses as rules over the image, maintained by delta), i.e. 0246 stages 4–5. The largest cost of an edit is now
+  `wait` (Q19).
+
+### Q19. A new process reads every kept frame of the cross part, its own or not
+
+- **Found** (2026-11-15, ep2, while measuring Q18): an edit of one rule's body costs 82.9 G in a new process, of
+  which `wait` is 44.8 G (13.5 G on the same store after the hub's merge, six runs before). A sample has 60% of the
+  main thread in `ContentStore::preload_frames_live` (decision 0104: every frame read before the first wave), its
+  `pread`s of frame blobs; the profile charges 31.8 GB allocated to it (`parse`'s own). The store holds 4.2 GB of
+  frames in 51 spaces. The memos' spaces (`local`, `local_out`, one per plan) are read only for live plans, each
+  path's newest. The cross part's space is read whole: 85,430 frames (911 MB), 10,987 (relation, identity) pairs
+  over 5,621 relations. These are the frames of every run the store keeps (earlier builds', earlier edits', those
+  before the input frames' keying, abb1bd17d), and a run reads those of its own program only.
+- **Done when**: a new process reads, before its first wave, the frames its run can read (its program's
+  identities), not every kept run's; an edit's `wait` on ep2 does not grow with the runs the store keeps.
 
 ## Questions for the user
 
