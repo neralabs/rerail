@@ -34,6 +34,7 @@ import {
   auditViolations,
   auditViolationsStaging,
   ruleViolationRollup,
+  mergeAssistState,
 } from "../../../src/engine/index.js";
 
 export const SCHEMA_SQL_PATH = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..", "src", "engine", "storage", "schema-sql.generated.ts");
@@ -74,6 +75,7 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   ruleSettings,
   libraryRules,
   ruleApprovals,
+  mergeAssistState,
   schemaMigrations,
   pathKeySpellings,
   });

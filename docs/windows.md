@@ -76,8 +76,8 @@ with `SW_HIDE`, and with `CREATE_NO_WINDOW` when it inherits no stdio. The optio
 
 ## The daemon's console
 
-On Windows the daemon owns a console that has no window, and every console program it starts shares that console. It
-never starts without a console.
+On Windows the daemon owns a console that has no window, so no console program it starts opens one. It never starts
+without a console.
 
 `DETACHED_PROCESS` leaves a process with no console at all, and Windows ignores `CREATE_NO_WINDOW` beside it. Node's
 `detached: true` adds `DETACHED_PROCESS` on Windows, so Rerail starts the daemon through the native `spawn_detached`
@@ -95,7 +95,8 @@ by a library Rerail does not control for example, then shares the hidden console
   Node's spawn hands a child every inheritable handle in the parent, and a daemon started under `just` held the
   caller's output pipe open, so a captured `rerail setup` never finished.
 - It keeps the child's process handle. `detachedExitCode(pid)` reads the exit code from it, so a daemon that exits
-  during its 15 s start is reported with its code, even once Windows has given its pid to another process.
+  during its 15 s start is reported with its code, even once Windows has given its pid to another process. The module
+  closes the handle once it has given the code, and `launchDetached` keeps that first answer for every later ask.
 - The daemon runs in the Rerail home, never in the folder of the session that started it. Windows holds a process's
   current folder open, so a daemon started from a repository kept that checkout, and every folder above it, from
   being deleted or renamed. The repository reaches it as `--workspace-root`, and `searchGitFrom`
@@ -105,6 +106,17 @@ by a library Rerail does not control for example, then shares the hidden console
 - The Rust test `starts_the_daemon_with_a_hidden_console_not_without_one` checks the flags on every OS, and the Windows
   build checks them against `windows-sys` when it compiles. PR CI compiles that `cfg(windows)` code in `unit-windows`
   whenever the engine's inputs change, and runs `reports_a_detached_childs_exit_code_from_the_handle_it_kept` there.
+- On Windows `test/runtime/daemon-control.test.ts` starts a probe (`test/support/platform/console-probe.ts`) through
+  `launchDetached`, as the daemon is started. The probe opens `CONOUT$` to say whether it has a console, and starts
+  two Git processes: one without `windowsHide`, as a library could, and one with it, as the helper does. The test
+  counts the console hosts (`conhost.exe`) under each in Windows' process table: none under the first, which shares
+  the probe's console, and one under the second, which shows the count is read. A probe started with no console, as
+  Rerail 0.1.3 started its daemon, fails both ways: it has no console, and the first Git gets one of its own, with a
+  window. `unit-windows` runs it.
+- On every OS the same file starts the daemon each way Rerail does on a stand-in Windows machine: `rerail daemon start`
+  and set-up's start (`startDaemon`), a hook's start before it sends its settings (`startDaemonForPackage`), a hook's
+  autostart (`autostartDaemon`), and the replacement near the heap limit (`relaunchDaemon`). Each must reach the
+  native spawn; a start through Node's spawn fails it.
 
 </details>
 
@@ -351,7 +363,7 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 | Agent | Hook command | Commands it runs |
 | --- | --- | --- |
-| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
+| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` where `node` on PATH is the recorded node, where set-up finds no `cmd.exe` by its full System32 path, or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`); elsewhere, a folder on a server before node's on PATH included, `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
 | Codex | PowerShell: `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '<node>') { & '<node>' '<hook>' } else { node '<hook>' }; exit $LASTEXITCODE` | PowerShell: `& '<node>' '<cli.js>'` |
 | Cursor | PowerShell, the event piped in: `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath '<node>') { $input \| & '<node>' '<hook>' } else { $input \| node '<hook>' } }` | PowerShell: `& '<node>' '<cli.js>'` |
 
@@ -433,8 +445,10 @@ On Windows every hook process exits once the process that started it is gone (`e
 the one node started.
 
 A coding agent that times out a hook kills the process it started. On macOS and Linux that is node, since the sh
-launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, the hook launcher
-for Claude Code. Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
+launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, `cmd.exe` for
+Claude Code where its entry starts `cmd.exe`, and the hook launcher where the `node` entry finds another node on PATH.
+Where that node is the recorded one, the launcher runs the hook in the process Claude Code ends, as on macOS and Linux.
+Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
 session's next hook waited up to 30 s for it. A hook that exits holding its session's lock now removes it as it exits,
 and a lock whose holder has stopped touching it for 10 s is taken by the next hook, even when Windows has given the
 holder's pid to another process. The watch checks the parent once a second. Since the watch does nothing
@@ -553,7 +567,10 @@ preimages and held steers.
   ACL before it writes a token there, so a remote's token is private before any daemon launch. A failure is reported on
   stderr and never fails the caller.
 - `loadDaemonTls` refuses a TLS private key that `openToOthers` finds other accounts can read, naming those accounts
-  and the `icacls` command that fixes it, and refuses a key whose ACL it cannot read.
+  and the `icacls` command that fixes it. When this account reads that key, the daemon then serves this computer alone,
+  on loopback, and says why (`serveRerailDaemon`), so hooks keep recording while the key is fixed. A key whose ACL it
+  cannot read (`Get-Acl` fails), a folder, a file whose ACL keeps this account from reading it, or a file that holds no
+  private key stops the start, and so does a `--tls-cert` that names no certificate for the key.
 
 </details>
 

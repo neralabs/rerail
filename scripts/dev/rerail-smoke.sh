@@ -9,8 +9,8 @@
 # with a request to npm login) and then logged in, exercises the installed rerail launcher
 # (status, daemon stop/start, update check, update to a newer published version, a
 # just nuke-rerail -> just rerail --restore round trip, install --remove deleting the
-# installation and backing up the database, and a --restore of that backup), and tears
-# everything down. The real ~/.rerail, ~/.npmrc, and coding-agent
+# installation and backing up the database, a --restore of that backup, and install --remove
+# --delete-data leaving nothing Rerail wrote in its home), and tears everything down. The real ~/.rerail, ~/.npmrc, and coding-agent
 # configs are never read or written; the package's own dependencies still come from
 # npmjs. KEEP=1 leaves the sandbox for inspection.
 set -euo pipefail
@@ -378,5 +378,26 @@ sandbox env RERAIL_REGISTRY="$REGISTRY/" \
 grep -qF "Daemon healthy at http://127.0.0.1:$DAEMON_PORT" "$SMOKE/restore-after-remove.log" || fail "the daemon restored after install --remove is not healthy"
 read -r _ MOCK_RESTORED <<<"$(rule_count)"
 [ "$MOCK_RESTORED" -gt 0 ] || fail "$MOCK_RULE did not survive install --remove -> rerail --restore"
+
+# The full deletion: rules and history, every backup, the project's session ledgers, the cache and the Rerail home go.
+info "rerail install --remove --delete-data --dry-run changes nothing"
+sandbox "$LAUNCHER" install --remove --delete-data --dry-run | tee "$SMOKE/delete-dry-run.log"
+[ -e "$DATABASE" ] || fail "install --remove --delete-data --dry-run deleted $DATABASE"
+compgen -G "$SANDBOX_HOME/.rerail-clean-*" >/dev/null || fail "install --remove --delete-data --dry-run deleted the backups"
+# By the path below HOME, as above.
+grep -q "^Would delete .*/home/\.rerail (the Rerail home)\.$" "$SMOKE/delete-dry-run.log" || fail "install --remove --delete-data --dry-run did not plan to delete the Rerail home"
+
+info "rerail install --remove --delete-data"
+sandbox "$LAUNCHER" install --remove --delete-data | tee "$SMOKE/delete.log"
+[ ! -e "$RERAIL_DIR" ] || fail "install --remove --delete-data left $RERAIL_DIR behind: $(ls -A "$RERAIL_DIR")"
+if compgen -G "$SANDBOX_HOME/.rerail-clean-*" >/dev/null; then fail "install --remove --delete-data left a .rerail-clean-* backup"; fi
+for deleted in .cache/rerail proj/.rerail/sessions .claude/commands/rerail.md; do
+  [ ! -e "$SANDBOX_HOME/$deleted" ] || fail "install --remove --delete-data left ~/$deleted behind"
+done
+grep -q "^Deleted .*/home/\.rerail (the Rerail home)\.$" "$SMOKE/delete.log" || fail "install --remove --delete-data did not say it deleted the Rerail home"
+# What it cannot reach is named with the command that deletes it: here, the copies of the person's Claude Code settings.
+grep -q "^Kept .*/home/\.claude/settings\.json\..*\.bak (a copy of .*/home/\.claude/settings\.json from before Rerail changed it)\. Delete it with: rm -rf " "$SMOKE/delete.log" \
+  || fail "install --remove --delete-data did not name the settings.json copies it kept"
+grep -qF "Session ledgers in a checkout Rerail never recorded are not found." "$SMOKE/delete.log" || fail "install --remove --delete-data did not name the ledgers it cannot find"
 
 info "rerail-smoke: PASS"

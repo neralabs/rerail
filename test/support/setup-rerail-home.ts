@@ -35,6 +35,11 @@ process.env.GIT_CONFIG_GLOBAL = gitConfig;
 // A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v1.sqlite`, shared by
 // every test file; each file gets its own (`contentStorePath` honours the override).
 process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sqlite");
+// Every experimental feature starts off, whatever the shell running the tests turned on (`RERAIL_EXPERIMENTAL=1`, or
+// one feature's own variable): a test that needs one stubs its variable.
+for (const name of Object.keys(process.env)) {
+  if (name === "RERAIL_EXPERIMENTAL" || name.startsWith("RERAIL_EXPERIMENTAL_")) delete process.env[name];
+}
 
 /**
  * Daemons this test file spawned that are still running. A spawned daemon is detached but keeps this worker as its

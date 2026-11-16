@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -226,6 +226,26 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("R E R A I L ● rules unavailable · steering unavailable");
   });
 
+  it("adds Merge Assist's segment: the newest conflict's line with the others counted, linked to its card", async () => {
+    const session = response.context!.session!;
+    const summary = { id: "conflict:overlap:abc:12345678", text: "PR #398 (jbarnes) shares compiled matchers you clone" };
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 3, summary } };
+    const overlaps = await read();
+    expect(overlaps.text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jbarnes) shares compiled matchers you clone (+2)");
+    expect(overlaps.parts.at(-1)!.url).toMatch(/#merge\?conflict=conflict:overlap:abc:12345678$/u);
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 1, summary } };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jbarnes) shares compiled matchers you clone");
+  });
+
+  it("cuts a long conflict line in Merge Assist's segment short, keeping the others' count", async () => {
+    const session = response.context!.session!;
+    const text = `origin/tbelanger/${"long-branch-".repeat(20)} (${"Someone ".repeat(10)}) is changing src/a/very/deep/path/to/a/file.ts`;
+    session.hud = { activeRuleCount: 3, steeringCount: 0, mergeAssist: { conflicts: 2, summary: { id: "conflict:a", text } } };
+    const segment = (await read()).parts.at(-1)!.text;
+    expect(segment).toMatch(/^◐ origin\/tbelanger\/long-branch-.*… \(\+1\)$/u);
+    expect([...segment.replace(/^◐ /u, "").replace(/ \(\+1\)$/u, "")]).toHaveLength(90);
+  });
+
   it("draws no footer where Rerail is stopped, says not on here on demand, and Not set up with the start command where no rules are configured", async () => {
     response.repositoryState = "stopped";
     // The ambient footer takes no space in a repository Rerail does not run in (#298).
@@ -298,6 +318,94 @@ describe("installed session presentation", () => {
     expect(rendered).toContain("\u001b]8;;http://127.0.0.1/\u0007R E R A I L\u001b]8;;\u0007");
     expect(rendered).toContain("\u001b]8;;http://127.0.0.1/#rules\u00072 rules\u001b]8;;\u0007");
     expect(rendered).not.toContain("\u001b\\");
+  });
+});
+
+describe("a live daemon that does not answer in time", () => {
+  let held: Server | undefined;
+
+  afterEach(async () => {
+    const server = held;
+    held = undefined;
+    server?.closeAllConnections();
+    if (server !== undefined) await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+
+  /**
+   * A listener that takes every request and never answers it, as a daemon whose main thread is busy does, recorded
+   * with `recorded` over the state the daemon writes.
+   */
+  const holdRequests = async (recorded: Record<string, unknown> = {}): Promise<void> => {
+    vi.unstubAllGlobals();
+    held = createServer(() => { /* The answer never comes. */ });
+    await new Promise<void>((resolve, reject) => held!.once("error", reject).listen(0, "127.0.0.1", () => resolve()));
+    const { port } = held.address() as AddressInfo;
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, pid: process.pid, port, url: `http://127.0.0.1:${port}/`, ...recorded }));
+  };
+
+  /** An engine endpoint that takes each connection and never answers, as a busy daemon's engine does; closes it. */
+  const silentEngine = async (endpoint: string): Promise<() => Promise<void>> => {
+    const sockets = new Set<Socket>();
+    const engine = createNetServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve, reject) => engine.once("error", reject).listen(endpoint, () => resolve()));
+    return async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => engine.close(() => resolve()));
+    };
+  };
+
+  const readWith = (startState: () => RepositoryStartState, onDemand = true) =>
+    readPresentation({ sessionId, host: "claude-code", cwd, startState, onDemand });
+
+  it("says not answering, never not running, where the checkout is started", async () => {
+    await holdRequests();
+    // Each read waits out its time, so they wait together.
+    const [started, stopped, summary, stoppedSummary, hookState] = await Promise.all([
+      readWith(() => "started"),
+      readWith(() => "stopped", false),
+      readSummaryState(cwd, "cursor", () => "started"),
+      readSummaryState(cwd, "cursor", () => "stopped"),
+      readRepositoryState(cwd, "omp"),
+    ]);
+    expect(started).toMatchObject({ status: "not-answering", text: "R E R A I L ● not answering", repositoryState: null, counts: null });
+    // Where Rerail is off here, the ambient footer still draws nothing.
+    expect(stopped).toMatchObject({ status: "not-on-here", text: "", repositoryState: "stopped" });
+    expect(summary).toBe("not-answering");
+    expect(stoppedSummary).toBe("stopped");
+    // The hook start check reads the database when no answer comes, as it did.
+    expect(hookState).toBeNull();
+  });
+
+  it("says not answering where the daemon's engine says nothing to the proof of its capability either", async () => {
+    // On Windows the daemon is sent the capability daemon.json records only once its engine proves it holds it, and a
+    // busy daemon's engine stays silent through that proof. Elsewhere the read itself goes unanswered.
+    const engine = testEngineEndpoint(home);
+    const closeEngine = await silentEngine(engine);
+    try {
+      await holdRequests({ kernelSocketPath: engine, accessToken: "capability" });
+      const [started, summary, hookState] = await Promise.all([
+        readWith(() => "started"),
+        readSummaryState(cwd, "cursor", () => "started"),
+        readRepositoryState(cwd, "omp"),
+      ]);
+      expect(started).toMatchObject({ status: "not-answering", text: "R E R A I L ● not answering" });
+      expect(summary).toBe("not-answering");
+      expect(hookState).toBeNull();
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  it("still says not running where the recorded pid is alive but nothing listens", async () => {
+    await holdRequests();
+    const server = held!;
+    held = undefined;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    expect(await readWith(() => "started")).toMatchObject({ status: "not-running", text: "R E R A I L ✕ not running" });
+    expect(await readSummaryState(cwd, "cursor", () => "started")).toBeNull();
   });
 });
 
