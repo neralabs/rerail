@@ -333,14 +333,21 @@ export class SharedTreeWatch {
   }
 
   #unwatchFor(user: object, root: string): void {
+    // What was queued of a root its walk lets go of is no longer its to take: the walk stopped weighing the root.
+    this.#queues.get(user)?.delete(root);
     const users = this.#roots.get(root);
-    if (users === undefined || !users.delete(user)) return;
-    if (users.size > 0) this.#watchLeft(root, users);
-    else {
-      this.#roots.delete(root);
-      this.#watch.unwatch(root);
-    }
+    if (users?.delete(user)) this.#release(root, users);
     this.#forgetIdle(user);
+  }
+
+  /** Watches `root` with the folders of the `users` left on it, or lets go of it when none is. */
+  #release(root: string, users: ReadonlyMap<object, readonly string[]>): void {
+    if (users.size > 0) {
+      this.#watchLeft(root, users);
+      return;
+    }
+    this.#roots.delete(root);
+    this.#watch.unwatch(root);
   }
 
   /**

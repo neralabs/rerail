@@ -309,4 +309,20 @@ describe("SharedTreeWatch", () => {
     expect(first.take()).toEqual([{ root: "/x", changed: [], renamed: [], lost: false, ended: true }]);
     expect(first.take()).toEqual([]);
   });
+
+  it("drops what was queued of a root for a walk that lets go of it, its ended watch's notice included", () => {
+    const watch = new ScriptedWatch();
+    const shared = new SharedTreeWatch(watch);
+    const [first, second] = [shared.user(), shared.user()];
+    first.watch("/x", [""]);
+    first.watch("/y", [""]);
+    second.watch("/x", [""]);
+    second.watch("/y", [""]);
+    watch.notice("/x", { changed: ["a.py"] });
+    watch.notice("/y", { ended: true });
+    second.take();
+    first.unwatch("/x");
+    first.unwatch("/y");
+    expect(first.take()).toEqual([]);
+  });
 });
