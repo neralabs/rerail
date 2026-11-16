@@ -124,6 +124,22 @@ impl P<'_> {
     }
 
     /// `modifiers`: the run of modifiers, in one node.
+    /// The node of a soft modifier's word (`inline` → `inline_modifier`, …).
+    fn soft_modifier(code: u8) -> K {
+        match code {
+            w::INLINE => K::InlineModifier,
+            w::OPAQUE => K::OpaqueModifier,
+            w::OPEN => K::OpenModifier,
+            w::INFIX => K::InfixModifier,
+            w::TRANSPARENT => K::TransparentModifier,
+            w::ERASED => K::ErasedModifier,
+            w::INTO => K::IntoModifier,
+            w::TRACKED => K::TrackedModifier,
+            w::UPDATE => K::UpdateModifier,
+            _ => K::ConsumeModifier,
+        }
+    }
+
     fn modifiers(&mut self) -> R<()> {
         let mut n = None;
         loop {
@@ -158,18 +174,7 @@ impl P<'_> {
                     }
                     // The scanner's token (`_inline_modifier`, …): the word, a named leaf.
                     self.take();
-                    let kind = match t.code {
-                        w::INLINE => K::InlineModifier,
-                        w::OPAQUE => K::OpaqueModifier,
-                        w::OPEN => K::OpenModifier,
-                        w::INFIX => K::InfixModifier,
-                        w::TRANSPARENT => K::TransparentModifier,
-                        w::ERASED => K::ErasedModifier,
-                        w::INTO => K::IntoModifier,
-                        w::TRACKED => K::TrackedModifier,
-                        w::UPDATE => K::UpdateModifier,
-                        _ => K::ConsumeModifier,
-                    };
+                    let kind = Self::soft_modifier(t.code);
                     if t.code == w::OPAQUE {
                         // `opaque` is the type definition's own, after its modifiers.
                         if let Some(n) = n.take() {
@@ -618,8 +623,17 @@ impl P<'_> {
         } else if self.is_word(w::WITH) && !self.tok().nl {
             // `_structural_instance`: its `with` in the return type's field, then the body.
             self.tkf(K::TWith, f::RETURN_TYPE)?;
-            if self.peek() == T::LBrace {
-                return self.refuse();
+            if self.peek() == T::LBrace && !self.tok().nl {
+                // `with { … }` (`with_template_body`, braced).
+                let n = self.open_field(K::WithTemplateBody, f::BODY);
+                self.tk(K::TLBrace)?;
+                let saved = std::mem::replace(&mut self.enum_cases, false);
+                let r = self.statements(Region::Brace, f::NONE);
+                self.enum_cases = saved;
+                r?;
+                self.expect(T::RBrace)?;
+                self.close(n);
+                return Ok(());
             }
             match self.layout(v::INDENT)? {
                 Some(Ext::Indent) => {}
@@ -638,9 +652,8 @@ impl P<'_> {
                 }
                 _ => return self.refuse(),
             }
-        } else {
-            return self.refuse();
         }
+        // Else a declaration (`_given_body` is optional).
         Ok(())
     }
 
@@ -697,7 +710,14 @@ impl P<'_> {
             return Ok(());
         }
         if self.peek() == T::LBrace {
-            return self.refuse();
+            // `{ … }` (`_extension_template_body`, field `body` on all of it).
+            self.tkf(K::TLBrace, f::BODY)?;
+            self.statements(Region::Brace, f::BODY)?;
+            if self.peek() != T::RBrace {
+                return self.refuse();
+            }
+            self.tkf(K::TRBrace, f::BODY)?;
+            return Ok(());
         }
         if !self.definition_ahead()? {
             return self.refuse();
@@ -757,6 +777,31 @@ impl P<'_> {
             }
             _ => self.refuse(),
         }
+    }
+
+    /// `{ type T <: A; def f: B }` (`refinement`): declarations, as a braced body reads them.
+    pub(super) fn refinement(&mut self) -> R<()> {
+        let saved = (std::mem::replace(&mut self.in_bound, false), std::mem::replace(&mut self.enum_cases, false));
+        let n = self.open(K::Refinement);
+        let r = (|| {
+            self.tk(K::TLBrace)?;
+            let indent = self.braced_indent()?;
+            self.statements(if indent { Region::Indent } else { Region::Brace }, f::NONE)?;
+            if indent {
+                match self.layout(v::OUTDENT)? {
+                    Some(Ext::Outdent) => {
+                        self.take();
+                    }
+                    _ => return self.refuse(),
+                }
+            }
+            self.expect(T::RBrace)?;
+            Ok(())
+        })();
+        (self.in_bound, self.enum_cases) = saved;
+        r?;
+        self.close(n);
+        Ok(())
     }
 
     /// `{ … }` (`template_body`), given `field`: a self type, then statements.
@@ -833,6 +878,18 @@ impl P<'_> {
     }
 
     /// Whether a self type starts the body (`self =>`, `self: T =>`, `this: T =>`).
+    /// Whether the line break before the token `j` ahead continues a type: an operator or `with`
+    /// ends the line before, or `with`, `&` or `|` starts this one (no automatic semicolon is
+    /// valid inside a type).
+    fn type_continues_at(&mut self, j: usize) -> bool {
+        let t = self.peek_at(j);
+        let before = self.peek_at(j - 1);
+        before.kind == T::Op && before.code != op::COLON && before.code != op::EQ
+            || before.kind == T::Id && before.code == w::WITH
+            || t.kind == T::Id && t.code == w::WITH
+            || t.kind == T::Op && (t.code == op::PIPE || self.text(t) == b"&")
+    }
+
     fn self_type_ahead(&mut self) -> bool {
         let t = self.tok();
         if !(Self::is_name(t) || t.kind == T::Id && t.code == w::UNDERSCORE) {
@@ -849,9 +906,7 @@ impl P<'_> {
         let mut j = 2;
         loop {
             let t = self.peek_at(j);
-            let before = self.peek_at(j - 1);
-            let continued = before.kind == T::Op && before.code != op::COLON || before.kind == T::Id && before.code == w::WITH;
-            if t.nl && !continued || t.kind == T::Eof || j > 40 {
+            if t.nl && !self.type_continues_at(j) || t.kind == T::Eof || j > 40 {
                 return false;
             }
             if t.kind == T::Op && t.code == op::ARROW {
@@ -983,8 +1038,15 @@ impl P<'_> {
             while self.is_op(op::AT) {
                 self.annotation()?;
             }
-            if matches!(self.word(), w::INLINE | w::ERASED | w::CONSUME | w::TRACKED) && Self::is_name(self.peek_at(1)) {
-                return self.refuse();
+            // `inline x: T` (and `erased`, …): the scanner's modifier token, a named leaf of the
+            // parameter's.
+            while matches!(self.word(), w::INLINE | w::ERASED | w::CONSUME | w::TRACKED) && Self::is_name(self.peek_at(1)) {
+                if !matches!(self.layout(v::MODS)?, Some(Ext::Modifier(_))) {
+                    return self.refuse();
+                }
+                self.take();
+                let kind = Self::soft_modifier(self.word());
+                self.leaf(kind, f::NONE)?;
             }
             match self.word() {
                 w::VAL => {
@@ -1025,7 +1087,7 @@ impl P<'_> {
         let mut d = 0i32;
         loop {
             let t = self.peek_at(j);
-            if j > 1 && t.nl && d == 0 || t.kind == T::Eof {
+            if j > 1 && t.nl && d == 0 && !self.type_continues_at(j) || t.kind == T::Eof {
                 break;
             }
             match t.kind {

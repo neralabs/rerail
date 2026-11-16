@@ -35,7 +35,7 @@ impl P<'_> {
             // A type lambda, a polymorphic function type: refused.
             return self.refuse();
         }
-        if self.peek() == T::LParen && self.arrow_after_parens(0) {
+        if self.peek() == T::LParen && !tx.no_arrow && self.arrow_after_parens(0) {
             // `(A, B) => C`: the parameters in `parameter_types`.
             let pt = self.open_field(K::ParameterTypes, f::PARAMETER_TYPES);
             self.tk(K::TLParen)?;
@@ -166,7 +166,9 @@ impl P<'_> {
         let mut n = self.compound_type()?;
         loop {
             let t = self.tok();
-            if t.nl {
+            // No automatic semicolon is valid inside a type: `&` or `|` starting the next line
+            // continues it.
+            if t.nl && !(t.kind == T::Op && (t.code == op::PIPE || self.text(t) == b"&")) {
                 break;
             }
             let alpha = match t.kind {
@@ -200,8 +202,10 @@ impl P<'_> {
     fn compound_type(&mut self) -> R<u32> {
         let m = self.mark();
         let b = self.annotated_type()?;
-        // A `{` after it is the caller's (a template's body; a refinement is not read).
-        if !self.is_word(w::WITH) {
+        // `{` on the line: a refinement (`A { type T }`); only types reach here (a template's
+        // `extends` and `new` read `annotated_type`, the `{` theirs).
+        let refined = |p: &mut Self| p.peek() == T::LBrace && !p.tok().nl;
+        if !self.is_word(w::WITH) && !refined(self) {
             self.t.unmark(m);
             return Ok(b);
         }
@@ -211,6 +215,9 @@ impl P<'_> {
             self.tk(K::TWith)?;
             let x = self.annotated_type()?;
             self.t.refield(x, f::EXTRA);
+        }
+        if refined(self) {
+            self.refinement()?;
         }
         let n = self.close(n);
         self.t.unmark(m);
@@ -319,9 +326,27 @@ impl P<'_> {
 
     /// `(A, B)` (`tuple_type`).
     fn tuple_type(&mut self) -> R<u32> {
-        if self.kind_at(1) == T::Id && self.op_at(2) == op::COLON {
-            // A named tuple type: refused.
-            return self.refuse();
+        if Self::is_name(self.peek_at(1)) && self.is_op_at(2, op::COLON) {
+            // `(a: A, b: B)` (`named_tuple_type`): each a `name_and_type` (`name`, `type`).
+            let n = self.open(K::NamedTupleType);
+            self.tk(K::TLParen)?;
+            loop {
+                let x = self.open(K::NameAndType);
+                self.identifier(f::NAME)?;
+                self.tk(K::TColon)?;
+                self.typ_f(f::TYPE)?;
+                self.close(x);
+                if self.peek() == T::Comma {
+                    self.tk(K::TComma)?;
+                    if self.peek() == T::RParen {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            self.expect(T::RParen)?;
+            return Ok(self.close(n));
         }
         let n = self.open(K::TupleType);
         self.tk(K::TLParen)?;
