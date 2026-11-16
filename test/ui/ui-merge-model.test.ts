@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MergeAssistStatus } from "../../src/engine/index.js";
 import {
-  conflictSections, dismissToast, githubText, hookFailure, hunkLines, openConflictCount, readinessChecks,
+  conflictSections, dismissToast, githubText, hookFailure, hunkLines, openConflictCount, readinessChecks, refocusIndex,
   safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, writeError,
 } from "../../ui/merge-model.js";
 import { sampleStatus } from "../support/merge-assist/status.js";
@@ -188,5 +188,41 @@ describe("the settings", () => {
     for (const timeout of ["0", "61", "2.5", "ten"]) {
       expect(settingsChange(draft("[\"./hook.sh\"]", timeout))).toEqual({ problem: "The timeout must be a whole number of seconds from 1 to 60.", field: "timeout" });
     }
+  });
+
+  it("refuses a timeout that is not plain decimal digits, though it reads as a number in range", () => {
+    for (const timeout of ["0x14", "1e1", "+5", "5.0", "0b11", "0o7"]) {
+      expect(settingsChange(draft("[\"./hook.sh\"]", timeout))).toEqual({ problem: "The timeout must be a whole number of seconds from 1 to 60.", field: "timeout" });
+    }
+    expect(settingsChange(draft("[\"./hook.sh\"]", " 20 "))).toEqual({ body: { hook: { command: ["./hook.sh"], timeoutSeconds: 20 } } });
+  });
+});
+
+describe("the focus once a write is drawn", () => {
+  const strip = [{ act: "mascan", i: null }, { act: "maoff", i: null }, { act: "masettings", i: null }];
+  const cards = (...ids: string[]) => ids.map(i => ({ act: "madismiss", i }));
+
+  it("goes back to the control the person used, rebuilt by the render", () => {
+    expect(refocusIndex({ act: "mascan", i: null, index: 0 }, strip)).toBe(0);
+    expect(refocusIndex({ act: "masettings", i: null, index: 0 }, strip)).toBe(2);
+  });
+
+  it("goes from Turn on to Scan now, and from Turn off to Turn on", () => {
+    expect(refocusIndex({ act: "maon", i: null, index: 0 }, strip)).toBe(0);
+    expect(refocusIndex({ act: "maoff", i: null, index: 0 }, [{ act: "maon", i: null }])).toBe(0);
+  });
+
+  it("goes from a dismissed card's Dismiss to the card that took its place, else the last card", () => {
+    const controls = [...strip, ...cards("b", "c")];
+    expect(refocusIndex({ act: "madismiss", i: "a", index: 0 }, controls)).toBe(3);
+    expect(refocusIndex({ act: "madismiss", i: "b", index: 1 }, [...strip, ...cards("a", "c")])).toBe(4);
+    expect(refocusIndex({ act: "madismiss", i: "c", index: 2 }, [...strip, ...cards("a", "b")])).toBe(4);
+    // A card that came back (its dismissal failed) takes it back.
+    expect(refocusIndex({ act: "madismiss", i: "c", index: 0 }, [...strip, ...cards("a", "c")])).toBe(4);
+  });
+
+  it("has nowhere to go when nothing took the control's place: the page then focuses a heading", () => {
+    expect(refocusIndex({ act: "madismiss", i: "a", index: 0 }, strip)).toBe(-1);
+    expect(refocusIndex({ act: "maon", i: null, index: 0 }, [])).toBe(-1);
   });
 });

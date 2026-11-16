@@ -3,17 +3,16 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistEnabled, pruneCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { openRerailDatabase, resetRepositoryHistoryIn, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { mergeAssistState, repositories, sessions } from "../../../src/engine/storage/schema.js";
 import { git } from "../../support/merge-assist/git.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const roots: string[] = [];
 const databases: RerailDatabase[] = [];

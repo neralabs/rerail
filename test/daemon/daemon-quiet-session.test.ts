@@ -5,8 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RerailDaemon } from "../../src/daemon/daemon.js";
 import type { AuditRecorder, CodeRuleAuditor } from "../../src/engine/index.js";
 import { ingestEngineEvent, type EngineService, type startEngineService } from "../../src/runtime/index.js";
+import { withExperiments } from "../support/environment/experiments.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { startTestRepository } from "../support/started-repository.js";
+
+withExperiments("REPOSITORY_SCAN");
 
 /**
  * The engine service each daemon here starts: its sessions are suspended after a minute of `clock` without an event,

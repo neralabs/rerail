@@ -347,6 +347,12 @@ export interface SessionsInput {
    * never says nothing is sent when something is; null when the remote configuration could not be read.
    */
   readonly remoteHosts?: readonly string[] | null;
+  /**
+   * A coding agent relays set-up (`--relay`, or the json lane), so the person reads the question in a coding agent
+   * session: it asks about sessions like that one, rather than as if sessions were somewhere else. Not "this session":
+   * most coding agents load Rerail's hooks only in sessions started after set-up.
+   */
+  readonly inSession?: boolean;
 }
 
 /** What the sessions question says about where sessions go: nowhere, or each remote by its host, and how to stop. */
@@ -365,17 +371,20 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
   return {
     id: "sessions",
     lead: [],
-    prompt: "Can Rerail see your coding agent sessions?",
+    prompt: input.inSession === true
+      ? "OK for Rerail to read coding agent sessions like this one?"
+      : "OK for Rerail to read your coding agent sessions?",
     trail: [
-      "Rerail sees what you ask your agent, what it does, and the files it edits,",
-      "so it can check the work against your rules.",
+      "Rerail checks your coding agent’s work, not you. It reads what you ask",
+      "the agent, what the agent does, and the files it edits.",
       "",
       ...sessionsDestination(input.remoteHosts),
       "  ✓ You’re asked once, for every repo you start Rerail in.",
+      "  ✓ Stop Rerail in a repo anytime: run rerail stop in its folder.",
     ],
     choices: [
-      { answer: "allow", label: "Yes, allow", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
-      { answer: "decline", label: "No, cancel set-up", hint: "nothing is connected or started", args: [SETUP_FLAGS.answer, "decline"] },
+      { answer: "allow", label: "Yes, that’s OK", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
+      { answer: "decline", label: "Not now, cancel set-up", hint: "nothing is connected or started", args: [SETUP_FLAGS.answer, "decline"] },
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
   };
@@ -414,10 +423,18 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
     lead: [],
     prompt: `Find rule packs for ${repo}?`,
     trail: [
-      "Rule packs are ready-made sets of rules your coding agent must follow.",
-      "Rerail can scan this repo’s files and suggest packs that fit.",
+      "Rule packs are ready-made rules, mostly the same ones linters use",
+      "(ESLint, Ruff, Clippy…).",
       "",
-      "  ✓ Scanning only reads files. Your code stays on this computer.",
+      "How they differ from your linter: your linter checks code after it’s",
+      "written. Rerail checks while your coding agent writes it, so the agent",
+      "fixes problems in the same turn, before review or CI.",
+      "",
+      "  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.",
+      "  ✓ Scanning looks at file types and dependencies to suggest packs, not at",
+      "    how your code is written. Your code stays on this computer.",
+      "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
+      "    rules that config turns off start off in Rerail too.",
       "  ✓ Nothing is installed or turned on until you say yes.",
     ],
     choices: [
@@ -437,16 +454,22 @@ export function renderReadRepoQuestion(input: ReadRepoInput, lane: SetupLane): s
 
 /** What set-up takes from the repository's own lint config: `repository-lint-config.ts`'s result. */
 export interface LintConfigInput {
-  /** Rules that start off (`on: false`) or with option values (`config`), in a folder or everywhere (`""`), and the config entry that says so. */
-  readonly settings: readonly {
-    readonly ruleId: string;
-    readonly folder: string;
-    readonly on: false | null;
-    readonly config: Readonly<Record<string, unknown>> | null;
-    readonly because: string;
-  }[];
+  /** Rules that start on or off, or with option values (`config`), in a folder or everywhere (`""`), and the config entry that says so. */
+  readonly settings: readonly LintConfigInputSetting[];
   /** Files not read, options not mapped, conflicts. */
   readonly notes: readonly string[];
+}
+
+/** One rule setting set-up takes from the lint config. */
+export interface LintConfigInputSetting {
+  readonly ruleId: string;
+  readonly folder: string;
+  /** `null`: as the pack has it (the setting carries options only). */
+  readonly on: boolean | null;
+  readonly config: Readonly<Record<string, unknown>> | null;
+  /** Whether the config names the rule; not: a linter's defaults or a preset decide, and the screen counts it. */
+  readonly explicit: boolean;
+  readonly because: string;
 }
 
 export interface RecommendedPacksInput {
@@ -474,20 +497,44 @@ const MAX_UNAVAILABLE_LINES = 4;
 /** At most this many lint config lines; the rest are counted. */
 const MAX_LINT_CONFIG_LINES = 8;
 
-/** Which rules start off or configured from the repository's lint config, and what was not read. */
+/** One setting the config names, as a row: how the rule starts, where, with which options, and why. */
+function explicitRow(setting: LintConfigInputSetting, style: Style): string {
+  const options = Object.entries(setting.config ?? {}).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(", ");
+  const change = [
+    `starts${setting.on === null ? "" : setting.on ? " on" : " off"}`,
+    ...(setting.folder === "" ? [] : [`in ${clean(setting.folder)}/`]),
+    ...(options === "" ? [] : [`with ${options}`]),
+  ].join(" ");
+  return `    ${clean(setting.ruleId)} ${change}  ${style.dim(clean(setting.because))}`;
+}
+
+/**
+ * The settings a linter's defaults or a preset decide, one row per state and reason with how many rules it covers:
+ * there can be hundreds, and one reason (`eslint.config.js does not turn it on`) covers them all.
+ */
+function implicitRows(settings: readonly LintConfigInputSetting[], style: Style): string[] {
+  const groups = Map.groupBy(settings, setting => `${String(setting.on)}\0${setting.because}`);
+  return [...groups.values()].map(group => {
+    const [{ on, because }] = group as [LintConfigInputSetting];
+    const state = on ? "on" : "off";
+    const count = group.length === 1 ? `1 rule starts ${state}` : `${group.length} rules start ${state}`;
+    return `    ${count}  ${style.dim(clean(because))}`;
+  });
+}
+
+/** Which rules start on, off or configured from the repository's lint config, and what was not read. */
 function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
   const settings = input.lintConfig?.settings ?? [];
   const notes = input.lintConfig?.notes ?? [];
   if (settings.length === 0 && notes.length === 0) return [];
+  // A setting for the whole repository the config does not name and that carries no options is counted, not listed.
+  const counted = (setting: LintConfigInputSetting): boolean => setting.explicit === false && setting.config === null && setting.folder === "";
   // What was not read comes first: it can explain every setting after it (a config not statically readable starts
-  // every rule it ports off), and the rows are capped.
+  // every rule it ports off), then the counts, which say the most per row; the rows are capped.
   const rows = [
     ...notes.map(note => `    ${style.dim(clean(note))}`),
-    ...settings.map(setting => {
-      const options = Object.entries(setting.config ?? {}).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(", ");
-      const change = setting.on === false ? (setting.folder === "" ? "starts off" : `starts off in ${clean(setting.folder)}/`) : `starts with ${options}`;
-      return `    ${clean(setting.ruleId)} ${change}  ${style.dim(clean(setting.because))}`;
-    }),
+    ...implicitRows(settings.filter(counted), style),
+    ...settings.filter(setting => !counted(setting)).map(setting => explicitRow(setting, style)),
   ];
   const shown = rows.length > MAX_LINT_CONFIG_LINES ? rows.slice(0, MAX_LINT_CONFIG_LINES - 1) : rows;
   const more = rows.length - shown.length;
@@ -511,7 +558,7 @@ function packRowName(pack: RecommendedPack): string {
 function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
   const names = packs.map(packRowName);
   const nameWidth = Math.max(TABLE_MIN_PACK_WIDTH, ...names.map(name => name.length + 2));
-  const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why it fits`);
+  const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why suggested`);
   const rows = packs.map(
     (pack, index) => `  ${(names[index] ?? "").padEnd(nameWidth)}${String(pack.ruleCount).padEnd(TABLE_RULES_WIDTH)}${clean(pack.reason)}`,
   );
@@ -685,8 +732,8 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
   const repo = clean(input.repoName);
   const count = input.packs.length;
   const scanned = count === 0
-    ? `Scanned ${repo}. None of Rerail’s rule packs fit it.`
-    : `Scanned ${repo}. ${count === 1 ? "1 rule pack fits" : `${count} rule packs fit`}:`;
+    ? `Scanned ${repo}. No rule pack matches what it’s built with.`
+    : `Scanned ${repo}. ${count === 1 ? "1 rule pack" : `${count} rule packs`} suggested for what it’s built with:`;
   const connecting = input.agentsFound.length === 0
     ? ["  Will connect to: no coding agents found"]
     : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];
@@ -1219,8 +1266,8 @@ export function renderSkipped(agents: AgentsConnection, lane: SetupLane): string
   const style = styleFor(lane);
   const { connected } = agents;
   const start = connected.length === 0
-    ? summaryRow("Start", ["Run rerail start in one of your repos.", "Rerail asks, suggests rule packs that fit, and starts there."])
-    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs that fit, and starts there.", ...otherFormLines(connected, "rerail-start")]);
+    ? summaryRow("Start", ["Run rerail start in one of your repos.", "Rerail asks, suggests rule packs, and starts there."])
+    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs, and starts there.", ...otherFormLines(connected, "rerail-start")]);
   const summary = [
     bullet("Rerail is installed · not on in any repo yet", style),
     ...connectionNotes(agents, style),

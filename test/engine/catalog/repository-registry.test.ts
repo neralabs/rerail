@@ -6,7 +6,7 @@ import { join, parse, resolve, sep } from "node:path";
 import { and, eq, ne } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
-import { checkouts, repositories } from "../../../src/engine/storage/schema.js";
+import { checkouts, mergeAssistState, repositories } from "../../../src/engine/storage/schema.js";
 import { withinCheckout } from "../../../src/engine/catalog/checkout-control.js";
 import type { CheckoutRecord, RepositoryStatus } from "../../../src/engine/catalog/repository-model.js";
 import {
@@ -74,6 +74,19 @@ function checkoutSetting(database: RerailDatabase, checkoutPath: string): void {
 
 function settingOwners(database: RerailDatabase): unknown[] {
   return database.$client.prepare("SELECT owner_kind, owner_id FROM rule_settings ORDER BY owner_kind, owner_id").all();
+}
+
+/** Merge Assist's state, by key. */
+function mergeAssistRows(database: RerailDatabase): Record<string, unknown> {
+  return Object.fromEntries(database.select().from(mergeAssistState).all().map(row => [row.key, JSON.parse(row.valueJson)]));
+}
+
+/** A Merge Assist hook command set for `repositoryKey` (`settings:`), and its `gh` readiness read (`github:`). */
+function mergeAssistSettings(database: RerailDatabase, repositoryKey: string, command: string): void {
+  database.insert(mergeAssistState).values([
+    { key: `settings:${repositoryKey}`, valueJson: JSON.stringify({ hook: { command: [command], timeoutSeconds: 10 } }), updatedAt: 1 },
+    { key: `github:${repositoryKey}`, valueJson: JSON.stringify({ state: "signed-in", login: "octocat", repository: null }), updatedAt: 1 },
+  ]).run();
 }
 
 /**
@@ -524,6 +537,41 @@ describe("the repository registry", () => {
     expect(recordCheckout(database, clone).repositoryKey).toMatch(/^clone:/u);
     git(clone, "remote", "add", "origin", "https://github.com/acme/late.git");
     expect(recordCheckout(database, clone).repositoryKey).toBe("remote:github.com/acme/late");
+  });
+
+  it("keeps the Merge Assist hook command when a clone gains a remote, and reads `gh` again under the new key", async () => {
+    const root = await temporary("rerail-registry-late-remote-hook-");
+    const database = open(join(root, "rerail.sqlite"));
+    const clone = gitRepository(join(root, "clone"));
+    const cloneKey = recordCheckout(database, clone).repositoryKey;
+    mergeAssistSettings(database, cloneKey, "notify");
+
+    git(clone, "remote", "add", "origin", "https://github.com/acme/late.git");
+    expect(recordCheckout(database, clone).repositoryKey).toBe("remote:github.com/acme/late");
+    expect(mergeAssistRows(database)).toEqual({
+      "settings:remote:github.com/acme/late": { hook: { command: ["notify"], timeoutSeconds: 10 } },
+    });
+  });
+
+  it("drops the Merge Assist settings of a repository it removes, so they never become another's hook command", async () => {
+    const root = await temporary("rerail-registry-absorb-hook-");
+    const database = open(join(root, "rerail.sqlite"));
+    const clone = gitRepository(join(root, "clone"));
+    const cloneKey = recordCheckout(database, clone).repositoryKey;
+    const web = gitRepository(join(root, "web"), "https://github.com/acme/web.git");
+    const webKey = recordCheckout(database, web).repositoryKey;
+    mergeAssistSettings(database, webKey, "stale");
+
+    // The clone, with no hook command, becomes the remote's repository: the one it replaces leaves no hook behind.
+    adoptRemote(database, cloneKey, webKey);
+    expect(mergeAssistRows(database)).toEqual({});
+
+    // A repository an alias brings in goes with its own.
+    const mirror = gitRepository(join(root, "mirror"), "https://github.com/acme/web-mirror.git");
+    const mirrorKey = recordCheckout(database, mirror).repositoryKey;
+    mergeAssistSettings(database, mirrorKey, "mirror");
+    linkAlias(database, webKey, "https://github.com/acme/web-mirror");
+    expect(mergeAssistRows(database)).toEqual({});
   });
 
   it("gives an unconfigured target the clone repository's configuration, and moves only checkouts to a configured one", async () => {

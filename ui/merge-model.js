@@ -128,10 +128,16 @@ function parseArgv(text) {
   }
 }
 
-/** The timeout field in whole seconds (empty: the default), or `null` when it is not 1 to 60. */
+/**
+ * The timeout field in whole seconds (empty: the default), or `null` when it is not decimal digits from 1 to 60.
+ * `Number` alone would take `0x14`, `1e1`, `+5` or `5.0` as numbers the person never typed as seconds.
+ */
 function parseTimeout(text) {
-  const seconds = text.trim() === "" ? HOOK_TIMEOUT_DEFAULT : Number(text);
-  return Number.isInteger(seconds) && seconds >= 1 && seconds <= HOOK_TIMEOUT_MAX ? seconds : null;
+  const digits = text.trim();
+  if (digits === "") return HOOK_TIMEOUT_DEFAULT;
+  if (!/^\d+$/u.test(digits)) return null;
+  const seconds = Number(digits);
+  return seconds >= 1 && seconds <= HOOK_TIMEOUT_MAX ? seconds : null;
 }
 
 /**
@@ -223,6 +229,30 @@ export function readinessChecks({ github }) {
     default:
       return [{ key: "github", ok: false, text: ["This repository is not on GitHub, so recent remote branches stand in for pull requests."] }];
   }
+}
+
+/* ---------- focus ---------- */
+
+/** The control that takes the focus once a write from one that goes away is drawn: Turn on's strip has Scan now. */
+const FOCUS_NEXT = { maon: "mascan", maoff: "maon" };
+
+/**
+ * Where the focus goes once the page drew a write a person made from the control `used` (`{ act, i, index }`: its
+ * `data-act`, `data-i` and place among the controls with its `act`), when the write left the focus nowhere: Chrome
+ * drops it from a button that is disabled while busy, and the answer may rebuild the button or remove its card.
+ * The index in `controls` (the page's enabled buttons in order, `{ act, i }`) of the same control, rebuilt or not;
+ * for Dismiss, the card's that took the dismissed one's place, else the last card's; for Turn on, Scan now; for
+ * Turn off, Turn on. `-1` when none is there: the page then focuses a heading.
+ */
+export function refocusIndex(used, controls) {
+  const same = controls.findIndex(c => c.act === used.act && (c.i ?? null) === (used.i ?? null));
+  if (same >= 0) return same;
+  if (used.act === "madismiss") {
+    const cards = controls.flatMap((c, n) => (c.act === "madismiss" ? [n] : []));
+    return cards[Math.min(used.index, cards.length - 1)] ?? -1;
+  }
+  const next = FOCUS_NEXT[used.act];
+  return next === undefined ? -1 : controls.findIndex(c => c.act === next);
 }
 
 /* ---------- write errors ---------- */

@@ -3,14 +3,14 @@ import { appendFile, mkdtemp, readFile, realpath, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodeRuleBridge, renderSteer, type CodeRuleViolation, type RuleSteerDelivery } from "../../src/engine/index.js";
-import type { FileDigests } from "../../src/runtime/owed-ledger.js";
-import { RerailRuntime, type SessionSuspension, type SuspendedSessions } from "../../src/runtime/runtime.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+import { CodeRuleBridge, renderSteer, type CodeRuleViolation, type RuleSteerDelivery } from "../../../src/engine/index.js";
+import type { FileDigests } from "../../../src/runtime/owed-ledger.js";
+import { RerailRuntime, type SessionSuspension, type SuspendedSessions } from "../../../src/runtime/runtime.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** The next look at whether an owed item's files changed (`changedFiles`), held while a test sets it (`holdNextLook`). */
 const looks = vi.hoisted(() => ({ hold: undefined as (() => Promise<void>) | undefined }));
-vi.mock("../../src/runtime/owed-ledger.js", async importOriginal => {
+vi.mock("../../../src/runtime/owed-ledger.js", async importOriginal => {
   const actual = await importOriginal<{ changedFiles: (root: string, digests: FileDigests) => Promise<string[]> }>();
   return {
     ...actual,

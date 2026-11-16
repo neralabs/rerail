@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
+import { withExperiments } from "../support/environment/experiments.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+withExperiments("REPOSITORY_SCAN");
 
 describe("a scan asked through the API", () => {
   let root: string;

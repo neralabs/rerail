@@ -1,0 +1,1 @@
+`rerail update` ends by listing the rule packs you installed that have a newer version for your Rerail, with the `rerail packs add` command that installs them, even when Rerail itself is current. It installs none. A pack is pinned to its version, so `rerail packs add <id>` without a version leaves it; the docs now say so.

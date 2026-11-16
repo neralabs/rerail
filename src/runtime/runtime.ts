@@ -30,7 +30,7 @@ import {
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
 } from "../engine/code-rule/code-rule.js";
 import type { AuditSettings as CheckoutAuditSettings } from "../engine/audit/audit-control-schema.js";
-import { firstRepositoryAuditEnabled, missedSteerDigestEnabled, steerStrategiesEnabled } from "../engine/experimental-features.js";
+import { conversationRulesEnabled, firstRepositoryAuditEnabled, missedSteerDigestEnabled, requireExperiment, steerStrategiesEnabled } from "../engine/experimental-features.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
@@ -309,11 +309,11 @@ function owedNow(state: RuntimeSessionState): number {
 }
 
 /**
- * The steers of `steers` the session owes its agent itself: not a Merge Assist note, which records itself as given once
- * a delivery takes it (`settled`) and which Merge Assist hands the session's next open again until one does.
+ * The steers of `steers` the session owes its agent itself: not a Merge Assist note (`mergeAssistNote`), which records
+ * itself as given once a delivery takes it and which Merge Assist hands the session's next open again until one does.
  */
 function ownSteers(steers: readonly PendingSteer[]): PendingSteer[] {
-  return steers.filter(steer => steer.settled === undefined);
+  return steers.filter(steer => steer.mergeAssistNote !== true);
 }
 
 /** Whether `item` is the steer of an edit Rerail rolled back: the agent's only word that its edit is gone. */
@@ -559,6 +559,8 @@ interface PendingSteer {
   scope: string[];
   /** Called once the steer leaves the queue, with whether a delivery took it (a Merge Assist note records itself then). */
   settled?: (delivered: boolean) => void;
+  /** A Merge Assist note: the conflict store keeps it until a delivery takes it, so closing the session loses nothing. */
+  mergeAssistNote?: true;
 }
 
 /**
@@ -1344,7 +1346,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const calls = takeUnanswered(state.pendingCodeRuleCalls, sessionEnds);
     if (calls.length === 0) return;
     await state.codeRuleBridge?.finishUnanswered(calls.map(call => call.id));
-    for (const call of calls) await this.#append(state, { type: "policy-result", toolCallId: call.id });
+    for (const call of calls) {
+      state.mergeAssistEdits.delete(call.id);
+      await this.#append(state, { type: "policy-result", toolCallId: call.id });
+    }
   }
 
   /** Runs `wait` as a boundary waiting for the session's edit checks: the steers they produce meanwhile ride its answer. */
@@ -1741,7 +1746,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return state.workspace.relate(left, right, spec);
   }
 
+  /** Internal testing: refused while conversation rules are off. */
   async testRule(sessionId: string, reference: string, text: string): Promise<{ similarity: number }> {
+    requireExperiment("CONVERSATION_RULES");
     this.#session(sessionId);
     const [left, right] = await this.#embedder.embed([reference, text]);
     if (left === undefined || right === undefined) {
@@ -1760,6 +1767,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       sample?: { source: string; boundary: (typeof SAMPLE_BOUNDARIES)[number]; text: string } | undefined;
     },
   ): Promise<unknown> {
+    // Internal testing: refused while conversation rules are off.
+    requireExperiment("CONVERSATION_RULES");
     const state = this.#session(sessionId);
     const registry = state.registry;
     if (registry === undefined) throw new Error("Rule management requires a configured native model");
@@ -2500,7 +2509,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
     await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
     const registry = state.registry;
-    if (registry === undefined) return;
+    // Internal testing: no conversation rule is checked while they are off, a session's own included.
+    if (registry === undefined || !conversationRulesEnabled()) return;
     const matches = registry.match(sample, { turn: state.turn });
 
     if (matches.length === 0) return;
@@ -2707,6 +2717,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         // A note speaks for no source: no edit makes it stale.
         revision: Number.POSITIVE_INFINITY,
         scope: [],
+        mergeAssistNote: true,
         settled: delivered => {
           for (const mark of note.marks) state.mergeAssistNotesInFlight.delete(mark);
           if (!delivered) return;

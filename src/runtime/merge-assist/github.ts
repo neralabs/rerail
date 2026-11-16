@@ -41,8 +41,9 @@ export interface PullRequestListing {
 
 export interface GithubClient {
   /**
-   * `not-github` without a repository; `missing` without `gh`; `signed-out` when `gh auth status` says so for the host;
-   * `unavailable` when `gh` could not tell (it timed out, failed to start or printed too much).
+   * `not-github` without a repository; `missing` without `gh`; `signed-out` when `gh auth status` says it holds no
+   * login for the host; `unavailable` when `gh` could not tell (it timed out, failed to start, printed too much, or
+   * failed otherwise, as with a token it could not check).
    */
   readiness(repository: GithubRepository | null): Promise<GithubReadiness>;
   /**
@@ -192,6 +193,12 @@ const PULL_REQUEST_FIELDS = "number,title,url,headRefName,headRefOid,headReposit
 
 const userSchema = z.object({ login: z.string() });
 
+/**
+ * What `gh auth status` prints when it holds no login for the host: "You are not logged into any GitHub hosts", "…any
+ * accounts on <host>" (gh 2.40 and later), or `Hostname "<host>" not found among authenticated GitHub hosts` (before).
+ */
+const NOT_LOGGED_IN = /not logged in|not found among authenticated GitHub hosts/iu;
+
 /** One entry of `gh pr list` on `host` as a summary, or null when it fails validation. */
 function pullRequestOf(entry: unknown, host: string): PullRequestSummary | null {
   const parsed = pullRequestEntrySchema.safeParse(entry);
@@ -319,11 +326,15 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
     return result.code === 0 ? json(result.stdout) : null;
   }
 
-  /** Whether `gh` holds a working sign-in for the host, as `gh auth status` says, or why that could not be read. */
+  /**
+   * Whether `gh` holds a working sign-in for the host, as `gh auth status` says, or why that could not be read. It is
+   * signed out only when `gh` says it holds no login ({@link NOT_LOGGED_IN}); any other failure (a token it could not
+   * check, offline, or rejected) is `unavailable`.
+   */
   async function signInState(host: string): Promise<"signed-in" | "signed-out" | "missing" | "unavailable"> {
     try {
       const status = await run(["auth", "status", "--hostname", host]);
-      if (status.code !== 0) return "signed-out";
+      if (status.code !== 0) return NOT_LOGGED_IN.test(status.stderr) ? "signed-out" : "unavailable";
       signedInHosts.add(host);
       return "signed-in";
     } catch (error) {

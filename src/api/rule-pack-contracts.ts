@@ -29,6 +29,7 @@ export const rulePackSchema = z.object({
     group: z.string().describe("The group the rule is filed under inside its pack, e.g. Complexity or api."),
     mode: z.enum(RULE_MODES).describe("The rule mode the pack starts it in."),
     on: z.boolean().describe("Whether the pack starts the rule on."),
+    heldOff: z.string().optional().describe("Why a reviewer holds the rule off though upstream turns it on; set-up never turns it on from the repository's lint config."),
     examples: z.object({ caught: ruleExampleSchema, passes: ruleExampleSchema }).strict().optional()
       .describe("One example the rule catches and one it lets pass, where the pack has them."),
   }).strict()),

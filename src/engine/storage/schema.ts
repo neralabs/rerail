@@ -14,6 +14,7 @@ import {
 } from "../audit/audit.js";
 import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "../code-rule/code-rule-schema.js";
 import {
+  RULE_SETTING_ORIGINS,
   RULE_SETTING_OWNER_KINDS,
   RULE_SETTING_TARGET_KINDS,
   RULE_SOURCE_KINDS,
@@ -228,7 +229,8 @@ export const ruleAttachments = sqliteTable(
 /**
  * `on` / `mode` / `suppressions` / `config_json` for a rule or a whole pack, owned by a repository (`owner_id` =
  * repository key) or a checkout (`owner_id` = checkout path), optionally for one folder. A null field defers to the
- * next owner. `config_json` (option values of a rule by Rerail) is set only on rule targets.
+ * next owner. `config_json` (option values of a rule by Rerail) is set only on rule targets. `origin`: `lint-config`
+ * when the repository's lint config gave the row (set-up, `rerail packs calibrate`); null when a person or an agent did.
  */
 export const ruleSettings = sqliteTable(
   "rule_settings",
@@ -243,6 +245,7 @@ export const ruleSettings = sqliteTable(
     suppressions: text("suppressions", { enum: RULE_SUPPRESSIONS }),
     config: text("config_json", { mode: "json" }).$type<RuleConfig>(),
     updatedAt: integer("updated_at").notNull(),
+    origin: text("origin", { enum: RULE_SETTING_ORIGINS }),
   },
   table => [
     primaryKey({ columns: [table.ownerKind, table.ownerId, table.folder, table.targetKind, table.targetId] }),
@@ -408,7 +411,10 @@ export const audits = sqliteTable(
      * `audit_rule_provenances` and writes `[]` here; the audit store reads whichever the row has.
      */
     ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<AuditRuleProvenance[]>().notNull(),
-    /** The run's rule provenance in `audit_rule_provenances`; null when `rule_provenance_json` holds it, or it is empty. */
+    /**
+     * The run's rule provenance in `audit_rule_provenances`, `[]` included; null only in a row a Rerail older than
+     * `audit-rule-provenance-once` wrote, whose `rule_provenance_json` holds the provenance.
+     */
     ruleProvenanceId: integer("rule_provenance_id"),
     paths: text("paths_json", { mode: "json" }).$type<string[]>().notNull(),
     startedAt: integer("started_at").notNull(),
@@ -450,6 +456,16 @@ export const auditRuleProvenances = sqliteTable(
   },
   table => [check("audit_rule_provenances_json", sql`json_type(${table.ruleProvenance}) = 'array'`)],
 );
+
+/**
+ * The last audit a file held when it ran `audit-rule-provenance-once`, which writes the row: the daemon's move of the
+ * provenance older audits hold inline takes the audits up to this one, in the order they were recorded
+ * (`rule-provenance-move.ts`). No row in a new file, in one that held no audit then, or in one that ran the step before
+ * it wrote this table; an older Rerail never reads it.
+ */
+export const auditRuleProvenanceStep = sqliteTable("audit_rule_provenance_step", {
+  lastAuditId: text("last_audit_id").primaryKey(),
+});
 
 /** Workspace-owned ongoing audit defaults; first-repository audits are fixed log-only audits. */
 export const auditResultPages = sqliteTable(

@@ -28,6 +28,9 @@ import { openRerailDatabase, SqliteAuditStore, SqliteAuditControlStore } from ".
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REPOSITORY_SCAN", "CONVERSATION_RULES", "SEMANTIC_TOOLS", "BLOCK_MODE", "MERGE_ASSIST");
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
 

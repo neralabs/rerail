@@ -21,6 +21,7 @@ import { processState, type ProcessSignal } from "../engine/process-liveness.js"
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { keepFolderPrivate, makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
+import type { ExperimentalFeature } from "../engine/experimental-features.js";
 
 /** What `rerail status` and the launcher need to find a running daemon. */
 export interface DaemonState {
@@ -56,6 +57,11 @@ export interface DaemonState {
    * certificate and no other (see {@link daemonFetch}), so a self-signed one needs no CA.
    */
   tlsFingerprint256?: string;
+  /**
+   * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
+   * the key, and this names it and the command that fixes it. Absent for every other daemon.
+   */
+  remoteRefused?: string;
 }
 
 /** Header a Rerail process, and the dashboard page, send the daemon's {@link DaemonState.accessToken} in. */
@@ -243,6 +249,8 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   workspaceRoot: string;
   /** When Rerail was installed on this machine (epoch ms); null before the database exists. */
   installedAt: number | null;
+  /** The experimental features this daemon runs (docs/internal-testing.md); the dashboard shows only theirs. */
+  experiments: ExperimentalFeature[];
 }
 
 /**
@@ -366,6 +374,7 @@ const DAEMON_STATE_FIELDS: Readonly<Record<string, (value: unknown) => boolean>>
   nativeToken: isOptionalString,
   accessToken: isOptionalString,
   tlsFingerprint256: isOptionalString,
+  remoteRefused: isOptionalString,
   startedAt: value => typeof value === "number",
   packageRoot: isString,
   workspaceRoot: isOptionalString,
@@ -900,7 +909,7 @@ export function relaunchDaemon(args: string[], logFile: string, machine: DaemonM
 
 export interface LaunchedDaemon {
   pid: number | undefined;
-  /** Why the launched process is gone, or undefined while it runs. */
+  /** Why the launched process is gone, the same each time it is asked once it is; undefined while it runs. */
   exitReason: () => string | undefined;
 }
 
@@ -938,7 +947,8 @@ export interface DetachedLaunch {
 
 /**
  * Why a process the native spawn started is gone, or undefined while it runs: its exit code, from the handle the native
- * module kept. A binary built before it had no such handle, and there only a pid that no process holds says so.
+ * module kept, which it closes once it has given the code, so a second read after the exit throws. A binary built before
+ * it had no such handle, and there only a pid that no process holds says so.
  */
 function detachedExitReason(launched: NativeProcess, kill: ProcessSignal): string | undefined {
   if (launched.exitCode === undefined) return processAlive(launched.pid, kill) ? undefined : "exited";
@@ -962,7 +972,9 @@ export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = 
   if (machine.platform === "win32") {
     const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const launched = machine.spawnDetached({ program, args: [...launch.args], cwd: launch.cwd ?? null, env, logFile: launch.logFile });
-    return { pid: launched.pid, exitReason: () => detachedExitReason(launched, machine.kill) };
+    // The native module closes the handle once it has given the exit code, and a later read throws: keep the answer.
+    let exited: string | undefined;
+    return { pid: launched.pid, exitReason: () => (exited ??= detachedExitReason(launched, machine.kill)) };
   }
   const log = openSync(launch.logFile, "a", 0o600);
   let child: StartedChild;

@@ -21,7 +21,7 @@
     "To change only where a rule applies, a Rerail pack's rule included, `rerail rules show <id>` prints it as a draft: change its `scope` alone, test it, and after the person confirms run `rerail rules add <draft.json>` and `rerail rules approve <id it printed>`. A pack rule is saved as the person's copy, which turns the original off once approved.",
     "A rule's mode is `log` (recorded only) or `steer` (its guidance is sent to the agent).",
     "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't and record that line with `rerail feedback <rule-id> '<that line>'`.",
-    "Rule packs are npm packages named `@neralabs/rerail-pack-<id>`; manage them with `rerail packs list`, `add`, `remove` and `recommend`.",
+    "Rule packs are npm packages named `@neralabs/rerail-pack-<id>`; manage them with `rerail packs list`, `add`, `remove` and `recommend`. Packs that port a linter are linter-equivalent to it, and set-up turns their rules on and off to match the repository's own linter config; after that config changes, `rerail packs calibrate` reads it again.",
     "A rule for one worktree only is a rule document in that worktree's `.rerail/rules/<name>.json`: it runs there and in no other checkout, needs no install or add, and `rerail packs list` run there shows whether it loaded."
   ]
 }
