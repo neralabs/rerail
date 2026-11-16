@@ -33,6 +33,18 @@ export { type HostRuntimePort, type HostRuntimeSessionState, RerailHostRuntime }
 export { OmpMessageContentSource, type OmpSessionEntryLike, OmpWatermarkStore } from "./omp-semantic.js";
 export { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
 export {
+  createMergeAssistService,
+  MERGE_ASSIST_ERROR_CODES,
+  MergeAssistError,
+  type MergeAssistErrorCode,
+  type MergeAssistRuntime,
+  type MergeAssistService,
+  type MergeAssistServiceOptions,
+  type MergeAssistSettingsChange,
+} from "./merge-assist/service.js";
+export { type StoredConflict, writeConflicts } from "./merge-assist/conflict-store.js";
+export { type GithubClient, GithubError, type GithubRepository, type PullRequestSummary } from "./merge-assist/github.js";
+export {
   isRerailStarted,
   setCheckoutStarted,
   setRepositoryStarted,

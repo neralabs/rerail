@@ -337,7 +337,10 @@ describe("Rerail daemon", () => {
     const response = await fetch(new URL(`/api/presentation?${query}`, daemon.url));
     const text = await response.text();
     expect(response.status).toBe(200);
-    expect(Buffer.byteLength(text)).toBeLessThan(1024);
+    // The answer names the test's folder, whose length depends on where the temp folder is, not on Rerail. So the answer
+    // is measured as if that folder were /tmp/rerail-daemon-XXXXXX (25 characters), made straight in Linux's /tmp.
+    const measured = text.replaceAll(JSON.stringify(root).slice(1, -1), "/tmp/rerail-daemon-XXXXXX");
+    expect(Buffer.byteLength(measured)).toBeLessThan(1024);
     const compact = presentationResponseSchema.parse(JSON.parse(text));
     expect(compact.context?.daemon).toEqual({
       pid: process.pid, database: { path, exists: true }, native: { ok: true }, workspaceRoot: root,

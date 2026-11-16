@@ -5,11 +5,13 @@
  * when PATH lacks it, so a file sourced twice (`.bash_profile` sourcing `.bashrc`) adds it once. Windows: the user
  * `Path` in `HKCU\Environment`, keeping its registry value kind so `%VAR%` entries stay unexpanded.
  *
- * Nothing is written when the running PATH has the directory already: the person manages it. `RERAIL_MODIFY_PATH=0`
- * turns the whole step off (dotfile managers; the test suite).
- *
  * Set-up records in the Rerail home that it handled PATH (`launcherPathMarker`). `rerail update` adds the entry only
  * where no set-up ever did, so a block the person took out by hand stays out; `rerail setup` run again adds it back.
+ *
+ * Once that record exists, nothing is written when the running PATH has the directory already: the person manages it.
+ * Before it does, the running PATH says nothing about a new terminal: the shell an uninstall ran in keeps the
+ * directory after the block is gone. `RERAIL_MODIFY_PATH=0` turns the whole step off (dotfile managers; the test
+ * suite).
  */
 import { existsSync } from "node:fs";
 import { chmod, copyFile, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
@@ -62,10 +64,15 @@ export interface LauncherPathOptions {
   loginShell?: string | null;
   platform?: NodeJS.Platform;
   dryRun?: boolean;
+  /**
+   * A set-up recorded PATH as handled in this Rerail home (`launcherPathMarker`). Only then does a running PATH that
+   * has the directory mean the person manages it.
+   */
+  handledBefore?: boolean;
 }
 
 export type LauncherPathChange =
-  /** `RERAIL_MODIFY_PATH=0`, or the running PATH has the directory already. */
+  /** `RERAIL_MODIFY_PATH=0`, or PATH was handled before and the running PATH has the directory already. */
   | { status: "skipped" }
   /** Every startup file (or the Windows user Path) names the directory already. */
   | { status: "unchanged"; locations: string[] }
@@ -102,25 +109,40 @@ function onRunningPath(binDir: string, env: NodeJS.ProcessEnv, platform: NodeJS.
 export async function addLauncherToPath(options: LauncherPathOptions): Promise<LauncherPathChange> {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
-  if (env.RERAIL_MODIFY_PATH === "0" || onRunningPath(options.binDir, env, platform)) return { status: "skipped" };
+  if (leftToPerson(options, env, platform)) return { status: "skipped" };
   try {
     if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check" : "add", env, options.home);
-    const files = startupFiles(options.home, env, options.loginShell === undefined ? accountLoginShell() : options.loginShell);
-    const changed: string[] = [];
-    for (const file of files) {
-      const existing = await readText(file.path);
-      const text = addBlock(existing?.text ?? "", file.block(options.binDir));
-      if (text === (existing?.text ?? "")) continue;
-      changed.push(file.path);
-      if (options.dryRun !== true) {
-        if (existing !== undefined) await backUp(file.path);
-        await writeTextFile(file.path, text, existing ?? { exists: false, mode: 0o644 }, false);
-      }
-    }
-    return changed.length === 0 ? { status: "unchanged", locations: files.map(file => file.path) } : { status: "changed", locations: changed };
+    return await addToStartupFiles(options, env);
   } catch (error) {
     return { status: "failed", reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/** `RERAIL_MODIFY_PATH=0`, or a set-up recorded PATH and the running PATH has the directory already. */
+function leftToPerson(options: LauncherPathOptions, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
+  return env.RERAIL_MODIFY_PATH === "0" || (options.handledBefore === true && onRunningPath(options.binDir, env, platform));
+}
+
+/** Put the block in each startup file the login shell reads. Throws on a file it cannot read or write. */
+async function addToStartupFiles(options: LauncherPathOptions, env: NodeJS.ProcessEnv): Promise<LauncherPathChange> {
+  const files = startupFiles(options.home, env, options.loginShell === undefined ? accountLoginShell() : options.loginShell);
+  const changed: string[] = [];
+  for (const file of files) {
+    if (await addBlockToFile(file.path, file.block(options.binDir), options.dryRun === true)) changed.push(file.path);
+  }
+  return changed.length === 0 ? { status: "unchanged", locations: files.map(file => file.path) } : { status: "changed", locations: changed };
+}
+
+/** Whether `path` needs `block`; writes it, backing up the file first, unless `dryRun`. */
+async function addBlockToFile(path: string, block: string, dryRun: boolean): Promise<boolean> {
+  const existing = await readText(path);
+  const text = addBlock(existing?.text ?? "", block);
+  if (text === (existing?.text ?? "")) return false;
+  if (!dryRun) {
+    if (existing !== undefined) await backUp(path);
+    await writeTextFile(path, text, existing ?? { exists: false, mode: 0o644 }, false);
+  }
+  return true;
 }
 
 /** Take out what `addLauncherToPath` wrote, from every startup file it may have used. Never throws. */

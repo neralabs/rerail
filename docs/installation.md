@@ -171,15 +171,16 @@ How checkouts and worktrees inherit this: [Rule scoping](rule-scoping.md#start-a
 
 ## Remove
 
-Removal keeps your rules and history unless you ask to delete them.
+Removal keeps your rules and history unless you ask to delete them. `/rerail-uninstall` in a coding agent offers both.
 
 ```sh
 rerail rules export --output ~/rerail-rules.json   # optional: a portable copy of your rules
 rerail install --remove --dry-run                  # print what would change
-rerail install --remove                            # or /rerail-uninstall in a coding agent
+rerail install --remove                            # remove, keeping a backup
+rerail install --remove --delete-data              # remove and delete everything; cannot be undone
 ```
 
-Restart open coding agent sessions afterwards. `--delete-data` also deletes your database; that cannot be undone.
+Restart open coding agent sessions afterwards.
 
 <details>
 <summary>What removal keeps and deletes</summary>
@@ -189,13 +190,15 @@ leaving other tools' entries alone. It stops the daemon and moves your database 
 
 It then deletes, naming each path, `~/.rerail/current`, the launcher, every version, the rule packs and the cache
 `~/.cache/rerail` (on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there).
+Your settings, logs and records stay in `~/.rerail`.
 
-`rerail install --remove --delete-data` deletes the database, its backups, the cache and the checkouts' session ledgers
-instead of keeping them. Nothing it deletes can be restored.
+`rerail install --remove --delete-data` deletes the database, its backups, the checkouts' session ledgers, the cache
+and everything else Rerail wrote in `~/.rerail`, then `~/.rerail` itself. Nothing it deletes can be restored. Its
+output names what it cannot reach, with the command that deletes each.
 
 </details>
 
-See [Removing Rerail in detail](how-setup-works.md#removing-rerail-in-detail).
+See [What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind).
 
 ## Supported and not supported
 

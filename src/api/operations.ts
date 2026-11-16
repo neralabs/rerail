@@ -23,6 +23,7 @@ import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { mergeAssistOperations } from "./merge-assist-operations.js";
 import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, historyScope, repositoryOperations, within } from "./repository-operations.js";
 import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
@@ -89,7 +90,8 @@ const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   blind: z.enum(AUDIT_BLIND_REASONS).optional(),
 }).strict();
 
-export const auditRecordSchema = createSelectSchema(audits).extend({
+// `ruleProvenance` is the audit's provenance wherever the database keeps it; the id of its stored copy stays inside.
+export const auditRecordSchema = createSelectSchema(audits).omit({ ruleProvenanceId: true }).extend({
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),
@@ -702,6 +704,7 @@ export const operations: readonly Operation[] = [
     },
   }),
   ...repositoryOperations,
+  ...mergeAssistOperations,
 ];
 
 /** The flat argument object an MCP tool takes: path params, query, and body merged. */

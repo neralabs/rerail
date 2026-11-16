@@ -1,8 +1,9 @@
 /**
  * Keeps the derived audit history tables (`audit_violations`, `rule_violation_rollup`, `audit_rule_sets`,
  * `audit_rule_set_rules`, `audit_rule_set_uses`, and the trigger-only scratch table `audit_violations_staging`; see
- * `schema.ts`) in step with `audits`. They are SQLite triggers rather than code in the audit writer because every
- * Rerail that shares the file writes `audits`, an older one included, and only a trigger sees all of them.
+ * `schema.ts`) in step with `audits`, and deletes a stored rule provenance (`audit_rule_provenances`) no audit names
+ * any more. They are SQLite triggers rather than code in the audit writer because every Rerail that shares the file
+ * writes `audits`, an older one included, and only a trigger sees all of them.
  *
  * The triggers are part of the DDL applied on every open (`schema-sql.generated.ts`), created `IF NOT EXISTS`: a
  * build that changes one must drop it in a migration step so the new body is created. The statements avoid conflict
@@ -191,5 +192,13 @@ export const AUDIT_HISTORY_TRIGGER_STATEMENTS: readonly string[] = [
   BEGIN
   DELETE FROM audit_violations WHERE audit_id = OLD.audit_id;
   DELETE FROM audit_rule_set_uses WHERE audit_id = OLD.audit_id;
+  END`,
+  // A stored rule provenance goes with the last audit that names it, so `rerail reset` leaves none of a repository's
+  // behind, whichever build deletes the audits.
+  `CREATE TRIGGER IF NOT EXISTS \`audits_rule_provenance_delete\` AFTER DELETE ON \`audits\`
+  WHEN OLD.rule_provenance_id IS NOT NULL
+  BEGIN
+  DELETE FROM audit_rule_provenances WHERE provenance_id = OLD.rule_provenance_id
+    AND NOT EXISTS (SELECT 1 FROM audits WHERE rule_provenance_id = OLD.rule_provenance_id);
   END`,
 ];

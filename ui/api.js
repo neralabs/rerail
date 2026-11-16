@@ -28,6 +28,17 @@ function accessHeaders() {
   return access === null ? {} : { "x-rerail-access": access };
 }
 
+/** The API's error code in a refusal's body (`{ error, message }`); `null` for a body that holds none. */
+async function errorCode(response) {
+  try {
+    const body = await response.json();
+    return typeof body?.error === "string" ? body.error : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A failed read throws an Error carrying the answer's `status` and the API's error `code` (`null` without one). */
 export async function get(path, { etag } = {}) {
   const response = await fetch(apiUrl(path), {
     headers: { ...accessHeaders(), ...(etag === undefined ? {} : { "if-none-match": etag }) },
@@ -35,7 +46,7 @@ export async function get(path, { etag } = {}) {
   const nextEtag = response.headers.get("etag") ?? undefined;
   if (response.status === 304) return { status: 304, etag: nextEtag, body: undefined };
   if (response.status === 401) throw accessRequired();
-  if (!response.ok) throw new Error(`${path} answered ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(`${path} answered ${response.status}`), { status: response.status, code: await errorCode(response) });
   return { status: response.status, etag: nextEtag, body: await response.json() };
 }
 

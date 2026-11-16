@@ -239,7 +239,7 @@ describe("rerail install --root", () => {
     expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data"], context)).toBe(0);
 
     for (const path of deleted) expect(await lstat(path).then(() => true, () => false), path).toBe(false);
-    expect((await readdir(context.home)).filter(name => name.includes(".sqlite"))).toEqual([]);
+    expect(existsSync(context.home)).toBe(false);
     expect((await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
     expect(await readFile(join(elsewhere, "sessions", "keep.jsonl"), "utf8")).toBe("not Rerail's to delete");
     expect(await readlink(join(linkedFolder, ".rerail"))).toBe(elsewhere);
@@ -247,6 +247,102 @@ describe("rerail install --root", () => {
     expect(existsSync(join(linked, ".rerail", "content-v1.sqlite"))).toBe(true);
     expect(existsSync(join(unrecorded, ".rerail", "sessions"))).toBe(true);
     expect(output.mock.calls.join("")).toContain(`Deleted ${backup} (`);
+  });
+
+  it("deletes every file Rerail wrote in its home with --delete-data, then the home, and the dry run only lists them", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    vi.stubEnv("RERAIL_DEVICE_SECRET_STORE", "file");
+    // What `rerail activate`, the daemon, the device secret store and a write cut short leave in the home.
+    await mkdir(join(context.home, PROFILES_DIR, "acme"), { recursive: true });
+    await mkdir(join(context.home, DEVICE_SECRETS_DIR), { recursive: true });
+    await writeFile(join(context.home, DEVICE_SECRETS_DIR, "acme"), "secret");
+    const written = [CONSENT_FILE, ACTIVE_PROFILE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_PORT_FILE, DAEMON_LOG_FILE, `${DAEMON_LOG_FILE}.1`, "daemon.json.4242.tmp", RULES_DUMP_FILE];
+    for (const name of written) await writeFile(join(context.home, name), "");
+    await writeFile(join(context.home, RERAIL_DATABASE_FILE), "rules and history");
+    const before = (await readdir(context.home)).sort();
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], context)).toBe(0);
+    const planned = output.mock.calls.join("");
+    for (const name of [...written, PROFILES_DIR, DEVICE_SECRETS_DIR, LOCKS_DIR, SEEN_AGENTS_FILE]) {
+      expect(planned).toContain(`Would delete ${join(context.home, name)} (Rerail's settings, logs and records).`);
+    }
+    expect(planned).toContain(`Would delete ${context.home} (the Rerail home).`);
+    // Nothing is listed twice: the installation and the database each have their own line.
+    expect(planned.split(`Would delete ${join(context.home, RERAIL_DATABASE_FILE)} `)).toHaveLength(2);
+    expect(planned).not.toContain(`Would delete ${context.updater.currentLink}`);
+    expect((await readdir(context.home)).sort()).toEqual(before);
+    output.mockClear();
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data"], context)).toBe(0);
+
+    expect(existsSync(context.home)).toBe(false);
+    const text = output.mock.calls.join("");
+    expect(text).toContain(`Deleted ${join(context.home, CONSENT_FILE)} (Rerail's settings, logs and records).`);
+    expect(text).toContain(`Deleted ${context.home} (the Rerail home).`);
+    expect(text).not.toContain("delete it if you will not install Rerail again");
+  });
+
+  it("keeps the files that are not Rerail's in a shared Rerail home with --delete-data, and the folders holding them", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    // As with RERAIL_HOME=$HOME: the person's own files sit beside Rerail's.
+    const bin = dirname(context.updater.launcherPath);
+    await writeFile(join(bin, "deploy"), "#!/bin/sh\n");
+    await writeFile(join(context.home, ".bashrc"), "mine");
+    await writeFile(join(context.home, CONSENT_FILE), "{}");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], context)).toBe(0);
+    expect(output.mock.calls.join("")).toContain(`Would keep ${context.home}, which also holds files that are not Rerail's.`);
+    expect(output.mock.calls.join("")).not.toContain(`Would delete ${bin} `);
+    output.mockClear();
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data"], context)).toBe(0);
+
+    expect(await readFile(join(context.home, ".bashrc"), "utf8")).toBe("mine");
+    expect(existsSync(join(bin, "deploy"))).toBe(true);
+    for (const name of [CONSENT_FILE, SEEN_AGENTS_FILE, LOCKS_DIR]) expect(existsSync(join(context.home, name)), name).toBe(false);
+    const text = output.mock.calls.join("");
+    expect(text).toContain(`Kept ${context.home}, which also holds files that are not Rerail's.`);
+    expect(text).not.toContain("delete those if you will not install Rerail again");
+  });
+
+  it.skipIf(process.platform === "win32")("names what --delete-data cannot reach, each with the command that deletes it", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    // A settings file the person had before: connecting backs it up, and so does the removal.
+    const settings = join(hostConfigHome, ".claude", "settings.json");
+    await writeFile(settings, JSON.stringify({ theme: "dark" }));
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const ledgers = join(dirname(hostConfigHome), "ledgers");
+    await mkdir(ledgers);
+    vi.stubEnv("RERAIL_STORAGE_ROOT", ledgers);
+    // Another Rerail home's daemon (alive: this test's parent process) holds the cache.
+    const cache = contentCache(hostConfigHome);
+    await mkdir(cache, { recursive: true });
+    await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: process.ppid }));
+    const removal = { ...context, machine: windows(["rerail-0123456789abcdef01234567"]) };
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], removal)).toBe(0);
+    expect(output.mock.calls.join("")).toContain(`Would keep ${ledgers} (the session ledgers RERAIL_STORAGE_ROOT names)`);
+    expect(output.mock.calls.join("")).toContain("Would keep the <file>.<timestamp>.bak copy");
+    output.mockClear();
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data"], removal)).toBe(0);
+
+    const text = output.mock.calls.join("");
+    const copies = (await readdir(dirname(settings))).filter(name => name.startsWith("settings.json.") && name.endsWith(".bak"));
+    expect(copies).toHaveLength(2);
+    for (const name of copies) {
+      const copy = join(dirname(settings), name);
+      expect(text).toContain(`Kept ${copy} (a copy of ${settings} from before Rerail changed it). Delete it with: ${cleanupCommand(copy, false)}`);
+    }
+    expect(text).toContain(`Kept ${ledgers} (the session ledgers RERAIL_STORAGE_ROOT names): it may hold files that are not Rerail's. If it holds only Rerail's, delete it with: ${cleanupCommand(ledgers, false)}`);
+    expect(text).toContain(`Session ledgers in a checkout Rerail never recorded are not found. Delete each checkout's with: ${cleanupCommand(join("<checkout>", ".rerail", "sessions"), false)}`);
+    expect(text).toContain(`Kept ${cache} (the cache): another Rerail daemon, pid ${process.ppid}, still uses it. Delete it once no Rerail uses it: ${cleanupCommand(cache, false)}`);
+    expect(existsSync(ledgers)).toBe(true);
   });
 
   it("backs up without --delete-data, leaving earlier backups and the checkouts' session ledgers", async () => {
@@ -472,6 +568,45 @@ describe("rerail install --root", () => {
     await runInstallCommand(["--root", packageRoot, "--remove"], context);
     expect(await readFile(zshrc, "utf8")).toBe("setopt autocd\n");
   });
+
+  it.skipIf(process.platform === "win32")("puts the launcher back on PATH when Rerail is installed again from the shell that removed it", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    await runInstallCommand(["--root", packageRoot, "--remove"], context);
+    expect(await readFile(zshrc, "utf8")).toBe("setopt autocd\n");
+    // The uninstall took the block out of the file, not the directory out of the PATH of the shell it ran in.
+    vi.stubEnv("PATH", `${join(context.home, "bin")}:${process.env.PATH}`);
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+
+    expect(output.mock.calls.join("")).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
+    expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
+  });
+
+  it.skipIf(process.platform === "win32")("leaves a block the person took out alone on a later install, while their PATH has the launcher", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    await writeFile(zshrc, "setopt autocd\n");
+    vi.stubEnv("PATH", `${join(context.home, "bin")}:${process.env.PATH}`);
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+
+    expect(await readFile(zshrc, "utf8")).toBe("setopt autocd\n");
+    // " to PATH" is in every launcher line: added, would add, could not add.
+    expect(output.mock.calls.join("")).not.toContain(" to PATH");
+  });
 });
 
 describe("rerail install --refresh", () => {
@@ -587,6 +722,26 @@ describe("rerail install --refresh", () => {
     expect(output.stdout()).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
     // Once, not every update: the next refresh finds the record and leaves PATH to the person.
     expect(existsSync(launcherPathMarker(context.home))).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("puts the launcher on PATH when an earlier set-up never added it, from a shell whose PATH has it", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    await writeFile(zshrc, "setopt autocd\n");
+    await rm(launcherPathMarker(context.home));
+    // The running PATH is no record of a new terminal's: with no record, the block is still written.
+    vi.stubEnv("PATH", `${join(context.home, "bin")}:${process.env.PATH}`);
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
+    expect(output.stdout()).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
   });
 
   it.skipIf(process.platform === "win32")("leaves a block the person took out alone once a set-up has written it", async () => {

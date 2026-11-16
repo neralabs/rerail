@@ -2,12 +2,18 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join, parse, resolve, sep } from "node:path";
+import { and, eq, ne } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
+import { checkouts, repositories } from "../../../src/engine/storage/schema.js";
+import { withinCheckout } from "../../../src/engine/catalog/checkout-control.js";
+import type { CheckoutRecord, RepositoryStatus } from "../../../src/engine/catalog/repository-model.js";
 import {
   adoptRemote,
+  checkoutStatus,
   linkAlias,
+  listedCheckoutStates,
   listRepositories,
   lookupCheckout,
   parentCheckouts,
@@ -70,6 +76,254 @@ function settingOwners(database: RerailDatabase): unknown[] {
   return database.$client.prepare("SELECT owner_kind, owner_id FROM rule_settings ORDER BY owner_kind, owner_id").all();
 }
 
+/**
+ * A stopped, set-up repository with `rows` (path, own on/off) recorded straight into the table in that order, in
+ * spellings `recordCheckout` would not write but older builds and other tools left. The clock reads `times`, by
+ * default one millisecond more for each row.
+ */
+async function recordedRows(rows: ReadonlyArray<readonly [string, boolean | null]>, times = rows.map((_, index) => index + 1)) {
+  const database = open(join(await temporary("rerail-registry-listed-"), "rerail.sqlite"));
+  const repositoryKey = "remote:github.com/acme/web";
+  database.insert(repositories).values({ repositoryKey, displayName: "web", configuredAt: 1, started: false, createdAt: 1, updatedAt: 1 }).run();
+  database.insert(checkouts).values(rows.map(([checkoutPath, started], index) => ({
+    checkoutPath, repositoryKey, cloneId: "clone", started, createdAt: times[index]!, lastSeenAt: 1,
+  }))).run();
+  return { database, repositoryKey };
+}
+
+/** Each recorded checkout's on/off, what decided it and its nearest parent: as the dashboard's listing gives them, and as the runtime reads them. */
+function bothReads(database: RerailDatabase, repositoryKey: string) {
+  const listing = listRepositories(database).find(repository => repository.repositoryKey === repositoryKey)!;
+  const stateAt = listedCheckoutStates(listing);
+  const read = (status: RepositoryStatus, parent: string | null) => [status.started, status.startedBy, parent];
+  return {
+    listed: new Map(listing.checkouts.map(row => {
+      const { status, parentCheckoutPath } = stateAt(row.checkoutPath);
+      return [row.checkoutPath, read(status, parentCheckoutPath)];
+    })),
+    runtime: new Map(listing.checkouts.map(row => [
+      row.checkoutPath,
+      read(checkoutStatus(database, { ...row, git: true, main: true }), parentCheckouts(database, row)[0]?.checkoutPath ?? null),
+    ])),
+  };
+}
+
+/**
+ * How long a containing checkout's path counts as, which orders a checkout's containing checkouts, the longer nearer:
+ * `main` took the recorded spelling's length; this change takes the length of the folder it names.
+ */
+type PathLength = (checkoutPath: string) => number;
+const SPELLED_LENGTH: PathLength = path => path.length;
+const FOLDER_LENGTH: PathLength = path => resolve(path).length;
+
+/**
+ * `main`'s readers of a checkout's containing checkouts and of its state, as they were before the dashboard's listing
+ * reader, copied here to hold that reader to `main`'s answers, with the length that orders containing checkouts as an
+ * argument. Containing checkouts of one length come in the order SQLite returns the rows: the order they were recorded
+ * in.
+ */
+function mainParentCheckouts(
+  database: RerailDatabase,
+  checkout: Pick<CheckoutRecord, "checkoutPath" | "repositoryKey">,
+  length: PathLength = SPELLED_LENGTH,
+): CheckoutRecord[] {
+  return database.select().from(checkouts)
+    .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
+    .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath))
+    .sort((left, right) => length(right.checkoutPath) - length(left.checkoutPath));
+}
+
+/** `main`'s `checkoutStatus` of a recorded checkout (see {@link mainParentCheckouts}). */
+function mainCheckoutStatus(
+  database: RerailDatabase,
+  checkout: Pick<CheckoutRecord, "checkoutPath" | "repositoryKey">,
+  length: PathLength = SPELLED_LENGTH,
+): RepositoryStatus {
+  const repository = database.select({ started: repositories.started, configuredAt: repositories.configuredAt })
+    .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
+  const setUp = repository?.configuredAt != null;
+  const own = database.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started;
+  if (own != null) return { started: own, setUp, startedBy: "checkout" };
+  const parent = mainParentCheckouts(database, checkout, length).find(row => row.started !== null);
+  if (parent?.started != null) return { started: parent.started, setUp, startedBy: "parent" };
+  return { started: repository?.started === true, setUp, startedBy: "repository" };
+}
+
+/** A checkout's on/off, whether its repository is set up, what decided the on/off, and its nearest parent. */
+function answerOf(status: RepositoryStatus, parentCheckoutPath: string | null): string {
+  return JSON.stringify([status.started, status.setUp, status.startedBy, parentCheckoutPath]);
+}
+
+/** Each recorded checkout's answer, by path, as the dashboard's listing reader gives it. */
+function listedAnswers(database: RerailDatabase): Map<string, string> {
+  const answers = new Map<string, string>();
+  for (const listing of listRepositories(database)) {
+    const stateAt = listedCheckoutStates(listing);
+    for (const { checkoutPath } of listing.checkouts) {
+      const { status, parentCheckoutPath } = stateAt(checkoutPath);
+      answers.set(checkoutPath, answerOf(status, parentCheckoutPath));
+    }
+  }
+  return answers;
+}
+
+/** Each recorded checkout's answer, by path, as `main`'s readers give it with containing checkouts ordered by `length`. */
+function mainAnswers(database: RerailDatabase, length: PathLength): Map<string, string> {
+  return new Map(database.select().from(checkouts).all().map(row => [
+    row.checkoutPath,
+    answerOf(mainCheckoutStatus(database, row, length), mainParentCheckouts(database, row, length)[0]?.checkoutPath ?? null),
+  ]));
+}
+
+/** Each recorded checkout's answer, by path, as the runtime's readers give it. */
+function runtimeAnswers(database: RerailDatabase): Map<string, string> {
+  return new Map(database.select().from(checkouts).all().map(row => [
+    row.checkoutPath,
+    answerOf(checkoutStatus(database, { ...row, git: true, main: true }), parentCheckouts(database, row)[0]?.checkoutPath ?? null),
+  ]));
+}
+
+/** mulberry32: the same numbers from the same seed on every run. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), state | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** `items` in a random order. */
+function shuffled<T>(items: readonly T[], next: () => number): T[] {
+  const order = [...items];
+  for (let index = order.length - 1; index > 0; index -= 1) {
+    const other = Math.floor(next() * (index + 1));
+    [order[index], order[other]] = [order[other]!, order[index]!];
+  }
+  return order;
+}
+
+/** Folder names of random trees: two in two letter cases each, two one letter apart, one that ends in a dot. */
+const TREE_NAMES = ["a", "ab", "wt", "WT", "é", "É", "a."];
+const ON_OFF = [true, false, null, null] as const;
+
+/**
+ * A folder as older builds and other tools recorded it: as is, with a `.` segment, with a trailing separator, or with a
+ * trailing `.` segment. All four name one folder, and the second and the fourth are as long as each other.
+ */
+const SPELLINGS: ReadonlyArray<(segments: readonly string[], next: () => number) => string> = [
+  segments => segments.join(sep),
+  (segments, next) => {
+    const at = 1 + Math.floor(next() * (segments.length - 1));
+    return [...segments.slice(0, at), ".", ...segments.slice(at)].join(sep);
+  },
+  segments => `${segments.join(sep)}${sep}`,
+  segments => `${segments.join(sep)}${sep}.`,
+];
+
+interface RandomTree {
+  readonly repositories: ReadonlyArray<typeof repositories.$inferInsert>;
+  /** In the order they were recorded. */
+  readonly checkouts: ReadonlyArray<typeof checkouts.$inferInsert>;
+}
+
+/** Each of `folders` in one to three random spellings, each under one of `roots`. */
+function spelledPaths(next: () => number, roots: readonly string[], folders: ReadonlyArray<readonly string[]>): string[] {
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
+  const paths = new Set<string>();
+  for (const names of folders) {
+    for (let count = 1 + Math.floor(next() * 3); count > 0; count -= 1) paths.add(pick(SPELLINGS)([pick(roots), ...names], next));
+  }
+  return [...paths];
+}
+
+/**
+ * How the clock moves between two recordings: on a millisecond with chance `tick`, and back by up to a second with
+ * chance `back`, as a clock set back by hand or by a time sync does.
+ */
+interface Clock {
+  readonly tick: number;
+  readonly back: number;
+}
+
+/**
+ * The clocks of random trees, by seed: every row in one millisecond, about half of them in the millisecond of the row
+ * before, each in a millisecond of its own, and one that goes back now and then.
+ */
+const CLOCKS: readonly Clock[] = [{ tick: 0, back: 0 }, { tick: 0.5, back: 0 }, { tick: 1, back: 0 }, { tick: 1, back: 0.5 }];
+
+/** How far `clock` moves after a recording. */
+function clockStep(clock: Clock, next: () => number): number {
+  if (next() < clock.back) return -1 - Math.floor(next() * 1_000);
+  return next() < clock.tick ? 1 : 0;
+}
+
+/** `count` times read from `clock`, one per recording. */
+function recordingTimes(count: number, clock: Clock, next: () => number): number[] {
+  const times: number[] = [];
+  for (let now = 1_000_000; times.length < count; now += clockStep(clock, next)) times.push(now);
+  return times;
+}
+
+/**
+ * Two repositories and their checkouts in random folders and spellings under `roots`, now and then one at the
+ * filesystem's root, recorded in a random order by one of {@link CLOCKS}.
+ */
+function randomTree(seed: number, roots: readonly string[]): RandomTree {
+  const next = seeded(seed);
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
+  const folders: string[][] = [[]];
+  for (let index = 0; index < 7; index += 1) folders.push([...pick(folders), pick(TREE_NAMES)]);
+  const paths = shuffled([...spelledPaths(next, roots, folders), ...pick([[], [], [parse(roots[0]!).root]])], next);
+  const times = recordingTimes(paths.length, CLOCKS[seed % CLOCKS.length]!, next);
+  return {
+    repositories: ["k1", "k2"].map(repositoryKey => ({
+      repositoryKey, displayName: repositoryKey, started: pick(ON_OFF), configuredAt: pick([1, null]), createdAt: 1, updatedAt: 1,
+    })),
+    checkouts: paths.map((checkoutPath, index) => ({
+      checkoutPath, repositoryKey: pick(["k1", "k1", "k1", "k2"]), cloneId: "clone", started: pick(ON_OFF), createdAt: times[index]!, lastSeenAt: 1,
+    })),
+  };
+}
+
+/** Puts `tree`'s rows in place of every repository and checkout row, the checkouts recorded in their order. */
+function recordTree(database: RerailDatabase, tree: RandomTree): void {
+  database.transaction(transaction => {
+    transaction.delete(checkouts).run();
+    transaction.delete(repositories).run();
+    transaction.insert(repositories).values([...tree.repositories]).run();
+    transaction.insert(checkouts).values([...tree.checkouts]).run();
+  });
+}
+
+/** Each checkout `reader` answers otherwise than `expected` has it, with the seed of its tree. */
+function differences(seed: number, reader: string, answers: Map<string, string>, expected: Map<string, string>): string[] {
+  const differing = answers.size === expected.size ? [] : [`seed ${seed}: ${reader} answers ${answers.size} checkouts of ${expected.size}`];
+  for (const [path, answer] of answers) {
+    if (answer !== expected.get(path)) differing.push(`seed ${seed}, ${reader}, ${path}: ${answer}, where main gives ${expected.get(path)}`);
+  }
+  return differing;
+}
+
+/**
+ * Each checkout of `tree` that the dashboard's listing reader or the runtime's readers answer otherwise than main's
+ * readers do with containing checkouts ordered by the folder each names (`differing`), and how many checkouts main's
+ * own order, by the recorded spelling's length, answers otherwise (`byFolder`).
+ */
+function comparedWithMain(database: RerailDatabase, seed: number, tree: RandomTree): { differing: string[]; byFolder: number } {
+  recordTree(database, tree);
+  const expected = mainAnswers(database, FOLDER_LENGTH);
+  const spelled = mainAnswers(database, SPELLED_LENGTH);
+  return {
+    differing: [
+      ...differences(seed, "listing", listedAnswers(database), expected),
+      ...differences(seed, "runtime", runtimeAnswers(database), expected),
+    ],
+    byFolder: [...expected].filter(([path, answer]) => spelled.get(path) !== answer).length,
+  };
+}
+
 describe("the repository registry", () => {
   it("puts clones that share a remote and worktrees that share a clone in one repository", async () => {
     const root = await temporary("rerail-registry-join-");
@@ -127,6 +381,88 @@ describe("the repository registry", () => {
     const [, , innerCheckout] = [main, outer, inner, beside].map(path => recordCheckout(database, path));
     expect(parentCheckouts(database, innerCheckout!).map(row => row.checkoutPath)).toEqual([outer, main]);
   });
+
+  it("gives each checkout in the dashboard's listing the state and parent the runtime gives it, in whatever spelling a folder was recorded", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const { database, repositoryKey } = await recordedRows([
+      // The filesystem's root holds every other row.
+      [parse(base).root, null],
+      // A trailing separator and a `.` segment: the folders a and b, as path.relative reads them.
+      [`${join(base, "a")}${sep}`, true],
+      [join(base, "a", "inner"), null],
+      [`${join(base, "b")}${sep}.`, true],
+      [join(base, "b", "inner"), null],
+      [join(base, "beside"), null],
+      // One folder on Windows, where path.relative ignores letter case; two elsewhere.
+      [join(base, "CASE"), true],
+      [join(base, "case", "inner"), null],
+      // A share root recorded without the separator path.resolve gives it.
+      ...process.platform === "win32" ? [["\\\\server\\share", true], ["\\\\server\\share\\inner", null]] as const : [],
+    ]);
+    const { listed, runtime } = bothReads(database, repositoryKey);
+    expect(listed).toEqual(runtime);
+    // The inner checkouts follow their parents in the runtime's reads, so the two reads agree on more than the repository.
+    expect(runtime.get(join(base, "a", "inner"))).toEqual([true, "parent", `${join(base, "a")}${sep}`]);
+    expect(runtime.get(join(base, "b", "inner"))).toEqual([true, "parent", `${join(base, "b")}${sep}.`]);
+    if (process.platform === "win32") expect(runtime.get("\\\\server\\share\\inner")).toEqual([true, "parent", "\\\\server\\share"]);
+  });
+
+  it("lets the spelling recorded first decide for the checkouts inside a folder recorded under two spellings of one length", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const inner = join(base, "wt", "inner");
+    // One folder as path.relative reads both: a `.` segment before or after its name, and on Windows its letter case.
+    const spellings: Array<readonly [string, string]> = [
+      [`${base}${sep}.${sep}wt`, `${base}${sep}wt${sep}.`],
+      ...process.platform === "win32" ? [[join(base, "wt"), join(base, "WT")] as const] : [],
+    ];
+    // The clock moving on between the recordings, standing still, and set back.
+    const clocks = [[1, 2, 3], [1, 1, 1], [2_000, 1_000, 3_000]];
+    for (const [one, other] of spellings) {
+      for (const [first, second] of [[one, other], [other, one]] as const) {
+        for (const times of clocks) {
+          // Stopped as the spelling recorded first, started as the other one.
+          const { database, repositoryKey } = await recordedRows([[first, false], [second, true], [inner, null]], times);
+          const { listed, runtime } = bothReads(database, repositoryKey);
+          expect(runtime.get(inner), `${first} then ${second} at ${times.join(", ")}`).toEqual([false, "parent", first]);
+          expect(listed.get(inner), `${first} then ${second} at ${times.join(", ")}`).toEqual([false, "parent", first]);
+        }
+      }
+    }
+  });
+
+  it("takes the deeper of two containing checkouts whose recorded paths are one length, in either order", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const inner = join(base, "b", "x", "inner");
+    // The folder b with a trailing `.` segment, and its subfolder x: both hold `inner`, and their paths are one length.
+    const farther = `${join(base, "b")}${sep}.`;
+    const nearer = join(base, "b", "x");
+    expect(farther).toHaveLength(nearer.length);
+    for (const recorded of [[[farther, false], [nearer, true]], [[nearer, true], [farther, false]]] as const) {
+      const { database, repositoryKey } = await recordedRows([...recorded, [inner, null]]);
+      const { listed, runtime } = bothReads(database, repositoryKey);
+      expect(runtime.get(inner), `${recorded[0][0]} first`).toEqual([true, "parent", nearer]);
+      expect(listed.get(inner), `${recorded[0][0]} first`).toEqual([true, "parent", nearer]);
+    }
+  });
+
+  it("gives each checkout, in the dashboard's listing and in the runtime, the state and parent main gave it, whatever the clock did", async () => {
+    const database = open(join(await temporary("rerail-registry-main-"), "rerail.sqlite"));
+    // These rows need not survive a crash, so no transaction waits for the disk.
+    database.$client.pragma("synchronous = OFF");
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const roots = process.platform === "win32" ? [base, base, "\\\\server\\share"] : [base];
+    const differing: string[] = [];
+    let byFolder = 0;
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const compared = comparedWithMain(database, seed, randomTree(seed, roots));
+      differing.push(...compared.differing);
+      byFolder += compared.byFolder;
+    }
+    // Main's answers, where a farther folder's row, as long as a nearer one's or longer, no longer comes first.
+    expect(differing).toEqual([]);
+    // The trees hold such rows, so the order by folder is what this compares.
+    expect(byFolder).toBeGreaterThan(0);
+  }, 30_000);
 
   it("puts a submodule checked out under two worktrees of its parent in one repository", async () => {
     const root = await temporary("rerail-registry-submodule-");
