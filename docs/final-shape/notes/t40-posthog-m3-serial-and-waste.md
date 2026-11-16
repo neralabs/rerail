@@ -82,3 +82,21 @@ Over a 3 s sample of the chunk phase, the main thread and the 15 pool threads ar
 - The start-up's 0.6 s is not sampled.
 - Whether the in-order filing with the main thread helping is what idles the pool: a run whose main thread helps
   only with small jobs would tell.
+
+## Follow-up (2026-11-15, after the bell, ByScope and paths resolved together)
+
+The same run on the M3 Max, profiled, at b476bbf52 plus the observer's root test by bytes. Findings unchanged in
+every run (29,747, the same set).
+
+- **The main thread no longer schedules by running chunks.** Before the bell (decision 0254 §5) its waits ran
+  others' jobs: "a chunk evaluated" 11.2 s waiting of which 9.6 s inside jobs, and made 305 waits late. With the
+  bell it waits idle (10.5–11.5 s) and the pool takes the chunks. Wall 40.7/39.5 s → 36.9/35.3 s. Workers taking
+  Begin and Finish themselves is not needed while the main thread's waits are idle.
+- **The process-wide maps of `setfix` are sharded by connection** (`rerail_accel::sharded::ByScope`): within
+  noise on the wall (37.4/36.5 → 35.8/36.7 s); `__psynch_mutexwait` is gone from the strata's samples.
+- **Phase 1's fixpoint.** Path resolution runs on the pool (`Observer::canonical_all`), and the observer's root
+  scans compare bytes (`under`) where `Path::starts_with` parsed both paths per root per call: in a 4 s sample of
+  the fixpoint, 61 main-thread frames → 0. Phase 1: 3.85 s → 3.69/3.67 s; "requests answered inside the fixpoint"
+  3.39 → 3.23/3.24 s.
+- **Still serial in phase 1:** the cone's strata (`ask_loaded_bff`, `ask_py_…`: about 0.6 s each, one walk each,
+  in one job), and "answer load" (about 1 s on the main thread). The cone's documents are built on the pool.
