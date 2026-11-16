@@ -18,6 +18,8 @@ mod build_languages;
 mod test_watchdog;
 #[cfg(test)]
 mod executors_guard_tests;
+#[cfg(test)]
+mod text_readers_guard_tests;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;

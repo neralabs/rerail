@@ -178,6 +178,8 @@ Done (2026-11-15) for messages:
   message's literal replaced by its skeleton (the template's holes, no text), so an edit of the words is not a change.
 - `rr_diagnostic` is never reused from the session's unchanged outputs; the writer composes each row's message from
   the template and the row's values.
+- Since decision 0283 (the phased-facts merge), a finding is 0249 §6's typed relation, not a JSON text: the holes'
+  values are its last columns (`findings::HOLE`), and the writer drops them once it has made the message.
 
 Over dl1 the findings are byte-identical, and a cold run costs about 1% more instructions (the templates read
 once per run, ~12 ms). The edit profile (ep2: corpus0, the main pack, one store):

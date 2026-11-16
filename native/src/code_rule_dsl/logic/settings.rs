@@ -78,24 +78,6 @@ pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String,
     Ok(settings)
 }
 
-/// `program` with the run's settings as `env(key, value)` facts, for a program that declares `env`; any other
-/// program is returned as it is. The facts are part of the program's text, so the plan, and every memo keyed by
-/// it, is per setting.
-pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
-    let declares = program.lines().any(|l| {
-        let l = l.trim_start();
-        l.strip_prefix(".decl").is_some_and(|r| r.trim_start().strip_prefix("env").is_some_and(|r| r.trim_start().starts_with('(')))
-    });
-    // A text in module form (decision 0089) reads `core.rr`, which declares `env`.
-    let declares = declares || program.lines().any(|l| l.trim_start().starts_with("#include"));
-    if !declares || settings.is_empty() {
-        return program.to_owned();
-    }
-    let quote = crate::code_rule_dsl::logic::rr::quote;
-    let facts: String = settings.iter().map(|(k, v)| format!("env({}, {}).\n", quote(k), quote(v))).collect();
-    format!("{program}\n// The run's settings (--env, rerail.env).\n{facts}")
-}
-
 /// The process's retired instructions and cycles so far (macOS `proc_pid_rusage`).
 pub fn process_counters() -> Option<(u64, u64)> {
     #[cfg(target_os = "macos")]

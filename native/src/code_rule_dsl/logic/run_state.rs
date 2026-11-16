@@ -81,6 +81,8 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/lanes.rs", "SUSPENDABLE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
+    ("src/code_rule_dsl/logic/native/setfix.rs", "WALKS_WHOLE", Carried, ""),
+    ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "ARENA", Thread, "this thread's device waves and launches"),
@@ -98,7 +100,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan.rs", "EXPLAIN_ALWAYS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "NO_SHAPES", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANS", Carried, ""),
-    ("src/code_rule_dsl/logic/plan.rs", "QUIET_COUNTS", Carried, ""),
+    ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANNED", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "PLANS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "PLAN_SITE", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "SEED", Call, "the last priced body's cheapest start, read by the same pricing"),
@@ -111,15 +113,15 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUNS_UNDER_WAY", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUN_TOKEN", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
+    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "TOGETHER", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/corpus/switches.rs", "DEPTH", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/session.rs", "FULL", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
-    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "TOGETHER", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
-    ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "FILLING", Thread, "this thread fills the tests' store template"),
+    ("src/code_rule_dsl/logic/plan/corpus/switches.rs", "DEPTH", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "FILLING", Thread, "this thread fills the test store's template: its own runs take the switches without making it first"),
     ("src/reactor.rs", "KEPT", Outermost, "the reactor's session between its commands, taken by each command (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN", Carried, ""),
@@ -129,7 +131,8 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/lower.rs", "TREE_READS", Thread, "this thread's counts of trees decoded and copied, and of reads of a version's tree"),
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
-    ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's lock"),
+    ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
+    ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's profile records, merged into the run's as they are read"),
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
     ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
@@ -198,6 +201,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/content_store/connection.rs", "OPERATION_WAITED", Thread, "this thread's SQLite connections and their waits"),
     ("src/content_store/connection.rs", "THREAD_CONNECTIONS", Thread, "this thread's SQLite connections and their waits"),
     ("src/content_store/connection.rs", "WAIT_SPENT", Thread, "this thread's SQLite connections and their waits"),
+    ("src/content_store/write_back.rs", "WAVES", Carried, ""),
 ];
 
 /// How many thread-locals are run context not carried yet ([`NotYet`]): lowered as each is carried, never raised.
@@ -283,6 +287,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::placement::carried,
     super::plan::corpus::switches::carried,
     super::plan::corpus::session::carried,
+    super::native::setfix::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,
@@ -291,6 +296,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
 /// The carried thread-locals of the crates below this one, which cannot name [`Capture`].
 fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
+    c.copy(&["WAVES"], &crate::content_store::write_back::WAVES);
     c.copy(&["STAGE"], &super::profile::STAGE);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }

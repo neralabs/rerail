@@ -865,8 +865,9 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
         return Err("no exports".into());
     }
     let node_col = |rel: &str, c: usize| rel.starts_with(ast) || program.decls.get(rel).and_then(|ts| ts.get(c)).is_some_and(|(_, t)| is_node(t));
-    // What a node holds itself; `child` and `field` go down from their first column.
-    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment"];
+    // What a node holds itself; `child` and `field` go down from their first column. `rr_long_text_node(n)` is a
+    // long-text twin's (`long_text_twins`): that `n`'s text is past the inline bound, made from the projected nodes.
+    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
     let down = |rel: &str| match rel { "child" => Some(1), "field" => Some(2), _ => None };
     let tree = |rel: &str| LOCAL.contains(&rel) || down(rel).is_some();
     let bare = |k: &str| k.rsplit(':').next().unwrap_or(k).to_owned();
@@ -1766,6 +1767,13 @@ impl Projected {
         if !withheld {
             let count = ranges.iter().flat_map(|&(a, b)| a..b).filter(|&id| f.named(id) && dialect.is_some_and(|d| shape != Shape::T || d.class(f, id) != Class::Comment)).count();
             p.core.reserve_exact(count);
+        }
+        // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a `;`
+        // between two statements) are in no range, yet are tokens of an included node, as `Projected::span` reads
+        // them. Counted here, so the tokens' ids are the spans'.
+        if ranges.len() > 1 && !withheld && shape == Shape::Core && dialect.is_some() && f.named(first) {
+            let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
+            tokens += f.children(first).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize] && outside(c)).count() as u32;
         }
         for id in ranges.iter().flat_map(|&(a, b)| a..b) {
             if !f.named(id) {
@@ -3504,6 +3512,21 @@ impl Source for Viewed {
     fn value(&self, row: usize, column: usize) -> i64 {
         self.row_value(row, column)
     }
+    /// Document by document, with no search for each row's document. (A merge had left this in `impl Viewed`,
+    /// where the trait's per-row scan, a document search for each row, shadowed it.)
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        let offsets = self.batch.offsets(self.view);
+        let mut out = Vec::new();
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = offsets[doc];
+            for i in 0..offsets[doc + 1] - base {
+                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
+                    out.push((base + i) as u32);
+                }
+            }
+        }
+        out
+    }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         let (p, i) = self.batch.locate(self.view, row);
         for (o, &c) in out.iter_mut().zip(columns) {
@@ -3562,20 +3585,6 @@ impl Viewed {
     fn row_value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
         self.value_at(p, i, column)
-    }
-    /// Document by document, with no search for each row's document.
-    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
-        let offsets = self.batch.offsets(self.view);
-        let mut out = Vec::new();
-        for (doc, p) in self.batch.docs.iter().enumerate() {
-            let base = offsets[doc];
-            for i in 0..offsets[doc + 1] - base {
-                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
-                    out.push((base + i) as u32);
-                }
-            }
-        }
-        out
     }
 }
 

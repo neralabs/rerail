@@ -40,12 +40,12 @@ use crate::content_store::{ContentStore, EncodedFrame, FramePut, FrameRel, Frame
 pub(in crate::code_rule_dsl) struct Kept {
     pub(in crate::code_rule_dsl) rel: Arc<InRel>,
     pub(in crate::code_rule_dsl) width: usize,
-    pub(in crate::code_rule_dsl) output: Option<(Vec<String>, Vec<usize>)>,
+    pub(in crate::code_rule_dsl) output: Option<(std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)>,
 }
 
 impl Kept {
     fn bytes(&self) -> usize {
-        self.rel.bytes() + self.output.as_ref().map_or(0, |(lines, _)| lines.iter().map(String::len).sum())
+        self.rel.bytes() + self.output.as_ref().map_or(0, |(rows, _)| rows.bytes())
     }
     /// Its rows as a source named as the planner reads relation `name` (`sql_col`).
     fn source(&self, name: &str) -> Arc<dyn Source> {
@@ -420,7 +420,7 @@ impl Cut {
     }
 
     /// The clean outputs' decoded rows and node columns, as the last run gave them.
-    pub(in crate::code_rule_dsl) fn outputs(&self, kept: &Retained, outputs: &[String]) -> Vec<(String, Vec<String>, Vec<usize>)> {
+    pub(in crate::code_rule_dsl) fn outputs(&self, kept: &Retained, outputs: &[String]) -> Vec<(String, std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)> {
         outputs
             .iter()
             .filter(|o| self.clean.contains(*o))
@@ -451,7 +451,7 @@ pub(in crate::code_rule_dsl) fn after(
     inputs: HashMap<String, u64>,
     cut: &Cut,
     derived: Vec<(String, usize, Arc<InRel>)>,
-    outputs: &BTreeMap<String, (Vec<String>, Vec<usize>)>,
+    outputs: &BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)>,
     sources: &[(String, Arc<dyn Source>)],
     measured: HashMap<(String, usize), Measured>,
     input_stats: HashMap<String, InputStats>,
@@ -962,6 +962,9 @@ impl Source for Renamed {
     }
     fn made_on_lookup(&self) -> bool {
         self.0.made_on_lookup()
+    }
+    fn complete_rows(&self) -> bool {
+        self.0.complete_rows()
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
@@ -1977,6 +1980,29 @@ impl Retained {
         let mut retags: Vec<crate::content_store::FrameRetag> = Vec::new();
         let mut delta_out: Vec<crate::content_store::FrameDelta> = Vec::new();
         let mut delta_rows = 0usize;
+        // The relations written whole, each one's rows copied, digested and (when its rows are not the stored
+        // ones) encoded in a job of its own (MLDB's per-item `parallelMap`): the loop below decides in its order,
+        // with each one's digest at hand. A relation not done here (a delta written after its frame, whose reads
+        // come out unknown) is done by the loop as before.
+        let whole: Vec<(&String, &Kept)> = derived.iter().copied()
+            .filter(|rel| was.names.contains_key(*rel) && !cut.clean.contains(*rel) && !(unchanged.contains(*rel) && was.derived.contains_key(*rel)))
+            .filter(|rel| !self.by_delta(store, was, rel, deltas))
+            .filter_map(|rel| self.framed(rel).map(|k| (rel, k)))
+            .collect();
+        let made: HashMap<&String, Whole> = {
+            use rayon::prelude::*;
+            let atoms = &atoms;
+            whole.into_par_iter().filter_map(|(rel, k)| {
+                let rows = k.rel.live_rows()?;
+                let n = k.rel.rows();
+                let types = frame_types(prog, domains, rel, k.rel.types());
+                let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(atoms, &types), &rows, n);
+                let rows = FrameRows { types, rows, n };
+                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| FramePut::encode_rows(&rows));
+                Some((rel, Whole { d, rows, bytes }))
+            }).collect()
+        };
+        let mut made = made;
         for scc in sccs {
             let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r) && !literals.contains(r.as_str())).collect();
             for rel in scc {
@@ -2008,13 +2034,11 @@ impl Retained {
                 // order under its rows' digest, which a delta moves, and without it the next process has no levels.
                 if let (Some((gone, added)), Some(stored), Some(rd)) = (deltas.get(rel), was.derived.get(rel), read_digests.as_ref())
                     && let Some(k) = self.framed(rel)
-                    && k.width > 0
-                    && !k.rel.has_levels()
+                    && self.by_delta(store, was, rel, deltas)
                 {
                     let (ng, na) = (gone.len() / k.width, added.len() / k.width);
                     let n_now = k.rel.rows();
-                    let (chain, chain_rows) = store.frame_chain(&was.space, name);
-                    if chain < max_deltas() && (chain_rows + ng + na) * 4 <= n_now.max(4096) {
+                    {
                         let n_was = (n_now + ng).saturating_sub(na);
                         let cells = Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types()));
                         let d = crate::code_rule_dsl::logic::plan::rows_digest_patched(&cells, stored.digest, n_was, gone, added);
@@ -2027,15 +2051,20 @@ impl Retained {
                 }
                 // A relation with no rows to keep (a view) is named by its reads' digests:
                 // derived again from the same reads, it has the same rows, so its readers' frames stay current.
-                let Some(rows) = self.framed(rel).and_then(|k| k.rel.live_rows().map(|rows| (k, rows))) else {
+                let done = made.remove(rel);
+                let Some((k, rows, d, bytes)) = (match done {
+                    Some(Whole { d, rows, bytes }) => self.framed(rel).map(|k| (k, rows.rows, d, bytes)),
+                    None => self.framed(rel).and_then(|k| k.rel.live_rows().map(|rows| {
+                        let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types())), &rows, k.rel.rows());
+                        (k, rows, d, None)
+                    })),
+                }) else {
                     if let Some(rd) = &read_digests {
                         now.insert(rel.clone(), unkept_digest(rel, rd));
                     }
                     continue;
                 };
-                let (k, rows) = rows;
                 let n = k.rel.rows();
-                let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types())), &rows, n);
                 now.insert(rel.clone(), d);
                 let Some(read_digests) = read_digests else { continue };
                 if was.derived.get(rel).is_some_and(|s| s.digest == d && s.reads == read_digests) {
@@ -2059,7 +2088,11 @@ impl Retained {
                 if let Some(level) = k.rel.live_levels() {
                     puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n } }.encoded());
                 }
-                puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: frame_types(prog, domains, rel, k.rel.types()), rows, n } }.encoded());
+                let types = frame_types(prog, domains, rel, k.rel.types());
+                puts.push(match bytes {
+                    Some(bytes) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
+                    None => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
+                });
             }
         }
         if trace {
@@ -2083,7 +2116,27 @@ impl Retained {
     }
 }
 
+/// A relation written whole (`write_frames`): its digest, its rows, and their bytes when its rows are not the
+/// stored ones.
+struct Whole {
+    d: u64,
+    rows: FrameRows,
+    bytes: Option<Vec<u8>>,
+}
+
 impl Retained {
+    /// Whether `rel`'s change is written as a delta after its frame (decision 0117 step 4), given its reads are
+    /// known: its frame's deltas few against its rows, and no levels (written whole: decision 0090).
+    fn by_delta(&self, store: &ContentStore, was: &InFrames, rel: &str, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>) -> bool {
+        let (Some((gone, added)), Some(_), Some(name), Some(k)) = (deltas.get(rel), was.derived.get(rel), was.names.get(rel), self.framed(rel)) else { return false };
+        if k.width == 0 || k.rel.has_levels() {
+            return false;
+        }
+        let (ng, na) = (gone.len() / k.width, added.len() / k.width);
+        let (chain, chain_rows) = store.frame_chain(&was.space, name);
+        chain < max_deltas() && (chain_rows + ng + na) * 4 <= k.rel.rows().max(4096)
+    }
+
     /// Each kept relation's statistics of its rows now, as a part of its frame under the rows' digest (`now`, as
     /// the frames name them; decision 0120 §3).
     fn stats_puts(&self, was: &InFrames, now: &HashMap<String, u64>, puts: &mut Vec<EncodedFrame>) {

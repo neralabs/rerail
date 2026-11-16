@@ -684,7 +684,7 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("vocabulary_pending", "term", "a trigger on `term_freq`"),
     ("text_term", "term", "SQL over `term_freq` and the `atoms` table, in the store's ids (vocabulary.rs)"),
     ("text_pending", "term", "a trigger on `term_freq`"),
-    ("frames", "data", "typed columns (`b's'`): mapped in the write transaction (frames.rs `keep_frame_refs`) and as decoded (`rows_of`); the memo's frames (`local`, `local_out`) by the plan's declarations (memo.rs `map_entries`)"),
+    ("frames", "data", "typed columns (`b's'`): mapped in the write transaction (frames.rs `keep_frame_refs`) and as decoded (`rows_of`)"),
     ("cross_blocks", "data", "the relations' `sym` columns (cross_memo.rs `Plan::syms`): mapped in `put_cross_rows` and `cross_rows`"),
     ("compiled_plans", "program", "a wave plan's SQL in this process's ids: reused only where the names it records intern to the same ids here (matches.rs `Wave::emit`)"),
     ("source_objects", "frame", "content-addressed sources: their makers keep no atom (tapes, program texts, tree counts of integer constants, the planning choices' own string table)"),
@@ -733,6 +733,9 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("frame_spaces", &["space", "runs"]),
     ("frame_used", &["space", "run", "rels"]),
     ("frames", &["space", "ident", "part", "digest", "reads", "width", "rows", "types", "used"]),
+    // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).
+    ("memo_entries", &["space", "part", "digest", "doc", "pack", "at", "len", "raw", "over_pack", "over_at", "over_len", "over_raw"]),
+    ("memo_packs", &["pack"]),
     ("git_tree_entries", &["tree_id", "name_string_id", "mode_id", "object_kind_id", "target_hash_id"]),
     ("git_trees", &["tree_id", "tree_hash_id", "complete", "entry_count"]),
     ("hashes", &["hash_id", "algorithm_id", "lane0", "lane1", "lane2", "lane3"]),

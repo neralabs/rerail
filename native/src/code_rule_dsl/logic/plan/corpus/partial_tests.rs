@@ -20,11 +20,11 @@ fn corpus(name: &str, marker: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 /// `program`'s rows of `outputs` over `dir`, each relation's sorted, with the run's report.
-fn run(dir: &std::path::Path, program: &str, outputs: &[&str]) -> (super::Report, Vec<BTreeSet<String>>) {
+fn run(dir: &std::path::Path, program: &str, outputs: &[&str]) -> (super::Report, Vec<BTreeSet<Vec<String>>>) {
     let out = dir.join(".out");
     let _ = std::fs::remove_dir_all(&out);
     let report = super::run(program, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let rows = outputs.iter().map(|rel| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect()).collect();
+    let rows = outputs.iter().map(|rel| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default().into_iter().collect()).collect();
     (report, rows)
 }
 
