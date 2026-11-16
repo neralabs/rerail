@@ -1,7 +1,7 @@
 // Writes phpcs.expected.json: for each corpus case (a repository's PHP_CodeSniffer rulesets), the messages of the
 // sniffs the php pack ports that PHP_CodeSniffer 4.0.4 reports in the same probe file at each probe path, run from the
 // case's root with no --standard, so it finds the ruleset itself (`Config::CONFIG_FILENAMES`) as it does in a
-// repository. `test/engine/catalog/lint-config/php-lint-config-oracle.test.ts` reads the rulesets with Rerail's reader
+// repository. `test/engine/catalog/lint-config/php/php-lint-config-oracle.test.ts` reads the rulesets with Rerail's reader
 // and compares.
 //
 // Run by hand, never in CI, against PHP_CodeSniffer installed from scripts/pack-data/runtimes/phpcs-4.0.4 (PHP

@@ -4,7 +4,7 @@ it as a repository runs it, `ruff check .` from the root, `HOME` and `XDG_CONFIG
 `--extend-select RUF100` added. The probe holds one `# noqa: <code>` comment per code on a line no rule reports, so
 RUF100 names every code Ruff does not run in that file (`non-enabled`, per-file ignores included); a removed rule's
 code on the last line proves RUF100 ran. A case Ruff refuses is recorded as "error". The lint-config test
-(test/engine/catalog/lint-config/ruff-oracle.test.ts) reads the same files into the reader and holds it to this.
+(test/engine/catalog/lint-config/python/ruff-oracle.test.ts) reads the same files into the reader and holds it to this.
 Run offline, not in CI, from anywhere:
 python3 generate_ruff.py <path to a ruff executable, 0.16.9>
 (`uvx ruff@0.16.9`'s binary; scripts/pack-data/runtimes/ruff-0.16.9 pins it)."""

@@ -1,5 +1,5 @@
 // Records eslint.expected.json: for each config of corpus.json, the ported ESLint rules the real ESLint runs on each
-// probe file, as the oracle of set-up's reading of ESLint configs (src/engine/catalog/lint-config/eslint-*.ts).
+// probe file, as the oracle of set-up's reading of ESLint configs (src/engine/catalog/lint-config/javascript/eslint-*.ts).
 // Run by hand, not in CI, against the pinned tools:
 //   npm install --prefix <tools> --legacy-peer-deps eslint@10.11.0 @eslint/js@10.0.1 globals@16.5.0 \
 //     @eslint/eslintrc@3.3.7 typescript-eslint@8.70.1 @typescript-eslint/eslint-plugin@8.70.1 \

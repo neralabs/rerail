@@ -2,7 +2,7 @@
 is a repository of probe.py in every folder of the corpus's `probes` (one snippet per test the python pack ports, and
 a few more) plus the case's own files; Bandit runs on it as a repository runs it, `bandit -r .` from the root with the
 case's `args`, `HOME` an empty folder. A case Bandit stops on is recorded as "error". The lint-config test
-(test/engine/catalog/lint-config/bandit-oracle.test.ts) reads the same files into the reader and holds it to this.
+(test/engine/catalog/lint-config/python/bandit-oracle.test.ts) reads the same files into the reader and holds it to this.
 Run offline, not in CI, from anywhere:
 python3 generate_bandit.py <path to a bandit executable, 1.9.4>
 (scripts/pack-data/runtimes/bandit-1.9.4 pins it: `uv sync` there, then .venv/bin/bandit)."""

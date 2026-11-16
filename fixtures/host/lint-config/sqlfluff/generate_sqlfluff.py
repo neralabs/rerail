@@ -6,7 +6,7 @@ reads the configs from the root down to the folder, and `get_rulepack` selects t
 a file there. A rule counts as run when it is in the rule pack and, for the rules that report nothing without it
 (AL07, CV13, PG01, PG02, TQ04), its `force_enable` is true. A probe folder SQLFluff ignores is recorded as "ignored",
 one it stops on as "error: …", and each SQL file of the case's own as "linted" or "ignored". The lint-config test
-(test/engine/catalog/lint-config/sqlfluff-oracle.test.ts) reads the same files into the reader and holds it to this.
+(test/engine/catalog/lint-config/sql/sqlfluff-oracle.test.ts) reads the same files into the reader and holds it to this.
 Run offline, not in CI, with the Python that has SQLFluff 4.4.0 (scripts/pack-data/runtimes/sqlfluff-4.4.0 pins it:
 `uv sync` there), from anywhere:
 <that folder>/.venv/bin/python generate_sqlfluff.py"""

@@ -1,5 +1,5 @@
 // Records oxlint.expected.json: for each config of corpus.json, the rules oxlint 1.88.0 runs in each probe folder, as
-// the oracle of set-up's reading of oxlint configs (src/engine/catalog/lint-config/oxlint-config.ts). Run by hand, not
+// the oracle of set-up's reading of oxlint configs (src/engine/catalog/lint-config/javascript/oxlint-config.ts). Run by hand, not
 // in CI, against the pinned tool:
 //   npm install --prefix <tools> oxlint@1.88.0
 //   node fixtures/host/lint-config/oxlint/generate_oxlint.mjs <tools>

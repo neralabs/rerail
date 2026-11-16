@@ -1,5 +1,5 @@
 // Records biome.expected.json: for each config of corpus.json, the lint rules Biome 2.5.15 runs in each probe folder,
-// as the oracle of set-up's reading of Biome configs (src/engine/catalog/lint-config/biome-config.ts). Run by hand,
+// as the oracle of set-up's reading of Biome configs (src/engine/catalog/lint-config/javascript/biome-config.ts). Run by hand,
 // not in CI, against the pinned tool:
 //   npm install --prefix <tools> @biomejs/biome@2.5.15
 //   node fixtures/host/lint-config/biome/generate_biome.mjs <tools>

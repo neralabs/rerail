@@ -1,7 +1,7 @@
 // Writes psalm.expected.json: for each corpus case (a repository's Psalm config), the issues of the php pack's Psalm
 // ports that Psalm 6.19.1 reports as errors (not info, which fails nothing) in the probe at each probe path, run from
 // the case's root with no --config, so it finds the config itself (`Config::DEFAULT_FILE_NAMES`) as it does in a
-// repository. `test/engine/catalog/lint-config/php-lint-config-oracle.test.ts` reads the configs with Rerail's reader
+// repository. `test/engine/catalog/lint-config/php/php-lint-config-oracle.test.ts` reads the configs with Rerail's reader
 // and compares.
 //
 // Run by hand, never in CI, against Psalm installed from scripts/pack-data/runtimes/psalm-6.19.1 (PHP 8.5.11):

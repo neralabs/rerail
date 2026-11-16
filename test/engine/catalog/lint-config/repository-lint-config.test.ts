@@ -5,12 +5,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
-import { eslintReader } from "../../../../src/engine/catalog/lint-config/eslint-config.js";
-import { readEslintRules } from "../../../../src/engine/catalog/lint-config/eslint-rules.js";
+import { eslintReader } from "../../../../src/engine/catalog/lint-config/javascript/eslint-config.js";
+import { readEslintRules } from "../../../../src/engine/catalog/lint-config/javascript/eslint-rules.js";
 import { type LinterNote, type Port, type RepositoryLintConfig } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../../../../src/engine/catalog/lint-config/repository-lint-config.js";
-import { readRuffSelection } from "../../../../src/engine/catalog/lint-config/ruff-config.js";
+import { readRuffSelection } from "../../../../src/engine/catalog/lint-config/python/ruff-config.js";
 import { symlinkOrSkip } from "../../../support/platform/links.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 

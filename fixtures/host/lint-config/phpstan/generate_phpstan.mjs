@@ -2,7 +2,7 @@
 // rules the php pack ports that PHPStan 2.2.16 reports in the probe at each probe path, run from the case's root
 // with no --configuration and no --level, so it finds the config itself as it does in a repository. An identifier
 // counts only on the probe line written for its rule, so another rule reporting it elsewhere does not.
-// `test/engine/catalog/lint-config/php-lint-config-oracle.test.ts` reads the configs with Rerail's reader and compares.
+// `test/engine/catalog/lint-config/php/php-lint-config-oracle.test.ts` reads the configs with Rerail's reader and compares.
 //
 // Run by hand, never in CI, against PHPStan installed from scripts/pack-data/runtimes/phpstan-2.2.16 (PHP 8.5.11):
 //   cp scripts/pack-data/runtimes/phpstan-2.2.16/composer.json <install dir>/ && composer install --working-dir=<install dir>
