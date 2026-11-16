@@ -133,7 +133,8 @@ is open to others again.
 4. Set up your checkout ([Development setup](#development-setup)), make the change, and add tests for the behavior it
    changes.
 5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
-6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change.
+6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change. The pull
+   request takes the issue's labels, except the triage ones such as `needs-triage`.
 7. A code owner reviews it, and the `neralabs-reviewer` bot may too (never on a pull request from a fork). The bot
    approves when it finds nothing blocking and the pull request touches no high-risk path in
    [REVIEW.md](REVIEW.md#high-risk-areas); that approval counts as the one main requires. Push fixes to the same
