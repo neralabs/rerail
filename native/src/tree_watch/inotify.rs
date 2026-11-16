@@ -1,15 +1,23 @@
-//! Linux: one inotify instance, one watch per folder a root's last read walked into.
+//! Linux: one inotify instance, one watch per folder a root's last read walked into, and one per
+//! folder above a root.
 //!
 //! A watch reports a change to any entry of its own folder and nothing deeper, so a folder the
 //! read left out (an ignored `node_modules`) costs no watch and reports nothing. A folder created
 //! in a watched folder is reported as `renamed`; the host's next read passes the new folder set.
 //! Watches are a budget every program of the user shares (`fs.inotify.max_user_watches`), so the
-//! engine takes at most a quarter of it, and at most 131,072: a root past that is not watched.
-//! Neither is a root on a file system inotify cannot see others' writes on (NFS, SMB, FUSE, 9p).
-//! The kernel's overflow (`IN_Q_OVERFLOW`) makes every root `lost`; the root folder's own delete,
-//! move or unmount ends its watch. A folder below that is deleted or moved away is let go of with
-//! the folders below it (a watch follows its folder, not the path), so the host's next watch of
-//! that folder set watches whatever is at those paths then.
+//! engine takes at most a quarter of it, and at most 131,072: a root past that is not watched (the
+//! folders above the roots, a handful each and shared between them, are not counted). Neither is a
+//! root on a file system inotify cannot see others' writes on (NFS, SMB, FUSE, 9p).
+//!
+//! A watch follows its folder, not its path. The root's own delete, move or unmount ends its
+//! watch, and so does that of any folder above it up to `/`: each is watched for its own going
+//! only. A folder above that cannot be watched (unreadable, or past the kernel's limit) leaves the
+//! root watched without it, and a rename of that folder goes unreported. A folder below the root
+//! that is deleted or moved away is let go of with the folders below it. The kernel's overflow
+//! (`IN_Q_OVERFLOW`) makes every root `lost`, and may have dropped those folders' own events as
+//! well, so every `watch` adds each folder again: the kernel hands back the descriptor it holds
+//! for the same folder, and another descriptor means another folder now sits at that path, which
+//! the watch then stands for.
 //!
 //! One thread, `rerail-tree-watch`, reads the instance; the host's thread adds and removes
 //! watches under the same lock that thread resolves them with.
@@ -34,6 +42,13 @@ const FALLBACK_WATCHES: usize = 8_192 / 4;
 const NAMED: u32 = libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_FROM | libc::IN_MOVED_TO;
 const CONTENT: u32 = libc::IN_MODIFY | libc::IN_ATTRIB;
 const SELF_GONE: u32 = libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_UNMOUNT;
+/// A folder above a root: only its own going. Added to the watch's mask (`IN_MASK_ADD`), so a
+/// watch it shares with a folder under another root keeps reporting that folder's entries.
+const ABOVE: u32 = libc::IN_DELETE_SELF
+    | libc::IN_MOVE_SELF
+    | libc::IN_ONLYDIR
+    | libc::IN_DONT_FOLLOW
+    | libc::IN_MASK_ADD;
 const MASK: u32 = NAMED
     | CONTENT
     | libc::IN_DELETE_SELF
@@ -65,19 +80,38 @@ const LOCAL_FILESYSTEMS: [u32; 19] = [
     0x1501_3346, // udf
 ];
 
-/// A folder of a root one watch descriptor stands for.
+/// What one watch descriptor stands for to one root: a folder under it (`""` for the root), or,
+/// with no folder, a folder above it.
 #[derive(Clone, PartialEq, Eq)]
 struct Owner {
     root: String,
-    folder: String,
+    folder: Option<String>,
+}
+
+impl Owner {
+    fn under(root: &str, folder: &str) -> Self {
+        Self {
+            root: root.to_owned(),
+            folder: Some(folder.to_owned()),
+        }
+    }
+
+    fn above(root: &str) -> Self {
+        Self {
+            root: root.to_owned(),
+            folder: None,
+        }
+    }
 }
 
 /// Every watch: who each descriptor stands for (one folder may be under two roots, a nested
-/// worktree's), and each root's descriptor per folder.
+/// worktree's, or above one root and under another), each root's descriptor per folder, and the
+/// descriptors of the folders above each root.
 #[derive(Default)]
 struct Watches {
     owners: HashMap<i32, Vec<Owner>>,
     roots: HashMap<String, HashMap<String, i32>>,
+    above: HashMap<String, Vec<i32>>,
 }
 
 impl Watches {
@@ -110,11 +144,29 @@ impl Watches {
     /// Releases every watch of `root`.
     fn release_root(&mut self, instance: RawFd, root: &str) {
         for (folder, descriptor) in self.roots.remove(root).unwrap_or_default() {
-            let owner = Owner {
-                root: root.to_owned(),
-                folder,
-            };
-            self.release(instance, descriptor, &owner);
+            self.release(instance, descriptor, &Owner::under(root, &folder));
+        }
+        self.release_above(instance, root, &[]);
+    }
+
+    /// Releases `root`'s watches of the folders above it, but those of `kept`.
+    fn release_above(&mut self, instance: RawFd, root: &str, kept: &[i32]) {
+        let owner = Owner::above(root);
+        for descriptor in self.above.remove(root).unwrap_or_default() {
+            if !kept.contains(&descriptor) {
+                self.release(instance, descriptor, &owner);
+            }
+        }
+    }
+
+    /// Releases `root`'s watch of `folder`, when it holds one.
+    fn release_folder(&mut self, instance: RawFd, root: &str, folder: &str) {
+        let held = self
+            .roots
+            .get_mut(root)
+            .and_then(|folders| folders.remove(folder));
+        if let Some(descriptor) = held {
+            self.release(instance, descriptor, &Owner::under(root, folder));
         }
     }
 
@@ -129,19 +181,19 @@ impl Watches {
         };
         let gone: Vec<(String, i32)> = folders.extract_if(|held, _| below(held)).collect();
         for (folder, descriptor) in gone {
-            let owner = Owner {
-                root: root.to_owned(),
-                folder,
-            };
-            self.release(instance, descriptor, &owner);
+            self.release(instance, descriptor, &Owner::under(root, &folder));
         }
     }
 
     /// Forgets `descriptor`, which the kernel dropped (its folder went).
     fn forget(&mut self, descriptor: i32) {
         for owner in self.owners.remove(&descriptor).unwrap_or_default() {
-            if let Some(folders) = self.roots.get_mut(&owner.root) {
-                folders.remove(&owner.folder);
+            if let Some(folder) = owner.folder {
+                if let Some(folders) = self.roots.get_mut(&owner.root) {
+                    folders.remove(&folder);
+                }
+            } else if let Some(above) = self.above.get_mut(&owner.root) {
+                above.retain(|held| *held != descriptor);
             }
         }
     }
@@ -191,8 +243,13 @@ impl Shared {
         }
     }
 
+    /// An entry's event, reported for a folder under a root; an entry of a folder above one is
+    /// not the root's.
     fn entry(&self, owner: &Owner, mask: u32, name: &str) {
-        let path = join_relative(&owner.folder, name);
+        let Some(folder) = &owner.folder else {
+            return;
+        };
+        let path = join_relative(folder, name);
         if mask & NAMED != 0 {
             self.notices.renamed(&owner.root, path.clone());
         }
@@ -201,23 +258,24 @@ impl Shared {
         }
     }
 
-    /// A watched folder's own event: the root's going ends the watch. A folder below goes as an
-    /// entry of its parent's watch; its own watch, and those below it, no longer stand for their
-    /// paths and are let go of. Its unmount is also told, as lost.
+    /// A watched folder's own event: the going of the root, or of a folder above it, ends the
+    /// watch. A folder below goes as an entry of its parent's watch; its own watch, and those
+    /// below it, no longer stand for their paths and are let go of. Its unmount is also told, as
+    /// lost.
     fn folder(&self, watches: &mut Watches, owner: &Owner, mask: u32) {
         if mask & SELF_GONE == 0 {
             return;
         }
         let instance = self.instance.as_raw_fd();
-        if owner.folder.is_empty() {
+        let Some(folder) = owner.folder.as_deref().filter(|folder| !folder.is_empty()) else {
             self.notices.ended(&owner.root);
             watches.release_root(instance, &owner.root);
             return;
-        }
+        };
         if mask & libc::IN_UNMOUNT != 0 {
             self.notices.lost(&owner.root);
         }
-        watches.release_below(instance, &owner.root, &owner.folder);
+        watches.release_below(instance, &owner.root, folder);
     }
 }
 
@@ -307,12 +365,26 @@ impl Inotify {
         })
     }
 
-    /// Adds the watch of `folder` under `root`.
-    fn add(&self, watches: &mut Watches, root: &str, folder: &str) -> Result<(), Refused> {
-        let path = c_path(&Path::new(root).join(folder)).ok_or(Refused::Other)?;
+    /// Stops the reading thread and waits for it; false when it was stopped already.
+    fn stop_reading(&mut self) -> bool {
+        let Some(thread) = self.thread.take() else {
+            return false;
+        };
+        self.shared.stop.store(true, Ordering::Release);
+        let one: u64 = 1;
+        // SAFETY: eight bytes to this backend's eventfd.
+        unsafe { libc::write(self.wake.as_raw_fd(), (&raw const one).cast(), 8) };
+        let _ = thread.join();
+        true
+    }
+
+    /// Watches `path` with `mask`: the descriptor, the one the instance already holds when it
+    /// watches the same folder.
+    fn add_watch(&self, path: &Path, mask: u32) -> Result<i32, Refused> {
+        let path = c_path(path).ok_or(Refused::Other)?;
         // SAFETY: a NUL-terminated path on this backend's instance.
         let descriptor = unsafe {
-            libc::inotify_add_watch(self.shared.instance.as_raw_fd(), path.as_ptr(), MASK)
+            libc::inotify_add_watch(self.shared.instance.as_raw_fd(), path.as_ptr(), mask)
         };
         if descriptor < 0 {
             return Err(match io::Error::last_os_error().raw_os_error() {
@@ -321,30 +393,37 @@ impl Inotify {
                 _ => Refused::Other,
             });
         }
-        let owner = Owner {
-            root: root.to_owned(),
-            folder: folder.to_owned(),
-        };
-        watches.own(descriptor, owner);
-        watches
-            .roots
-            .entry(root.to_owned())
-            .or_default()
-            .insert(folder.to_owned(), descriptor);
-        Ok(())
+        Ok(descriptor)
     }
 
-    /// Watches each of `wanted` under `root` not watched yet. False when the root itself or the
-    /// limit refused.
+    /// Watches `folder` under `root`, held or not. Another descriptor than the one held means
+    /// another folder now sits at that path (the held one was deleted or moved away, and an
+    /// overflow may have dropped its own events): the held watch is let go of, as it is when the
+    /// path cannot be watched.
+    fn add(&self, watches: &mut Watches, root: &str, folder: &str) -> Result<(), Refused> {
+        let added = self.add_watch(&Path::new(root).join(folder), MASK);
+        let replaced = match added {
+            Ok(descriptor) => {
+                watches.own(descriptor, Owner::under(root, folder));
+                let folders = watches.roots.entry(root.to_owned()).or_default();
+                let held = folders.insert(folder.to_owned(), descriptor);
+                held.filter(|held| *held != descriptor)
+            }
+            Err(_) => watches
+                .roots
+                .get_mut(root)
+                .and_then(|folders| folders.remove(folder)),
+        };
+        if let Some(descriptor) = replaced {
+            let instance = self.shared.instance.as_raw_fd();
+            watches.release(instance, descriptor, &Owner::under(root, folder));
+        }
+        added.map(|_| ())
+    }
+
+    /// Watches each of `wanted` under `root`. False when the root itself or the limit refused.
     fn add_wanted(&self, watches: &mut Watches, root: &str, wanted: &HashSet<&str>) -> bool {
         for folder in wanted {
-            let held = watches
-                .roots
-                .get(root)
-                .is_some_and(|held| held.contains_key(*folder));
-            if held {
-                continue;
-            }
             if let Err(refused) = self.add(watches, root, folder)
                 && !self.goes_on_without(root, folder, refused)
             {
@@ -370,21 +449,34 @@ impl Inotify {
 
     /// Releases the watches of `root`'s folders not in `wanted`.
     fn drop_unwanted(&self, watches: &mut Watches, root: &str, wanted: &HashSet<&str>) {
-        let held = watches.roots.get(root).cloned().unwrap_or_default();
-        for (folder, descriptor) in held {
-            if wanted.contains(folder.as_str()) {
-                continue;
-            }
-            watches
-                .roots
-                .get_mut(root)
-                .map(|folders| folders.remove(&folder));
-            let owner = Owner {
-                root: root.to_owned(),
-                folder,
-            };
-            watches.release(self.shared.instance.as_raw_fd(), descriptor, &owner);
+        let unwanted: Vec<String> = watches
+            .roots
+            .get(root)
+            .into_iter()
+            .flat_map(HashMap::keys)
+            .filter(|folder| !wanted.contains(folder.as_str()))
+            .cloned()
+            .collect();
+        for folder in unwanted {
+            watches.release_folder(self.shared.instance.as_raw_fd(), root, &folder);
         }
+    }
+
+    /// Watches each folder above `root` up to `/` (which cannot go) for its own going, which ends
+    /// the root; one watch stands for a folder above any number of roots. The root is watched
+    /// without a folder that cannot be.
+    fn watch_above(&self, watches: &mut Watches, root: &str) {
+        let above: Vec<i32> = Path::new(root)
+            .ancestors()
+            .skip(1)
+            .filter(|folder| folder.parent().is_some())
+            .filter_map(|folder| self.add_watch(folder, ABOVE).ok())
+            .collect();
+        for descriptor in &above {
+            watches.own(*descriptor, Owner::above(root));
+        }
+        watches.release_above(self.shared.instance.as_raw_fd(), root, &above);
+        watches.above.insert(root.to_owned(), above);
     }
 }
 
@@ -399,6 +491,7 @@ impl Backend for Inotify {
         let fits = watches.count_with(root, wanted.len()) <= self.budget;
         if fits && self.add_wanted(&mut watches, root, &wanted) {
             self.drop_unwanted(&mut watches, root, &wanted);
+            self.watch_above(&mut watches, root);
             return true;
         }
         watches.release_root(self.shared.instance.as_raw_fd(), root);
@@ -412,14 +505,9 @@ impl Backend for Inotify {
     }
 
     fn close(&mut self) {
-        let Some(thread) = self.thread.take() else {
+        if !self.stop_reading() {
             return;
-        };
-        self.shared.stop.store(true, Ordering::Release);
-        let one: u64 = 1;
-        // SAFETY: eight bytes to this backend's eventfd.
-        unsafe { libc::write(self.wake.as_raw_fd(), (&raw const one).cast(), 8) };
-        let _ = thread.join();
+        }
         *self.shared.watches() = Watches::default();
     }
 
@@ -530,11 +618,47 @@ fn name_of(bytes: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Inotify, local_filesystem, parse};
-    use crate::tree_watch::Backend;
+    use super::{Inotify, drain, local_filesystem, parse};
     use crate::tree_watch::notices::Notices;
     use crate::tree_watch::tests::{Scratch, wait_for};
+    use crate::tree_watch::{Backend, TreeNotice};
+    use std::os::fd::AsRawFd;
     use std::sync::Arc;
+
+    /// An adapter whose reading thread is stopped: events wait in the kernel's queue until the
+    /// test reports them with [`deliver`] or drops them with [`overflow`].
+    fn paused(notices: &Arc<Notices>) -> Inotify {
+        let mut backend = Inotify::open(Arc::clone(notices)).expect("inotify opens");
+        assert!(backend.stop_reading());
+        backend
+    }
+
+    /// Reports every queued event, as the reading thread does.
+    fn deliver(backend: &Inotify) {
+        drain(&backend.shared, &mut vec![0; 64 * 1024]);
+    }
+
+    /// Drops every queued event and reports the overflow, as the kernel does past its queue limit.
+    fn overflow(backend: &Inotify) {
+        let instance = backend.shared.instance.as_raw_fd();
+        let mut buffer = [0_u8; 4096];
+        // SAFETY: reads at most the buffer's length into it.
+        while unsafe { libc::read(instance, buffer.as_mut_ptr().cast(), buffer.len()) } > 0 {}
+        backend.shared.dispatch(-1, libc::IN_Q_OVERFLOW, None);
+    }
+
+    /// `root`'s notice among those taken.
+    fn notice_of(notices: &Notices, root: &str) -> TreeNotice {
+        notices
+            .take()
+            .into_iter()
+            .find(|notice| notice.root == root)
+            .expect("a notice of the root")
+    }
+
+    fn names(notice: &TreeNotice, path: &str) -> bool {
+        notice.renamed.iter().any(|renamed| renamed == path)
+    }
 
     #[test]
     fn an_overflow_loses_every_watched_root() {
@@ -579,19 +703,10 @@ mod tests {
         backend.close();
     }
 
-    /// Creates the folder `marker` and waits until it is reported: every event before it has been
-    /// handled by then.
-    fn settle(notices: &Notices, scratch: &Scratch, marker: &str) {
-        std::fs::create_dir(scratch.path(marker)).expect("create marker");
-        wait_for(notices, &scratch.root(), |notice| {
-            notice.renamed.iter().any(|path| path == marker)
-        });
-    }
-
     #[test]
     fn a_folder_moved_away_or_deleted_is_watched_again_at_its_path() {
         let notices = Arc::new(Notices::default());
-        let mut backend = Inotify::open(Arc::clone(&notices)).expect("inotify opens");
+        let mut backend = paused(&notices);
         let scratch = Scratch::new("folder-gone");
         scratch.write("a/deep/x.ts", "x");
         scratch.write("c/x.ts", "x");
@@ -606,20 +721,80 @@ mod tests {
         // Deleted, and created again.
         std::fs::remove_dir_all(scratch.path("c")).expect("delete c");
         std::fs::create_dir(scratch.path("c")).expect("create c again");
-        settle(&notices, &scratch, "marker");
 
-        // The host's next read walks into the same folders, now other folders at those paths.
+        // The host's next read walks into the same folders, now other folders at those paths,
+        // before the old folders' own events are handled.
         assert!(backend.watch(&root, &folders));
         scratch.write("a/deep/y.ts", "y");
         scratch.write("c/y.ts", "y");
         scratch.write("b/deep/z.ts", "z");
-        let notice = wait_for(&notices, &root, |notice| {
-            notice.renamed.iter().any(|path| path == "a/deep/y.ts")
-                && notice.renamed.iter().any(|path| path == "c/y.ts")
-        });
+        deliver(&backend);
+        let notice = notice_of(&notices, &root);
+        assert!(names(&notice, "a/deep/y.ts") && names(&notice, "c/y.ts"));
         assert!(
-            !notice.renamed.iter().any(|path| path == "a/deep/z.ts"),
+            !names(&notice, "a/deep/z.ts"),
             "the moved folder's old watch reports nothing"
+        );
+        backend.close();
+    }
+
+    #[test]
+    fn a_folder_replaced_while_an_overflow_drops_its_events_is_watched_again() {
+        let notices = Arc::new(Notices::default());
+        let mut backend = paused(&notices);
+        let scratch = Scratch::new("overflow-replaced");
+        scratch.write("gen/deep/x.ts", "x");
+        let root = scratch.root();
+        let folders = ["", "gen", "gen/deep"].map(str::to_owned).to_vec();
+        notices.start(&root);
+        assert!(backend.watch(&root, &folders));
+
+        // A branch switch deletes `gen` and creates it again; the kernel drops the old folders'
+        // own events past its queue limit, and with them the watches.
+        std::fs::remove_dir_all(scratch.path("gen")).expect("delete gen");
+        std::fs::create_dir_all(scratch.path("gen/deep")).expect("create gen again");
+        overflow(&backend);
+        assert!(notice_of(&notices, &root).lost);
+
+        // The host reads the lost root whole and watches the folder set it walked into again.
+        assert!(backend.watch(&root, &folders));
+        scratch.write("gen/y.ts", "y");
+        scratch.write("gen/deep/y.ts", "y");
+        deliver(&backend);
+        let notice = notice_of(&notices, &root);
+        assert!(names(&notice, "gen/y.ts") && names(&notice, "gen/deep/y.ts"));
+        backend.close();
+    }
+
+    #[test]
+    fn renaming_a_folder_above_a_root_ends_it() {
+        let notices = Arc::new(Notices::default());
+        let mut backend = paused(&notices);
+        let scratch = Scratch::new("above");
+        scratch.write("parent/checkout/a.ts", "a");
+        let outer = scratch.path("parent").to_string_lossy().into_owned();
+        let inner = scratch
+            .path("parent/checkout")
+            .to_string_lossy()
+            .into_owned();
+        for root in [&outer, &inner] {
+            notices.start(root);
+            assert!(backend.watch(root, &[String::new()]));
+        }
+        // The outer root's watch of `parent` is the inner root's watch of a folder above it, too.
+        backend.unwatch(&outer);
+        scratch.write("parent/noise.txt", "n");
+        std::fs::rename(scratch.path("parent"), scratch.path("moved")).expect("rename parent");
+        deliver(&backend);
+        let notice = notice_of(&notices, &inner);
+        assert!(notice.ended);
+        assert!(
+            notice.renamed.is_empty(),
+            "an entry of a folder above the root is not the root's"
+        );
+        assert!(
+            backend.shared.watches().owners.is_empty(),
+            "an ended root holds no watch"
         );
         backend.close();
     }
