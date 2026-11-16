@@ -1,4 +1,6 @@
-# 0286: The device's functions are one table, and its missing shapes are measured first
+# 0287: The device's functions are one table, and its missing shapes are measured first
+
+Numbered 0286 where it was written: django-bugs has its own 0286.
 
 Status: §1 built (2026-11-15); §2–§4 draft, not to be built before a workload shows their gain. Refines the
 device's placement (`plan::placement`, decision 0095) and its compile (`setfix::device`).

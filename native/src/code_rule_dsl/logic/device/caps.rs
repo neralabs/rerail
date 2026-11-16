@@ -1,4 +1,4 @@
-//! The functions a device computes, by the native engine's names (decision 0286 §1): one table the planner's
+//! The functions a device computes, by the native engine's names (decision 0287 §1): one table the planner's
 //! placement (`plan::placement`) and a device's compile (Metal's `setfix::device::compile`) both read, so a
 //! function the device gains is placed on it at once, and a function it lacks is named where the planner refuses it.
 //!
