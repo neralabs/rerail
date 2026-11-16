@@ -554,12 +554,32 @@ pass.
 
     - The outputs (`outputs.rro`) are identical across every step.
     - The span's own time went from 9.7 s to 1.35 s.
-- **Open.** `the kept inputs, from the frames` (2.26 s) decodes every granule of all 1208 inputs into full
-  column sources before the cross part runs, with 3 changed. The fallback reads the 300 hits' projected rows, and
-  its `stats` is 2.1 G.
-  - Taking the kept inputs still costs more than the fallback, so the done-when is not met.
-  - Reading an input's granules where reached (a source that decodes a granule on first read, with its count from
-    the documents' table) is the shape 0266's blocks give: "base + delta read as one".
+- **What the run reads of the kept inputs** (2026-11-16, `RERAIL_KEPT_READS`, one B101 edit): of 1208 inputs (22.4 M
+  rows, 33,756 granules), 1182 are never read; 23 are read whole, row by row, by `measure export` (their kept
+  statistics' row count is not the rows held); 3 by statistics or an index. So a lazy source would save the decode
+  of most inputs. But a profile put most of the step elsewhere: with no changed file, `the evaluated owners,
+  patched` took 1.0 s and `the changed files' old and new rows` 0.27 s.
+- **Cause, built** (a2ff8071e). Since memo entries are images (0240 §4), a hit read for its outputs alone called
+  `entry(d)`, which decodes every relation. Its export and base rows then went through the replay into the exports
+  and `base_rows`, and the kept-inputs step took them for this run's rows of the changed files: every document
+  "evaluated", every input patched by digest, and 3 inputs reported changed with no file changed. Such a hit now
+  decodes its `own:` rows alone (`memo::outputs_alone`), as the outputs frame held before 0240.
+  - Test: `a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows` (rerail-engine): three edits of one
+    file, each reads both other files for their outputs alone with no export or base value decoded
+    (`Report::memo_kept`), and each edit's rows are a full run's. It waits out the stat index's racy window first:
+    without that, whether a file was known by stat (and so read for its outputs alone) depended on the test's speed.
+  - ep2, B101 edits after a cold run: every edit takes its kept inputs (0 of 1208 inputs changed). `stats` is
+    0.45–0.48 s; of it, `the evaluated owners, patched` is 1 ms (was 1.0 s) and the memo replay 4 ms (was 0.15 s).
+    Totals 63–68 G, peak 1.39 GB (was 98 G, 3.25 GB). An edit with `RERAIL_KEPT_INPUTS=off`: 69.1 G, peak 5.39 GB.
+    The outputs are identical (md5 82c81b38…).
+  - **The done-when is met**: every edit took its kept inputs, and taking them costs less than the fallback.
+- **Open.**
+  - `the kept inputs, from the frames` (0.31 s warm) still decodes every granule of all 1208 inputs, 1182 of them
+    never read. A source that decodes an input on its first read would save it, if the planner's estimates do not
+    force the decode. 0266's `Facts` block (step 4, not started on any branch) would read them in place.
+  - The 23 inputs read whole by `measure export` are the next read of unchanged rows: their kept statistics should
+    be taken.
+  - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 
 ## Questions for the user
 
