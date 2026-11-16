@@ -1,7 +1,7 @@
 import { lstatSync, readdirSync, readFileSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { checkoutRealpath, withinCheckout } from "./checkout-control.js";
-import { readTomlStringLists } from "./lint-config/formats/lint-config-formats.js";
+import { readTomlStringLists } from "./lint-config/formats/toml-format.js";
 import { IGNORED_DIRECTORIES } from "../code-rule/ignored-directories.js";
 import { GitUnavailableError, runGit } from "../git.js";
 import { compareDeterministicStrings } from "../stable-json.js";

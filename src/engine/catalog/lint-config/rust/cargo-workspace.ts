@@ -14,7 +14,8 @@
  */
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { LintConfigFormatError, readFormat, readTomlTrees, type TomlValue } from "../formats/lint-config-formats.js";
+import { LintConfigFormatError, readFormat } from "../formats/lint-config-formats.js";
+import { readTomlTrees, type TomlValue } from "../formats/toml-format.js";
 import { NOT_A_FILE, readRootFile, type LinterNote } from "../linter-config.js";
 import { repositoryFiles } from "../repository-files.js";
 import { repositoryPath } from "../repository-paths.js";

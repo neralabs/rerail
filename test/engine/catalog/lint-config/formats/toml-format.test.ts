@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LintConfigFormatError, readTomlStringLists, readTomlTrees, type TomlValue } from "../../../../../src/engine/catalog/lint-config/formats/lint-config-formats.js";
+import { LintConfigFormatError } from "../../../../../src/engine/catalog/lint-config/formats/lint-config-formats.js";
+import { readTomlStringLists, readTomlTrees, type TomlValue } from "../../../../../src/engine/catalog/lint-config/formats/toml-format.js";
 
 /** A tree as plain objects, for comparing. */
 const plain = (value: TomlValue | ReadonlyMap<string, TomlValue> | undefined): unknown => {

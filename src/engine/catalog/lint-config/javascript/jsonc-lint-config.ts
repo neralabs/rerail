@@ -3,7 +3,8 @@
  * and how an entry is named to the person.
  */
 import { z } from "zod";
-import { parseJsonc, readFormat } from "../formats/lint-config-formats.js";
+import { parseJsonc } from "../formats/jsonc-format.js";
+import { readFormat } from "../formats/lint-config-formats.js";
 import { NOT_A_FILE, type LintConfigLinter, type LinterNote } from "../linter-config.js";
 
 /** A JSON object; arrays and `null` are not. Zod leaves out `__proto__` keys. */

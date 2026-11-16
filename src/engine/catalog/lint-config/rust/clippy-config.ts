@@ -41,7 +41,8 @@ import {
   type UnreadCargoConfig,
   type UnreadFolder,
 } from "./cargo-workspace.js";
-import { LintConfigFormatError, readFormat, type TomlValue } from "../formats/lint-config-formats.js";
+import { LintConfigFormatError, readFormat } from "../formats/lint-config-formats.js";
+import type { TomlValue } from "../formats/toml-format.js";
 import { inFolder, NOT_A_FILE, readRootFile, type FolderDecision, type LinterNote, type LinterReader, type Port, type PortDecision, type PortVerdict } from "../linter-config.js";
 import { readRustLintAttributes, type RustLintLevel } from "./rust-lint-attributes.js";
 

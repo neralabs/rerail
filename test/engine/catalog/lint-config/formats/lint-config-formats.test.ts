@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readIni, type IniDialect, type IniSections } from "../../../../../src/engine/catalog/lint-config/formats/ini-format.js";
-import { LintConfigFormatError, parseJsonc, readFormat } from "../../../../../src/engine/catalog/lint-config/formats/lint-config-formats.js";
+import { parseJsonc } from "../../../../../src/engine/catalog/lint-config/formats/jsonc-format.js";
+import { LintConfigFormatError, readFormat } from "../../../../../src/engine/catalog/lint-config/formats/lint-config-formats.js";
 import { isNeonArray, neonEntry, parseNeon, type NeonValue } from "../../../../../src/engine/catalog/lint-config/formats/neon-format.js";
 import { parseXml, xmlChildren } from "../../../../../src/engine/catalog/lint-config/formats/xml-format.js";
 

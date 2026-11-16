@@ -31,7 +31,8 @@ import {
   type PortDecision,
   type PortVerdict,
 } from "../linter-config.js";
-import { readFormat, readTomlStringLists, type TomlStringLists } from "../formats/lint-config-formats.js";
+import { readFormat } from "../formats/lint-config-formats.js";
+import { readTomlStringLists, type TomlStringLists } from "../formats/toml-format.js";
 import {
   RUFF_CATEGORIES,
   RUFF_CONVENTIONS,

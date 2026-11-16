@@ -23,7 +23,8 @@
 import { posix } from "node:path";
 import { fnmatchPattern } from "../formats/fnmatch.js";
 import { readIni, type IniSections } from "../formats/ini-format.js";
-import { LintConfigFormatError, readFormat, readTomlTrees, type TomlValue } from "../formats/lint-config-formats.js";
+import { LintConfigFormatError, readFormat } from "../formats/lint-config-formats.js";
+import { readTomlTrees, type TomlValue } from "../formats/toml-format.js";
 import { inFolder, NOT_A_FILE, readRootFile, type FolderDecision, type LinterConfig, type LinterNote, type LinterReader, type PortDecision, type PortVerdict } from "../linter-config.js";
 import { repositoryFiles } from "../repository-files.js";
 

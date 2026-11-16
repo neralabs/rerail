@@ -24,7 +24,8 @@ import { globPattern } from "../../rule-pack-matcher.js";
 import { BIOME_DOMAINS, BIOME_RULES, type BiomeRuleDeclaration } from "../generated/biome-rules.generated.js";
 import { folderOfGlob } from "./eslint-flat-config.js";
 import { repositoryFiles } from "../repository-files.js";
-import { LintConfigFormatError, parseJsonc, readFormat } from "../formats/lint-config-formats.js";
+import { LintConfigFormatError, readFormat } from "../formats/lint-config-formats.js";
+import { parseJsonc } from "../formats/jsonc-format.js";
 import {
   NOT_A_FILE,
   readRootFile,
