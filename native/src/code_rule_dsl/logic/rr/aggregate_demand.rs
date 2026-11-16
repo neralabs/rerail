@@ -21,45 +21,18 @@ fn dependencies(p: &Program) -> BTreeMap<String, BTreeSet<String>> {
     deps
 }
 
-/// The relations that reach each target through `deps`, found once a target (a reverse walk) and dropped when the
-/// edges change. `guards` asks it of every literal of every consumer, so a walk each was quadratic in the program.
-#[derive(Default)]
-struct Reach {
-    to: std::cell::RefCell<BTreeMap<String, std::rc::Rc<BTreeSet<String>>>>,
-}
-
-impl Reach {
-    fn reaches(&self, deps: &BTreeMap<String, BTreeSet<String>>, start: &str, target: &str) -> bool {
-        if start == target {
+fn reaches(deps: &BTreeMap<String, BTreeSet<String>>, start: &str, target: &str) -> bool {
+    let mut todo = vec![start];
+    let mut seen = BTreeSet::new();
+    while let Some(at) = todo.pop() {
+        if at == target {
             return true;
         }
-        let set = self.to.borrow().get(target).cloned();
-        let set = set.unwrap_or_else(|| {
-            let mut rev: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-            for (from, tos) in deps {
-                for t in tos {
-                    rev.entry(t.as_str()).or_default().push(from.as_str());
-                }
-            }
-            let mut seen = BTreeSet::new();
-            let mut todo = vec![target];
-            while let Some(at) = todo.pop() {
-                for &f in rev.get(at).into_iter().flatten() {
-                    if seen.insert(f.to_owned()) {
-                        todo.push(f);
-                    }
-                }
-            }
-            let set = std::rc::Rc::new(seen);
-            self.to.borrow_mut().insert(target.to_owned(), set.clone());
-            set
-        });
-        set.contains(start)
+        if seen.insert(at) {
+            todo.extend(deps.get(at).into_iter().flatten().map(String::as_str));
+        }
     }
-
-    fn clear(&self) {
-        self.to.borrow_mut().clear();
-    }
+    false
 }
 
 /// Safe positive guards, then comparisons whose inputs those guards bind. A context is a superset
@@ -69,14 +42,13 @@ fn guards(
     helper: &str,
     keys: &BTreeSet<String>,
     deps: &BTreeMap<String, BTreeSet<String>>,
-    reach: &Reach,
 ) -> Option<Vec<Literal>> {
     let safe: Vec<_> = rule
         .body
         .iter()
         .filter(|l| match l {
             Literal::Atom(a) => {
-                !a.neg && !reach.reaches(deps, &a.rel, helper) && !reach.reaches(deps, &a.rel, &rule.head.rel)
+                !a.neg && !reaches(deps, &a.rel, helper) && !reaches(deps, &a.rel, &rule.head.rel)
             }
             Literal::Nearest { .. } => true,
             _ => false,
@@ -196,7 +168,6 @@ pub fn optimize(program: &mut Program) {
     // declared demand relation, so it stays as it was, and only the demand rules' reads are checked). A candidate is
     // placed in the program itself, and taken out again where stratifying refuses it.
     let mut deps = dependencies(program);
-    let reach = Reach::default();
     let declared = front::declared(program).is_ok();
     let mut readers: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut makers: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -260,7 +231,7 @@ pub fn optimize(program: &mut Program) {
                         v
                     })
                     .collect();
-                let Some(body) = guards(rule, &name, &keys, &deps, &reach) else {
+                let Some(body) = guards(rule, &name, &keys, &deps) else {
                     refused = true;
                     break;
                 };
@@ -323,7 +294,6 @@ pub fn optimize(program: &mut Program) {
         }
         deps.entry(name.clone()).or_default().insert(demand.clone());
         deps.entry(demand.clone()).or_default().extend(guards);
-        reach.clear();
         for i in first..program.rules.len() {
             index(&mut readers, i, &program.rules[i]);
         }
