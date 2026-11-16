@@ -1654,7 +1654,9 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       await requestDiscovery(bridge, walk);
       git(root, "worktree", "remove", worktree);
       roots.length = 0;
-      await vi.advanceTimersByTimeAsync(200);
+      // The walk is timed the gap or the last walk's length after that walk, whichever is longer: on a slow machine, as
+      // Git on Windows is, longer than the gap. The checkpoint's wait and Git's timeouts come later, so it is the next timer.
+      await vi.advanceTimersToNextTimerAsync();
       await bridge.settleWorktreeWalk();
       walk.release();
       await bridge.checkpoint("turn");
