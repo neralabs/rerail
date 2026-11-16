@@ -6,8 +6,9 @@
 //!
 //! - the projection's arrays, by local id: `core` (the tape node), `low` (its id's low 32 bits by definition,
 //!   empty for ids in preorder), `ord` (its index among its siblings), and the fielded nodes;
-//! - the facts' arrays, by tape node: `parent`, `start`, `end`, `kind` (the tape's atom) and `field`;
-//! - `local`, each tape node's local id (`NONE` for one left out), which a parent is read through;
+//! - `up`, the projection's parent of each local id (`Projected::up`, `NONE` above the root and an anchor);
+//! - each node's `start`, `end`, `kind` (the tape's atom) and `field`, by local id, read off the tape through its API
+//!   (0293) when the chunk is made: an interim, until the device's kernels read the tape in the chunk (0293 step 5);
 //! - `core.rr`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
 //!   first device read (`fill_locs`): the document's first row in them, its spans past its nodes (tokens, the whole
 //!   text, lines and end points, as `Projected::span` gives them) and its line starts (`core_rr::Lines`).
@@ -16,9 +17,9 @@
 //! the block once, and an entry points at its own.
 //!
 //! The projection's arrays are made in the batch's block (0289 §3): the entry points at them, and nothing is copied.
-//! The facts' arrays and the canonical tables are copied in once per batch, on the device's first read: `Facts` is
-//! shared by every batch and memo hit that reads a document, so its arrays move into the block when a memo entry is a
-//! document range copied into the chunk (0266 path, steps 4 and 5).
+//! `Facts` holds no column since 0293 step 4: a node's kind, span and field are the tape's answers, and the tape image
+//! is already in the chunk (0289 §4). Until the kernels read it there, the chunk holds those four answers for the
+//! projected nodes, made once per batch on the device's first read. The canonical tables are copied in once a batch.
 
 use super::{Batch, Place, View};
 use crate::code_rule_dsl::facts::core::NONE;
@@ -46,8 +47,8 @@ structure! {
         pub low: Span<u32>,
         pub ord: Span<u32>,
         pub fielded: Span<u32>,
-        pub local: Span<u32>,
-        pub parent: Span<u32>,
+        pub up: Span<u32>,
+        /// By local id, off the tape (an interim until 0293 step 5).
         pub start: Span<u32>,
         pub end: Span<u32>,
         pub kind: Span<u32>,
@@ -126,6 +127,18 @@ fn put<T: Copy>(b: &Block, span: *const Span<T>, src: &[T]) {
     }
 }
 
+/// `n` values made by `at` (by local id) put in `b`, and `span` set to them.
+fn made<T: Copy>(b: &Block, span: *const Span<T>, n: usize, at: impl Fn(usize) -> T) {
+    let p: *mut T = b.alloc_t(n.max(1));
+    // SAFETY: `p` holds `n` items, just allocated in `b`, as `span` is.
+    unsafe {
+        for l in 0..n {
+            p.add(l).write(at(l));
+        }
+        Span::set(span, p, n);
+    }
+}
+
 /// Points `span` at `cells`, which are in `b` (a projection's, made in its batch's block); copied in when they are
 /// not (a projection made apart from the batch).
 fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cells: &Cells<T>) {
@@ -173,12 +186,12 @@ pub fn build(batch: &Batch) -> Chunk {
             }
             point(&b, &raw const (*d).ord, p.ordinals());
             point(&b, &raw const (*d).fielded, fielded);
-            point(&b, &raw const (*d).local, &p.local);
-            put(&b, &raw const (*d).parent, &f.parent[..]);
-            put(&b, &raw const (*d).start, &f.start[..]);
-            put(&b, &raw const (*d).end, &f.end[..]);
-            put(&b, &raw const (*d).kind, &f.kind);
-            put(&b, &raw const (*d).field, &f.field);
+            point(&b, &raw const (*d).up, &p.up);
+            let ids = &p.core;
+            made(&b, &raw const (*d).start, ids.len(), |l| f.start(ids[l]));
+            made(&b, &raw const (*d).end, ids.len(), |l| f.end(ids[l]));
+            made(&b, &raw const (*d).kind, ids.len(), |l| f.kind(ids[l]));
+            made(&b, &raw const (*d).field, ids.len(), |l| f.field(ids[l]));
             match canon.get(&p.tag) {
                 Some(&(c, n)) => Span::set(&raw const (*d).canonical, c, n),
                 None => Span::set(&raw const (*d).canonical, std::ptr::null::<u16>(), 0),

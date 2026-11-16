@@ -482,19 +482,25 @@ fn within_holds_exactly_the_contained_pairs() {
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
     let axes: Vec<(&[u32], &[u32])> = batch.docs.iter().map(|p| (p.sizes(), p.depths())).collect();
     // (document, local, size, depth, start, end) of node row r.
-    let at = |r: usize| {
-        let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
-        let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
-        let core = p.core[local] as usize;
-        (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, p.facts.start[core], p.facts.end[core])
-    };
+    // Read once: the reference loop below visits every pair.
+    let rows: Vec<_> = (0..nodes)
+        .map(|r| {
+            let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
+            let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
+            let (start, end) = p.facts.span(p.core[local]);
+            (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, start, end)
+        })
+        .collect();
+    let at = |r: usize| rows[r];
     let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
     assert!(zero > 0, "the broken documents have nodes of zero width");
     let cpu = || { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s };
     let (mut reference_cpu, mut relation_cpu) = (0.0, 0.0);
+    // The tree's containment reads the documents' tapes (decision 0293), in every format; spans read the facts.
+    use crate::code_rule_dsl::tape::formats::Format;
+    assert!(batch.docs.iter().all(|p| p.facts.tape.is_some()), "every document holds its tape");
     for mode in [within::Mode::Tree, within::Mode::Span] {
         let before_reference = cpu();
-        let within = within::Within::new(Arc::clone(&batch), mode);
         let mut expected = BTreeSet::new();
         for a in 0..nodes {
             for b in 0..nodes {
@@ -511,34 +517,38 @@ fn within_holds_exactly_the_contained_pairs() {
             }
         }
         reference_cpu += cpu() - before_reference;
-        let before_relation = cpu();
-        let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
-        let ids: Vec<i64> = (0..nodes).map(id).collect();
-        // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
-        let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
-        assert_eq!(rows(within.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, b)| half.contains(b)).copied().collect());
-        assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
-        assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
-        assert_eq!(rows((0..within.len()).collect()), expected);
-        // Each node's containers are made once: the inner side's rows are exactly the pairs.
-        assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
-        let own = usize::from(mode == within::Mode::Span);
-        assert_eq!(within.estimated_len(), (0..nodes).map(|r| at(r).3 + own).sum::<usize>());
-        if mode == within::Mode::Tree {
-            assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
+        let formats: &[Format] = if mode == within::Mode::Tree { &Format::ALL } else { &[Format::F15] };
+        for &format in formats {
+            let within = within::Within::new(Arc::clone(&batch), mode).reading(format);
+            let before_relation = cpu();
+            let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
+            let ids: Vec<i64> = (0..nodes).map(id).collect();
+            // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
+            let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+            assert_eq!(rows(within.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, b)| half.contains(b)).copied().collect());
+            assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
+            assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
+            assert_eq!(rows((0..within.len()).collect()), expected);
+            // Each node's containers are made once: the inner side's rows are exactly the pairs.
+            assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
+            let own = usize::from(mode == within::Mode::Span);
+            assert_eq!(within.estimated_len(), (0..nodes).map(|r| at(r).3 + own).sum::<usize>());
+            if mode == within::Mode::Tree {
+                assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
+            }
+            // Read whole first (the device's keyed read, decision 0277): the tree by the batch's solve, every pair once,
+            // and the lookups after it read the same rows; spans have no solve.
+            let whole = within::Within::new(Arc::clone(&batch), mode).reading(format);
+            assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");
+            if mode == within::Mode::Tree {
+                let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect() };
+                assert_eq!(whole.len(), expected.len());
+                assert_eq!(rows((0..whole.len()).collect()), expected);
+                assert_eq!(rows(whole.lookup(0, &ids).unwrap()), expected);
+                assert_eq!(rows(whole.lookup(1, &ids).unwrap()), expected);
+            }
+            relation_cpu += cpu() - before_relation;
         }
-        // Read whole first (the device's keyed read, decision 0277): the tree by the batch's solve, every pair once,
-        // and the lookups after it read the same rows; spans have no solve.
-        let whole = within::Within::new(Arc::clone(&batch), mode);
-        assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");
-        if mode == within::Mode::Tree {
-            let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect() };
-            assert_eq!(whole.len(), expected.len());
-            assert_eq!(rows((0..whole.len()).collect()), expected);
-            assert_eq!(rows(whole.lookup(0, &ids).unwrap()), expected);
-            assert_eq!(rows(whole.lookup(1, &ids).unwrap()), expected);
-        }
-        relation_cpu += cpu() - before_relation;
     }
     eprintln!("CONTAINMENT CHECK: {nodes} nodes, reference {reference_cpu:.6} CPU s, relation and comparisons {relation_cpu:.6} CPU s");
 }
@@ -549,7 +559,13 @@ fn within_holds_exactly_the_contained_pairs() {
 fn the_kind_set_axes_hold_exactly_their_pairs() {
     use crate::code_rule_dsl::facts::core::kind_atom;
     let store = ContentStore::open(&temp("axes")).unwrap();
-    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let mut docs: Vec<Document> = documents().into_iter().take(4).collect();
+    // A document with ERROR nodes: an ERROR node's kind is ERROR's atom (`Facts::kind`), never a member, whatever kind
+    // its tape entry holds; the tape's code set leaves it out too.
+    let source = "def f(:\n    return [1, 2\nclass C:\n    x = (\ny = f(1) + g(2)\n";
+    let broken = facts("broken.py", source);
+    assert!(broken.errors().iter().any(|&id| broken.flags(id) & 8 != 0), "broken.py has ERROR nodes");
+    docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None });
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
@@ -560,14 +576,21 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local] as usize]);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.core[local]));
         i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
-    // Nested kinds: the root's, and two from inside the documents.
-    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    // Nested kinds: the root's, and two from inside the documents; and every kind of broken.py's nodes, ERROR's
+    // among them.
+    let mut set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    set.extend((batch.nodes[4]..nodes).map(kind));
+    set.sort_unstable();
+    set.dedup();
     // Each row's place and membership read once: the brute force below is quadratic in the rows.
     let place: Vec<(u32, usize, usize)> = (0..nodes).map(at).collect();
-    let member: Vec<bool> = (0..nodes).map(|r| set.contains(&kind(r))).collect();
+    // An ERROR node (its atom's code 0) is never a member, though the set names ERROR (`Within::member`).
+    let error = |k: i64| k % i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE) == 0;
+    assert!(set.iter().any(|&k| error(k)), "the set names ERROR");
+    let member: Vec<bool> = (0..nodes).map(|r| kind(r)).map(|k| set.contains(&k) && !error(k)).collect();
     let below = |n: usize, a: usize| {
         let ((dn, ln, _), (da, la, za)) = (place[n], place[a]);
         dn == da && la < ln && ln <= la + za
@@ -600,13 +623,17 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
-    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal.
+    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal;
+    // each read off the documents' tapes in every format (decision 0293).
+    use crate::code_rule_dsl::tape::formats::Format;
+    assert!(batch.docs.iter().all(|p| p.facts.tape.is_some()), "the axes read every document's tape");
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
     let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
     let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();
-    for ((axis, expected), (binding, solve)) in axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))) {
+    let cases = axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))).flat_map(|c| Format::ALL.map(|f| (c, f)));
+    for (((axis, expected), (binding, solve)), format) in cases {
         let expected = expected.clone();
-        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding).reading(format);
         if solve {
             source.expect_lookups(0, 1e12);
         }
@@ -614,10 +641,11 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect() };
         let ids: Vec<i64> = (0..nodes).map(id).collect();
         let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
-        assert_eq!(rows(source.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, a)| half.contains(a)).copied().collect());
-        assert_eq!(rows(source.lookup(0, &ids).unwrap()), expected);
-        assert_eq!(rows(source.lookup(1, &ids).unwrap()), expected);
-        assert_eq!(rows((0..source.len()).collect()), expected);
+        let case = format!("{axis:?} on {binding:?}, solved {solve}, format {format:?}");
+        assert_eq!(rows(source.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, a)| half.contains(a)).copied().collect(), "{case}");
+        assert_eq!(rows(source.lookup(0, &ids).unwrap()), expected, "{case}");
+        assert_eq!(rows(source.lookup(1, &ids).unwrap()), expected, "{case}");
+        assert_eq!(rows((0..source.len()).collect()), expected, "{case}");
         assert_eq!(source.len(), expected.len());
         assert_eq!(source.estimated_len(), expected.len(), "an axis's rows are counted from the tree");
         let stats = source.statistics().unwrap();
@@ -777,8 +805,8 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     // Independent eager reference: tokens grouped by the named parent's preorder, then source and lines.
     let mut expected = Vec::new();
     for &id in p.core.iter() {
-        for &c in f.children(id) {
-            if !f.named(c) && f.end[c as usize] > f.start[c as usize] { expected.push([f.start[c as usize], f.end[c as usize]]); }
+        for c in f.children(id) {
+            if !f.named(c) && f.end(c) > f.start(c) { expected.push([f.start(c), f.end(c)]); }
         }
     }
     let tokens = expected.len();
@@ -801,7 +829,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
         let mut depth=0;let mut up=parent;
         while up!=NONE { depth+=1;up=p.parent(up as usize); }
         assert_eq!(p.depth(l),depth);
-        let subtree_end=f.subtree_end[p.core[l] as usize];
+        let subtree_end=f.subtree_end(p.core[l]);
         assert_eq!(p.size(l),p.core[l+1..].iter().filter(|&&id|id<subtree_end).count() as u32);
     }
     assert!(p.fielded.get().is_none(),"reading other axes must not build field rows");
@@ -1081,7 +1109,7 @@ fn definition_ids_census() {
                         let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                         row.parse += cpu_now() - t_parse;
                         let f = &*facts;
-                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)).collect();
+                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
                         let t0 = cpu_now();
                         let _ = granules::number(&p, &dialect, &tokens, &mut vec![0; p.core.len() + tokens.len()]);
                         row.cpu += cpu_now() - t0;

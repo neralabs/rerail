@@ -561,7 +561,7 @@ pass.
   - Reading an input's granules where reached (a source that decodes a granule on first read, with its count from
     the documents' table) is the shape 0266's blocks give: "base + delta read as one".
 
-### Q17. The hub's gate failures at 692cc9772
+### Q21. The hub's gate failures at 692cc9772
 
 - **Found** (2026-11-15, `cargo test --lib --no-fail-fast` on 0288's branch at 51422de6a): 43 failures.
   - 8 have no pack test data on the host (ruff, sqlfluff, vue fixtures).
@@ -585,9 +585,15 @@ pass.
   (packs.tsv), `executors_are_shared` (blocks/src/gpu.rs:199 makes a command queue), `the_gate_catches_a_widened_walk`,
   `spilled_walks_find_the_cpus_roots`, `the_backends_find_the_same_keys_on_real_files`, and the replay sample
   (63 of 268 events).
+- **A run stops under strict SQL too** (2026-11-16, 93b9e0f31 and after): the bench's 317 rules (`rules/B-now`)
+  with this checkout's `docs/rule-syntax/lib` over 10 of corpus0's files abort with "SQL inside the waves: `SELECT
+  n, v FROM main.value`", from `setfix::input_of` under `plan::Run::native_stratum` (a native step's input read as a
+  stored table inside the waves). The same family as the `@rr_node_text` failures above. The shared `rs-now/lib` is
+  older than decision 0263 (`load` not `extensible`), and this checkout's whole python pack stops at "not lowered
+  yet: flat: match_all over $e".
 - **Done when**: each passes on the hub, fixed at its cause.
 
-### Q17. Two `rr::tests` red on the branch head
+### Q22. Two `rr::tests` red on the branch head
 
 - **Found** (2026-11-15, while validating decision 0291; both fail at 86b6c271f without 0291's change):
   `guests_that_do_not_parse_follow_the_policy` (tests.rs 2286: "the broken guest keeps its partial tree", rows
@@ -631,7 +637,15 @@ pass.
   bytes. Red with that branch's own binary at its head (23:01), green at 19:32. Theirs to settle, their area.
 - **Done when**: the test states the set the token loop reads codes for, and passes.
 
-### Q27. Placement's CPU estimates miss by their planned work, so the GPU is not chosen
+### Q26. The tape lab's clippy warnings
+
+- **Found** (2026-11-16, building 0293's tables): `cargo clippy --features grammar --lib` in `native/lab/tape16`
+  gives 51 warnings in the lab's library, from before this work (`is_multiple_of` 9, index loops 20, complex types
+  5, `chunks_exact` 4, precedence 3, and others). The binary's seven are fixed. `clippy --fix` applies none of its
+  20 suggestions here. The lab is its own workspace, so CI does not see them.
+- **Done when**: the lab's library is clean under clippy, with its timing loops keeping what they time.
+
+### Q30. Placement's CPU estimates miss by their planned work, so the GPU is not chosen
 
 - **Found** (2026-11-16, Native-and-GPU-strata, `placement.tsv` of five cold runs of the light run over PostHog's
   `posthog/hogql`, the same 1,629 findings each): the strata cost 2.2–3.7 s of CPU against 1.3–1.6 s estimated, in
@@ -663,7 +677,7 @@ pass.
 - **Done when**: placement's CPU estimate is within 2× of the measured CPU for the costliest strata of this run, and
   the strata the GPU then runs cheaper move there.
 
-### Q28. A rule that copies a view's columns is a stratum
+### Q31. A rule that copies a view's columns is a stratum
 
 - **Found** (2026-11-16, Native-and-GPU-strata): `kind(n, k) :- node(_, n, k, _, _).` (`typing/programs/calls.rr`)
   copies the `node` view: 3.5 M rows, 0.28–0.41 s of CPU a cold run of hogql, the costliest stratum with an exact

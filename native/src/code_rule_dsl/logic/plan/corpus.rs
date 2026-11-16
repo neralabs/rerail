@@ -2066,7 +2066,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
             let mut sources = sources.clone();
             sources.extend(late.lock().expect("the late sources").iter().copied());
             let recorded = store
-                .record_corpus_run_lane(&root, &sources, crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), plan, &also, lane, now)
+                .record_corpus_run_lane(&root, &sources, crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()), plan, &also, lane, now)
                 .and_then(|new| {
                     // A warm run may move an identical manifest's timestamps (`profile::WARM_WRITES_ALLOWED`), never
                     // record a new one.
@@ -4633,7 +4633,7 @@ fn run_observed(
                 let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes, by their sources".into());
                 let ids: Vec<crate::content_store::SourceId> = asked.iter().map(|i| content[*i].and_then(memo::Content::stored).expect("stored")).collect();
                 let frames = cache
-                    .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION))
+                    .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
                     .map_err(|e| Error::Plan(e.to_string()))?;
                 for (i, f) in asked.into_iter().zip(frames) {
                     tape[i] = f;
@@ -4801,7 +4801,7 @@ fn run_observed(
                 .filter(|s| !own.contains(s) && !found.contains(s))
                 .collect();
             let frames = cache
-                .tape_frames_for(&wanted, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION))
+                .tape_frames_for(&wanted, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
                 .map_err(|e| Error::Plan(e.to_string()))?;
             let asked = wanted.len();
             let held: HashMap<_, _> = wanted.into_iter().zip(frames).filter_map(|(s, f)| f.map(|f| (s, f))).collect();

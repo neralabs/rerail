@@ -1,6 +1,7 @@
 # 0289: A chunk is a block, and the device reads its views there
 
-Status: draft (2026-11-15), being built. 0266's path step 2 (`Chunk`), taken here at the user's choice. It is
+Status: draft (2026-11-15), being built. §3's second half was overtaken by 0293 step 4 (2026-11-16): the device's
+reads of the tape wait for 0293 step 5. 0266's path step 2 (`Chunk`), taken here at the user's choice. It is
 done in the order that removes the measured cost first. Builds on 0266 (blocks), 0254 (chunks evaluated at once)
 and 0277 (what the device reads).
 
@@ -45,13 +46,12 @@ holds:
 - the projection's arrays, by local id:
   - `core`, the tape node of each node;
   - its id's low 32 bits (`DefIds::low`, or the preorder index);
-  - its parent's local id;
+  - its parent's local id (`Projected::up`, made in the walk: the tape stores no parent, 0293 §6);
   - its index among its siblings;
   - the fielded nodes;
-- the facts' arrays the views read, by tape node:
-  - `start` and `end`;
-  - `kind`, as the atom the dialect gives it;
-  - `field`, as its atom.
+- what the views read of each node, by local id: `start` and `end`, `kind` (the atom the dialect gives it) and
+  `field` (its atom). These were the facts' arrays, by tape node; since 0293 step 4 `Facts` holds no column, and they
+  are the tape's answers, read through its API when the chunk is made (§3).
 
 The document table is a `structure!`, so the same layout is the host's Rust struct and the kernel's MSL struct
 (0266 §4). There is no hand-written copy.
@@ -169,10 +169,26 @@ in the same block: its entries point at those arrays (`device_chunk::point`), an
 apart from a batch (`Projected::new`: one document's numbering, its definitions) has a block of its own. A batch's
 block is made whether or not the device reads it: it reserves address space, and holds only what was written.
 
-**The facts' arrays wait.** `parent`, `start`, `end`, `kind` and `field` are `Facts`', which every batch and memo hit
-reading the document shares (`Arc<Facts>`). They can be in a batch's block only once a memo entry is a document range
-that a hit copies into the chunk: 0266's path, steps 4 (`Facts` in blocks) and 5 (the journal's entries). In the engine
-`chunk::add_hit` has no caller yet. Until then they are copied into the chunk on the device's first read, as before.
+**The facts' arrays are gone (0293 step 4).** This half was to move `Facts`' `parent`, `start`, `end`, `kind` and
+`field` into the block once a memo entry was a document range a hit copies into the chunk (0266's path, steps 4 and 5).
+Since 0293 step 4 `Facts` holds no column: a node's kind, flags, field, span and parent are the tape's answers,
+through one API over every format, and the tape image is already in the chunk (§4). So nothing of `Facts` moves.
+What is left:
+
+- **The parents are the projection's.** `Projected::up`, the parent of each local id found in the walk that numbers
+  them (0293 §6: a pass over them costs 1.2 M instructions, against 54 to 120 M read off the tape), is made in the
+  batch's block with `core` and `local`, and the chunk points at it. The device's climbs (`parent_of`, the axes'
+  solve) read it by local id, and `local` (by tape node) leaves the chunk.
+- **The device reads the tape in the chunk** (§2's views and the axes' solve), with the kernels 0293 step 5 brings
+  (the lab's format-16 kernels, E30 and E31), when they land; a format-15-only reader written now would be thrown
+  away. Until then, the chunk holds what the kernels read of each projected node (`start`, `end`, `kind`, `field`,
+  by local id), read off the tape through its API once a batch on the device's first read: an interim, as 0293's
+  own (the matcher's records), and nothing is measured before step 5.
+
+Found at the merge: the tape's code set of an axis (`Within::set`, 0293 step 3) counted an ERROR node as a member
+when the set names ERROR (its entry's code 0), where `Within::member`, the device's solve and every reader before
+step 3 never do. The set now leaves ERROR entries out; `the_kind_set_axes_hold_exactly_their_pairs` holds a
+document with ERROR nodes and a set naming ERROR, and fails without the fix.
 
 Checks: `views_made_on_the_device_are_the_hosts_rows` (every view's columns, read through the arrays in place);
 `definition_ids_are_pinned` (every id as it was); the projection's tests (`facts::vtab::syntax::tests`); the axes'

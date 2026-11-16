@@ -186,7 +186,7 @@ fn string_text(label: &str, kind: &str, text: &str, start: u32, node: [u32; 2]) 
 fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option<(String, Placement)> {
     let f = &*host.facts;
     let &(id, kind) = ids.get(local as usize)?;
-    let (start, end) = (f.start[id as usize], f.end[id as usize]);
+    let (start, end) = (f.start(id), f.end(id));
     let node = [start, end];
     let tag = core::facts_tag(f);
     let label = crate::code_rule_dsl::language::from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label).unwrap_or("");
@@ -201,12 +201,12 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
         let mut value = String::new();
         let mut pieces = Vec::new();
         let mut tail = i64::from(end);
-        for &c in f.children(id) {
+        for c in f.children(id) {
             let Some(&(_, k)) = ids.iter().find(|&&(i, _)| i == c) else { continue };
             if !is_string(k) {
                 continue;
             }
-            let (text, place) = string_text(label, k, f.text(c), f.start[c as usize], node)?;
+            let (text, place) = string_text(label, k, f.text(c), f.start(c), node)?;
             let at = value.len() as u32;
             match place {
                 Placement::Copied { delta, .. } => {
@@ -232,7 +232,7 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
 /// `> ` or indent on a continued line). The pieces are copied stretches of the host, so its nodes have the file's
 /// lines and columns.
 pub fn markdown_inline_text(f: &core::Facts, id: u32) -> (String, Placement) {
-    let (start, end) = (f.start[id as usize], f.end[id as usize]);
+    let (start, end) = (f.start(id), f.end(id));
     let src = f.source.as_bytes();
     let mut text = Vec::new();
     let mut pieces = Vec::new();
@@ -242,7 +242,7 @@ pub fn markdown_inline_text(f: &core::Facts, id: u32) -> (String, Placement) {
         if syntax::kind_name(f, c) != "block_continuation" {
             continue;
         }
-        let (a, b) = (f.start[c as usize], f.end[c as usize]);
+        let (a, b) = (f.start(c), f.end(c));
         pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(from), escape: false });
         text.extend_from_slice(&src[from as usize..a as usize]);
         from = b;
@@ -365,7 +365,7 @@ impl Guests {
         let placed = match text {
             Some(text) => {
                 let Some(&(id, _)) = ids.get(local as usize) else { return Ok(None) };
-                Some((text, Placement::At([host.facts.start[id as usize], host.facts.end[id as usize]])))
+                Some((text, Placement::At([host.facts.start(id), host.facts.end(id)])))
             }
             None => host_text(host, ids, local),
         };
@@ -469,10 +469,10 @@ impl Guests {
         let base = syntax::unparsed(d);
         // The unparsed text's offset in the document's text (a wrapped fragment's root starts past the `(`).
         let off = match d.guest.as_deref() {
-            Some(g) if g.root != 0 => d.facts.start[g.root as usize] as usize,
+            Some(g) if g.root != 0 => d.facts.start(g.root) as usize,
             _ => 0,
         };
-        let (a, b) = (d.facts.start[id as usize] as usize, d.facts.end[id as usize] as usize);
+        let (a, b) = (d.facts.start(id) as usize, d.facts.end(id) as usize);
         let (Some(a), Some(b)) = (a.checked_sub(off), b.checked_sub(off)) else { return Ok(None) };
         if b > base.len() || !base.is_char_boundary(a) || !base.is_char_boundary(b) {
             return Ok(None);
@@ -583,7 +583,7 @@ type Tape = Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<dyn crate::code_rul
 fn wrapped_root(f: &core::Facts, label: &str) -> u32 {
     let Some(dialect) = crate::code_rule_dsl::language::dialect_by_label(label) else { return 0 };
     let kinds = dialect.kinds();
-    let name = |id: u32| kinds.kind_name(core::kind_code(f.kind[id as usize])).unwrap_or("");
+    let name = |id: u32| kinds.kind_name(core::kind_code(f.kind(id))).unwrap_or("");
     let named = |id: u32| -> Vec<u32> { f.children(id).iter().copied().filter(|&c| f.named(c) && !name(c).contains("comment")).collect() };
     let first = named(0).first().copied().unwrap_or(0);
     let path = (|| {
