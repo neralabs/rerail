@@ -23,6 +23,8 @@ import {
 } from "../../src/runtime/index.js";
 import { runAuditCommand } from "../../src/cli/audit-cli.js";
 import { registerHostCommands, type HostCommandHost } from "../../src/harness/index.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import { setUpTestRepository, testCodeRuleCatalog } from "../support/repository-rules.js";
 import { startRerail } from "../../src/cli/index.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
@@ -49,7 +51,7 @@ afterEach(async () => {
   for (const { root, runtime, daemon } of fixtures.splice(0)) {
     await runtime.dispose();
     await daemon.close();
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   }
 });
 
@@ -74,7 +76,7 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "s1", cwd: root } });
   const daemon = await RerailDaemon.start({
     version: "test", databasePath: database, workspaceRoot: root, port: 0,
-    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"), accessToken: ACCESS,
+    stateFile: join(home, "daemon.json"), kernelSocketPath: testEngineEndpoint(root), accessToken: ACCESS,
   });
   fixtures.push({ root, runtime, daemon });
   return { root, home, database, daemon, runtime, repositoryKey };

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -12,7 +12,8 @@ vi.mock("../../../src/presentation/session-presentation.js", () => ({
   fallbackPresentation: (reason: string) => ({ text: reason }),
   formatTerminalStatus: (presentation: { text?: string }) => presentation.text ?? "Rerail | 2 rules | steered 1×",
 }));
-import { runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
+import { previousStatusSpawn, runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -65,12 +66,12 @@ describe("composed Claude status", () => {
           store.readClaudeStatusCommand(home, settingsPath, cwd));
         expect((await render(undefined, projectSettingsPath)).toString()).toBe(`${label}\nRerail | 2 rules | steered 1×\n`);
       }
-      await rm(join(home, "worktree", ".claude"), { recursive: true });
+      await removeFolder(join(home, "worktree", ".claude"));
       await mkdir(dirname(globalSettingsPath), { recursive: true });
       await writeFile(globalSettingsPath, JSON.stringify({ statusLine: { type: "command", command: "rerail-status" } }));
       expect((await render(undefined, projectSettingsPath)).toString()).toBe("global status\nRerail | 2 rules | steered 1×\n");
     } finally {
-      await rm(home, { recursive: true, force: true });
+      await removeFolder(home);
     }
   });
 
@@ -104,6 +105,69 @@ describe("composed Claude status", () => {
     mocks.command.mockReturnValue(nodePredecessor("process.stdout.write('slow status\\n'); setInterval(() => {}, 1000)"));
     const result = await render();
     expect(result.toString()).toBe("slow status\nRerail | 2 rules | steered 1×\n");
+  });
+
+  it("ends the prior command, not just its shell, once it exceeds its execution budget", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "rerail-claude-status-"));
+    const pidFile = join(folder, "pid");
+    try {
+      // On Windows the command runs under Git Bash's launcher, which starts the real bash, which starts node. Git Bash
+      // reads a backslash in its command line as an escape, so the path goes with forward slashes, which node takes.
+      mocks.command.mockReturnValue(nodePredecessor(
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile.replaceAll("\\", "/"))}, String(process.pid)); process.stdout.write('slow status\\n'); setInterval(() => {}, 1000)`,
+      ));
+      expect((await render()).toString()).toBe("slow status\nRerail | 2 rules | steered 1×\n");
+      const pid = Number(await readFile(pidFile, "utf8"));
+      const alive = (): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const deadline = Date.now() + 5_000;
+      while (alive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      const survived = alive();
+      if (survived) process.kill(pid);
+      expect(survived).toBe(false);
+    } finally {
+      await removeFolder(folder);
+    }
+  }, 15_000);
+
+  it("returns within its budget when the prior command leaves a process holding its output", async () => {
+    // The grandchild leaves the command's process group and keeps the stdout pipe for 10 s.
+    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], "
+      + "{ detached: true, stdio: ['ignore', 'inherit', 'ignore'] }).unref(); process.stdout.write('held status')";
+    mocks.command.mockReturnValue(nodePredecessor(script));
+    const started = performance.now();
+    const result = (await render()).toString();
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(result).toBe("held status\nRerail | 2 rules | steered 1×\n");
+  }, 15_000);
+
+  it("runs the prior command on Windows through Git Bash, as Claude Code does, not cmd.exe", () => {
+    const command = "bash ~/.claude/statusline.sh";
+    const bash = String.raw`C:\Program Files\Git\bin\bash.exe`;
+    expect(previousStatusSpawn(command, "win32", { CLAUDE_CODE_GIT_BASH_PATH: bash })).toEqual({ file: bash, args: ["-c", command], shell: false });
+    expect(previousStatusSpawn(command, "linux", {})).toEqual({ file: command, args: [], shell: true });
+  });
+
+  it("finds Git Bash beside Git where CLAUDE_CODE_GIT_BASH_PATH is not an absolute path, which Rerail would not start", () => {
+    const command = "bash ~/.claude/statusline.sh";
+    expect(previousStatusSpawn(command, "win32", { CLAUDE_CODE_GIT_BASH_PATH: "bash.exe" })).toEqual(previousStatusSpawn(command, "win32", {}));
+  });
+
+  it("draws Rerail's line when the prior command cannot be started at all", async () => {
+    // Node refuses a command line holding a NUL byte before it starts anything, by throwing from spawn.
+    mocks.command.mockReturnValue({ type: "command", command: "printf 'old\u0000status'" });
+    expect((await render()).toString()).toBe("Rerail | 2 rules | steered 1×\n");
+  });
+
+  it.runIf(process.platform === "win32")("keeps a bash status line working on Windows once Rerail wraps it", async () => {
+    mocks.command.mockReturnValue({ type: "command", command: "printf 'bash %s' \"$((1 + 1))\"" });
+    expect((await render()).toString()).toBe("bash 2\nRerail | 2 rules | steered 1×\n");
   });
 
   it("keeps forwarding input beyond Rerail's JSON budget to the original command", async () => {

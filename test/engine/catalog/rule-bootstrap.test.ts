@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,11 +11,12 @@ import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-document
 import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { exportRulesDump, importRulesDump, type RulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
 import { testBundle } from "../../support/rule-configuration-builders.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDatabase(): Promise<string> {

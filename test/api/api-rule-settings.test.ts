@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,6 +22,7 @@ import {
 } from "../../src/engine/index.js";
 import { fixturesPath } from "../support/oracles.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const RULE = "typescript-eslint-consistent-type-definitions";
 const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript"), fixturesPath("packs", "config-regex")]);
@@ -58,7 +59,7 @@ describe("rule settings: suppressions and config", () => {
 
   afterEach(async () => {
     stores.close();
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   const put = async (path: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> => {

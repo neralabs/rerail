@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,12 +10,16 @@ import { startDaemon, stopDaemon } from "../../../src/runtime/index.js";
 import {
   acquireMainInstance,
   assertContentStoreOwner,
+  forgetMainInstanceHolder,
   MAIN_INSTANCE_HOLDER_FILE,
+  MAIN_INSTANCE_LOCK_FILE,
   MainInstanceConflictError,
+  mainInstanceLockHeld,
   type MainInstanceLease,
   type MainRerailBuild,
 } from "../../../src/engine/native/main-instance.js";
 import { mainContentStoreDirectory } from "../../../src/engine/native/rerail-build.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const packageRoot = resolve(import.meta.dirname, "..", "..", "..");
 const mainInstanceModule = pathToFileURL(join(packageRoot, "src", "engine", "native", "main-instance.ts")).href;
@@ -40,7 +44,7 @@ afterEach(async () => {
     }
   }
   vi.unstubAllEnvs();
-  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0)) await removeFolder(directory);
 });
 
 async function temporaryDirectory(): Promise<string> {
@@ -150,4 +154,34 @@ describe("the single main instance", () => {
     );
     expect(conflict(mainDirectory).holder?.pid).toBe(holder.pid);
   }, 30_000);
+});
+
+describe("forgetMainInstanceHolder", () => {
+  it("removes the record of a holder the OS ended without its release, and no other holder's", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rerail-main-instance-record-"));
+    try {
+      const record = join(directory, MAIN_INSTANCE_HOLDER_FILE);
+      await writeFile(record, `${JSON.stringify({ pid: 123, version: "2.0.0", packageRoot: build.packageRoot, startedAt: "2026-11-09T00:00:00.000Z" })}\n`);
+      forgetMainInstanceHolder(456, directory);
+      expect(existsSync(record)).toBe(true);
+      forgetMainInstanceHolder(123, directory);
+      expect(existsSync(record)).toBe(false);
+    } finally {
+      await removeFolder(directory);
+    }
+  });
+});
+
+describe("mainInstanceLockHeld", () => {
+  // The lock refuses every other handle, this process's own included, so the holder can sit in this process.
+  it("answers held while a main instance holds the lock, free once it lets go, and makes no lock file where none is", async () => {
+    const directory = await temporaryDirectory();
+    expect(mainInstanceLockHeld(directory)).toBe(false);
+    expect(existsSync(join(directory, MAIN_INSTANCE_LOCK_FILE))).toBe(false);
+    const lease = acquireMainInstance(build, directory);
+    leases.push(lease);
+    expect(mainInstanceLockHeld(directory)).toBe(true);
+    lease.release();
+    expect(mainInstanceLockHeld(directory)).toBe(false);
+  });
 });

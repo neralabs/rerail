@@ -4,7 +4,7 @@
  * recorded on 2026-10-22 (typescript-eslint's annotated tags, Rust 1.99.0 and 1.99.1); nothing reaches the network.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
@@ -12,11 +12,12 @@ import { afterEach, test, vi } from "vitest";
 import { RUNTIMES_DIRECTORY } from "../../../scripts/pack-data/runtimes.js";
 import { applyBump, main, planBump, renderBump, type Sources } from "../../../scripts/upstream/bump.js";
 import { upstreamPins, type Fetch } from "../../../scripts/upstream/releases.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 /** A checkout holding `files`. */

@@ -35,7 +35,9 @@ for that kind. The person decides; nothing leaves their computer until they say 
 
    It reports this repository's latest session. If the problem was in an earlier one, ask for its id, which is in its dashboard
    address (`sessionId=…`), and run `rerail support-bundle --json --session <id>` instead. Read the file the output's `path`
-   names. If the command fails, its message is your evidence: the kind is an engine bug, and there is no bundle to attach.
+   names. It can wait about 12 s for a busy daemon (a 2 s health check, then 10 s more), so give it a minute; if it is
+   stopped while it waits, read the file its waiting message names, which already holds a bundle. If the command fails, its
+   message is your evidence: the kind is an engine bug, and there is no bundle to attach.
 3. **Check the version.** Run `rerail update check`. If a newer version exists, say so and suggest `/rerail-update` and trying
    again before reporting. The person can still report it.
 4. **Work out the kind**, in this order, and stop at the first that fits:

@@ -24,6 +24,16 @@ function ConvertTo-RerailArgument([string]$Value) {
   return '"' + (($Value -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
 }
 
+# Redirects a process's stdout and stderr and reads them as UTF-8, which node writes to a pipe whatever the console's
+# code page. Left unset, .NET decodes them with the console's code page (437 on an en-US install), and set-up's JSON
+# comes back with the sandbox's accented profile path garbled.
+function Set-RerailUtf8Pipes([Diagnostics.ProcessStartInfo]$Start) {
+  $Start.RedirectStandardOutput = $true
+  $Start.RedirectStandardError = $true
+  $Start.StandardOutputEncoding = New-Object Text.UTF8Encoding $false
+  $Start.StandardErrorEncoding = New-Object Text.UTF8Encoding $false
+}
+
 # Runs a program with stdout and stderr read through pipes. Its stdout must close within 15 s of its exit: a daemon
 # that inherited the pipe would hold every captured `rerail setup` open (what a coding agent running set-up sees).
 function Invoke-RerailCaptured([string]$File, [string[]]$Arguments, [string]$WorkingDirectory, [int]$TimeoutMinutes = 15) {
@@ -31,8 +41,7 @@ function Invoke-RerailCaptured([string]$File, [string[]]$Arguments, [string]$Wor
   $start.Arguments = (@($Arguments) | ForEach-Object { ConvertTo-RerailArgument $_ }) -join " "
   $start.WorkingDirectory = $WorkingDirectory
   $start.UseShellExecute = $false
-  $start.RedirectStandardOutput = $true
-  $start.RedirectStandardError = $true
+  Set-RerailUtf8Pipes $start
   $process = [Diagnostics.Process]::Start($start)
   $stdout = $process.StandardOutput.ReadToEndAsync()
   $stderr = $process.StandardError.ReadToEndAsync()
@@ -46,7 +55,8 @@ function Invoke-RerailCaptured([string]$File, [string[]]$Arguments, [string]$Wor
 }
 
 # A registry on 127.0.0.1 that serves the given tarballs under the @neralabs scope, readable by anyone as npmjs serves
-# a public package. Map the scope to `.Url` in the user's .npmrc; every other package still comes from npmjs.
+# a public package, and marked as npmjs marks a version that ships a shrinkwrap (Set-RerailShrinkwrapFlag). Map the
+# scope to `.Url` in the user's .npmrc; every other package still comes from npmjs.
 function Start-RerailRegistry([string]$Root, [string[]]$Tarballs) {
   $ErrorActionPreference = "Continue"
   $node = Get-RerailNode
@@ -91,12 +101,29 @@ log: { type: stdout, level: warn }
     foreach ($tarball in $Tarballs) {
       $published = (& $node $npmCli publish $tarball --tag latest --registry $url --userconfig "$Root\publisher.npmrc" --loglevel=warn 2>&1) -join "`n"
       if ($LASTEXITCODE -ne 0) { throw "publishing $tarball to $url failed:`n$published" }
+      Set-RerailShrinkwrapFlag -Storage "$Root\storage" -Tarball $tarball
     }
   } catch {
     & taskkill.exe /T /F /PID $process.Id *> $null
     throw
   }
   return @{ Url = $url; Process = $process }
+}
+
+# npmjs marks a version whose tarball ships an npm-shrinkwrap.json with `_hasShrinkwrap: true`, and npm reads a
+# dependency's shrinkwrap only when its registry marks it so; Verdaccio stores no such mark. Setting it in Verdaccio's
+# stored metadata for the version makes an install from the local registry read the shrinkwrap, lay out the tree and
+# run the install scripts an install from npmjs does. Windows' own tar.exe reads a drive-letter path, which Git's GNU
+# tar takes for a remote host.
+function Set-RerailShrinkwrapFlag([string]$Storage, [string]$Tarball) {
+  $ErrorActionPreference = "Continue"
+  $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+  & $tar -tzf $Tarball package/npm-shrinkwrap.json *> $null
+  if ($LASTEXITCODE -ne 0) { return }
+  $manifest = (& $tar -xzOf $Tarball package/package.json) -join "`n" | ConvertFrom-Json
+  $stored = Join-Path $Storage "$($manifest.name)\package.json"
+  & (Get-RerailNode) -e "const fs=require('fs');const [file,version]=process.argv.slice(1);const doc=JSON.parse(fs.readFileSync(file,'utf8'));doc.versions[version]._hasShrinkwrap=true;fs.writeFileSync(file,JSON.stringify(doc,null,2))" $stored $manifest.version
+  if ($LASTEXITCODE -ne 0) { throw "could not mark $($manifest.name)@$($manifest.version) as shipping a shrinkwrap in $stored" }
 }
 
 function Stop-RerailRegistry($Registry) {
@@ -107,9 +134,9 @@ function Stop-RerailRegistry($Registry) {
 # Set-up's machine-readable lane to the end, answering as a person accepting the defaults would (allow sessions, read
 # this repository, start with the packs shown): `npx @neralabs/rerail@<Spec> setup --json`, which installs, then for
 # each answer the launcher command set-up printed for it. `Options` go on the first command (`--port 4799`); set-up
-# carries them into the commands it prints. Writes `step <name>: <screen>` for each step, and each step's JSON to
-# `LogDir` when given; throws unless set-up ends with Rerail on and every command it ran exited 0 (the lane exits 1
-# only on its `error` step, 0 on a question).
+# carries them into the commands it prints. Writes each step's stderr and `step <name>: <screen>`, and each step's
+# JSON to `LogDir` when given; throws unless set-up ends with Rerail on and every command it ran exited 0 (the lane
+# exits 1 only on its `error` step, 0 on a question).
 function Invoke-RerailSetup([string]$Spec, [string]$Project, [string]$Launcher, [string[]]$Options = @(), [string]$LogDir = "") {
   $ErrorActionPreference = "Continue"
   $node = Get-RerailNode
@@ -120,6 +147,9 @@ function Invoke-RerailSetup([string]$Spec, [string]$Project, [string]$Launcher, 
     if ($LogDir) { Write-RerailUtf8 "$LogDir\setup-$i.json" $run.Out }
     # Windows PowerShell's ConvertFrom-Json returns nothing for empty input rather than failing.
     try { $step = $run.Out | ConvertFrom-Json } catch { $step = $null }
+    # Every step's stderr, whatever its exit: npx prints nothing of the install it runs first, even when one of its
+    # dependencies' install scripts fails, so what it did print is the only trace in the log.
+    "stderr (exit $($run.Exit)): $(if ($run.Err.Trim()) { "`n" + $run.Err.TrimEnd() } else { '(empty)' })"
     if ($null -eq $step) { throw "set-up printed no JSON step (exit $($run.Exit)):`n$($run.Out)`n$($run.Err)" }
     "step $($step.step): $($step.screen)"
     if ($run.Exit -ne 0) { throw "set-up exited $($run.Exit) at step $($step.step):`n$($run.Err)" }
@@ -150,10 +180,11 @@ function Assert-RerailManagedInstall([string]$RerailHome) {
 function Invoke-RerailSessionStartHooks([string]$UserHome, [string]$Project, [string]$WorkDir, [string]$Prefix) {
   $ErrorActionPreference = "Continue"
   $node = Get-RerailNode
-  $claude = (Get-Content -Raw "$UserHome\.claude\settings.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0]
+  # UTF-8, as set-up writes them: Windows PowerShell reads a file without a byte order mark in the ANSI code page.
+  $claude = (Get-Content -Raw -Encoding UTF8 "$UserHome\.claude\settings.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0]
   if ($null -eq $claude.args) { throw "the Claude Code hook is not in exec form: $($claude.command)" }
   Write-RerailUtf8 "$WorkDir\claude-args.json" (ConvertTo-Json -Compress @($claude.args))
-  Write-RerailUtf8 "$WorkDir\codex-command.txt" (Get-Content -Raw "$UserHome\.codex\hooks.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0].command
+  Write-RerailUtf8 "$WorkDir\codex-command.txt" (Get-Content -Raw -Encoding UTF8 "$UserHome\.codex\hooks.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0].command
   $probe = "const {spawnSync}=require('child_process'),fs=require('fs');const [kind,a,b,payload,cwd]=process.argv.slice(1);const input=fs.readFileSync(payload);" +
     "const r=kind==='exec'?spawnSync(a,JSON.parse(fs.readFileSync(b,'utf8')),{input,encoding:'utf8',cwd}):spawnSync('powershell.exe',['-NoProfile','-Command',fs.readFileSync(a,'utf8')],{input,encoding:'utf8',cwd});" +
     "process.stdout.write('exit='+r.status+' '+(r.stdout+r.stderr).trim().slice(0,300));process.exitCode=r.status"
@@ -190,4 +221,40 @@ function Get-RerailHookLeftovers([string]$UserHome) {
     $path = Join-Path $UserHome $file
     if ((Test-Path $path) -and ((Get-Content -Raw $path) -match '[\\/]\.rerail[\\/]')) { $path }
   }
+}
+
+# The user Path as HKCU\Environment stores it, %VAR% entries unexpanded. Set-up writes the launcher folder there, and no
+# variable a sandbox sets redirects it, so a check that runs set-up on a person's machine changes their Path.
+function Get-RerailUserPath {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+  if ($null -eq $key) { return "" }
+  try { return [string]$key.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } finally { $key.Close() }
+}
+
+# Splits a raw Path value into its entries in $Folder or under it (`Under`) and the value without them (`Rest`), where
+# every other entry, empty ones too, keeps its place and spelling. Entries compare as written, case and a trailing
+# backslash aside, never with %VAR% expanded: set-up writes its folder out in full, and the smoke has pointed
+# USERPROFILE into its sandbox, so a person's `%USERPROFILE%\...` entry would expand to a folder there.
+function Split-RerailPathUnder([string]$Path, [string]$Folder) {
+  $root = $Folder.Trim().TrimEnd('\')
+  if ($root -eq "") { throw "no folder to look for in the Path" }
+  $under = @(); $rest = @()
+  foreach ($entry in $Path -split ";") {
+    $full = $entry.Trim().TrimEnd('\')
+    if ($full -ieq $root -or $full.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) { $under += $entry } else { $rest += $entry }
+  }
+  return @{ Under = $under; Rest = $rest -join ";" }
+}
+
+# Takes every entry in $Folder or under it out of the user Path and writes the rest back with the value's kind, so
+# entries the person added meanwhile stay and %VAR% entries stay unexpanded. Writes a line for each entry it removes.
+function Clear-RerailUserPath([string]$Folder) {
+  $split = Split-RerailPathUnder (Get-RerailUserPath) $Folder
+  if ($split.Under.Count -eq 0) { return }
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+  try { $key.SetValue("Path", $split.Rest, $key.GetValueKind("Path")) } finally { $key.Close() }
+  # Setting a throwaway user variable broadcasts WM_SETTINGCHANGE, as set-up does, so new terminals get the new Path.
+  [Environment]::SetEnvironmentVariable("RERAIL_PATH_REFRESH", "1", "User")
+  [Environment]::SetEnvironmentVariable("RERAIL_PATH_REFRESH", $null, "User")
+  foreach ($entry in $split.Under) { "removed $entry from the user Path" }
 }

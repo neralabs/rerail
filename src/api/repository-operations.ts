@@ -6,7 +6,7 @@
  * while it is not set up, to add a rule they created in the same call, or to add the copy of a By Rerail rule they
  * edited; they may never turn Follow .gitignore off; people may change anything.
  */
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { z, ZodError } from "zod";
@@ -17,7 +17,6 @@ import {
   normalizeFolder,
   type ApiCaller,
   type CheckoutContext,
-  type CheckoutRecord,
   type EffectiveRule,
   type LibraryRule,
   type RepositoryStatus,
@@ -27,8 +26,17 @@ import {
   type RuleSettingTargetKind,
   type RuleSuppressions,
 } from "../engine/catalog/repository-model.js";
+import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, repositoryHistoryIds, type RepositoryListing } from "../engine/catalog/repository-registry.js";
+import {
+  checkoutStatus,
+  linkAlias,
+  listedCheckoutStates,
+  listRepositories,
+  parentCheckouts,
+  repositoryHistoryIds,
+  type RepositoryListing,
+} from "../engine/catalog/repository-registry.js";
 import { setCheckoutStarted, setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
 import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
 import {
@@ -85,7 +93,7 @@ function blockNote(modes: ReadonlyArray<RuleMode | null | undefined>): { note?: 
   return modes.includes("block") ? { note: BLOCK_STEERS_NOTE } : {};
 }
 
-interface Target {
+export interface Target {
   readonly repository: RepositoryListing;
   readonly checkout: CheckoutContext | undefined;
   /** The folder the target names: `folder`, else the folder `checkout` points into, else the agent's folder. */
@@ -129,7 +137,7 @@ function checkoutNotFound(path: string): ApiError {
 export function checkoutAt(stores: RerailApiStores, path: string, write: boolean): { checkout: CheckoutContext; folder: string } {
   let physical: string;
   try {
-    physical = realpathSync(path);
+    physical = checkoutRealpath(path);
   } catch {
     throw checkoutNotFound(path);
   }
@@ -173,7 +181,7 @@ export function checkoutRuleCatalog(stores: RerailApiStores, checkout: CheckoutC
  * reaches only the repository it works in, whatever it names: another's rules, settings and checkouts are not its
  * business, and its paths are the person's.
  */
-function resolveTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): Target {
+export function resolveTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): Target {
   const db = stores.database();
   const located = input.checkout !== undefined
     ? checkoutAt(stores, input.checkout, write)
@@ -216,10 +224,6 @@ function guardAgent(stores: RerailApiStores, caller: ApiCaller, target: Target, 
   throw new ApiError(403, "agent-not-permitted",
     `${target.repository.displayName} is set up, so a coding agent can't change its rules for the whole repository. `
     + `Change them for this worktree instead, or ask the person to change them in the dashboard: ${url}`);
-}
-
-function contextOfRecord(record: CheckoutRecord): CheckoutContext {
-  return { checkoutPath: record.checkoutPath, repositoryKey: record.repositoryKey, cloneId: record.cloneId, git: true, main: true };
 }
 
 function effectiveStatus(db: RerailDatabase, checkout: CheckoutContext): RepositoryStatus {
@@ -421,7 +425,7 @@ function attachmentsOf(db: RerailDatabase, repositoryKey: string): z.infer<typeo
 }
 
 /** A checkout of the repository that is on disk to scan: the target's, else the main checkout, else the most recently seen. */
-function checkoutOnDisk(target: Target): string {
+export function checkoutOnDisk(target: Target): string {
   if (target.checkout !== undefined && existsSync(target.checkout.checkoutPath)) return target.checkout.checkoutPath;
   const present = target.repository.checkouts.filter(checkout => existsSync(checkout.checkoutPath));
   const main = present.find(checkout => repositoryIdentityLocation(checkout.checkoutPath).main);
@@ -475,16 +479,17 @@ export const repositoryOperations: readonly Operation[] = [
     output: repositoryContextSchema,
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, false);
-      const db = stores.database();
+      // Every checkout's state from the listing the target was found in: no statement per checkout.
+      const stateAt = listedCheckoutStates(target.repository);
       const clones = new Map<string, z.infer<typeof repositoryContextSchema>["clones"][number]["checkouts"]>();
       for (const record of target.repository.checkouts) {
-        const status = effectiveStatus(db, contextOfRecord(record));
+        const { status, parentCheckoutPath } = stateAt(record.checkoutPath);
         clones.set(record.cloneId, [...(clones.get(record.cloneId) ?? []), {
           checkoutPath: record.checkoutPath,
           started: record.started,
           state: stateOf(status),
           startedBy: status.startedBy,
-          parentCheckoutPath: parentCheckouts(db, record)[0]?.checkoutPath ?? null,
+          parentCheckoutPath,
           onDisk: existsSync(record.checkoutPath),
         }]);
       }
@@ -494,7 +499,8 @@ export const repositoryOperations: readonly Operation[] = [
         checkout: target.checkout === undefined ? null : {
           checkoutPath: target.checkout.checkoutPath,
           folder: target.folder,
-          state: stateOf(effectiveStatus(db, target.checkout)),
+          // As the runtime reads it: the row at its path decides, even one another repository recorded there.
+          state: stateOf(effectiveStatus(stores.database(), target.checkout)),
         },
       };
     },

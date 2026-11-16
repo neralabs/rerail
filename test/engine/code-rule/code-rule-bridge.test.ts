@@ -1,13 +1,17 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CodeRuleBridge,
+  filesystemClock,
   generatedEditPaths,
   isCommandTool,
   ledgerPreimage,
@@ -17,6 +21,9 @@ import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-ru
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
+import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
+import { holdRemovals } from "../../support/platform/held-removal.js";
+import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),
@@ -27,6 +34,12 @@ const discovery = vi.hoisted(() => ({
  * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+/** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
+const heldGit = vi.hoisted(() => ({ reads: 0 }));
+/** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
+const decodedReads = vi.hoisted(() => ({ count: 0 }));
+/** Each buffer a file read filled while `watching`, by `readFile` or a file handle's `read`, for what a walk allocates. */
+const readBuffers = vi.hoisted(() => ({ watching: false, seen: new Set<ArrayBufferLike>() }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -37,6 +50,11 @@ vi.mock("node:child_process", async importOriginal => {
       const forwarded = fails ? [...args, "--no-such-option"] : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
+      if (heldGit.reads > 0) {
+        heldGit.reads -= 1;
+        call[0] = process.execPath;
+        call[1] = ["-e", "setTimeout(() => {}, 30_000)", "--", ...forwarded];
+      }
     }
     return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
   };
@@ -49,14 +67,44 @@ vi.mock("node:fs/promises", async importOriginal => {
     ...actual,
     readFile: async (...args: Parameters<typeof actual.readFile>) => {
       const contents = await actual.readFile(...args);
-      await discovery.reads.get(String(args[0]))?.shift()?.();
+      if (readBuffers.watching && Buffer.isBuffer(contents)) readBuffers.seen.add(contents.buffer);
       return contents;
+    },
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      if (!readBuffers.watching) return handle;
+      // Every form of `read` passes through unchanged; only the buffer it fills is noted.
+      const read = handle.read.bind(handle) as (...call: unknown[]) => ReturnType<typeof handle.read>;
+      handle.read = ((...call: unknown[]) => {
+        if (Buffer.isBuffer(call[0])) readBuffers.seen.add(call[0].buffer);
+        return read(...call);
+      }) as typeof handle.read;
+      return handle;
     },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
       return await actual.opendir(...args);
     },
+    // A test can make Windows hold a folder for a moment (holdRemovals).
+    rm: vi.fn(actual.rm),
   };
+});
+vi.mock("../../../src/engine/code-rule/walk-read-buffers.js", async importOriginal => {
+  const actual = await importOriginal<typeof WalkReads>();
+  /** A walk's read held once its bytes are in and the file closed (`discovery.reads`), each copy made into text counted. */
+  class HeldReadBuffers extends actual.WalkReadBuffers {
+    override async lend<T>(absolute: string, size: number, use: (read: WalkReads.LentBytes) => Promise<T>): Promise<T> {
+      return await super.lend(absolute, size, async read => {
+        await discovery.reads.get(absolute)?.shift()?.();
+        return await use({ bytes: read.bytes, text: () => countedText(read) });
+      });
+    }
+  }
+  function countedText(read: WalkReads.LentBytes): string {
+    decodedReads.count += 1;
+    return read.text();
+  }
+  return { ...actual, WalkReadBuffers: HeldReadBuffers };
 });
 
 interface DiscoveryGate {
@@ -109,9 +157,12 @@ afterEach(async () => {
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
+  heldGit.reads = 0;
+  readBuffers.watching = false;
+  readBuffers.seen.clear();
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
 });
 
 async function workspace(): Promise<string> {
@@ -134,6 +185,16 @@ async function awaitClockAfter(...paths: string[]): Promise<void> {
     const info = await lstat(join(probe, "tick"));
     if (Math.max(info.mtimeMs, info.ctimeMs) > since) return;
   }
+}
+setFlagsFromString("--expose-gc");
+const gc = runInNewContext("gc") as () => void;
+/** Heap bytes in use once full collections have run and their sweeping has finished. */
+async function heapInUse(): Promise<number> {
+  for (let pass = 0; pass < 3; pass += 1) {
+    gc();
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  return process.memoryUsage().heapUsed;
 }
 function auditor(auditGeneratedEdits: CodeRuleAuditor["auditGeneratedEdits"]): CodeRuleAuditor {
   return { openWorkspace: vi.fn(async () => undefined), acceptsPath: () => true, auditGeneratedEdits, close: vi.fn(async () => undefined) };
@@ -390,6 +451,67 @@ describe("CodeRuleBridge", () => {
     await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
+  it("makes no text of the files a later walk first sees, as its baseline, in a folder the baseline could not read", async () => {
+    const root = await realpath(await workspace());
+    await mkdir(join(root, "deep"));
+    const files = Array.from({ length: 20 }, (_, index) => join(root, "deep", `f${index}.py`));
+    await Promise.all(files.map((file, index) => writeFile(file, `x = ${index}\n`)));
+    commitAll(root);
+    await awaitClockAfter(...files);
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    decodedReads.count = 0;
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // A later walk reads the folder: its first sight of every file there, none of which can be an edit.
+    await bridge.checkpoint("turn");
+    expect(decodedReads.count).toBe(0);
+    await shell(bridge, () => writeFile(files[0]!, "x = 0\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "deep/f0.py", language: "python", previousText: "x = 0\n", generatedText: "x = 0\nmine\n" }],
+    ]);
+  });
+
+  it("audits a shell command's writes that its own walk is the first to see, in a folder the baseline could not read", async () => {
+    const root = await realpath(await workspace());
+    await writeFile(join(root, "src", "kept.py"), "kept\n");
+    await mkdir(join(root, "deep"));
+    await writeFile(join(root, "deep", "old.py"), "old\n");
+    commitAll(root);
+    await awaitClockAfter(join(root, "deep", "old.py"));
+    // Every walk the session's opening makes fails to list the folder; the command's walk is the first to read it.
+    const failing = async () => { throw new Error("EMFILE: too many open files"); };
+    discovery.directories.set(join(root, "deep"), Array.from({ length: 20 }, () => failing));
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    discovery.directories.delete(join(root, "deep"));
+    await shell(bridge, async () => {
+      await writeFile(join(root, "deep", "old.py"), "old\nviolation\n");
+      await writeFile(join(root, "deep", "new.py"), "violation\n");
+    });
+    const uncaptured = "Source changed during initial discovery without a captured preimage";
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([[[
+      { path: "deep/new.py", language: "python", previousReadError: uncaptured, generatedText: "violation\n" },
+      { path: "deep/old.py", language: "python", previousReadError: uncaptured, generatedText: "old\nviolation\n" },
+    ], undefined]]);
+  });
+
+  it("measures a shell edit from the text of a file a command moved into the session folder, stamped before the session", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "a.py"), "a\n");
+    commitAll(root);
+    const outside = await workspace();
+    await mkdir(join(outside, "pkg"));
+    const moved = join(outside, "pkg", "m.py");
+    await writeFile(moved, "moved\n");
+    await awaitClockAfter(join(root, "src", "a.py"), moved);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // A move keeps the stamps of the files in the folder, so the walk first sees m.py with a stamp from before the session.
+    await shell(bridge, () => rename(join(outside, "pkg"), join(root, "src", "pkg")));
+    await shell(bridge, () => writeFile(join(root, "src", "pkg", "m.py"), "moved\nmine\n"));
+    // Whether the move itself is audited depends on the stamps the platform gives a moved folder: only the edit is pinned.
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
+      { path: "src/pkg/m.py", language: "python", previousText: "moved\n", generatedText: "moved\nmine\n" },
     ]);
   });
 
@@ -793,6 +915,59 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
+  it("keeps one observation of an unchanged source for all the sessions that share baseline observations", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "read.py"), "stable\n");
+    await writeFile(join(root, "src", "skipped.py"), "stable\n");
+    await awaitClockAfter(join(root, "src", "read.py"), join(root, "src", "skipped.py"));
+    const observations: SourceObservationCache = new Map();
+    // A source no rule reads is observed by its stamp alone.
+    const open = async (sessionId: string): Promise<void> => {
+      const bridge = createBridge(root, {
+        ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))),
+        acceptsPath: path => path !== "src/skipped.py",
+      }, { observations });
+      await bridge.openWorkspace(sessionId);
+    };
+    await open("session-1");
+    await vi.waitFor(() => expect(observations.get(root)?.get("src/read.py")?.digest).toBeDefined());
+    const first = observations.get(root)!;
+    await open("session-2");
+    await vi.waitFor(() => expect(observations.get(root)).not.toBe(first));
+    // Each live session keeps a baseline of every source of its checkout, so a copy each would cost a whole checkout's
+    // observations a session.
+    expect(observations.get(root)?.get("src/read.py")).toBe(first.get("src/read.py"));
+    expect(observations.get(root)?.get("src/skipped.py")).toBe(first.get("src/skipped.py"));
+  });
+
+  it("costs each session a table of the shared observations, not copies of them or of their paths", { timeout: 60_000 }, async () => {
+    const root = await workspace();
+    const files = 2_000;
+    // Names of about 165 characters: a path string of a session's own then costs more than the session's table, so a
+    // session that keys its table by the walk's own path strings fails the bound by a wide margin.
+    const name = (index: number): string => `module_${index}_${"x".repeat(150)}.py`;
+    for (let index = 0; index < files; index += 1) await writeFile(join(root, "src", name(index)), "stable\n");
+    await awaitClockAfter(join(root, "src", name(files - 1)));
+    const observations: SourceObservationCache = new Map();
+    const open = async (sessionId: string): Promise<void> => {
+      const published = observations.get(root);
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { observations });
+      await bridge.openWorkspace(sessionId);
+      await vi.waitFor(() => expect(observations.get(root)).not.toBe(published), { timeout: 20_000 });
+      // The walk that follows a baseline has finished too: nothing a walk holds while it runs is counted.
+      await bridge.checkpoint("turn");
+    };
+    // The first sessions read every source and pay for the compiled code.
+    await open("session-1");
+    await open("session-2");
+    const before = await heapInUse();
+    const sessions = 5;
+    for (let index = 0; index < sessions; index += 1) await open(`session-${index + 3}`);
+    // Each session's tables hold 60 to 69 bytes a source. A path string of its own brings that to about 250, and an
+    // observation of its own, which "keeps one observation of an unchanged source" also catches, to about 195.
+    expect((await heapInUse() - before) / sessions / files).toBeLessThan(105);
+  });
+
   it("abandons the baseline walk of an interrupted session", async () => {
     const root = await workspace();
     await writeFile(join(root, "src", "a.py"), "before\n");
@@ -804,6 +979,38 @@ describe("CodeRuleBridge", () => {
     await bridge.close();
 
     expect(observations.size).toBe(0);
+  });
+
+  it("closes mid-walk with no Git it started still running in the folder, which can then be removed at once", async () => {
+    const root = await workspace();
+    git(root, "init", "--quiet");
+    const bridge = new CodeRuleBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+      onIgnoreRulesChanged: () => undefined,
+    });
+
+    await bridge.openWorkspace("session-1");
+    // The baseline walk reads HEAD and the ignore rules ask Git for their exclude files, neither waited for by the open.
+    expect(runningIn(root)).not.toEqual([]);
+    await bridge.close();
+
+    expect(runningIn(root)).toEqual([]);
+    // One try: on Windows a process still running in the folder keeps it from being removed.
+    await removeFolder(root, { retry: false });
+  });
+
+  it("reopens with no Git the earlier session started still running in the folder", async () => {
+    const root = await workspace();
+    git(root, "init", "--quiet");
+    const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    // The first session's walk reads HEAD first, through a Git that runs until it is ended.
+    heldGit.reads = 1;
+    await bridge.openWorkspace("session-1");
+    const first = runningIn(root);
+    expect(first).not.toEqual([]);
+
+    await bridge.openWorkspace("session-2");
+    // The second session's own Git may still run; none of the first session's does.
+    expect(runningIn(root).filter(entry => first.includes(entry))).toEqual([]);
   });
 
   it("sends a deletion with its preimage instead of an unreadable workspace scan", async () => {
@@ -832,7 +1039,7 @@ describe("CodeRuleBridge", () => {
 
     await bridge.openWorkspace("session-1");
     await bridge.begin("replace", "write", { path: "src/a.py" });
-    await rm(join(root, "src", "a.py"), { recursive: true });
+    await removeFolder(join(root, "src", "a.py"));
     await writeFile(join(root, "src", "a.py"), "after\n");
     await bridge.finish("replace");
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-1", expect.objectContaining({ edits: [expect.objectContaining({ path: "src/a.py", previousReadError: expect.any(String), generatedText: "after\n" })] }));
@@ -893,6 +1100,10 @@ describe("ledgerPreimage", () => {
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
 }
+/** `path` relative to `root` as the bridge names a file, with `/` between its parts on every platform. */
+function repositoryPath(root: string, path: string): string {
+  return relative(root, path).split(sep).join("/");
+}
 /** Makes `root` a repository whose one commit holds every file in it. */
 function commitAll(root: string): void {
   git(root, "init", "--quiet");
@@ -905,6 +1116,9 @@ async function twoBranches(): Promise<string> {
   await writeFile(join(root, "src", "a.py"), "old\n");
   await writeFile(join(root, "src", "gone.py"), "gone\n");
   git(root, "init", "--quiet", "--initial-branch=main");
+  // Git writes the files as committed, LF, whatever the machine sets: Git for Windows sets core.autocrlf=true for every
+  // repository. The describe block on core.autocrlf sets it for its own repositories.
+  git(root, "config", "core.autocrlf", "false");
   git(root, "add", ".");
   git(root, "commit", "--quiet", "-m", "seed");
   git(root, "switch", "--quiet", "-c", "other");
@@ -1001,7 +1215,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
-      [{ path: relative(root, join(worktree, "src", "a.py")), language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" }],
+      [{ path: repositoryPath(root, join(worktree, "src", "a.py")), language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" }],
     ]);
   });
 
@@ -1012,7 +1226,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
     await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
-      [[relative(root, join(worktree, "src", "a.py"))], "log"],
+      [[repositoryPath(root, join(worktree, "src", "a.py"))], "log"],
       [["src/a.py"], undefined],
     ]);
   });
@@ -1051,7 +1265,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
     await shellInWorktree(bridge, () => writeFile(path, "gone\nours\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
-      [[{ path: relative(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
     ]);
   });
 
@@ -1075,7 +1289,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
-    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([relative(root, join(worktree, "src", "a.py"))]);
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([repositoryPath(root, join(worktree, "src", "a.py"))]);
   });
 
   it("takes a worktree's first walk as its baseline, though `git worktree add` wrote it after the session opened, and records a later change", async () => {
@@ -1108,6 +1322,136 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual(["wt/src/a.py"]);
+  });
+
+  it("leaves the other worktrees' sources, and files a tool wrote outside its folder, out of the observations it shares once it closes", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    for (const name of ["w1", "w2", "w3"]) {
+      const place = join(await workspace(), name);
+      git(root, "worktree", "add", "--quiet", "--detach", place, "other");
+      roots.push(await realpath(place));
+    }
+    const sibling = join(await workspace(), "sibling");
+    await mkdir(sibling);
+    const observations: SourceObservationCache = new Map();
+    const bridge = createBridge(root, {
+      ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))),
+      sourceRoot: path => [...roots, sibling].find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0, observations });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.begin("call-1", "write", { path: join(sibling, "x.py") });
+    await writeFile(join(sibling, "x.py"), "after\n");
+    await bridge.finish("call-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const own = ["src/a.py", "src/gone.py"];
+    const others = roots.flatMap(worktree => ["a.py", "new.py"].map(file => relative(root, join(worktree, "src", file)).split(sep).join("/")));
+    const outside = relative(root, join(sibling, "x.py")).split(sep).join("/");
+    // While the session walks them, a session opening in its folder starts from the worktrees' sources too.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...others, ...own, outside].sort());
+    await bridge.close();
+    // The daemon keeps a folder's observations while it serves the folder, so each folder sessions started in held every
+    // file of every worktree: its heap grew with the folders times the files of all the repository's worktrees.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
+  });
+
+  it("checks a later session's edits in its folder, in a worktree and outside the folder as it did before an earlier session there closed", async () => {
+    const root = await twoBranches();
+    const { worktree, roots } = await withWorktree(root, join(await workspace(), "w"));
+    const sibling = join(await workspace(), "sibling");
+    await mkdir(sibling);
+    await writeFile(join(sibling, "x.py"), "outside\n");
+    // Every session in the folder starts from one observation cache, as with the runtime that serves the folder.
+    const observations: SourceObservationCache = new Map();
+    const open = async (sessionId: string) => {
+      const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+      const bridge = createBridge(root, {
+        ...auditor(audit),
+        sourceRoot: path => [...roots, sibling].find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+        worktreeRoots: () => roots,
+      }, { worktreeWalkGapMs: 0, observations });
+      await bridge.openWorkspace(sessionId);
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+      // Each audit as its edits and its mode: `undefined` steers the session, `log` only records.
+      return { bridge, audited: () => audit.mock.calls.map(([, batch]) => [batch.edits, batch.mode]) };
+    };
+    let calls = 0;
+    const toolWrite = async (bridge: CodeRuleBridge, path: string, text: string) => {
+      const id = `write-${++calls}`;
+      await bridge.begin(id, "write", { path });
+      await writeFile(path, text);
+      await bridge.finish(id);
+    };
+    // The walk of the other worktrees, which a shell call does not wait for, finds what it wrote there.
+    const shellWrite = async (bridge: CodeRuleBridge, path: string, text: string) => {
+      const id = `shell-${++calls}`;
+      await bridge.begin(id, "shell", { command: "./run.sh" });
+      await writeFile(path, text);
+      await bridge.finish(id);
+      await bridge.settleWorktreeWalk();
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    const named = (absolute: string) => relative(root, absolute).split(sep).join("/");
+    const edit = (path: string, previousText: string, generatedText: string) => ({ path, language: "python", previousText, generatedText });
+
+    const first = await open("session-1");
+    await toolWrite(first.bridge, join(sibling, "x.py"), "outside\nfirst\n");
+    await shellWrite(first.bridge, join(worktree, "src", "new.py"), "violation\nfirst\n");
+    await first.bridge.close();
+    expect(first.audited()).toEqual([
+      [[edit(named(join(sibling, "x.py")), "outside\n", "outside\nfirst\n")], undefined],
+      [[edit(named(join(worktree, "src", "new.py")), "violation\n", "violation\nfirst\n")], "log"],
+    ]);
+
+    // Another process changes a file in each place while no session runs.
+    await writeFile(join(worktree, "src", "a.py"), "old\nviolation\nbetween\n");
+    await writeFile(join(root, "src", "a.py"), "old\nbetween\n");
+    await writeFile(join(sibling, "x.py"), "outside\nfirst\nbetween\n");
+    await awaitClockAfter(join(worktree, "src", "a.py"), join(root, "src", "a.py"), join(sibling, "x.py"));
+
+    const second = await open("session-2");
+    // What changed while no session ran is no session's edit.
+    expect(second.audited()).toEqual([]);
+    await toolWrite(second.bridge, join(worktree, "src", "a.py"), "old\nviolation\nbetween\nmine\n");
+    await shellWrite(second.bridge, join(worktree, "src", "new.py"), "violation\nfirst\nmine\n");
+    await shellWrite(second.bridge, join(root, "src", "a.py"), "old\nbetween\nmine\n");
+    await toolWrite(second.bridge, join(sibling, "x.py"), "outside\nfirst\nbetween\nmine\n");
+    expect(second.audited()).toEqual([
+      [[edit(named(join(worktree, "src", "a.py")), "old\nviolation\nbetween\n", "old\nviolation\nbetween\nmine\n")], undefined],
+      [[edit(named(join(worktree, "src", "new.py")), "violation\nfirst\n", "violation\nfirst\nmine\n")], "log"],
+      [[edit("src/a.py", "old\nbetween\n", "old\nbetween\nmine\n")], undefined],
+      [[edit(named(join(sibling, "x.py")), "outside\nfirst\nbetween\n", "outside\nfirst\nbetween\nmine\n")], undefined],
+    ]);
+  });
+
+  it("keeps its own sources, and none of the worktrees inside its folder, in the observations it shares once it closes", async () => {
+    const root = await twoBranches();
+    // A folder of its own whose path starts with a worktree's: `wt/w1-notes` beside `wt/w1`.
+    await mkdir(join(root, "wt", "w1-notes"), { recursive: true });
+    await writeFile(join(root, "wt", "w1-notes", "a.py"), "notes\n");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "notes");
+    const roots = ["w1", "w2"].map(name => join(root, "wt", name));
+    for (const place of roots) git(root, "worktree", "add", "--quiet", "--detach", place, "other");
+    const observations: SourceObservationCache = new Map();
+    const bridge = createBridge(root, {
+      ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0, observations });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const own = ["src/a.py", "src/gone.py", "wt/w1-notes/a.py"];
+    const others = ["w1", "w2"].flatMap(name => ["a.py", "new.py"].map(file => `wt/${name}/src/${file}`));
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...own, ...others].sort());
+    await bridge.close();
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
   });
 
   it("audits nothing when a worktree is removed, or of one Git adds later", async () => {
@@ -1145,7 +1489,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     walk.release();
     await bridge.settleWorktreeWalk();
-    expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "top.py"))]);
+    expect(auditedPaths(auditGeneratedEdits)).toEqual([repositoryPath(root, join(worktree, "top.py"))]);
   });
 
   it("takes what a walk could not read in a worktree as a baseline once it can, but for what was written since", async () => {
@@ -1164,8 +1508,110 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await writeFile(join(worktree, "deep", "new.py"), "violation\n");
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
-    expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "deep", "new.py"))]);
+    expect(auditedPaths(auditGeneratedEdits)).toEqual([repositoryPath(root, join(worktree, "deep", "new.py"))]);
     expect((await bridge.checkpoint("turn")).failures).toEqual([]);
+  });
+
+  it("makes no text of the files a worktree's first walk takes as its baseline, and records a later change from Git's text", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const files = Array.from({ length: 20 }, (_, index) => join(worktree, "src", `f${index}.py`));
+    await Promise.all(files.map((file, index) => writeFile(file, `x = ${index}\n`)));
+    git(worktree, "add", ".");
+    git(worktree, "commit", "--quiet", "-m", "files");
+    await awaitClockAfter(...files);
+    decodedReads.count = 0;
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    expect(decodedReads.count).toBe(0);
+    await shellInWorktree(bridge, () => writeFile(files[0]!, "x = 0\nmine\n"));
+    const path = relative(root, files[0]!).split(sep).join("/");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path, language: "python", previousText: "x = 0\n", generatedText: "x = 0\nmine\n" }], "log"],
+    ]);
+    // The one file that changed is the one read made into text.
+    expect(decodedReads.count).toBe(1);
+  });
+
+  it("reads the files of a worktree's first walk into buffers it reuses, not a buffer of their own each", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const files = Array.from({ length: 64 }, (_, index) => join(worktree, "src", `f${index}.py`));
+    await Promise.all(files.map((file, index) => writeFile(file, `x = ${index}\n`)));
+    git(worktree, "add", ".");
+    git(worktree, "commit", "--quiet", "-m", "files");
+    await awaitClockAfter(...files);
+    readBuffers.watching = true;
+    await opened(root, extra);
+    readBuffers.watching = false;
+    // A walk runs 16 reads at once (OBSERVATION_CONCURRENCY), and two walked here: the session folder and the worktree.
+    expect(readBuffers.seen.size).toBeGreaterThan(0);
+    expect(readBuffers.seen.size).toBeLessThanOrEqual(2 * 16);
+  });
+
+  it("makes no text of the files a later worktree walk first sees, as its baseline, in a folder the last one could not read", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep"));
+    const files = Array.from({ length: 20 }, (_, index) => join(worktree, "deep", `f${index}.py`));
+    await Promise.all(files.map((file, index) => writeFile(file, `x = ${index}\n`)));
+    git(worktree, "add", ".");
+    git(worktree, "commit", "--quiet", "-m", "files");
+    await awaitClockAfter(...files);
+    discovery.directories.set(join(worktree, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    decodedReads.count = 0;
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    // The walk that reads the folder comes after the worktree's first: only that folder's failure makes these a baseline.
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(decodedReads.count).toBe(0);
+    await shellInWorktree(bridge, () => writeFile(files[0]!, "x = 0\nmine\n"));
+    const path = relative(root, files[0]!).split(sep).join("/");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path, language: "python", previousText: "x = 0\n", generatedText: "x = 0\nmine\n" }], "log"],
+    ]);
+  });
+
+  it("records another writer's change in a worktree Git added during the session, made before that worktree's first walk", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const worktree = await realpath(place);
+    await writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n");
+    roots.push(worktree);
+    await shellInWorktree(bridge, () => undefined);
+    const path = relative(root, join(worktree, "src", "a.py")).split(sep).join("/");
+    // Whether Git's own write of src/new.py is recorded too depends on how its checkout wrote line breaks.
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([[expect.arrayContaining([
+      { path, language: "python", previousReadError: "Source changed during initial discovery without a captured preimage", generatedText: "old\nviolation\nmine\n" },
+    ]), "log"]]);
+  });
+
+  it("records a file a shell command moved into another worktree, stamped before the session, and measures its next edit from that text", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const outside = await workspace();
+    await mkdir(join(outside, "pkg"));
+    const moved = join(outside, "pkg", "m.py");
+    await writeFile(moved, "moved\n");
+    await awaitClockAfter(moved);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shellInWorktree(bridge, () => rename(join(outside, "pkg"), join(worktree, "src", "pkg")));
+    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "pkg", "m.py"), "moved\nmine\n"));
+    const path = relative(root, join(worktree, "src", "pkg", "m.py")).split(sep).join("/");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path, language: "python", generatedText: "moved\n" }], "log"],
+      [[{ path, language: "python", previousText: "moved\n", generatedText: "moved\nmine\n" }], "log"],
+    ]);
   });
 
   it("reports a worktree walk that never ran as pending when the session closes, and none with no worktree to walk", async () => {
@@ -1232,6 +1678,158 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     walk.release();
     await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("records only the deletions of a worktree nested in another walked worktree and removed during its first walk", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    git(root, "worktree", "add", "--quiet", "-b", "nested", join(worktree, "nest"), "main");
+    const nested = await realpath(join(worktree, "nest"));
+    // A walk opens one level of folders at a time, so it opens this folder of the outer worktree after it has read the
+    // nested worktree's files: a gate here holds the walk between those reads and the audit of what it found.
+    const deepest = join(worktree, "deep", "deeper", "deepest");
+    await mkdir(deepest, { recursive: true });
+    await awaitClockAfter(join(nested, "src", "a.py"), join(nested, "src", "gone.py"));
+    const nest = relative(root, nested).split(sep).join("/");
+    const { bridge, auditGeneratedEdits } = await opened(root, {
+      ...extra,
+      sourceRoot: path => roots.filter(known => resolve(root, path).startsWith(`${known}${sep}`)).sort((a, b) => b.length - a.length)[0] ?? root,
+      // The outer worktree ignores the folder that holds the nested one, as a main checkout often ignores its
+      // worktrees' folder, so the outer worktree's walk never reads the nested worktree's files.
+      ignoresPath: (path, directory) => directory && path === nest,
+    });
+    roots.push(nested);
+    const walk = holdDiscovery("directories", deepest);
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    git(root, "worktree", "remove", "--force", nested);
+    roots.splice(roots.indexOf(nested), 1);
+    // The session folder's walk finds the worktree gone: the held walk no longer takes its files as a baseline.
+    await bridge.checkpoint("turn");
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    // No one wrote these files. A walk that kept their text recorded each one created, then deleted.
+    const deleted = { language: "python", previousReadError: "Source was deleted without a captured preimage", deleted: true };
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: `${nest}/src/a.py`, ...deleted }, { path: `${nest}/src/gone.py`, ...deleted }], "log"],
+    ]);
+  });
+
+  it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const walk = holdDiscovery("directories", join(worktree, "src"));
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    git(root, "worktree", "remove", worktree);
+    roots.length = 0;
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+});
+
+describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
+  /** `twoBranches` with `core.autocrlf=true`, as Git for Windows' installer sets it, its files checked out again in CRLF. */
+  async function crlfBranches(): Promise<string> {
+    const root = await twoBranches();
+    git(root, "config", "core.autocrlf", "true");
+    await rm(join(root, "src", "a.py"));
+    await rm(join(root, "src", "gone.py"));
+    git(root, "checkout", "--", ".");
+    await awaitClockAfter(join(root, "src", "a.py"), join(root, "src", "gone.py"));
+    return root;
+  }
+
+  it("audits nothing a checkout wrote with CRLF line breaks", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other"))).resolves.toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("audits nothing restored from another branch with CRLF line breaks", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await expect(shell(bridge, () => git(root, "checkout", "other", "--", "src/a.py"))).resolves.toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("audits a shell write with an LF line a checkout never writes, though another branch holds its text with LF", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // `other` holds "old\nviolation\n", which a checkout here writes with a CRLF after each line.
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nviolation\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nviolation\n" }],
+    ]);
+  });
+
+  it("gives a shell write the preimage Git holds, in the CRLF line breaks the file held it in", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nmine\r\n" }],
+    ]);
+  });
+
+  it("audits a shell write that gives an LF file CRLF line breaks where Git would never write them", async () => {
+    const root = await twoBranches();
+    // As on macOS and Linux, and on Windows set up to check files out as they are stored.
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "config", "core.eol", "lf");
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\r\n" }],
+    ]);
+  });
+
+  it("credits Git with CRLF line breaks an eol attribute or a text file under core.eol=crlf has it write", async () => {
+    for (const setup of [
+      { attributes: "*.py eol=crlf\n", eol: "lf" },
+      { attributes: "*.py text\n", eol: "crlf" },
+    ]) {
+      const root = await twoBranches();
+      git(root, "config", "core.autocrlf", "false");
+      git(root, "config", "core.eol", setup.eol);
+      await writeFile(join(root, ".git", "info", "attributes"), setup.attributes);
+      await rm(join(root, "src", "a.py"));
+      git(root, "checkout", "--", "src/a.py");
+      await awaitClockAfter(join(root, "src", "a.py"));
+      const { bridge, auditGeneratedEdits } = await opened(root);
+      await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other")), setup.attributes).resolves.toEqual([]);
+      expect(auditGeneratedEdits, setup.attributes).not.toHaveBeenCalled();
+    }
+  });
+
+  it("credits Git with the CRLF line breaks a text or eol=crlf attribute has it write into a blob that already holds a CR", async () => {
+    for (const setup of [
+      { attributes: "*.py eol=crlf\n", autocrlf: "false" },
+      // Git for Windows' default core.autocrlf with a text attribute.
+      { attributes: "*.py text\n", autocrlf: "true" },
+    ]) {
+      const root = await twoBranches();
+      // Committed with no attribute, so the blobs keep their CRs: a CRLF beside an LF, and a lone CR.
+      git(root, "switch", "--quiet", "other");
+      await writeFile(join(root, "src", "a.py"), "old\r\nviolation\n");
+      await writeFile(join(root, "src", "new.py"), "violation\rmore\n");
+      git(root, "commit", "--quiet", "-am", "carriage returns");
+      git(root, "switch", "--quiet", "main");
+      git(root, "config", "core.autocrlf", setup.autocrlf);
+      await writeFile(join(root, ".git", "info", "attributes"), setup.attributes);
+      await rm(join(root, "src", "a.py"));
+      git(root, "checkout", "--", "src/a.py");
+      await awaitClockAfter(join(root, "src", "a.py"));
+      const { bridge, auditGeneratedEdits } = await opened(root);
+      // A checkout writes every LF without its CR as CRLF here, whatever else the blob holds.
+      await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other")), setup.attributes).resolves.toEqual([]);
+      expect(auditGeneratedEdits, setup.attributes).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -1769,5 +2367,26 @@ describe("ToolCallWindows", () => {
     expect(windows.ranDuring(0, 0)).toBe(false);
     expect(windows.ranDuring(10, 10)).toBe(true);
     expect(windows.ranDuring(MAX_FINISHED_CALLS * 10, MAX_FINISHED_CALLS * 10)).toBe(true);
+  });
+});
+
+describe("the file system's clock", () => {
+  afterEach(() => {
+    vi.mocked(rm).mockReset();
+    vi.useRealTimers();
+  });
+
+  it("is sampled from its probe folder even while Windows holds that folder for a moment", async () => {
+    const { rm: actualRm } = await vi.importActual<typeof FileSystem>("node:fs/promises");
+    // Date.now() far from the file system's clock, so a sample that fell back to it shows.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+    const refused = holdRemovals(vi.mocked(rm), actualRm, 2, path => /rerail-clock-[^\\/]+$/u.test(path));
+
+    const clock = await filesystemClock();
+
+    expect(refused).toHaveLength(2);
+    expect(clock).toBeGreaterThan(0);
+    expect(existsSync(refused[0]!)).toBe(false);
   });
 });

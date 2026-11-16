@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,12 +15,13 @@ import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import type { ConversationRule } from "../../../src/engine/catalog/rule-schema.js";
 import { MOCK_CODE_RULES } from "../../../src/cli/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 const connections: RerailDatabase[] = [];
 afterEach(async () => {
   for (const connection of connections.splice(0)) connection.$client.close();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 function rule(id: string, reference: string, overrides: Partial<ConversationRule> = {}): ConversationRule {

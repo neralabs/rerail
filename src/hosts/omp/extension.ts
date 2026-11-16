@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -7,6 +6,7 @@ import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent";
+import { execFile } from "../../engine/child-process.js";
 import type * as RepositoryStart from "../../runtime/repository-start.js";
 import {
   assistantAbortEvent,

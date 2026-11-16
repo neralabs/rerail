@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +37,7 @@ import { steerDashboard } from "../../../src/presentation/index.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 /** The steer block a `mode` conversation rule delivers for a step of the conversation. */
 function deliveredSteer(ruleId: string, guidance: string, mode: RuleMode = "steer"): string {
@@ -81,7 +82,7 @@ afterEach(async () => {
   vi.useRealTimers();
   if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = originalRerailHome;
-  for (const path of temporaryDirectories.splice(0)) rmSync(path, { recursive: true, force: true });
+  for (const path of temporaryDirectories.splice(0)) removeFolderSync(path);
 });
 
 interface RegisteredTool {

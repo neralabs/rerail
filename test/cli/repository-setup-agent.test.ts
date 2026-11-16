@@ -21,6 +21,8 @@ import { directoryPackStore } from "../support/directory-pack-store.js";
 import { installPack, removeInstalledPacks } from "../support/installed-packs.js";
 import { attachPacks, fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { removeFixtures, TS_PACKS, fixture, gitRepository, agentIo, request, selected, enabledRules, startRows, expectUntouched, failStarts, SETUP_TIMEOUT_MS, TYPESCRIPT, offerReview } from "../support/repository-setup.js";
+import { shellWord } from "../../src/engine/index.js";
+import { stubUserHome } from "../support/user-home.js";
 
 afterEach(async () => {
   readsRepository.mockClear();
@@ -37,7 +39,8 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const asked = agentIo();
     expect(await runSetup(asked, request(setup, environment))).toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Find rule packs for acme-api?");
-    expect(asked.text()).toContain(`rerail setup --answer yes --repo ${setup.repo}`);
+    // The agent runs answers in a POSIX shell, Git Bash on Windows, which needs a Windows path in quotes.
+    expect(asked.text()).toContain(`rerail setup --answer yes --repo ${shellWord("posix", setup.repo)}`);
     expectUntouched(setup);
     expect(existsSync(setup.databasePath)).toBe(false);
 
@@ -55,7 +58,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     expect(selected(setup)).toEqual(TS_PACKS);
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: setup.repo }]);
-    expect(environment.pages).toMatchObject([{ repoRoot: setup.repo, page: "rules", open: true }]);
+    expect(environment.pages).toMatchObject([{ repoRoot: setup.repo, page: "rules", open: false }]);
     expect(started.text()).toContain(`Rerail is on in acme-api · 1 rule pack, ${enabledRules(setup)} rules`);
     const firstStart = startRows(setup);
 
@@ -67,6 +70,17 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(selected(setup)).toEqual(TS_PACKS);
     expect(environment.connections).toHaveLength(1);
     expect(environment.pages.at(-1)).toMatchObject({ repoRoot: setup.repo, page: "rules", open: false });
+  });
+
+  it("opens no browser when it starts Rerail, and shows the dashboard's link instead", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    const started = agentIo();
+    // A coding agent may run set-up where no one watches the screen, or in a sandbox.
+    expect(await runSetup(started, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }))).toMatchObject({ status: "started" });
+    expect(environment.pages).toEqual([expect.objectContaining({ page: "rules", open: false })]);
+    expect(started.text()).toContain("http://127.0.0.1:4737/#rules");
+    expect(started.text()).not.toContain("Opening in your browser.");
   });
 
   it("goes straight to the confirm question where an earlier set-up offered the review and nothing changed there", async () => {
@@ -248,7 +262,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const recommended = agentIo();
     expect(await runSetup(recommended, request(setup, environment, { repo: other }))).toEqual({ status: "waiting" });
     expect(recommended.text()).toContain("Scanned landing-page.");
-    expect(recommended.text()).toContain(`rerail setup --answer start --repo ${other}`);
+    expect(recommended.text()).toContain(`rerail setup --answer start --repo ${shellWord("posix", other)}`);
     expectUntouched(setup, other);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: other }));
@@ -324,14 +338,6 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(environment.connections).toEqual([]);
   });
 
-  it("shows the link and says why when no browser can open", async () => {
-    const setup = await fixture();
-    const summary = agentIo();
-    await runSetup(summary, request(setup, fakeSetupEnvironment({ browser: false }), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
-    expect(summary.text()).toContain("http://127.0.0.1:4737/#rules");
-    expect(summary.text()).toContain("Couldn’t open your browser. Copy the link instead.");
-  });
-
   it("rejects an answer set-up does not know", async () => {
     const setup = await fixture();
     await expect(runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "maybe" }))).rejects.toThrow("Unknown answer: maybe");
@@ -367,7 +373,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const setup = await fixture();
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const asked = agentIo();
     expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: "~" }))).toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Start Rerail inside a repository, not your home folder.");

@@ -6,6 +6,7 @@
  */
 
 import type { CommandSigil, ObservedFileWrite } from "../engine/adapter-contract.js";
+import { powershellQuotesTwice, type Shell } from "../engine/command-line.js";
 
 export type RerailCommandName =
   | "rerail"
@@ -34,7 +35,7 @@ export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   { name: "rerail-stop", description: "Stop Rerail in this checkout and the worktrees inside it; rules and history are kept", summary: "stop Rerail in this repo" },
   { name: "rerail-start", description: "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time", summary: "start Rerail in this repo" },
   { name: "rerail-update", description: "Update Rerail to the newest version", summary: "get the newest version" },
-  { name: "rerail-uninstall", description: "Remove Rerail from this computer; rules and history are kept in a backup", summary: "remove Rerail from this computer" },
+  { name: "rerail-uninstall", description: "Remove Rerail from this computer, keeping your rules and history in a backup or deleting everything", summary: "remove Rerail from this computer" },
   // An alias of `/rerail`: the same summary and command list.
   { name: "rerail-help", description: "Show a list of Rerail commands", summary: "show a list of commands" },
   { name: "rerail-show-me", description: "See Rerail catch a broken rule in this repo and steer the fix, then clean up", summary: "see Rerail catch and fix a broken rule" },
@@ -60,6 +61,16 @@ export function rerailCommandList(sigil: CommandSigil): string {
   ].join("\n");
 }
 
+/**
+ * The fence a command for `shell` goes in. A PowerShell line (`& '<node>' …`) in a `sh` fence invites an agent with a
+ * POSIX shell at hand to run it there, where the `&` puts node in the background with no arguments.
+ */
+const FENCES: Record<Shell, string> = { posix: "```sh", powershell: "```powershell" };
+
+export function commandFence(shell: Shell = "posix"): string {
+  return FENCES[shell];
+}
+
 export interface CreateRuleInstructionsInput {
   /** The shell-quoted launcher the agent runs, e.g. `'/usr/bin/node' '/home/me/.rerail/current/dist/cli/cli.js'`. */
   cli: string;
@@ -67,6 +78,8 @@ export interface CreateRuleInstructionsInput {
   packageRoot: string;
   /** The person's sentence; a placeholder such as `$ARGUMENTS` when the coding agent substitutes it. */
   request: string;
+  /** The shell `cli` is written for, which names the fence its commands go in. */
+  shell?: Shell;
 }
 
 /** The skill `/rerail-create` follows, inside the installed package. */
@@ -79,7 +92,7 @@ export function createRuleSkillPath(packageRoot: string): string {
  * the package holds the steps; this keeps the commands and the one promise that matters in the command itself: test before
  * showing, and add only after the person says yes.
  */
-export function createRuleInstructions({ cli, packageRoot, request }: CreateRuleInstructionsInput): string {
+export function createRuleInstructions({ cli, packageRoot, request, shell }: CreateRuleInstructionsInput): string {
   return [
     `Create a Rerail rule for this repo. The person's words: ${request}`,
     "",
@@ -93,7 +106,7 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
     "",
     "The commands it uses:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} rules evidence --json`,
     `${cli} rules export --output <tmp>/rules.json`,
     `${cli} rules show <id>`,
@@ -109,18 +122,23 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
   ].join("\n");
 }
 
-/** `/rerail-uninstall`: say what goes and what stays, ask once, and remove only on an explicit yes (design A9, A10). */
-export function uninstallInstructions(cli: string, sigil: CommandSigil): string {
+/**
+ * `/rerail-uninstall`: say what goes and what stays, offer both removals (keeping a backup, or deleting everything with
+ * `--delete-data`), ask once, and remove only on an explicit yes (design A9, A10).
+ */
+export function uninstallInstructions(cli: string, sigil: CommandSigil, shell: Shell = "posix"): string {
   return [
     "Remove Rerail from this computer, if the person confirms.",
     "",
-    "First, see what would be removed, without changing anything:",
+    "First, see what each kind of removal would do, without changing anything:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} install --remove --dry-run`,
+    `${cli} install --remove --delete-data --dry-run`,
     "```",
     "",
-    "From that output, take the coding agents and the backup folder. Show this, as written, and ask once:",
+    "From the first output, take the coding agents and the backup folder. From the second, take every path on a",
+    "`Would delete` line. Show this, as written, and ask once:",
     "",
     "```text",
     "Remove Rerail from this computer?",
@@ -130,19 +148,22 @@ export function uninstallInstructions(cli: string, sigil: CommandSigil): string 
     "            Rerail itself: its installed versions, the rerail",
     "            command, rule packs and cache",
     "            Rerail stops in every repo",
-    "  Keeps     your rules and history, in a backup folder:",
-    "            <backup folder>",
     "",
-    "  You can reinstall anytime and restore your rules from the backup.",
-    "",
-    "  1. Yes, remove Rerail",
-    "  2. Only stop it in this repo    Rerail stays everywhere else",
-    "  3. Cancel                       nothing changes",
+    "  1. Remove, keep a backup        your rules and history move to",
+    "                                  <backup folder>; reinstall and",
+    "                                  restore them anytime",
+    "  2. Remove and delete everything cannot be undone; also deletes:",
+    "                                  <each Would delete path>",
+    "  3. Only stop it in this repo    Rerail stays everywhere else",
+    "  4. Cancel                       nothing changes",
     "```",
+    "",
+    "Under it, show each `Would keep` line of the second output and its line about checkouts Rerail never recorded, as",
+    "written: those are what option 2 cannot reach, each with the command that deletes it.",
     "",
     "If they pick 1, run:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} install --remove`,
     "```",
     "",
@@ -157,11 +178,28 @@ export function uninstallInstructions(cli: string, sigil: CommandSigil): string 
     "  To come back, install Rerail again and ask it to restore the backup.",
     "```",
     "",
-    "If the output has `Could not remove` lines, show each as written: it names what is left and the command that removes it.",
+    "If they pick 2, run:",
     "",
-    `If they pick 2, run \`${cli} stop\` and show its output.`,
-    "If they pick 3, or anything else, change nothing.",
-    "Never run the removal without the person's explicit yes in this session.",
+    commandFence(shell),
+    `${cli} install --remove --delete-data`,
+    "```",
+    "",
+    "Then reply with this:",
+    "",
+    "```text",
+    "○ Rerail and everything it kept are deleted from this computer.",
+    "  Removed from   <coding agents>",
+    "",
+    "  Restart your coding agents to finish.",
+    "```",
+    "",
+    "Under it, show each `Kept` line of the output and its line about checkouts Rerail never recorded, as written.",
+    "",
+    "If the removal's output has `Could not remove` or `Could not delete` lines, show each as written: it names what is left and the command that removes it.",
+    "",
+    `If they pick 3, run \`${cli} stop\` and show its output.`,
+    "If they pick 4, or anything else, change nothing.",
+    "Never run either removal without the person's explicit yes in this session.",
   ].join("\n");
 }
 
@@ -171,6 +209,8 @@ export interface ShowMeInstructionsInput {
   sigil: CommandSigil;
   /** How the agent writes the demo file so the hooks see it: its capability profile's `observedFileWrite`. */
   write: ObservedFileWrite;
+  /** The shell the agent runs commands in: PowerShell for Codex on Windows (`windowsCommandShell`), which has no heredoc. */
+  shell?: Shell;
 }
 
 /**
@@ -178,9 +218,12 @@ export interface ShowMeInstructionsInput {
  * the file straight after so the steer reaches it (Claude Code and Cursor deliver it with the next tool call), fixes
  * it, and always runs `rerail show-me --cleanup`. The steer is recognised by the rule id, never faked.
  */
-export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInput): string {
+export function showMeInstructions({ cli, sigil, write, shell = "posix" }: ShowMeInstructionsInput): string {
+  const example = shell === "powershell"
+    ? `\`Set-Content -NoNewline -LiteralPath '<file>' -Value @'\` … \`'@\`, with ${powershellQuotesTwice("`<file>`")}`
+    : "`cat > '<file>' <<'EOF'` … `EOF`";
   const how = write === "shell"
-    ? "with one shell command, not a file-change, edit, write or apply_patch tool (for example `cat > '<file>' <<'EOF'` … `EOF`)"
+    ? `with one shell command, not a file-change, edit, write or apply_patch tool (for example ${example})`
     : "with your file edit or write tool";
   return [
     "Show the person how Rerail works, on this repo, in under a minute: add a demo rule, break it on purpose, let Rerail",
@@ -188,7 +231,7 @@ export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInpu
     "",
     "1. Run exactly this and read its JSON output:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} show-me --json`,
     "```",
     "",
@@ -209,7 +252,7 @@ export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInpu
     "",
     "6. Always clean up, whatever happened. Run exactly this:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} show-me --cleanup`,
     "```",
     "",
@@ -238,6 +281,8 @@ export interface BugReportInstructionsInput {
   packageRoot: string;
   /** The person's words; a placeholder such as `$ARGUMENTS` when the coding agent substitutes it. */
   request: string;
+  /** The shell `cli` is written for, which names the fence its commands go in. */
+  shell?: Shell;
 }
 
 /** The skill `/rerail-bug-report` follows, inside the installed package. */
@@ -250,7 +295,7 @@ export function bugReportSkillPath(packageRoot: string): string {
  * in the package holds the steps; this keeps the commands and the promise that matters in the command itself: an issue is
  * public, so sending anything is the person's to decide.
  */
-export function bugReportInstructions({ cli, packageRoot, request }: BugReportInstructionsInput): string {
+export function bugReportInstructions({ cli, packageRoot, request, shell }: BugReportInstructionsInput): string {
   return [
     `Work out what went wrong with Rerail, then fix it or report it. The person's words: ${request}`,
     "",
@@ -262,7 +307,7 @@ export function bugReportInstructions({ cli, packageRoot, request }: BugReportIn
     "",
     "The commands it uses:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} support-bundle --json`,
     `${cli} support-bundle --json --session <id>`,
     `${cli} update check`,

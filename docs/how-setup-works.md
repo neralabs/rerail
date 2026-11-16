@@ -127,8 +127,8 @@ agents already connected, to bring the new version's commands and skills.
 
 </details>
 
-**6. Summary.** Set-up lists the packs and rules added, the dashboard link, and agents it could not connect, then
-opens the browser.
+**6. Summary.** Set-up lists the packs and rules added, the dashboard link, and agents it could not connect. In a
+terminal it then opens the browser; run by a coding agent (`--relay`, `--json`), it shows the link alone.
 
 <details>
 <summary>What the summary shows</summary>
@@ -141,7 +141,8 @@ opens the browser.
 - With no agent found, it says so, names the supported ones, and says to rerun `rerail setup` once one is installed.
 - The daemon is the active install's and serves every repository; one from another version or port is replaced
   (`--port` picks the port).
-- The browser opens unless `BROWSER=none`, the session is over SSH, or Linux has no display.
+- In a terminal the browser opens unless `BROWSER=none`, the session is over SSH, or Linux has no display. A coding
+  agent's run opens none: it may run where no one watches the screen, or in a sandbox.
 
 </details>
 
@@ -151,7 +152,7 @@ Set-up denies coding agents access to Rerail's data wherever the agent's user se
 
 - **Rerail home** (`~/.rerail`, or `RERAIL_HOME`): access token, every repository's history database, installed
   package.
-- **Content cache** (`~/.cache/rerail`): parsed files and results.
+- **Content cache** (`~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail`): parsed files and results.
 
 Agents run commands as you, so only their own sandbox can keep them out.
 
@@ -205,7 +206,8 @@ Agents run commands as you, so only their own sandbox can keep them out.
   Access: Workspace" in Cursor's settings makes the agent ask before reading outside the workspace; it covers every
   path, so set-up leaves it alone.
 - **Cursor CLI** (`cursor-agent`): `Write(...)` denies for both folders and Claude Code's `Read(...)` denies, for its
-  file tools only. Written only when the CLI has written that file, and not on Windows.
+  file tools only. Written only when the CLI has written that file; on Windows as native paths
+  (`C:\Users\me\.rerail\**`), the only form the CLI matches.
 - **OMP and Pi** have no sandbox: their agents can read and change all of Rerail's data.
 
 </details>
@@ -251,7 +253,8 @@ On macOS and Linux, a block between `# >>> rerail >>>` and `# <<< rerail <<<` go
 The block adds the directory only when `PATH` lacks it, so a file sourced twice adds it once. On Windows the
 directory is appended to the user `Path` (`HKCU\Environment`), keeping that value's registry kind. The Windows
 launcher is `rerail.cmd`, with an sh launcher `rerail` beside it for Git Bash, which runs neither `.cmd` nor `.bat`
-files by bare name.
+files by bare name. In Git Bash's own window (mintty), which gives Windows programs pipes instead of a console, that
+launcher starts node through winpty, so set-up shows a person its menu.
 
 </details>
 
@@ -261,8 +264,11 @@ files by bare name.
 - **Ownership.** Set-up records that it handled `PATH` in `~/.rerail/launcher-path.json`; from then on `PATH` is
   yours. A block you take out stays out until `rerail setup` runs again. `rerail update` adds the entry only when that
   record is missing.
-- **When nothing changes.** Set-up says what it changed. It changes nothing when the running `PATH` already has the
-  directory, the entry is in place, or `RERAIL_MODIFY_PATH=0`. A block written for another Rerail home is replaced.
+- **When nothing changes.** Set-up says what it changed. It changes nothing when the entry is in place, with
+  `RERAIL_MODIFY_PATH=0`, or, once that record exists, when the running `PATH` already has the directory. Before the
+  record exists the running `PATH` does not count: the shell that removed Rerail keeps the directory on its `PATH`
+  after the block is gone, so installing again from it writes the block. A block written for another Rerail home is
+  replaced.
 - **Backup.** A changed startup file keeps one `<file>.rerail.bak` beside it: the file before Rerail last changed it.
   Each change replaces it; `rerail install --remove` deletes it once the block is out.
 
@@ -308,7 +314,17 @@ with one command per answer. Answer flags:
 
 Each answer run starts from what it is told, so running one twice repeats no earlier step's side effect. Claude
 Code's, Cursor's and Codex's `/rerail-start` runs `rerail start --relay`, and every answer command carries `--relay`,
-so an agent running commands in a terminal gets these questions, not a prompt waiting on input.
+so an agent running commands in a terminal gets these questions, not a prompt waiting on input. On Windows Codex's and
+Cursor's `/rerail-start` runs `rerail start --relay --powershell`, since they run PowerShell there: each answer
+command is then written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`, or the CLI
+running set-up until set-up has installed one) and carries `--powershell` too. Every value PowerShell would read goes in single quotes, as
+`--packs 'typescript@0.1.1,complexity@0.1.1'`, since PowerShell passes a bare `a,b` to a program as two arguments; so
+does the value the agent writes in (`--packs '<packs>'`). PowerShell ends a single-quoted value at any of `'`, `‘`, `’`,
+`‚` and `‛`, so the answer for a folder the person names tells the agent to write each of them twice in it (a folder
+named `O'Neil` goes in as `'O''Neil'`). Claude Code runs Git Bash on Windows, so its answer commands
+are written for a POSIX shell there too, and start with the sh launcher `rerail`. No answer runs `rerail.cmd`: cmd.exe
+reads a batch file's arguments again, so a folder named `C:\code\R&D` would end the command at its `&` and run the
+rest, and a `%NAME%` in one would expand.
 
 </details>
 
@@ -369,8 +385,8 @@ Xcode installed.
 
 Set-up records the Node that ran it for the launcher, the hooks and the Claude Code status line. Homebrew's is
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
-recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`, except the status line on
-Windows.
+recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
+Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux.
 
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
 says `needs Node 24 or newer`.
@@ -471,8 +487,9 @@ database before the now-active version, to put back by hand (see [Database compa
 
 Policy evaluation caches parsed files and results in a content store; where the package lives, not a flag, picks which one.
 
-The managed installation uses `~/.cache/rerail/content-v1.sqlite`; a build from a Git checkout uses
-`<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
+The managed installation uses `~/.cache/rerail/content-v1.sqlite`, and on Windows `%USERPROFILE%\AppData\Local\rerail\content-v1.sqlite`, out of
+a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
+build from a Git checkout uses `<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
 <details>
 <summary>Which store a build uses</summary>
@@ -498,8 +515,9 @@ process (`rerail daemon stop`, or end it by pid) and start again.
 <details>
 <summary>The lock</summary>
 
-The daemon holds an exclusive OS lock (`flock` / `LockFileEx`) on `~/.cache/rerail/main-instance.lock` for its whole
-life, and records its pid, version, package root and start time beside it in `main-instance.json`. The OS drops the
+The daemon holds an exclusive OS lock (`flock` / `LockFileEx`) on `~/.cache/rerail/main-instance.lock` (on Windows
+`%USERPROFILE%\AppData\Local\rerail\main-instance.lock`) for its whole life, and records its pid, version, package root and start time
+beside it in `main-instance.json`. The OS drops the
 lock however the daemon ends, `kill -9` included, so there is never a stale lock to clear.
 
 A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `daemon.json` no longer names.
@@ -556,6 +574,12 @@ the file, and a hook or the status line runs such steps itself. A step an older 
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
 
+Storing each new audit's rule provenance once sets no floor, so coding agents on different Rerail versions keep
+sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote, in its
+`audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
+provenance, and work as before. The audits it writes, and those recorded before the update, keep their provenance in
+their own row, where both versions read it.
+
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.
 
@@ -563,16 +587,43 @@ version but cannot take a copy removes the old one, which no longer holds the da
 
 ## Removing Rerail in detail
 
-`rerail install --remove` takes Rerail off a machine and keeps your rules and history in a backup.
+There are two removals, and `/rerail-uninstall` in a coding agent offers both:
+
+- **`rerail install --remove`** takes Rerail off a machine and keeps your rules and history in a backup.
+- **`rerail install --remove --delete-data`** takes Rerail off and deletes what it kept too. This cannot be undone.
 
 ```sh
 rerail rules export --output ~/rerail-rules.json   # optional: a portable copy of your rules
 rerail install --remove --dry-run                  # print what would change
-rerail install --remove                            # or: --remove --delete-data, keeping nothing
+rerail install --remove                            # remove, keeping a backup
+rerail install --remove --delete-data --dry-run    # print what a full deletion would delete
+rerail install --remove --delete-data              # remove and delete everything
 ```
 
-The database goes to `~/.rerail-clean-YYYYMMDD/rerail-home/`. Restart open harness sessions afterwards: their loaded
-hooks point at files that are about to go.
+Restart open harness sessions afterwards: their loaded hooks point at files that are about to go.
+
+### What each removal leaves behind
+
+`rerail install --remove` leaves your data in place for you to restore or delete:
+
+- **Rerail home** (`~/.rerail`): Rerail's settings, logs and records, such as `consent.json`, `coding-agents.json`,
+  `daemon.log`, `access-token`, `locks`, `profiles` and `device-secrets`. The output names them.
+- **Backups:** `~/.rerail-clean-YYYYMMDD/`, holding your rules and history, and every earlier backup.
+- **Agent config copies:** a `<file>.<timestamp>.bak` beside each agent config file Rerail changed.
+- **Session ledgers:** `<checkout>/.rerail/sessions` in every checkout, and ledgers under a custom `RERAIL_STORAGE_ROOT`.
+- **Device secrets** of `rerail activate` profiles, in the system credential store.
+- **The content cache**, only while another Rerail home's daemon holds it.
+
+`rerail install --remove --delete-data` leaves nothing Rerail wrote in its home, and deletes the home once it is empty.
+It leaves only what it cannot reach, and names each in its output with the command that deletes it:
+
+- **Agent config copies:** each `<file>.<timestamp>.bak`. They hold your own settings from before Rerail changed them.
+- **Unrecorded checkouts:** `.rerail/sessions` in a checkout the database never recorded.
+- **A custom `RERAIL_STORAGE_ROOT`:** the folder it names, which may hold your own files.
+- **A held cache:** the content cache, or the `RERAIL_CONTENT_STORE_PATH` store, while another Rerail home's daemon
+  holds it.
+- **A shared home:** in a Rerail home shared with other files (`RERAIL_HOME=$HOME`), those files, with any `bin`,
+  `versions` or `packs` folder that holds some of them.
 
 <details>
 <summary>What it removes</summary>
@@ -590,7 +641,8 @@ hooks point at files that are about to go.
 - **Removes the `PATH` entry** set-up added from every shell startup file (or the Windows user `Path`).
 - **Deletes the installation**, last: `~/.rerail/current`, the launcher's `~/.rerail/bin`, every version under
   `~/.rerail/versions` with `update-state.json`, the rule packs in `~/.rerail/packs`, and the cache `~/.cache/rerail`
-  (left alone, and said so, while another Rerail home's daemon holds it).
+  (on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there; left alone, and said so, while
+  another Rerail home's daemon holds it).
 
 </details>
 
@@ -601,8 +653,8 @@ In `bin`, `versions` and `packs` it deletes only what Rerail put there. A folder
 home shared with them, as with `RERAIL_HOME=$HOME`) is kept with those files, and named.
 
 It prints each path it removed, and what it kept in the Rerail home (settings such as `consent.json`, logs, records),
-which you can delete if you will not install Rerail again. A home that also holds other files is never offered for
-deletion whole; only Rerail's files in it are named.
+which you can delete if you will not install Rerail again, or delete with `--delete-data`. A home that also holds other
+files is never offered for deletion whole; only Rerail's files in it are named.
 
 </details>
 
@@ -620,7 +672,8 @@ finishes the job once that session is closed. The rest of the uninstall has happ
 
 ### Removing everything, data included
 
-`rerail install --remove --delete-data` does all of the above but deletes instead of backing up, printing each path it deletes.
+`rerail install --remove --delete-data` does all of the above but deletes instead of backing up, then deletes the rest
+of the Rerail home, printing each path it deletes.
 
 Nothing it deletes can be restored, so export your rules first if you may want them back.
 `rerail install --remove --delete-data --dry-run` lists what it would delete.
@@ -635,8 +688,12 @@ Nothing it deletes can be restored, so export your rules first if you may want t
   database goes), and the checkout's `.rerail` when the ledgers were all it held. A checkout that no longer exists is
   skipped. Links are never followed: a `.rerail` that is a link is left alone, and a `sessions` link is removed as a
   link, never its target. Ledgers written elsewhere with `RERAIL_STORAGE_ROOT` are not found.
-- **Content cache:** `~/.cache/rerail` (kept while another Rerail home's daemon holds it, as above), and the file
+- **Content cache:** `~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail` (kept while another Rerail home's daemon holds it, as above), and the file
   `RERAIL_CONTENT_STORE_PATH` names, with its sidecars, when it is set.
+- **The Rerail home:** everything else Rerail wrote there (settings, logs, records, locks, profiles, device secrets),
+  then the folder itself once it is empty. A home shared with other files keeps them.
+- **Device secrets in the system credential store:** the one each `rerail activate` profile keeps in the macOS
+  Keychain, Secret Service or Windows Credential Manager.
 
 `--delete-data` only goes with the whole uninstall: with `--agents`, or with `--root` naming a checkout other than the
 active install, it refuses before changing anything.

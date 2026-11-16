@@ -1,16 +1,9 @@
-import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ChildProcess } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const launcher = vi.hoisted(() => ({ spawn: vi.fn() }));
-vi.mock("node:child_process", async () => ({
-  ...await vi.importActual<Record<string, unknown>>("node:child_process"),
-  spawn: launcher.spawn,
-}));
 /** A main build's Pi goes through the daemon; tests that set `main` stand in for that daemon. */
 const daemonRoute = vi.hoisted(() => ({ main: undefined as boolean | undefined, startDaemonForPackage: vi.fn() }));
 vi.mock("../../../src/engine/native/rerail-build.js", async () => {
@@ -38,6 +31,7 @@ import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, RerailRun
 import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
@@ -75,7 +69,7 @@ afterEach(async () => {
   vi.useRealTimers();
   if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = originalRerailHome;
-  for (const path of temporaryDirectories.splice(0)) rmSync(path, { recursive: true, force: true });
+  for (const path of temporaryDirectories.splice(0)) removeFolderSync(path);
 });
 
 interface RegisteredTool {

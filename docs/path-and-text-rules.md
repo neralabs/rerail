@@ -22,7 +22,7 @@ rule made only of `ast` queries reads only its language's files, however wide it
 <details>
 <summary>Which files count as text</summary>
 
-- source files of the languages Rerail parses: Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue;
+- source files of the languages Rerail parses: Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue, Java;
 - files read as text by suffix or name: `.json`, `.yaml`, `.yml`, `.toml`, `.md`, `.mdx`, `.rst`, `.txt`, `.sh`,
   `.bash`, `.zsh`, `.html`, `.css`, `.scss`, `.gitignore`, `.npmignore`;
 - any other file without a NUL byte, such as `Justfile`, `LICENSE`, `NOTICE`, `.gitattributes` or `Cargo.lock`, unless

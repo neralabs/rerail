@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { steers, type RuleMode } from "./catalog/rule-mode.js";
+import type { Shell } from "./command-line.js";
 
 /** Every coding agent Rerail works with. */
 export const RERAIL_HOSTS = ["omp", "pi", "claude-code", "codex", "cursor"] as const;
@@ -53,10 +54,18 @@ export interface AdapterCapabilityProfile {
   delivery: Readonly<Record<RuleMode, DeliveryMechanism>>;
   lifecycleEvents: readonly string[];
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
+  /** Whether it draws Rerail's footer: Claude Code's status line, OMP's and Pi's widget. */
+  statusLine: boolean;
   /** What Rerail's commands start with in this coding agent, in every text that names one. */
   commandSigil: CommandSigil;
   /** How this coding agent writes a file so that Rerail's hooks see the edit. */
   observedFileWrite: ObservedFileWrite;
+  /**
+   * The shell this coding agent runs the commands Rerail names in on Windows (steers, command files, set-up answers):
+   * Git Bash (`posix`) or PowerShell. Off Windows every agent runs a POSIX shell. Hooks are separate: their commands
+   * are registered per agent in `harness-registration.ts`.
+   */
+  windowsCommandShell: Shell;
 }
 
 export const ADAPTER_CAPABILITIES = {
@@ -65,6 +74,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "native",
     persistence: "session-entries",
+    statusLine: true,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -79,12 +89,14 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "/",
     observedFileWrite: "edit-tool",
+    windowsCommandShell: "posix",
   },
   pi: {
     host: "pi",
     assistantObservation: "streaming",
     toolSurface: "native",
     persistence: "session-entries",
+    statusLine: true,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -99,12 +111,14 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "/",
     observedFileWrite: "edit-tool",
+    windowsCommandShell: "posix",
   },
   "claude-code": {
     host: "claude-code",
     assistantObservation: "streaming",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    statusLine: true,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -119,12 +133,14 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "/",
     observedFileWrite: "edit-tool",
+    windowsCommandShell: "posix",
   },
   codex: {
     host: "codex",
     assistantObservation: "completed",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    statusLine: false,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -139,12 +155,14 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "$",
     observedFileWrite: "shell",
+    windowsCommandShell: "powershell",
   },
   cursor: {
     host: "cursor",
     assistantObservation: "completed",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    statusLine: false,
     delivery: {
       log: "observe",
       steer: "deferred-context",
@@ -159,6 +177,7 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "/",
     observedFileWrite: "edit-tool",
+    windowsCommandShell: "powershell",
   },
 } as const satisfies Record<RerailHost, AdapterCapabilityProfile>;
 
@@ -168,13 +187,22 @@ export interface AdapterSession {
   cwd: string;
 }
 
-/** Host hook payloads are untyped JSON; nonblank text is the only accepted field value. */
+/**
+ * Host hook payloads are untyped JSON; nonblank text is the accepted value of a text field. A key that orders events
+ * (`requiredKey`) may come as text or as a whole number, as Claude Code sends MessageDisplay's `index`.
+ */
 export function hookText(host: string) {
   return {
     required(input: Readonly<Record<string, unknown>>, field: string): string {
       const value = input[field];
       if (typeof value !== "string" || value.trim() === "") throw new Error(`${host} hook omitted ${field}`);
       return value;
+    },
+    requiredKey(input: Readonly<Record<string, unknown>>, field: string): string {
+      const value = input[field];
+      if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
+      if (typeof value === "string" && value.trim() !== "") return value;
+      throw new Error(`${host} hook omitted ${field}, or sent it as ${value === null ? "null" : typeof value} rather than text or a whole number`);
     },
     optional(input: Readonly<Record<string, unknown>>, field: string): string | undefined {
       const value = input[field];
@@ -214,7 +242,17 @@ export type AdapterEvent =
     })
   | (ContextualAdapterEvent & { kind: "assistant-message"; messageId: string; text: string })
   | (ContextualAdapterEvent & { kind: "assistant-abort"; messageId: string })
-  | (ContextualAdapterEvent & { kind: "call"; toolCallId: string; toolName: string; input: unknown })
+  | (ContextualAdapterEvent & {
+      kind: "call";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      /**
+       * The subagent that made the call, where a host sends a subagent's calls under its parent's session: Claude Code's
+       * `agent_id`. Absent for the session's own agent.
+       */
+      agentId?: string | undefined;
+    })
   | (ContextualAdapterEvent & { kind: "result"; toolCallId: string; toolName: string; output: unknown; failed?: boolean | undefined })
   | (ContextualAdapterEvent & { kind: "turn-end"; text: string });
 
@@ -312,6 +350,8 @@ export interface AdapterDelivery {
    */
   toolCallId?: string;
   rewound?: readonly string[];
+  /** The in-flight conflict a Merge Assist note surfaces: the person's line for it (`conflictLine`); never the agent's text. */
+  conflict?: ConflictNotice;
 }
 
 /** One rule a delivery steered (or logged) about, for the person's line and the dashboard; the coding agent never reads it. */
@@ -324,6 +364,14 @@ export interface SteerRule {
   readonly url?: string | undefined;
 }
 
+/** A conflict a delivery surfaces to the person: its id, the line's words, and its card's page once an adapter links it. */
+export interface ConflictNotice {
+  readonly id: string;
+  /** `your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher`. */
+  readonly text: string;
+  readonly url?: string | undefined;
+}
+
 /** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */
 export function isSteerRule(value: unknown): value is SteerRule {
   if (value === null || typeof value !== "object") return false;
@@ -332,6 +380,13 @@ export function isSteerRule(value: unknown): value is SteerRule {
     && (rule.state === "steered" || rule.state === "logged")
     && (rule.origin === undefined || typeof rule.origin === "string")
     && (rule.url === undefined || typeof rule.url === "string");
+}
+
+/** Whether `value`, read back from a file, is a `ConflictNotice`. */
+export function isConflictNotice(value: unknown): value is ConflictNotice {
+  if (value === null || typeof value !== "object") return false;
+  const notice = value as Partial<ConflictNotice>;
+  return typeof notice.id === "string" && typeof notice.text === "string" && (notice.url === undefined || typeof notice.url === "string");
 }
 
 /** The `customType` every host records Rerail rule guidance under in its own session transcript. */
@@ -380,7 +435,8 @@ export async function sendNativeDeliveries(
         { deliverAs: "steer" },
       );
     }
-    if (delivery.content.trim() === "") continue;
+    // A note that names no rule (a Merge Assist note) shows the person no steer line, so it is not counted as a steer.
+    if (delivery.content.trim() === "" || delivery.ruleIds.length === 0) continue;
     try {
       await record(delivery.sessionId, randomUUID(), delivery.ruleIds);
     } catch (error) {

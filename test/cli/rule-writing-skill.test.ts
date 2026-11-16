@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseRuleDraft, testRuleDraft } from "../../src/cli/rule-draft.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /**
  * The `/rerail-create` skill (`skills/rerail-create/`): every rule draft it shows the agent is a fenced `json draft` block, and
@@ -38,7 +39,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await rm(repo, { recursive: true, force: true });
+  await removeFolder(repo);
 });
 
 describe("rerail-create skill drafts", () => {

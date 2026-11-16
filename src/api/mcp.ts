@@ -1,8 +1,8 @@
-import { realpathSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { isAbsolute, sep } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { physicalPath } from "../engine/catalog/checkout-control.js";
+import { checkoutRealpath, physicalPath } from "../engine/catalog/checkout-control.js";
 import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import { CALLER_CWD_HEADER, normalizeFolder, type ApiCaller } from "../engine/catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
@@ -86,7 +86,9 @@ export function callerFromHeader(header: string | null, recordedVersion?: string
   try {
     const cwd = decodeURIComponent(header);
     if (cwd.includes("\0") || !isAbsolute(cwd)) return INVALID_CALLER;
-    real = realpathSync(cwd);
+    // Spelt as the checkout is (on Windows each name's long form), or a folder sent with 8.3 short names
+    // (`C:\Users\RUNNER~1\...`) lies outside it.
+    real = checkoutRealpath(cwd);
     if (!statSync(real).isDirectory()) return INVALID_CALLER;
   } catch {
     return INVALID_CALLER;

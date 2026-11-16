@@ -1,0 +1,1 @@
+Set-up run by a coding agent (`/rerail-start`, `rerail setup --relay` or `--json`) no longer opens a browser window, which could appear on your screen from a sandboxed or unattended run; its summary shows the dashboard link instead. Set-up in a terminal still opens the dashboard.

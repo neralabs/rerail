@@ -1,16 +1,26 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, delimiter, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", { spy: true });
+
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, gitUnmergedReader, headMovedOnlyByCommits,
-  readGitBlobIds, readGitBlobs, runGit,
+  findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
+  gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
+  readGitBlobs, runGit, searchGitFrom,
 } from "../../src/engine/git.js";
+import { processState } from "../../src/engine/process-liveness.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+
+const actualChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, encoding: "utf8" });
@@ -30,9 +40,9 @@ async function repository(files: Record<string, string>): Promise<string> {
 async function partialClone(): Promise<{ clone: string; oid: string }> {
   const origin = await repository({ "a.py": "print(1)\n" });
   git(origin, "config", "uploadpack.allowFilter", "true");
-  const clone = join(origin, "..", `${origin.split("/").pop()}-clone`);
+  const clone = join(origin, "..", `${basename(origin)}-clone`);
   roots.push(clone);
-  git(origin, "clone", "--quiet", "--filter=blob:none", "--no-checkout", `file://${origin}`, clone);
+  git(origin, "clone", "--quiet", "--filter=blob:none", "--no-checkout", pathToFileURL(origin).href, clone);
   return { clone, oid: git(clone, "rev-parse", "HEAD:a.py").trim() };
 }
 
@@ -147,6 +157,97 @@ describe("gitHead and headMovedOnlyByCommits", () => {
   });
 });
 
+describe("GitReads", () => {
+  it("answers a read it stopped as without Git, and starts no Git once stopped", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const reads = new GitReads();
+    const running = reads.run(signal => gitHead(root, { signal }));
+    await reads.stop();
+
+    await expect(running).resolves.toBeUndefined();
+    await expect(reads.run(signal => gitHead(root, { signal }))).resolves.toBeUndefined();
+    await expect(reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, signal }))).resolves.toEqual(new Map());
+    await expect(new GitReads().run(signal => gitHead(root, { signal }))).resolves.toMatch(/^[0-9a-f]{40}/u);
+    await writeFile(join(root, "b.py"), "untracked\n");
+    await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual([]);
+    await expect(new GitReads().run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual(["b.py"]);
+  });
+
+  /**
+   * Has the next Git a read streams from print `output`, then stay running with its output open until it is ended, as a
+   * Git still at work does. Resolves once that output has reached the read.
+   */
+  function streamingGitThatStays(output: string): Promise<void> {
+    const printed = Promise.withResolvers<void>();
+    vi.mocked(spawn).mockImplementationOnce((_git, args, options) => {
+      const script = `process.stdout.write(${JSON.stringify(output)}); setTimeout(() => {}, 30_000)`;
+      const child = actualChildProcess.spawn(process.execPath, ["-e", script, "--", ...args], options);
+      // Ahead of the read's own listener, which has the chunk by the time this is awaited.
+      child.stdout?.once("data", () => printed.resolve());
+      return child;
+    });
+    return printed.promise;
+  }
+
+  it("stops a read still streaming from its Git at once, with the blobs it had read", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const printed = streamingGitThatStays(`${"a".repeat(40)} blob 2\n1\n\n`);
+    const reads = new GitReads();
+    // A timeout this long never ends the read here: only the stop does.
+    const read = reads.run(signal => readGitBlobs(root, ["HEAD:./a.py", "HEAD:./b.py"], { maxBlobBytes: 1_000, timeout: 60_000, signal }));
+    await printed;
+
+    const stopped = reads.stop().then(() => "stopped");
+    await expect(Promise.race([stopped, delay(3_000, "still running", { ref: false })])).resolves.toBe("stopped");
+    await expect(read).resolves.toEqual(new Map([["HEAD:./a.py", Buffer.from("1\n")]]));
+  });
+
+  /**
+   * A launcher, run with the file to write a pid to: it runs the real Git as its own child holding the output it was
+   * given, writes that child's pid, and waits for it, as Git for Windows' `cmd\git.exe` waits for the git.exe it starts.
+   * `detached` keeps the child out of the job object Node puts its children in, which would end it with the launcher;
+   * a launcher without one leaves its child running when it is killed.
+   */
+  const LAUNCHER = [
+    "const git = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], { stdio: 'inherit', windowsHide: true, detached: true });",
+    "require('node:fs').writeFileSync(process.argv[1], String(git.pid));",
+    "setTimeout(() => {}, 30_000);",
+  ].join(" ");
+
+  /** The pid in `file`, once a launcher has written it there. */
+  async function launchedGit(file: string): Promise<number> {
+    return await vi.waitFor(async () => {
+      const pid = Number(await readFile(file, "utf8"));
+      if (!(pid > 0)) throw new Error(`${file} holds no pid yet`);
+      return pid;
+    }, { timeout: 10_000, interval: 20 });
+  }
+
+  it.runIf(process.platform === "win32")("ends the Git behind a launcher with the launcher, and answers once both have exited", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const pids = await mkdtemp(join(tmpdir(), "rerail-git-launched-"));
+    roots.push(pids);
+    const [headPid, blobsPid] = [join(pids, "head"), join(pids, "blobs")];
+    vi.mocked(execFile).mockImplementationOnce((_git, args, options, callback) =>
+      actualChildProcess.execFile(process.execPath, ["-e", LAUNCHER, "--", headPid, ...(args ?? [])], options, callback));
+    vi.mocked(spawn).mockImplementationOnce((_git, args, options) =>
+      actualChildProcess.spawn(process.execPath, ["-e", LAUNCHER, "--", blobsPid, ...args], options));
+    const reads = new GitReads();
+    const answers = Promise.all([
+      reads.run(signal => gitHead(root, { signal })),
+      reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, timeout: 60_000, signal })),
+    ]);
+    const gits = await Promise.all([launchedGit(headPid), launchedGit(blobsPid)]);
+    await reads.stop();
+
+    // Each read settles only once its whole tree has exited, so neither Git is waited for here.
+    const running = gits.filter(pid => processState(pid) !== "gone");
+    for (const pid of running) process.kill(pid);
+    expect(running).toEqual([]);
+    await expect(answers).resolves.toEqual([undefined, new Map()]);
+  });
+});
+
 describe("gitExcludeFiles", () => {
   afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -194,6 +295,84 @@ describe("gitExcludeFiles", () => {
     expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
     expect(await gitConfigFiles(home)).toEqual([]);
   });
+
+  it("finds the global files in Git's own home, which on Windows without HOME is HOMEDRIVE and HOMEPATH", async () => {
+    const { root, home } = await isolatedRepository();
+    vi.stubEnv("GIT_CONFIG_GLOBAL", "");
+    const share = join(home, "share");
+    await mkdir(share);
+    const globals = [join(share, ".gitconfig"), join(share, ".config", "git", "config")];
+    // Git's home, not the account's: HOME here names another folder than the one homedir() answers.
+    expect((await gitConfigFiles(root, { env: { ...process.env, HOME: share } })).slice(2)).toEqual(globals);
+    if (process.platform === "win32") {
+      const { HOME: _home, ...withoutHome } = process.env;
+      const drive = share.slice(0, 2);
+      expect((await gitConfigFiles(root, { env: { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, platform: "win32" })).slice(2)).toEqual(globals);
+    }
+  });
+});
+
+describe("gitBehindLauncher", () => {
+  it("runs Git for Windows' own git.exe, not the launcher that starts it as a child a timeout would leave running", () => {
+    const git = String.raw`C:\Program Files\Git`;
+    const launcher = String.raw`${git}\cmd\git.exe`;
+    const search = { platform: "win32" as const, home: String.raw`C:\Users\me`, path: undefined, cwd: undefined };
+    const installed = (...paths: string[]) => {
+      const files = [launcher, String.raw`${git}\etc\gitconfig`, ...paths];
+      return { exists: (path: string) => files.includes(path), runnable: (path: string) => files.includes(path), realpath: (path: string) => path, developerDir: () => undefined };
+    };
+    const real = String.raw`${git}\mingw64\bin\git.exe`;
+    expect(gitBehindLauncher(launcher, search, installed(real))).toBe(real);
+    expect(gitBehindLauncher(String.raw`${git}\bin\git.exe`, search, installed(real))).toBe(real);
+    expect(gitBehindLauncher(launcher, search, installed(String.raw`${git}\clangarm64\bin\git.exe`))).toBe(String.raw`${git}\clangarm64\bin\git.exe`);
+    // The real one is itself, and a Git laid out otherwise (a scoop shim, a launcher without its Git) is run as found.
+    expect(gitBehindLauncher(real, search, installed(real))).toBe(real);
+    expect(gitBehindLauncher(String.raw`D:\scoop\shims\git.exe`, search, installed(real))).toBe(String.raw`D:\scoop\shims\git.exe`);
+    expect(gitBehindLauncher(launcher, search, installed())).toBe(launcher);
+  });
+
+  it.runIf(process.platform === "win32")("is what Rerail runs on this Windows machine", () => {
+    expect(gitExecutable()).toBe(gitBehindLauncher(gitExecutable()));
+    expect(gitExecutable().toLowerCase()).not.toMatch(/\\cmd\\git\.exe$/u);
+  });
+});
+
+describe("gitCrlfPaths", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("names the files a checkout writes with CRLF line breaks and the rule of each, as Git's attributes and configuration decide it", async () => {
+    const root = await repository({ "a.py": "a\n", "b.bin": "b\n", "c.txt": "c\n", "d.md": "d\n", "e.ts": "e\n" });
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "config", "core.eol", "native");
+    await writeFile(join(root, ".git", "info", "attributes"), "*.py text\n*.bin -text eol=crlf\n*.txt eol=crlf\n*.ts text=auto\n");
+    const paths = ["a.py", "b.bin", "c.txt", "d.md", "e.ts"];
+    // A text file takes core.eol, whose default (native) is CRLF on Windows alone; -text is never converted.
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "win32" }))).toEqual({ "a.py": "text", "c.txt": "text", "e.ts": "auto" });
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "linux" }))).toEqual({ "c.txt": "text" });
+    // core.autocrlf=true converts every file with no text attribute too, by Git's guess; input converts none on checkout.
+    git(root, "config", "core.autocrlf", "true");
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "linux" }))).toEqual({ "a.py": "text", "c.txt": "text", "d.md": "auto", "e.ts": "auto" });
+    git(root, "config", "core.autocrlf", "input");
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "win32" }))).toEqual({ "c.txt": "text" });
+  });
+
+  it("reads core.autocrlf from the person's global settings, which tests otherwise keep from every repository", async () => {
+    const root = await repository({ "a.py": "a\n" });
+    const global = join(root, ".git", "person.gitconfig");
+    await writeFile(global, "[core]\n\tautocrlf = true\n");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", global);
+    expect(Object.fromEntries(await gitCrlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({ "a.py": "auto" });
+  });
+});
+
+describe("gitHome", () => {
+  it("on Windows without HOME takes HOMEDRIVE and HOMEPATH when that folder exists, as Git for Windows does", () => {
+    const share = { HOMEDRIVE: "H:", HOMEPATH: "\\" };
+    expect(gitHome(share, "win32", path => path === "H:\\")).toBe("H:\\");
+    expect(gitHome(share, "win32", () => false)).toBe(homedir());
+    expect(gitHome({ ...share, HOME: "C:\\Users\\me" }, "win32", () => true)).toBe("C:\\Users\\me");
+    expect(gitHome(share, "linux", () => true)).toBe(homedir());
+  });
 });
 
 describe("gitUnmergedReader", () => {
@@ -220,6 +399,17 @@ describe("gitUnmergedReader", () => {
     expect(() => git(root, "merge", "--quiet", "second")).toThrow();
     return root;
   }
+
+  it("answers a read its signal stopped as one Git could not answer, starting no Git, and lists the entries next time", async () => {
+    const root = await conflicted();
+    const read = gitUnmergedReader();
+    const stopped = new GitReads();
+    await stopped.stop();
+
+    await expect(stopped.run(signal => read(root, { signal }))).resolves.toBeUndefined();
+    expect([...(await reader()(root)).keys()]).toEqual(["a.py"]);
+    expect([...((await read(root)) ?? new Map()).keys()]).toEqual(["a.py"]);
+  });
 
   it("cannot say outside a repository, and has nothing where nothing is unmerged", async () => {
     const outside = await mkdtemp(join(tmpdir(), "rerail-git-unmerged-"));
@@ -402,17 +592,57 @@ describe("gitCandidates", () => {
     }
   });
 
+  it("on Windows also looks in Program Files on the drive of the account's home", () => {
+    const search = { platform: "win32" as const, home: String.raw`D:\Users\a`, path: undefined, cwd: undefined };
+    expect(gitCandidates(search, disk([]))).toEqual(expect.arrayContaining([
+      String.raw`D:\Program Files\Git\cmd\git.exe`,
+      String.raw`D:\Program Files (x86)\Git\cmd\git.exe`,
+    ]));
+  });
+
+  it("on Windows looks at each path once, whatever case PATH or the home spells it in", () => {
+    // Windows paths ignore case: `c:\program files\git\cmd` on PATH and a home on `c:` name the C: install again.
+    const search = { platform: "win32" as const, home: String.raw`c:\Users\me`, path: String.raw`c:\program files\git\cmd`, cwd: undefined };
+    expect(gitCandidates(search, disk([]))).toEqual([
+      String.raw`c:\program files\git\cmd\git.exe`,
+      String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
+      String.raw`c:\Users\me\AppData\Local\Programs\Git\cmd\git.exe`,
+      String.raw`c:\Users\me\scoop\apps\git\current\cmd\git.exe`,
+    ]);
+  });
+
   it("keeps every absolute entry outside node_modules when the folder it runs in is in no repository", () => {
     const search = { platform: "linux" as const, home: "/home/me", path: "/home/me/bin", cwd: "/home/me" };
     expect(gitCandidates(search, disk([]))[0]).toBe("/home/me/bin/git");
   });
 
-  it("still lists PATH and the install locations from a working folder that was deleted", async () => {
+  it("skips the PATH entries of the repository it was told to search from, wherever it runs", async () => {
+    // The daemon runs in the Rerail home and serves the repository it was started for (`--workspace-root`).
+    const repository = await realpath(await mkdtemp(join(tmpdir(), "rerail-git-served-")));
+    roots.push(repository);
+    await mkdir(join(repository, ".git"));
+    const tools = await realpath(await mkdtemp(join(tmpdir(), "rerail-git-tools-")));
+    roots.push(tools);
+    const program = process.platform === "win32" ? "git.exe" : "git";
+    vi.stubEnv("PATH", [join(repository, "bin"), tools].join(delimiter));
+    try {
+      expect(gitCandidates()).toContain(join(repository, "bin", program));
+      searchGitFrom(repository);
+      expect(gitCandidates()).not.toContain(join(repository, "bin", program));
+      expect(gitCandidates()[0]).toBe(join(tools, program));
+    } finally {
+      searchGitFrom(undefined);
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("still lists PATH and the install locations from a working folder that was deleted", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows keeps a process's working folder open, so it cannot be deleted under the process");
     const gone = await mkdtemp(join(tmpdir(), "rerail-git-gone-"));
     const before = process.cwd();
     process.chdir(gone);
     try {
-      await rm(gone, { recursive: true });
+      await removeFolder(gone);
       expect(() => process.cwd()).toThrow();
       vi.stubEnv("PATH", "/opt/local/bin");
       expect(gitCandidates()).toContain("/opt/local/bin/git");
@@ -420,6 +650,64 @@ describe("gitCandidates", () => {
       vi.unstubAllEnvs();
       process.chdir(before);
     }
+  });
+});
+
+describe("findGit", () => {
+  /** A disk holding `files`, each runnable, that counts the realpath calls it answers. */
+  const counted = (files: readonly string[]) => {
+    const realpaths: string[] = [];
+    return {
+      realpaths,
+      exists: (path: string) => files.includes(path),
+      runnable: (path: string) => files.includes(path),
+      realpath: (path: string) => {
+        realpaths.push(path);
+        return path;
+      },
+      developerDir: () => undefined,
+    };
+  };
+  const entries = Array.from({ length: 40 }, (_, index) => `/opt/tool-${index}/bin`);
+
+  it("stops at the first Git that runs, without resolving the PATH entries after it", () => {
+    const search = { platform: "linux" as const, home: "/home/me", path: ["/opt/first/bin", "/opt/git/bin", ...entries].join(":"), cwd: "/home/me/app" };
+    const disk = counted(["/home/me/app/.git", "/opt/git/bin/git"]);
+    expect(findGit(search, disk).path).toBe("/opt/git/bin/git");
+    // The repository it runs in, then each entry up to the Git found.
+    expect(disk.realpaths).toEqual(["/home/me/app", "/opt/first/bin", "/opt/git/bin"]);
+    // Outside any repository no entry needs its real path.
+    const outside = counted(["/opt/git/bin/git"]);
+    expect(findGit({ ...search, cwd: "/home/me" }, outside).path).toBe("/opt/git/bin/git");
+    expect(outside.realpaths).toEqual([]);
+  });
+
+  it("on Windows goes behind a launcher only into a Git for Windows install, by the checks every PATH entry gets", () => {
+    const repository = String.raw`C:\code\app`;
+    const search = { platform: "win32" as const, home: String.raw`C:\Users\me`, cwd: repository };
+    const layout = (root: string, ...more: string[]) => [String.raw`${root}\cmd\git.exe`, String.raw`${root}\mingw64\bin\git.exe`, ...more];
+    const found = (path: string, files: readonly string[], links: Record<string, string> = {}) => findGit({ ...search, path }, {
+      ...counted([String.raw`${repository}\.git`, ...files]),
+      realpath: (folder: string) => Object.entries(links).reduce((real, [link, target]) => real.startsWith(link) ? target + real.slice(link.length) : real, folder),
+    }).path;
+    const installed = String.raw`C:\Program Files\Git`;
+    expect(found(String.raw`${installed}\cmd`, layout(installed, String.raw`${installed}\etc\gitconfig`))).toBe(String.raw`${installed}\mingw64\bin\git.exe`);
+    expect(found(String.raw`${installed}\cmd`, layout(installed, String.raw`${installed}\mingw64\share\git`))).toBe(String.raw`${installed}\mingw64\bin\git.exe`);
+    // A launcher someone put on PATH beside a git.exe of their choosing, with nothing of Git for Windows around it.
+    const planted = String.raw`D:\tools\planted`;
+    expect(found(String.raw`${planted}\cmd`, layout(planted))).toBe(String.raw`${planted}\cmd\git.exe`);
+    // A real install whose mingw64 folder is a junction into the repository Rerail runs in.
+    const linked = String.raw`D:\portable\Git`;
+    const junction = { [String.raw`${linked}\mingw64`]: String.raw`${repository}\vendor\mingw64` };
+    expect(found(String.raw`${linked}\cmd`, layout(linked, String.raw`${linked}\etc\gitconfig`), junction)).toBe(String.raw`${linked}\cmd\git.exe`);
+  });
+
+  it("lists every place it looked, in gitCandidates' order, when no Git runs", () => {
+    const search = { platform: "linux" as const, home: "/home/me", path: entries.join(":"), cwd: undefined };
+    const found = findGit(search, counted([]));
+    expect(found.path).toBeUndefined();
+    expect(found.looked).toEqual(gitCandidates(search, counted([])));
+    expect(new GitUnavailableError(found.looked).message).toContain("/opt/tool-39/bin/git, /usr/bin/git");
   });
 });
 

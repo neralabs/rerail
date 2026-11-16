@@ -23,6 +23,7 @@ import {
 import { RULE_MODES } from "../catalog/rule-mode.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
 import type { RuleDocument } from "../catalog/rule-store.js";
+import { PRESENTATION_PRESENCES } from "./presentation-presence.js";
 
 /**
  * One machine database holds the rule catalog and every repository's execution history.
@@ -44,7 +45,7 @@ export type RuleScope = (typeof RULE_SCOPES)[number];
 const inList = (values: readonly string[]): string => values.map(value => `'${value}'`).join(", ");
 
 export const PRESENTATION_HOSTS = ["", ...Object.keys(ADAPTER_CAPABILITIES) as RerailHost[]] as const;
-export const PRESENTATION_PRESENCES = ["compact", "silent"] as const;
+export { PRESENTATION_PRESENCES };
 
 /** Empty repository/host keys select database-local defaults for that dimension. */
 export const presentationPreferences = sqliteTable(
@@ -155,7 +156,8 @@ export const ruleCatalogIdentities = sqliteTable(
  * `origin` (or sole) remote, else `clone:<clone id>`; `aliases_json` lists other keys that resolve here.
  * `configured_at` null means Not set up, so nothing runs; `started` is the default every checkout follows, and null
  * means nobody started or stopped the repository yet (off). `follow_gitignore` leaves files Git ignores out of every
- * audit of the repository's checkouts; a session reads it when it opens.
+ * audit of the repository's checkouts; a session reads it when it opens. `merge_assist` turns Merge Assist on for the
+ * repository's checkouts; only a person turns it on.
  */
 export const repositories = sqliteTable(
   "repositories",
@@ -166,6 +168,7 @@ export const repositories = sqliteTable(
     configuredAt: integer("configured_at"),
     started: integer("started", { mode: "boolean" }),
     followGitignore: integer("follow_gitignore", { mode: "boolean" }).notNull().default(true),
+    mergeAssist: integer("merge_assist", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -400,7 +403,13 @@ export const audits = sqliteTable(
     catalogRevision: text("catalog_revision"),
     /** Exact rule revisions compiled for this run; empty when it never reached evaluation. */
     ruleRevisions: text("rule_revisions_json", { mode: "json" }).$type<Array<{ ruleId: string; revision: number }>>().notNull().default([]),
+    /**
+     * The run's rule provenance as an older Rerail writes it, inline. This build keeps it once in
+     * `audit_rule_provenances` and writes `[]` here; the audit store reads whichever the row has.
+     */
     ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<AuditRuleProvenance[]>().notNull(),
+    /** The run's rule provenance in `audit_rule_provenances`; null when `rule_provenance_json` holds it, or it is empty. */
+    ruleProvenanceId: integer("rule_provenance_id"),
     paths: text("paths_json", { mode: "json" }).$type<string[]>().notNull(),
     startedAt: integer("started_at").notNull(),
     finishedAt: integer("finished_at"),
@@ -413,6 +422,8 @@ export const audits = sqliteTable(
     index("audits_status").on(table.status),
     index("audits_scope").on(table.scope),
     index("audits_mode").on(table.mode),
+    // The delete trigger asks whether any audit still names a provenance (`audit-history.ts`).
+    index("audits_rule_provenance").on(table.ruleProvenanceId),
     check("audits_scope", sql`${table.scope} IN (${sql.raw(inList(AUDIT_SCOPES))})`),
     check("audits_mode", sql`${table.mode} IN (${sql.raw(inList(AUDIT_MODES))})`),
     check("audits_status", sql`${table.status} IN (${sql.raw(inList(AUDIT_STATUSES))})`),
@@ -422,6 +433,22 @@ export const audits = sqliteTable(
     check("audits_violations_json", sql`json_type(${table.violations}) = 'array'`),
     check("audits_failures_json", sql`json_type(${table.failures}) = 'array'`),
   ],
+);
+
+/**
+ * Each distinct rule provenance an audit recorded, once. The audits of a checkout share one until its rules or their
+ * settings change, and one runs to hundreds of KB (767 rules: 221 KB), so an audit names it by
+ * `audits.rule_provenance_id` rather than holding a copy. `digest` is the SHA-256 of the JSON text, which a writer looks
+ * it up by. The last audit that names one takes it along when deleted (`audit-history.ts`).
+ */
+export const auditRuleProvenances = sqliteTable(
+  "audit_rule_provenances",
+  {
+    provenanceId: integer("provenance_id").primaryKey(),
+    digest: text("digest").notNull().unique(),
+    ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<AuditRuleProvenance[]>().notNull(),
+  },
+  table => [check("audit_rule_provenances_json", sql`json_type(${table.ruleProvenance}) = 'array'`)],
 );
 
 /** Workspace-owned ongoing audit defaults; first-repository audits are fixed log-only audits. */
@@ -623,6 +650,13 @@ export const policySessionOwners = sqliteTable("policy_session_owners", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+/** Merge Assist's bookkeeping by key (`runtime/merge-assist/state.ts`): `conflicts:<checkout path>` holds a checkout's conflicts, `scan:<checkout path>` its last scan. */
+export const mergeAssistState = sqliteTable("merge_assist_state", {
+  key: text("key").primaryKey(),
+  valueJson: text("value_json").notNull(),
+  updatedAt: integer("updated_at"),
+});
+
 /** The `migrations.ts` steps a file has run, by id. */
 export const schemaMigrations = sqliteTable("schema_migrations", {
   id: text("id").primaryKey(),
@@ -644,8 +678,9 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
 
 /**
  * Session history `rerail reset` deletes for every session of the repository, running or not.
- * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`; `sessions` and `policy_session_owners`
- * lose only ended sessions, so running ones keep recording.
+ * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`, and a stored rule provenance goes with the
+ * last audit that names it (`audit-history.ts`); `sessions` and `policy_session_owners` lose only ended sessions, so
+ * running ones keep recording.
  */
 export const SESSION_HISTORY_TABLES = [events, workLinks, steerFeedback, audits, auditRequests, repositoryAudits] as const;
 

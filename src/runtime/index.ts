@@ -10,6 +10,7 @@ export {
   DAEMON_STATE_FILE,
   daemonFetch,
   type DaemonHealth,
+  type DaemonMachine,
   type DaemonLaunchOptions,
   type EngineEndpoint,
   type DaemonState,
@@ -20,6 +21,7 @@ export {
   stopDaemon,
 } from "./daemon-control.js";
 export { type EngineService, ingestEngineEvent, startEngineService } from "./engine-service.js";
+export { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineProof } from "./engine-proof.js";
 export {
   AdapterEventSchema,
   decodeRerailEventFrame,
@@ -30,6 +32,18 @@ export {
 export { type HostRuntimePort, type HostRuntimeSessionState, RerailHostRuntime } from "./host-runtime.js";
 export { OmpMessageContentSource, type OmpSessionEntryLike, OmpWatermarkStore } from "./omp-semantic.js";
 export { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
+export {
+  createMergeAssistService,
+  MERGE_ASSIST_ERROR_CODES,
+  MergeAssistError,
+  type MergeAssistErrorCode,
+  type MergeAssistRuntime,
+  type MergeAssistService,
+  type MergeAssistServiceOptions,
+  type MergeAssistSettingsChange,
+} from "./merge-assist/service.js";
+export { type StoredConflict, writeConflicts } from "./merge-assist/conflict-store.js";
+export { type GithubClient, GithubError, type GithubRepository, type PullRequestSummary } from "./merge-assist/github.js";
 export {
   isRerailStarted,
   setCheckoutStarted,
@@ -48,7 +62,7 @@ export {
   SqliteSessionStore,
 } from "./session-store.js";
 export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, onRuleCount } from "./repository-start.js";
-export { type NpmRunner } from "./npm.js";
+export { type NpmRunner, runNpm } from "./npm.js";
 export {
   addRemote,
   machineId,

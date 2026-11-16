@@ -1,6 +1,6 @@
-import { lstatSync, readdirSync, readFileSync, realpathSync, type Dirent } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
-import { withinCheckout } from "./checkout-control.js";
+import { checkoutRealpath, withinCheckout } from "./checkout-control.js";
 import { readTomlStringLists } from "./lint-config/lint-config-formats.js";
 import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
 import { GitUnavailableError, runGit } from "../git.js";
@@ -154,7 +154,7 @@ function listRepositoryFiles(root: string): Pick<RepositoryScan, "files" | "notS
 function readableManifest(root: string, path: string): boolean {
   try {
     const info = lstatSync(path);
-    return info.isFile() && info.size <= MAX_MANIFEST_BYTES && withinCheckout(realpathSync(root), realpathSync(dirname(path)));
+    return info.isFile() && info.size <= MAX_MANIFEST_BYTES && withinCheckout(checkoutRealpath(root), checkoutRealpath(dirname(path)));
   } catch {
     // A manifest that vanished or cannot be inspected says nothing about the stack.
     return false;

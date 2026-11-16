@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -16,11 +17,20 @@ import {
 import { ENTRY_POINTS } from "../../src/engine/index.js";
 import type { NpmRunner } from "../../src/runtime/index.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-race.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
+
+/** The pid of a process that has already exited. */
+function exitedPid(): number {
+  const pid = spawnSync(process.execPath, ["-e", ""]).pid;
+  if (pid === undefined) throw new Error("no pid for the exited process");
+  return pid;
+}
 
 class FakeRegistry implements PackageRegistry {
   readonly resolvedChannels: string[] = [];
@@ -49,6 +59,9 @@ async function fixture(): Promise<{ home: string; packageRoot: string }> {
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
   return { home: join(root, "home"), packageRoot };
 }
+
+/** The engine as a Rerail whose engine does not load has it. */
+const noEngine = (): never => { throw new Error("Unsupported platform or missing native addon: rerail_engine.node"); };
 
 async function assertPackageIdentity(installation: Installation): Promise<void> {
   const manifest = JSON.parse(await readFile(join(installation.packageRoot, "package.json"), "utf8")) as Record<
@@ -230,6 +243,63 @@ describe("ManagedUpdater", () => {
     expect(registry.installedVersions).toHaveLength(installsBeforeUpdate);
   });
 
+  it("stops a daemon running from the installation before rebuilding its SQLite binding in place", async () => {
+    const { home, packageRoot } = await fixture();
+    const steps: string[] = [];
+    let installed = false;
+    const updater = new ManagedUpdater({
+      home,
+      packageRoot,
+      packageVersion: "1.0.0",
+      registry: new FakeRegistry("1.0.0"),
+      validateInstallation: async () => {
+        if (installed && !steps.includes("repair")) throw new Error("NODE_MODULE_VERSION 137");
+      },
+      // Windows cannot overwrite the better_sqlite3.node a running daemon has loaded.
+      stopDaemonUsing: async (root) => {
+        steps.push(`stop ${root}`);
+      },
+      repairInstallation: async (root) => {
+        steps.push("repair");
+        return { prefix: dirname(dirname(dirname(root))), rebuilt: true };
+      },
+    });
+    await updater.install();
+    installed = true;
+    const current = (await updater.status()).current;
+    await updater.update();
+    expect(steps).toEqual([`stop ${current.packageRoot}`, "repair"]);
+  });
+
+  it("puts back a current link an interrupted Windows swap left only as current.*.old", async () => {
+    const { home, packageRoot } = await fixture();
+    const target = join(home, "versions", "1.0.0");
+    await mkdir(target, { recursive: true });
+    // The swapping process is gone: it was killed between its two renames.
+    const left = `current.${exitedPid()}.0b9d.old`;
+    await symlink(target, join(home, left), "junction");
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0") });
+    await updater.status();
+    expect(await realpath(updater.currentLink)).toBe(await realpath(target));
+    expect(existsSync(join(home, left))).toBe(false);
+  });
+
+  // Every CLI call looks for a missing `current`, unlocked. One that put the `.old` back while its swapper still ran
+  // would leave a folder where the swapper renames its new link next, and fail the update.
+  it("leaves current.*.old alone while the process that moved it aside still runs, even beside a dead one's", async () => {
+    const { home, packageRoot } = await fixture();
+    const target = join(home, "versions", "1.0.0");
+    await mkdir(target, { recursive: true });
+    const swapping = `current.${process.pid}.0b9d.old`;
+    const abandoned = `current.${exitedPid()}.1c2e.old`;
+    await symlink(target, join(home, abandoned), "junction");
+    await symlink(target, join(home, swapping), "junction");
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0") });
+    await updater.readState();
+    expect(existsSync(updater.currentLink)).toBe(false);
+    expect((await readdir(home)).filter(name => name.endsWith(".old")).sort()).toEqual([abandoned, swapping].sort());
+  });
+
   it("surfaces an unrepairable current installation instead of reporting no update", async () => {
     const { home, packageRoot } = await fixture();
     const registry = new FakeRegistry("1.0.0");
@@ -325,54 +395,101 @@ describe("ManagedUpdater", () => {
     await expect(updater.update()).rejects.toThrow("health check failed");
   });
 
-  it("refuses a live lease regardless of the lock directory age", async () => {
+  it.each([
+    ["the OS lock", {}],
+    ["the folder lock, where its engine does not load", { lockEngine: noEngine }],
+  ])("says another update is running while one holds %s, and runs once it lets go", async (_lock, engine) => {
     const { home, packageRoot } = await fixture();
     const registry = new FakeRegistry("1.1.0");
-    await mkdir(join(home, "update.lock"), { recursive: true });
-    await writeFile(
-      join(home, "update.lock", "lease.json"),
-      JSON.stringify({
-        owner: "another-updater",
-        expiresAt: "2026-09-01T12:15:00.000Z",
-      }),
-    );
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, validateInstallation: assertPackageIdentity, ...engine });
+    const holding = Promise.withResolvers<void>();
+    const mayEnd = Promise.withResolvers<void>();
+    const running = new ManagedUpdater({
+      home,
+      packageRoot,
+      packageVersion: "1.0.0",
+      registry: { resolveVersion: async () => { holding.resolve(); await mayEnd.promise; return "1.0.0"; }, installVersion: async () => {} },
+      validateInstallation: async () => {},
+      ...engine,
+    }).update();
+    await holding.promise;
+
+    await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
+    expect(registry.installedVersions).toEqual([]);
+    mayEnd.resolve();
+    await running;
+    await updater.update();
+    expect(registry.installedVersions).toEqual(["1.1.0"]);
+  });
+
+  it("where its engine does not load, holds the folder lock while it runs and leaves none behind", async () => {
+    const { home, packageRoot } = await fixture();
+    const registry = new FakeRegistry("1.1.0");
+    const held: string[][] = [];
     const updater = new ManagedUpdater({
       home,
       packageRoot,
       packageVersion: "1.0.0",
       registry,
-      now: () => new Date("2026-09-01T12:00:00.000Z"),
-      validateInstallation: assertPackageIdentity,
-    });
-
-    await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
-    expect(registry.installedVersions).toEqual([]);
-    await expect(readFile(join(home, "update.lock", "lease.json"), "utf8")).resolves.toContain("another-updater");
-  });
-
-  it("does not release a lease replaced by another owner", async () => {
-    const { home, packageRoot } = await fixture();
-    const updater = new ManagedUpdater({
-      home,
-      packageRoot,
-      packageVersion: "1.0.0",
-      registry: new FakeRegistry("1.1.0"),
-      now: () => new Date("2026-09-01T12:00:00.000Z"),
+      lockEngine: noEngine,
       validateInstallation: async (installation) => {
+        held.push(await readdir(join(home, "locks", "update-without-engine")));
         await assertPackageIdentity(installation);
-        await writeFile(
-          join(home, "update.lock", "lease.json"),
-          JSON.stringify({
-            owner: "different-updater",
-            expiresAt: "2026-09-01T12:15:00.000Z",
-          }),
-        );
       },
     });
 
     await updater.update();
-    await expect(readFile(join(home, "update.lock", "lease.json"), "utf8")).resolves.toContain("different-updater");
+    expect(held).toEqual([[expect.stringMatching(/^owner-[0-9a-f-]+\.json$/u)]]);
+    expect(await readdir(join(home, "locks"))).toEqual([]);
   });
+
+  it.each([
+    ["no lease, as an update killed before it wrote one left it", undefined],
+    ["an empty lease, as an update killed while it wrote one left it", ""],
+  ])("runs past the update.lock folder with %s", async (_left, lease) => {
+    const { home, packageRoot } = await fixture();
+    await mkdir(join(home, "update.lock"), { recursive: true });
+    if (lease !== undefined) await writeFile(join(home, "update.lock", "lease.json"), lease);
+    const registry = new FakeRegistry("1.1.0");
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, validateInstallation: assertPackageIdentity });
+
+    await updater.update();
+    expect(registry.installedVersions).toEqual(["1.1.0"]);
+  });
+});
+
+describe("updates racing for the lock of one killed while it held it", () => {
+  it.each([
+    ["the OS lock", ""],
+    ["the folder lock, where their engine does not load", `lockEngine: () => { throw new Error("no engine"); },`],
+  ])("take %s one at a time, and every other says another update is running", async (_lock, engine) => {
+    const { home, packageRoot } = await fixture();
+    const size = raceSize({ processes: 8, rounds: 4 });
+
+    const race = await raceForLock({
+      take: `import { ManagedUpdater } from ${JSON.stringify(sourceModule("src/setup/updater.ts"))};
+const checked = new Error("checked for a newer version");
+const take = async (inside, role) => {
+  const updater = new ManagedUpdater({
+    home: ${JSON.stringify(home)},
+    packageRoot: ${JSON.stringify(packageRoot)},
+    packageVersion: "1.0.0",
+    // The racers' clock is an hour past the killed update's: its lock is as one killed long ago left it, whatever it records.
+    now: () => new Date(Date.now() + (role === "racer" ? 60 * 60_000 : 0)),
+    registry: { resolveVersion: async () => { await inside(); throw checked; }, installVersion: async () => {} },
+    validateInstallation: async () => {},
+    ${engine}
+  });
+  await updater.update().catch(error => { if (error !== checked) throw error; });
+};`,
+      busy: /^Another Rerail update is already running/u,
+      ...size,
+    });
+
+    expect(race).toMatchObject({ overlaps: 0, errors: [] });
+    expect(race.ran).toBeGreaterThan(0);
+    expect(race.ran + race.busy).toBe(size.processes * size.rounds);
+  }, 600_000);
 });
 
 describe("ManagedUpdater.install (setup bootstrap)", () => {
@@ -399,11 +516,15 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
 
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
     const shim = await readFile(updater.launcherPath, "utf8");
-    expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
-    expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli", "cli.js")}'`);
-    expect(shim).toContain(`NODE='${pinnedNodePath()}'`);
-    expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
     expect(shim).toBe(launcherShim(updater.currentLink, pinnedNodePath()));
+    // The sh launcher's form. On Windows the launcher is the `rerail.cmd` batch file, whose form the managed launcher
+    // shim tests check.
+    if (process.platform !== "win32") {
+      expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
+      expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli", "cli.js")}'`);
+      expect(shim).toContain(`NODE='${pinnedNodePath()}'`);
+      expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
+    }
 
     // Re-running is a no-op: same root, nothing reinstalled, launcher untouched.
     const again = await updater.install();
@@ -496,6 +617,34 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(existsSync(home)).toBe(false);
   });
 
+  it("keeps the update lock of one of two first installs into a fresh home when the other finds it held", async () => {
+    const { home, packageRoot } = await fixture();
+    const holds = Promise.withResolvers<void>();
+    const mayEnd = Promise.withResolvers<void>();
+    const installer = (validateInstallation: (installation: Installation) => Promise<void>) => new ManagedUpdater({
+      home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0"), validateInstallation,
+    });
+    const holding = async (installation: Installation): Promise<void> => {
+      holds.resolve();
+      await mayEnd.promise;
+      await assertPackageIdentity(installation);
+    };
+    // Started together, both find no Rerail home; one takes the update lock and the other finds it held.
+    const installs = [installer(holding).install(), installer(holding).install()];
+    try {
+      const lost = await Promise.race(installs.map(async install => await install.then(() => "ran", (error: unknown) => error)));
+      expect(lost).toMatchObject({ message: "Another Rerail update is already running" });
+      await holds.promise;
+      // The loser's failure left the winner's lock alone: the lock file, and the record that names its holder.
+      expect((await readdir(join(home, "locks"))).sort()).toEqual(["update.json", "update.lock"]);
+      await expect(installer(assertPackageIdentity).install()).rejects.toThrow("Another Rerail update is already running");
+    } finally {
+      mayEnd.resolve();
+    }
+    const outcomes = await Promise.allSettled(installs);
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+  });
+
   it("removes only the empty versions/ it made when an install into an existing home fails", async () => {
     const { home, packageRoot } = await fixture();
     await mkdir(home);
@@ -515,7 +664,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
 });
 
 describe("NpmPackageRegistry", () => {
-  interface NpmCall { args: readonly string[]; cwd: string | undefined; projectConfig: boolean }
+  interface NpmCall { args: readonly string[]; cwd: string | undefined; projectConfig: boolean; env: NodeJS.ProcessEnv | undefined; userconfig: string | undefined }
 
   /**
    * An npm whose registry has `@neralabs/rerail@1.1.0` at https://mirror.example/npm and whose `audit signatures`
@@ -525,7 +674,11 @@ describe("NpmPackageRegistry", () => {
     const calls: NpmCall[] = [];
     const npm: NpmRunner = async (args, options = {}) => {
       const cwd = options.cwd ?? process.cwd();
-      calls.push({ args, cwd: options.cwd, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")) });
+      const userconfigPath = options.env?.npm_config_userconfig;
+      calls.push({
+        args, cwd: options.cwd, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")), env: options.env,
+        userconfig: userconfigPath === undefined ? undefined : await readFile(userconfigPath, "utf8"),
+      });
       if (args[0] === "view") return { stdout: JSON.stringify("1.1.0"), stderr: "" };
       if (args[0] === "audit") {
         await audit();
@@ -566,6 +719,33 @@ describe("NpmPackageRegistry", () => {
       expect(view.cwd).toBeDefined();
       expect(view.cwd).not.toBe(process.cwd());
       expect(view.projectConfig).toBe(false);
+    }
+  });
+
+  it("installs with the person's npm settings but not allow-scripts, which npm 11 refuses for a --prefix install", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const scratch = await mkdtemp(join(tmpdir(), "rerail-npmrc-"));
+    temporaryDirectories.push(scratch);
+    const npmrc = join(scratch, "npmrc");
+    await writeFile(npmrc, "registry=https://mirror.example/npm/\nallow-scripts=@anthropic-ai/claude-code\n//mirror.example/npm/:_authToken=secret\nallow-scripts[]=esbuild\n");
+    // npm, as `npx` runs Rerail, sets the lower-case name for its child; a person sets either.
+    vi.stubEnv("NPM_CONFIG_USERCONFIG", npmrc);
+    vi.stubEnv("npm_config_userconfig", npmrc);
+    vi.stubEnv("npm_config_allow_scripts", "esbuild");
+    try {
+      const { npm, calls } = fakeNpm(async () => {});
+      const updater = await updaterWith(npm, async () => {});
+      await expect(updater.update()).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+
+      const prefixCalls = calls.filter(call => call.args.includes("--prefix"));
+      expect(prefixCalls.map(call => call.args[0])).toEqual(["install", "audit"]);
+      for (const call of prefixCalls) {
+        expect(call.projectConfig).toBe(false);
+        expect(call.userconfig).toBe("registry=https://mirror.example/npm/\n//mirror.example/npm/:_authToken=secret\n");
+        expect(Object.keys(call.env ?? {}).filter(name => /allow[-_]scripts|^npm_config_userconfig$/iu.test(name))).toEqual(["npm_config_userconfig"]);
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 

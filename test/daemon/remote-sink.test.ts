@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RerailDaemon } from "../../src/daemon/index.js";
 import { addRemote, machineId, SqliteSessionStore } from "../../src/runtime/index.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../support/fake-sink.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -22,7 +23,7 @@ async function until(condition: () => boolean, timeoutMs = 15_000): Promise<void
 describe("the daemon's remote sink", () => {
   it("ships a session recorded while it runs, and catches up after the remote was down", async () => {
     const home = mkdtempSync(join(tmpdir(), "rerail-remote-daemon-"));
-    cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    cleanups.push(() => removeFolderSync(home));
     const sink: FakeSink = await startFakeSink();
     cleanups.push(() => sink.close());
     const databasePath = join(home, "rerail.sqlite");

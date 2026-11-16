@@ -1,16 +1,14 @@
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import {
-  chmod,
   lstat,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
   realpath,
-  rename,
-  rm,
   rmdir,
   symlink,
   unlink,
@@ -21,8 +19,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
+import { removeScratch, removeWithRetry, renameWithRetry, replaceFile } from "../engine/file-replace.js";
+import { withHomeLock, type LockEngine } from "../engine/native/file-lock.js";
+import { processState } from "../engine/process-liveness.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
+import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
-import { auditSignatures, checkRegistry, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
+import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { CURRENT_LINK, defaultRerailHome, LAUNCHER_DIR, UPDATE_STATE_FILE, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -31,12 +35,15 @@ import { pinnedNodePath } from "./node-path.js";
 export const DEFAULT_UPDATE_CHANNEL = "latest";
 
 export { CURRENT_LINK, LAUNCHER_DIR, UPDATE_STATE_FILE, VERSIONS_DIR };
-/** In the Rerail home: the lock an update holds. */
+/** The lock an update holds, `locks/update.lock` in the Rerail home. */
+const UPDATE_LOCK = "update";
+/**
+ * In the Rerail home: the folder Rerail before `locks/` held as the update lock. Uninstall keeps it with the home and
+ * names it there as one of Rerail's own entries (`RERAIL_HOME_ENTRIES` in setup-cli.ts).
+ */
 export const UPDATE_LOCK_DIR = "update.lock";
 
 const UPDATE_STATE_VERSION = 1;
-const LOCK_LEASE_MS = 15 * 60 * 1_000;
-const LOCK_RENEWAL_MS = LOCK_LEASE_MS / 3;
 const EVENT_HEALTH_TIMEOUT_MS = 15_000;
 const STAGING_RENAME_RETRY_MS = 10_000;
 
@@ -84,11 +91,10 @@ export interface ManagedUpdaterOptions {
   validateInstallation?: (installation: Installation) => Promise<void>;
   /** Rebuilds the SQLite binding below a package root that fails validation; tests substitute it. */
   repairInstallation?: (packageRoot: string) => Promise<SqliteRepairResult>;
-}
-
-interface UpdateLockLease {
-  owner: string;
-  expiresAt: string;
+  /** Stops a daemon running from a package root before its SQLite binding is rebuilt in place; tests substitute it. */
+  stopDaemonUsing?: (packageRoot: string) => Promise<void>;
+  /** Loads the engine for the update lock; tests make it fail, as it does where the engine does not load. */
+  lockEngine?: () => LockEngine;
 }
 
 function assertChannel(channel: string): void {
@@ -172,7 +178,11 @@ async function installedFromRegistry(prefix: string): Promise<string | undefined
 }
 
 export class NpmPackageRegistry implements PackageRegistry {
-  constructor(private readonly npm: NpmRunner = runNpm) {}
+  private readonly npm: NpmRunner;
+
+  constructor(npm: NpmRunner = runNpm) {
+    this.npm = prefixInstallNpm(npm);
+  }
 
   /** Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer. */
   async resolveVersion(channel: string): Promise<string> {
@@ -280,20 +290,32 @@ export function launcherShim(currentLink: string, nodePath: string, platform: No
 /**
  * The launcher Git Bash runs on Windows, `<home>/bin/rerail` beside `rerail.cmd`: Git Bash finds a command without
  * an extension or with `.exe`, never `rerail.cmd`.
+ *
+ * Git Bash's own window, mintty, hands a Windows program pipes, not a console, unless its pseudo console support is on
+ * (`enable_pcon` in `MSYS`). Node then reads stdin and stdout as no terminal, and set-up gave a person at that window the
+ * text it writes for a coding agent instead of its menu. Run from a terminal there, the launcher starts node through
+ * Git for Windows' winpty, which gives it a console, as Git for Windows' own `node` alias does. Windows Terminal and
+ * VS Code's terminal give node a console already, and pipes (an agent's shell) never get winpty.
  */
 export function gitBashShim(currentLink: string, nodePath: string): string {
-  return shLauncher(nodePath, windowsPath.join(currentLink, ENTRY_POINTS.cli));
+  return shLauncher(nodePath, windowsPath.join(currentLink, ENTRY_POINTS.cli), true);
 }
 
-function shLauncher(nodePath: string, cliPath: string): string {
+function shLauncher(nodePath: string, cliPath: string, mintty = false): string {
   const escapedSingleQuote = String.raw`'\''`;
   const quotedNodePath = `'${nodePath.replaceAll("'", escapedSingleQuote)}'`;
   const quotedCliPath = `'${cliPath.replaceAll("'", escapedSingleQuote)}'`;
+  const winpty = [
+    'if [ -t 0 ] && [ -t 1 ] && [ "${TERM_PROGRAM-}" = mintty ] && [ -x /usr/bin/winpty ]; then',
+    `  case "\${MSYS-}" in *enable_pcon*) ;; *) exec /usr/bin/winpty "$NODE" ${quotedCliPath} "$@" ;; esac`,
+    "fi",
+  ];
   return [
     "#!/bin/sh",
     `# ${LAUNCHER_HEADER}`,
     `NODE=${quotedNodePath}`,
     '[ -x "$NODE" ] || NODE=node',
+    ...(mintty ? winpty : []),
     `exec "$NODE" ${quotedCliPath} "$@"`,
     "",
   ].join("\n");
@@ -312,6 +334,17 @@ function batchPath(path: string, rerailHome: string): string | undefined {
   const relativePath = windowsPath.relative(rerailHome, path);
   if (relativePath === "" || relativePath.startsWith("..") || windowsPath.isAbsolute(relativePath)) return undefined;
   return `%~dp0..\\${escape(relativePath)}`;
+}
+
+/**
+ * Stops the daemon of `home` when it runs from `packageRoot`, before that package's SQLite binding is rebuilt in place:
+ * Windows refuses to overwrite or remove a loaded DLL, and the daemon has `better_sqlite3.node` loaded. The next
+ * session starts the daemon again. Elsewhere a rebuild replaces the file under a running daemon, so nothing stops.
+ */
+async function stopDaemonFrom(home: string, packageRoot: string, platform: NodeJS.Platform): Promise<void> {
+  if (platform !== "win32") return;
+  const lookup = await lookupDaemon(home);
+  if (lookup.status !== "absent" && await daemonUsesPackageRoot(lookup.state, packageRoot)) await stopFoundDaemon(home, lookup);
 }
 
 async function repairManagedInstallation(packageRoot: string): Promise<SqliteRepairResult> {
@@ -385,7 +418,8 @@ export async function validateManagedInstallation(installation: Installation): P
     await mkdir(userHome);
     await startHealthRepository(join(installation.packageRoot, ENTRY_POINTS.cli), workspace, env);
   } catch (error) {
-    await rm(root, { recursive: true, force: true });
+    // A Git the timed-out CLI left running can still hold the workspace on Windows; the health check's error is the one thrown.
+    await removeScratch(root);
     throw new Error(`Installed CLI could not start a health-check repository: ${error instanceof Error ? error.message : String(error)}`);
   }
   const child = spawn(process.execPath, [join(installation.packageRoot, ENTRY_POINTS.eventStream)], {
@@ -440,9 +474,24 @@ export async function validateManagedInstallation(installation: Installation): P
     }
   } finally {
     clearTimeout(timeout);
-    if (child.exitCode === null) child.kill();
-    await rm(root, { recursive: true, force: true });
+    await stopChild(child);
+    await removeScratch(root);
   }
+}
+
+/** How long a killed health-check child gets to exit before its scratch folder is removed anyway. */
+const CHILD_EXIT_WAIT_MS = 5_000;
+
+/**
+ * Ends `child` and what it started (`endProcessTree`) if it still runs, and waits for it to exit, up to
+ * {@link CHILD_EXIT_WAIT_MS}: on Windows the kill returns before the process is gone, the SQLite files it holds open
+ * cannot be removed until it is, and a Git it started holds the scratch repository until it is ended too.
+ */
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const gone = once(child, "exit").then(() => undefined, () => undefined);
+  endProcessTree(child);
+  await Promise.race([gone, sleep(CHILD_EXIT_WAIT_MS, undefined, { ref: false })]);
 }
 async function pathEntryExists(path: string): Promise<boolean> {
   try {
@@ -452,6 +501,26 @@ async function pathEntryExists(path: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
+}
+
+/**
+ * Whether the process that moved `name` (`current.<pid>.<uuid>.old`) aside still runs, and so is mid-swap. A pid that
+ * runs as another account's process (`EPERM`) counts too: the swap may be its.
+ */
+function swapRuns(name: string): boolean {
+  const pid = /^current\.(\d+)\./u.exec(name)?.[1];
+  return pid !== undefined && processState(Number(pid)) !== "gone";
+}
+
+/** The most recently modified of `names` in `folder`, by `lstat`; undefined when none is there. */
+async function newestEntry(folder: string, names: readonly string[]): Promise<string | undefined> {
+  let newest: { path: string; time: number } | undefined;
+  for (const name of names) {
+    const path = join(folder, name);
+    const time = await lstat(path).then(info => info.mtimeMs, () => undefined);
+    if (time !== undefined && (newest === undefined || time > newest.time)) newest = { path, time };
+  }
+  return newest?.path;
 }
 
 async function unlinkIfPresent(path: string): Promise<void> {
@@ -472,7 +541,9 @@ export class ManagedUpdater {
   private readonly now: () => Date;
   private readonly validate: (installation: Installation) => Promise<void>;
   private readonly repair: (packageRoot: string) => Promise<SqliteRepairResult>;
+  private readonly stopDaemonUsing: (packageRoot: string) => Promise<void>;
   private readonly platform: NodeJS.Platform;
+  private readonly lockEngine: (() => LockEngine) | undefined;
 
   constructor(options: ManagedUpdaterOptions) {
     this.home = options.home ?? defaultRerailHome();
@@ -486,6 +557,8 @@ export class ManagedUpdater {
     this.platform = options.platform ?? process.platform;
     this.validate = options.validateInstallation ?? validateManagedInstallation;
     this.repair = options.repairInstallation ?? repairManagedInstallation;
+    this.stopDaemonUsing = options.stopDaemonUsing ?? (async packageRoot => await stopDaemonFrom(this.home, packageRoot, this.platform));
+    this.lockEngine = options.lockEngine;
   }
 
   /** The version of the package this updater runs from; what `install()` activates by default. */
@@ -494,6 +567,7 @@ export class ManagedUpdater {
   }
 
   async readState(): Promise<UpdateState> {
+    await this.restoreCurrentLink();
     try {
       return parseState(await readFile(this.statePath, "utf8"));
     } catch (error) {
@@ -517,11 +591,25 @@ export class ManagedUpdater {
   }
 
   private async writeState(state: UpdateState): Promise<void> {
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
-    const temporaryPath = `${this.statePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporaryPath, this.statePath);
+    makeRerailHome(this.home, { platform: this.platform });
+    await replaceFile(this.statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, platform: this.platform });
     await this.syncLauncher(state.current);
+  }
+
+  /**
+   * Puts back a `current` an interrupted swap left out. Windows cannot rename a junction over another, so
+   * `syncCurrentLink` moves the old one aside first; a kill or power loss between its two renames leaves only
+   * `current.<pid>.<uuid>.old`, and every hook and the launcher fail until `current` is back. The newest one wins.
+   * Every CLI call runs this without the update lock, so while the process a `.old` names still runs, its swap is in
+   * progress and nothing is put back: that process renames its new link into place next, which fails on a folder put
+   * back meanwhile, and it puts the old one back itself if its swap fails.
+   */
+  private async restoreCurrentLink(): Promise<void> {
+    if (await pathEntryExists(this.currentLink)) return;
+    const left = (await readdir(this.home).catch(() => [] as string[])).filter(name => name.startsWith(`${CURRENT_LINK}.`) && name.endsWith(".old"));
+    if (left.some(name => swapRuns(name))) return;
+    const newest = await newestEntry(this.home, left);
+    if (newest !== undefined) await renameWithRetry(newest, this.currentLink, { platform: this.platform }).catch(() => undefined);
   }
 
   private async syncCurrentLink(target: string): Promise<void> {
@@ -537,19 +625,19 @@ export class ManagedUpdater {
     const temporaryLink = `${this.currentLink}.${process.pid}.${randomUUID()}.tmp`;
     await symlink(linkTarget, temporaryLink, this.platform === "win32" ? "junction" : undefined);
     if (this.platform !== "win32") {
-      await rename(temporaryLink, this.currentLink);
+      await renameWithRetry(temporaryLink, this.currentLink, { platform: this.platform });
       return;
     }
 
     const previousLink = `${this.currentLink}.${process.pid}.${randomUUID()}.old`;
     const hadCurrent = await pathEntryExists(this.currentLink);
     try {
-      if (hadCurrent) await rename(this.currentLink, previousLink);
-      await rename(temporaryLink, this.currentLink);
+      if (hadCurrent) await renameWithRetry(this.currentLink, previousLink, { platform: this.platform });
+      await renameWithRetry(temporaryLink, this.currentLink, { platform: this.platform });
       if (hadCurrent) await unlink(previousLink);
     } catch (error) {
       await unlinkIfPresent(temporaryLink);
-      if (hadCurrent && !(await pathEntryExists(this.currentLink))) await rename(previousLink, this.currentLink);
+      if (hadCurrent && !(await pathEntryExists(this.currentLink))) await renameWithRetry(previousLink, this.currentLink, { platform: this.platform });
       throw error;
     }
   }
@@ -576,80 +664,24 @@ export class ManagedUpdater {
       const current = await readFile(path, "utf8").catch(() => undefined);
       if (current === shim) continue;
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-      await writeFile(temporaryPath, shim, { mode: 0o755 });
-      if (this.platform !== "win32") await chmod(temporaryPath, 0o755);
-      await rename(temporaryPath, path);
+      await replaceFile(path, shim, { mode: 0o755, platform: this.platform });
     }
   }
 
-  private async readLockLease(lockPath: string): Promise<UpdateLockLease | undefined> {
-    try {
-      const value = JSON.parse(await readFile(join(lockPath, "lease.json"), "utf8")) as unknown;
-      if (typeof value !== "object" || value === null) return undefined;
-      const lease = value as Record<string, unknown>;
-      if (typeof lease.owner !== "string" || typeof lease.expiresAt !== "string") return undefined;
-      if (!Number.isFinite(Date.parse(lease.expiresAt))) return undefined;
-      return { owner: lease.owner, expiresAt: lease.expiresAt };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
-  }
-
-  private async renewLockLease(lockPath: string, owner: string): Promise<void> {
-    const lease = await this.readLockLease(lockPath);
-    if (lease?.owner !== owner) throw new Error("Rerail update lock ownership was lost");
-    const next: UpdateLockLease = {
-      owner,
-      expiresAt: new Date(this.now().getTime() + LOCK_LEASE_MS).toISOString(),
-    };
-    await writeFile(join(lockPath, "lease.json"), `${JSON.stringify(next)}\n`, { mode: 0o600 });
-  }
-
-  private async releaseLock(lockPath: string, owner: string): Promise<void> {
-    const lease = await this.readLockLease(lockPath);
-    if (lease?.owner === owner) await rm(lockPath, { recursive: true, force: true });
-  }
-
-  private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    const lockPath = join(this.home, UPDATE_LOCK_DIR);
-    const owner = randomUUID();
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
-    try {
-      await mkdir(lockPath, { mode: 0o700 });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const lease = await this.readLockLease(lockPath);
-      if (lease === undefined || Date.parse(lease.expiresAt) > this.now().getTime()) {
-        throw new Error("Another Rerail update is already running");
-      }
-      await rm(lockPath, { recursive: true, force: true });
-      await mkdir(lockPath, { mode: 0o700 });
-    }
-    await writeFile(
-      join(lockPath, "lease.json"),
-      `${JSON.stringify({
-        owner,
-        expiresAt: new Date(this.now().getTime() + LOCK_LEASE_MS).toISOString(),
-      } satisfies UpdateLockLease)}\n`,
-      { mode: 0o600 },
-    );
-    let renewalFailure: Error | undefined;
-    const renewal = setInterval(() => {
-      void this.renewLockLease(lockPath, owner).catch((error) => {
-        renewalFailure ??= error as Error;
-      });
-    }, LOCK_RENEWAL_MS);
-    renewal.unref();
-    try {
-      const result = await operation();
-      if (renewalFailure !== undefined) throw renewalFailure;
-      return result;
-    } finally {
-      clearInterval(renewal);
-      await this.releaseLock(lockPath, owner);
-    }
+  /**
+   * Runs `operation` holding the update lock (`locks/update.lock`, `withHomeLock`); throws at once while another update
+   * holds it. `rerail update` is how a person replaces a Rerail whose engine does not load, so where this one's does not,
+   * the update takes the folder lock that works without it.
+   */
+  /** Runs `operation` holding the update lock; `firstInstall` removes the `locks/` it made where `operation` fails. */
+  private async withLock<T>(operation: () => Promise<T>, firstInstall = false): Promise<T> {
+    return await withHomeLock(this.home, {
+      name: UPDATE_LOCK,
+      engine: this.lockEngine,
+      withoutEngine: "folder",
+      busy: () => new Error("Another Rerail update is already running"),
+      removeMadeFolderOnFailure: firstInstall,
+    }, operation);
   }
 
   async status(): Promise<UpdateStatus> {
@@ -699,10 +731,26 @@ export class ManagedUpdater {
       await this.validate({ version, packageRoot: join(stagingPrefix, "node_modules", "@neralabs", "rerail") });
       await this.renameStaging(stagingPrefix, finalPrefix);
     } catch (error) {
-      await rm(stagingPrefix, { recursive: true, force: true, maxRetries: 10 });
+      await this.removeStaging(stagingPrefix, error);
       throw error;
     }
     return installation;
+  }
+
+  /**
+   * Removes the staging folder of an install that failed with `failure`. When that fails too, the error thrown carries
+   * both, `failure` first: its message leads with why the install failed, then names the folder left behind and why.
+   */
+  private async removeStaging(stagingPrefix: string, failure: unknown): Promise<void> {
+    try {
+      await removeWithRetry(stagingPrefix, { platform: this.platform });
+    } catch (cleanup) {
+      const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+      throw new AggregateError(
+        [failure, cleanup],
+        `${reason(failure)}; the staging folder ${stagingPrefix} it left could not be removed: ${reason(cleanup)}`,
+      );
+    }
   }
 
   /**
@@ -711,18 +759,7 @@ export class ManagedUpdater {
    * few seconds, as npm does, instead of failing the install.
    */
   private async renameStaging(stagingPrefix: string, finalPrefix: string): Promise<void> {
-    const deadline = Date.now() + STAGING_RENAME_RETRY_MS;
-    for (;;) {
-      try {
-        await rename(stagingPrefix, finalPrefix);
-        return;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        const transient = code === "EPERM" || code === "EACCES" || code === "EBUSY";
-        if (this.platform !== "win32" || !transient || Date.now() >= deadline) throw error;
-        await sleep(100);
-      }
-    }
+    await renameWithRetry(stagingPrefix, finalPrefix, { platform: this.platform, retryMs: STAGING_RENAME_RETRY_MS });
   }
 
   /**
@@ -733,6 +770,7 @@ export class ManagedUpdater {
     try {
       await this.validate(installation);
     } catch (error) {
+      await this.stopDaemonUsing(installation.packageRoot);
       const { rebuilt } = await this.repair(installation.packageRoot);
       if (!rebuilt) throw error;
       await this.validate(installation);
@@ -809,13 +847,22 @@ export class ManagedUpdater {
    */
   async install(version = this.packageVersion): Promise<UpdateResult> {
     parseSemver(version);
-    // A failed install leaves no folder of its own behind (set-up says nothing was changed): `versions/`, and the
-    // home itself on a first install, go again when this run made them and they are still empty.
+    // A failed install leaves no folder of its own behind (set-up says nothing was changed). `versions/`, when this run
+    // made it and it is still empty, goes while the update lock is held, so it is this run's own; the `locks/` it made
+    // goes with the lock (`withLock`'s `firstInstall`); then the home, on a first install, once it is empty. Another
+    // install that found no home either and lost the lock removes nothing of the one that holds it.
     const created = [this.versionsRoot, this.home].filter(path => !existsSync(path));
     try {
-      return await this.withLock(async () => await this.adopt(await this.materializeVersion(version)));
+      return await this.withLock(async () => {
+        try {
+          return await this.adopt(await this.materializeVersion(version));
+        } catch (error) {
+          if (created.includes(this.versionsRoot)) await rmdir(this.versionsRoot).catch(() => undefined);
+          throw error;
+        }
+      }, true);
     } catch (error) {
-      for (const path of created) await rmdir(path).catch(() => undefined);
+      if (created.includes(this.home)) await rmdir(this.home).catch(() => undefined);
       throw error;
     }
   }

@@ -9,16 +9,13 @@ import {
   readFile,
   readlink,
   realpath,
-  rename,
-  rm,
   rmdir,
   stat,
   symlink,
   unlink,
-  writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import {
   isClaudeStatusLine,
   readClaudeStatusRegistration,
@@ -30,16 +27,19 @@ import {
 import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettingsEntries } from "./settings-entries-store.js";
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
-import { andList, shellQuote } from "../harness/setup-screens.js";
+import { andList } from "../harness/setup-screens.js";
+import { commandLine, POWERSHELL_SAFE, powershellLiteral, shellWord } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
-import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
-import { CURRENT_LINK, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
+import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
+import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
+import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
-import { DAEMON_ACCESS_TOKEN_FILE } from "../runtime/daemon-control.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
+import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
+import { z } from "zod";
 
 export type Harness = RerailHost;
 
@@ -52,7 +52,7 @@ export interface RegistrationOptions {
   nodePath?: string;
   harnesses?: readonly Harness[];
   /** Native project settings context; omitted for global-only programmatic registration. */
-  workspaceDir?: string;
+  workspaceDir?: string | undefined;
   dryRun?: boolean;
   /** Test seam for platform-specific command quoting and directory links. */
   platform?: NodeJS.Platform;
@@ -193,24 +193,61 @@ function assertInside(path: string, container: string, label: string): void {
   }
 }
 
-function shellArgument(value: string, platform: NodeJS.Platform): string {
-  if (platform === "win32") return `"${value.replaceAll("%", "%%")}"`;
+/**
+ * How a word of a generated hook command is quoted, part of the stored format registration recognises by its exact
+ * text. `posix` leaves a plain word bare and puts any other in double quotes, with `"`, `\`, `$` and backticks escaped.
+ * `cmd` always uses double quotes, which cmd.exe reads for a Windows path; `%` stays single, since only a batch file
+ * turns `%%` back into `%`, and none of the shells these words reach is one. No line for Git Bash takes `cmd` quoting:
+ * Git Bash expands a `$` or backtick inside double quotes.
+ */
+type HookQuoting = "posix" | "cmd";
+
+/** The quoting of the hook commands written for `platform`: `cmd` on Windows. */
+const hookQuoting = (platform: NodeJS.Platform): HookQuoting => (platform === "win32" ? "cmd" : "posix");
+
+/** `value` as one word of a generated hook command ({@link HookQuoting}). */
+function hookWord(value: string, quoting: HookQuoting): string {
+  if (quoting === "cmd") return `"${value}"`;
   return /^[\w./:@+=-]+$/.test(value) ? value : `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
-/** `<recorded node> <root>/<executable>`, both quoted for the platform's shell; `executable` is an `ENTRY_POINTS` path. */
-function directCommand(context: Context, executable: string): string {
-  return `${shellArgument(context.nodePath, context.platform)} ${shellArgument(join(context.root, executable), context.platform)}`;
+/**
+ * The path rules of `platform`, whatever the host runs: Windows' on win32, POSIX's elsewhere. Hook commands are built
+ * and read with them, so a test on one host covers the commands written for another.
+ */
+function pathsOf(platform: NodeJS.Platform): typeof win32 {
+  return platform === "win32" ? win32 : posix;
 }
 
-/** The package root of a registered `script` when it is that package's `executable`; undefined for any other script. */
-function registeredRoot(script: string, executable: string): string | undefined {
-  const tail = `${sep}${normalize(executable)}`;
+/** `<root>/<executable>` by the path rules of the platform the hook is for. */
+function hookScript(context: HookCommandContext, executable: string): string {
+  return pathsOf(context.platform).join(context.root, executable);
+}
+
+/** `<recorded node> <root>/<executable>`, both quoted for the platform's hooks; `executable` is an `ENTRY_POINTS` path. */
+function directCommand(context: HookCommandContext, executable: string): string {
+  const quoting = hookQuoting(context.platform);
+  return `${hookWord(context.nodePath, quoting)} ${hookWord(hookScript(context, executable), quoting)}`;
+}
+
+/**
+ * The package root of a registered `script` when it is that package's `executable`, by `platform`'s path rules;
+ * undefined for any other script.
+ */
+function registeredRoot(script: string, executable: string, platform: NodeJS.Platform): string | undefined {
+  const paths = pathsOf(platform);
+  const tail = `${paths.sep}${paths.normalize(executable)}`;
   return script.endsWith(tail) ? script.slice(0, -tail.length) : undefined;
 }
 
+/** Whether `a` and `b` name the same path by `platform`'s rules, such as `C:/x` and `C:\x` on Windows. */
+function samePath(a: string, b: string, platform: NodeJS.Platform): boolean {
+  const paths = pathsOf(platform);
+  return paths.normalize(a) === paths.normalize(b);
+}
+
 async function isRerailPackageRoot(context: Context, root: string): Promise<boolean> {
-  if (root === context.root || root === join(context.home, ".rerail", CURRENT_LINK)) return true;
+  if ([context.root, join(context.home, ".rerail", CURRENT_LINK)].some(own => samePath(root, own, context.platform))) return true;
   let verified = context.packageRoots.get(root);
   if (verified === undefined) {
     verified = readFile(join(root, "package.json"), "utf8").then(text => {
@@ -239,10 +276,10 @@ async function pathExists(path: string): Promise<boolean> {
  * package.json is that package's, whether or not its script is there. A script of any other shape is never replaced.
  */
 async function isReplaceableScript(context: Context, script: string, executable: string): Promise<boolean> {
-  const root = registeredRoot(script, executable);
+  const root = registeredRoot(script, executable, context.platform);
   if (root === undefined) return false;
   if (await isRerailPackageRoot(context, root)) return true;
-  return !(await pathExists(script)) && !(await pathExists(join(root, "package.json")));
+  return !(await pathExists(script)) && !(await pathExists(pathsOf(context.platform).join(root, "package.json")));
 }
 
 /** Whether `path` resolves to something on disk, following symlinks: a dangling link does not. */
@@ -271,10 +308,10 @@ async function isGoneInstallRoot(root: string): Promise<boolean> {
 
 function unquoteShellWord(word: string, windows = false): string {
   const value = word.replace(/^"|"$/gu, "");
-  return windows ? value.replaceAll("%%", "%") : value.replace(/\\(["\\$`])/gu, "$1");
+  return windows ? value : value.replace(/\\(["\\$`])/gu, "$1");
 }
 
-/** The words of `text` as `shellArgument` writes them, still quoted: double-quoted or bare, and always quoted on Windows. */
+/** The words of `text` as `hookWord` writes them, still quoted: double-quoted or bare, and always quoted on Windows. */
 function shellWords(text: string, windows: boolean): string[] {
   return text.match(windows ? /"[^"]+"/gu : /"(?:\\["\\$`]|[^"\\$`])*"|[\w./:@+=-]+/gu) ?? [];
 }
@@ -284,34 +321,110 @@ interface HookTarget {
   script: string;
 }
 
+/** What the generated hook commands are written from: the recorded node, the package root, and the platform. */
+type HookCommandContext = Pick<Context, "platform" | "nodePath" | "root">;
+
+/** The Windows `cmd` fallback releases before this one wrote: a bare `node`, which cmd looks for in the current folder first. */
+function legacyWindowsCmdHookCommand(node: string, hook: string): string {
+  return `cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`;
+}
+
+/**
+ * A pattern for every command `template` writes, capturing its two double-quoted words as `node` and `hook`. It is
+ * built from the template itself, so what registration recognises is what it writes.
+ */
+function cmdFallbackPattern(template: (node: string, hook: string) => string): RegExp {
+  const seen = new Set<string>();
+  const source = template("\u0000node\u0000", "\u0000hook\u0000")
+    .replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")
+    .replace(/\u0000(node|hook)\u0000/gu, (_slot, name: string) => {
+      if (seen.has(name)) return `\\k<${name}>`;
+      seen.add(name);
+      return `(?<${name}>"[^"]+")`;
+    });
+  return new RegExp(`^${source}$`, "u");
+}
+
+/** The Windows `cmd` fallbacks Rerail has written: this release's, then the earlier bare `node` form. */
+const WINDOWS_FALLBACKS: readonly RegExp[] = [cmdFallbackPattern(windowsCmdHookCommand), cmdFallbackPattern(legacyWindowsCmdHookCommand)];
+
+/** `command` as the two words `"<node>" "<hook>"` a Windows `cmd` fallback runs, or undefined when it is none. */
+function windowsFallbackWords(command: string): string | undefined {
+  const words = WINDOWS_FALLBACKS.map(pattern => pattern.exec(command)?.groups).find(groups => groups !== undefined);
+  return words === undefined ? undefined : `${words.node} ${words.hook}`;
+}
+
+/** The POSIX `sh` fallback `hookCommand` writes before the two words. */
+const SH_FALLBACK_PREFIX = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
+
+/** A PowerShell single-quoted literal, as `powershellLiteral` writes it. */
+const POWERSHELL_LITERAL = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
+
+/** Codex's and Cursor's PowerShell fallbacks (`powershellHookCommand`, `cursorPowershellHookCommand`): node (1), hook (2). */
+const POWERSHELL_FALLBACKS = [
+  String.raw`^\$LASTEXITCODE = 1; if \(Test-Path -LiteralPath ${POWERSHELL_LITERAL}\) \{ & \1 ${POWERSHELL_LITERAL} \} else \{ node \2 \}; exit \$LASTEXITCODE$`,
+  String.raw`^Invoke-Command -ScriptBlock \{ if \(Test-Path -LiteralPath ${POWERSHELL_LITERAL}\) \{ \$input \| & \1 ${POWERSHELL_LITERAL} \} else \{ \$input \| node \2 \} \}$`,
+].map(source => new RegExp(source, "u"));
+
+/** `command` as the two words a PowerShell fallback runs, quoted as `hookWord` writes them for cmd, or undefined when it is none. */
+function powershellFallbackWords(command: string): string | undefined {
+  const fallback = POWERSHELL_FALLBACKS.map(pattern => pattern.exec(command)).find(match => match !== null);
+  return fallback?.slice(1, 3)
+    .map(word => hookWord(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "cmd"))
+    .join(" ");
+}
+
+/**
+ * The two words a generated shell-form `command` runs, without the fallback around them: the POSIX `sh` fallback, the
+ * Windows `cmd` fallback or, on Windows, Codex's or Cursor's PowerShell fallback. `command` itself when it has none.
+ */
+function directHookWords(command: string, windows: boolean): string {
+  if (command.startsWith(SH_FALLBACK_PREFIX)) return command.slice(SH_FALLBACK_PREFIX.length);
+  return (windows ? powershellFallbackWords(command) : undefined) ?? windowsFallbackWords(command) ?? command;
+}
+
+/**
+ * Every command an entry for `recorded` may hold as Rerail's: the forms this release writes and, on Windows, the forms
+ * earlier releases wrote, which doubled each `%` in a path and fell back to a bare `node`. Registering replaces those.
+ */
+function generatedHookCommands(recorded: HookCommandContext, executable: string): string[] {
+  const commands = [
+    hookCommand(recorded, executable), directCommand(recorded, executable),
+    powershellHookCommand(recorded, executable), cursorPowershellHookCommand(recorded, executable),
+  ];
+  if (recorded.platform !== "win32") return commands;
+  for (const word of [(value: string) => `"${value}"`, (value: string) => `"${value.replaceAll("%", "%%")}"`]) {
+    const node = word(recorded.nodePath);
+    const hook = word(hookScript(recorded, executable));
+    commands.push(legacyWindowsCmdHookCommand(node, hook), `${node} ${hook}`);
+  }
+  return commands;
+}
+
 /**
  * Node and hook script of a generated shell-form entry: direct, the POSIX `sh` fallback, the Windows `cmd` fallback, or
- * Codex's PowerShell fallback.
+ * Codex's or Cursor's PowerShell fallback.
  */
-function shellHookTarget(context: Context, command: string, executable: string): HookTarget | undefined {
+function shellHookTarget(context: Pick<Context, "platform">, command: string, executable: string): HookTarget | undefined {
   const windows = context.platform === "win32";
-  const fallbackPrefix = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
-  const windowsFallback = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(node \2\)"$/u.exec(command);
-  const literal = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
-  const powershellFallback = new RegExp(
-    String.raw`^\$LASTEXITCODE = 1; if \(Test-Path -LiteralPath ${literal}\) \{ & \1 ${literal} \} else \{ node \2 \}; exit \$LASTEXITCODE$`,
-    "u",
-  ).exec(command);
-  let direct = windowsFallback === null ? command : `${windowsFallback[1]} ${windowsFallback[2]}`;
-  if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
-  if (powershellFallback !== null && windows) {
-    direct = [powershellFallback[1]!, powershellFallback[2]!]
-      .map(word => shellArgument(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "win32"))
-      .join(" ");
-  }
+  const direct = directHookWords(command, windows);
   const words = shellWords(direct, windows);
   if (words.length !== 2 || words.join(" ") !== direct) return undefined;
-  const target = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
-  const root = registeredRoot(target.script, executable);
-  if (root === undefined) return undefined;
-  const recorded = { ...context, root, nodePath: target.nodePath };
-  return [hookCommand(recorded, executable), directCommand(recorded, executable), powershellHookCommand(recorded, executable)]
-    .includes(command) ? target : undefined;
+  const written = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
+  // Earlier Windows releases doubled each `%` in a path; the path they meant has it once.
+  const targets = windows && direct.includes("%%")
+    ? [{ nodePath: written.nodePath.replaceAll("%%", "%"), script: written.script.replaceAll("%%", "%") }, written]
+    : [written];
+  return targets.find(target => {
+    const root = registeredRoot(target.script, executable, context.platform);
+    return root !== undefined
+      && generatedHookCommands({ platform: context.platform, root, nodePath: target.nodePath }, executable).includes(command);
+  });
+}
+
+/** The node and hook script of `command` when it is a hook command Rerail generated, or undefined. */
+export function generatedHookTarget(command: string, executable: string, platform: NodeJS.Platform): HookTarget | undefined {
+  return shellHookTarget({ platform }, command, executable);
 }
 
 /** A node binary as setup records it: `node` or `node.exe`, bare or at any path. */
@@ -319,27 +432,35 @@ function isNodeExecutable(path: string): boolean {
   return /^node(?:\.exe)?$/iu.test(path.split(/[\\/]/u).at(-1)!);
 }
 
+/** The arguments of a generated exec-form entry: the hook launcher, the recorded node and the hook. */
+const execHookArgs = z.tuple([z.string(), z.string(), z.string()]);
+
 /** Node and hook script of a generated exec-form entry: `node <root>/<hook launcher> <recorded node> <root>/<hook>`. */
-function execHookTarget(command: string, args: unknown, executable: string): HookTarget | undefined {
-  if (command !== "node" || !Array.isArray(args) || args.length !== 3 || !args.every(arg => typeof arg === "string")) return undefined;
-  const [launcher, nodePath, script] = args as [string, string, string];
-  const root = registeredRoot(script, executable);
-  return root !== undefined && launcher === join(root, ENTRY_POINTS.hookLauncher) ? { nodePath, script } : undefined;
+function execHookTarget(context: Pick<Context, "platform">, command: string, args: unknown, executable: string): HookTarget | undefined {
+  const parsed = execHookArgs.safeParse(args);
+  if (command !== "node" || !parsed.success) return undefined;
+  const [launcher, nodePath, script] = parsed.data;
+  const root = registeredRoot(script, executable, context.platform);
+  return root !== undefined && launcher === pathsOf(context.platform).join(root, ENTRY_POINTS.hookLauncher) ? { nodePath, script } : undefined;
 }
 
 /**
- * Recognize only generated entries — the exec-form hook launcher or a direct or fallback shell launcher — never
- * arbitrary compound shell commands.
+ * Node and hook script of `entry` when Rerail generated it: the exec-form hook launcher or a direct or fallback shell
+ * launcher, running a node binary on an absolute script. Never an arbitrary compound shell command.
  */
+function generatedEntryTarget(context: Context, { command, args }: JsonObject, executable: string): HookTarget | undefined {
+  if (typeof command !== "string") return undefined;
+  const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(context, command, args, executable);
+  return target !== undefined && isNodeExecutable(target.nodePath) && pathsOf(context.platform).isAbsolute(target.script) ? target : undefined;
+}
+
+/** Whether `entry` is a generated entry (`generatedEntryTarget`) that registration replaces or removal takes out. */
 async function isRerailHookEntry(context: Context, entry: JsonObject, executable: string): Promise<boolean> {
-  const { command, args } = entry;
-  if (typeof command !== "string") return false;
-  const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(command, args, executable);
+  const target = generatedEntryTarget(context, entry, executable);
   if (target === undefined) return false;
-  const { nodePath, script } = target;
-  const root = registeredRoot(script, executable);
-  if (!isNodeExecutable(nodePath) || !isAbsolute(script) || root === undefined) return false;
-  return context.mode === "unregister" ? root === context.root : isReplaceableScript(context, script, executable);
+  const root = registeredRoot(target.script, executable, context.platform);
+  if (root === undefined) return false;
+  return context.mode === "unregister" ? samePath(root, context.root, context.platform) : isReplaceableScript(context, target.script, executable);
 }
 
 /**
@@ -349,24 +470,49 @@ async function isRerailHookEntry(context: Context, entry: JsonObject, executable
  * on PATH. The POSIX form execs only inside the test, so a non-zero hook exit never re-runs the hook
  * through the fallback; `exec` also leaves stdio alone, so hook input still arrives on stdin.
  */
-function hookCommand(context: Context, executable: string): string {
-  const node = shellArgument(context.nodePath, context.platform);
-  const hook = shellArgument(join(context.root, executable), context.platform);
-  if (context.platform === "win32") return `cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`;
-  return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
+export function hookCommand(context: HookCommandContext, executable: string): string {
+  const quoting = hookQuoting(context.platform);
+  const node = hookWord(context.nodePath, quoting);
+  const hook = hookWord(hookScript(context, executable), quoting);
+  if (context.platform === "win32") return windowsCmdHookCommand(node, hook);
+  return `${SH_FALLBACK_PREFIX}${node} ${hook}`;
+}
+
+/**
+ * The Windows form of {@link hookCommand}, from `node` and `hook` as quoted words, for a host that runs a hook's command
+ * in cmd.exe. No host gets it now; registration recognizes it to replace what earlier set-ups wrote for Cursor. The
+ * fallback finds `node.exe` with `%~$PATH:I`, which searches PATH alone: a bare `node` would make cmd look in the
+ * current folder first, where a repository's own node.exe, node.bat or node.cmd would run on every hook. `@` keeps cmd
+ * from echoing the command onto the hook's output. cmd stays node's parent, as it has no `exec`, so a host that kills
+ * it on a timeout leaves node running; the hook then ends itself (`exitWhenParentGone`).
+ */
+export function windowsCmdHookCommand(node: string, hook: string): string {
+  return `cmd /d /c "if exist ${node} (${node} ${hook}) else (for %I in (node.exe) do @"%~$PATH:I" ${hook})"`;
 }
 
 /**
  * The same order for Codex on Windows, which hands a hook's command to PowerShell (`-Command`): there the `cmd` form's
- * nested double quotes split at a space in the profile path. A single-quoted literal keeps spaces, `$`, backticks and
- * `%` as they are; a quote inside is doubled, and PowerShell reads ‘ ’ ‚ ‛ as single quotes too. `$LASTEXITCODE` starts
- * at 1 so the hook still fails when neither node runs, and `exit` passes on the hook's own exit code.
+ * nested double quotes split at a space in the profile path. A single-quoted literal (`powershellLiteral`) keeps spaces,
+ * `$`, backticks and `%` as they are. `$LASTEXITCODE` starts at 1 so the hook still fails when neither node runs, and
+ * `exit` passes on the hook's own exit code.
  */
-function powershellHookCommand(context: Context, executable: string): string {
-  const quote = (value: string) => `'${value.replace(/['\u2018-\u201B]/gu, "$&$&")}'`;
-  const node = quote(context.nodePath);
-  const hook = quote(join(context.root, executable));
+function powershellHookCommand(context: HookCommandContext, executable: string): string {
+  const node = powershellLiteral(context.nodePath);
+  const hook = powershellLiteral(hookScript(context, executable));
   return `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
+}
+
+/**
+ * The same order for Cursor on Windows, which runs a hook's command in PowerShell with the event piped in:
+ * `Get-Content <event> | & { $input | <command> }`. The command is a pipeline element there, so the Codex form, which
+ * starts with an assignment, cannot parse, and the `cmd` form breaks at its nested quotes and `$PATH`. `Invoke-Command`
+ * hands its input to the script block as `$input`, which goes on to node's stdin. PowerShell looks a bare `node` up on
+ * PATH, never in the current folder.
+ */
+function cursorPowershellHookCommand(context: HookCommandContext, executable: string): string {
+  const node = powershellLiteral(context.nodePath);
+  const hook = powershellLiteral(hookScript(context, executable));
+  return `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath ${node}) { $input | & ${node} ${hook} } else { $input | node ${hook} } }`;
 }
 
 /**
@@ -377,7 +523,7 @@ function hookExecEntry(context: Context, executable: string): JsonObject {
   return {
     type: "command",
     command: "node",
-    args: [join(context.root, ENTRY_POINTS.hookLauncher), context.nodePath, join(context.root, executable)],
+    args: [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)],
   };
 }
 
@@ -393,8 +539,21 @@ const RENAMED_COMMANDS: readonly string[] = ["rerail-ui", "rerail-rage-quit"];
 const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-session", "rerail-disable", "rerail-enable", ...RENAMED_COMMANDS];
 const RETIRED_CODEX_SKILLS: readonly string[] = RENAMED_COMMANDS;
 
+/**
+ * The launcher for command files. On Windows an agent whose profile names PowerShell (`windowsCommandShell`) gets the
+ * call operator form (`powershellCli`), since PowerShell takes a line that starts with a quoted path for a string; one
+ * that runs Git Bash gets the plain form, since `&` there would put the command in the background. That form is POSIX
+ * words there (`commandLine`): the `cmd` quoting of a hook command would let Git Bash expand a `$` or backtick in a path
+ * and fold a UNC path's `\\` into one `\`.
+ */
 function commandContext(context: Context): CommandFileContext {
-  return { cli: directCommand(context, ENTRY_POINTS.cli), packageRoot: context.root, setupLauncher: setupLauncher(context) };
+  const words = [context.nodePath, hookScript(context, ENTRY_POINTS.cli)];
+  return {
+    cli: context.platform === "win32" ? commandLine("posix", words) : directCommand(context, ENTRY_POINTS.cli),
+    packageRoot: context.root,
+    setupLauncher: setupLauncher(context),
+    ...(context.platform === "win32" ? { powershellCli: commandLine("powershell", words) } : {}),
+  };
 }
 
 /** The Rerail home set-up uses: `RERAIL_HOME`, else `.rerail` in the registered home (`defaultRerailHome`). */
@@ -402,9 +561,13 @@ function rerailHomeDirectory(context: Context): string {
   return process.env.RERAIL_HOME === undefined ? join(context.home, ".rerail") : resolve(process.env.RERAIL_HOME);
 }
 
-/** The launcher set-up's answer commands start with (`Updater.launcherPath`), quoted as set-up prints it. */
+/**
+ * The launcher set-up's answer commands start with in a POSIX shell (`setupAnswerCommand`), quoted as set-up prints it:
+ * the sh launcher, on Windows too, where Git Bash runs it in place of `rerail.cmd`. Only Claude Code's command files
+ * grant it, and Claude Code runs Git Bash on Windows.
+ */
 function setupLauncher(context: Context): string {
-  return shellQuote(join(rerailHomeDirectory(context), "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"), context.platform);
+  return shellWord("posix", join(rerailHomeDirectory(context), "bin", "rerail"));
 }
 
 function describe(context: Context, detail: string): string {
@@ -446,37 +609,41 @@ async function resolveWriteTarget(path: string): Promise<string> {
   }
   let target = path;
   for (let hops = 0; hops < 40; hops += 1) {
-    let link: string;
-    try {
-      if (!(await lstat(target)).isSymbolicLink()) return target;
-      link = await readlink(target);
-    } catch (error) {
-      if (isMissing(error)) return target;
-      throw error;
-    }
+    const link = await symlinkText(target);
+    if (link === undefined) return target;
     target = resolve(dirname(target), link);
   }
   throw new Error(`Too many levels of symbolic links resolving ${path}`);
 }
 
+/** The path the symlink at `path` names; undefined when `path` is missing or not a symlink. */
+async function symlinkText(path: string): Promise<string | undefined> {
+  try {
+    return (await lstat(path)).isSymbolicLink() ? await readlink(path) : undefined;
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    throw error;
+  }
+}
+
 /**
- * Replaces the file behind `path` via temp file + rename beside it, first backing it up when it exists and `backup`:
- * a file Rerail generated whole (a command file or skill) is not backed up, since registration writes it again.
+ * Replaces the file behind `path` whole with `text` in `existing.mode`, first backing it up when it exists and
+ * `backup`: a file Rerail generated whole (a command file or skill) is not backed up, since registration writes it again.
  */
 export async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }, backup = true): Promise<void> {
   const target = await resolveWriteTarget(path);
-  const directory = dirname(target);
-  await mkdir(directory, { recursive: true });
+  await mkdir(dirname(target), { recursive: true });
   if (existing.exists && backup) {
     const backupPath = `${target}.${new Date().toISOString().replace(/[:.]/g, "-")}.${randomUUID()}.bak`;
     await copyFile(target, backupPath, constants.COPYFILE_EXCL);
     await chmod(backupPath, 0o600);
   }
-  const temp = join(directory, `.${randomUUID()}.tmp`);
-  await writeFile(temp, text, { mode: existing.mode });
-  await chmod(temp, existing.mode);
-  if (process.platform === "win32" && existing.exists) await rm(target, { force: true });
-  await rename(temp, target);
+  await replaceFile(target, text, { mode: existing.mode });
+}
+
+/** What a write of a file is: an update of one that exists, or the creation of one that does not. */
+function writeAction(file: { exists: boolean }): RegistrationChange["action"] {
+  return file.exists ? "updated" : "created";
 }
 
 function planMutation(
@@ -504,7 +671,7 @@ async function planJsonFile(
     const reason = context.mode === "register" ? "already in place" : "nothing to remove";
     return { change: { harness, path, action: "unchanged", detail: `${text}: ${reason}` } };
   }
-  return planMutation(context, harness, path, existing.exists ? "updated" : "created", text,
+  return planMutation(context, harness, path, writeAction(existing), text,
     () => writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing));
 }
 
@@ -605,10 +772,21 @@ function planGroupedHooks(
 /**
  * The hooks' recorded-first, PATH-fallback order for the status line: without it, once the recorded node is gone the
  * status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script and, for a
- * project's settings, the settings path after it. Windows keeps the direct command, quoted for `cmd`: Claude Code
- * runs it through Git Bash there, and the `sh` form would need the path quoted for that shell instead.
+ * project's settings, the settings path after it. Claude Code runs the status line through Git Bash on Windows too, so
+ * every word after it is quoted for a POSIX shell there as well (`claudeStatusCommand`). There the `sh` is a second Git
+ * Bash process: 14 to 23 ms and about 6 MB a run, at most 1.2% of the status line's 2 s budget. The same test written
+ * inline skips it, but registration would then write a second form and recognise one more, so every platform keeps
+ * this one.
  */
 const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `;
+
+/** The status line command for the settings at `path`: the fallback, then node, the script and a project's settings path. */
+function claudeStatusCommand(context: Context, path: string): string {
+  // A POSIX word on every platform: Git Bash reads it on Windows, and keeps each backslash it escapes.
+  const word = (value: string): string => hookWord(value, "posix");
+  const settings = path === join(context.home, ".claude", "settings.json") ? "" : ` ${word(path)}`;
+  return `${CLAUDE_STATUS_FALLBACK}${word(context.nodePath)} ${word(hookScript(context, ENTRY_POINTS.claudeStatus))}${settings}`;
+}
 
 function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, command: string): ClaudeStatusLine {
   return { ...previous, type: "command", command, refreshInterval: previous?.refreshInterval ?? 5 };
@@ -623,25 +801,31 @@ function registerClaudeStatus(
   context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
   inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined, replaceable: boolean,
 ): ClaudeStatusRegistration {
-  const command = (context.platform === "win32" ? "" : CLAUDE_STATUS_FALLBACK)
-    + directCommand(context, ENTRY_POINTS.claudeStatus)
-    + (path === join(context.home, ".claude", "settings.json") ? "" : ` ${shellArgument(path, context.platform)}`);
+  const command = claudeStatusCommand(context, path);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
-  const previous = statusLine ?? inherited;
-  const wrapper = previous !== undefined
-    && (previous.command === command || claudeStatusScript(previous.command, context.platform) !== undefined);
-  if (!ownsStatus && !replaceable && wrapper) {
-    throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
-  }
-  const replaced = !ownsStatus && replaceable;
-  const previousInherited = ownsStatus ? registration.previousInherited : !replaced && statusLine === undefined && inherited !== undefined;
-  next.statusLine = composedClaudeStatus(previous, command);
-  const unownedPrevious = replaced ? null : previous ?? null;
+  const predecessor = ownsStatus ? registration : unownedClaudeStatus(context, path, command, { statusLine, inherited, replaceable });
+  next.statusLine = composedClaudeStatus(statusLine ?? inherited, command);
   return {
     settingsPath: path, installedRoot: context.root, installedCommand: command,
-    previous: ownsStatus ? registration.previous : unownedPrevious,
-    ...(previousInherited ? { previousInherited: true } : {}),
+    previous: predecessor.previous,
+    ...(predecessor.previousInherited === true ? { previousInherited: true } : {}),
   };
+}
+
+/**
+ * What a status line Rerail has no record of owning leaves for removal to bring back: nothing when it is `replaceable`,
+ * else itself or the one it inherits, which must not be a wrapper of Rerail's own (`claudeStatusScript`).
+ */
+function unownedClaudeStatus(
+  context: Context, path: string, command: string,
+  { statusLine, inherited, replaceable }: { statusLine: ClaudeStatusLine | undefined; inherited: ClaudeStatusLine | undefined; replaceable: boolean },
+): Pick<ClaudeStatusRegistration, "previous" | "previousInherited"> {
+  if (replaceable) return { previous: null };
+  const previous = statusLine ?? inherited;
+  if (previous !== undefined && (previous.command === command || claudeStatusScript(previous.command, context.platform) !== undefined)) {
+    throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
+  }
+  return { previous: previous ?? null, previousInherited: statusLine === undefined && inherited !== undefined };
 }
 
 function restoreClaudeStatus(next: JsonObject, statusLine: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration): void {
@@ -651,12 +835,16 @@ function restoreClaudeStatus(next: JsonObject, statusLine: ClaudeStatusLine | un
     delete next.statusLine;
     return;
   }
-  const restored: ClaudeStatusLine = { ...statusLine, type: registration.previous.type, command: registration.previous.command };
-  if (statusLine.refreshInterval === installedStatus.refreshInterval) {
-    if (registration.previous.refreshInterval === undefined) delete restored.refreshInterval;
-    else restored.refreshInterval = registration.previous.refreshInterval;
-  }
-  next.statusLine = restored;
+  next.statusLine = restoredClaudeStatus(statusLine, registration.previous, installedStatus);
+}
+
+/** `previous` back in place of the installed status line, keeping the display settings the person changed since. */
+function restoredClaudeStatus(current: ClaudeStatusLine, previous: ClaudeStatusLine, installed: ClaudeStatusLine): ClaudeStatusLine {
+  const restored: ClaudeStatusLine = { ...current, type: previous.type, command: previous.command };
+  if (current.refreshInterval !== installed.refreshInterval) return restored;
+  if (previous.refreshInterval === undefined) delete restored.refreshInterval;
+  else restored.refreshInterval = previous.refreshInterval;
+  return restored;
 }
 
 /** Whether `path` is `container` or lies inside it. */
@@ -792,7 +980,22 @@ interface RerailDataDirectories {
 
 function rerailDataDirectories(context: Context): RerailDataDirectories {
   const rerailHome = rerailHomeDirectory(context);
-  return { rerailHome, cache: join(context.home, ".cache", "rerail"), isolateHome: !contains(rerailHome, context.home) };
+  return { rerailHome, cache: mainContentStoreDirectory(context.home, context.platform), isolateHome: !contains(rerailHome, context.home) };
+}
+
+/**
+ * The deny rules that keep a coding agent's file tools out of Rerail's data: no `write` (the host's name for its write
+ * tools) into the Rerail home or the content cache, no read of the cache or of the home's data
+ * (`RERAIL_HOME_DATA_ENTRIES`). `rulePath` writes a folder as the host matches it.
+ */
+function rerailDataDenyRules(
+  { rerailHome, cache, isolateHome }: RerailDataDirectories, write: "Edit" | "Write", rulePath: (path: string) => string,
+): string[] {
+  return [
+    ...(isolateHome ? [rerailHome, cache] : [cache]).map(directory => `${write}(${rulePath(directory)}/**)`),
+    ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rulePath(rerailHome)}/${entry})`) : [],
+    `Read(${rulePath(cache)}/**)`,
+  ];
 }
 
 /**
@@ -803,14 +1006,10 @@ function rerailDataDirectories(context: Context): RerailDataDirectories {
  * (`excludedCommands`) and goes through the person's permission rules there.
  */
 async function claudeIsolationEntries(context: Context): Promise<Record<string, string[]>> {
-  const { rerailHome, cache, isolateHome } = rerailDataDirectories(context);
+  const directories = rerailDataDirectories(context);
+  const { rerailHome, cache, isolateHome } = directories;
   const protectedDirectories = isolateHome ? [rerailHome, cache] : [cache];
-  const rule = (path: string): string => claudeRulePath(path, context.platform);
-  const deny = [
-    ...protectedDirectories.map(directory => `Edit(${rule(directory)}/**)`),
-    ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rule(rerailHome)}/${entry})`) : [],
-    `Read(${rule(cache)}/**)`,
-  ];
+  const deny = rerailDataDenyRules(directories, "Edit", path => claudeRulePath(path, context.platform));
   // Native Windows runs commands unsandboxed: only the file tools' rules apply there.
   if (context.platform === "win32") return { "permissions.deny": deny };
   const packageCode = [join(rerailHome, CURRENT_LINK), join(rerailHome, VERSIONS_DIR), context.root, await realpath(context.root).catch(() => context.root)];
@@ -823,6 +1022,71 @@ async function claudeIsolationEntries(context: Context): Promise<Record<string, 
   };
 }
 
+/** The `statusLine` of the settings `value` read from `path`; one that is not a command specification throws. */
+function settingsStatusLine(value: JsonObject, path: string): ClaudeStatusLine | undefined {
+  const { statusLine } = value;
+  if (statusLine !== undefined && !isClaudeStatusLine(statusLine)) {
+    throw new Error(`Cannot register rerail status line: "statusLine" in ${path} is not a command specification`);
+  }
+  return statusLine;
+}
+
+/**
+ * This home's record of the status line Rerail composed in `path`. On registration the install it names counts as one
+ * of this package (`isRerailPackageRoot`), so its hooks and status line are replaced.
+ */
+function claudeStatusRecord(context: Context, path: string): ClaudeStatusRegistration | undefined {
+  const registration = readClaudeStatusRegistration(context.home, path);
+  if (context.mode === "register" && registration !== undefined) {
+    context.packageRoots.set(registration.installedRoot, Promise.resolve(true));
+  }
+  return registration;
+}
+
+/**
+ * The user settings `value` at `path` with Rerail's hooks, and the isolation entries (`claudeIsolationEntries`) that an
+ * earlier registration added (`added`) and that this one adds (`nextAdded`). A project's settings get neither.
+ */
+async function claudeUserSettings(
+  context: Context, path: string, value: JsonObject,
+): Promise<{ next: JsonObject; added: AddedSettingsEntries | undefined; nextAdded: AddedSettingsEntries | undefined }> {
+  // Claude Code runs shell-form hooks through Git Bash on Windows, which rewrites `cmd /d /c` into drive paths;
+  // cmd then reads the hook's JSON from stdin as commands. Exec form (`args`) spawns node with no shell.
+  const hookEntry = context.platform === "win32"
+    ? hookExecEntry(context, ENTRY_POINTS.claudeHook)
+    : { type: "command", command: hookCommand(context, ENTRY_POINTS.claudeHook) };
+  const next = structuredClone(await updateGroupedHooks(value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, ENTRY_POINTS.claudeHook, hookEntry));
+  const added = readAddedSettingsEntries(context.home, path);
+  const nextAdded = replaceAddedEntries(context, next, added, context.mode === "register" ? await claudeIsolationEntries(context) : {}, path);
+  return { next, added, nextAdded };
+}
+
+/** The status line's record once this registration composes it in `next`, or this removal restores what it replaced. */
+async function nextClaudeStatusRecord(
+  context: Context, path: string, next: JsonObject,
+  { statusLine, inherited, registration }: { statusLine: ClaudeStatusLine | undefined; inherited: ClaudeStatusLine | undefined; registration: ClaudeStatusRegistration | undefined },
+): Promise<ClaudeStatusRegistration | undefined> {
+  if (context.mode === "register") {
+    const replaceable = await isPackageClaudeStatus(context, statusLine ?? inherited);
+    return registerClaudeStatus(context, path, next, statusLine, inherited, registration, replaceable);
+  }
+  if (registration?.installedRoot !== context.root) return registration;
+  restoreClaudeStatus(next, statusLine, registration);
+  return undefined;
+}
+
+/** What a plan of Claude Code's settings says it does, for the user settings and for a project's. */
+const CLAUDE_SETTINGS_DETAILS: Readonly<Record<"user" | "project", Readonly<Record<Mode, string>>>> = {
+  user: {
+    register: `register rerail hooks for ${CLAUDE_HOOK_EVENTS.length} Claude Code events, compose the status line and keep Rerail's data from the agent`,
+    unregister: "remove rerail hooks and data denies and restore the Claude Code status line",
+  },
+  project: {
+    register: "compose the project Claude Code status line",
+    unregister: "restore the project Claude Code status line",
+  },
+};
+
 /** Global hooks and statusLine share one preflight and atomic settings replacement. */
 async function planClaudeSettings(
   context: Context,
@@ -831,46 +1095,21 @@ async function planClaudeSettings(
 ): Promise<Plan> {
   const global = path === join(context.home, ".claude", "settings.json");
   const existing = await readJsonFile(path);
-  const registration = readClaudeStatusRegistration(context.home, path);
-  const statusLine = existing.value.statusLine;
-  if (statusLine !== undefined && !isClaudeStatusLine(statusLine)) {
-    throw new Error(`Cannot register rerail status line: "statusLine" in ${path} is not a command specification`);
-  }
-  if (context.mode === "register" && registration !== undefined) {
-    context.packageRoots.set(registration.installedRoot, Promise.resolve(true));
-  }
-  // Claude Code runs shell-form hooks through Git Bash on Windows, which rewrites `cmd /d /c` into drive paths;
-  // cmd then reads the hook's JSON from stdin as commands. Exec form (`args`) spawns node with no shell.
-  const hookEntry = context.platform === "win32"
-    ? hookExecEntry(context, ENTRY_POINTS.claudeHook)
-    : { type: "command", command: hookCommand(context, ENTRY_POINTS.claudeHook) };
-  const next = global
-    ? structuredClone(await updateGroupedHooks(existing.value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, ENTRY_POINTS.claudeHook, hookEntry))
-    : { ...existing.value };
+  const registration = claudeStatusRecord(context, path);
+  const statusLine = settingsStatusLine(existing.value, path);
   // Only the user settings carry the isolation entries; a project's settings never get them.
-  const added = global ? readAddedSettingsEntries(context.home, path) : undefined;
-  const nextAdded = global
-    ? replaceAddedEntries(context, next, added, context.mode === "register" ? await claudeIsolationEntries(context) : {}, path)
-    : undefined;
-  let nextRegistration: ClaudeStatusRegistration | undefined = registration;
-  if (context.mode === "register") {
-    const replaceable = await isPackageClaudeStatus(context, statusLine ?? inherited);
-    nextRegistration = registerClaudeStatus(context, path, next, statusLine, inherited, registration, replaceable);
-  } else if (registration?.installedRoot === context.root) {
-    restoreClaudeStatus(next, statusLine, registration);
-    nextRegistration = undefined;
-  }
+  const { next, added, nextAdded } = global
+    ? await claudeUserSettings(context, path, existing.value)
+    : { next: { ...existing.value }, added: undefined, nextAdded: undefined };
+  const nextRegistration = await nextClaudeStatusRecord(context, path, next, { statusLine, inherited, registration });
   const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
   const ownershipChanged = stableJsonText(registration ?? {}) !== stableJsonText(nextRegistration ?? {});
   const addedChanged = stableJsonText(added ?? {}) !== stableJsonText(nextAdded ?? {});
-  let detail = context.mode === "register" ? "compose the project Claude Code status line" : "restore the project Claude Code status line";
-  if (global) detail = context.mode === "register"
-    ? `register rerail hooks for ${CLAUDE_HOOK_EVENTS.length} Claude Code events, compose the status line and keep Rerail's data from the agent`
-    : "remove rerail hooks and data denies and restore the Claude Code status line";
+  const detail = CLAUDE_SETTINGS_DETAILS[global ? "user" : "project"][context.mode];
   if (!settingsChanged && !ownershipChanged && !addedChanged) {
     return { change: { harness: "claude-code", path, action: "unchanged", detail: `${detail}: already in place` } };
   }
-  return planMutation(context, "claude-code", path, existing.exists ? "updated" : "created", detail, async () => {
+  return planMutation(context, "claude-code", path, writeAction(existing), detail, async () => {
     const writeSettings = async (): Promise<void> => {
       if (settingsChanged) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
     };
@@ -883,12 +1122,18 @@ async function planClaudeSettings(
   });
 }
 
+/** What a plan of the Cursor CLI's config says it does. */
+const CURSOR_CLI_DETAILS: Readonly<Record<Mode, string>> = {
+  register: "deny the Cursor CLI's file tools Rerail's data",
+  unregister: "remove Rerail's data denies from the Cursor CLI",
+};
+
 /**
  * The Cursor CLI's file tools follow `permissions.deny` in `~/.cursor/cli-config.json`: no write to the Rerail home or
  * the content cache, no read of the cache or of the home's data (`RERAIL_HOME_DATA_ENTRIES`). Only a file the CLI has
  * written is changed, so a Cursor without the CLI gets none. Nothing else in Cursor reads such a list: `sandbox.json`
- * only adds paths, and the editor's agent has no path deny. Native Windows is left out, as the reference shows only
- * POSIX paths.
+ * only adds paths, and the editor's agent has no path deny. The CLI matches a rule literally but for `*`, against the
+ * path as the platform writes it, so on Windows each rule is written with backslashes (`C:\Users\me\.rerail\**`).
  */
 async function planCursorCli(context: Context): Promise<Plan[]> {
   const path = join(context.home, ".cursor", "cli-config.json");
@@ -896,70 +1141,83 @@ async function planCursorCli(context: Context): Promise<Plan[]> {
   const existing = await readJsonFile(path);
   const previous = readAddedSettingsEntries(context.home, path);
   if (!existing.exists && previous === undefined) return [];
-  const { rerailHome, cache, isolateHome } = rerailDataDirectories(context);
-  const deny = [
-    ...(isolateHome ? [rerailHome, cache] : [cache]).map(directory => `Write(${directory}/**)`),
-    ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rerailHome}/${entry})`) : [],
-    `Read(${cache}/**)`,
-  ];
-  const wanted = context.mode === "register" && existing.exists && context.platform !== "win32" ? { "permissions.deny": deny } : {};
+  const deny = rerailDataDenyRules(rerailDataDirectories(context), "Write", directory => directory)
+    .map(rule => (context.platform === "win32" ? rule.replaceAll("/", "\\") : rule));
+  const wanted = context.mode === "register" && existing.exists ? { "permissions.deny": deny } : {};
   const next = structuredClone(existing.value);
   const added = replaceAddedEntries(context, next, previous, wanted, path);
-  const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
-  const detail = context.mode === "register" ? "deny the Cursor CLI's file tools Rerail's data" : "remove Rerail's data denies from the Cursor CLI";
-  if (!settingsChanged && stableJsonText(previous ?? {}) === stableJsonText(added ?? {})) {
+  const detail = CURSOR_CLI_DETAILS[context.mode];
+  // Unchanged when neither the settings nor the record of what Rerail added in them changes.
+  if (stableJsonText([existing.value, previous ?? {}]) === stableJsonText([next, added ?? {}])) {
     return [{ change: { harness: "cursor", path, action: "unchanged", detail: `${detail}: already in place` } }];
   }
   return [planMutation(context, "cursor", path, "updated", detail, () => writeAddedSettingsEntries(context.home, path, added, async () => {
-    if (settingsChanged) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
+    if (stableJsonText(existing.value) !== stableJsonText(next)) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
   }))];
 }
 
 /**
- * The script of the generated executable shape, recognized even when its old package/ownership is gone: direct, as
- * Windows and earlier versions write it, or behind the POSIX fallback.
+ * The node and the script a status line command runs, unquoted, when it has the generated shape: direct, as Windows
+ * and earlier versions write it, or behind the POSIX fallback, with a project's settings path after the script or not.
  */
+function claudeStatusNodeAndScript(command: string, platform: NodeJS.Platform): [node: string, script: string] | undefined {
+  const fallback = command.startsWith(CLAUDE_STATUS_FALLBACK);
+  const direct = fallback ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
+  const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu) ?? [];
+  if (![2, 3].includes(words.length) || words.join(" ") !== direct) return undefined;
+  // Words behind the fallback are POSIX-quoted on every platform; only the direct form earlier Windows set-ups wrote is not.
+  const windows = platform === "win32" && !fallback;
+  return [unquoteShellWord(words[0]!, windows), unquoteShellWord(words[1]!, windows)];
+}
+
+/** The script of a generated status line (`claudeStatusNodeAndScript`), recognized even when its old package/ownership is gone. */
 function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
-  const direct = command.startsWith(CLAUDE_STATUS_FALLBACK) ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
-  const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
-  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== direct) return undefined;
-  const windows = platform === "win32";
-  const script = unquoteShellWord(words[1]!, windows);
-  return isNodeExecutable(unquoteShellWord(words[0]!, windows))
-    && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;
+  const words = claudeStatusNodeAndScript(command, platform);
+  if (words === undefined) return undefined;
+  const [node, script] = words;
+  return isNodeExecutable(node) && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;
 }
 
 /** A status line generated by any install of this package, or by one that is gone, identified as hooks are (`isReplaceableScript`). */
 async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusLine | undefined): Promise<boolean> {
   const script = statusLine === undefined ? undefined : claudeStatusScript(statusLine.command, context.platform);
-  return script !== undefined && isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
+  return script !== undefined && pathsOf(context.platform).isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
 }
 
 /** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */
 async function claudeLocalDirectory(workspaceDir: string, context: Context): Promise<string> {
   if (context.platform === "win32" || process.getuid === undefined) return workspaceDir;
-  let root: string;
+  const root = await mainCheckoutRoot(workspaceDir);
+  if (root === undefined || root === await realpath(context.home).catch(() => context.home)) return workspaceDir;
+  return await ownedBy([root, join(root, ".git"), join(root, ".claude")], process.getuid()) ? root : workspaceDir;
+}
+
+/**
+ * The main checkout of the repository at `directory`, the first worktree Git lists, with its symlinks resolved;
+ * undefined when Git names none. rev-parse rejects non-repositories and bare repositories; Git also enforces
+ * safe.directory.
+ */
+async function mainCheckoutRoot(directory: string): Promise<string | undefined> {
   try {
-    // rev-parse rejects non-repositories/bare repositories; Git also enforces safe.directory.
-    if (runGit(workspaceDir, ["rev-parse", "--show-toplevel"]).status !== 0) return workspaceDir;
-    const worktrees = runGit(workspaceDir, ["worktree", "list", "--porcelain", "-z"]);
-    if (worktrees.status !== 0) return workspaceDir;
-    const first = worktrees.stdout.split("\0", 1)[0];
-    if (first === undefined || !first.startsWith("worktree ")) return workspaceDir;
-    root = await realpath(first.slice("worktree ".length));
+    if (runGit(directory, ["rev-parse", "--show-toplevel"]).status !== 0) return undefined;
+    const worktrees = runGit(directory, ["worktree", "list", "--porcelain", "-z"]);
+    const first = worktrees.status === 0 ? worktrees.stdout.split("\0", 1)[0] : undefined;
+    return first?.startsWith("worktree ") ? await realpath(first.slice("worktree ".length)) : undefined;
   } catch {
-    return workspaceDir;
+    return undefined;
   }
-  if (root === await realpath(context.home).catch(() => context.home)) return workspaceDir;
-  const uid = process.getuid();
-  for (const path of [root, join(root, ".git"), join(root, ".claude")]) {
+}
+
+/** Whether each of `paths` that exists belongs to `uid`, and so does what it links to. */
+async function ownedBy(paths: readonly string[], uid: number): Promise<boolean> {
+  for (const path of paths) {
     try {
-      if ((await lstat(path)).uid !== uid || (await stat(path)).uid !== uid) return workspaceDir;
+      if ((await lstat(path)).uid !== uid || (await stat(path)).uid !== uid) return false;
     } catch (error) {
       if (!isMissing(error)) throw error;
     }
   }
-  return root;
+  return true;
 }
 
 async function planClaudeProjectSettings(workspace: string, context: Context): Promise<Plan[]> {
@@ -970,29 +1228,25 @@ async function planClaudeProjectSettings(workspace: string, context: Context): P
     join(workspaceDir, ".claude", "settings.local.json"),
   ])];
   if (context.mode === "unregister") {
-    const plans: Plan[] = [];
-    for (const path of localPaths) {
-      if (readClaudeStatusRegistration(context.home, path) !== undefined) plans.push(await planClaudeSettings(context, path));
-    }
-    return plans;
+    const recorded = localPaths.filter(path => readClaudeStatusRegistration(context.home, path) !== undefined);
+    return Promise.all(recorded.map(path => planClaudeSettings(context, path)));
   }
   // User-local predecessors win; generated inherited wrappers resolve cwd inheritance on every invocation.
   for (const path of localPaths) {
     const existing = await readJsonFile(path);
     if (existing.value.statusLine !== undefined) return [await planClaudeSettings(context, path)];
   }
+  if (workspaceDir === await realpath(context.home).catch(() => context.home)) return [];
   const sharedPath = join(workspaceDir, ".claude", "settings.json");
-  const shared = await readJsonFile(sharedPath);
-  if (shared.value.statusLine === undefined || workspaceDir === await realpath(context.home).catch(() => context.home)) return [];
-  if (!isClaudeStatusLine(shared.value.statusLine)) {
-    throw new Error(`Cannot register rerail status line: "statusLine" in ${sharedPath} is not a command specification`);
-  }
-  return [await planClaudeSettings(context, localPaths[0]!, shared.value.statusLine)];
+  const shared = settingsStatusLine((await readJsonFile(sharedPath)).value, sharedPath);
+  return shared === undefined ? [] : [await planClaudeSettings(context, localPaths[0]!, shared)];
 }
 
 function planCursor(context: Context): Promise<Plan> {
   const path = join(context.home, ".cursor", "hooks.json");
-  const command = hookCommand(context, ENTRY_POINTS.cursorHook);
+  const command = context.platform === "win32"
+    ? cursorPowershellHookCommand(context, ENTRY_POINTS.cursorHook)
+    : hookCommand(context, ENTRY_POINTS.cursorHook);
   const detail =
     context.mode === "register"
       ? `register rerail hooks for ${CURSOR_HOOK_EVENTS.length} Cursor events`
@@ -1037,8 +1291,12 @@ async function piSourceKind(context: Context, agentDir: string, source: string):
   if (isRerailNpmSource(source)) return "npm";
   const root = resolve(agentDir, source);
   if (root === context.root) return "own";
-  if (context.mode === "unregister") return undefined;
-  return await isRerailPackageRoot(context, root) || (isAbsolute(source) && await isGoneInstallRoot(root)) ? "other" : undefined;
+  return context.mode === "register" && await isOtherInstall(context, source, root) ? "other" : undefined;
+}
+
+/** Whether a Pi package `source` at `root` is another install of this package, or one that is gone (`isGoneInstallRoot`). */
+async function isOtherInstall(context: Context, source: string, root: string): Promise<boolean> {
+  return await isRerailPackageRoot(context, root) || (isAbsolute(source) && await isGoneInstallRoot(root));
 }
 
 /**
@@ -1064,7 +1322,7 @@ function planPi(context: Context): Promise<Plan> {
   const agentDir = join(context.home, ".pi", "agent");
   const path = join(agentDir, "settings.json");
   let replaced: string | undefined;
-  const removed: string[] = [];
+  let removed: string[] = [];
   const detail = (): string => {
     if (context.mode === "unregister") return "remove rerail from Pi packages";
     return [
@@ -1077,30 +1335,61 @@ function planPi(context: Context): Promise<Plan> {
     const packages = value.packages ?? [];
     if (!Array.isArray(packages))
       throw new Error(`Cannot register rerail package: "packages" in ${path} is not an array`);
-    const entries: Array<{ entry: unknown; source: string | undefined; kind: PiSourceKind }> = [];
-    for (const entry of packages as unknown[]) {
-      const source = piPackageSource(entry);
-      entries.push({ entry, source, kind: source === undefined ? undefined : await piSourceKind(context, agentDir, source) });
-    }
-    const kept: unknown[] = [];
+    const entries = await piPackageEntries(context, agentDir, packages);
     if (context.mode === "unregister") {
-      for (const { entry, kind } of entries) if (kind === undefined || (kind === "npm" && !context.managed)) kept.push(entry);
-    } else {
-      const ownSlot = entries.findIndex(({ kind }) => kind === "own");
-      const slot = ownSlot === -1 ? entries.findIndex(({ kind }) => kind !== undefined) : ownSlot;
-      entries.forEach(({ entry, source, kind }, index) => {
-        if (kind === undefined) kept.push(entry);
-        else if (index === slot) kept.push(isObject(entry) ? { ...entry, source: context.root } : context.root);
-        else if (kind !== "own" && source !== undefined) removed.push(source);
-      });
-      if (slot === -1) kept.push(context.root);
-      else if (entries[slot]!.kind !== "own") replaced = entries[slot]!.source;
+      const kept = entries.filter(({ kind }) => kind === undefined || (kind === "npm" && !context.managed));
+      return withPiPackages(value, kept.map(({ entry }) => entry));
     }
-    const next = { ...value };
-    if (kept.length > 0 || (Array.isArray(value.packages) && value.packages.length === 0)) next.packages = kept;
-    else delete next.packages;
-    return next;
+    const registered = registeredPiPackages(context.root, entries);
+    ({ replaced, removed } = registered);
+    return withPiPackages(value, registered.kept);
   });
+}
+
+/** A Pi `packages` entry, its source, and what that source is to this registration (`piSourceKind`). */
+interface PiPackageEntry {
+  entry: unknown;
+  source: string | undefined;
+  kind: PiSourceKind;
+}
+
+async function piPackageEntries(context: Context, agentDir: string, packages: readonly unknown[]): Promise<PiPackageEntry[]> {
+  const entries: PiPackageEntry[] = [];
+  for (const entry of packages) {
+    const source = piPackageSource(entry);
+    entries.push({ entry, source, kind: source === undefined ? undefined : await piSourceKind(context, agentDir, source) });
+  }
+  return entries;
+}
+
+/**
+ * Pi's packages with `root` in Rerail's one slot: its own entry, else the first other Rerail entry with `root` as its
+ * source, else `root` appended. The other Rerail entries go (`removed`); `replaced` is the source the slot held when it
+ * was not this install's.
+ */
+function registeredPiPackages(
+  root: string, entries: readonly PiPackageEntry[],
+): { kept: unknown[]; replaced: string | undefined; removed: string[] } {
+  const ownSlot = entries.findIndex(({ kind }) => kind === "own");
+  const slot = ownSlot === -1 ? entries.findIndex(({ kind }) => kind !== undefined) : ownSlot;
+  const kept: unknown[] = [];
+  const removed: string[] = [];
+  entries.forEach(({ entry, source, kind }, index) => {
+    if (kind === undefined) kept.push(entry);
+    else if (index === slot) kept.push(isObject(entry) ? { ...entry, source: root } : root);
+    else if (kind !== "own" && source !== undefined) removed.push(source);
+  });
+  if (slot === -1) return { kept: [...kept, root], replaced: undefined, removed };
+  const { kind, source } = entries[slot]!;
+  return { kept, replaced: kind === "own" ? undefined : source, removed };
+}
+
+/** `value` with `packages` set to `kept`, or without it once Rerail's entries were all it held; an empty list stays. */
+function withPiPackages(value: JsonObject, kept: unknown[]): JsonObject {
+  const next = { ...value };
+  if (kept.length > 0 || (Array.isArray(value.packages) && value.packages.length === 0)) next.packages = kept;
+  else delete next.packages;
+  return next;
 }
 
 const OMP_EXTENSION_NAME = "rerail";
@@ -1121,22 +1410,31 @@ async function planOmpPackageDuplicates(context: Context): Promise<Plan[]> {
   for (const name of names) {
     if (name === OMP_EXTENSION_NAME) continue;
     const path = join(directory, name);
-    if (!(await lstat(path)).isSymbolicLink()) continue;
-    let target: string;
-    let gone = false;
-    try {
-      target = await realpath(path);
-    } catch (error) {
-      if (!isAbsent(error)) continue;
-      target = resolve(directory, await readlink(path));
-      gone = true;
-    }
-    if (!(await (gone ? isGoneInstallRoot(target) : isRerailPackageRoot(context, target)))) continue;
-    const detail = gone ? `remove symlink to an install that is gone at ${target}` : `remove symlink to another install at ${target}`;
-    plans.push(planMutation(context, "omp", path, "updated", detail, () => unlink(path)));
+    const detail = await otherInstallLink(context, path);
+    if (detail !== undefined) plans.push(planMutation(context, "omp", path, "updated", detail, () => unlink(path)));
   }
   return plans;
 }
+
+/**
+ * Why the extension at `path` goes, when it is a symlink to another install of this package or to an install that is
+ * gone (`isGoneInstallRoot`); undefined for anything else, which stays.
+ */
+async function otherInstallLink(context: Context, path: string): Promise<string | undefined> {
+  if (!(await lstat(path)).isSymbolicLink()) return undefined;
+  let target: string;
+  try {
+    target = await realpath(path);
+  } catch (error) {
+    if (!isAbsent(error)) return undefined;
+    const gone = resolve(dirname(path), await readlink(path));
+    return await isGoneInstallRoot(gone) ? `remove symlink to an install that is gone at ${gone}` : undefined;
+  }
+  return await isRerailPackageRoot(context, target) ? `remove symlink to another install at ${target}` : undefined;
+}
+
+/** The part of OMP's plugin lockfile that says whether Rerail's plugin install is turned off. */
+const ompPluginLock = z.object({ plugins: z.object({ [RERAIL_PACKAGE_NAME]: z.object({ enabled: z.unknown() }) }) });
 
 /**
  * Whether OMP loads its own plugin install of this package (`omp plugin install @neralabs/rerail`, in
@@ -1156,50 +1454,60 @@ async function hasOmpPluginCopy(context: Context): Promise<boolean> {
   } catch {
     return true;
   }
-  const state = isObject(lock) && isObject(lock.plugins) ? lock.plugins[RERAIL_PACKAGE_NAME] : undefined;
-  return !(isObject(state) && state.enabled === false);
+  return ompPluginLock.safeParse(lock).data?.plugins[RERAIL_PACKAGE_NAME].enabled !== false;
 }
 
 /** The note a registration of OMP carries while OMP's plugin install of Rerail loads too (`hasOmpPluginCopy`). */
 export const OMP_PLUGIN_NOTE =
   `OMP also loads Rerail from its plugin install, so two copies run: remove that one with omp plugin uninstall ${RERAIL_PACKAGE_NAME}.`;
 
+/** What is at the path of OMP's extension link: nothing, something that is no symlink, or a symlink and where it leads. */
+type OmpExtension = { kind: "missing" } | { kind: "other" } | { kind: "symlink"; target: string };
+
+async function ompExtension(path: string): Promise<OmpExtension> {
+  let link: boolean;
+  try {
+    link = (await lstat(path)).isSymbolicLink();
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+    return { kind: "missing" };
+  }
+  if (!link) return { kind: "other" };
+  return { kind: "symlink", target: await realpath(path).catch(async () => resolve(dirname(path), await readlink(path))) };
+}
+
+function unchangedOmp(path: string, detail: string): Plan {
+  return { change: { harness: "omp", path, action: "unchanged", detail } };
+}
+
 async function planOmp(context: Context): Promise<Plan> {
   const path = join(context.home, ".omp", "agent", "extensions", OMP_EXTENSION_NAME);
   assertInside(path, context.home, "home");
-  let kind: "missing" | "symlink" | "other";
-  try {
-    kind = (await lstat(path)).isSymbolicLink() ? "symlink" : "other";
-  } catch (error) {
-    if (!isMissing(error)) throw error;
-    kind = "missing";
-  }
+  const extension = await ompExtension(path);
   const canonicalRoot = await realpath(context.root).catch(() => context.root);
-  let target: string | undefined;
-  if (kind === "symlink") {
-    try {
-      target = await realpath(path);
-    } catch {
-      target = resolve(dirname(path), await readlink(path));
-    }
-  }
-  const unchanged = (detail: string): Plan => ({ change: { harness: "omp", path, action: "unchanged", detail } });
+  return context.mode === "register"
+    ? linkOmpExtension(context, path, extension, canonicalRoot)
+    : unlinkOmpExtension(context, path, extension, canonicalRoot);
+}
 
-  if (context.mode === "register") {
-    if (kind === "other") throw new Error(`Refusing to replace ${path}: it exists and is not a symlink`);
-    if (target === canonicalRoot) return unchanged(`symlink to ${context.root}: already in place`);
-    const detail =
-      kind === "symlink" ? `repoint symlink from ${target} to ${context.root}` : `symlink to ${context.root}`;
-    return planMutation(context, "omp", path, kind === "symlink" ? "updated" : "created", detail, async () => {
-      await mkdir(dirname(path), { recursive: true });
-      if (kind === "symlink") await unlink(path);
-      await symlink(context.root, path, context.platform === "win32" ? "junction" : undefined);
-    });
-  }
+/** Links the extension to this install: a new link, or one repointed from where it leads; anything else is refused. */
+function linkOmpExtension(context: Context, path: string, extension: OmpExtension, canonicalRoot: string): Plan {
+  if (extension.kind === "other") throw new Error(`Refusing to replace ${path}: it exists and is not a symlink`);
+  const repoint = extension.kind === "symlink";
+  if (repoint && extension.target === canonicalRoot) return unchangedOmp(path, `symlink to ${context.root}: already in place`);
+  const detail = repoint ? `repoint symlink from ${extension.target} to ${context.root}` : `symlink to ${context.root}`;
+  return planMutation(context, "omp", path, repoint ? "updated" : "created", detail, async () => {
+    await mkdir(dirname(path), { recursive: true });
+    if (repoint) await unlink(path);
+    await symlink(context.root, path, context.platform === "win32" ? "junction" : undefined);
+  });
+}
 
-  if (kind === "missing") return unchanged("no symlink: nothing to remove");
-  if (kind === "other") return unchanged("not a symlink: left in place");
-  if (target !== canonicalRoot) return unchanged(`symlink points at ${target}: left in place`);
+/** Removes the extension link when it leads to this install; anything else stays. */
+function unlinkOmpExtension(context: Context, path: string, extension: OmpExtension, canonicalRoot: string): Plan {
+  if (extension.kind === "missing") return unchangedOmp(path, "no symlink: nothing to remove");
+  if (extension.kind === "other") return unchangedOmp(path, "not a symlink: left in place");
+  if (extension.target !== canonicalRoot) return unchangedOmp(path, `symlink points at ${extension.target}: left in place`);
   // The extensions folder goes too once it is empty: registration made it for the link when OMP had none.
   return planMutation(context, "omp", path, "updated", `remove symlink to ${context.root}`, async () => {
     await unlink(path);
@@ -1215,11 +1523,25 @@ export const RERAIL_MCP_SERVER_NAME = "rerail";
  * name. Only the shape setup writes counts, `<node> <root>/dist/cli/cli.js mcp-bridge` (`ENTRY_POINTS.cli`), so a gone
  * entry of another tool (an `npx` command, or a script outside `dist/cli/`) stays.
  */
+/** The bridge entry set-up writes: `<node> <root>/dist/cli/cli.js mcp-bridge`. */
+const mcpBridgeEntry = z.object({ command: z.string(), args: z.tuple([z.string(), z.literal("mcp-bridge")]) });
+/** An MCP server entry with a list of arguments, the first of which names a bridge's script. */
+const mcpServerArgs = z.object({ args: z.array(z.unknown()) });
+
 async function isPackageMcpBridge(context: Context, server: unknown): Promise<boolean> {
-  if (!isObject(server) || typeof server.command !== "string" || !Array.isArray(server.args) || server.args.length !== 2) return false;
-  const [script, command] = server.args as unknown[];
-  if (command !== "mcp-bridge" || typeof script !== "string" || !isAbsolute(script) || !isNodeExecutable(server.command)) return false;
-  return await isReplaceableScript(context, script, ENTRY_POINTS.cli);
+  const bridge = mcpBridgeEntry.safeParse(server);
+  if (!bridge.success) return false;
+  const [script] = bridge.data.args;
+  return isAbsolute(script) && isNodeExecutable(bridge.data.command) && await isReplaceableScript(context, script, ENTRY_POINTS.cli);
+}
+
+/** `servers` without the bridges another install of this package wrote, or one that is gone (`isPackageMcpBridge`). */
+async function withoutPackageMcpBridges(context: Context, servers: JsonObject): Promise<JsonObject> {
+  const kept: JsonObject = {};
+  for (const [name, server] of Object.entries(servers)) {
+    if (!(await isPackageMcpBridge(context, server))) kept[name] = server;
+  }
+  return kept;
 }
 
 function planOmpMcp(context: Context): Promise<Plan> {
@@ -1233,26 +1555,13 @@ function planOmpMcp(context: Context): Promise<Plan> {
     if (!isObject(servers))
       throw new Error(`Cannot register rerail MCP server: "mcpServers" in ${path} is not an object`);
     const { [RERAIL_MCP_SERVER_NAME]: previous, ...others } = servers;
-    // Removal takes out only this installation's bridge: a `rerail` entry naming another install or checkout stays.
-    const ours = isObject(previous) && Array.isArray(previous.args) && previous.args[0] === join(context.root, ENTRY_POINTS.cli);
-    if (context.mode === "unregister" && !ours) return value;
-    const kept: JsonObject = {};
-    for (const [name, server] of Object.entries(others)) {
-      if (context.mode === "register" && await isPackageMcpBridge(context, server)) continue;
-      kept[name] = server;
+    if (context.mode === "register") {
+      const bridge = { command: context.nodePath, args: [join(context.root, ENTRY_POINTS.cli), "mcp-bridge"] };
+      return { ...value, mcpServers: { ...await withoutPackageMcpBridges(context, others), [RERAIL_MCP_SERVER_NAME]: bridge } };
     }
-    const next: JsonObject =
-      context.mode === "register"
-        ? {
-          ...kept,
-          [RERAIL_MCP_SERVER_NAME]: {
-            command: context.nodePath,
-            args: [join(context.root, ENTRY_POINTS.cli), "mcp-bridge"],
-          },
-        }
-        : kept;
-    if (Object.keys(next).length === 0 && !isObject(value.mcpServers)) return value;
-    return { ...value, mcpServers: next };
+    // Removal takes out only this installation's bridge: a `rerail` entry naming another install or checkout stays.
+    const ours = mcpServerArgs.safeParse(previous).data?.args[0] === join(context.root, ENTRY_POINTS.cli);
+    return ours ? { ...value, mcpServers: others } : value;
   });
 }
 
@@ -1286,7 +1595,7 @@ async function planCodexSkill(context: Context, name: RerailCommandName): Promis
   const text = commandFileText("codex", name, commandContext(context));
   if (existing.text === text) return { change: { harness: "codex", path, action: "unchanged", detail: `$${name} skill: already in place` } };
   // Only a skill carrying Rerail's marker gets here: Rerail generated it, so it is not backed up.
-  return planMutation(context, "codex", path, existing.exists ? "updated" : "created", `register the $${name} skill`,
+  return planMutation(context, "codex", path, writeAction(existing), `register the $${name} skill`,
     () => writeTextFile(path, text, existing, false));
 }
 
@@ -1296,17 +1605,65 @@ function promptCommandPath(context: Context, harness: PromptCommandHarness, name
   return path;
 }
 
+/** The end of a path to `executable` on `platform`, escaped for a RegExp. */
+function scriptTail(executable: string, platform: NodeJS.Platform): string {
+  const paths = pathsOf(platform);
+  return `${paths.sep}${paths.normalize(executable)}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/**
+ * The paths ending in `executable` that `text` names in POSIX single quotes (`shellWord("posix", …)`), unquoted: the
+ * form Claude Code's command files take on Windows. A match ends at `executable` and its closing quote, so an apostrophe
+ * in the instructions' prose never pairs with the quote around a path.
+ */
+function posixQuotedScripts(text: string, executable: string, platform: NodeJS.Platform): string[] {
+  return [...text.matchAll(new RegExp(String.raw`'((?:[^']|'\\'')*${scriptTail(executable, platform)})'`, "gu"))]
+    .map(match => match[1]!.replaceAll(String.raw`'\''`, "'"));
+}
+
+/**
+ * The paths ending in `executable` that `text` names as PowerShell literals (`powershellLiteral`), unquoted: the form
+ * Codex's and Cursor's command files take on Windows, each quote in the path written twice. A literal starts a word, so
+ * the quotes of a POSIX-quoted `'` never open one, and it ends at `executable` as in `posixQuotedScripts`.
+ */
+function powershellQuotedScripts(text: string, executable: string, platform: NodeJS.Platform): string[] {
+  const literal = String.raw`(?<![^\s(])'((?:[^'\u2018-\u201B]|(['\u2018-\u201B])\2)*${scriptTail(executable, platform)})'`;
+  return [...text.matchAll(new RegExp(literal, "gu"))].map(match => match[1]!.replace(/(['\u2018-\u201B])\1/gu, "$1"));
+}
+
+/** Whether `text` names `script` as it is, in POSIX single quotes or as a PowerShell literal: each form a file takes. */
+function namesScript(text: string, script: string): boolean {
+  return [script, shellWord("posix", script), powershellLiteral(script)].some(form => text.includes(form));
+}
+
+/** The `words` that are this package's CLI under an install root registration knows (`registeredRoot`). */
+function registeredScripts(words: readonly string[], platform: NodeJS.Platform): Set<string> {
+  return new Set(words.filter(word => pathsOf(platform).isAbsolute(word) && registeredRoot(word, ENTRY_POINTS.cli, platform) !== undefined));
+}
+
 /**
  * Whether a command file or skill runs this installation's CLI or, on registration, that of another install of this
  * package or of one that is gone, recognized as hooks are (`isReplaceableScript`): an earlier version wrote its files
- * under its own install root. A generated file names exactly one `<root>/dist/cli/cli.js` (`ENTRY_POINTS.cli`).
+ * under its own install root. A generated file names exactly one `<root>/dist/cli/cli.js` (`ENTRY_POINTS.cli`), as a
+ * hook word (`hookWord`) or, in the command files on Windows, in POSIX single quotes (Claude Code's) or for PowerShell
+ * (Codex's and Cursor's): as a literal, or bare where PowerShell reads the path as one word (`shellWord`), as it does
+ * `C:\Users\me\.rerail\versions\0.2.0\dist\cli\cli.js`. Without the bare form every update backed up each of those files
+ * as someone else's and left the retired ones in place.
  */
 async function runsPackageCli(context: Context, text: string): Promise<boolean> {
-  if (text.includes(join(context.root, ENTRY_POINTS.cli))) return true;
+  if (namesScript(text, hookScript(context, ENTRY_POINTS.cli))) return true;
   if (context.mode === "unregister") return false;
   const windows = context.platform === "win32";
-  const scripts = new Set(shellWords(text, windows).map(word => unquoteShellWord(word, windows))
-    .filter(word => isAbsolute(word) && registeredRoot(word, ENTRY_POINTS.cli) !== undefined));
+  const words = shellWords(text, windows).map(word => unquoteShellWord(word, windows));
+  const quoted = windows
+    ? [
+      ...posixQuotedScripts(text, ENTRY_POINTS.cli, context.platform),
+      ...powershellQuotedScripts(text, ENTRY_POINTS.cli, context.platform),
+      // A word ends at a space, or at the backtick around inline code.
+      ...text.split(/[\s`]+/u).filter(word => POWERSHELL_SAFE.test(word)),
+    ]
+    : [];
+  const scripts = registeredScripts([...words, ...quoted], context.platform);
   const [script] = scripts;
   return scripts.size === 1 && await isReplaceableScript(context, script!, ENTRY_POINTS.cli);
 }
@@ -1330,25 +1687,43 @@ async function planPromptCommand(context: Context, harness: PromptCommandHarness
   if (existing.exists && existing.text === text) return { change: { harness, path, action: "unchanged", detail: `/${name} command: already in place` } };
   // A command file of this package (`runsPackageCli`) is generated whole; anyone else's is backed up before it goes.
   const backup = existing.exists && !(await runsPackageCli(context, existing.text));
-  return planMutation(context, harness, path, existing.exists ? "updated" : "created", `register the /${name} command`,
+  return planMutation(context, harness, path, writeAction(existing), `register the /${name} command`,
     () => writeTextFile(path, text, existing, backup));
+}
+
+/** How one coding agent takes Rerail's commands: Codex as skills, Claude Code and Cursor as prompt command files. */
+interface AgentCommandFiles {
+  plan: (context: Context, name: RerailCommandName) => Promise<Plan>;
+  /** The names earlier versions installed and this one no longer does. */
+  retired: readonly string[];
+  path: (context: Context, name: string) => string;
+  planRemoval: (context: Context, name: string, path: string, existing: TextFile) => Promise<Plan>;
+}
+
+function agentCommandFiles(harness: PromptCommandHarness | "codex"): AgentCommandFiles {
+  if (harness === "codex") {
+    return { plan: planCodexSkill, retired: RETIRED_CODEX_SKILLS, path: codexSkillPath, planRemoval: planCodexSkillRemoval };
+  }
+  return {
+    plan: (context, name) => planPromptCommand(context, harness, name),
+    retired: RETIRED_PROMPT_COMMANDS,
+    path: (context, name) => promptCommandPath(context, harness, name),
+    planRemoval: (context, name, path, existing) => planPromptCommandRemoval(context, harness, name, path, existing),
+  };
 }
 
 /** The Rerail commands of one coding agent, plus removal of the ones earlier versions installed. */
 async function planAgentCommands(context: Context, harness: PromptCommandHarness | "codex"): Promise<Plan[]> {
+  const files = agentCommandFiles(harness);
   const plans: Plan[] = [];
-  for (const { name } of RERAIL_COMMANDS) {
-    plans.push(harness === "codex" ? await planCodexSkill(context, name) : await planPromptCommand(context, harness, name));
-  }
+  for (const { name } of RERAIL_COMMANDS) plans.push(await files.plan(context, name));
   // A retired file of this installation goes in either mode, and on registration one of another install of this package
   // or of one that is gone; absent or foreign files produce no plan at all.
-  for (const name of harness === "codex" ? RETIRED_CODEX_SKILLS : RETIRED_PROMPT_COMMANDS) {
-    const path = harness === "codex" ? codexSkillPath(context, name) : promptCommandPath(context, harness, name);
+  for (const name of files.retired) {
+    const path = files.path(context, name);
     const existing = await readTextFile(path);
     if (!existing.exists) continue;
-    const plan = harness === "codex"
-      ? await planCodexSkillRemoval(context, name, path, existing)
-      : await planPromptCommandRemoval(context, harness, name, path, existing);
+    const plan = await files.planRemoval(context, name, path, existing);
     if (plan.change.action !== "unchanged") plans.push(plan);
   }
   return plans;

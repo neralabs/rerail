@@ -1,14 +1,19 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runRemoteCommand, seedRerailDatabase } from "../../src/cli/index.js";
 import { SqliteAuditStore } from "../../src/engine/index.js";
 import { addRemote, machineId, readRemoteConfig, setRepositoryExcluded } from "../../src/runtime/remote-config.js";
 import { backoffMs, MAX_BACKOFF_MS, RemoteOutbox } from "../../src/runtime/remote-outbox.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../support/fake-sink.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
+
+vi.mock("node:fs", { spy: true });
+const real = await vi.importActual<typeof import("node:fs")>("node:fs");
 
 const REPOSITORY = "remote:example.com/team/app";
 let home: string;
@@ -23,8 +28,11 @@ beforeEach(async () => {
   clock = 1_000_000;
 });
 afterEach(async () => {
+  vi.mocked(writeFileSync).mockReset();
+  vi.mocked(linkSync).mockReset();
+  vi.mocked(renameSync).mockReset();
   await sink.close();
-  rmSync(home, { recursive: true, force: true });
+  removeFolderSync(home);
 });
 
 /** One finished session of four events (`seedRerailDatabase`) in {@link REPOSITORY}, and a finished audit with a violation. */
@@ -305,9 +313,97 @@ describe("remote sink outbox", () => {
     await expect(runRemoteCommand(["add", "http://example.com", "--token-file", tokenFile], { home, stdout })).rejects.toThrow(/https/u);
   });
 
+  it("gives the token folder an owner-only ACL on Windows on every add, in a home an earlier release made", () => {
+    // The home is already there, so nothing gives it an ACL now: an earlier release made it with its parent's, under C:\.
+    const restricted: Array<[string, boolean]> = [];
+    const acl = { restrictToOwner: (path: string, folder: boolean): void => { restricted.push([path, folder]); }, otherReaders: (): string[] => [] };
+    const windows = { acl, platform: "win32" as const, profile: String.raw`C:\Users\nobody-here` };
+    addRemote({ url: "https://rerail.example", token: "t", content: true, name: "team" }, home, clock, windows);
+    expect(restricted).toEqual([[join(home, "remote-tokens"), true]]);
+    // A tokens folder an earlier release made is fixed too: each add sets the ACL again, which its files inherit.
+    addRemote({ url: "https://rerail.example", token: "t", content: true, name: "other" }, home, clock, windows);
+    expect(restricted).toEqual([[join(home, "remote-tokens"), true], [join(home, "remote-tokens"), true]]);
+  });
+
   it("backs off exponentially within bounds", () => {
     expect(backoffMs(1, () => 0.5)).toBe(2_000);
     expect(backoffMs(3, () => 0.5)).toBe(8_000);
     expect(backoffMs(30, () => 1)).toBe(MAX_BACKOFF_MS);
+  });
+});
+
+describe("machineId", () => {
+  const ID = /^[0-9a-f-]{36}$/u;
+
+  /**
+   * Has another process ask for the machine id the moment the machine-id file first appears in the home, however it is
+   * made: created and then written, linked in, or renamed in. Returns what that process got.
+   */
+  function askedWhenMade(): string[] {
+    const file = join(home, "machine-id");
+    const got: string[] = [];
+    let asked = false;
+    const ask = (): void => {
+      asked = true;
+      got.push(machineId(home));
+    };
+    vi.mocked(writeFileSync).mockImplementation((path, data, options) => {
+      if (path !== file || asked) return real.writeFileSync(path, data, options);
+      // Created empty, as an exclusive create leaves it, then written.
+      real.writeFileSync(path, "", options);
+      ask();
+      real.writeFileSync(path, data, { ...(typeof options === "object" ? options : {}), flag: "w" });
+    });
+    vi.mocked(linkSync).mockImplementation((from, to) => {
+      real.linkSync(from, to);
+      if (to === file && !asked) ask();
+    });
+    vi.mocked(renameSync).mockImplementation((from, to) => {
+      real.renameSync(from, to);
+      if (to === file && !asked) ask();
+    });
+    return got;
+  }
+
+  it("gives another process asking the moment the id file appears the whole id, not an empty one", () => {
+    const askedMeanwhile = askedWhenMade();
+
+    const id = machineId(home);
+
+    expect(id).toMatch(ID);
+    expect(askedMeanwhile).toEqual([id]);
+  });
+
+  it("returns the id of the process that made the file first when it loses the race to make it", () => {
+    const winner = randomUUID();
+    vi.mocked(linkSync).mockImplementationOnce((from, to) => {
+      const theirs = join(home, "their.tmp");
+      real.writeFileSync(theirs, `${winner}\n`);
+      real.linkSync(theirs, to);
+      real.rmSync(theirs);
+      real.linkSync(from, to);
+    });
+
+    expect(machineId(home)).toBe(winner);
+    expect(machineId(home)).toBe(winner);
+  });
+
+  it("replaces a file that holds no id, as one left empty by a process that died making it, and keeps the new id", () => {
+    writeFileSync(join(home, "machine-id"), "");
+
+    const id = machineId(home);
+
+    expect(id).toMatch(ID);
+    expect(readFileSync(join(home, "machine-id"), "utf8").trim()).toBe(id);
+    expect(machineId(home)).toBe(id);
+  });
+
+  it("leaves no temporary file behind", () => {
+    machineId(home);
+    rmSync(join(home, "machine-id"));
+    writeFileSync(join(home, "machine-id"), "not an id\n");
+    machineId(home);
+
+    expect(real.readdirSync(home).filter(name => name.startsWith("machine-id"))).toEqual(["machine-id"]);
   });
 });

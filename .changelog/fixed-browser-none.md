@@ -1,0 +1,1 @@
+With `BROWSER=none` set, `rerail manage`, `rerail session --open`, `rerail daemon start --open` and OMP's and Pi's `/rerail-manage` no longer open a browser or an Orca tab: each says no browser opened and gives the link to open yourself, as set-up already did.

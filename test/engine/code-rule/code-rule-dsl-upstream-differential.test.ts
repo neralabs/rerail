@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { fixturesPath } from "../../support/oracles.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const ruleObject = z.record(z.string(), z.unknown());
 /** A rule × source case pinned to upstream ast-grep: `fixtures/{ecma,python}/matcher/ast-grep/<feature>.json`. */
@@ -43,7 +44,7 @@ const UPSTREAM_VERSION = "0.51.0";
 const cli = join(dirname(createRequire(import.meta.url).resolve("@ast-grep/cli/package.json")), "ast-grep");
 const binding = loadNativeBinding();
 const scratch = mkdtempSync(join(tmpdir(), "rerail-upstream-"));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeFolderSync(scratch));
 
 /** Matched byte range plus the single-node captures, as `start-end` strings. */
 interface Match {

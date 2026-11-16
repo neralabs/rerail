@@ -1,0 +1,1 @@
+On Windows, a hook keeps its event and its answer when a virus scan briefly holds its session's lock file, and a lock left by a hook that ended no longer holds up the session's next hooks for 30 seconds when Windows gives its process number to another program.

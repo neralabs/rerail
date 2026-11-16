@@ -26,6 +26,8 @@ export interface RepositoryRecord {
   readonly started: boolean;
   /** Whether audits leave out files Git ignores; true until turned off. */
   readonly followGitignore: boolean;
+  /** Whether Merge Assist is on for the repository's checkouts; off until a person turns it on. */
+  readonly mergeAssist: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -55,7 +57,8 @@ export interface CheckoutContext {
 }
 
 /** `not-set-up`: started, but the repository has no configuration, so nothing runs. */
-export type RepositoryStartState = "started" | "stopped" | "not-set-up";
+export const REPOSITORY_START_STATES = ["started", "stopped", "not-set-up"] as const;
+export type RepositoryStartState = (typeof REPOSITORY_START_STATES)[number];
 
 const RUNNING_START_STATES: readonly string[] = ["started", "not-set-up"];
 

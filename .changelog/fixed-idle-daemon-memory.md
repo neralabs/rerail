@@ -1,0 +1,1 @@
+A daemon gives back the memory its compiled rules hold 15 minutes after a repository's last session ends. It kept every rule it had compiled for as long as it ran: about 740 MB with the Node, TypeScript, JavaScript, Python and complexity packs, 512 MB of it the Node pack's builtins rule.

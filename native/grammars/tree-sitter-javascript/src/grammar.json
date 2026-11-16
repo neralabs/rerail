@@ -5486,6 +5486,15 @@
                 "name": "escape_sequence"
               },
               {
+                "type": "ALIAS",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_template_escape_without_digits"
+                },
+                "named": true,
+                "value": "escape_sequence"
+              },
+              {
                 "type": "SYMBOL",
                 "name": "template_substitution"
               }
@@ -5497,6 +5506,22 @@
           "value": "`"
         }
       ]
+    },
+    "_template_escape_without_digits": {
+      "type": "IMMEDIATE_TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "\\"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[xu]"
+          }
+        ]
+      }
     },
     "template_substitution": {
       "type": "SEQ",
