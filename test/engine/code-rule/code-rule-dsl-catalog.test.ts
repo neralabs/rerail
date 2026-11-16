@@ -426,7 +426,10 @@ function recordCheckoutRows(databasePath: string, repositoryKey: string, paths: 
     const insert = database.$client.prepare(
       "INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, 'clone', NULL, 1, 1)",
     );
-    for (const path of paths) insert.run(path, repositoryKey);
+    // One transaction: the database syncs every commit to disk, and 300 commits on a busy disk outlast the test's limit.
+    database.$client.transaction(() => {
+      for (const path of paths) insert.run(path, repositoryKey);
+    })();
   } finally {
     database.$client.close();
   }
