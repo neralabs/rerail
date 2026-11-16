@@ -392,16 +392,21 @@ fn tier1_by_kind() {
         }
         let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
         b.call(&aot.parser.tier1);
-        let (mut ours, mut lean) = (u64::MAX, u64::MAX);
+        let (mut ours, mut lean) = ((u64::MAX, u64::MAX), (u64::MAX, u64::MAX));
+        let least = |m: (u64, u64), a: (u64, u64), b: (u64, u64)| (m.0.min(b.0 - a.0), m.1.min(b.1 - a.1));
         for _ in 0..rounds {
-            let at = retired().0;
+            let at = retired();
             b.call(&aot.parser.tier1);
-            ours = ours.min(retired().0 - at);
-            let at = retired().0;
+            ours = least(ours, at, retired());
+            let at = retired();
             std::hint::black_box(rr::lean::token_count(std::hint::black_box(&text)));
-            lean = lean.min(retired().0 - at);
+            lean = least(lean, at, retired());
         }
-        eprintln!("  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions a token, lean lexer {:6.1}", ours as f64 / tokens as f64, lean as f64 / tokens as f64);
+        let t = tokens as f64;
+        eprintln!(
+            "  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions {:5.1} cycles a token (IPC {:.2}), lean lexer {:6.1} {:5.1} (IPC {:.2})",
+            ours.0 as f64 / t, ours.1 as f64 / t, ours.0 as f64 / ours.1 as f64, lean.0 as f64 / t, lean.1 as f64 / t, lean.0 as f64 / lean.1 as f64
+        );
     }
 }
 
@@ -487,4 +492,15 @@ fn a_numbers_arm_reads_one_window() {
     assert!(!arm.contains("vceqq_u8") && !arm.contains("count_ones"), "a count of the number's `.`: {arm}");
     // A leading zero asked inline of the digits' first lane: the long way's call alone cold.
     assert_eq!(arm.matches("cold_path").count(), 1, "a cold test in the number arm: {arm}");
+}
+
+/// The loop's next start is the block's base and the starts' next bit, as lean's `base + q`:
+/// not the token's end's block (`end & !63`), which chained each start to the token before it
+/// (its byte, its table entry, its run), so short tokens ran one after another.
+#[test]
+fn the_next_start_is_the_blocks() {
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let f0 = &f0[..f0[10..].find("\nunsafe fn ").map_or(f0.len(), |e| e + 10)];
+    assert!(!f0.contains("(-64i64 as u64)"), "a start from a token's end's block");
 }

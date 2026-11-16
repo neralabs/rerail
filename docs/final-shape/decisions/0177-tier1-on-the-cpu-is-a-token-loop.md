@@ -3151,3 +3151,42 @@ if entry & LEADING_ZERO_MAY != 0 { cold_path(); if b[s] == b'0' && digit(b[s + 1
 
 Test: `a_numbers_arm_reads_one_window` (no `.` compare, no count,
 one cold path).
+
+## The next start is the block's, not the token's
+
+**Intro.** On short tokens, tier 1 ran lean's instruction count at a
+lower IPC. Words, punctuation and mixed code ran at IPC 2.4–3.2,
+against lean's 4.0–5.0. Long tokens did not: strings and comments
+matched lean. That pointed at a chain from token to token.
+
+The loop's next start was `(end + 1) & !63` plus the next start bit.
+So each start waited on the token before it: the byte load, the
+table entry's load, the run's `ctz`, the select of the end. Lean's
+is `base + q`, where `base` is the window's. Its tokens in one window
+are independent, and the core overlaps them.
+
+**The change.** The block's base is a block register
+(`BlockRegs::base`, the refill's `q64`). The inner loop's next start
+is `base + ctz(left)`. Starts are left only while the cursor is in
+the token's block (`left` is cut to none otherwise), so the two are
+equal wherever the loop goes on.
+
+```rust
+// generated, the run loop's tail, after
+let next = base + left.trailing_zeros();
+// before
+let next = ((end + 1) & !63) + left.trailing_zeros();
+```
+
+Measured, as information (cycles a token, AOT ÷ lean, the same
+heavily loaded machine): punctuation 1.31–1.59 → 1.11, mixed code
+1.56–1.68 → 1.11–1.18, words 1.27–1.36 → 1.18–1.23. Numbers did not
+move. Their end comes from a 16-byte load at `s + 1`, a compare, a
+narrowing shift, a lane move and a `ctz`, about 15 cycles of data
+dependency. Lean's `while digit { end += 1 }` is one add a digit,
+its branch predicted. A block-level digits mask would take the load
+off the chain. This file's "one run word a block" decision keeps
+the number's run off the block, for its rarity. That tradeoff is
+open.
+
+Test: `the_next_start_is_the_blocks` (the generated Rust).

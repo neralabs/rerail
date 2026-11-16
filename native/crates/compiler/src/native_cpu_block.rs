@@ -4949,6 +4949,9 @@ fn marks_in(f: &mut FunctionBuilder<'_>, rd: &Reads<'_>, c: &FileCols, marks: &[
 struct BlockRegs {
     cand: Value,
     runs: Vec<(u16, Value)>,
+    /// The block's first byte's position: the next start's base, the block's, as lean's
+    /// `base + q`, not the token's end's (which chained each start to the token before).
+    base: Value,
 }
 
 
@@ -5425,7 +5428,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 f.append_block_param(token_r, types::I64);
                 let hr: Vec<Value> = rp[2..].iter().copied().chain(std::iter::once(rp[1])).chain(words.iter().copied()).collect();
                 f.ins().jump(token_r, &[rp[0].into()]);
-                rare_part = Some((token_r, hr, BlockRegs { cand: rp[1], runs: runs.iter().copied().zip(words.iter().copied()).collect() }));
+                rare_part = Some((token_r, hr, BlockRegs { cand: rp[1], runs: runs.iter().copied().zip(words.iter().copied()).collect(), base: q64 }));
             }
             // The start: a token, or past the file.
             f.switch_to_block(from_word);
@@ -5434,7 +5437,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let fw = f.block_params(from_word).to_vec();
             // Every start is inside the file (the refill's `valid`).
             let s = fw[0];
-            regs = Some(BlockRegs { cand: fw[1], runs: runs.iter().copied().zip(words.iter().copied()).collect() });
+            regs = Some(BlockRegs { cand: fw[1], runs: runs.iter().copied().zip(words.iter().copied()).collect(), base: q64 });
             // The token's state, the inner loop's: what the code after reads as the head's.
             h = fw[2..].iter().copied().chain(std::iter::once(fw[1])).chain(words.iter().copied()).collect();
             (pending_in, from_in) = (h[3], h[4]);
@@ -6004,7 +6007,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // the starts left, by `mid`, out of the inner loop.
             let after: Vec<BlockArg> = std::iter::once(BlockArg::from(if common && lean.is_some() { rest } else { left })).chain(back.iter().cloned()).collect();
             if common && lean.is_some() {
-                let base = f.ins().band_imm(cv[1], !63);
+                // The block's base (`BlockRegs::base`): starts are left only where the cursor is
+                // in the token's block.
+                let base = g.base;
                 let tz = f.ins().ctz(left);
                 let s0 = f.ins().iadd(base, tz);
                 let on: Vec<BlockArg> = [s0, left].iter().copied().map(BlockArg::from).chain(back.iter().cloned()).collect();
@@ -6014,8 +6019,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             }
         } else if let Some(inner) = inner {
             // Starts left in the block: the next, in the inner loop, as the lean lexer's
-            // `while run != 0`; none, the refill (the head, its words unread).
-            let base = f.ins().band_imm(cv[1], !63);
+            // `while run != 0`; none, the refill (the head, its words unread). From the block's
+            // base (`BlockRegs::base`), not the token's end.
+            let base = g.base;
             let tz = f.ins().ctz(left);
             let s0 = f.ins().iadd(base, tz);
             let on: Vec<BlockArg> = [s0, left].iter().copied().map(BlockArg::from).chain(back.iter().cloned()).collect();
